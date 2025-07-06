@@ -398,40 +398,67 @@ class Interpreter(Generic[TContext, TEvent]):
             self._active_state_nodes.discard(state)
 
     async def _check_and_fire_on_done(self, final_state: StateNode) -> None:
-        """Checks if a parent state is complete and fires its onDone event.
+        """
+        Checks if an ancestor state is now "done" because a child has entered
+        a final state, and if so, fires the appropriate `onDone` event.
 
-        This is triggered whenever a substate enters a 'final' state.
+        This method bubbles up from the parent of the newly entered final state
+        to check all relevant ancestors.
 
         Args:
             final_state: The state that has just become final.
         """
-        parent = final_state.parent
-        if not parent or not parent.on_done:
-            return
+        # Start checking from the parent of the state that became final.
+        current = final_state.parent
 
-        is_done = False
-        # A compound state is done if its active substate is a final state.
-        if parent.type == "compound":
-            is_done = True
+        while current:
+            # We only care about states that have an onDone transition defined.
+            if current.on_done:
+                is_done = False
 
-        # A parallel state is done if ALL of its regions are in a final state.
-        elif parent.type == "parallel":
-            # Get the current final states within this parallel state's regions.
-            active_final_states_in_parent = {
-                s
-                for s in self._active_state_nodes
-                if s.type == "final" and s.parent == parent
-            }
-            # The parent is done if the number of completed regions equals the total number of regions.
-            if len(active_final_states_in_parent) == len(parent.states):
-                is_done = True
+                # A compound state is done if its active substate is a final state.
+                if current.type == "compound":
+                    active_children = {
+                        s
+                        for s in self._active_state_nodes
+                        if s.parent == current
+                    }
+                    if any(s.type == "final" for s in active_children):
+                        is_done = True
 
-        if is_done:
-            logger.info(
-                f"✅ State '{parent.id}' is done. Firing onDone event."
-            )
-            # Create and send the special event for this state being done.
-            await self.send(Event(type=f"done.state.{parent.id}"))
+                # A parallel state is done if ALL of its regions are in a final state.
+                elif current.type == "parallel":
+                    all_regions_done = True
+                    # Iterate through each defined region (child state) of the parallel state.
+                    for region in current.states.values():
+                        # Check if there is an active state within this region that is final.
+                        active_states_in_region = {
+                            s
+                            for s in self._active_state_nodes
+                            if self._is_descendant(s, region)
+                        }
+                        if not any(
+                            s.type == "final" for s in active_states_in_region
+                        ):
+                            all_regions_done = False
+                            break  # One region isn't done, so the parallel state isn't done.
+
+                    if all_regions_done:
+                        is_done = True
+
+                if is_done:
+                    logger.info(
+                        f"✅ State '{current.id}' is done. Firing onDone event."
+                    )
+                    # Create and send the special event for this state being done.
+                    await self.send(Event(type=f"done.state.{current.id}"))
+
+                    # Once we fire an onDone event, we stop bubbling. The new event
+                    # will trigger its own transition cycle.
+                    return
+
+            # Move up to the next ancestor to check it.
+            current = current.parent
 
     # -----------------------------------------------------------------------------
     # Action, Service, and Actor Execution

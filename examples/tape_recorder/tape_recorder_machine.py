@@ -1,4 +1,4 @@
-# examples/tape_recorder_machine.py
+# examples/tape_recorder/tape_recorder_machine.py
 import asyncio
 import json
 import logging
@@ -142,18 +142,23 @@ class TapeRecorder:
         print("🎤 Actor: Acquiring microphone...")
         await asyncio.sleep(0.5)
 
+        # ⬇️ FIX: Add `self` as the first parameter to each lambda ⬇️
         self.mic_stream = type(
             "MicStream",
             (),
             {
-                "start": lambda: print("  ▶️ Mic stream started recording."),
-                "stop": lambda: print("  ⏹️ Mic stream stopped recording."),
-                "pause": lambda: print("  ⏸️ Mic stream paused."),
-                "resume": lambda: print("  ⏯️ Mic stream resumed."),
+                "start": lambda self: print(
+                    "  ▶️ Mic stream started recording."
+                ),
+                "stop": lambda self: print(
+                    "  ⏹️ Mic stream stopped recording."
+                ),
+                "pause": lambda self: print("  ⏸️ Mic stream paused."),
+                "resume": lambda self: print("  ⏯️ Mic stream resumed."),
             },
         )()
 
-        # ✨ FIX: Access the invocation input from the event's payload.
+        # Access the invocation input from the event's payload.
         event_name = f"ok_{event.payload['input']['fixme1']}"
         await interpreter.send(event_name, stream=self.mic_stream)
         return {"status": "microphone ready"}
