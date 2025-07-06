@@ -35,3 +35,9 @@ class ImplementationMissingError(XStateMachineError):
     """Raised when an action, guard, or service implementation is missing."""
 
     pass
+
+
+class ActorSpawningError(XStateMachineError):
+    """Raised when there is an error spawning or communicating with an actor."""
+
+    pass

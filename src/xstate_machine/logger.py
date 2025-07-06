@@ -1,20 +1,21 @@
-### 3. `src/xstate_machine/logger.py`
-
-# This file sets up the centralized logger
-
-
 # src/xstate_machine/logger.py
 import logging
 
 # -----------------------------------------------------------------------------
-# 🪵 Logger Configuration
+# 🪵 Library-Safe Logger Configuration
 # -----------------------------------------------------------------------------
-# A centralized logger to be used across the library. This allows users of the
-# library to easily control the log level and output.
+# This setup follows the best practice for logging in a reusable library.
+#
+# 1. We get a logger specific to this library's namespace.
+# 2. We do NOT configure it with handlers or formatting, as that is the
+#    responsibility of the end-user's application.
+# 3. We add a `NullHandler` to prevent "No handler found" warnings if the
+#    user's application has not configured logging. This handler is a no-op;
+#    it does nothing with the log records.
 # -----------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# ✅ Get the top-level logger for the "xstate_machine" library.
 logger = logging.getLogger("xstate_machine")
+
+# ✅ Add a NullHandler to suppress "No handler found" warnings.
+logger.addHandler(logging.NullHandler())
