@@ -1,25 +1,34 @@
-# food_delivery_machine.py
 import asyncio
+import logging
 import random
 from uuid import uuid4
 
 from src.xstate_machine import (
+    Event,
     Interpreter,
     LoggingInspector,
     MachineLogic,
     create_machine,
-    Event,
 )
-
-# In the user's main.py file
-import logging
 
 # Configure logging for the application
 logging.basicConfig(
     level=logging.INFO, format="[%(levelname)s] %(name)s: %(message)s"
 )
 
-# In food_delivery_machine.py
+
+async def async_process_payment(
+    interpreter: Interpreter, ctx: dict, evt: Event
+) -> dict:
+    """A simulated async function that represents calling a payment gateway."""
+    print("💳 Processing payment...")
+    await asyncio.sleep(2)
+    if random.random() > 0.1:
+        print("✅ Payment successful!")
+        return {"confirmationCode": "PMT-ABC-123"}
+    else:
+        print("❌ Payment failed!")
+        raise Exception("Insufficient funds")
 
 
 async def main():
@@ -28,7 +37,6 @@ async def main():
     """
     print("🎬 --- Food Delivery Service Simulation --- 🎬\n")
 
-    # ... (Actor and Machine configs remain the same) ...
     delivery_actor_config = {
         "id": "deliveryActor",
         "initial": "assigning",
@@ -121,10 +129,11 @@ async def main():
         delivery_actor_config,
         MachineLogic(
             actions={
-                "assignDriver": lambda i, ctx, evt: ctx.update(
+                # ⬇️ FIX: Add a fourth argument (e.g., 'action_def') to every lambda ⬇️
+                "assignDriver": lambda i, ctx, evt, action_def: ctx.update(
                     {"driverId": evt.payload.get("driverId", "DRV-007")}
                 ),
-                "notifyParentNoDrivers": lambda i, ctx, evt: asyncio.create_task(
+                "notifyParentNoDrivers": lambda i, ctx, evt, action_def: asyncio.create_task(
                     i.parent.send("NO_DRIVERS")
                 ),
             }
@@ -133,18 +142,17 @@ async def main():
 
     order_machine_logic = MachineLogic(
         actions={
-            "addItemToCart": lambda i, ctx, evt: ctx["cart"].append(
-                evt.payload.get("item")
-            ),
-            "logPaymentFailure": lambda i, ctx, evt: print(
+            # ⬇️ FIX: Add a fourth argument to every lambda ⬇️
+            "addItemToCart": lambda i, ctx, evt, action_def: ctx[
+                "cart"
+            ].append(evt.payload.get("item")),
+            "logPaymentFailure": lambda i, ctx, evt, action_def: print(
                 f"💳 Payment failed: {evt.data.get('error')}"
             ),
-            "assignToKitchen": lambda i, ctx, evt: print(
+            "assignToKitchen": lambda i, ctx, evt, action_def: print(
                 f"🍳 Order {ctx['orderId']} assigned to kitchen."
             ),
-            # ✨ FIX: Retrieve the actor reference dynamically from the context
-            # instead of using a hardcoded ID.
-            "notifyActorPickupReady": lambda i, ctx, evt: asyncio.create_task(
+            "notifyActorPickupReady": lambda i, ctx, evt, action_def: asyncio.create_task(
                 next(iter(ctx["actors"].values())).send("PICKUP_READY")
             ),
         },
@@ -179,7 +187,6 @@ async def main():
     await asyncio.sleep(3)
 
     # A driver becomes available!
-    # ✨ FIX: Retrieve the actor reference dynamically to send it a message.
     if interpreter.context.get("actors"):
         print("\n---  Assigned a driver! ---")
         delivery_actor_ref = next(iter(interpreter.context["actors"].values()))
@@ -194,21 +201,6 @@ async def main():
     print(f"Final Context: {interpreter.context}")
 
     await interpreter.stop()
-
-
-# ✨ FIX: Update the async service to the correct signature.
-async def async_process_payment(
-    interpreter: Interpreter, ctx: dict, evt: Event
-) -> dict:
-    """A simulated async function that represents calling a payment gateway."""
-    print("💳 Processing payment...")
-    await asyncio.sleep(2)
-    if random.random() > 0.1:
-        print("✅ Payment successful!")
-        return {"confirmationCode": "PMT-ABC-123"}
-    else:
-        print("❌ Payment failed!")
-        raise Exception("Insufficient funds")
 
 
 if __name__ == "__main__":

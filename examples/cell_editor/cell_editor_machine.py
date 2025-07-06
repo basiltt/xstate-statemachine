@@ -2,10 +2,8 @@
 import asyncio
 import json
 import logging
-from typing import Any, Dict
 
 from src.xstate_machine import (
-    Event,
     Interpreter,
     LoggingInspector,
     MachineLogic,
@@ -39,32 +37,33 @@ async def main():
     # 🧠 Define the implementation logic for the machine.
     cell_editor_logic = MachineLogic(
         actions={
-            "startEditing": lambda i, ctx, evt: ctx.update(
+            # ⬇️ FIX: Add a fourth argument (e.g., 'action_def') to every lambda ⬇️
+            "startEditing": lambda i, ctx, evt, action_def: ctx.update(
                 {
                     "editingCell": evt.payload.get("cellId"),
                     "inputValue": evt.payload.get("initialValue", ""),
                 }
             ),
-            "setInputValue": lambda i, ctx, evt: ctx.update(
+            "setInputValue": lambda i, ctx, evt, action_def: ctx.update(
                 {"inputValue": evt.payload.get("value")}
             ),
-            "updateCaretPosition": lambda i, ctx, evt: ctx.update(
+            "updateCaretPosition": lambda i, ctx, evt, action_def: ctx.update(
                 {"caretPosition": evt.payload.get("position")}
             ),
-            "updateEmplaceTokenByInputValue": lambda i, ctx, evt: None,  # No-op for simulation
-            "enableManualEmplaceMode": lambda i, ctx, evt: ctx.update(
+            "updateEmplaceTokenByInputValue": lambda i, ctx, evt, action_def: None,  # No-op for simulation
+            "enableManualEmplaceMode": lambda i, ctx, evt, action_def: ctx.update(
                 {"isManualEmplaceMode": True}
             ),
-            "disableManualEmplaceMode": lambda i, ctx, evt: ctx.update(
+            "disableManualEmplaceMode": lambda i, ctx, evt, action_def: ctx.update(
                 {"isManualEmplaceMode": False}
             ),
-            "applySelectionToFormula": lambda i, ctx, evt: ctx.update(
+            "applySelectionToFormula": lambda i, ctx, evt, action_def: ctx.update(
                 {"inputValue": ctx["inputValue"] + evt.payload.get("cellRef")}
             ),
-            "finishEditing": lambda i, ctx, evt: print(
+            "finishEditing": lambda i, ctx, evt, action_def: print(
                 f"✅ Editing finished. Final value: '{ctx['inputValue']}'"
             ),
-            "submit": lambda i, ctx, evt: print(
+            "submit": lambda i, ctx, evt, action_def: print(
                 f"✅ Submitted value: '{ctx['inputValue']}'"
             ),
         },

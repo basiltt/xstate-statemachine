@@ -1,4 +1,4 @@
-# examples/chatbot_machine.py
+# examples/chatbot/chatbot_machine.py
 import asyncio
 import json
 import logging
@@ -64,29 +64,29 @@ async def main():
     # 🧠 Define the implementation logic for the machine.
     chatbot_logic = MachineLogic(
         actions={
-            "setProviderTypePrompt": lambda i, ctx, evt: ctx.update(
+            # ⬇️ FIX: Add a fourth argument (e.g., 'action_def') to every lambda ⬇️
+            "setProviderTypePrompt": lambda i, ctx, evt, action_def: ctx.update(
                 {
                     "providerTypePrompt": "What type of provider are you looking for?"
                 }
             ),
-            "setProviderType": lambda i, ctx, evt: ctx.update(
+            "setProviderType": lambda i, ctx, evt, action_def: ctx.update(
                 {"identifiedService": evt.payload.get("type")}
             ),
-            "setZipCodePrompt": lambda i, ctx, evt: ctx.update(
+            "setZipCodePrompt": lambda i, ctx, evt, action_def: ctx.update(
                 {"zipCodePrompt": "Please enter your 5-digit zip code."}
             ),
-            "setZipCode": lambda i, ctx, evt: ctx.update(
+            "setZipCode": lambda i, ctx, evt, action_def: ctx.update(
                 {"zipCode": evt.payload.get("zip")}
             ),
-            # ✨ FIX: Use the imported `logging` module directly, not an undefined `logger` variable.
-            "logEventValue": lambda i, ctx, evt: logging.info(
+            "logEventValue": lambda i, ctx, evt, action_def: logging.info(
                 f"📝 Event Logged: {evt.type} | Payload: {evt.payload}"
             ),
-            "setServiceProviders": lambda i, ctx, evt: ctx.update(
+            # FIX: DoneEvents from services have an `evt.data` attribute
+            "setServiceProviders": lambda i, ctx, evt, action_def: ctx.update(
                 {"serviceProviders": evt.data.get("providers")}
             ),
-            # ✨ FIX: Use the imported `logging` module directly.
-            "logEventOutput": lambda i, ctx, evt: logging.info(
+            "logEventOutput": lambda i, ctx, evt, action_def: logging.info(
                 f"📝 Service Result Logged: {evt.type}, Data: {evt.data}"
             ),
         },

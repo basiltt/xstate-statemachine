@@ -1,36 +1,30 @@
-# drone_machine.py
 import asyncio
-
-from src.xstate_machine import MachineLogic, create_machine, Interpreter
-
-# In the user's main.py file
 import logging
 
-# Configure logging for their entire application
-logging.basicConfig(
-    level=logging.WARNING, format="[%(levelname)s] %(name)s: %(message)s"
-)
+from src.xstate_machine import Interpreter, MachineLogic, create_machine
 
-# Specifically enable INFO-level logs just for your library
-logging.getLogger("xstate_machine").setLevel(logging.INFO)
+# Configure logging for the application
+logging.basicConfig(
+    level=logging.INFO, format="[%(levelname)s] %(name)s: %(message)s"
+)
 
 
 async def main():
-    # 1. Define your state machine in XState JSON format
+    # 1. Define the state machine in XState JSON format
     drone_config = {
         "id": "drone",
         "initial": "idle",
         "context": {"battery": 100},
         "states": {
-            "idle": {"on": {"TAKEOFF": {"target": "flying"}}},
+            "idle": {"on": {"TAKEOFF": "flying"}},
             "flying": {
                 "after": {
                     "5000": {
                         "target": "landing",
-                        "actions": [{"type": "logLowBattery"}],
+                        "actions": ["logLowBattery"],
                     }
                 },
-                "on": {"LAND": {"target": "landing"}},
+                "on": {"LAND": "landing"},
             },
             "landing": {"type": "final"},
         },
@@ -39,8 +33,8 @@ async def main():
     # 2. Provide the implementation for your actions
     logic = MachineLogic(
         actions={
-            # ✨ FIX: Update the lambda to accept the `interpreter` argument.
-            "logLowBattery": lambda interpreter, ctx, evt: print(
+            # ⬇️ FIX: Update the lambda to accept the fourth `action_def` argument ⬇️
+            "logLowBattery": lambda interpreter, ctx, evt, action_def: print(
                 f"🔋 Low battery ({ctx['battery']}%). Returning to land."
             )
         }

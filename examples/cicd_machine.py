@@ -1,4 +1,4 @@
-# cicd_machine.py
+# examples/cicd_machine.py
 import asyncio
 import logging
 import random
@@ -249,17 +249,18 @@ async def main():
     # 🤖 Logic for the actor machine.
     integration_test_logic = MachineLogic(
         actions={
-            "logError": lambda i, ctx, evt: ctx.update(
+            # ⬇️ FIX: Add a fourth argument (e.g., 'action_def') to every lambda ⬇️
+            "logError": lambda i, ctx, evt, action_def: ctx.update(
                 {"error": str(evt.data)}
             ),
-            "setTestDb": lambda i, ctx, evt: ctx.update(
+            "setTestDb": lambda i, ctx, evt, action_def: ctx.update(
                 {"testDb": evt.data.get("db_url")}
             ),
             # These actions use the `interpreter` to communicate with the parent.
-            "notifyParentSuccess": lambda i, ctx, evt: asyncio.create_task(
+            "notifyParentSuccess": lambda i, ctx, evt, action_def: asyncio.create_task(
                 i.parent.send("TESTS_PASSED")
             ),
-            "notifyParentFailure": lambda i, ctx, evt: asyncio.create_task(
+            "notifyParentFailure": lambda i, ctx, evt, action_def: asyncio.create_task(
                 i.parent.send("TESTS_FAILED", error=ctx["error"])
             ),
         },
@@ -279,13 +280,14 @@ async def main():
     # 🚀 Logic for the main pipeline machine.
     pipeline_logic = MachineLogic(
         actions={
-            "setCommitId": lambda i, ctx, evt: ctx.update(
+            # ⬇️ FIX: Add a fourth argument (e.g., 'action_def') to every lambda ⬇️
+            "setCommitId": lambda i, ctx, evt, action_def: ctx.update(
                 {"commitId": evt.payload.get("commitId")}
             ),
-            "logError": lambda i, ctx, evt: ctx.update(
+            "logError": lambda i, ctx, evt, action_def: ctx.update(
                 {"error": str(evt.data)}
             ),
-            "setArtifactUrl": lambda i, ctx, evt: ctx.update(
+            "setArtifactUrl": lambda i, ctx, evt, action_def: ctx.update(
                 {"artifactUrl": evt.data.get("url")}
             ),
         },
