@@ -9,6 +9,7 @@ from .exceptions import ActorSpawningError, ImplementationMissingError
 from .logger import logger
 from .models import (
     ActionDefinition,
+    InvokeDefinition,
     MachineNode,
     StateNode,
     TContext,
@@ -132,7 +133,6 @@ class Interpreter(Generic[TContext, TEvent]):
         self.status = "running"
         self._event_loop_task = asyncio.create_task(self._run_event_loop())
 
-        # 📢 Notify plugins that the interpreter is starting.
         for plugin in self._plugins:
             plugin.on_interpreter_start(self)
 
@@ -141,26 +141,20 @@ class Interpreter(Generic[TContext, TEvent]):
         return self
 
     async def stop(self) -> None:
-        """Stops the interpreter and cleans up all background tasks and actors.
-
-        This is a graceful shutdown process.
-        """
+        """Stops the interpreter and cleans up all background tasks and actors."""
         if self.status != "running":
             return
 
         logger.info(f"🛑 Gracefully stopping interpreter '{self.id}'...")
         self.status = "stopped"
 
-        # 📢 Notify plugins of the shutdown.
         for plugin in self._plugins:
             plugin.on_interpreter_stop(self)
 
-        # 👶 Stop all child actors recursively.
         for actor_id, actor in self._actors.items():
             logger.info(f"👨‍👧‍👦 Stopping child actor '{actor_id}'...")
             await actor.stop()
 
-        # 🗑️ Clean up all pending tasks.
         await self.task_manager.cancel_all()
         if self._event_loop_task:
             self._event_loop_task.cancel()
@@ -170,34 +164,14 @@ class Interpreter(Generic[TContext, TEvent]):
 
     @overload
     async def send(self, event_type: str, **payload: Any) -> None:
-        """Sends an event to the machine with a string type and keyword arguments.
-
-        This is the most common and user-friendly way to send events.
-
-        Args:
-            event_type: The string representing the event type (e.g., "CLICK").
-            **payload: Key-value arguments to include in the event payload.
-
-        Example:
-            >>> await interpreter.send("USER_UPDATE", name="John", age=30)
-        """
+        """Sends an event to the machine with a string type and keyword arguments."""
         ...
 
     @overload
     async def send(
         self, event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent]
     ) -> None:
-        """Sends a pre-structured event object or dictionary to the machine.
-
-        This is useful for internal events or when the event data is already
-        in dictionary form.
-
-        Args:
-            event: An `Event` object or a dictionary with a "type" key.
-
-        Example:
-            >>> await interpreter.send({"type": "TAKEOFF"})
-        """
+        """Sends a pre-structured event object or dictionary to the machine."""
         ...
 
     async def send(
@@ -205,15 +179,9 @@ class Interpreter(Generic[TContext, TEvent]):
         event_or_type: Union[str, Dict, Event, DoneEvent, AfterEvent],
         **payload: Any,
     ) -> None:
-        """Sends an event to the machine's event queue.
-
-        This method is overloaded to provide a flexible and type-safe API. It
-        normalizes different calling styles into a standard `Event` object before
-        processing.
-        """
+        """Sends an event to the machine's event queue."""
         event_obj: Union[Event, DoneEvent, AfterEvent]
 
-        #  Normalize the input into a standard Event object
         if isinstance(event_or_type, str):
             event_obj = Event(type=event_or_type, payload=payload)
         elif isinstance(event_or_type, dict):
@@ -227,7 +195,6 @@ class Interpreter(Generic[TContext, TEvent]):
                 f"Unsupported event type passed to send(): {type(event_or_type)}"
             )
 
-        # 📨 Add the standardized event to the processing queue.
         await self._event_queue.put(event_obj)
 
     # -----------------------------------------------------------------------------
@@ -235,20 +202,11 @@ class Interpreter(Generic[TContext, TEvent]):
     # -----------------------------------------------------------------------------
 
     def get_snapshot(self) -> str:
-        """Returns a JSON serializable snapshot of the interpreter's current state.
-
-        This includes the active state configuration and the machine's context,
-        allowing for state restoration.
-
-        Returns:
-            A JSON string representing the machine's state.
-        """
+        """Returns a JSON serializable snapshot of the interpreter's current state."""
         snapshot = {
             "status": self.status,
             "context": self.context,
             "state_ids": list(self.current_state_ids),
-            # Note: A full persistence solution would also need to serialize and
-            # restore the state of spawned actors.
         }
         return json.dumps(snapshot, indent=2)
 
@@ -256,30 +214,15 @@ class Interpreter(Generic[TContext, TEvent]):
     def from_snapshot(
         cls, snapshot_str: str, machine: MachineNode[TContext, TEvent]
     ) -> "Interpreter[TContext, TEvent]":
-        """Creates and restores an interpreter instance from a snapshot.
-
-        This method initializes an interpreter and immediately places it in the
-        saved state, bypassing the normal initial state transition. The event
-        loop is not started automatically.
-
-        Args:
-            snapshot_str: The JSON string generated by `get_snapshot()`.
-            machine: The `MachineNode` definition corresponding to the snapshot.
-
-        Returns:
-            A new `Interpreter` instance restored to the saved state.
-        """
+        """Creates and restores an interpreter instance from a snapshot."""
         snapshot = json.loads(snapshot_str)
         interpreter = cls(machine)
         interpreter.context = snapshot["context"]
         interpreter.status = snapshot["status"]
 
-        # 🌳 Restore the active state configuration from the snapshot.
         for state_id in snapshot["state_ids"]:
             node = machine.get_state_by_id(state_id)
             if node:
-                # This is a simplified restoration. A full implementation would need
-                # to reconstruct the entire state hierarchy for perfect restoration.
                 interpreter._active_state_nodes.add(node)
 
         logger.info(
@@ -295,17 +238,11 @@ class Interpreter(Generic[TContext, TEvent]):
         """The main private loop that processes events from the queue."""
         while self.status == "running":
             try:
-                # 📥 Wait for the next event from the queue.
                 event = await self._event_queue.get()
-
-                # 📢 Notify plugins that an event is about to be processed.
                 for plugin in self._plugins:
                     plugin.on_event_received(self, event)
-
-                # 🧠 Process the event to determine the next state.
                 await self._process_event(event)
             except asyncio.CancelledError:
-                # This is expected during shutdown.
                 break
             except Exception as e:
                 logger.error(
@@ -317,14 +254,7 @@ class Interpreter(Generic[TContext, TEvent]):
     async def _process_event(
         self, event: Union[Event, AfterEvent, DoneEvent]
     ) -> None:
-        """Finds and executes a transition based on the given event.
-
-        This method implements the core state transition algorithm (based on SCXML).
-
-        Args:
-            event: The event to process.
-        """
-        # 1. 🔍 Find the single, optimal transition to take.
+        """Finds and executes a transition based on the given event."""
         transition = self._find_optimal_transition(event)
         if not transition:
             logger.debug(
@@ -332,7 +262,6 @@ class Interpreter(Generic[TContext, TEvent]):
             )
             return
 
-        # Handle internal (target-less) transitions, which only run actions.
         if not transition.target_str:
             logger.info(
                 f"⚡ Performing internal transition on event '{event.type}'"
@@ -352,10 +281,7 @@ class Interpreter(Generic[TContext, TEvent]):
         )
         from_states_snapshot = self._active_state_nodes.copy()
 
-        # 2. 🌳 Find the transition domain (Least Common Ancestor).
         domain = self._find_transition_domain(transition)
-
-        # 3. ⬅️ Exit all states from the current configuration up to the domain.
         states_to_exit = {
             s
             for s in self._active_state_nodes
@@ -365,17 +291,14 @@ class Interpreter(Generic[TContext, TEvent]):
             sorted(list(states_to_exit), key=lambda s: len(s.id), reverse=True)
         )
 
-        # 4. 🎬 Execute the transition's actions.
         await self._execute_actions(transition.actions, event)
 
-        # 5. ➡️ Enter all states from the domain down to the target state(s).
         target_state = resolve_target_state(
             transition.target_str, transition.source
         )
         path_to_target = self._get_path_to_state(target_state, stop_at=domain)
         await self._enter_states(path_to_target)
 
-        # 6. 📢 Notify plugins about the completed transition.
         for plugin in self._plugins:
             plugin.on_transition(
                 self,
@@ -391,36 +314,24 @@ class Interpreter(Generic[TContext, TEvent]):
     def _find_optimal_transition(
         self, event: Union[Event, AfterEvent, DoneEvent]
     ) -> Optional[TransitionDefinition]:
-        """Finds the best transition to take, prioritizing deeper states.
-
-        This function is the core of the event processing logic. It searches for
-        a valid transition by checking the current atomic states and bubbling
-        up their parents.
-
-        ✨ FIX: This version correctly checks all possible transition sources:
-        1. On the state's `on` property for regular events.
-        2. On the state's `after` property for delayed events.
-        3. On the state's `invoke` property for `onDone`/`onError` events.
-
-        Args:
-            event: The event being processed.
-
-        Returns:
-            The single best `TransitionDefinition` to take, or `None`.
-        """
+        """Finds the best transition to take from all possible sources."""
         eligible_transitions: List[TransitionDefinition] = []
 
-        # Iterate through all active states to find matching transitions.
         for state in self._active_state_nodes:
             current: Optional[StateNode] = state
             while current:
-                # 1. ✅ Check for standard `on` transitions.
+                # 1. Check for standard `on` transitions.
                 if event.type in current.on:
                     for transition in current.on[event.type]:
                         if self._is_guard_satisfied(transition.guard, event):
                             eligible_transitions.append(transition)
 
-                # 2. ✅ Check for `after` transitions if it's an AfterEvent.
+                # ✨ FIX: Check for the state's `onDone` transition if a `done.state.*` event occurs.
+                if current.on_done and current.on_done.event == event.type:
+                    if self._is_guard_satisfied(current.on_done.guard, event):
+                        eligible_transitions.append(current.on_done)
+
+                # 2. Check for `after` transitions.
                 if isinstance(event, AfterEvent):
                     for delay, transitions in current.after.items():
                         for transition in transitions:
@@ -432,81 +343,95 @@ class Interpreter(Generic[TContext, TEvent]):
                             ):
                                 eligible_transitions.append(transition)
 
-                # 3. ✅ Check for `invoke` transitions if it's a DoneEvent.
-                if isinstance(event, DoneEvent) and current.invoke:
-                    # Check if the event source matches the invoke ID
-                    if event.src == current.invoke.id:
-                        # Check both onDone and onError transitions
-                        invoke_transitions = (
-                            current.invoke.on_done + current.invoke.on_error
-                        )
-                        for transition in invoke_transitions:
-                            if (
-                                transition.event == event.type
-                                and self._is_guard_satisfied(
-                                    transition.guard, event
-                                )
-                            ):
-                                eligible_transitions.append(transition)
+                # 3. Check for `invoke` transitions.
+                if isinstance(event, DoneEvent):
+                    for invocation in current.invoke:
+                        if event.src == invocation.id:
+                            invoke_transitions = (
+                                invocation.on_done + invocation.on_error
+                            )
+                            for transition in invoke_transitions:
+                                if (
+                                    transition.event == event.type
+                                    and self._is_guard_satisfied(
+                                        transition.guard, event
+                                    )
+                                ):
+                                    eligible_transitions.append(transition)
 
-                # Bubble up to the parent state to check for transitions there.
                 current = current.parent
 
         if not eligible_transitions:
             return None
 
-        # The optimal transition is the one defined on the deepest state node.
         return max(eligible_transitions, key=lambda t: len(t.source.id))
 
     async def _enter_states(self, states_to_enter: List[StateNode]) -> None:
-        """Enters a list of states and executes their entry actions.
-
-        This method is now asynchronous to ensure entry actions complete before
-        the logic proceeds, which is critical for `spawn` and `invoke`.
-
-        Args:
-            states_to_enter: An ordered list of states to enter, from outermost
-                             to innermost.
-        """
+        """Enters a list of states, executes entry actions, and schedules tasks."""
         for state in states_to_enter:
             self._active_state_nodes.add(state)
             logger.debug(f"➡️  Entering state: {state.id}")
 
-            # 🎬 Execute entry actions for this state and wait for them to complete.
             await self._execute_actions(
-                state.entry, Event(f"entry.{state.id}")
+                state.entry, Event(type=f"entry.{state.id}")
             )
 
-            # 🚀 If it's a compound state, recursively enter its initial child.
+            # ✨ FIX: After entering a state, check if its entry completes a parent state.
+            # This is the trigger for the onDone logic.
+            if state.type == "final":
+                await self._check_and_fire_on_done(state)
+
+            # Recurse for nested states.
             if state.type == "compound" and state.initial:
                 await self._enter_states([state.states[state.initial]])
-            # 🚀 If it's a parallel state, enter all its child states.
             elif state.type == "parallel":
                 await self._enter_states(list(state.states.values()))
 
-            # ⏰ Schedule any `after` or `invoke` tasks for this state.
             self._schedule_state_tasks(state)
 
     async def _exit_states(self, states_to_exit: List[StateNode]) -> None:
-        """Exits a list of states and executes their exit actions.
-
-        This method is now asynchronous to ensure exit actions complete.
-
-        Args:
-            states_to_exit: An ordered list of states to exit, from innermost
-                            to outermost.
-        """
+        """Exits a list of states and executes their exit actions."""
         for state in states_to_exit:
             logger.debug(f"⬅️  Exiting state: {state.id}")
-
-            # 🗑️ Cancel any running tasks associated with this state.
             self._cancel_state_tasks(state)
-
-            # 🎬 Execute exit actions and wait for them to complete.
             await self._execute_actions(state.exit, Event(f"exit.{state.id}"))
-
-            # 🌳 Remove the state from the active configuration.
             self._active_state_nodes.discard(state)
+
+    async def _check_and_fire_on_done(self, final_state: StateNode) -> None:
+        """Checks if a parent state is complete and fires its onDone event.
+
+        This is triggered whenever a substate enters a 'final' state.
+
+        Args:
+            final_state: The state that has just become final.
+        """
+        parent = final_state.parent
+        if not parent or not parent.on_done:
+            return
+
+        is_done = False
+        # A compound state is done if its active substate is a final state.
+        if parent.type == "compound":
+            is_done = True
+
+        # A parallel state is done if ALL of its regions are in a final state.
+        elif parent.type == "parallel":
+            # Get the current final states within this parallel state's regions.
+            active_final_states_in_parent = {
+                s
+                for s in self._active_state_nodes
+                if s.type == "final" and s.parent == parent
+            }
+            # The parent is done if the number of completed regions equals the total number of regions.
+            if len(active_final_states_in_parent) == len(parent.states):
+                is_done = True
+
+        if is_done:
+            logger.info(
+                f"✅ State '{parent.id}' is done. Firing onDone event."
+            )
+            # Create and send the special event for this state being done.
+            await self.send(Event(type=f"done.state.{parent.id}"))
 
     # -----------------------------------------------------------------------------
     # Action, Service, and Actor Execution
@@ -526,7 +451,6 @@ class Interpreter(Generic[TContext, TEvent]):
         for action_def in actions:
             for plugin in self._plugins:
                 plugin.on_action_execute(self, action_def)
-
             if action_def.type.startswith("spawn_"):
                 await self._spawn_actor(action_def, event)
                 continue
@@ -539,38 +463,30 @@ class Interpreter(Generic[TContext, TEvent]):
                 continue
 
             logger.debug(f"🎬 Executing action: {action_def.type}")
+            # ✨ FIX: Pass the `action_def` itself as the fourth argument to the
+            # action callable. This prevents mutating the immutable Event object.
             if asyncio.iscoroutinefunction(action_callable):
-                await action_callable(self, self.context, event)
+                await action_callable(self, self.context, event, action_def)
             else:
-                action_callable(self, self.context, event)
+                action_callable(self, self.context, event, action_def)
 
     async def _spawn_actor(
         self, action_def: ActionDefinition, event: Event
     ) -> None:
-        """Handles the logic for the 'spawn' action to create a child interpreter.
-
-        Args:
-            action_def: The action definition, where the type indicates which
-                        machine to spawn (e.g., "spawn_my_child_machine").
-            event: The event that triggered the spawn.
-        """
+        """Handles the logic for the 'spawn' action to create a child interpreter."""
         actor_machine_key = action_def.type.replace("spawn_", "")
         actor_machine = self.machine.logic.services.get(actor_machine_key)
-
         if not isinstance(actor_machine, MachineNode):
             raise ActorSpawningError(
                 f"Cannot spawn '{actor_machine_key}'. "
-                "The corresponding item in `services` logic is not a valid MachineNode."
+                + "The corresponding item in `services` logic is not a valid MachineNode."
             )
-
         actor_id = f"{self.id}:{actor_machine_key}:{uuid.uuid4()}"
         logger.info(f"👶 Spawning new actor: {actor_id}")
-
         actor_interpreter = Interpreter(actor_machine)
         actor_interpreter.parent = self
         actor_interpreter.id = actor_id
         await actor_interpreter.start()
-
         self._actors[actor_id] = actor_interpreter
         self.context.setdefault("actors", {})[actor_id] = actor_interpreter
 
@@ -583,15 +499,14 @@ class Interpreter(Generic[TContext, TEvent]):
                 )
             )
             self.task_manager.add(state.id, task)
-
-        if state.invoke:
-            service = self.machine.logic.services.get(state.invoke.src)
+        for invocation in state.invoke:
+            service = self.machine.logic.services.get(invocation.src)
             if not service:
                 raise ImplementationMissingError(
-                    f"Service '{state.invoke.src}' is not implemented."
+                    f"Service '{invocation.src}' is not implemented."
                 )
             task = asyncio.create_task(
-                self._invoke_service(state.invoke.id, service)
+                self._invoke_service(invocation, service)
             )
             self.task_manager.add(state.id, task)
 
@@ -606,24 +521,32 @@ class Interpreter(Generic[TContext, TEvent]):
         await self.send(event)
 
     async def _invoke_service(
-        self, service_id: str, service: callable
+        self, invocation: InvokeDefinition, service: callable
     ) -> None:
         """Coroutine that runs an invoked service and sends a done/error event."""
-        logger.info(f"📞 Invoking service: {service_id}")
+        logger.info(
+            f"📞 Invoking service: {invocation.src} (id: {invocation.id})"
+        )
         try:
-            result = await service(
-                self, self.context, Event(f"invoke.{service_id}")
+            invoke_event = Event(
+                type=f"invoke.{invocation.id}",
+                payload={"input": invocation.input},
             )
-            event = DoneEvent(
-                type=f"done.invoke.{service_id}", data=result, src=service_id
+            result = await service(self, self.context, invoke_event)
+            done_event = DoneEvent(
+                type=f"done.invoke.{invocation.id}",
+                data=result,
+                src=invocation.id,
             )
-            await self.send(event)
+            await self.send(done_event)
         except Exception as e:
-            logger.error(f"💥 Service '{service_id}' failed: {e}")
-            event = DoneEvent(
-                type=f"error.platform.{service_id}", data=e, src=service_id
+            logger.error(f"💥 Service '{invocation.id}' failed: {e}")
+            error_event = DoneEvent(
+                type=f"error.platform.{invocation.id}",
+                data=e,
+                src=invocation.id,
             )
-            await self.send(event)
+            await self.send(error_event)
 
     # -----------------------------------------------------------------------------
     # Private State Tree Helpers

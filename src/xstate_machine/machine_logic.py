@@ -15,18 +15,18 @@ from .events import Event
 if TYPE_CHECKING:
     from .interpreter import Interpreter
 
+    # ✨ FIX: Import ActionDefinition for use in the type hint.
+    from .models import ActionDefinition
+
 TContext = TypeVar("TContext", bound=Dict[str, Any])
 TEvent = TypeVar("TEvent", bound=Dict[str, Any])
 
-# -----------------------------------------------------------------------------
-# ✨ FIX: Add `Interpreter` as the first argument to all callables.
-# This allows actions and services to access the interpreter that is running them,
-# which is essential for actors to communicate with their parents.
-# -----------------------------------------------------------------------------
+# ✨ FIX: Add `ActionDefinition` as the fourth argument to the ActionCallable.
 ActionCallable = Callable[
-    ["Interpreter", TContext, TEvent], Union[None, Awaitable[None]]
+    ["Interpreter", TContext, TEvent, "ActionDefinition"],
+    Union[None, Awaitable[None]],
 ]
-GuardCallable = Callable[[TContext, TEvent], bool]  # Guards remain simple
+GuardCallable = Callable[[TContext, TEvent], bool]
 ServiceCallable = Callable[["Interpreter", TContext, TEvent], Awaitable[Any]]
 
 

@@ -1,0 +1,209 @@
+{
+  "id": "TapeRecorder",
+  "initial": "inactive",
+  "states": {
+    "inactive": {
+      "description": "Waiting for user",
+      "on": {
+        "action_start": [
+          {
+            "actions": [],
+            "target": "recording"
+          }
+        ]
+      }
+    },
+    "recording": {
+      "initial": "acquiring",
+      "invoke": [
+        {
+          "id": "mic",
+          "input": {
+            "constraints": {
+              "audio": true,
+              "video": false
+            },
+            "fixme1": "e646t5",
+            "mimeType": "audio/webm;codecs=opus"
+          },
+          "src": "MediaRecorderStream_actor"
+        },
+        {
+          "id": "file",
+          "input": {
+            "fixme1": "zov2pr",
+            "startIn": "documents",
+            "suggestedName": "out.weba"
+          },
+          "src": "FileWriterStream_actor"
+        }
+      ],
+      "on": {
+        "error": [
+          {
+            "actions": [
+              {
+                "type": "console_error"
+              }
+            ],
+            "target": ".done"
+          }
+        ]
+      },
+      "onDone": {
+        "actions": [],
+        "target": "inactive"
+      },
+      "states": {
+        "acquiring": {
+          "description": "Waiting for microphone & output file to be open",
+          "onDone": {
+            "actions": [],
+            "target": "recording"
+          },
+          "states": {
+            "acquiring_file": {
+              "initial": "acquiring",
+              "states": {
+                "acquiring": {
+                  "on": {
+                    "ok_zov2pr": [
+                      {
+                        "actions": [
+                          {
+                            "type": "assign file"
+                          }
+                        ],
+                        "target": "ready"
+                      }
+                    ]
+                  }
+                },
+                "ready": {
+                  "type": "final"
+                }
+              }
+            },
+            "acquiring_mic": {
+              "initial": "acquiring",
+              "states": {
+                "acquiring": {
+                  "on": {
+                    "ok_e646t5": [
+                      {
+                        "actions": [
+                          {
+                            "type": "assign mic"
+                          }
+                        ],
+                        "target": "ready"
+                      }
+                    ]
+                  }
+                },
+                "ready": {
+                  "type": "final"
+                }
+              }
+            }
+          },
+          "type": "parallel"
+        },
+        "done": {
+          "type": "final"
+        },
+        "recording": {
+          "on": {
+            "action_stop": [
+              {
+                "actions": [],
+                "target": "done"
+              }
+            ]
+          },
+          "states": {
+            "recording": {
+              "entry": {
+                "params": {
+                  "assign": "mic",
+                  "name": "start"
+                },
+                "type": "context_do"
+              },
+              "exit": {
+                "params": {
+                  "assign": "mic",
+                  "name": "stop"
+                },
+                "type": "context_do"
+              },
+              "initial": "recording",
+              "states": {
+                "paused": {
+                  "on": {
+                    "action_resume": [
+                      {
+                        "actions": [
+                          {
+                            "params": {
+                              "assign": "mic",
+                              "name": "resume"
+                            },
+                            "type": "context_do"
+                          }
+                        ],
+                        "target": "recording"
+                      }
+                    ]
+                  }
+                },
+                "recording": {
+                  "on": {
+                    "action_pause": [
+                      {
+                        "actions": [
+                          {
+                            "params": {
+                              "assign": "mic",
+                              "name": "pause"
+                            },
+                            "type": "context_do"
+                          }
+                        ],
+                        "target": "paused"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "saving": {
+              "initial": "saving",
+              "invoke": {
+                "id": "saving",
+                "input": {},
+                "src": "pipeTo_actor"
+              },
+              "states": {
+                "done": {
+                  "type": "final"
+                },
+                "saving": {
+                  "on": {
+                    "done": [
+                      {
+                        "actions": [],
+                        "target": "done"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "type": "parallel"
+        }
+      }
+    }
+  }
+}
