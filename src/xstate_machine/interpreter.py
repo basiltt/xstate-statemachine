@@ -235,21 +235,57 @@ class Interpreter(Generic[TContext, TEvent]):
     # -----------------------------------------------------------------------------
 
     async def _run_event_loop(self) -> None:
-        """The main private loop that processes events from the queue."""
-        while self.status == "running":
-            try:
+        """Dequeues events and drives the state-transition engine.
+
+        Workflow
+        --------
+        1. While the interpreter is *running*, pull the next event from
+           ``self._event_queue`` and let `_process_event` handle it.
+        2. Forward every event to registered plugins via
+           ``plugin.on_event_received``.
+        3. **Cancellation** (`asyncio.CancelledError`) is a normal shutdown
+           signal → exit the loop quietly.
+        4. **Any other exception** is considered *fatal*:
+           * Log it at *critical* level ⚠️
+           * Flip the interpreter’s status to ``"stopped"``
+           * Cancel all background tasks & child actors
+           * Re-raise so the surrounding `asyncio.Task` finishes **errored**.
+             This lets test code (and library users) detect the failure with
+             ``task.done()`` / ``task.exception()``.
+        """
+        try:
+            while self.status == "running":
                 event = await self._event_queue.get()
+
+                # 🔔 Notify plugins the event was received
                 for plugin in self._plugins:
                     plugin.on_event_received(self, event)
+
+                # 🚀 Drive the state machine
                 await self._process_event(event)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(
-                    f"💥 Unhandled error in event loop for '{self.id}': {e}",
-                    exc_info=True,
-                )
-        logger.debug(f"Event loop for '{self.id}' has finished.")
+
+        except asyncio.CancelledError:
+            # Normal shutdown path — the interpreter (or parent) cancelled us.
+            logger.debug(f"🛑 Event loop for '{self.id}' cancelled; exiting.")
+
+        except Exception as exc:  # noqa: BLE001
+            # Anything else is unexpected → treat as *fatal*
+            logger.critical(
+                f"💥 Fatal error in event loop for '{self.id}': {exc}",
+                exc_info=True,
+            )
+            self.status = "stopped"
+
+            # Clean up tasks & spawned actors to avoid resource leaks
+            await self.task_manager.cancel_all()
+            for actor in self._actors.values():
+                await actor.stop()
+
+            # Bubble the exception so the outer Task ends errored (tests rely on this)
+            raise
+
+        finally:
+            logger.debug(f"⚓ Event loop coroutine for '{self.id}' exited.")
 
     async def _process_event(
         self, event: Union[Event, AfterEvent, DoneEvent]

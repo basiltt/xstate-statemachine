@@ -202,8 +202,12 @@ class StateNode(Generic[TContext, TEvent]):
         # when a compound/parallel state has completed its work.
         self.on_done: Optional[TransitionDefinition] = None
         on_done_config = config.get("onDone")
+
+        # ⬇️ FIX: Add this block to handle the string shorthand for onDone ⬇️
+        if isinstance(on_done_config, str):
+            on_done_config = {"target": on_done_config}
+
         if isinstance(on_done_config, dict):
-            # There can only be one onDone transition per state.
             self.on_done = TransitionDefinition(
                 f"done.state.{self.id}", on_done_config, self
             )
