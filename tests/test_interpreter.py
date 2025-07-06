@@ -138,16 +138,19 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
         interpreter = await Interpreter(machine_def).start()
 
         # Define the side effect for the mock action to modify the context.
-        def increment_context(interpreter, ctx, evt):
+        # ⬇️ FIX: The action must accept all 4 arguments passed by the interpreter.
+        def increment_context(interpreter, ctx, evt, action_def):
             ctx["count"] += 1
 
         mock_action.side_effect = increment_context
 
         # 🚀 Act: Send an event that triggers the action.
         await interpreter.send("INC")
-        await asyncio.sleep(
-            0.05
-        )  # Sleep is fine here as the action is synchronous.
+
+        # In this specific case, asyncio.sleep is appropriate because "INC"
+        # causes an *internal* transition (the state doesn't change),
+        # so we just need to yield to the event loop to process the action.
+        await asyncio.sleep(0.05)
 
         # ✅ Assert: The action was called and the context was updated.
         mock_action.assert_called_once()
@@ -277,7 +280,8 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
             },
             MachineLogic(
                 actions={
-                    "pong": lambda interpreter, ctx, evt: asyncio.create_task(
+                    # ⬇️ FIX: Add the fourth 'action' argument to the lambda ⬇️
+                    "pong": lambda interpreter, ctx, evt, action: asyncio.create_task(
                         interpreter.parent.send("PONG_RECEIVED")
                     )
                 }
@@ -342,7 +346,10 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
             },
             MachineLogic(
                 actions={
-                    "setData": lambda i, c, e: c.update({"data": "updated"})
+                    # ⬇️ FIX: Add the fourth 'action_def' argument to the lambda ⬇️
+                    "setData": lambda i, c, e, action_def: c.update(
+                        {"data": "updated"}
+                    )
                 }
             ),
         )
