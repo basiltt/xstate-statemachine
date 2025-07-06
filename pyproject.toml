@@ -1,0 +1,26 @@
+# pyproject.toml
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[project]
+name = "xstate-machine"
+version = "0.1.0"
+authors = [
+  { name="Basil T T", email="tt.basil@gmail.com" },
+]
+description = "A robust Python library for parsing and running XState JSON state machines."
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/example/xstate-machine"
+"Bug Tracker" = "https://github.com/example/xstate-machine/issues"
