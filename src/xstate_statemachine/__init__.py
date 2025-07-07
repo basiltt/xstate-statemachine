@@ -6,6 +6,7 @@ from .factory import create_machine
 from .interpreter import Interpreter
 from .machine_logic import MachineLogic
 from .events import Event
+from .models import MachineNode
 from .plugins import PluginBase, LoggingInspector
 from .exceptions import (
     XStateMachineError,
@@ -28,4 +29,5 @@ __all__ = [
     "StateNotFoundError",
     "ImplementationMissingError",
     "ActorSpawningError",
+    "MachineNode",
 ]

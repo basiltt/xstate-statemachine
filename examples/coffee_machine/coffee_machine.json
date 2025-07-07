@@ -1,0 +1,85 @@
+{
+  "context": {
+    "coffeeCount": 0,
+    "selectedDrink": null,
+    "waterLevel": 100
+  },
+  "id": "coffeeMachine",
+  "initial": "idle",
+  "states": {
+    "brewing": {
+      "after": {
+        "3000": {
+          "actions": [
+            "incrementCoffeeCount",
+            "decrementWater"
+          ],
+          "target": "ready"
+        }
+      },
+      "onEntry": [
+        "startBrewing"
+      ]
+    },
+    "cleaning": {
+      "after": {
+        "5000": "idle"
+      },
+      "onEntry": [
+        "startCleaning"
+      ]
+    },
+    "idle": {
+      "on": {
+        "CLEAN_MACHINE": {
+          "guard": "canClean",
+          "target": "cleaning"
+        },
+        "REFILL_WATER": "refillingWater",
+        "SELECT_ESPRESSO": {
+          "actions": [
+            "setEspresso"
+          ],
+          "target": "selectingDrink"
+        },
+        "SELECT_LATTE": {
+          "actions": [
+            "setLatte"
+          ],
+          "target": "selectingDrink"
+        }
+      }
+    },
+    "ready": {
+      "on": {
+        "TAKE_DRINK": "idle"
+      },
+      "onEntry": [
+        "serveDrink"
+      ]
+    },
+    "refillingWater": {
+      "invoke": {
+        "onDone": {
+          "actions": [
+            "setWaterToFull"
+          ],
+          "target": "idle"
+        },
+        "src": "refillWaterService"
+      }
+    },
+    "selectingDrink": {
+      "on": {
+        "BREW": {
+          "guard": "canBrew",
+          "target": "brewing"
+        },
+        "CANCEL": "idle"
+      },
+      "onEntry": [
+        "logSelection"
+      ]
+    }
+  }
+}
