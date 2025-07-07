@@ -22,5 +22,5 @@ classifiers = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/example/xstate-machine"
-"Bug Tracker" = "https://github.com/example/xstate-machine/issues"
+"Homepage" = "https://github.com/basiltt/xstate-machine"
+"Bug Tracker" = "https://github.com/basiltt/xstate-machine/issues"
