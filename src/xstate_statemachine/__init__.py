@@ -1,12 +1,12 @@
 # src/xstate_statemachine/__init__.py
 
-__version__ = "0.2.0"  # Version bump for new features
+__version__ = "0.2.1"  # Version bump for this feature
 
 from .factory import create_machine
 from .interpreter import Interpreter
 from .machine_logic import MachineLogic
 from .events import Event
-from .models import MachineNode
+from .models import ActionDefinition
 from .plugins import PluginBase, LoggingInspector
 from .exceptions import (
     XStateMachineError,
@@ -15,6 +15,8 @@ from .exceptions import (
     ImplementationMissingError,
     ActorSpawningError,
 )
+from .logic_loader import LogicLoader
+
 
 # This is the public API of the library.
 __all__ = [
@@ -29,5 +31,6 @@ __all__ = [
     "StateNotFoundError",
     "ImplementationMissingError",
     "ActorSpawningError",
-    "MachineNode",
+    "LogicLoader",
+    "ActionDefinition",
 ]
