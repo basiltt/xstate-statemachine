@@ -14,7 +14,7 @@ Define your logic once in a simple JSON format, and use this library to bring it
 
 **Definition (The "What")**: You define your state machine's structure, states, and transitions in a JSON file. This is your blueprint. It describes what can happen.
 
-**Implementation (The "How")**: You write the business logic—the actual code that runs—in a Python `MachineLogic` object. This describes how actions are performed or services are called.
+**Implementation (The "How")**: You write the business logic—the actual code that runs—in Python. This describes how actions are performed or services are called.
 
 This separation makes your application logic easier to understand, test, and maintain.
 
@@ -33,6 +33,7 @@ One of the biggest advantages of using an XState-compatible format is the abilit
 - **XState Compatible**: Parses JSON configurations generated from the XState ecosystem.
 - **Fully Asynchronous**: Built on `asyncio` for modern, non-blocking applications.
 - **Hierarchical & Parallel States**: Model complex logic with nested and parallel states.
+- **Automatic Logic Discovery**: Optionally, let the library find and bind your Python functions to your machine's logic automatically, reducing boilerplate.
 - **Timed Events**: Use `after` for declarative, time-based transitions.
 - **Asynchronous Services**: Use `invoke` to call async functions and react to their success (`onDone`) or failure (`onError`).
 - **Actor Model**: Spawn child state machines from a parent machine for concurrent, isolated logic.
@@ -55,7 +56,7 @@ pip install xstate-statemachine
 
 Let's create a simple toggle switch.
 
-### 1. Define the Logic (`toggle.json`)
+### 1. Define the Machine (`toggle.json`)
 
 ```json
 {
@@ -84,22 +85,16 @@ import json
 from xstate_statemachine import create_machine, Interpreter
 
 async def main():
-    # Load the machine definition from the JSON file
     with open("toggle.json") as f:
         toggle_config = json.load(f)
 
-    # Create a machine instance from the config
+    # Since there's no custom logic, we can create the machine directly.
     toggle_machine = create_machine(toggle_config)
 
-    # Create an interpreter to run the machine
     interpreter = await Interpreter(toggle_machine).start()
     print(f"Initial state: {interpreter.current_state_ids}")
 
-    # Send an event to the machine
-    print("Sending TOGGLE event...")
     await interpreter.send("TOGGLE")
-
-    # Give the event loop a moment to process
     await asyncio.sleep(0.01)
     print(f"New state: {interpreter.current_state_ids}")
 
@@ -109,23 +104,55 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-### 3. See the Output
-
-```
-Initial state: {'toggle.inactive'}
-Sending TOGGLE event...
-New state: {'toggle.active'}
-```
-
 ---
 
 ## 🧠 Core Concepts
 
+There are two primary ways to provide your Python implementations (actions, guards, services) to the state machine: Explicit Binding (the classic way) and Automatic Discovery (the new, convenient way).
+
+### 🤖 Automatic Logic Discovery (Convention over Configuration)
+
+This is the recommended approach for quickly wiring up your logic. Instead of manually creating a MachineLogic object, you can place your implementation functions in a Python module and tell the factory where to find them.
+
+How it Works: The LogicLoader inspects your modules, finds your functions, and automatically binds them to the names in your JSON config.
+
+Naming Convention: It's smart about names! A camelCase name in your JSON (like `myAction`) will automatically match a snake_case function in your Python code (`def my_action(...):`).
+
+#### Example
+
+1. **Your Logic** (`my_logic.py`)
+
+    ```python
+    # No MachineLogic object needed here! Just define your functions.
+    def my_action(interpreter, context, event, action_def):
+        print("Action executed!")
+    ```
+
+2. **Your Runner** (`main.py`)
+
+    ```python
+    from xstate_statemachine import create_machine
+
+    # Tell the factory where to find your logic functions.
+    machine = create_machine(
+        config=my_config,
+        logic_modules=["my_logic"]  # Pass the module path as a string
+    )
+    # ... or ...
+    import my_logic
+    machine = create_machine(
+        config=my_config,
+        logic_modules=[my_logic]  # Pass the imported module object
+    )
+    ```
+
+---
+
 ### Actions & Context
 
-Actions are "fire-and-forget" functions executed during a transition. They are the primary way to interact with the outside world or update the machine's internal context.
+Actions are "fire-and-forget" functions executed during transitions.
 
-#### Example: `drone.json`
+#### `drone.json`
 
 ```json
 {
@@ -133,122 +160,140 @@ Actions are "fire-and-forget" functions executed during a transition. They are t
   "initial": "flying",
   "context": { "battery": 100 },
   "states": {
-    "flying": {
-      "on": {
-        "PHOTO_TAKEN": { "actions": ["decrementBattery"] }
-      }
-    }
+    "flying": { "on": { "PHOTO_TAKEN": { "actions": ["decrementBattery"] } } }
   }
 }
 ```
 
-#### `drone.py`
+#### `drone_logic.py`
 
 ```python
-from xstate_statemachine import MachineLogic
-
+# With Automatic Discovery, this is all you need.
 def decrement_battery(interpreter, context, event, action_def):
     context["battery"] -= 1
     print(f"Battery at {context['battery']}%")
+```
 
-logic = MachineLogic(
-    actions={"decrementBattery": decrement_battery}
-)
+#### `main.py`
+
+```python
+from xstate_statemachine import create_machine, MachineLogic
+
+# 🤖 Option 1: Automatic Discovery (Recommended)
+machine = create_machine(drone_config, logic_modules=["drone_logic"])
+
+# 🧠 Option 2: Explicit Binding (Classic)
+from drone_logic import decrement_battery
+logic = MachineLogic(actions={"decrementBattery": decrement_battery})
+machine = create_machine(drone_config, logic=logic)
 ```
 
 ---
 
 ### Guards
 
-Guards are conditional checks that determine if a transition should be taken. If a guard returns `False`, the transition is blocked.
+Guards are conditions that must return `True` for a transition to be taken.
 
 #### `checkout.json`
 
 ```json
 {
-    "id": "cart",
-    "context": { "items": [] },
-    "on": {
-        "CHECKOUT": {
-            "target": "paying",
-            "guard": "cartIsNotEmpty"
-        }
-    }
+  "id": "cart",
+  "context": { "items": [] },
+  "on": { "CHECKOUT": { "target": "paying", "guard": "cartIsNotEmpty" } }
 }
 ```
 
-#### `checkout.py`
+#### `checkout_logic.py`
 
 ```python
-from xstate_statemachine import MachineLogic
-
+# With Automatic Discovery, this is all you need.
 def cart_is_not_empty(context, event):
     return len(context.get("items", [])) > 0
+```
 
-logic = MachineLogic(
-    guards={"cartIsNotEmpty": cart_is_not_empty}
-)
+#### `main.py`
+
+```python
+from xstate_statemachine import create_machine, MachineLogic
+
+# 🤖 Option 1: Automatic Discovery (Recommended)
+machine = create_machine(cart_config, logic_modules=["checkout_logic"])
+
+# 🧠 Option 2: Explicit Binding (Classic)
+from checkout_logic import cart_is_not_empty
+logic = MachineLogic(guards={"cartIsNotEmpty": cart_is_not_empty})
+machine = create_machine(cart_config, logic=logic)
 ```
 
 ---
 
 ### Asynchronous Services (`invoke`)
 
-For long-running or async operations, use `invoke`. The machine will transition to different states based on the success (`onDone`) or failure (`onError`) of the invoked async function.
+Use `invoke` for long-running or async operations. The machine will transition based on the success (`onDone`) or failure (`onError`) of the invoked async function.
 
 #### `fetch.json`
 
 ```json
 {
-    "id": "fetcher",
-    "initial": "loading",
-    "states": {
-        "loading": {
-            "invoke": {
-                "src": "fetchUserData",
-                "onDone": { "target": "success" },
-                "onError": { "target": "failure" }
-            }
-        },
-        "success": { "type": "final" },
-        "failure": { "type": "final" }
-    }
+  "id": "fetcher",
+  "initial": "loading",
+  "states": {
+    "loading": {
+      "invoke": {
+        "src": "fetchUserData",
+        "onDone": { "target": "success" },
+        "onError": { "target": "failure" }
+      }
+    },
+    "success": {}, "failure": {}
+  }
 }
 ```
 
-#### `fetch.py`
+#### `fetch_logic.py`
 
 ```python
 import aiohttp
-from xstate_statemachine import MachineLogic
 
+# With Automatic Discovery, this is all you need.
 async def fetch_user_data(interpreter, context, event):
     async with aiohttp.ClientSession() as session:
         async with session.get("https://api.example.com/user") as resp:
             resp.raise_for_status()
             return await resp.json()
+```
 
-logic = MachineLogic(
-    services={"fetchUserData": fetch_user_data}
-)
+#### `main.py`
+
+```python
+from xstate_statemachine import create_machine, MachineLogic
+
+# 🤖 Option 1: Automatic Discovery (Recommended)
+machine = create_machine(fetch_config, logic_modules=["fetch_logic"])
+
+# 🧠 Option 2: Explicit Binding (Classic)
+from fetch_logic import fetch_user_data
+logic = MachineLogic(services={"fetchUserData": fetch_user_data})
+machine = create_machine(fetch_config, logic=logic)
 ```
 
 ---
 
 ### Timed Events (`after`)
 
-Declaratively schedule transitions to occur after a certain amount of time (in milliseconds).
+Declaratively schedule transitions after a delay (in milliseconds).
 
 #### `traffic_light.json`
 
 ```json
 {
-    "id": "light",
-    "initial": "green",
-    "states": {
-        "green": { "after": { "30000": "yellow" } },
-        "yellow": { "after": { "5000": "red" } }
-    }
+  "id": "light",
+  "initial": "green",
+  "states": {
+    "green": { "after": { "30000": "yellow" } },
+    "yellow": { "after": { "5000": "red" } }
+  }
 }
 ```
 
@@ -256,37 +301,19 @@ Declaratively schedule transitions to occur after a certain amount of time (in m
 
 ### Parallel States
 
-Model system components that operate independently at the same time. The machine is in all child states of a parallel state simultaneously. The parent `onDone` transition only fires when all child regions have reached their final state.
+Model independent, concurrent regions within a machine. The parent `onDone` fires when all child regions finish.
 
 #### `build.json`
 
 ```json
 {
-    "id": "build",
-    "initial": "running",
-    "states": {
-        "running": {
-            "type": "parallel",
-            "onDone": "success",
-            "states": {
-                "backend": {
-                    "initial": "compiling",
-                    "states": {
-                        "compiling": { "after": { "5000": "done" } },
-                        "done": { "type": "final" }
-                    }
-                },
-                "frontend": {
-                    "initial": "linting",
-                    "states": {
-                        "linting": { "after": { "3000": "done" } },
-                        "done": { "type": "final" }
-                    }
-                }
-            }
-        },
-        "success": { "type": "final" }
-    }
+  "id": "build",
+  "type": "parallel",
+  "onDone": "success",
+  "states": {
+    "backend": { /* ... */ },
+    "frontend": { /* ... */ }
+  }
 }
 ```
 
@@ -294,9 +321,7 @@ Model system components that operate independently at the same time. The machine
 
 ### Actors (Spawning Machines)
 
-For truly isolated, concurrent logic, you can spawn a child machine from a parent. The parent and child can communicate by sending events to each other.
-
-To spawn an actor, define an entry action with the name `spawn_<serviceName>`, where `<serviceName>` corresponds to a key in your services logic that provides a `MachineNode`.
+Spawn child machines from a parent for isolated, concurrent logic. Entry actions use `spawn_<serviceName>`.
 
 #### `main_machine.py`
 
@@ -304,34 +329,29 @@ To spawn an actor, define an entry action with the name `spawn_<serviceName>`, w
 import asyncio
 from xstate_statemachine import create_machine, MachineLogic
 
-# Define the child machine that will be spawned
+# 1. Child machine
 child_config = { "id": "pinger", "on": { "PING": { "actions": ["pong"] } } }
 child_logic = MachineLogic(
     actions={"pong": lambda i,c,e,a: asyncio.create_task(i.parent.send("PONG"))}
 )
-child_machine_node = create_machine(child_config, child_logic)
+child_node = create_machine(child_config, child_logic)
 
-# Define the parent machine
+# 2. Parent machine
 parent_config = {
-    "id": "parent",
-    "initial": "running",
-    "states": {
-        "running": {
-            "entry": ["spawn_pingerService"]
-        }
-    },
+    "id": "parent", "initial": "running",
+    "states": { "running": { "entry": ["spawn_pingerService"] } },
     "on": { "PONG": "finished" }
 }
-parent_logic = MachineLogic(
-    services={"pingerService": child_machine_node}
-)
+parent_logic = MachineLogic(services={"pingerService": child_node})
+
+parent_machine = create_machine(parent_config, logic=parent_logic)
 ```
 
 ---
 
 ## 🐞 Debugging with Plugins
 
-The interpreter supports a plugin system to hook into its lifecycle. A built-in `LoggingInspector` is provided for easy, detailed debugging.
+Use plugins to hook into the interpreter lifecycle. The built-in `LoggingInspector` is great for detailed logs.
 
 ```python
 import logging
@@ -349,7 +369,7 @@ await interpreter.start()
 
 ## 🤝 Contributing
 
-Contributions are welcome! If you find a bug or have a feature request, please open an issue on our [GitHub Issue Tracker](https://github.com/basiltt/xstate-statemachine/issues).
+Contributions are welcome! Open an issue on our [GitHub Issue Tracker](https://github.com/basiltt/xstate-statemachine/issues).
 
 ---
 
