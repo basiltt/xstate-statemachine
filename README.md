@@ -354,7 +354,7 @@ Now, all events, transitions, and actions will be logged to the console.
 
 ## 🤝 Contributing
 
-Contributions are welcome! If you find a bug or have a feature request, please open an issue on our [GitHub Issue Tracker](https://github.com/tt-basil/xstate-statemachine/issues).
+Contributions are welcome! If you find a bug or have a feature request, please open an issue on our [GitHub Issue Tracker](https://github.com/basiltt/xstate-statemachine/issues).
 
 ---
 
