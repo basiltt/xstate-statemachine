@@ -1,4 +1,3 @@
-# examples/tape_recorder/tape_recorder_machine.py
 import asyncio
 import json
 import logging
@@ -14,15 +13,30 @@ from src.xstate_machine import (
 from src.xstate_machine.models import ActionDefinition
 
 # -----------------------------------------------------------------------------
+# 📚 File Overview
+# -----------------------------------------------------------------------------
+# This file implements a Tape Recorder simulation using the `xstate-machine`
+# library. It demonstrates a class-based approach where the state machine
+# definition is loaded from an external JSON file (`TapeRecorder.json`),
+# and the corresponding actions and services are implemented as methods
+# within the `TapeRecorder` class.
+#
+# The simulation showcases asynchronous operations for acquiring resources
+# (microphone, file handles) and processing data, along with state transitions
+# triggered by user actions like start, pause, resume, and stop.
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
 # 🪵 Logging Configuration
 # -----------------------------------------------------------------------------
-# This demonstrates how an application using the `xstate-machine` library
-# can configure its own logging to see output from the library.
+# This configures the application's logging to display messages from the
+# `xstate-machine` library and the application itself.
 # -----------------------------------------------------------------------------
 
 logging.basicConfig(
     level=logging.INFO, format="[%(levelname)s] %(name)s: %(message)s"
 )
+logger = logging.getLogger(__name__)
 
 
 # -----------------------------------------------------------------------------
@@ -37,10 +51,18 @@ logging.basicConfig(
 
 
 class TapeRecorder:
-    """A class that implements the logic for the TapeRecorder state machine."""
+    """
+    A class that implements the logic for the TapeRecorder state machine.
 
-    def __init__(self):
-        """Initializes the TapeRecorder instance.
+    This class manages the state and behavior of a simulated tape recorder,
+    integrating with the `xstate-machine` library. It loads its state
+    machine definition from a JSON file and maps state machine actions
+    and services to its own methods.
+    """
+
+    def __init__(self) -> None:
+        """
+        Initializes the TapeRecorder instance.
 
         This constructor performs all necessary setup:
         1. Loads the state machine definition from `TapeRecorder.json`.
@@ -48,151 +70,269 @@ class TapeRecorder:
            names from the JSON to the methods of this class instance.
         3. Creates the state machine and the interpreter that will run it.
         """
+        logger.info("🚀 Initializing TapeRecorder...")
+
         # 📝 Instance variables to hold mock resources.
         self.mic_stream: Any = None
         self.file_writer: Any = None
 
         # 📜 Load the machine definition from the JSON file.
-        with open("TapeRecorder.json") as f:
-            recorder_config = json.load(f)
+        try:
+            with open("TapeRecorder.json", "r") as f:
+                recorder_config: Dict[str, Any] = json.load(f)
+            logger.info(
+                "✅ TapeRecorder machine configuration loaded successfully."
+            )
+        except FileNotFoundError:
+            logger.error(
+                "❌ TapeRecorder.json not found. Please ensure it's in the same directory."
+            )
+            raise
+        except json.JSONDecodeError:
+            logger.error(
+                "❌ TapeRecorder.json is malformed. Please check its syntax."
+            )
+            raise
 
         # 🧠 Define the implementation logic by binding strings from the JSON
-        # to the methods of this class instance.
+        # to the methods of this class instance. This establishes the
+        # separation of concerns between state definition (JSON) and
+        # implementation details (Python methods).
         recorder_logic = MachineLogic(
             actions={
-                "assign mic": self.assign_mic_action,
-                "assign file": self.assign_file_action,
-                "context_do": self.context_do_action,
-                "console_error": self.console_error_action,
+                "assign mic": self._assign_mic_action,
+                "assign file": self._assign_file_action,
+                "context_do": self._context_do_action,
+                "console_error": self._console_error_action,
             },
             services={
-                "MediaRecorderStream_actor": self.media_recorder_actor,
-                "FileWriterStream_actor": self.file_writer_actor,
-                "pipeTo_actor": self.pipe_to_actor,
+                "MediaRecorderStream_actor": self._media_recorder_actor,
+                "FileWriterStream_actor": self._file_writer_actor,
+                "pipeTo_actor": self._pipe_to_actor,
             },
         )
+        logger.info("✅ Machine logic mapped to TapeRecorder methods.")
 
         # 🚀 Create and store the interpreter instance.
         recorder_machine = create_machine(recorder_config, recorder_logic)
-        self.interpreter = Interpreter(recorder_machine)
+        self.interpreter: Interpreter = Interpreter(recorder_machine)
         self.interpreter.use(LoggingInspector())
+        logger.info(
+            "✅ State machine interpreter created and configured with logging inspector."
+        )
 
     # -------------------------------------------------------------------------
-    # Action Implementations
+    # ⚙️ Action Implementations
     # -------------------------------------------------------------------------
 
-    def assign_mic_action(
+    def _assign_mic_action(
         self,
         interpreter: Interpreter,
-        context: Dict,
+        context: Dict[str, Any],
         event: Event,
         action: ActionDefinition,
     ) -> None:
-        """Assigns the mock microphone stream from the event payload to the context."""
-        print("🎤 Microphone assigned to context.")
-        context["mic"] = event.payload.get("stream")
+        """
+        Assigns the mock microphone stream from the event payload to the context.
 
-    def assign_file_action(
-        self,
-        interpreter: Interpreter,
-        context: Dict,
-        event: Event,
-        action: ActionDefinition,
-    ) -> None:
-        """Assigns the mock file writer from the event payload to the context."""
-        print("📄 File handle assigned to context.")
-        context["file"] = event.payload.get("writer")
+        Args:
+            interpreter (Interpreter): The interpreter instance.
+            context (Dict[str, Any]): The current context of the state machine.
+            event (Event): The event that triggered this action.
+            action (ActionDefinition): The definition of the action being executed.
+        """
+        stream = event.payload.get("stream")
+        if stream:
+            context["mic"] = stream
+            logger.info("🎤 Microphone assigned to context.")
+        else:
+            logger.warning(
+                "⚠️ No microphone stream found in event payload for assignment."
+            )
 
-    def context_do_action(
+    def _assign_file_action(
         self,
         interpreter: Interpreter,
-        context: Dict,
+        context: Dict[str, Any],
         event: Event,
         action: ActionDefinition,
     ) -> None:
-        """A generic action that simulates calling a method on a context object."""
-        # ✨ FIX: Use the `action` argument directly to get the params.
-        params = action.params
-        target_name = params.get("assign")
-        method_name = params.get("name")
-        target_obj = context.get(target_name)
+        """
+        Assigns the mock file writer from the event payload to the context.
+
+        Args:
+            interpreter (Interpreter): The interpreter instance.
+            context (Dict[str, Any]): The current context of the state machine.
+            event (Event): The event that triggered this action.
+            action (ActionDefinition): The definition of the action being executed.
+        """
+        writer = event.payload.get("writer")
+        if writer:
+            context["file"] = writer
+            logger.info("📄 File handle assigned to context.")
+        else:
+            logger.warning(
+                "⚠️ No file writer found in event payload for assignment."
+            )
+
+    def _context_do_action(
+        self,
+        interpreter: Interpreter,
+        context: Dict[str, Any],
+        event: Event,
+        action: ActionDefinition,
+    ) -> None:
+        """
+        A generic action that simulates calling a method on a context object.
+
+        This action uses parameters defined in the state machine's action
+        definition to dynamically call methods on objects stored in the context.
+
+        Args:
+            interpreter (Interpreter): The interpreter instance.
+            context (Dict[str, Any]): The current context of the state machine.
+            event (Event): The event that triggered this action.
+            action (ActionDefinition): The definition of the action being executed.
+        """
+        params: Dict[str, Any] = action.params if action.params else {}
+        target_name: str = params.get("assign", "")
+        method_name: str = params.get("name", "")
+
+        target_obj: Any = context.get(target_name)
 
         if target_obj and hasattr(target_obj, method_name):
-            print(f"🎶 Calling '{method_name}' on '{target_name}'...")
-            getattr(target_obj, method_name)()
+            logger.info(f"🎶 Calling '{method_name}' on '{target_name}'...")
+            try:
+                getattr(target_obj, method_name)()
+                logger.info(
+                    f"✅ Successfully called '{method_name}' on '{target_name}'."
+                )
+            except Exception as e:
+                logger.error(
+                    f"❌ Error calling '{method_name}' on '{target_name}': {e}"
+                )
+        else:
+            logger.warning(
+                f"⚠️ Could not call method '{method_name}' on '{target_name}'. "
+                "Target object or method not found."
+            )
 
-    def console_error_action(
+    def _console_error_action(
         self,
         interpreter: Interpreter,
-        context: Dict,
+        context: Dict[str, Any],
         event: Event,
         action: ActionDefinition,
     ) -> None:
-        """Logs an error event to the console."""
-        print(f"❌ An error occurred: {event.data}")
+        """
+        Logs an error event to the console.
+
+        Args:
+            interpreter (Interpreter): The interpreter instance.
+            context (Dict[str, Any]): The current context of the state machine.
+            event (Event): The error event containing data about the error.
+            action (ActionDefinition): The definition of the action being executed.
+        """
+        logger.error(f"❌ An error occurred in state machine: {event.data}")
 
     # -------------------------------------------------------------------------
-    # Service (Actor) Implementations
+    # 🎭 Service (Actor) Implementations
     # -------------------------------------------------------------------------
 
-    async def media_recorder_actor(
-        self, interpreter: Interpreter, context: Dict, event: Event
-    ) -> Dict:
-        """Simulates acquiring a microphone stream asynchronously."""
-        print("🎤 Actor: Acquiring microphone...")
-        await asyncio.sleep(0.5)
+    async def _media_recorder_actor(
+        self, interpreter: Interpreter, context: Dict[str, Any], event: Event
+    ) -> Dict[str, Any]:
+        """
+        Simulates acquiring a microphone stream asynchronously.
 
-        # ⬇️ FIX: Add `self` as the first parameter to each lambda ⬇️
+        Args:
+            interpreter (Interpreter): The interpreter instance invoking this service.
+            context (Dict[str, Any]): The current context of the state machine.
+            event (Event): The `invoke` event that triggered this service.
+
+        Returns:
+            Dict[str, Any]: A dictionary indicating the status of the operation.
+        """
+        logger.info("🎤 Actor: Acquiring microphone stream...")
+        await asyncio.sleep(0.5)  # Simulate asynchronous work
+
+        # Create a mock microphone stream object with callable methods.
+        # This demonstrates dynamically creating an object with specific behaviors.
         self.mic_stream = type(
             "MicStream",
             (),
             {
-                "start": lambda self: print(
+                "start": lambda self_instance: logger.info(
                     "  ▶️ Mic stream started recording."
                 ),
-                "stop": lambda self: print(
+                "stop": lambda self_instance: logger.info(
                     "  ⏹️ Mic stream stopped recording."
                 ),
-                "pause": lambda self: print("  ⏸️ Mic stream paused."),
-                "resume": lambda self: print("  ⏯️ Mic stream resumed."),
+                "pause": lambda self_instance: logger.info(
+                    "  ⏸️ Mic stream paused."
+                ),
+                "resume": lambda self_instance: logger.info(
+                    "  ⏯️ Mic stream resumed."
+                ),
             },
         )()
+        logger.info("✅ Mock microphone stream acquired.")
 
-        # Access the invocation input from the event's payload.
-        event_name = f"ok_{event.payload['input']['fixme1']}"
+        # Access the invocation input from the event's payload and send a success event.
+        event_name = (
+            f"ok_{event.payload.get('input', {}).get('fixme1', 'media_ready')}"
+        )
         await interpreter.send(event_name, stream=self.mic_stream)
+        logger.debug(f"✉️ Sent event: '{event_name}' with mic stream.")
         return {"status": "microphone ready"}
 
-    async def file_writer_actor(
-        self, interpreter: Interpreter, context: Dict, event: Event
-    ) -> Dict:
-        """Simulates creating/opening a file for writing asynchronously."""
-        print("📄 Actor: Opening file for writing...")
-        await asyncio.sleep(1.0)
-        self.file_writer = {"path": "out.weba"}
-
-        # ✨ FIX: Access the invocation input from the event's payload.
-        event_name = f"ok_{event.payload['input']['fixme1']}"
-        await interpreter.send(event_name, writer=self.file_writer)
-        return {"status": "file ready"}
-
-    async def pipe_to_actor(
-        self, interpreter: Interpreter, context: Dict, event: Event
-    ) -> Dict:
-        """Simulates the process of piping audio data to the file.
+    async def _file_writer_actor(
+        self, interpreter: Interpreter, context: Dict[str, Any], event: Event
+    ) -> Dict[str, Any]:
+        """
+        Simulates creating/opening a file for writing asynchronously.
 
         Args:
-            interpreter: The interpreter instance invoking this service.
-            context: The current context of the state machine.
-            event: The `invoke` event.
+            interpreter (Interpreter): The interpreter instance invoking this service.
+            context (Dict[str, Any]): The current context of the state machine.
+            event (Event): The `invoke` event that triggered this service.
 
         Returns:
-            A dictionary indicating the result of the operation.
+            Dict[str, Any]: A dictionary indicating the status of the operation.
         """
-        print("💾 Actor: Saving audio data to file...")
-        await asyncio.sleep(2)
-        print("✅ Actor: Saving complete.")
+        logger.info("📄 Actor: Opening file for writing...")
+        await asyncio.sleep(1.0)  # Simulate asynchronous file I/O
+
+        self.file_writer = {"path": "out.weba"}
+        logger.info("✅ Mock file writer ready.")
+
+        # Access the invocation input from the event's payload and send a success event.
+        event_name = (
+            f"ok_{event.payload.get('input', {}).get('fixme1', 'file_ready')}"
+        )
+        await interpreter.send(event_name, writer=self.file_writer)
+        logger.debug(f"✉️ Sent event: '{event_name}' with file writer.")
+        return {"status": "file ready"}
+
+    async def _pipe_to_actor(
+        self, interpreter: Interpreter, context: Dict[str, Any], event: Event
+    ) -> Dict[str, Any]:
+        """
+        Simulates the process of piping audio data to the file.
+
+        Args:
+            interpreter (Interpreter): The interpreter instance invoking this service.
+            context (Dict[str, Any]): The current context of the state machine.
+            event (Event): The `invoke` event.
+
+        Returns:
+            Dict[str, Any]: A dictionary indicating the result of the operation.
+        """
+        logger.info("💾 Actor: Saving audio data to file...")
+        await asyncio.sleep(2)  # Simulate data writing process
+        logger.info("✅ Actor: Saving complete.")
         await interpreter.send("done")
+        logger.debug("✉️ Sent event: 'done' after saving.")
         return {"bytesWritten": 1024}
 
 
@@ -201,50 +341,69 @@ class TapeRecorder:
 # -----------------------------------------------------------------------------
 
 
-async def main():
-    """Initializes and runs the TapeRecorder simulation."""
-    print("🎬 --- Tape Recorder Simulation (Class-Based) --- 🎬\n")
+async def main() -> None:
+    """
+    Initializes and runs the TapeRecorder simulation.
+
+    This function sets up the TapeRecorder, starts its state machine,
+    and sends a sequence of events to simulate user interactions
+    (start, pause, resume, stop recording).
+    """
+    logger.info(
+        "🎬 --- Tape Recorder Simulation (Class-Based) Starting --- 🎬\n"
+    )
 
     # 1. Instantiate the main class. It handles all setup internally.
-    tape_recorder = TapeRecorder()
+    tape_recorder: TapeRecorder = TapeRecorder()
 
     # 2. Start the machine.
     await tape_recorder.interpreter.start()
-    print(f"Initial State: {tape_recorder.interpreter.current_state_ids}\n")
+    logger.info(
+        f"Starting state machine. Initial State: {tape_recorder.interpreter.current_state_ids}\n"
+    )
 
     # 3. Send an event to start recording.
-    print("--- ➡️  User presses START ---")
+    logger.info("--- ➡️  User presses START ---")
     await tape_recorder.interpreter.send("action_start")
+    logger.info("✉️ Sent 'action_start' event.")
 
     # The machine is now in the parallel 'acquiring' state, waiting for both
     # the mic and file actors to complete their async work.
     await asyncio.sleep(1.5)
-    print(
+    logger.info(
         f"\n✅ Machine is now recording. Current State: {tape_recorder.interpreter.current_state_ids}\n"
     )
 
     # 4. Send a pause and resume event.
-    print("--- ⏸️  User presses PAUSE ---")
+    logger.info("--- ⏸️  User presses PAUSE ---")
     await tape_recorder.interpreter.send("action_pause")
+    logger.info("✉️ Sent 'action_pause' event.")
     await asyncio.sleep(1)
-    print(f"Current State: {tape_recorder.interpreter.current_state_ids}\n")
+    logger.info(
+        f"Current State after pause: {tape_recorder.interpreter.current_state_ids}\n"
+    )
 
-    print("--- ⏯️  User presses RESUME ---")
+    logger.info("--- ⏯️  User presses RESUME ---")
     await tape_recorder.interpreter.send("action_resume")
+    logger.info("✉️ Sent 'action_resume' event.")
     await asyncio.sleep(1)
-    print(f"Current State: {tape_recorder.interpreter.current_state_ids}\n")
+    logger.info(
+        f"Current State after resume: {tape_recorder.interpreter.current_state_ids}\n"
+    )
 
     # 5. Send an event to stop recording.
-    print("--- ⏹️  User presses STOP ---")
+    logger.info("--- ⏹️  User presses STOP ---")
     await tape_recorder.interpreter.send("action_stop")
+    logger.info("✉️ Sent 'action_stop' event.")
 
     # The machine will now be in the 'saving' state, waiting for the pipeTo actor.
     await asyncio.sleep(2.5)
 
-    print("\n--- 🏁 SIMULATION COMPLETE ---")
-    print(f"Final State: {tape_recorder.interpreter.current_state_ids}")
+    logger.info("\n--- 🏁 SIMULATION COMPLETE ---")
+    logger.info(f"Final State: {tape_recorder.interpreter.current_state_ids}")
 
     await tape_recorder.interpreter.stop()
+    logger.info("🛑 State machine interpreter stopped.")
 
 
 if __name__ == "__main__":
