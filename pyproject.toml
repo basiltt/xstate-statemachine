@@ -5,7 +5,7 @@ requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [project]
-name = "xstate-machine"
+name = "xstate-statemachine"
 version = "0.1.0"
 authors = [
   { name="Basil T T", email="tt.basil@gmail.com" },
@@ -22,5 +22,5 @@ classifiers = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/basiltt/xstate-machine"
-"Bug Tracker" = "https://github.com/basiltt/xstate-machine/issues"
+"Homepage" = "https://github.com/basiltt/xstate-statemachine"
+"Bug Tracker" = "https://github.com/basiltt/xstate-statemachine/issues"

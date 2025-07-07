@@ -3,14 +3,14 @@ import json
 import logging
 from typing import Any, Dict
 
-from src.xstate_machine import (
+from src.xstate_statemachine import (
     Event,
     Interpreter,
     LoggingInspector,
     MachineLogic,
     create_machine,
 )
-from src.xstate_machine.models import ActionDefinition
+from src.xstate_statemachine.models import ActionDefinition
 
 # -----------------------------------------------------------------------------
 # 📚 File Overview

@@ -1,4 +1,4 @@
-# src/xstate_python/factory.py
+# src/xstate_statemachine/factory.py
 from typing import Any, Dict
 from .models import MachineNode
 from .machine_logic import MachineLogic

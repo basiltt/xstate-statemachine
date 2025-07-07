@@ -17,7 +17,7 @@ import random
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
-from src.xstate_machine import (
+from src.xstate_statemachine import (
     Event,
     Interpreter,
     LoggingInspector,

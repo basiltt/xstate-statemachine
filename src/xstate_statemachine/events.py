@@ -1,4 +1,4 @@
-# src/xstate_python/events.py
+# src/xstate_statemachine/events.py
 from typing import Any, Dict, Literal, NamedTuple
 
 

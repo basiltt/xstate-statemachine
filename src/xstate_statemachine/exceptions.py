@@ -1,4 +1,4 @@
-# src/xstate_machine/exceptions.py
+# src/xstate_statemachine/exceptions.py
 
 # -----------------------------------------------------------------------------
 # 🚨 Custom Exceptions

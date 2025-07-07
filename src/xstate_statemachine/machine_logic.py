@@ -1,4 +1,4 @@
-# src/xstate_machine/machine_logic.py
+# src/xstate_statemachine/machine_logic.py
 from __future__ import annotations
 import logging  # 📝 Added import for logging
 from typing import (

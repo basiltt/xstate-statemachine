@@ -14,15 +14,15 @@ from typing import Any, Set
 
 from unittest.mock import MagicMock
 
-from src.xstate_machine import (
+from src.xstate_statemachine import (
     PluginBase,
     LoggingInspector,
     Event,
     ImplementationMissingError,
     XStateMachineError,
 )
-from src.xstate_machine.events import DoneEvent
-from src.xstate_machine.task_manager import TaskManager
+from src.xstate_statemachine.events import DoneEvent
+from src.xstate_statemachine.task_manager import TaskManager
 
 # -----------------------------------------------------------------------------
 # Logger Configuration

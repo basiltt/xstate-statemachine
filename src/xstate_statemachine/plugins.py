@@ -1,4 +1,4 @@
-# src/xstate_machine/plugins.py
+# src/xstate_statemachine/plugins.py
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Set

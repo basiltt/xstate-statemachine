@@ -1,4 +1,4 @@
-# src/xstate_machine/__init__.py
+# src/xstate_statemachine/__init__.py
 
 __version__ = "0.2.0"  # Version bump for new features
 

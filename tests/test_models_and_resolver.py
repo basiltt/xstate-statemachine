@@ -11,9 +11,9 @@ import logging
 import unittest
 from typing import Any, Dict, Optional, Set
 
-from src.xstate_machine import create_machine, StateNotFoundError, Event
-from src.xstate_machine.models import ActionDefinition
-from src.xstate_machine.resolver import resolve_target_state
+from src.xstate_statemachine import create_machine, StateNotFoundError, Event
+from src.xstate_statemachine.models import ActionDefinition
+from src.xstate_statemachine.resolver import resolve_target_state
 
 
 # -----------------------------------------------------------------------------

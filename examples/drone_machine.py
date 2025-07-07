@@ -17,7 +17,12 @@ import asyncio
 import logging
 from typing import Any, Dict
 
-from src.xstate_machine import Interpreter, MachineLogic, create_machine, Event
+from src.xstate_statemachine import (
+    Interpreter,
+    MachineLogic,
+    create_machine,
+    Event,
+)
 
 # -----------------------------------------------------------------------------
 # Logger Configuration

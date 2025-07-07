@@ -1,4 +1,4 @@
-# src/xstate_machine/resolver.py
+# src/xstate_statemachine/resolver.py
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

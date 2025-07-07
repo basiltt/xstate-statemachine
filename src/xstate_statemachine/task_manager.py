@@ -1,4 +1,4 @@
-# src/xstate_machine/task_manager.py
+# src/xstate_statemachine/task_manager.py
 import asyncio
 from typing import Dict, Set
 

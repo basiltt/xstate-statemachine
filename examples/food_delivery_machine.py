@@ -17,7 +17,7 @@ import random
 from typing import Any, Dict, Optional  # 📝 Added Optional for clarity
 from uuid import uuid4
 
-from src.xstate_machine import (
+from src.xstate_statemachine import (
     Event,
     Interpreter,
     LoggingInspector,
@@ -439,7 +439,7 @@ class FoodDeliveryLogic(MachineLogic):
         # This action ensures the actor is listed in the context.
         # The actual spawning is triggered by 'invoke' in the state config.
         logger.info("🚀 Attempting to spawn delivery actor...")
-        # The xstate_machine library's Interpreter manages the actual spawning
+        # The xstate_statemachine library's Interpreter manages the actual spawning
         # and adding to ctx['actors'] when a service with 'type: "machine"' is invoked.
         # This action primarily serves as a log point or to trigger additional logic
         # if the spawning mechanism were more complex or manual.

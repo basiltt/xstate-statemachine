@@ -1,4 +1,4 @@
-# src/xstate_machine/logger.py
+# src/xstate_statemachine/logger.py
 import logging
 
 # -----------------------------------------------------------------------------
@@ -14,8 +14,8 @@ import logging
 #    it does nothing with the log records.
 # -----------------------------------------------------------------------------
 
-# ✅ Get the top-level logger for the "xstate_machine" library.
-logger = logging.getLogger("xstate_machine")
+# ✅ Get the top-level logger for the "xstate_statemachine" library.
+logger = logging.getLogger("xstate_statemachine")
 
 # ✅ Add a NullHandler to suppress "No handler found" warnings.
 logger.addHandler(logging.NullHandler())

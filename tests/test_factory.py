@@ -11,8 +11,12 @@ import logging
 import unittest
 from typing import Any, Dict
 
-from src.xstate_machine import InvalidConfigError, MachineLogic, create_machine
-from src.xstate_machine.models import MachineNode
+from src.xstate_statemachine import (
+    InvalidConfigError,
+    MachineLogic,
+    create_machine,
+)
+from src.xstate_statemachine.models import MachineNode
 
 # -----------------------------------------------------------------------------
 # Logger Configuration

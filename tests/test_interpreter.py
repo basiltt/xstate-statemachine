@@ -14,7 +14,7 @@ from typing import Any, Dict, Set
 
 from unittest.mock import AsyncMock, MagicMock
 
-from src.xstate_machine import (
+from src.xstate_statemachine import (
     Interpreter,
     create_machine,
     MachineLogic,

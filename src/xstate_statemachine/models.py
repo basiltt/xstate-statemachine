@@ -1,3 +1,4 @@
+# src/xstate_statemachine/models.py
 import logging
 from typing import (
     Any,

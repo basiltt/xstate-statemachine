@@ -1,4 +1,4 @@
-# src/xstate_machine/interpreter.py
+# src/xstate_statemachine/interpreter.py
 import asyncio
 import json
 import uuid

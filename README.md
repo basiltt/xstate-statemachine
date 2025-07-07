@@ -1,4 +1,4 @@
-# 🚦 XState Machine for Python
+# 🚦 XState StateMachine for Python
 
 A robust, asynchronous, and feature-complete Python library for parsing and executing state machines defined in XState-compatible JSON.
 
@@ -46,7 +46,7 @@ One of the biggest advantages of using an XState-compatible format is the abilit
 Install the library directly from PyPI:
 
 ```bash
-pip install xstate-machine
+pip install xstate-statemachine
 ```
 
 ---
@@ -81,7 +81,7 @@ Let's create a simple toggle switch.
 ```python
 import asyncio
 import json
-from xstate_machine import create_machine, Interpreter
+from xstate_statemachine import create_machine, Interpreter
 
 async def main():
     # Load the machine definition from the JSON file
@@ -145,7 +145,7 @@ Actions are "fire-and-forget" functions executed during a transition. They are t
 #### drone.py
 
 ```python
-from xstate_machine import MachineLogic
+from xstate_statemachine import MachineLogic
 
 def decrement_battery(interpreter, context, event, action_def):
     context["battery"] -= 1
@@ -180,7 +180,7 @@ Guards are conditional checks that determine if a transition should be taken. If
 #### checkout.py
 
 ```python
-from xstate_machine import MachineLogic
+from xstate_statemachine import MachineLogic
 
 def cart_is_not_empty(context, event):
     return len(context.get("items", [])) > 0
@@ -220,7 +220,7 @@ For long-running or async operations, use `invoke`. The machine will transition 
 
 ```python
 import aiohttp
-from xstate_machine import MachineLogic
+from xstate_statemachine import MachineLogic
 
 async def fetch_user_data(interpreter, context, event):
     async with aiohttp.ClientSession() as session:
@@ -302,7 +302,7 @@ To spawn an actor, define an entry action with the name `spawn_<serviceName>`, w
 
 ```python
 import asyncio
-from xstate_machine import create_machine, MachineLogic
+from xstate_statemachine import create_machine, MachineLogic
 
 # Define the child machine that will be spawned
 child_config = { "id": "pinger", "on": { "PING": { "actions": ["pong"] } } }
@@ -338,7 +338,7 @@ The interpreter supports a plugin system to hook into its lifecycle. A built-in 
 
 ```python
 import logging
-from xstate_machine import Interpreter, LoggingInspector
+from xstate_statemachine import Interpreter, LoggingInspector
 
 logging.basicConfig(level=logging.INFO)
 
@@ -354,7 +354,7 @@ Now, all events, transitions, and actions will be logged to the console.
 
 ## 🤝 Contributing
 
-Contributions are welcome! If you find a bug or have a feature request, please open an issue on our [GitHub Issue Tracker](https://github.com/tt-basil/xstate-machine/issues).
+Contributions are welcome! If you find a bug or have a feature request, please open an issue on our [GitHub Issue Tracker](https://github.com/tt-basil/xstate-statemachine/issues).
 
 ---
 
