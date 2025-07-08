@@ -60,6 +60,9 @@ Let's walk through the core idea: separating your application's flow (the "what"
 
 Imagine you're drawing a flowchart for a traffic light on a whiteboard. It's simple:
 
+![image](https://github.com/user-attachments/assets/fd3a8c61-032a-4269-b872-f876a8ff807d)
+
+
 1. The light starts as **Green**.
 2. After some time, it must turn **Yellow**.
 3. After a short time, it must turn **Red**.
