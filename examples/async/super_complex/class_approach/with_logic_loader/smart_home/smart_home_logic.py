@@ -12,7 +12,7 @@ from src.xstate_statemachine import (
     create_machine,
     MachineLogic,
 )
-from xstate_statemachine.models import MachineNode
+from src.xstate_statemachine.models import MachineNode
 
 
 class SmartHomeLogic:
@@ -20,9 +20,7 @@ class SmartHomeLogic:
 
     def __init__(self):
         # Load the actor's machine definition once to be used by the service method
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        json_path = os.path.join(current_dir, "light_bulb_actor.json")
-        with open(json_path, "r") as f:
+        with open("light_bulb_actor.json", "r") as f:
             self.light_bulb_config = json.load(f)
 
         # Define the logic for the actor machine
@@ -55,10 +53,7 @@ class SmartHomeLogic:
         self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
     ):
         logging.error("🚨🚨🚨 ALARM TRIGGERED! Motion detected! 🚨🚨🚨")
-        for (
-            actor_id,
-            actor,
-        ) in i._actors.items():  # Use i._actors to get spawned actors
+        for actor_id, actor in i._actors.items():
             if "light" in actor_id:
                 await actor.send("SET_COLOR", color="red")
 
@@ -73,8 +68,6 @@ class SmartHomeLogic:
     def spawn_light_bulb(
         self, i: Interpreter, ctx: Dict, e: Event, ad: ActionDefinition
     ):
-        # This action name is special and handled by the interpreter.
-        # LogicLoader doesn't need to find it, but it must match the service name.
         pass
 
     # --- Services ---
@@ -100,7 +93,6 @@ class SmartHomeLogic:
         logging.info("  -> 🌡️  Target temperature reached.")
         return {"final_temp": ctx["temperature"]}
 
-    # ✅ FIX: The method name now matches the service name in the `spawn_light_bulb` action.
     def light_bulb(self, i: Interpreter, ctx: Dict, e: Event) -> "MachineNode":
         """This service is discovered by LogicLoader. It returns a fully configured
         MachineNode instance for the interpreter to spawn as an actor."""
@@ -109,7 +101,6 @@ class SmartHomeLogic:
         )
 
     # --- Light Bulb Actor Logic ---
-    # This is not discovered by the main machine's LogicLoader, but is used when creating the actor machine.
     def light_bulb_set_color_action(
         self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
     ):

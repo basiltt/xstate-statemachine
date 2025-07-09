@@ -1,0 +1,35 @@
+{
+  "context": {
+    "end": null,
+    "start": null
+  },
+  "id": "pathfinder",
+  "initial": "calculating",
+  "states": {
+    "calculating": {
+      "after": {
+        "5000": {
+          "actions": "send_timeout_failure_to_parent",
+          "target": "failed"
+        }
+      },
+      "invoke": {
+        "onDone": {
+          "actions": "send_path_to_parent",
+          "target": "finished"
+        },
+        "onError": {
+          "actions": "send_failure_to_parent",
+          "target": "failed"
+        },
+        "src": "calculate_path_service"
+      }
+    },
+    "failed": {
+      "type": "final"
+    },
+    "finished": {
+      "type": "final"
+    }
+  }
+}

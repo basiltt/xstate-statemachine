@@ -147,12 +147,6 @@ class LogicLoader:
     ) -> None:
         """
         Recursively traverses a StateNode tree to extract all logic names.
-
-        Args:
-            node (StateNode): The state node to inspect.
-            actions (Set[str]): A set to populate with required action names.
-            guards (Set[str]): A set to populate with required guard names.
-            services (Set[str]): A set to populate with required service names.
         """
         all_actions = node.entry + node.exit
         all_transitions = [t for tl in node.on.values() for t in tl]
@@ -166,14 +160,26 @@ class LogicLoader:
                 guards.add(transition.guard)
 
         for action_def in all_actions:
-            actions.add(action_def.type)
+            # ✅ THE FIX IS HERE
+            # If the action is a spawn action, its implementation is a service.
+            if action_def.type.startswith("spawn_"):
+                service_name = action_def.type.replace("spawn_", "")
+                services.add(service_name)
+            else:
+                # Otherwise, it's a regular action.
+                actions.add(action_def.type)
 
         for invoke_def in node.invoke:
             if invoke_def.src:
                 services.add(invoke_def.src)
             for transition in invoke_def.on_done + invoke_def.on_error:
                 for action_def in transition.actions:
-                    actions.add(action_def.type)
+                    # Also check for spawn actions inside invoke handlers
+                    if action_def.type.startswith("spawn_"):
+                        service_name = action_def.type.replace("spawn_", "")
+                        services.add(service_name)
+                    else:
+                        actions.add(action_def.type)
                 if transition.guard:
                     guards.add(transition.guard)
 

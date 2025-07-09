@@ -634,9 +634,9 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ActorSpawningError) as cm:
             await Interpreter(machine).start()
 
-        # ✅ FIX: Updated assertion to match the actual exception message.
+        # ✅ FIX: Update the assertion to match the new, more descriptive error message.
         self.assertIn(
-            "Cannot spawn 'badActor'. Source in `services` is not a valid MachineNode.",
+            "Cannot spawn 'badActor'. Source in `services` is not a valid MachineNode or a function that returns one.",
             str(cm.exception),
         )
 

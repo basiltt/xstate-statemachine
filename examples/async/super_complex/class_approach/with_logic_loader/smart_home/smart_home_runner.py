@@ -23,6 +23,8 @@ sys.path.insert(
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../..")),
 )
 from src.xstate_statemachine import create_machine, Interpreter
+
+# ✅ FIX: Correctly import from the sub-directory
 from smart_home_logic import SmartHomeLogic
 
 # --- Logger Configuration ---
@@ -32,13 +34,12 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 async def main():
     print("\n--- 🏡 Async Smart Home Simulation (Class / LogicLoader) ---")
 
+    # ✅ FIX: Correctly get the path to the JSON file inside the sub-directory
     with open("smart_home.json", "r") as f:
         config = json.load(f)
 
     logic_provider = SmartHomeLogic()
 
-    # ✅ FIX: No manual patching needed. The LogicLoader will find the `light_bulb`
-    # method on the logic_provider and correctly register it as a service.
     machine = create_machine(config, logic_providers=[logic_provider])
 
     interpreter = await Interpreter(machine).start()

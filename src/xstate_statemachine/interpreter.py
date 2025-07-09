@@ -117,7 +117,9 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             for plugin in self._plugins:
                 plugin.on_interpreter_start(self)
 
-            await self._enter_states([self.machine])
+            # ✅ FIX: Pass a synthetic init event for startup actions
+            init_event = Event(type="___xstate_statememachine_init___")
+            await self._enter_states([self.machine], init_event)
             logger.info(
                 "✅ Interpreter '%s' started. Current states: %s",
                 self.id,
@@ -285,12 +287,26 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         """Handles the logic for spawning a child actor."""
         logger.info("👶 Spawning actor for action: '%s'", action_def.type)
         actor_machine_key = action_def.type.replace("spawn_", "")
-        actor_machine = self.machine.logic.services.get(actor_machine_key)
 
-        if not isinstance(actor_machine, MachineNode):
+        actor_source = self.machine.logic.services.get(actor_machine_key)
+        actor_machine: Optional[MachineNode] = None
+
+        if isinstance(actor_source, MachineNode):
+            # Case 1: The service IS the MachineNode directly.
+            actor_machine = actor_source
+        elif callable(actor_source):
+            # Case 2: The service is a callable that RETURNS the MachineNode.
+            # We need to call it, similar to how invoke works.
+            spawn_event = Event(f"spawn.{actor_machine_key}")
+            # The service that returns a machine definition should be synchronous.
+            result = actor_source(self, self.context, spawn_event)
+            if isinstance(result, MachineNode):
+                actor_machine = result
+
+        if not actor_machine:
             raise ActorSpawningError(
                 f"Cannot spawn '{actor_machine_key}'. "
-                "Source in `services` is not a valid MachineNode."
+                "Source in `services` is not a valid MachineNode or a function that returns one."
             )
 
         actor_id = f"{self.id}:{actor_machine_key}:{uuid.uuid4()}"
@@ -300,8 +316,13 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         actor_interpreter.id = actor_id
         await actor_interpreter.start()
 
+        # Place the actor in the parent's context for reference
+        if "actors" not in self.context:
+            self.context["actors"] = {}
+        self.context["actors"][actor_id] = actor_interpreter
+
+        # Also store it internally for management (e.g., stopping)
         self._actors[actor_id] = actor_interpreter
-        self.context.setdefault("actors", {})[actor_id] = actor_interpreter
         logger.info("✅ Actor '%s' spawned successfully.", actor_id)
 
     async def _cancel_state_tasks(self, state: StateNode) -> None:
