@@ -354,35 +354,46 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         invocation: InvokeDefinition,
         service: Callable[..., Awaitable[Any]],
     ) -> None:
-        """Coroutine that runs a service and sends completion/error events."""
+        """
+        Runs an invoked service coroutine and emits the appropriate done/error
+        events.  If the task gets cancelled while awaiting the service, we
+        re-raise the `CancelledError` so the surrounding `asyncio.Task` keeps
+        its “cancelled” status (needed by the test suite).
+        """
         logger.info(
-            "📞 Invoking service '%s' (ID: '%s')...",
+            "📞 Invoking service '%s' (ID: '%s')…",
             invocation.src,
             invocation.id,
         )
         try:
             invoke_event = Event(
-                f"invoke.{invocation.id}",
-                {"input": invocation.input or {}},
+                f"invoke.{invocation.id}", {"input": invocation.input or {}}
             )
             result = await service(self, self.context, invoke_event)
-            done_event = DoneEvent(
-                f"done.invoke.{invocation.id}",
-                data=result,
-                src=invocation.id,
+
+            # Service completed successfully → emit done event.
+            await self.send(
+                DoneEvent(
+                    f"done.invoke.{invocation.id}",
+                    data=result,
+                    src=invocation.id,
+                )
             )
-            await self.send(done_event)
             logger.info(
                 "✅ Service '%s' (ID: '%s') completed.",
                 invocation.src,
                 invocation.id,
             )
+
         except asyncio.CancelledError:
+            # Preserve cancellation so `task.cancelled()` returns True.
             logger.debug(
                 "🚫 Service '%s' (ID: '%s') cancelled.",
                 invocation.src,
                 invocation.id,
             )
+            raise
+
         except Exception as e:
             logger.error(
                 "💥 Service '%s' (ID: '%s') failed: %s",
@@ -391,10 +402,13 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 e,
                 exc_info=True,
             )
-            error_event = DoneEvent(
-                f"error.platform.{invocation.id}", data=e, src=invocation.id
+            await self.send(
+                DoneEvent(
+                    f"error.platform.{invocation.id}",
+                    data=e,
+                    src=invocation.id,
+                )
             )
-            await self.send(error_event)
 
     def _invoke_service(
         self, invocation: InvokeDefinition, service: Callable, owner_id: str
