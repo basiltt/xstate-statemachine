@@ -1,0 +1,68 @@
+{
+  "context": {
+    "error": null,
+    "game_mode": "Ranked",
+    "match_id": null,
+    "player_id": null
+  },
+  "id": "gameMatchmaking",
+  "initial": "idle",
+  "states": {
+    "game_over_defeat": {
+      "entry": "log_game_result"
+    },
+    "game_over_draw": {
+      "entry": "log_game_result"
+    },
+    "game_over_victory": {
+      "entry": "log_game_result"
+    },
+    "idle": {
+      "on": {
+        "SEARCH_FOR_MATCH": {
+          "actions": "set_player_info",
+          "target": "searching"
+        }
+      }
+    },
+    "in_game": {
+      "after": {
+        "10000": {
+          "target": "game_over_draw"
+        }
+      },
+      "entry": "log_game_start",
+      "on": {
+        "PLAYER_DEFEAT": "game_over_defeat",
+        "PLAYER_VICTORY": "game_over_victory"
+      }
+    },
+    "match_found": {
+      "on": {
+        "ACCEPT_MATCH": "in_game",
+        "DECLINE_MATCH": "idle"
+      }
+    },
+    "search_failed": {
+      "on": {
+        "SEARCH_FOR_MATCH": {
+          "actions": "set_player_info",
+          "target": "searching"
+        }
+      }
+    },
+    "searching": {
+      "invoke": {
+        "onDone": {
+          "actions": "store_match_info",
+          "target": "match_found"
+        },
+        "onError": {
+          "actions": "set_search_error",
+          "target": "search_failed"
+        },
+        "src": "find_match_service"
+      }
+    }
+  }
+}

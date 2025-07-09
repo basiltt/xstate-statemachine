@@ -31,11 +31,7 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 async def main():
     print("\n--- 🔐 Async 2FA Simulation (Class / LogicLoader) ---")
 
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    json_path = os.path.join(
-        current_dir, "two_factor_auth", "two_factor_auth.json"
-    )
-    with open(json_path, "r") as f:
+    with open("two_factor_auth.json", "r") as f:
         config = json.load(f)
 
     logic_provider = TwoFactorAuthLogic()

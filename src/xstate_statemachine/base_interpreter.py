@@ -432,17 +432,23 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             or event.type.startswith("error.")
             or event.type.startswith("after.")
         )
+        # ✅ FIX: Only check for transient transitions if the event type is empty
+        # This prevents redundant checks.
+        is_explicit_transient_event = event.type == ""
 
         for state in sorted_active_nodes:
             current: Optional[StateNode] = state
             while current:
                 # Regular event transitions
-                if event.type in current.on:
+                if (
+                    not is_explicit_transient_event
+                    and event.type in current.on
+                ):
                     for transition in current.on[event.type]:
                         if self._is_guard_satisfied(transition.guard, event):
                             eligible_transitions.append(transition)
 
-                # Event-less transitions
+                # Event-less transitions (only check if it's a transient check)
                 if is_transient_check and "" in current.on:
                     for transition in current.on[""]:
                         if self._is_guard_satisfied(transition.guard, event):
