@@ -1,9 +1,10 @@
 # src/xstate_statemachine/__init__.py
 
-__version__ = "0.2.1"  # Version bump for this feature
+__version__ = "0.3.0"  # Version bump for sync feature
 
 from .factory import create_machine
 from .interpreter import Interpreter
+from .sync_interpreter import SyncInterpreter  # ✨ NEW
 from .machine_logic import MachineLogic
 from .events import Event
 from .models import ActionDefinition
@@ -14,6 +15,7 @@ from .exceptions import (
     StateNotFoundError,
     ImplementationMissingError,
     ActorSpawningError,
+    NotSupportedError,  # ✨ NEW
 )
 from .logic_loader import LogicLoader
 
@@ -22,6 +24,7 @@ from .logic_loader import LogicLoader
 __all__ = [
     "create_machine",
     "Interpreter",
+    "SyncInterpreter",  # ✨ NEW
     "MachineLogic",
     "Event",
     "PluginBase",
@@ -31,6 +34,7 @@ __all__ = [
     "StateNotFoundError",
     "ImplementationMissingError",
     "ActorSpawningError",
+    "NotSupportedError",  # ✨ NEW
     "LogicLoader",
     "ActionDefinition",
 ]

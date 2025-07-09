@@ -41,3 +41,12 @@ class ActorSpawningError(XStateMachineError):
     """Raised when there is an error spawning or communicating with an actor."""
 
     pass
+
+
+class NotSupportedError(XStateMachineError):
+    """
+    Raised when a feature is used that is not supported by the current
+    interpreter mode (e.g., calling an async action in the SyncInterpreter).
+    """
+
+    pass

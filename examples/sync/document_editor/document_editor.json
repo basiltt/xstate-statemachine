@@ -1,0 +1,52 @@
+{
+  "context": {
+    "content": "",
+    "isBold": false
+  },
+  "id": "docEditor",
+  "initial": "idle",
+  "states": {
+    "editing": {
+      "entry": "log_entry",
+      "exit": "log_exit",
+      "initial": "typing",
+      "on": {
+        "SAVE": "saving"
+      },
+      "states": {
+        "formatting": {
+          "entry": "enter_format_mode",
+          "on": {
+            "TOGGLE_BOLD": {
+              "actions": "toggle_bold"
+            },
+            "TOGGLE_FORMAT_MODE": "typing"
+          }
+        },
+        "typing": {
+          "on": {
+            "KEY_PRESS": {
+              "actions": "update_content"
+            },
+            "TOGGLE_FORMAT_MODE": "formatting"
+          }
+        }
+      }
+    },
+    "idle": {
+      "on": {
+        "START_EDITING": {
+          "actions": "set_content",
+          "target": "editing"
+        }
+      }
+    },
+    "saving": {
+      "invoke": {
+        "onDone": "idle",
+        "onError": "editing",
+        "src": "save_document"
+      }
+    }
+  }
+}

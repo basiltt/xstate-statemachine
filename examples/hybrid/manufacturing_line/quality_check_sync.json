@@ -1,0 +1,28 @@
+{
+  "context": {
+    "inspectionCount": 0,
+    "isPassed": false
+  },
+  "id": "qualityCheck",
+  "initial": "inspecting",
+  "states": {
+    "failed": {},
+    "inspecting": {
+      "entry": "run_inspection",
+      "on": {
+        "": [
+          {
+            "guard": "did_pass",
+            "target": "passed"
+          },
+          {
+            "target": "failed"
+          }
+        ]
+      }
+    },
+    "passed": {
+      "entry": "set_passed"
+    }
+  }
+}

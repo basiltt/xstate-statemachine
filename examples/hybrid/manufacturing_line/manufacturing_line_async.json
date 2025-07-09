@@ -1,0 +1,45 @@
+{
+  "context": {
+    "partId": null,
+    "qcResult": null
+  },
+  "id": "assemblyLine",
+  "initial": "acceptingParts",
+  "states": {
+    "acceptingParts": {
+      "on": {
+        "PART_RECEIVED": {
+          "actions": "assign_part_id",
+          "target": "assembly"
+        }
+      }
+    },
+    "assembly": {
+      "invoke": {
+        "onDone": "qualityControl",
+        "onError": "failed",
+        "src": "assemble_part"
+      }
+    },
+    "complete": {
+      "type": "final"
+    },
+    "failed": {
+      "type": "final"
+    },
+    "packaging": {
+      "invoke": {
+        "onDone": "complete",
+        "onError": "failed",
+        "src": "package_part"
+      }
+    },
+    "qualityControl": {
+      "entry": "run_quality_check",
+      "on": {
+        "QC_FAILED": "failed",
+        "QC_PASSED": "packaging"
+      }
+    }
+  }
+}
