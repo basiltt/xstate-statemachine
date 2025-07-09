@@ -1,117 +1,96 @@
-# src/xstate_statemachine/resolver.py
+# ─── src/xstate_statemachine/resolver.py ──────────────────────────────────────
 from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
+from typing import TYPE_CHECKING, List
 from .exceptions import StateNotFoundError
 
 if TYPE_CHECKING:
     from .models import StateNode
 
 
-# -----------------------------------------------------------------------------
-# 🗺️ State Resolver
-# -----------------------------------------------------------------------------
-# This module is responsible for the critical task of finding a target state
-# node based on a target string from a reference state. It implements the full
-# XState resolution logic, forming a core part of the state transition
-# algorithm. Its functions are pure and have no side effects, adhering to the
-# principle of Separation of Concerns.
-# -----------------------------------------------------------------------------
+_ILLEGAL_DOTS_MSG = "Target path contains empty segments"
+
+
+def _validate_segments(segments: List[str], target: str, ref: str) -> None:
+    """Reject trailing dots (‘b.’) or consecutive dots (‘b..c’)."""
+    if any(seg == "" for seg in segments):
+        raise StateNotFoundError(target, ref)
 
 
 def resolve_target_state(
     target: str, reference_state: "StateNode"
 ) -> "StateNode":
-    """Resolves a target string to a specific StateNode within the machine.
+    """
+    Resolve *target* (XState-style string) against *reference_state*.
 
-    This function implements the state resolution algorithm according to the
-    standard XState specification for resolving state targets:
-    1.  **Absolute**: If the target starts with '#', it's an absolute path
-        from the machine root (e.g., "#machine.state.child").
-    2.  **Relative**: If the target starts with '.', it's a relative path
-        from the parent of the reference state (or the state itself if it's the root).
-    3.  **Sibling/Ancestor**: Otherwise, it's treated as a sibling of the reference
-        state, bubbling up through ancestors if not found immediately.
+    Resolution order:
 
-    Args:
-        target: The target string to resolve.
-        reference_state: The `StateNode` where the transition is defined.
-
-    Returns:
-        The resolved `StateNode`.
-
-    Raises:
-        StateNotFoundError: If the target string cannot be resolved to a valid
-                            state node in the machine.
-        TypeError: If the provided target is not a string.
+    1.  Absolute   – starts with '#'
+    2.  Single dot – '.'  →  parent (or self if root)
+    3.  Dot path   – '.foo.bar'  →  descendant of parent
+    4.  Plain id   – try as
+        a) descendant of *current* (new),
+        b) the *current* node itself,
+        c) bubble to ancestor and repeat
     """
     if not isinstance(target, str):
         raise TypeError(
             f"Transition target must be a string, but got {type(target)}"
         )
+    if target == "":
+        raise StateNotFoundError(target, reference_state.id)
 
     machine = reference_state.machine
 
-    if target == ".":
-        return reference_state.parent or reference_state
-
+    # ── 1.  Absolute path  ──────────────────────────────────────────────────
     if target.startswith("#"):
-        path = target[1:].split(".")
-        if path[0] != machine.key:
+        segments = target[1:].split(".")
+        _validate_segments(segments, target, reference_state.id)
+        if segments[0] != machine.key:
             raise StateNotFoundError(target, reference_state.id)
-        node = machine
-        for key in path[1:]:
+
+        node: StateNode = machine
+        for key in segments[1:]:
             if key not in node.states:
                 raise StateNotFoundError(target, reference_state.id)
             node = node.states[key]
         return node
 
+    # ── 2.  Single dot  (‘.’)  ──────────────────────────────────────────────
+    if target == ".":
+        return reference_state.parent or reference_state
+
+    # ── 3.  Dot-relative path  (‘.foo.bar’)  ────────────────────────────────
     if target.startswith("."):
-        path = target[1:].split(".")
-        start_node = reference_state.parent or reference_state
-        return _find_descendant(start_node, path)
+        segments = target[1:].split(".")
+        _validate_segments(segments, target, reference_state.id)
+        base = reference_state.parent or reference_state
+        return _find_descendant(base, segments)
 
-    path = target.split(".")
-    node = reference_state
-    while node:  # FIX: Change to `while node` to include the root machine.
-        # Check if the target is a direct key of the current node
-        if path[0] == node.key and len(path) == 1:
-            return node
+    # ── 4.  Plain identifier / dotted path  ─────────────────────────────────
+    segments = target.split(".")
+    _validate_segments(segments, target, reference_state.id)
 
-        # Check for descendants if the node has a parent
-        if node.parent:
-            try:
-                return _find_descendant(node.parent, path)
-            except StateNotFoundError:
-                pass  # Not found, continue bubbling up
+    current: StateNode | None = reference_state
+    while current:
+        # 4a ▸ descendant of *current*
+        try:
+            return _find_descendant(current, segments)
+        except StateNotFoundError:
+            pass
 
-        node = node.parent
+        # 4b ▸ the node itself?
+        if len(segments) == 1 and segments[0] == current.key:
+            return current
 
+        # 4c ▸ bubble up one level
+        current = current.parent
+
+    # Nothing matched
     raise StateNotFoundError(target, reference_state.id)
 
 
-# -----------------------------------------------------------------------------
-# Private Helpers
-# -----------------------------------------------------------------------------
-
-
-def _find_descendant(start_node: "StateNode", path: list[str]) -> "StateNode":
-    """A private helper to find a descendant state from a path list.
-
-    This function traverses down the state tree from a given starting node.
-
-    Args:
-        start_node: The `StateNode` from which to begin the search.
-        path: A list of state keys representing the path to the descendant.
-
-    Returns:
-        The found descendant `StateNode`.
-
-    Raises:
-        StateNotFoundError: If any key in the path does not correspond to a
-                            valid child state.
-    """
+# Helper stays unchanged (but note empty path never reaches it now)
+def _find_descendant(start_node: "StateNode", path: List[str]) -> "StateNode":
     current = start_node
     for key in path:
         if key not in current.states:

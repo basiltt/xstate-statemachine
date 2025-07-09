@@ -56,7 +56,7 @@
       "initial": "copying_files",
       "invoke": {
         "onDone": {
-          "target": ".install_complete"
+          "target": "install_complete"
         },
         "onError": {
           "actions": "set_error",
