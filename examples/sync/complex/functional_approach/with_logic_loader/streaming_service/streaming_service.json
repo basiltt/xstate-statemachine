@@ -1,0 +1,72 @@
+{
+  "context": {
+    "content_id": null,
+    "error": null,
+    "manifest_data": null,
+    "quality_level": null
+  },
+  "id": "streamingService",
+  "initial": "idle",
+  "states": {
+    "buffering": {
+      "invoke": {
+        "onDone": "playing",
+        "onError": {
+          "actions": "set_error",
+          "target": "error"
+        },
+        "src": "buffer_video_service"
+      }
+    },
+    "error": {},
+    "idle": {
+      "on": {
+        "SELECT_CONTENT": {
+          "actions": "set_content_id",
+          "target": "loading_manifest"
+        }
+      }
+    },
+    "loading_manifest": {
+      "invoke": {
+        "onDone": {
+          "actions": "store_manifest",
+          "target": "ready"
+        },
+        "onError": {
+          "actions": "set_error",
+          "target": "error"
+        },
+        "src": "load_manifest_service"
+      }
+    },
+    "paused": {
+      "on": {
+        "PLAY": "playing",
+        "STOP": "idle"
+      }
+    },
+    "playing": {
+      "entry": "log_playback_started",
+      "on": {
+        "PAUSE": "paused",
+        "STOP": "idle"
+      }
+    },
+    "ready": {
+      "on": {
+        "PLAY": [
+          {
+            "actions": "set_quality_hd",
+            "guard": "can_play_hd",
+            "target": "buffering"
+          },
+          {
+            "actions": "set_quality_sd",
+            "target": "buffering"
+          }
+        ]
+      }
+    }
+  }
+}
