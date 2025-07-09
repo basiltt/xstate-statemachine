@@ -317,9 +317,10 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
 
         interpreter = await Interpreter(parent_machine).start()
         await self.wait_for_state(interpreter, {"parent.spawning"})
-        child_interp = next(
-            iter(interpreter.context.get("actors", {}).values()), None
-        )
+
+        # ✅ FIX: Look for the spawned actor in the interpreter's internal `_actors`
+        # dictionary instead of the context.
+        child_interp = next(iter(interpreter._actors.values()), None)
         self.assertIsNotNone(child_interp)
 
         await child_interp.send("PING")

@@ -18,9 +18,7 @@
     },
     "failed": {},
     "fulfilling": {
-      "onDone": {
-        "target": "returning_to_base"
-      },
+      "onDone": "returning_to_base",
       "states": {
         "manipulation": {
           "initial": "waiting_for_arrival",
@@ -46,6 +44,7 @@
             },
             "waiting_for_arrival": {
               "on": {
+                "ALL_ITEMS_PICKED": "all_items_picked",
                 "ARRIVED": "picking_item"
               }
             }
@@ -59,6 +58,7 @@
             },
             "arrived_at_item": {
               "on": {
+                "ALL_ITEMS_LOCATED": "all_items_navigated",
                 "NEXT_ITEM": "planning_route"
               }
             },

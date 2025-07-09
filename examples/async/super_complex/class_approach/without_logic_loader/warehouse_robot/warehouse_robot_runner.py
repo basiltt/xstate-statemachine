@@ -48,6 +48,7 @@ async def main():
             "set_manipulation_error": logic_provider.set_manipulation_error,
         },
         services={
+            # The key 'pathfinder_actor' must match the name in 'spawn_pathfinder_actor'
             "pathfinder_actor": logic_provider.pathfinder_actor,
             "follow_path_service": logic_provider.follow_path_service,
             "pick_item_service": logic_provider.pick_item_service,
@@ -69,12 +70,12 @@ async def main():
     await interpreter.send("ASSIGN_ORDER", **order)
 
     # Wait long enough for the entire fulfillment process
-    # Path (2s) + Move (2s) + Pick (1.5s) = 5.5s per item * 2 items = 11s + buffer
     await asyncio.sleep(13)
 
     logging.info("\n--- Fulfillment Summary ---")
     logging.info(f"Final state: {interpreter.current_state_ids}")
-    logging.info(f"Final context: {json.dumps(interpreter.context, indent=2)}")
+    # ✅ FIX: Print the context directly to avoid JSON serialization errors
+    logging.info(f"Final context: {interpreter.context}")
 
     await interpreter.stop()
     print("\n--- ✅ Simulation Complete ---")

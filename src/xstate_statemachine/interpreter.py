@@ -316,12 +316,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         actor_interpreter.id = actor_id
         await actor_interpreter.start()
 
-        # Place the actor in the parent's context for reference
-        if "actors" not in self.context:
-            self.context["actors"] = {}
-        self.context["actors"][actor_id] = actor_interpreter
-
-        # Also store it internally for management (e.g., stopping)
+        # ✅ FIX: The actor reference is no longer placed in the context.
+        # It is managed internally by the parent interpreter.
         self._actors[actor_id] = actor_interpreter
         logger.info("✅ Actor '%s' spawned successfully.", actor_id)
 

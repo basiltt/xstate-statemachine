@@ -47,9 +47,10 @@ class WarehouseRobotLogic:
         ctx["path"] = e.payload.get("path")
         logging.info(f"🗺️  Path received: {' -> '.join(ctx['path'])}")
 
-    def store_picked_item(
+    async def store_picked_item(
         self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
     ):
+        """This action is now async to allow sending events and having them processed."""
         item = e.data.get("item_picked")
         ctx["picked_items"].append(item)
         logging.info(
@@ -58,30 +59,20 @@ class WarehouseRobotLogic:
 
         if len(ctx["picked_items"]) == len(ctx["order_items"]):
             logging.info("🎉 All items picked!")
-            asyncio.create_task(
-                i.send({"type": "FINISH_MANIPULATION"})
-            )  # A non-existent event to stop this region, effectively. A better model would have a transition. Forcing final state.
-            i._active_state_nodes = {
-                s
-                for s in i._active_state_nodes
-                if not s.id.startswith(f"{i.id}.fulfilling.manipulation")
-            }
-            i._active_state_nodes.add(
-                i.machine.get_state_by_id(
-                    f"{i.id}.fulfilling.manipulation.all_items_picked"
-                )
-            )
-
+            # Send events to both parallel regions to move them to their final states.
+            await i.send("ALL_ITEMS_PICKED")
+            await i.send("ALL_ITEMS_LOCATED")
         else:
+            # If more items, send an event to the movement region to get the next path.
             ctx["target_location"] = ctx["order_items"][
                 len(ctx["picked_items"])
             ]["location"]
-            asyncio.create_task(i.send("NEXT_ITEM"))
+            await i.send("NEXT_ITEM")
 
     def set_movement_error(
         self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
     ):
-        ctx["error"] = str(e.data)
+        ctx["error"] = e.payload.get("error", "Unknown movement error")
         logging.error(f"MOVEMENT ERROR: {ctx['error']}")
         asyncio.create_task(i.send("FATAL_ERROR"))
 
@@ -133,26 +124,19 @@ class WarehouseRobotLogic:
     async def pathfinder_send_path(
         self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
     ):
-        path = e.data.get("path")
-        await i.parent.send(
-            {"type": "PATH_CALCULATED", "payload": {"path": path}}
-        )
+        path_data = e.data.get("path")
+        await i.parent.send({"type": "PATH_CALCULATED", "path": path_data})
 
     async def pathfinder_send_failure(
         self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
     ):
-        await i.parent.send(
-            {"type": "PATH_FAILED", "payload": {"error": str(e.data)}}
-        )
+        await i.parent.send({"type": "PATH_FAILED", "error": str(e.data)})
 
     async def pathfinder_send_timeout_failure(
         self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
     ):
         await i.parent.send(
-            {
-                "type": "PATH_FAILED",
-                "payload": {"error": "Pathfinder timed out"},
-            }
+            {"type": "PATH_FAILED", "error": "Pathfinder timed out"}
         )
 
     async def pathfinder_calculate_path(
@@ -164,7 +148,6 @@ class WarehouseRobotLogic:
             f"      -> 🤖 Pathfinder Actor: Calculating path from {start} to {end}..."
         )
         await asyncio.sleep(2)
-        # Simulate a simple path
         path = [
             start,
             f"R{random.randint(1, 5)}",
