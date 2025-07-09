@@ -24,6 +24,7 @@ from src.xstate_statemachine import (
     ImplementationMissingError,
     PluginBase,
     ActionDefinition,
+    InvalidConfigError,
 )
 
 # -----------------------------------------------------------------------------
@@ -152,6 +153,62 @@ class TestSyncInterpreter(unittest.TestCase):
         self.assertEqual(interpreter.current_state_ids, {"internal.active"})
         action.assert_called_once()
 
+    def test_event_payload_is_passed_to_actions(self) -> None:
+        """Should pass the event payload correctly to actions."""
+        mock_action = MagicMock()
+        machine = create_machine(
+            {
+                "id": "payload_test",
+                "initial": "idle",
+                "states": {"idle": {"on": {"DATA": {"actions": "process"}}}},
+            },
+            logic=MachineLogic(actions={"process": mock_action}),
+        )
+        interpreter = SyncInterpreter(machine).start()
+        payload = {"user": "test", "id": 123}
+        interpreter.send("DATA", **payload)
+        self.assertEqual(mock_action.call_args[0][2].payload, payload)
+
+    def test_reentrant_send_from_action_is_queued(self) -> None:
+        """Should queue events sent from within an action, not process immediately."""
+        call_order = []
+
+        def action_sends_event(interpreter, ctx, evt, ad):
+            call_order.append("action_A")
+            interpreter.send("EVENT_B")
+            call_order.append("action_A_finished")
+
+        def action_for_b(interpreter, ctx, evt, ad):
+            call_order.append("action_B")
+
+        machine = create_machine(
+            {
+                "id": "reentrant",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "on": {
+                            "EVENT_A": {"target": "b", "actions": "actionA"}
+                        }
+                    },
+                    "b": {"on": {"EVENT_B": {"target": "c"}}},
+                    "c": {"entry": "actionB"},
+                },
+            },
+            logic=MachineLogic(
+                actions={
+                    "actionA": action_sends_event,
+                    "actionB": action_for_b,
+                }
+            ),
+        )
+        interpreter = SyncInterpreter(machine).start()
+        interpreter.send("EVENT_A")
+        self.assertEqual(
+            call_order, ["action_A", "action_A_finished", "action_B"]
+        )
+        self.assertEqual(interpreter.current_state_ids, {"reentrant.c"})
+
     # -------------------------------------------------------------------------
     # Guard and Transition Logic Tests
     # -------------------------------------------------------------------------
@@ -266,6 +323,61 @@ class TestSyncInterpreter(unittest.TestCase):
         interpreter.send("CHECK")
         self.assertEqual(interpreter.current_state_ids, {"chooser.high"})
 
+    def test_eventless_transition_is_taken_immediately(self) -> None:
+        """Should take an event-less ("always") transition upon state entry."""
+        machine = create_machine(
+            {
+                "id": "transient",
+                "initial": "a",
+                "states": {
+                    "a": {"on": {"NEXT": "b"}},
+                    "b": {"on": {"": {"target": "c"}}},
+                    "c": {},
+                },
+            }
+        )
+        interpreter = SyncInterpreter(machine).start()
+        interpreter.send("NEXT")
+        self.assertEqual(interpreter.current_state_ids, {"transient.c"})
+
+    def test_guarded_eventless_transitions(self) -> None:
+        """Should choose the correct guarded event-less transition."""
+        machine = create_machine(
+            {
+                "id": "transient_guarded",
+                "initial": "start",
+                "context": {"status": "ok"},
+                "states": {
+                    "start": {"on": {"CHECK": "evaluating"}},
+                    "evaluating": {
+                        "on": {
+                            "": [
+                                {"target": "success", "guard": "isOk"},
+                                {"target": "failure"},
+                            ]
+                        }
+                    },
+                    "success": {},
+                    "failure": {},
+                },
+            },
+            logic=MachineLogic(
+                guards={"isOk": lambda c, e: c["status"] == "ok"}
+            ),
+        )
+        interpreter = SyncInterpreter(machine).start()
+        interpreter.send("CHECK")
+        self.assertEqual(
+            interpreter.current_state_ids, {"transient_guarded.success"}
+        )
+        interpreter.stop()
+        interpreter = SyncInterpreter(machine).start()
+        interpreter.context["status"] = "error"
+        interpreter.send("CHECK")
+        self.assertEqual(
+            interpreter.current_state_ids, {"transient_guarded.failure"}
+        )
+
     # -------------------------------------------------------------------------
     # State Hierarchy and Entry/Exit Action Tests
     # -------------------------------------------------------------------------
@@ -309,7 +421,6 @@ class TestSyncInterpreter(unittest.TestCase):
         machine = create_machine(self.nested_machine_config, logic)
         interpreter = SyncInterpreter(machine).start()
         self.assertEqual(call_order, ["enterA", "enterA1"])
-
         call_order.clear()
         interpreter.send("T1")
         self.assertEqual(call_order, ["exitA1", "exitA", "enterB"])
@@ -374,12 +485,34 @@ class TestSyncInterpreter(unittest.TestCase):
             interpreter.current_state_ids,
             {"parallel.active.a.a1", "parallel.active.b.b1"},
         )
-
         interpreter.send("A_DONE")
         self.assertNotIn("parallel.finished", interpreter.current_state_ids)
-
         interpreter.send("B_DONE")
         self.assertEqual(interpreter.current_state_ids, {"parallel.finished"})
+
+    def test_transition_from_nested_state_to_ancestor_sibling(self) -> None:
+        """Should correctly exit nested states to transition to a sibling of an ancestor."""
+        machine = create_machine(
+            {
+                "id": "deep",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "initial": "a1",
+                        "states": {
+                            "a1": {
+                                "initial": "a11",
+                                "states": {"a11": {"on": {"GOTO_B": "b"}}},
+                            }
+                        },
+                    },
+                    "b": {},
+                },
+            }
+        )
+        interpreter = SyncInterpreter(machine).start()
+        interpreter.send("GOTO_B")
+        self.assertEqual(interpreter.current_state_ids, {"deep.b"})
 
     # -------------------------------------------------------------------------
     # Service Invocation (Invoke) Tests
@@ -461,6 +594,36 @@ class TestSyncInterpreter(unittest.TestCase):
         self.assertEqual(
             interpreter.context["user"], {"name": "Jane Doe", "id": 123}
         )
+
+    def test_invoke_sync_service_that_returns_none(self) -> None:
+        """Should handle services that return None without error."""
+        action = MagicMock()
+        logic = MachineLogic(
+            services={"fireAndForget": lambda i, c, e: None},
+            actions={"logDone": action},
+        )
+        machine = create_machine(
+            {
+                "id": "none_service",
+                "initial": "working",
+                "states": {
+                    "working": {
+                        "invoke": {
+                            "src": "fireAndForget",
+                            "onDone": {
+                                "target": "done",
+                                "actions": "logDone",
+                            },
+                        }
+                    },
+                    "done": {},
+                },
+            },
+            logic,
+        )
+        interpreter = SyncInterpreter(machine).start()
+        self.assertEqual(interpreter.current_state_ids, {"none_service.done"})
+        self.assertIsNone(action.call_args[0][2].data)
 
     # -------------------------------------------------------------------------
     # Snapshot & Restore Tests
@@ -548,21 +711,29 @@ class TestSyncInterpreter(unittest.TestCase):
             SyncInterpreter(machine).start()
 
     def test_error_on_unsupported_spawn_action(self) -> None:
-        """Should raise ImplementationMissingError for unimplemented spawn_ actions."""
-        # Note: The loader finds this as a missing action before the interpreter
-        # can raise the NotSupportedError. This is correct fail-fast behavior.
-        with self.assertRaises(ImplementationMissingError):
-            create_machine(
-                {
-                    "id": "spawner",
-                    "initial": "active",
-                    "states": {"active": {"entry": ["spawn_something"]}},
+        """Should raise NotSupportedError when SyncInterpreter tries to spawn."""
+        machine = create_machine(
+            {
+                "id": "spawner",
+                "initial": "active",
+                "states": {"active": {"entry": "spawn_something"}},
+            },
+            logic=MachineLogic(
+                services={
+                    "something": create_machine(
+                        {"id": "child", "initial": "a", "states": {"a": {}}}
+                    )
                 }
-            )
+            ),
+        )
+        interpreter = SyncInterpreter(machine)
+        with self.assertRaisesRegex(
+            NotSupportedError, "Actor spawning is not supported"
+        ):
+            interpreter.start()
 
     def test_error_on_missing_action_implementation(self) -> None:
         """Should raise ImplementationMissingError for undefined actions."""
-        # ✅ FIX: This test now correctly expects the error at creation time.
         with self.assertRaises(ImplementationMissingError):
             create_machine(
                 {
@@ -574,7 +745,6 @@ class TestSyncInterpreter(unittest.TestCase):
 
     def test_error_on_missing_guard_implementation(self) -> None:
         """Should raise ImplementationMissingError for undefined guards."""
-        # ✅ FIX: This test now correctly expects the error at creation time.
         with self.assertRaises(ImplementationMissingError):
             create_machine(
                 {
@@ -628,17 +798,151 @@ class TestSyncInterpreter(unittest.TestCase):
 
         interpreter = SyncInterpreter(machine)
         interpreter.use(mock_plugin)
-
         interpreter.start()
+
         mock_plugin.on_interpreter_start.assert_called_once_with(interpreter)
         mock_plugin.on_action_execute.assert_called_once()
 
         interpreter.send("NEXT")
         mock_plugin.on_event_received.assert_called_once()
-        self.assertEqual(mock_plugin.on_transition.call_count, 1)
+        self.assertEqual(mock_plugin.on_transition.call_count, 2)
 
         interpreter.stop()
         mock_plugin.on_interpreter_stop.assert_called_once_with(interpreter)
+
+    # -------------------------------------------------------------------------
+    # Corrected and New Tests from Previous Iteration
+    # -------------------------------------------------------------------------
+
+    def test_context_is_copied_not_referenced(self) -> None:
+        """Should perform a deep copy of the initial context."""
+        config = {
+            "id": "m",
+            "initial": "s1",
+            "context": {"data": {"nested": "value"}},
+            "states": {"s1": {}},
+        }
+        machine = create_machine(config)
+        interpreter = SyncInterpreter(machine).start()
+        interpreter.context["data"]["nested"] = "changed"
+        self.assertEqual(config["context"]["data"]["nested"], "value")
+
+    def test_deeply_nested_parallel_state_on_done(self) -> None:
+        """Should correctly fire onDone from a deeply nested parallel state."""
+        machine = create_machine(
+            {
+                "id": "m",
+                "initial": "s1",
+                "states": {
+                    "s1": {
+                        "initial": "p_wrapper",
+                        "onDone": "s2",
+                        "states": {
+                            "p_wrapper": {
+                                "initial": "p",
+                                "states": {
+                                    "p": {
+                                        "type": "parallel",
+                                        "onDone": "p_final",
+                                        "states": {
+                                            "a": {
+                                                "initial": "a1",
+                                                "states": {
+                                                    "a1": {"type": "final"}
+                                                },
+                                            },
+                                            "b": {
+                                                "initial": "b1",
+                                                "states": {
+                                                    "b1": {"type": "final"}
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "p_final": {"type": "final"},
+                                },
+                            }
+                        },
+                    },
+                    "s2": {},
+                },
+            }
+        )
+        interpreter = SyncInterpreter(machine).start()
+        self.assertEqual(interpreter.current_state_ids, {"m.s2"})
+
+    def test_guard_receives_context_and_event_payload_correctly(self) -> None:
+        """Should pass event payload correctly to guards."""
+        guard = MagicMock(return_value=True)
+        machine = create_machine(
+            {
+                "id": "m",
+                "initial": "s1",
+                "context": {"x": 1},
+                "states": {"s1": {"on": {"E": {"guard": "myGuard"}}}},
+            },
+            logic=MachineLogic(guards={"myGuard": guard}),
+        )
+        interpreter = SyncInterpreter(machine).start()
+        interpreter.send("E", y=2)
+        guard.assert_called_once()
+        self.assertEqual(guard.call_args[0][0]["x"], 1)
+        self.assertEqual(guard.call_args[0][1].payload, {"y": 2})
+
+    def test_invalid_config_shorthand_transition_raises_error(self) -> None:
+        """Should raise InvalidConfigError for malformed transition shorthand."""
+        with self.assertRaisesRegex(
+            InvalidConfigError, "Invalid transition config"
+        ):
+            create_machine(
+                {
+                    "id": "m",
+                    "initial": "s1",
+                    "states": {"s1": {"on": {"E": 123}}},
+                }
+            )
+
+    def test_internal_transition_fires_on_transition_hook(self) -> None:
+        """Should fire the on_transition hook for internal transitions."""
+        mock_plugin = MagicMock(spec=PluginBase)
+        machine = create_machine(
+            {
+                "id": "m",
+                "initial": "s1",
+                "states": {"s1": {"on": {"NOOP": {}}}},
+            }
+        )
+        interpreter = SyncInterpreter(machine).use(mock_plugin).start()
+        interpreter.send("NOOP")
+        self.assertEqual(mock_plugin.on_transition.call_count, 2)
+
+    def test_unhandled_event_does_not_fire_on_transition_hook(self) -> None:
+        """Should NOT fire the on_transition hook for an unhandled event."""
+        mock_plugin = MagicMock(spec=PluginBase)
+        machine = create_machine(
+            {
+                "id": "m",
+                "initial": "s1",
+                "states": {"s1": {"on": {"REAL_EVENT": {}}}},
+            }
+        )
+        interpreter = SyncInterpreter(machine).use(mock_plugin).start()
+        interpreter.send("UNHANDLED_EVENT")
+        mock_plugin.on_transition.assert_called_once()
+
+    def test_restore_from_snapshot_with_missing_state_id_raises_error(
+        self,
+    ) -> None:
+        """Should raise StateNotFoundError when a snapshot state is not in the machine."""
+        machine = create_machine(
+            {"id": "m", "initial": "s1", "states": {"s1": {}}}
+        )
+        snapshot = '{"status": "running", "context": {}, "state_ids": ["m.nonexistent"]}'
+        with self.assertRaisesRegex(
+            StateNotFoundError,
+            "Could not resolve target state 'm.nonexistent'",
+        ):
+            SyncInterpreter.from_snapshot(snapshot, machine)
 
 
 if __name__ == "__main__":

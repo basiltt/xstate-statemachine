@@ -29,6 +29,7 @@ from .models import (
     StateNode,
     TContext,
     TEvent,
+    TransitionDefinition,
 )
 from .resolver import resolve_target_state
 
@@ -103,9 +104,23 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         logger.info("🏁 Starting sync interpreter '%s'...", self.id)
         self.status = "running"
+
+        # ✅ FIX: Explicitly notify plugins about the initial transition.
+        initial_transition = TransitionDefinition(
+            event="___xstate_statemachine_init___",
+            config={},
+            source=self.machine,
+        )
         for plugin in self._plugins:
             plugin.on_interpreter_start(self)
+            # Pass empty set as from_states for the initial transition
+            plugin.on_transition(
+                self, set(), self._active_state_nodes, initial_transition
+            )
+
         self._enter_states([self.machine])
+        self._process_transient_transitions()
+
         logger.info(
             "✅ Sync interpreter '%s' started. Current states: %s",
             self.id,
@@ -130,11 +145,10 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     @overload
     def send(self, event_type: str, **payload: Any) -> None: ...  # noqa: E704
 
-    # ✅ FIX: Updated overload to include DoneEvent and AfterEvent
     @overload
     def send(  # noqa
         self, event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent]
-    ) -> None: ...  # noqa: E704
+    ) -> None: ...
 
     def send(
         self,
@@ -145,19 +159,6 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     ) -> None:
         """
         Sends an event to the machine for immediate, synchronous processing.
-
-        This method processes the given event and any subsequent events (like
-        `onDone`) that are generated during the transition, all within this
-        single, blocking call.
-
-        Args:
-            event_or_type (Union[str, Dict, Event, DoneEvent, AfterEvent]): The
-                event to send.
-            **payload (Any): Optional keyword arguments for the event's payload
-                if `event_or_type` is a string.
-
-        Raises:
-            TypeError: If an unsupported type is passed for the event.
         """
         if self.status != "running":
             logger.warning("⚠️ Cannot send event. Interpreter is not running.")
@@ -188,12 +189,31 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 for plugin in self._plugins:
                     plugin.on_event_received(self, event)
                 self._process_event(event)
+                # After processing an external event, check for any resulting transient transitions
+                self._process_transient_transitions()
         finally:
             self._is_processing = False
 
     # -------------------------------------------------------------------------
     # Synchronous Overrides of Core Logic
     # -------------------------------------------------------------------------
+
+    def _process_transient_transitions(self) -> None:
+        """
+        Continuously processes event-less ("always") transitions until the state stabilizes.
+        """
+        while True:
+            # Use a dummy event for guard evaluation if needed.
+            transient_event = Event(type="")
+            transition = self._find_optimal_transition(transient_event)
+
+            # An event-less transition is one with an empty event string.
+            if transition and transition.event == "":
+                logger.info("⚡ Processing transient transition...")
+                self._process_event(transient_event)
+            else:
+                # No more transient transitions to take.
+                break
 
     def _process_event(
         self, event: Union[Event, AfterEvent, DoneEvent]
@@ -202,6 +222,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         transition = self._find_optimal_transition(event)
         if not transition:
             return
+
         if not transition.target_str:
             self._execute_actions(transition.actions, event)
             for plugin in self._plugins:
@@ -265,31 +286,20 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             self._active_state_nodes.discard(state)
 
     def _check_and_fire_on_done(self, final_state: StateNode) -> None:
-        """Synchronously checks for and fires onDone events."""
+        """
+        Synchronously checks if an ancestor state is "done" and queues the event.
+        """
         current_ancestor = final_state.parent
         while current_ancestor:
-            if current_ancestor.on_done:
-                is_done = False
-                if current_ancestor.type == "compound":
-                    if any(
-                        s.type == "final"
-                        for s in self._active_state_nodes
-                        if s.parent == current_ancestor
-                    ):
-                        is_done = True
-                elif current_ancestor.type == "parallel":
-                    if all(
-                        any(
-                            s.type == "final"
-                            for s in self._active_state_nodes
-                            if self._is_descendant(s, r)
-                        )
-                        for r in current_ancestor.states.values()
-                    ):
-                        is_done = True
-                if is_done:
-                    self.send(Event(f"done.state.{current_ancestor.id}"))
-                    return
+            if current_ancestor.on_done and self._is_state_done(
+                current_ancestor
+            ):
+                logger.info(
+                    "✅ State '%s' is done, queuing onDone event.",
+                    current_ancestor.id,
+                )
+                self.send(Event(type=f"done.state.{current_ancestor.id}"))
+                return
             current_ancestor = current_ancestor.parent
 
     # -------------------------------------------------------------------------
@@ -315,7 +325,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 )
             if asyncio.iscoroutinefunction(action_callable):
                 raise NotSupportedError(
-                    f"Action '{action_def.type}' is async."
+                    f"Action '{action_def.type}' is async and not supported by SyncInterpreter."
                 )
             action_callable(self, self.context, event, action_def)
 
@@ -342,7 +352,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     ) -> None:
         """Handles invoked services, supporting only synchronous callables."""
         if asyncio.iscoroutinefunction(service):
-            raise NotSupportedError(f"Service '{invocation.src}' is async.")
+            raise NotSupportedError(
+                f"Service '{invocation.src}' is async and not supported by SyncInterpreter."
+            )
         logger.info(
             "📞 Invoking sync service '%s' (ID: '%s')...",
             invocation.src,

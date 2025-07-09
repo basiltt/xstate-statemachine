@@ -96,7 +96,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         Starts the interpreter and its main event loop.
 
         This method initializes the machine by transitioning it to its initial
-        state and begins processing events.
+        state and begins processing events. It now includes exception handling
+        to gracefully stop the interpreter if startup fails.
 
         Returns:
             Interpreter: The interpreter instance, allowing for method chaining.
@@ -112,15 +113,25 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         self.status = "running"
         self._event_loop_task = asyncio.create_task(self._run_event_loop())
 
-        for plugin in self._plugins:
-            plugin.on_interpreter_start(self)
+        try:
+            for plugin in self._plugins:
+                plugin.on_interpreter_start(self)
 
-        await self._enter_states([self.machine])
-        logger.info(
-            "✅ Interpreter '%s' started. Current states: %s",
-            self.id,
-            self.current_state_ids,
-        )
+            await self._enter_states([self.machine])
+            logger.info(
+                "✅ Interpreter '%s' started. Current states: %s",
+                self.id,
+                self.current_state_ids,
+            )
+        except Exception:
+            logger.error(
+                "💥 Interpreter '%s' failed to start.", self.id, exc_info=True
+            )
+            self.status = "stopped"
+            # The event loop task might not have stopped yet, ensure it's cancelled.
+            if self._event_loop_task and not self._event_loop_task.done():
+                self._event_loop_task.cancel()
+            raise
         return self
 
     async def stop(self) -> None:
@@ -200,6 +211,17 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                     plugin.on_event_received(self, event)
 
                 await self._process_event(event)
+
+                # After processing an event, immediately process any event-less ("transient") transitions
+                while True:
+                    transient_event = Event(type="")
+                    transition = self._find_optimal_transition(transient_event)
+                    if transition and transition.event == "":
+                        logger.info("⚡ Processing transient transition...")
+                        await self._process_event(transient_event)
+                    else:
+                        break  # No more transient transitions, state is stable
+
                 self._event_queue.task_done()
         except asyncio.CancelledError:
             logger.debug("🛑 Event loop for '%s' cancelled; exiting.", self.id)
@@ -210,10 +232,9 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 exc,
                 exc_info=True,
             )
+            # Set status to stopped and then re-raise the exception.
+            # This ensures the interpreter is in a correct final state.
             self.status = "stopped"
-            await self.task_manager.cancel_all()
-            for actor in list(self._actors.values()):
-                await actor.stop()
             raise
         finally:
             logger.debug("⚓ Event loop for '%s' exited.", self.id)
@@ -283,9 +304,30 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         self.context.setdefault("actors", {})[actor_id] = actor_interpreter
         logger.info("✅ Actor '%s' spawned successfully.", actor_id)
 
-    def _cancel_state_tasks(self, state: StateNode) -> None:
-        """Cancels all background tasks associated with a specific state."""
-        self.task_manager.cancel_by_owner(state.id)
+    async def _cancel_state_tasks(self, state: StateNode) -> None:
+        """
+        Asynchronously cancels all background tasks associated with a specific state.
+
+        This implementation manually handles the cancellation process to ensure
+        that tasks are properly cancelled and awaited.
+        """
+        owner_id = state.id
+        if owner_id in self.task_manager._tasks_by_owner:
+            tasks_to_cancel = list(self.task_manager._tasks_by_owner[owner_id])
+            logger.debug(
+                "Cancelling %d tasks for owner '%s'",
+                len(tasks_to_cancel),
+                owner_id,
+            )
+            for task in tasks_to_cancel:
+                task.cancel()
+
+            # Wait for all tasks to acknowledge cancellation. This is the crucial step
+            # to ensure the ".cancelled()" status is updated before tests check it.
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+
+            # Manually clean up the task manager for this owner
+            del self.task_manager._tasks_by_owner[owner_id]
 
     async def _after_timer_task(
         self, delay_sec: float, event: AfterEvent
@@ -358,7 +400,13 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         self, invocation: InvokeDefinition, service: Callable, owner_id: str
     ) -> None:
         """Creates a task to run an invoked service."""
-        task = asyncio.create_task(
-            self._invoke_service_task(invocation, service)
-        )
+
+        async def _invoke_wrapper():
+            # Yield control to the event loop to ensure the task is registered
+            # in the TaskManager before the service is awaited. This resolves
+            # a race condition in tests for long-running services.
+            await asyncio.sleep(0)
+            await self._invoke_service_task(invocation, service)
+
+        task = asyncio.create_task(_invoke_wrapper())
         self.task_manager.add(owner_id, task)

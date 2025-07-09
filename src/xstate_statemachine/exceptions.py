@@ -23,12 +23,15 @@ class InvalidConfigError(XStateMachineError):
 class StateNotFoundError(XStateMachineError):
     """Raised when a target state cannot be resolved."""
 
-    def __init__(self, target: str, reference_id: str):
+    # ✅ FIX: Made `reference_id` optional and updated the message logic.
+    def __init__(self, target: str, reference_id: str = None):
         self.target = target
         self.reference_id = reference_id
-        super().__init__(
-            f"Could not resolve target state '{target}' from state '{reference_id}'."
-        )
+        if reference_id:
+            message = f"Could not resolve target state '{target}' from state '{reference_id}'."
+        else:
+            message = f"Could not resolve target state '{target}'."
+        super().__init__(message)
 
 
 class ImplementationMissingError(XStateMachineError):

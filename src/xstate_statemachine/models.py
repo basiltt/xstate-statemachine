@@ -430,6 +430,9 @@ class StateNode(Generic[TContext, TEvent]):
 
         Returns:
             A list of transition configuration dictionaries.
+
+        Raises:
+            InvalidConfigError: If the config is not a str, dict, or list.
         """
         # Case 1: "EVENT": "targetState"
         if isinstance(config, str):
@@ -445,9 +448,16 @@ class StateNode(Generic[TContext, TEvent]):
                     normalized_list.append({"target": item})
                 elif isinstance(item, dict):
                     normalized_list.append(item)
+                else:
+                    # ✅ FIX: Raise error for invalid items within a list
+                    raise InvalidConfigError(
+                        f"Invalid transition item in list: {item}. Must be str or dict."
+                    )
             return normalized_list
-        # Should not happen with a valid config.
-        return []
+        # ✅ FIX: Raise an error for any other invalid type.
+        raise InvalidConfigError(
+            f"Invalid transition config: {config}. Must be str, dict, or list."
+        )
 
     @staticmethod
     def _ensure_list(config_item: Any) -> List:
