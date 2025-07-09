@@ -263,7 +263,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             if self._is_descendant(s, domain) and s != domain
         }
         await self._exit_states(
-            sorted(list(states_to_exit), key=lambda s: len(s.id), reverse=True)
+            sorted(
+                list(states_to_exit), key=lambda s: len(s.id), reverse=True
+            ),
+            event,  # Pass the triggering event
         )
 
         await self._execute_actions(transition.actions, event)
@@ -273,7 +276,9 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         path_to_enter = self._get_path_to_state(
             target_state_node, stop_at=domain
         )
-        await self._enter_states(path_to_enter)
+        await self._enter_states(
+            path_to_enter, event
+        )  # Pass the triggering event
 
         for plugin in self._plugins:
             plugin.on_transition(
@@ -287,41 +292,57 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             self.current_state_ids,
         )
 
-    async def _enter_states(self, states_to_enter: List[StateNode]) -> None:
+    async def _enter_states(
+        self, states_to_enter: List[StateNode], event: Optional[Event] = None
+    ) -> None:
         """
         Enters a list of states, executing entry actions and scheduling tasks.
         """
+        # ✅ FIX: If no event is passed (e.g., on startup), create a synthetic init event.
+        triggering_event = event or Event(
+            type="___xstate_statemachine_init___"
+        )
+
         for state in states_to_enter:
             self._active_state_nodes.add(state)
             logger.debug("➡️  Entering state: '%s'.", state.id)
 
-            await self._execute_actions(
-                state.entry, Event(type=f"entry.{state.id}")
-            )
+            await self._execute_actions(state.entry, triggering_event)
 
             if state.type == "final":
                 await self._check_and_fire_on_done(state)
 
             if state.type == "compound" and state.initial:
                 if state.initial in state.states:
-                    await self._enter_states([state.states[state.initial]])
+                    await self._enter_states(
+                        [state.states[state.initial]], triggering_event
+                    )
                 else:
                     logger.error(
                         "❌ Initial state '%s' not found.", state.initial
                     )
             elif state.type == "parallel":
-                await self._enter_states(list(state.states.values()))
+                await self._enter_states(
+                    list(state.states.values()), triggering_event
+                )
 
             self._schedule_state_tasks(state)
 
-    async def _exit_states(self, states_to_exit: List[StateNode]) -> None:
+    async def _exit_states(
+        self, states_to_exit: List[StateNode], event: Optional[Event] = None
+    ) -> None:
         """
         Exits a list of states, executing exit actions and canceling tasks.
         """
+        # ✅ FIX: If no event is passed, create a synthetic event.
+        triggering_event = event or Event(
+            type="___xstate_statemachine_exit___"
+        )
+
         for state in states_to_exit:
             logger.debug("⬅️  Exiting state: '%s'.", state.id)
             await self._cancel_state_tasks(state)
-            await self._execute_actions(state.exit, Event(f"exit.{state.id}"))
+            await self._execute_actions(state.exit, triggering_event)
             self._active_state_nodes.discard(state)
 
     def _is_state_done(self, state_node: StateNode) -> bool:

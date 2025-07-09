@@ -1,0 +1,48 @@
+{
+  "context": {
+    "credentials_to_try": null,
+    "error": null,
+    "username": null
+  },
+  "id": "authFlow",
+  "initial": "logged_out",
+  "states": {
+    "authenticating": {
+      "invoke": {
+        "onDone": {
+          "actions": "assign_user_to_context",
+          "target": "logged_in"
+        },
+        "onError": {
+          "actions": "assign_error_to_context",
+          "target": "login_failed"
+        },
+        "src": "authenticate_user"
+      }
+    },
+    "logged_in": {
+      "on": {
+        "LOGOUT": {
+          "actions": "clear_context",
+          "target": "logged_out"
+        }
+      }
+    },
+    "logged_out": {
+      "on": {
+        "LOGIN": {
+          "actions": "cache_credentials",
+          "target": "authenticating"
+        }
+      }
+    },
+    "login_failed": {
+      "on": {
+        "LOGIN": {
+          "actions": "cache_credentials",
+          "target": "authenticating"
+        }
+      }
+    }
+  }
+}

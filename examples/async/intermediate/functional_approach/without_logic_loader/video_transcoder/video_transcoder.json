@@ -1,0 +1,44 @@
+{
+  "context": {
+    "error": null,
+    "source_file": null,
+    "transcoding_status": null,
+    "upload_path": null
+  },
+  "id": "videoTranscoder",
+  "initial": "idle",
+  "states": {
+    "complete": {
+      "type": "final"
+    },
+    "idle": {
+      "on": {
+        "SELECT_FILE": {
+          "actions": "upload_video_file",
+          "target": "uploading"
+        }
+      }
+    },
+    "transcode_failure": {},
+    "transcoding": {
+      "invoke": {
+        "onDone": {
+          "actions": "set_transcoding_status",
+          "target": "complete"
+        },
+        "onError": {
+          "actions": "set_error",
+          "target": "transcode_failure"
+        },
+        "src": "transcode_video_service"
+      }
+    },
+    "upload_failure": {},
+    "uploading": {
+      "on": {
+        "UPLOAD_COMPLETE": "transcoding",
+        "UPLOAD_FAILED": "upload_failure"
+      }
+    }
+  }
+}

@@ -1,0 +1,99 @@
+{
+  "context": {
+    "delivery_method": "SMS",
+    "error": null,
+    "generated_code": null,
+    "user_code_input": ""
+  },
+  "id": "twoFactorAuth",
+  "initial": "pending",
+  "on": {
+    "DELIVERY_FAILED": ".failure",
+    "TIMEOUT": ".failure"
+  },
+  "states": {
+    "authenticating": {
+      "onDone": "success",
+      "states": {
+        "codeDelivery": {
+          "initial": "sending",
+          "states": {
+            "delivery_failed": {},
+            "finished": {
+              "type": "final"
+            },
+            "sending": {
+              "invoke": {
+                "onDone": {
+                  "actions": "store_generated_code",
+                  "target": "sent"
+                },
+                "onError": {
+                  "actions": "set_error",
+                  "target": "delivery_failed"
+                },
+                "src": "send_auth_code"
+              }
+            },
+            "sent": {
+              "on": {
+                "VALIDATION_SUCCESS": "finished"
+              }
+            }
+          }
+        },
+        "codeEntry": {
+          "after": {
+            "10000": {
+              "target": "timeout"
+            }
+          },
+          "initial": "waitingForInput",
+          "states": {
+            "timeout": {},
+            "validated": {
+              "entry": "notify_validation_success",
+              "type": "final"
+            },
+            "validating": {
+              "on": {
+                "": [
+                  {
+                    "guard": "is_code_correct",
+                    "target": "validated"
+                  },
+                  {
+                    "actions": "increment_attempts",
+                    "target": "waitingForInput"
+                  }
+                ]
+              }
+            },
+            "waitingForInput": {
+              "on": {
+                "SUBMIT_CODE": {
+                  "actions": "store_user_input",
+                  "target": "validating"
+                }
+              }
+            }
+          }
+        }
+      },
+      "type": "parallel"
+    },
+    "failure": {
+      "on": {
+        "RESTART": "pending"
+      }
+    },
+    "pending": {
+      "on": {
+        "START_2FA": "authenticating"
+      }
+    },
+    "success": {
+      "entry": "log_final_success"
+    }
+  }
+}
