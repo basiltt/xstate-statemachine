@@ -547,6 +547,13 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         target_state = resolve_target_state(
             transition.target_str, transition.source
         )
+
+        # Handle external self-transition: the domain is the parent.
+        # This ensures the state is exited and re-entered. An internal transition
+        # (one without a `target`) is handled before this method is called.
+        if transition.target_str and target_state == transition.source:
+            return transition.source.parent
+
         source_ancestors = self._get_ancestors(transition.source)
         target_ancestors = self._get_ancestors(target_state)
         common_ancestors = source_ancestors.intersection(target_ancestors)
@@ -572,14 +579,50 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             return True
         return node.id.startswith(f"{ancestor.id}.") or node == ancestor
 
-    @staticmethod
     def _get_path_to_state(
-        node: StateNode, stop_at: Optional[StateNode] = None
-    ) -> List[StateNode]:
-        """Gets the hierarchical path of states from an ancestor down to a node."""
-        path = []
-        current: Optional[StateNode] = node
-        while current and current != stop_at:
+        self,
+        to_state: "MachineNode",
+        *,
+        stop_at: "MachineNode | None" = None,
+    ) -> list["MachineNode"]:
+        """
+        Build the list of state nodes that must be *entered* in order to reach
+        ``to_state``.
+
+        Parameters
+        ----------
+        to_state:
+            The target state node we are heading *into*.
+        stop_at:
+            If supplied, traversal stops *before* this ancestor node – it is
+            **not** included in the returned path.  In practice this is the
+            “domain” (least-common-ancestor) that is already active and therefore
+            does **not** need to be re-entered.
+
+        Returns
+        -------
+        List[MachineNode]
+            Ordered **top-down**: the first element is the highest ancestor that
+            must be entered and the last element is ``to_state`` itself.
+
+        Examples
+        --------
+        - Transition from ``A.b`` → ``A.c.d`` with ``stop_at = A``
+          returns ``[A.c, A.c.d]``.
+        - External self-transition on ``S`` (domain is ``S``’s parent)
+          returns ``[S]`` so entry/exit actions fire again.
+        """
+        # Collect nodes bottom-up until we hit `stop_at` (or the root)
+        path: list["MachineNode"] = []
+        current = to_state
+        while current is not None and current is not stop_at:
             path.append(current)
             current = current.parent
-        return list(reversed(path))
+
+        # `stop_at == to_state` ➜ nothing to enter
+        if not path:
+            return []
+
+        # We built the path bottom-up – reverse it so it is top-down
+        path.reverse()
+        return path

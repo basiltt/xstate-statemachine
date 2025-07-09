@@ -23,6 +23,7 @@ from src.xstate_statemachine import (
     ImplementationMissingError,
     ActorSpawningError,
 )
+from xstate_statemachine import ActionDefinition
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
@@ -933,6 +934,523 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             restored.current_state_ids, {"m.p1.a.a1", "m.p1.b.b1"}
         )
+
+    async def test_invoke_with_input_from_context(self) -> None:
+        """Invoked service should receive static input defined in the machine."""
+
+        async def check_input_service(i, c, e):
+            # The 'input' from the invoke config is passed in the invoke event payload
+            self.assertEqual(e.payload.get("input"), {"userId": 123})
+            return True
+
+        mock_service = AsyncMock(side_effect=check_input_service)
+        machine = create_machine(
+            {
+                "id": "invoke_input",
+                "initial": "active",
+                "states": {
+                    "active": {
+                        "invoke": {
+                            "src": "serviceWithInput",
+                            "input": {"userId": 123},
+                            "onDone": "success",
+                        }
+                    },
+                    "success": {},
+                },
+            },
+            logic=MachineLogic(services={"serviceWithInput": mock_service}),
+        )
+
+        interpreter = await Interpreter(machine).start()
+        await self.wait_for_state(interpreter, {"invoke_input.success"})
+        mock_service.assert_awaited_once()
+        await interpreter.stop()
+
+    async def test_invoke_onError_transition_is_guarded(self) -> None:
+        """A guarded onError transition should be blocked if the guard fails."""
+        mock_service = AsyncMock(side_effect=RuntimeError("Service Failed"))
+        logic = MachineLogic(
+            services={"failingService": mock_service},
+            guards={"shouldHandleError": lambda c, e: False},
+        )
+        machine = create_machine(
+            {
+                "id": "guarded_error",
+                "initial": "working",
+                "states": {
+                    "working": {
+                        "invoke": {
+                            "src": "failingService",
+                            "onError": {
+                                "target": "failed",
+                                "guard": "shouldHandleError",
+                            },
+                        }
+                    },
+                    "failed": {},
+                },
+            },
+            logic=logic,
+        )
+
+        interpreter = await Interpreter(machine).start()
+        await asyncio.sleep(0.1)  # Allow service to fail
+
+        # FIX: The interpreter should remain in the 'working' state and its event loop
+        # should still be running because the error was handled internally.
+        self.assertEqual(
+            interpreter.current_state_ids, {"guarded_error.working"}
+        )
+        self.assertFalse(interpreter._event_loop_task.done())
+        self.assertEqual(interpreter.status, "running")
+
+        await interpreter.stop()
+
+    async def test_invoke_chooses_correct_guarded_onDone(self) -> None:
+        """Should choose the correct onDone transition based on service output and guards."""
+
+        async def service_returns_value(i, c, e):
+            return {"value": 25}
+
+        logic = MachineLogic(
+            services={"valueService": service_returns_value},
+            guards={
+                "isLow": lambda c, e: e.data["value"] < 20,
+                "isMed": lambda c, e: e.data["value"] < 30,
+            },
+        )
+        machine = create_machine(
+            {
+                "id": "guarded_choice",
+                "initial": "working",
+                "states": {
+                    "working": {
+                        "invoke": {
+                            "src": "valueService",
+                            "onDone": [
+                                {"target": "low", "guard": "isLow"},
+                                {"target": "medium", "guard": "isMed"},
+                            ],
+                        }
+                    },
+                    "low": {},
+                    "medium": {},
+                },
+            },
+            logic=logic,
+        )
+
+        interpreter = await Interpreter(machine).start()
+        await self.wait_for_state(interpreter, {"guarded_choice.medium"})
+        self.assertEqual(
+            interpreter.current_state_ids, {"guarded_choice.medium"}
+        )
+        await interpreter.stop()
+
+    async def test_multiple_after_timers_in_one_state(self) -> None:
+        """Should fire the shortest timer when multiple 'after' timers exist."""
+        machine = create_machine(
+            {
+                "id": "multi_timer",
+                "initial": "waiting",
+                "states": {
+                    "waiting": {"after": {"100": "fastest", "200": "slowest"}},
+                    "fastest": {},
+                    "slowest": {},
+                },
+            }
+        )
+        interpreter = await Interpreter(machine).start()
+        await self.wait_for_state(interpreter, {"multi_timer.fastest"})
+        self.assertEqual(
+            interpreter.current_state_ids, {"multi_timer.fastest"}
+        )
+        await interpreter.stop()
+
+    async def test_after_transition_is_guarded(self) -> None:
+        """A guarded 'after' transition should not fire if the guard fails."""
+        logic = MachineLogic(guards={"shouldFire": lambda c, e: False})
+        machine = create_machine(
+            {
+                "id": "guarded_after",
+                "initial": "waiting",
+                "states": {
+                    "waiting": {
+                        "after": {
+                            "50": {"target": "finished", "guard": "shouldFire"}
+                        }
+                    }
+                },
+                "finished": {},
+            },
+            logic=logic,
+        )
+
+        interpreter = await Interpreter(machine).start()
+        await asyncio.sleep(0.1)
+        # Stays in 'waiting' because the guard blocked the transition
+        self.assertEqual(
+            interpreter.current_state_ids, {"guarded_after.waiting"}
+        )
+        await interpreter.stop()
+
+    async def test_guarded_eventless_transition_async(self) -> None:
+        """A guarded event-less transition should only be taken if the guard passes."""
+        logic = MachineLogic(guards={"shouldGo": lambda c, e: c["go"]})
+        machine = create_machine(
+            {
+                "id": "guarded_transient",
+                "initial": "a",
+                "context": {"go": True},
+                "states": {
+                    "a": {"on": {"NEXT": "b"}},
+                    "b": {"on": {"": {"target": "c", "guard": "shouldGo"}}},
+                    "c": {},
+                },
+            },
+            logic,
+        )
+
+        interpreter = await Interpreter(machine).start()
+        await interpreter.send("NEXT")
+        await self.wait_for_state(interpreter, {"guarded_transient.c"})
+        self.assertEqual(
+            interpreter.current_state_ids, {"guarded_transient.c"}
+        )
+        await interpreter.stop()
+
+    async def test_self_transition_executes_entry_exit_actions(self) -> None:
+        """An external self-transition should re-execute its entry/exit actions."""
+        exit_action = MagicMock()
+        entry_action = MagicMock()
+        logic = MachineLogic(
+            actions={"onExit": exit_action, "onEnter": entry_action}
+        )
+        machine = create_machine(
+            {
+                "id": "self_trans",
+                "initial": "active",
+                "states": {
+                    "active": {
+                        # FIX: Use a relative target ('.active') to define an external transition
+                        # that exits and re-enters the state.
+                        "on": {"LOOP": {"target": ".active"}},
+                        "entry": "onEnter",
+                        "exit": "onExit",
+                    }
+                },
+            },
+            logic=logic,
+        )
+
+        interpreter = await Interpreter(machine).start()
+        # The initial entry action is called once on start.
+        entry_action.assert_called_once()
+
+        # Send the event to trigger the self-transition.
+        await interpreter.send("LOOP")
+        await asyncio.sleep(0.01)
+
+        # The exit action should now have been called once, and the entry action a total of twice.
+        self.assertEqual(exit_action.call_count, 1)
+        self.assertEqual(entry_action.call_count, 2)
+        await interpreter.stop()
+
+    async def test_event_handled_by_ancestor_state(self) -> None:
+        """An event should be handled by an ancestor if not handled by the current state."""
+        machine = create_machine(
+            {
+                "id": "ancestor_handler",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "initial": "a1",
+                        "on": {"GOTO_B": "b"},
+                        "states": {"a1": {}},
+                    },
+                    "b": {},
+                },
+            }
+        )
+        interpreter = await Interpreter(machine).start()
+        self.assertEqual(
+            interpreter.current_state_ids, {"ancestor_handler.a.a1"}
+        )
+
+        await interpreter.send("GOTO_B")
+        await self.wait_for_state(interpreter, {"ancestor_handler.b"})
+        self.assertEqual(interpreter.current_state_ids, {"ancestor_handler.b"})
+        await interpreter.stop()
+
+    async def test_actor_onDone_is_triggered_on_child_final_state(
+        self,
+    ) -> None:
+        """Parent should transition when a spawned actor with its own logic reaches a final state."""
+        # FIX: The child's logic (including the action to notify the parent) must be
+        # defined with the child machine itself.
+        child_logic = MachineLogic(
+            actions={
+                "notifyParentDone": lambda i, c, e, a: asyncio.create_task(
+                    i.parent.send("CHILD_DONE")
+                )
+            }
+        )
+        child_machine = create_machine(
+            {
+                "id": "child",
+                "initial": "working",
+                "states": {
+                    "working": {"on": {"FINISH": "done"}},
+                    # The action must be defined on the state where it's executed.
+                    "done": {"type": "final", "entry": ["notifyParentDone"]},
+                },
+            },
+            logic=child_logic,
+        )
+
+        parent_machine = create_machine(
+            {
+                "id": "parent",
+                "initial": "spawning",
+                "states": {
+                    "spawning": {
+                        "entry": ["spawn_childActor"],
+                        "on": {"CHILD_DONE": "child_finished"},
+                    },
+                    "child_finished": {},
+                },
+            },
+            logic=MachineLogic(services={"childActor": child_machine}),
+        )
+
+        interpreter = await Interpreter(parent_machine).start()
+        await self.wait_for_state(interpreter, {"parent.spawning"})
+
+        self.assertEqual(len(interpreter._actors), 1)
+        child_interp = next(iter(interpreter._actors.values()))
+        await child_interp.send("FINISH")
+
+        await self.wait_for_state(interpreter, {"parent.child_finished"})
+        self.assertEqual(
+            interpreter.current_state_ids, {"parent.child_finished"}
+        )
+        await interpreter.stop()
+
+    async def test_parent_stop_cancels_multiple_child_actors(self) -> None:
+        """Stopping a parent should stop all of its spawned child actors."""
+        child_machine_1 = create_machine(
+            {"id": "child1", "initial": "a", "states": {"a": {}}}
+        )
+        child_machine_2 = create_machine(
+            {"id": "child2", "initial": "b", "states": {"b": {}}}
+        )
+        parent_machine = create_machine(
+            {
+                "id": "multi_parent",
+                "initial": "running",
+                "states": {
+                    "running": {"entry": ["spawn_child1", "spawn_child2"]}
+                },
+            },
+            logic=MachineLogic(
+                services={"child1": child_machine_1, "child2": child_machine_2}
+            ),
+        )
+
+        interpreter = await Interpreter(parent_machine).start()
+        await self.wait_for_state(interpreter, {"multi_parent.running"})
+        self.assertEqual(len(interpreter._actors), 2)
+
+        actors = list(interpreter._actors.values())
+        self.assertEqual(actors[0].status, "running")
+        self.assertEqual(actors[1].status, "running")
+
+        await interpreter.stop()
+        self.assertEqual(actors[0].status, "stopped")
+        self.assertEqual(actors[1].status, "stopped")
+
+    async def test_send_on_unstarted_interpreter(self) -> None:
+        """Events sent to an unstarted interpreter should be queued and processed on start."""
+        machine = create_machine(
+            {
+                "id": "q",
+                "initial": "a",
+                "states": {"a": {"on": {"NEXT": "b"}}, "b": {}},
+            }
+        )
+        interpreter = Interpreter(machine)
+
+        # Send event before starting
+        await interpreter.send("NEXT")
+
+        self.assertEqual(interpreter.status, "uninitialized")
+        self.assertEqual(interpreter.current_state_ids, set())
+
+        # Start the interpreter
+        await interpreter.start()
+
+        # The queued event should be processed
+        await self.wait_for_state(interpreter, {"q.b"})
+        self.assertEqual(interpreter.current_state_ids, {"q.b"})
+        await interpreter.stop()
+
+    async def test_start_on_running_interpreter_is_noop(self) -> None:
+        """Calling start() on an already running interpreter should do nothing."""
+        machine = create_machine(
+            {"id": "test", "initial": "a", "states": {"a": {}}}
+        )
+        interpreter = await Interpreter(machine).start()
+        self.assertEqual(interpreter.status, "running")
+
+        # Spy on the _enter_states method to ensure it's not called again
+        interpreter._enter_states = AsyncMock()  # type: ignore
+
+        await interpreter.start()
+        interpreter._enter_states.assert_not_called()
+        await interpreter.stop()
+
+    async def test_stop_on_stopped_interpreter_is_noop(self) -> None:
+        """Calling stop() on an already stopped interpreter should do nothing."""
+        machine = create_machine(
+            {"id": "test", "initial": "a", "states": {"a": {}}}
+        )
+        interpreter = await Interpreter(machine).start()
+        await interpreter.stop()
+        self.assertEqual(interpreter.status, "stopped")
+
+        # Spy on the task_manager to ensure it's not cancelled again
+        interpreter.task_manager.cancel_all = AsyncMock()  # type: ignore
+        await interpreter.stop()
+        interpreter.task_manager.cancel_all.assert_not_called()
+
+    async def test_snapshot_does_not_restore_transient_tasks(self) -> None:
+        """Snapshot and restore should not persist 'after' timers."""
+        machine = create_machine(
+            {
+                "id": "snap_after",
+                "initial": "waiting",
+                "states": {"waiting": {"after": {"100": "done"}}, "done": {}},
+            }
+        )
+        interpreter = await Interpreter(machine).start()
+        snapshot = interpreter.get_snapshot()
+        await interpreter.stop()
+
+        restored = Interpreter.from_snapshot(snapshot, machine)
+        # Manually start the restored interpreter's event loop for the test
+        restored._event_loop_task = asyncio.create_task(
+            restored._run_event_loop()
+        )
+
+        await asyncio.sleep(0.2)  # Wait longer than the original timer
+        # State should not have changed, as the timer was not restored
+        self.assertEqual(restored.current_state_ids, {"snap_after.waiting"})
+        await restored.stop()
+
+    async def test_unhandled_event_is_ignored(self) -> None:
+        """Sending an event with no matching transition should result in no state change."""
+        machine = create_machine(
+            {
+                "id": "unhandled",
+                "initial": "a",
+                "states": {"a": {"on": {"REAL_EVENT": "b"}}, "b": {}},
+            }
+        )
+        interpreter = await Interpreter(machine).start()
+        self.assertEqual(interpreter.current_state_ids, {"unhandled.a"})
+
+        # Send an event that is not handled in state 'a'
+        await interpreter.send("FAKE_EVENT")
+        await asyncio.sleep(0.01)
+
+        # The state should remain 'a'
+        self.assertEqual(interpreter.current_state_ids, {"unhandled.a"})
+        await interpreter.stop()
+
+    async def test_final_state_in_parallel_machine_triggers_onDone(
+        self,
+    ) -> None:
+        """A final state in one region of a parallel state should not trigger onDone alone."""
+        machine = create_machine(
+            {
+                "id": "p_final",
+                "type": "parallel",
+                "onDone": "finished",
+                "states": {
+                    "a": {
+                        "initial": "a1",
+                        "states": {
+                            "a1": {"on": {"FINISH_A": "a2"}},
+                            "a2": {"type": "final"},
+                        },
+                    },
+                    "b": {"initial": "b1", "states": {"b1": {}}},
+                },
+            }
+        )
+        interpreter = await Interpreter(machine).start()
+        await interpreter.send("FINISH_A")
+        await self.wait_for_state(interpreter, {"p_final.a.a2"})
+        # The machine is NOT done because region 'b' is not in a final state
+        self.assertNotEqual(
+            interpreter.current_state_ids, {"p_final.finished"}
+        )
+        self.assertTrue(interpreter.status, "running")
+        await interpreter.stop()
+
+    async def test_send_dict_event_object(self) -> None:
+        """Should correctly process an event sent as a dictionary."""
+        machine = create_machine(
+            {
+                "id": "dict_event",
+                "initial": "a",
+                "states": {"a": {"on": {"NEXT": "b"}}, "b": {}},
+            }
+        )
+        interpreter = await Interpreter(machine).start()
+        await interpreter.send({"type": "NEXT", "value": 123})
+        await self.wait_for_state(interpreter, {"dict_event.b"})
+        self.assertEqual(interpreter.current_state_ids, {"dict_event.b"})
+        await interpreter.stop()
+
+    async def test_interpreter_id_matches_machine_id(self) -> None:
+        """The interpreter's ID should be initialized from the machine's ID."""
+        machine = create_machine(
+            {"id": "my-special-id", "initial": "a", "states": {"a": {}}}
+        )
+        interpreter = Interpreter(machine)
+        self.assertEqual(interpreter.id, "my-special-id")
+
+    async def test_transition_action_error_stops_event_loop(self) -> None:
+        """An error in a transition action should stop the event loop."""
+
+        async def failing_action(i, c, e, a):
+            raise ValueError("Transition Action Failed")
+
+        machine = create_machine(
+            {
+                "id": "fail_trans",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "on": {"NEXT": {"target": "b", "actions": "failing"}}
+                    },
+                    "b": {},
+                },
+            },
+            logic=MachineLogic(actions={"failing": failing_action}),
+        )
+
+        interpreter = await Interpreter(machine).start()
+        await interpreter.send("NEXT")
+        await asyncio.sleep(0.01)  # Allow event loop to process
+
+        self.assertTrue(interpreter._event_loop_task.done())
+        with self.assertRaises(ValueError):
+            await interpreter._event_loop_task
+
+        self.assertEqual(interpreter.status, "stopped")
 
 
 if __name__ == "__main__":

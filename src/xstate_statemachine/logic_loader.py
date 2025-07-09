@@ -190,29 +190,6 @@ class LogicLoader:
     ) -> MachineLogic:
         """
         Discovers implementations from modules/instances and builds `MachineLogic`.
-
-        This is the core factory method of the loader. It orchestrates the entire
-        process:
-        1. Aggregates all available logic sources (modules and class instances).
-        2. Extracts all required logic names from the state machine config.
-        3. Searches the sources for matching implementations.
-        4. Populates and returns a `MachineLogic` object.
-
-        Args:
-            machine_config (Dict[str, Any]): The raw machine configuration.
-            logic_modules (Optional[List[Union[str, ModuleType]]]): A list of
-                modules or module paths to search for functions.
-            logic_providers (Optional[List[Any]]): A list of class instances
-                to search for methods.
-
-        Returns:
-            MachineLogic: An instantiated `MachineLogic` object.
-
-        Raises:
-            InvalidConfigError: If `machine_config` is not a dictionary.
-            ImportError: If a module path string cannot be resolved.
-            TypeError: If an item in `logic_modules` is not a string or module.
-            ImplementationMissingError: If a required implementation is not found.
         """
         logger.info("🔍 Starting logic discovery and binding process...")
         if not isinstance(machine_config, dict):
@@ -220,14 +197,10 @@ class LogicLoader:
                 "Machine configuration must be a dictionary."
             )
 
-        # ---------------------------------------------------------------------
-        # 1. Aggregate All Logic Sources
-        # ---------------------------------------------------------------------
         all_modules: List[ModuleType] = list(self._registered_logic_modules)
         if logic_modules:
             for item in logic_modules:
                 module: ModuleType
-                # ✅ FIX: Added explicit type validation to prevent crashes.
                 if isinstance(item, str):
                     module = importlib.import_module(item)
                 elif isinstance(item, ModuleType):
@@ -240,12 +213,8 @@ class LogicLoader:
                 if module not in all_modules:
                     all_modules.append(module)
 
-        # ---------------------------------------------------------------------
-        # 2. Build a Map of All Available Implementations
-        # ---------------------------------------------------------------------
         logic_map: Dict[str, Callable[..., Any]] = {}
 
-        # 🔎 Scan modules for functions
         for module in all_modules:
             logger.debug(
                 "🔎 Scanning module: '%s' for functions...", module.__name__
@@ -253,13 +222,11 @@ class LogicLoader:
             for name, func in inspect.getmembers(module, inspect.isfunction):
                 if name.startswith("_"):
                     continue
-                if name not in logic_map:
-                    logic_map[name] = func
+                logic_map[name] = func
                 camel_name = _snake_to_camel(name)
-                if camel_name not in logic_map:
-                    logic_map[camel_name] = func
+                logic_map[camel_name] = func
 
-        # 🔎 Scan class instances for methods
+        # FIX: Process providers *after* modules so their methods can override.
         if logic_providers:
             for provider in logic_providers:
                 cls_name = provider.__class__.__name__
@@ -272,32 +239,20 @@ class LogicLoader:
                 ):
                     if name.startswith("_"):
                         continue
-                    if name not in logic_map:
-                        logic_map[name] = method
+                    logic_map[name] = method
                     camel_name = _snake_to_camel(name)
-                    if camel_name not in logic_map:
-                        logic_map[camel_name] = method
+                    logic_map[camel_name] = method
 
-        # ---------------------------------------------------------------------
-        # 3. Extract Required Logic Names from Machine Config
-        # ---------------------------------------------------------------------
         required_actions, required_guards, required_services = (
             set(),
             set(),
             set(),
         )
-        # Create a temporary machine to safely traverse the config structure
         temp_machine = MachineNode(config=machine_config, logic=MachineLogic())
         self._extract_logic_from_node(
             temp_machine, required_actions, required_guards, required_services
         )
-        logger.debug("🎯 Required Actions: %s", required_actions or "None")
-        logger.debug("🛡️ Required Guards: %s", required_guards or "None")
-        logger.debug("📞 Required Services: %s", required_services or "None")
 
-        # ---------------------------------------------------------------------
-        # 4. Discover and Bind Implementations
-        # ---------------------------------------------------------------------
         discovered_logic = {"actions": {}, "guards": {}, "services": {}}
         logic_definitions = [
             ("Action", required_actions, discovered_logic["actions"]),
