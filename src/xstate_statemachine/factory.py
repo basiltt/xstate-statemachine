@@ -22,25 +22,7 @@ def create_machine(
     logic_modules: Optional[List[Union[str, ModuleType]]] = None,
     logic_providers: Optional[List[Any]] = None,
 ) -> MachineNode:
-    """
-    Creates a state machine instance from a config and implementation logic.
-
-    This factory supports three ways of providing logic, in order of priority:
-    1.  **logic**: An explicit, pre-built `MachineLogic` object.
-    2.  **logic_modules/logic_providers**: Lists of modules or class instances
-        for automatic discovery of implementations.
-
-    Args:
-        config (Dict[str, Any]): The state machine's definition.
-        logic (Optional[MachineLogic]): An explicit `MachineLogic` object.
-        logic_modules (Optional[List[Union[str, ModuleType]]]): A list of modules
-            or module paths for auto-discovery of functions.
-        logic_providers (Optional[List[Any]]): A list of class instances for
-            auto-discovery of methods.
-
-    Returns:
-        MachineNode: The root node of the fully constructed state machine graph.
-    """
+    """Creates a state machine instance from a config and implementation logic."""
     final_logic: MachineLogic
     if logic:
         logger.info("🧠 Using explicitly provided MachineLogic instance.")
@@ -53,16 +35,18 @@ def create_machine(
         final_logic = loader.discover_and_build_logic(
             config,
             logic_modules=logic_modules,
-            logic_providers=logic_providers,  # Pass providers to the loader
+            logic_providers=logic_providers,
         )
 
     machine_id = config.get("id")
+    # FIX: Add explicit validation for the machine ID type.
+    if not isinstance(machine_id, str):
+        raise InvalidConfigError(
+            "Machine configuration 'id' must be a string."
+        )
+
     logger.info("🏭 Creating machine with id: '%s'", machine_id)
-    if (
-        not isinstance(config, dict)
-        or "states" not in config
-        or not machine_id
-    ):
+    if "states" not in config:
         raise InvalidConfigError(
             "Invalid config: must be a dict with 'id' and 'states' keys."
         )

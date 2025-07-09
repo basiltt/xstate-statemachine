@@ -1,4 +1,5 @@
 # tests/test_sync_interpreter.py
+import json
 
 # -----------------------------------------------------------------------------
 # 🧪 Test Suite: SyncInterpreter
@@ -943,6 +944,236 @@ class TestSyncInterpreter(unittest.TestCase):
             "Could not resolve target state 'm.nonexistent'",
         ):
             SyncInterpreter.from_snapshot(snapshot, machine)
+
+    def test_invoke_service_with_no_on_done_handler(self) -> None:
+        """A service invocation without an onDone handler should complete without error."""
+        logic = MachineLogic(services={"doNothing": lambda i, c, e: "data"})
+        machine = create_machine(
+            {
+                "id": "m",
+                "initial": "working",
+                "states": {"working": {"invoke": {"src": "doNothing"}}},
+            },
+            logic,
+        )
+        # The machine should start and simply remain in the 'working' state.
+        interpreter = SyncInterpreter(machine).start()
+        self.assertEqual(interpreter.current_state_ids, {"m.working"})
+
+    def test_transition_with_multiple_actions_in_list(self) -> None:
+        """Should execute a sequence of actions defined in a list."""
+        call_order = []
+        logic = MachineLogic(
+            actions={
+                "action1": lambda i, c, e, a: call_order.append(1),
+                "action2": lambda i, c, e, a: call_order.append(2),
+            }
+        )
+        machine = create_machine(
+            {
+                "id": "m",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "on": {
+                            "E": {
+                                "target": "b",
+                                "actions": ["action1", "action2"],
+                            }
+                        }
+                    },
+                    "b": {},
+                },
+            },
+            logic,
+        )
+        interpreter = SyncInterpreter(machine).start()
+        interpreter.send("E")
+        self.assertEqual(call_order, [1, 2])
+
+    def test_complex_nested_entry_actions(self) -> None:
+        """Should fire entry actions from the outermost to innermost state."""
+        call_order = []
+        logic = MachineLogic(
+            actions={
+                "enterA": lambda i, c, e, a: call_order.append("A"),
+                "enterB": lambda i, c, e, a: call_order.append("B"),
+                "enterC": lambda i, c, e, a: call_order.append("C"),
+            }
+        )
+        machine = create_machine(
+            {
+                "id": "m",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "entry": "enterA",
+                        "initial": "b",
+                        "states": {
+                            "b": {
+                                "entry": "enterB",
+                                "initial": "c",
+                                "states": {"c": {"entry": "enterC"}},
+                            }
+                        },
+                    }
+                },
+            },
+            logic,
+        )
+        SyncInterpreter(machine).start()
+        self.assertEqual(call_order, ["A", "B", "C"])
+
+    def test_complex_nested_exit_actions(self) -> None:
+        """Should fire exit actions from the innermost to outermost state."""
+        call_order = []
+        logic = MachineLogic(
+            actions={
+                "exitA": lambda i, c, e, a: call_order.append("A"),
+                "exitB": lambda i, c, e, a: call_order.append("B"),
+                "exitC": lambda i, c, e, a: call_order.append("C"),
+            }
+        )
+        machine = create_machine(
+            {
+                "id": "m",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "exit": "exitA",
+                        "initial": "b",
+                        "states": {
+                            "b": {
+                                "exit": "exitB",
+                                "initial": "c",
+                                "states": {
+                                    "c": {
+                                        "exit": "exitC",
+                                        "on": {"FINISH": "#m.d"},
+                                    }
+                                },
+                            }
+                        },
+                    },
+                    "d": {},
+                },
+            },
+            logic,
+        )
+        interpreter = SyncInterpreter(machine).start()
+        interpreter.send("FINISH")
+        self.assertEqual(call_order, ["C", "B", "A"])
+
+    def test_transition_with_unhandled_event(self) -> None:
+        """Should remain in the same state if an event is unhandled."""
+        machine = create_machine(
+            {
+                "id": "m",
+                "initial": "a",
+                "states": {"a": {"on": {"REAL_EVENT": "b"}}, "b": {}},
+            }
+        )
+        interpreter = SyncInterpreter(machine).start()
+        interpreter.send("FAKE_EVENT")
+        self.assertEqual(interpreter.current_state_ids, {"m.a"})
+
+    def test_self_transition_on_state(self) -> None:
+        """An external self-transition should re-execute entry/exit actions."""
+        exit_action = MagicMock()
+        entry_action = MagicMock()
+        machine = create_machine(
+            {
+                "id": "m",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "on": {"LOOP": ".a"},
+                        "entry": "onEnter",
+                        "exit": "onExit",
+                    }
+                },
+            },
+            logic=MachineLogic(
+                actions={"onEnter": entry_action, "onExit": exit_action}
+            ),
+        )
+
+        interpreter = SyncInterpreter(machine).start()
+        entry_action.assert_called_once()
+        exit_action.assert_not_called()
+
+        interpreter.send("LOOP")
+        self.assertEqual(entry_action.call_count, 2)
+        self.assertEqual(exit_action.call_count, 1)
+
+    def test_start_on_already_started_interpreter(self) -> None:
+        """Calling start() on a running SyncInterpreter should be a no-op."""
+        machine = create_machine(
+            {"id": "m", "initial": "a", "states": {"a": {}}}
+        )
+        interpreter = SyncInterpreter(machine).start()
+        # To verify it's a no-op, we can check that a plugin hook isn't called again.
+        mock_plugin = MagicMock(spec=PluginBase)
+        interpreter.use(mock_plugin)
+        interpreter.start()  # Second call
+        mock_plugin.on_interpreter_start.assert_not_called()
+
+    def test_stop_on_already_stopped_interpreter(self) -> None:
+        """Calling stop() on a stopped SyncInterpreter should be a no-op."""
+        machine = create_machine(
+            {"id": "m", "initial": "a", "states": {"a": {}}}
+        )
+        interpreter = SyncInterpreter(machine).start()
+        interpreter.stop()
+
+        mock_plugin = MagicMock(spec=PluginBase)
+        interpreter.use(mock_plugin)
+        interpreter.stop()  # Second call
+        mock_plugin.on_interpreter_stop.assert_not_called()
+
+    def test_snapshot_of_parallel_state(self) -> None:
+        """Should correctly snapshot a machine in a parallel state."""
+        machine = create_machine(
+            {
+                "id": "p",
+                "type": "parallel",
+                "states": {
+                    "a": {"initial": "a1", "states": {"a1": {}}},
+                    "b": {"initial": "b1", "states": {"b1": {}}},
+                },
+            }
+        )
+        interpreter = SyncInterpreter(machine).start()
+        snapshot_str = interpreter.get_snapshot()
+        snapshot = json.loads(snapshot_str)
+        self.assertEqual(set(snapshot["state_ids"]), {"p.a.a1", "p.b.b1"})
+
+    def test_final_state_in_parallel_machine_triggers_onDone(self) -> None:
+        """A final state in one parallel region should NOT trigger onDone alone."""
+        machine = create_machine(
+            {
+                "id": "p_final",
+                "type": "parallel",
+                "onDone": "finished",
+                "states": {
+                    "a": {
+                        "initial": "a1",
+                        "states": {
+                            "a1": {"on": {"FINISH_A": "a2"}},
+                            "a2": {"type": "final"},
+                        },
+                    },
+                    "b": {"initial": "b1", "states": {"b1": {}}},
+                },
+                "finished": {},
+            }
+        )
+        interpreter = SyncInterpreter(machine).start()
+        interpreter.send("FINISH_A")
+        # Still in the parallel state because region 'b' is not done
+        self.assertEqual(
+            interpreter.current_state_ids, {"p_final.a.a2", "p_final.b.b1"}
+        )
 
 
 if __name__ == "__main__":

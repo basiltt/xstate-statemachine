@@ -296,7 +296,6 @@ class TestLogicLoader(unittest.TestCase):
         )
         self.assertIn("a_guard", machine.logic.guards)
 
-        # To verify which one was picked, we can inspect the source file of the function object
         guard_func = machine.logic.guards["a_guard"]
         self.assertIn("conflict_module_b.py", inspect.getsourcefile(guard_func))  # type: ignore
 
@@ -411,8 +410,6 @@ class TestLogicLoader(unittest.TestCase):
         # Correctly register the imported module object
         loader.register_logic_module(temp_logic_for_testing)
 
-        # discover_and_build_logic should now find the logic without needing
-        # it to be passed in the local `logic_modules` argument.
         logic = loader.discover_and_build_logic(_MACHINE_CONFIG)
         self.assertIn("an_action", logic.actions)
         self.assertIs(
@@ -498,8 +495,6 @@ class TestLogicLoader(unittest.TestCase):
             logic_providers=[MyProvider()],
         )
 
-        # The logic_map should prioritize the provider's method.
-        # Check that the bound action is a method bound to the provider instance.
         action_func = machine.logic.actions["factory_action"]
         self.assertTrue(
             hasattr(action_func, "__self__"), "Action should be a bound method"

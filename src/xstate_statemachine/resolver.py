@@ -31,7 +31,7 @@ def resolve_target_state(
         from the machine root (e.g., "#machine.state.child").
     2.  **Relative**: If the target starts with '.', it's a relative path
         from the parent of the reference state (or the state itself if it's the root).
-    3.  **Sibling**: Otherwise, it's treated as a sibling of the reference
+    3.  **Sibling/Ancestor**: Otherwise, it's treated as a sibling of the reference
         state, bubbling up through ancestors if not found immediately.
 
     Args:
@@ -46,7 +46,6 @@ def resolve_target_state(
                             state node in the machine.
         TypeError: If the provided target is not a string.
     """
-    # 🧪 Validate input to prevent downstream errors.
     if not isinstance(target, str):
         raise TypeError(
             f"Transition target must be a string, but got {type(target)}"
@@ -54,7 +53,9 @@ def resolve_target_state(
 
     machine = reference_state.machine
 
-    # 1. 🆔 Absolute path from root (e.g., "#some.state")
+    if target == ".":
+        return reference_state.parent or reference_state
+
     if target.startswith("#"):
         path = target[1:].split(".")
         if path[0] != machine.key:
@@ -66,26 +67,27 @@ def resolve_target_state(
             node = node.states[key]
         return node
 
-    # 2. 🎯 Relative path from parent (e.g., ".sibling")
     if target.startswith("."):
         path = target[1:].split(".")
-        # ✨ FIX: If the reference state is the root, resolve from the root itself.
-        # Otherwise, resolve from the parent.
         start_node = reference_state.parent or reference_state
         return _find_descendant(start_node, path)
 
-    # 3. 👯 Sibling or ancestor's child (e.g., "other_state")
     path = target.split(".")
     node = reference_state
-    while node.parent:
-        try:
-            # ✅ Attempt to find the target as a descendant of the parent.
-            return _find_descendant(node.parent, path)
-        except StateNotFoundError:
-            # 🤷 Not found, so bubble up to the next ancestor.
-            node = node.parent
+    while node:  # FIX: Change to `while node` to include the root machine.
+        # Check if the target is a direct key of the current node
+        if path[0] == node.key and len(path) == 1:
+            return node
 
-    # ❌ If we've bubbled up to the root and still not found it, fail.
+        # Check for descendants if the node has a parent
+        if node.parent:
+            try:
+                return _find_descendant(node.parent, path)
+            except StateNotFoundError:
+                pass  # Not found, continue bubbling up
+
+        node = node.parent
+
     raise StateNotFoundError(target, reference_state.id)
 
 

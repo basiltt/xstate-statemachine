@@ -482,6 +482,41 @@ class StateNode(Generic[TContext, TEvent]):
         """Provides a developer-friendly string representation."""
         return f"StateNode(id='{self.id}', type='{self.type}')"
 
+    def _get_ancestors(self) -> Set["StateNode"]:
+        """Gets a set of all ancestors of a node, including the node itself."""
+        ancestors = set()
+        current: Optional[StateNode] = self
+        while current:
+            ancestors.add(current)
+            current = current.parent
+        return ancestors
+
+    @staticmethod
+    def _is_descendant(
+        node: "StateNode", ancestor: Optional["StateNode"]
+    ) -> bool:
+        """Checks if a node is a descendant of a specified ancestor."""
+        if not ancestor:
+            return True
+        return node.id.startswith(f"{ancestor.id}.") or node == ancestor
+
+    def _get_path_to_state(
+        self,
+        to_state: "StateNode",
+        *,
+        stop_at: Optional["StateNode"] = None,
+    ) -> List["StateNode"]:
+        """Builds the list of states to enter to reach a target state."""
+        path: List["StateNode"] = []
+        current: Optional["StateNode"] = to_state
+        while current and current is not stop_at:
+            path.append(current)
+            current = current.parent
+        if not path:
+            return []
+        path.reverse()
+        return path
+
 
 class MachineNode(StateNode[TContext, TEvent]):
     """The root node of a state machine, with added developer utilities."""
