@@ -46,48 +46,10 @@ def set_sync_error(i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition):
     logging.error(f"❌ Could not save document: {ctx['error']}")
 
 
-async def spawn_collaborator_cursor(
-    i: Interpreter, ctx: Dict, e: Event, ad: ActionDefinition
-):
-    # ✅ FIX: This action now needs to be explicitly implemented to pass context.
-    # The interpreter's built-in `spawn_` only works for simple cases.
-    # To pass initial context, we do it manually.
-    user_id = e.payload.get("user_id")
-    logging.info(f"👤 User '{user_id}' joined. Spawning cursor actor.")
-
-    # Get the actor's machine definition from the service
-    actor_machine_def_callable = i.machine.logic.services.get(
-        "collaborator_cursor"
-    )
-    if not actor_machine_def_callable:
-        logging.error("Could not find 'collaborator_cursor' service to spawn.")
-        return
-
-    actor_machine = actor_machine_def_callable(i, ctx, e)
-
-    # Set the initial context for this specific actor
-    actor_machine.initial_context["user_id"] = user_id
-    actor_machine.initial_context["color"] = random.choice(
-        ["orange", "purple", "green"]
-    )
-
-    # The rest is the same as the internal _spawn_actor logic
-    actor_id = f"{i.id}:collaborator_cursor:{user_id}"  # Use a predictable ID
-    actor_interpreter = Interpreter(actor_machine)
-    actor_interpreter.parent = i
-    actor_interpreter.id = actor_id
-    await actor_interpreter.start()
-
-    i._actors[actor_id] = actor_interpreter
-    logging.info(f"✅ Actor '{actor_id}' spawned successfully.")
-
-
 async def destroy_collaborator_cursor(
     i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
 ):
     user_id_to_remove = e.payload.get("user_id")
-
-    # ✅ FIX: Find the actor by inspecting its internal context
     actor_to_stop = next(
         (
             actor
@@ -102,13 +64,8 @@ async def destroy_collaborator_cursor(
             f"👤 Collaborator '{user_id_to_remove}' left. Destroying cursor actor."
         )
         await actor_to_stop.stop()
-        # It's safer to remove the actor after stopping it
         if actor_to_stop.id in i._actors:
             del i._actors[actor_to_stop.id]
-    else:
-        logging.warning(
-            f"Could not find actor for user '{user_id_to_remove}' to destroy."
-        )
 
 
 # --- Main Machine Services ---
@@ -138,10 +95,22 @@ def load_actor_defs():
 
 
 def collaborator_cursor(i: Interpreter, ctx: Dict, e: Event) -> "MachineNode":
-    """Service that returns the machine definition for a collaborator cursor actor."""
+    """
+    This service is called by the interpreter's `spawn_` logic.
+    It uses the event payload to set the initial context of the new actor.
+    """
     load_actor_defs()
-    # Note: We return a *copy* of the config to avoid modifying the original
-    return create_machine(_actor_config.copy(), logic=_actor_logic)
+    # Create a fresh copy of the config to avoid state pollution
+    machine_config = _actor_config.copy()
+
+    # ✅ FIX: Set initial context for the spawned actor
+    machine_config["context"] = machine_config.get("context", {})
+    machine_config["context"]["user_id"] = e.payload.get("user_id")
+    machine_config["context"]["color"] = random.choice(
+        ["orange", "purple", "green"]
+    )
+
+    return create_machine(machine_config, logic=_actor_logic)
 
 
 def actor_update_position(

@@ -1,0 +1,22 @@
+{
+  "context": {
+    "details": null,
+    "service_type": null
+  },
+  "id": "ancillaryServiceActor",
+  "initial": "active",
+  "states": {
+    "active": {
+      "on": {
+        "CONFIRM": "confirmed",
+        "UPDATE_DETAILS": {
+          "actions": "update_details"
+        }
+      }
+    },
+    "confirmed": {
+      "entry": "notify_parent_confirmed",
+      "type": "final"
+    }
+  }
+}

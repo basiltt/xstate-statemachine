@@ -161,12 +161,10 @@ class LogicLoader:
 
         for action_def in all_actions:
             # ✅ THE FIX IS HERE
-            # If the action is a spawn action, its implementation is a service.
             if action_def.type.startswith("spawn_"):
                 service_name = action_def.type.replace("spawn_", "")
                 services.add(service_name)
             else:
-                # Otherwise, it's a regular action.
                 actions.add(action_def.type)
 
         for invoke_def in node.invoke:
@@ -174,7 +172,6 @@ class LogicLoader:
                 services.add(invoke_def.src)
             for transition in invoke_def.on_done + invoke_def.on_error:
                 for action_def in transition.actions:
-                    # Also check for spawn actions inside invoke handlers
                     if action_def.type.startswith("spawn_"):
                         service_name = action_def.type.replace("spawn_", "")
                         services.add(service_name)

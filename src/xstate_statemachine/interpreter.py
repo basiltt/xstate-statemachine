@@ -292,14 +292,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         actor_machine: Optional[MachineNode] = None
 
         if isinstance(actor_source, MachineNode):
-            # Case 1: The service IS the MachineNode directly.
             actor_machine = actor_source
         elif callable(actor_source):
-            # Case 2: The service is a callable that RETURNS the MachineNode.
-            # We need to call it, similar to how invoke works.
-            spawn_event = Event(f"spawn.{actor_machine_key}")
-            # The service that returns a machine definition should be synchronous.
-            result = actor_source(self, self.context, spawn_event)
+            # ✅ FIX: Pass the original event that triggered the spawn action
+            # to the service that provides the machine definition.
+            result = actor_source(self, self.context, event)
             if isinstance(result, MachineNode):
                 actor_machine = result
 
@@ -310,14 +307,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             )
 
         actor_id = f"{self.id}:{actor_machine_key}:{uuid.uuid4()}"
-        # Ensure child actor is also an async Interpreter
         actor_interpreter = Interpreter(actor_machine)
         actor_interpreter.parent = self
         actor_interpreter.id = actor_id
         await actor_interpreter.start()
 
-        # ✅ FIX: The actor reference is no longer placed in the context.
-        # It is managed internally by the parent interpreter.
         self._actors[actor_id] = actor_interpreter
         logger.info("✅ Actor '%s' spawned successfully.", actor_id)
 

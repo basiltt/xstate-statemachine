@@ -1,0 +1,104 @@
+{
+  "context": {
+    "ancillary_services": {},
+    "booking_reference": null,
+    "error": null,
+    "payment_id": null,
+    "search_criteria": null,
+    "selected_flight": null
+  },
+  "id": "flightBooking",
+  "initial": "browsing",
+  "states": {
+    "browsing": {
+      "on": {
+        "SEARCH_FLIGHTS": {
+          "actions": "set_search_criteria",
+          "target": "searching"
+        }
+      }
+    },
+    "complete": {
+      "type": "final"
+    },
+    "confirmed": {
+      "entry": "generate_booking_reference",
+      "onDone": "complete",
+      "states": {
+        "booking_management": {
+          "initial": "viewing",
+          "states": {
+            "cancelled": {
+              "type": "final"
+            },
+            "viewing": {
+              "on": {
+                "ADD_BAGGAGE": {
+                  "actions": "spawn_ancillary_service"
+                },
+                "ADD_SEAT": {
+                  "actions": "spawn_ancillary_service"
+                }
+              },
+              "type": "final"
+            }
+          }
+        },
+        "checkin_status": {
+          "initial": "waiting_for_window",
+          "states": {
+            "checkin_open": {
+              "type": "final"
+            },
+            "waiting_for_window": {
+              "after": {
+                "5000": "checkin_open"
+              },
+              "entry": "log_checkin_wait"
+            }
+          }
+        }
+      },
+      "type": "parallel"
+    },
+    "paying": {
+      "invoke": {
+        "onDone": {
+          "actions": "store_payment_id",
+          "target": "confirmed"
+        },
+        "onError": {
+          "actions": "set_payment_error",
+          "target": "payment_failed"
+        },
+        "src": "process_payment_service"
+      }
+    },
+    "payment_failed": {
+      "on": {
+        "RETRY_PAYMENT": "paying"
+      }
+    },
+    "results": {
+      "on": {
+        "SELECT_FLIGHT": {
+          "actions": "set_selected_flight",
+          "target": "paying"
+        }
+      }
+    },
+    "searching": {
+      "invoke": {
+        "onDone": {
+          "actions": "store_flight_options",
+          "target": "results"
+        },
+        "onError": {
+          "actions": "set_search_error",
+          "target": "browsing"
+        },
+        "src": "search_flights_service"
+      }
+    }
+  }
+}

@@ -36,7 +36,7 @@ async def simulate_user_activity(interpreter: Interpreter):
     await interpreter.send("USER_JOINED", user_id="Alice")
 
     await asyncio.sleep(1)
-    # ✅ FIX: Find the actor by checking its context
+    # ✅ FIX: Find the actor robustly by checking its context.
     alice_actor = next(
         (
             actor
@@ -50,6 +50,8 @@ async def simulate_user_activity(interpreter: Interpreter):
         await alice_actor.send(
             "UPDATE_CURSOR_POS", position={"x": 100, "y": 150}
         )
+    else:
+        logging.error("Runner could not find Alice's actor to move cursor.")
 
     await asyncio.sleep(2)
     logging.info("\n--- User 'Bob' joins the session ---")
@@ -68,9 +70,7 @@ async def main():
     with open("collaborative_editor.json", "r") as f:
         config = json.load(f)
 
-    # ✅ FIX: Since we are now implementing the spawn action ourselves, we don't need
-    # the LogicLoader to do anything special with a "spawn_" prefix.
-    # It will discover `spawn_collaborator_cursor` just like any other action.
+    # The LogicLoader will now correctly find `collaborator_cursor` as a required service.
     machine = create_machine(
         config, logic_modules=[collaborative_editor_logic]
     )
@@ -78,12 +78,11 @@ async def main():
 
     logging.info(f"Initial states: {interpreter.current_state_ids}")
 
-    # Start the background simulation of other users
     user_activity_task = asyncio.create_task(
         simulate_user_activity(interpreter)
     )
 
-    # Simulate the primary user typing
+    # ... (rest of the simulation is the same) ...
     await asyncio.sleep(1)
     logging.info("\n--- Primary user starts typing ---")
     await interpreter.send("KEY_PRESS", key="H")
@@ -104,7 +103,9 @@ async def main():
     logging.info("\n--- Editor Summary ---")
     logging.info(f"Final state: {interpreter.current_state_ids}")
     serializable_context = interpreter.context.copy()
-    serializable_context.pop("actors", None)
+    serializable_context.pop(
+        "actors", None
+    )  # Remove actors if they were added
     logging.info(
         f"Final context: {json.dumps(serializable_context, indent=2)}"
     )
