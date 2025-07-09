@@ -8,7 +8,7 @@
 # -----------------------------------------------------------------------------
 
 from typing import Any, Dict, Optional, List, Union
-from types import ModuleType  # ✨ NEW
+from types import ModuleType
 from .models import MachineNode
 from .machine_logic import MachineLogic
 from .exceptions import InvalidConfigError
@@ -19,18 +19,24 @@ from .logic_loader import LogicLoader
 def create_machine(
     config: Dict[str, Any],
     logic: Optional[MachineLogic] = None,
-    # ♻️ REFACTORED: Updated type hint to allow module objects
     logic_modules: Optional[List[Union[str, ModuleType]]] = None,
+    logic_providers: Optional[List[Any]] = None,
 ) -> MachineNode:
     """
     Creates a state machine instance from a config and implementation logic.
 
+    This factory supports three ways of providing logic, in order of priority:
+    1.  **logic**: An explicit, pre-built `MachineLogic` object.
+    2.  **logic_modules/logic_providers**: Lists of modules or class instances
+        for automatic discovery of implementations.
+
     Args:
         config (Dict[str, Any]): The state machine's definition.
-        logic (Optional[MachineLogic]): An explicit `MachineLogic` object. If
-            provided, `logic_modules` are ignored.
-        logic_modules (Optional[List[Union[str, ModuleType]]]): A list of module
-            paths (str) or imported module objects for auto-discovery.
+        logic (Optional[MachineLogic]): An explicit `MachineLogic` object.
+        logic_modules (Optional[List[Union[str, ModuleType]]]): A list of modules
+            or module paths for auto-discovery of functions.
+        logic_providers (Optional[List[Any]]): A list of class instances for
+            auto-discovery of methods.
 
     Returns:
         MachineNode: The root node of the fully constructed state machine graph.
@@ -43,9 +49,11 @@ def create_machine(
         logger.info(
             "🤖 No explicit logic provided, attempting auto-discovery..."
         )
-        logic_loader_instance = LogicLoader.get_instance()
-        final_logic = logic_loader_instance.discover_and_build_logic(
-            config, logic_modules
+        loader = LogicLoader.get_instance()
+        final_logic = loader.discover_and_build_logic(
+            config,
+            logic_modules=logic_modules,
+            logic_providers=logic_providers,  # Pass providers to the loader
         )
 
     machine_id = config.get("id")
