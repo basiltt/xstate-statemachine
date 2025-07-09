@@ -1,13 +1,8 @@
-# examples/user_auth_logic.py
+# examples/sync/basic/class_approach/without_logic_loader/user_auth_logic.py
 
 import logging
-import os
-from typing import Dict, Any
-import sys
+from typing import Dict
 
-sys.path.insert(
-    0, os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-)
 from src.xstate_statemachine import SyncInterpreter, Event, ActionDefinition
 
 
@@ -27,8 +22,8 @@ class UserAuthLogic:
         """Action to set the username in context upon successful login."""
         c["username"] = e.data.get("username")
         c["error"] = None
-        c["credentials"] = None  # Clear credentials after use
-        c["loginAttempts"] = 0  # Reset on success
+        c["credentials"] = None
+        c["loginAttempts"] = 0
         logging.info(f"✅ User '{c['username']}' successfully logged in.")
 
     def set_error(
@@ -42,8 +37,7 @@ class UserAuthLogic:
         self, i: SyncInterpreter, c: Dict, e: Event, a: ActionDefinition
     ) -> None:
         """Action to clear user data on logout."""
-        is_logged_in = c.get("username") is not None
-        if is_logged_in:
+        if c.get("username"):
             logging.info(f"👤 User '{c['username']}' logged out.")
         c["username"] = None
         c["error"] = None
@@ -67,17 +61,11 @@ class UserAuthLogic:
     def attempt_login(
         self, i: SyncInterpreter, c: Dict, e: Event
     ) -> Dict[str, str]:
-        """
-        Synchronous service to simulate a login attempt.
-        ✅ FIX: Reads credentials from context instead of event payload.
-        """
+        """Synchronous service to simulate a login attempt."""
         credentials = c.get("credentials", {})
         username = credentials.get("username")
         password = credentials.get("password")
-        logging.info(
-            f"🔐 Attempting login for user '{username}' from context..."
-        )
-
+        logging.info(f"🔐 Attempting login for user '{username}'...")
         if username == "admin" and password == "password123":
             return {"username": username}
         else:

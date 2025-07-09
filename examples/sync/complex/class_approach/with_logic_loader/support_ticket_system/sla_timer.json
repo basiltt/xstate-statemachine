@@ -1,0 +1,17 @@
+{
+  "context": {
+    "duration": 5000
+  },
+  "id": "slaTimer",
+  "initial": "running",
+  "states": {
+    "breached": {
+      "entry": "notify_parent_breach"
+    },
+    "running": {
+      "after": {
+        "5000": "breached"
+      }
+    }
+  }
+}

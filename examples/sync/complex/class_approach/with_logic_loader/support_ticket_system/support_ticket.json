@@ -1,0 +1,60 @@
+{
+  "context": {
+    "assignee": null,
+    "priority": "low",
+    "resolution_notes": null,
+    "sla_timer_id": null,
+    "summary": null,
+    "ticket_id": null
+  },
+  "id": "supportTicket",
+  "initial": "unassigned",
+  "states": {
+    "assigned": {
+      "on": {
+        "ESCALATE": {
+          "actions": "escalate_priority",
+          "target": "escalated"
+        },
+        "RESOLVE": {
+          "actions": [
+            "set_resolution_notes",
+            "stop_sla_timer"
+          ],
+          "target": "resolved"
+        }
+      }
+    },
+    "escalated": {
+      "entry": "log_escalation",
+      "on": {
+        "RESOLVE": {
+          "actions": [
+            "set_resolution_notes",
+            "stop_sla_timer"
+          ],
+          "target": "resolved"
+        }
+      }
+    },
+    "resolved": {
+      "type": "final"
+    },
+    "unassigned": {
+      "entry": "spawn_sla_timer",
+      "on": {
+        "ASSIGN": {
+          "actions": "assign_to_agent",
+          "guard": "is_valid_assignee",
+          "target": "assigned"
+        },
+        "ESCALATE": {
+          "actions": "escalate_priority"
+        },
+        "SLA_BREACH": {
+          "target": "escalated"
+        }
+      }
+    }
+  }
+}

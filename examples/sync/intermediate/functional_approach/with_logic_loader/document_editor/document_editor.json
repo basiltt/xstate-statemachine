@@ -43,8 +43,12 @@
     },
     "saving": {
       "invoke": {
-        "onDone": "idle",
-        "onError": "editing",
+        "onDone": {
+          "target": "idle"
+        },
+        "onError": {
+          "target": "editing"
+        },
         "src": "save_document"
       }
     }

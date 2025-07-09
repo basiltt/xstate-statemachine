@@ -1,27 +1,24 @@
-# examples/sync_vending_machine.py
+# examples/sync/easy/functional_approach/without_logic_loader/vending_machine/vending_machine_runner.py
 
 # -----------------------------------------------------------------------------
-# 🥤 Simple Example: Synchronous Vending Machine
+# 🥤 Easy Example: Synchronous Vending Machine
 # -----------------------------------------------------------------------------
-# This script demonstrates the basic usage of the `SyncInterpreter`.
+# This script demonstrates the most direct usage of the `SyncInterpreter`.
 #
 # Key Concepts Illustrated:
 #   - Synchronous Execution: Uses the `SyncInterpreter` for a blocking workflow.
-#   - Inline Configuration: The machine logic is defined as a Python dictionary.
-#   - Explicit Logic Binding: A `MachineLogic` object is created manually.
+#   - External JSON Config: The machine logic is loaded from a separate file.
+#   - Explicit Logic Binding: A `MachineLogic` object is created manually,
+#     mapping function objects directly to the names in the config.
 #   - Functional Approach: Actions and guards are standalone functions.
 # -----------------------------------------------------------------------------
 
+import json
 import logging
 import os
+import sys
 from typing import Any, Dict
 
-# Make the library accessible in the examples folder
-import sys
-
-sys.path.insert(
-    0, os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-)
 
 from src.xstate_statemachine import (
     create_machine,
@@ -30,9 +27,7 @@ from src.xstate_statemachine import (
     Event,
 )
 
-# -----------------------------------------------------------------------------
-# 🪵 Logger Configuration
-# -----------------------------------------------------------------------------
+# --- Logger Configuration ---
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 
@@ -72,50 +67,24 @@ def run_vending_machine_simulation():
     """Initializes and runs the vending machine simulation."""
     print("\n--- 🥤 Synchronous Vending Machine Simulation ---")
 
-    # 📜 1. Define the machine configuration as a dictionary.
-    vending_machine_config = {
-        "id": "vendingMachine",
-        "initial": "idle",
-        "context": {"coins": 0},
-        "states": {
-            "idle": {
-                "on": {
-                    "INSERT_COIN": {
-                        "target": "selecting",
-                        "actions": "addCoin",
-                    }
-                }
-            },
-            "selecting": {
-                "on": {
-                    "INSERT_COIN": {"actions": "addCoin"},
-                    "SELECT_DRINK": {
-                        "target": "dispensing",
-                        "guard": "enoughCoins",
-                    },
-                }
-            },
-            "dispensing": {
-                "entry": ["dispenseDrink"],
-                "on": {"": "idle"},  # Immediate transition back to idle
-            },
-        },
-    }
+    # 1. Load the machine configuration from a JSON file.
+    with open("vending_machine.json", "r") as f:
+        vending_machine_config = json.load(f)
 
-    # 🧠 2. Manually create the MachineLogic instance (no auto-discovery).
+    # 2. Manually create the MachineLogic instance (no auto-discovery).
     vending_logic = MachineLogic(
         actions={
-            "addCoin": add_coin_action,
-            "dispenseDrink": dispense_drink_action,
+            "add_coin": add_coin_action,
+            "dispense_drink": dispense_drink_action,
         },
-        guards={"enoughCoins": enough_coins_guard},
+        guards={"enough_coins": enough_coins_guard},
     )
 
-    # 🏭 3. Create the machine and the synchronous interpreter.
+    # 3. Create the machine and the synchronous interpreter.
     machine = create_machine(vending_machine_config, logic=vending_logic)
     interpreter = SyncInterpreter(machine)
 
-    # ▶️ 4. Start the machine and run the simulation.
+    # 4. Start the machine and run the simulation.
     interpreter.start()
     logging.info(f"Initial state: {interpreter.current_state_ids}")
 

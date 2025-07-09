@@ -14,9 +14,7 @@
       }
     },
     "loggedOut": {
-      "entry": [
-        "clear_context"
-      ],
+      "entry": "clear_context",
       "on": {
         "LOGIN": {
           "actions": [

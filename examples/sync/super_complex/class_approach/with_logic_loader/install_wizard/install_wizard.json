@@ -1,0 +1,83 @@
+{
+  "context": {
+    "config": {
+      "admin": null,
+      "database": null,
+      "network": null
+    },
+    "error": null,
+    "install_log": []
+  },
+  "id": "installWizard",
+  "initial": "welcome",
+  "states": {
+    "configuring": {
+      "initial": "network",
+      "onDone": "installing",
+      "states": {
+        "admin_user": {
+          "on": {
+            "SUBMIT_ADMIN": {
+              "actions": "store_admin_config",
+              "target": "config_complete"
+            }
+          }
+        },
+        "config_complete": {
+          "type": "final"
+        },
+        "database": {
+          "on": {
+            "SUBMIT_DATABASE": {
+              "actions": "store_database_config",
+              "target": "admin_user"
+            }
+          }
+        },
+        "network": {
+          "on": {
+            "SUBMIT_NETWORK": {
+              "actions": "store_network_config",
+              "target": "database"
+            }
+          }
+        }
+      }
+    },
+    "failed": {
+      "entry": "log_failure"
+    },
+    "finished": {
+      "entry": "log_success",
+      "type": "final"
+    },
+    "installing": {
+      "entry": "log_install_start",
+      "initial": "copying_files",
+      "invoke": {
+        "onDone": {
+          "target": ".install_complete"
+        },
+        "onError": {
+          "actions": "set_error",
+          "target": "failed"
+        },
+        "src": "run_installation_steps"
+      },
+      "onDone": "finished",
+      "states": {
+        "copying_files": {},
+        "finalizing": {},
+        "install_complete": {
+          "type": "final"
+        },
+        "running_scripts": {}
+      }
+    },
+    "welcome": {
+      "on": {
+        "BEGIN_SETUP": "configuring"
+      }
+    }
+  }
+}
