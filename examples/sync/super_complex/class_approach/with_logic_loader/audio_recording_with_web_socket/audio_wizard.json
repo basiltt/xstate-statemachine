@@ -1,0 +1,209 @@
+{
+  "id": "Audio recording with websocket",
+  "states": {
+    "mediarecorder": {
+      "initial": "ready",
+      "states": {
+        "ready": {
+          "on": {
+            "startOrResumeRecording": [
+              {
+                "actions": [
+                  {
+                    "type": "queueStartRecording"
+                  }
+                ],
+                "guard": "websocket is connected",
+                "target": "recording"
+              }
+            ]
+          }
+        },
+        "recording": {
+          "on": {
+            "Change Audio Source": [
+              {
+                "actions": [],
+                "target": "recording"
+              }
+            ],
+            "dataAvailable": [
+              {
+                "actions": [
+                  {
+                    "params": {
+                      "message": {}
+                    },
+                    "type": "queueData"
+                  }
+                ],
+                "target": "recording"
+              }
+            ],
+            "pauseRecording": [
+              {
+                "actions": [],
+                "target": "ready"
+              }
+            ],
+            "stopRecording": [
+              {
+                "actions": [
+                  {
+                    "type": "queueStopRecording"
+                  }
+                ],
+                "target": "stopped"
+              }
+            ]
+          }
+        },
+        "stopped": {
+          "type": "final"
+        }
+      }
+    },
+    "websocket": {
+      "initial": "ready",
+      "states": {
+        "closed": {
+          "type": "final"
+        },
+        "connected": {
+          "on": {
+            "wsOnClose": [
+              {
+                "actions": [],
+                "target": "closed"
+              }
+            ]
+          },
+          "states": {
+            "Receive": {
+              "on": {
+                "onMessage": [
+                  {
+                    "actions": [
+                      {
+                        "params": {
+                          "message": {}
+                        },
+                        "type": "saveRealtimeMessage"
+                      }
+                    ],
+                    "target": "Receive"
+                  }
+                ]
+              }
+            },
+            "Send": {
+              "initial": "idle",
+              "states": {
+                "done": {},
+                "idle": {
+                  "always": {
+                    "actions": [],
+                    "target": "sending"
+                  }
+                },
+                "sending": {
+                  "always": [
+                    {
+                      "actions": [],
+                      "guard": "message is stop_recording",
+                      "target": "done"
+                    },
+                    {
+                      "actions": [],
+                      "target": "idle"
+                    }
+                  ],
+                  "entry": {
+                    "type": "unqueueData"
+                  }
+                }
+              }
+            }
+          },
+          "type": "parallel"
+        },
+        "disconnected": {
+          "initial": "waiting",
+          "states": {
+            "abandonned": {
+              "type": "final"
+            },
+            "connecting": {
+              "entry": {
+                "type": "connect"
+              },
+              "on": {
+                "\ud83d\udd34 wsConnectError": [
+                  {
+                    "actions": [],
+                    "guard": "Session expired",
+                    "target": "submitting"
+                  },
+                  {
+                    "actions": [],
+                    "target": "abandonned"
+                  }
+                ],
+                "\ud83d\udfe2 wsConnectSuccess": [
+                  {
+                    "actions": [],
+                    "target": "#Audio recording with websocket.websocket.connected.Send"
+                  }
+                ]
+              }
+            },
+            "submitting": {
+              "on": {
+                "\ud83d\udd34 sessionSubmitError": [
+                  {
+                    "actions": [],
+                    "target": "abandonned"
+                  }
+                ],
+                "\ud83d\udfe2 sessionSubmitSucces": [
+                  {
+                    "actions": [
+                      {
+                        "type": "udpdateToken"
+                      }
+                    ],
+                    "target": "waiting"
+                  }
+                ]
+              }
+            },
+            "waiting": {
+              "always": [
+                {
+                  "actions": [],
+                  "guard": "websocket token is defined",
+                  "target": "connecting"
+                },
+                {
+                  "actions": [],
+                  "target": "submitting"
+                }
+              ]
+            }
+          }
+        },
+        "ready": {
+          "on": {
+            "startWebsocket": [
+              {
+                "actions": [],
+                "target": "disconnected"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "type": "parallel"
+}

@@ -1,0 +1,36 @@
+{
+  "context": {
+    "user": null
+  },
+  "id": "sessionTimeout",
+  "initial": "logged_out",
+  "states": {
+    "logged_in": {
+      "after": {
+        "3000": "timed_out"
+      },
+      "entry": "log_login",
+      "on": {
+        "LOGOUT": "logged_out",
+        "USER_ACTIVITY": {
+          "internal": false,
+          "target": "logged_in"
+        }
+      }
+    },
+    "logged_out": {
+      "on": {
+        "LOGIN": {
+          "actions": "set_user",
+          "target": "logged_in"
+        }
+      }
+    },
+    "timed_out": {
+      "entry": "log_timeout",
+      "on": {
+        "": "logged_out"
+      }
+    }
+  }
+}

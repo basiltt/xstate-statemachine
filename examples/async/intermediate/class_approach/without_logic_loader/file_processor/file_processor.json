@@ -1,0 +1,34 @@
+{
+  "context": {
+    "file_name": null,
+    "file_type": null,
+    "processed_data": null
+  },
+  "id": "fileProcessor",
+  "initial": "idle",
+  "states": {
+    "failure": {
+      "entry": "log_failure",
+      "type": "final"
+    },
+    "idle": {
+      "on": {
+        "UPLOAD": {
+          "actions": "set_file_info",
+          "target": "processing"
+        }
+      }
+    },
+    "processing": {
+      "invoke": {
+        "onDone": "success",
+        "onError": "failure",
+        "src": "process_file"
+      }
+    },
+    "success": {
+      "entry": "log_success",
+      "type": "final"
+    }
+  }
+}

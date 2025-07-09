@@ -1,0 +1,40 @@
+{
+  "context": {
+    "elapsed_time": 0
+  },
+  "id": "stopwatch",
+  "initial": "stopped",
+  "on": {
+    "RESET": {
+      "actions": "reset_timer",
+      "target": ".stopped"
+    }
+  },
+  "states": {
+    "running": {
+      "entry": {
+        "params": {
+          "status": "Running"
+        },
+        "type": "log_status"
+      },
+      "on": {
+        "LAP": {
+          "actions": "record_lap"
+        },
+        "STOP": "stopped"
+      }
+    },
+    "stopped": {
+      "entry": {
+        "params": {
+          "status": "Stopped"
+        },
+        "type": "log_status"
+      },
+      "on": {
+        "START": "running"
+      }
+    }
+  }
+}

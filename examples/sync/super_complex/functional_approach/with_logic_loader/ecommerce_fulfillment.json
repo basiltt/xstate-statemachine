@@ -1,0 +1,258 @@
+{
+  "context": {
+    "cart": [],
+    "error": null,
+    "lastSynced": null,
+    "orderId": null,
+    "orderStatus": "DRAFT",
+    "paymentInfo": null,
+    "supportTickets": {},
+    "trackingNumber": null
+  },
+  "id": "ECommerceFulfillment",
+  "states": {
+    "customerSupport": {
+      "initial": "dormant",
+      "states": {
+        "active": {
+          "on": {
+            "RESOLVE_TICKET": "dormant"
+          }
+        },
+        "dormant": {
+          "on": {
+            "OPEN_TICKET": "active"
+          }
+        }
+      }
+    },
+    "inventorySync": {
+      "initial": "inSync",
+      "states": {
+        "inSync": {
+          "on": {
+            "ITEM_CHANGED": "outOfSync"
+          }
+        },
+        "outOfSync": {
+          "invoke": {
+            "onDone": "inSync",
+            "src": "debouncedSave"
+          }
+        }
+      }
+    },
+    "orderFlow": {
+      "initial": "new",
+      "onDone": {
+        "actions": "logOrderCompletion"
+      },
+      "states": {
+        "cancelled": {
+          "type": "final"
+        },
+        "charging": {
+          "invoke": {
+            "onDone": {
+              "actions": [
+                {
+                  "params": {
+                    "status": "PAID"
+                  },
+                  "type": "markOrderStatus"
+                },
+                {
+                  "type": "reserveInventory"
+                }
+              ],
+              "target": "paymentConfirmed"
+            },
+            "onError": {
+              "actions": [
+                {
+                  "params": {
+                    "status": "PAYMENT_FAILED"
+                  },
+                  "type": "markOrderStatus"
+                },
+                {
+                  "params": {
+                    "template": "payment_failed"
+                  },
+                  "type": "sendEmail"
+                }
+              ],
+              "target": "paymentFailed"
+            },
+            "src": "chargePayment"
+          }
+        },
+        "checkoutPending": {
+          "on": {
+            "CANCEL_ORDER": {
+              "actions": [
+                {
+                  "type": "releaseInventory"
+                },
+                {
+                  "params": {
+                    "status": "CANCELLED"
+                  },
+                  "type": "markOrderStatus"
+                },
+                {
+                  "params": {
+                    "template": "cancelled"
+                  },
+                  "type": "sendEmail"
+                }
+              ],
+              "target": "cancelled"
+            },
+            "SUBMIT_PAYMENT": {
+              "guard": "paymentIsValid",
+              "target": "charging"
+            }
+          }
+        },
+        "completed": {
+          "type": "final"
+        },
+        "new": {
+          "on": {
+            "CHECKOUT": {
+              "actions": {
+                "params": {
+                  "status": "PENDING_PAYMENT"
+                },
+                "type": "markOrderStatus"
+              },
+              "guard": "cartIsNotEmpty",
+              "target": "checkoutPending"
+            }
+          }
+        },
+        "packing": {
+          "on": {
+            "PACKING_DONE": {
+              "actions": {
+                "params": {
+                  "status": "READY_TO_SHIP"
+                },
+                "type": "markOrderStatus"
+              },
+              "target": "shipping"
+            }
+          }
+        },
+        "paymentConfirmed": {
+          "on": {
+            "RESERVE_FAILED": {
+              "actions": [
+                {
+                  "type": "queueRefund"
+                },
+                {
+                  "params": {
+                    "template": "stock_unavailable"
+                  },
+                  "type": "sendEmail"
+                }
+              ],
+              "target": "cancelled"
+            },
+            "RESERVE_SUCCESS": {
+              "actions": {
+                "params": {
+                  "status": "PACKING"
+                },
+                "type": "markOrderStatus"
+              },
+              "target": "packing"
+            }
+          }
+        },
+        "paymentFailed": {
+          "on": {
+            "CANCEL_ORDER": "cancelled",
+            "RETRY_PAYMENT": "charging"
+          }
+        },
+        "shipping": {
+          "onDone": "completed",
+          "states": {
+            "label": {
+              "initial": "requesting",
+              "states": {
+                "ready": {
+                  "type": "final"
+                },
+                "requesting": {
+                  "invoke": {
+                    "onDone": {
+                      "actions": "addTrackingNumber",
+                      "target": "ready"
+                    },
+                    "src": "arrangeShipment"
+                  }
+                }
+              }
+            },
+            "transit": {
+              "initial": "notShipped",
+              "states": {
+                "delivered": {
+                  "type": "final"
+                },
+                "inTransit": {
+                  "on": {
+                    "DELIVERED": {
+                      "actions": [
+                        {
+                          "params": {
+                            "status": "DELIVERED"
+                          },
+                          "type": "markOrderStatus"
+                        },
+                        {
+                          "params": {
+                            "template": "delivered"
+                          },
+                          "type": "sendEmail"
+                        }
+                      ],
+                      "target": "delivered"
+                    }
+                  }
+                },
+                "notShipped": {
+                  "on": {
+                    "SHIP": {
+                      "actions": [
+                        {
+                          "params": {
+                            "status": "SHIPPED"
+                          },
+                          "type": "markOrderStatus"
+                        },
+                        {
+                          "params": {
+                            "template": "shipped"
+                          },
+                          "type": "sendEmail"
+                        }
+                      ],
+                      "target": "inTransit"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "type": "parallel"
+        }
+      }
+    }
+  },
+  "type": "parallel"
+}

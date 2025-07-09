@@ -1,0 +1,25 @@
+{
+  "context": {
+    "flips": 0
+  },
+  "id": "lightSwitch",
+  "initial": "off",
+  "states": {
+    "off": {
+      "on": {
+        "TOGGLE": {
+          "actions": "increment_flips",
+          "target": "on"
+        }
+      }
+    },
+    "on": {
+      "on": {
+        "TOGGLE": {
+          "actions": "increment_flips",
+          "target": "off"
+        }
+      }
+    }
+  }
+}

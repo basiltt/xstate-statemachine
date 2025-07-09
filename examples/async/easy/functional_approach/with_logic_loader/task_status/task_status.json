@@ -1,0 +1,25 @@
+{
+  "context": {
+    "current_task_id": null
+  },
+  "id": "taskStatus",
+  "initial": "idle",
+  "states": {
+    "idle": {
+      "on": {
+        "START": {
+          "actions": "set_task_id",
+          "target": "running"
+        }
+      }
+    },
+    "running": {
+      "on": {
+        "FINISH": {
+          "actions": "clear_task_id",
+          "target": "idle"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "context": {
+    "data": null,
+    "error": null,
+    "retries": 0
+  },
+  "id": "dataFetcher",
+  "initial": "idle",
+  "states": {
+    "failed": {
+      "type": "final"
+    },
+    "fetching": {
+      "entry": "fetch_data_action"
+    },
+    "idle": {
+      "on": {
+        "FETCH": "fetching"
+      }
+    },
+    "success": {
+      "type": "final"
+    },
+    "waiting_to_retry": {
+      "after": {
+        "1000": {
+          "target": "fetching"
+        }
+      },
+      "entry": "log_wait"
+    }
+  }
+}
