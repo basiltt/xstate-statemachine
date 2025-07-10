@@ -1,36 +1,64 @@
 # src/xstate_statemachine/plugins.py
+
+# -----------------------------------------------------------------------------
+# 🔌 Plugin System
+# -----------------------------------------------------------------------------
+# This module defines the base class for plugins, which allows for extending
+# the interpreter's functionality using an Observer pattern. This architecture
+# provides a clean separation of concerns where cross-cutting logic like
+# logging, debugging, or persistence can be added without modifying the
+# core interpreter code. This makes the system highly extensible and
+# maintainable.
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# 📦 Imports
+# -----------------------------------------------------------------------------
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Set
+# Import for type checking to avoid circular dependencies at runtime.
+from typing import TYPE_CHECKING, Generic, Set, TypeVar
 
-from .events import Event
 from .logger import logger
 
+# The `if TYPE_CHECKING:` block allows us to import types for hinting
+# without causing circular import errors at runtime.
 if TYPE_CHECKING:
-    from .interpreter import Interpreter
+    from .events import Event
     from .models import ActionDefinition, StateNode, TransitionDefinition
 
-
 # -----------------------------------------------------------------------------
-# 🔗 Plugin Architecture
-# -----------------------------------------------------------------------------
-# This module provides the base class for creating plugins that can hook into
-# the interpreter's lifecycle. This follows the Observer and Strategy design
-# patterns, allowing for a clean separation of concerns where cross-cutting
-# logic like logging, debugging, or persistence can be added without modifying
-# the core interpreter. This makes the system highly extensible and maintainable.
+# 🔹 Type Variable for Generic Plugin
 # -----------------------------------------------------------------------------
 
+# This TypeVar is the key to making the plugin system fully type-safe.
+# It allows a plugin to be defined for a specific subclass of BaseInterpreter,
+# such as `Interpreter` or `SyncInterpreter`.
+TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter")  # noqa: F821
 
-class PluginBase:
+
+# -----------------------------------------------------------------------------
+# 🏛️ Base Plugin Class
+# -----------------------------------------------------------------------------
+
+
+class PluginBase(Generic[TInterpreter]):
     """Abstract base class for creating an interpreter plugin.
 
-    Plugins can hook into various lifecycle events of the interpreter
-    to add logging, debugging, persistence, or other custom features. Subclasses
-    should override the methods they are interested in.
+    Plugins hook into the interpreter's lifecycle to add features like logging,
+    debugging, or persistence. Subclasses should override the methods they are
+    interested in. This class is generic, enabling plugins to be type-safe
+    with the specific interpreter they are designed to work with.
+
+    Example:
+        # A simple plugin that only works with the async Interpreter
+        class AsyncOnlyDebugger(PluginBase["Interpreter"]):
+            def on_event_received(self, interpreter: "Interpreter", event: Event):
+                # This plugin now has full autocompletion for the async Interpreter
+                print(f"Async event: {event.type}")
     """
 
-    def on_interpreter_start(self, interpreter: "Interpreter") -> None:
+    def on_interpreter_start(self, interpreter: TInterpreter) -> None:
         """Called when the interpreter's `start()` method is first initiated.
 
         This hook is useful for setup tasks or for logging the beginning of a
@@ -41,7 +69,7 @@ class PluginBase:
         """
         pass
 
-    def on_interpreter_stop(self, interpreter: "Interpreter") -> None:
+    def on_interpreter_stop(self, interpreter: TInterpreter) -> None:
         """Called when the interpreter's `stop()` method is initiated.
 
         This hook is useful for teardown tasks or for logging the end of a
@@ -53,7 +81,7 @@ class PluginBase:
         pass
 
     def on_event_received(
-        self, interpreter: "Interpreter", event: Event
+        self, interpreter: TInterpreter, event: "Event"
     ) -> None:
         """Called immediately after an event is received, before processing.
 
@@ -68,7 +96,7 @@ class PluginBase:
 
     def on_transition(
         self,
-        interpreter: "Interpreter",
+        interpreter: TInterpreter,
         from_states: Set["StateNode"],
         to_states: Set["StateNode"],
         transition: "TransitionDefinition",
@@ -88,7 +116,7 @@ class PluginBase:
         pass
 
     def on_action_execute(
-        self, interpreter: "Interpreter", action: "ActionDefinition"
+        self, interpreter: TInterpreter, action: "ActionDefinition"
     ) -> None:
         """Called right before an action is executed.
 
@@ -102,16 +130,21 @@ class PluginBase:
         pass
 
 
+# -----------------------------------------------------------------------------
+# 🕵️ Built-in Logging Plugin
+# -----------------------------------------------------------------------------
+
+
 class LoggingInspector(PluginBase):
     """A built-in plugin for detailed, real-time inspection of a machine.
 
     This provides clear, emoji-prefixed logs for events, transitions, and
     action executions, making it invaluable for debugging complex state machines.
-    It serves as a canonical example of how to implement a plugin.
+    It serves as a canonical example of how to implement a `PluginBase` subclass.
     """
 
     def on_event_received(
-        self, interpreter: "Interpreter", event: Event
+        self, interpreter: TInterpreter, event: "Event"
     ) -> None:
         """Logs the details of every event processed by the machine.
 
@@ -122,9 +155,8 @@ class LoggingInspector(PluginBase):
             interpreter: The interpreter instance processing the event.
             event: The `Event` object that was received.
         """
-        # ✨ FIX: Safely access event data to handle different event types.
-        # Use getattr to check for a 'payload' attribute, falling back to 'data',
-        # and then to None if neither exists. This makes the logger robust.
+        # ⚙️ Safely access event data to handle different event types.
+        # Use getattr to check for a 'payload' or 'data' attribute.
         data_or_payload = getattr(
             event, "payload", getattr(event, "data", None)
         )
@@ -137,7 +169,7 @@ class LoggingInspector(PluginBase):
 
     def on_transition(
         self,
-        interpreter: "Interpreter",
+        interpreter: TInterpreter,
         from_states: Set["StateNode"],
         to_states: Set["StateNode"],
         transition: "TransitionDefinition",
@@ -156,21 +188,21 @@ class LoggingInspector(PluginBase):
         from_ids = {s.id for s in from_states if s.is_atomic or s.is_final}
         to_ids = {s.id for s in to_states if s.is_atomic or s.is_final}
 
-        # ✅ Only log if a state change actually happened.
+        # ✅ Only log if a meaningful state change actually happened.
         if from_ids != to_ids:
             logger.info(
                 f"🕵️ [INSPECT] Transition: {from_ids} -> {to_ids} on Event '{transition.event}'"
             )
             logger.info(f"🕵️ [INSPECT] New Context: {interpreter.context}")
-        # For internal transitions, we also log the context change if any.
+        # 🎬 For internal transitions (no state change), still log context.
         elif transition.actions:
             logger.info(
-                f"🕵️ [INSPECT] Internal transition on '{transition.event}'. Context may have changed."
+                f"🕵️ [INSPECT] Internal transition on Event '{transition.event}'. Context may have changed."
             )
             logger.info(f"🕵️ [INSPECT] New Context: {interpreter.context}")
 
     def on_action_execute(
-        self, interpreter: "Interpreter", action: "ActionDefinition"
+        self, interpreter: TInterpreter, action: "ActionDefinition"
     ) -> None:
         """Logs the name of each action right before it is executed.
 
