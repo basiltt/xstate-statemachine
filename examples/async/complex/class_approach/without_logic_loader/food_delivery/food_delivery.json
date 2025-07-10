@@ -1,0 +1,61 @@
+{
+  "context": {
+    "error": null,
+    "order_id": null,
+    "status": "No order placed"
+  },
+  "id": "foodDelivery",
+  "initial": "browsing",
+  "states": {
+    "browsing": {
+      "on": {
+        "PLACE_ORDER": "confirming_restaurant"
+      }
+    },
+    "confirming_restaurant": {
+      "entry": "set_pending_status",
+      "invoke": {
+        "onDone": {
+          "actions": "log_confirmation",
+          "target": "finding_driver"
+        },
+        "onError": {
+          "actions": "set_rejection_error",
+          "target": "order_failed"
+        },
+        "src": "confirm_with_restaurant"
+      }
+    },
+    "delivered": {
+      "entry": "update_status_to_delivered",
+      "type": "final"
+    },
+    "finding_driver": {
+      "after": {
+        "10000": {
+          "actions": "set_timeout_error",
+          "target": "order_failed"
+        }
+      },
+      "entry": "update_status_to_finding_driver",
+      "on": {
+        "DRIVER_ASSIGNED": "preparing_food"
+      }
+    },
+    "order_failed": {
+      "entry": "log_failure_reason"
+    },
+    "out_for_delivery": {
+      "entry": "update_status_to_delivering",
+      "on": {
+        "ORDER_DELIVERED": "delivered"
+      }
+    },
+    "preparing_food": {
+      "entry": "update_status_to_preparing",
+      "on": {
+        "ORDER_READY_FOR_PICKUP": "out_for_delivery"
+      }
+    }
+  }
+}

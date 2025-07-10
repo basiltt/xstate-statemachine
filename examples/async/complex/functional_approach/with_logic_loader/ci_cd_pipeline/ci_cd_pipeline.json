@@ -1,0 +1,107 @@
+{
+  "context": {
+    "build_artifact": null,
+    "commit_hash": null,
+    "deployment_url": null,
+    "error": null,
+    "scan_results": null,
+    "test_results": null
+  },
+  "id": "ciCdPipeline",
+  "initial": "idle",
+  "states": {
+    "building": {
+      "invoke": {
+        "onDone": {
+          "actions": "store_build_artifact",
+          "target": "validating"
+        },
+        "onError": {
+          "actions": "set_error",
+          "target": "failed"
+        },
+        "src": "run_build_service"
+      }
+    },
+    "deploying": {
+      "invoke": {
+        "onDone": {
+          "actions": "store_deployment_url",
+          "target": "succeeded"
+        },
+        "onError": {
+          "actions": "set_error",
+          "target": "failed"
+        },
+        "src": "run_deployment_service"
+      }
+    },
+    "failed": {},
+    "idle": {
+      "on": {
+        "NEW_COMMIT": {
+          "actions": "set_commit_hash",
+          "target": "building"
+        }
+      }
+    },
+    "succeeded": {
+      "type": "final"
+    },
+    "validating": {
+      "on": {
+        "VALIDATION_FAILED": {
+          "target": "failed"
+        }
+      },
+      "onDone": "deploying",
+      "states": {
+        "security_scan": {
+          "initial": "scanning",
+          "states": {
+            "scan_failed": {},
+            "scan_passed": {
+              "type": "final"
+            },
+            "scanning": {
+              "invoke": {
+                "onDone": {
+                  "actions": "store_scan_results",
+                  "target": "scan_passed"
+                },
+                "onError": {
+                  "actions": "set_error",
+                  "target": "scan_failed"
+                },
+                "src": "run_security_scan"
+              }
+            }
+          }
+        },
+        "testing": {
+          "initial": "running_tests",
+          "states": {
+            "running_tests": {
+              "invoke": {
+                "onDone": {
+                  "actions": "store_test_results",
+                  "target": "tests_passed"
+                },
+                "onError": {
+                  "actions": "set_error",
+                  "target": "tests_failed"
+                },
+                "src": "run_test_suite"
+              }
+            },
+            "tests_failed": {},
+            "tests_passed": {
+              "type": "final"
+            }
+          }
+        }
+      },
+      "type": "parallel"
+    }
+  }
+}

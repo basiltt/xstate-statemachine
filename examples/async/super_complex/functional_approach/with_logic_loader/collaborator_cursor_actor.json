@@ -1,0 +1,20 @@
+{
+  "context": {
+    "color": null,
+    "position": {
+      "x": 0,
+      "y": 0
+    },
+    "user_id": null
+  },
+  "id": "collaboratorCursor",
+  "initial": "visible",
+  "on": {
+    "UPDATE_CURSOR_POS": {
+      "actions": "update_position"
+    }
+  },
+  "states": {
+    "visible": {}
+  }
+}

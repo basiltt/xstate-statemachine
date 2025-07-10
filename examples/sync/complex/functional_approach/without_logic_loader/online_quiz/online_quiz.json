@@ -1,0 +1,67 @@
+{
+  "context": {
+    "error": null,
+    "final_score": null,
+    "questions": [],
+    "quiz_id": null,
+    "user_answers": {}
+  },
+  "id": "onlineQuiz",
+  "initial": "idle",
+  "states": {
+    "finished": {
+      "type": "final"
+    },
+    "grading": {
+      "invoke": {
+        "onDone": {
+          "actions": "store_final_score",
+          "target": "finished"
+        },
+        "onError": {
+          "actions": "set_error",
+          "target": "grading_failed"
+        },
+        "src": "grade_quiz_service"
+      }
+    },
+    "grading_failed": {},
+    "idle": {
+      "on": {
+        "START_QUIZ": {
+          "actions": "set_quiz_id",
+          "target": "loading"
+        }
+      }
+    },
+    "in_progress": {
+      "after": {
+        "8000": {
+          "actions": "log_timeout",
+          "target": "grading"
+        }
+      },
+      "entry": "log_quiz_start",
+      "on": {
+        "ANSWER_QUESTION": {
+          "actions": "store_answer"
+        },
+        "SUBMIT_QUIZ": "grading"
+      }
+    },
+    "load_failed": {},
+    "loading": {
+      "invoke": {
+        "onDone": {
+          "actions": "store_quiz_data",
+          "target": "in_progress"
+        },
+        "onError": {
+          "actions": "set_error",
+          "target": "load_failed"
+        },
+        "src": "load_quiz_data_service"
+      }
+    }
+  }
+}

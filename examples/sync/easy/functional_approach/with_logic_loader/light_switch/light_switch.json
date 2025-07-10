@@ -1,0 +1,29 @@
+{
+  "context": {
+    "brightness": 0
+  },
+  "id": "lightSwitch",
+  "initial": "off",
+  "states": {
+    "off": {
+      "on": {
+        "TURN_ON": {
+          "actions": [
+            "set_brightness_to_default"
+          ],
+          "target": "on"
+        }
+      }
+    },
+    "on": {
+      "on": {
+        "TURN_OFF": {
+          "actions": [
+            "set_brightness_to_zero"
+          ],
+          "target": "off"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "context": {
+    "elapsedTime": 0
+  },
+  "id": "stopwatch",
+  "initial": "stopped",
+  "states": {
+    "running": {
+      "on": {
+        "RESET": {
+          "actions": "reset_time",
+          "target": "stopped"
+        },
+        "STOP": {
+          "actions": "record_time",
+          "target": "stopped"
+        }
+      }
+    },
+    "stopped": {
+      "on": {
+        "START": "running"
+      }
+    }
+  }
+}

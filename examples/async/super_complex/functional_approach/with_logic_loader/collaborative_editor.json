@@ -1,0 +1,87 @@
+{
+  "context": {
+    "collaborators": {},
+    "doc_id": "doc-123",
+    "error": null,
+    "last_saved": null,
+    "local_content": "",
+    "server_content": ""
+  },
+  "id": "collaborativeEditor",
+  "states": {
+    "editing_session": {
+      "initial": "idle",
+      "states": {
+        "idle": {
+          "on": {
+            "KEY_PRESS": "typing"
+          }
+        },
+        "typing": {
+          "entry": "update_local_content",
+          "on": {
+            "KEY_PRESS": {
+              "actions": "update_local_content",
+              "internal": true,
+              "target": "typing"
+            },
+            "STOP_TYPING": "idle"
+          }
+        }
+      }
+    },
+    "network_sync": {
+      "initial": "synced",
+      "states": {
+        "saving": {
+          "invoke": {
+            "onDone": {
+              "actions": "update_server_content",
+              "target": "synced"
+            },
+            "onError": {
+              "actions": "set_sync_error",
+              "target": "sync_failed"
+            },
+            "src": "save_to_server_service"
+          }
+        },
+        "sync_failed": {
+          "on": {
+            "RETRY_SAVE": "saving"
+          }
+        },
+        "synced": {
+          "on": {
+            "CONTENT_CHANGED": "unsynced"
+          }
+        },
+        "unsynced": {
+          "after": {
+            "3000": "saving"
+          },
+          "entry": "start_autosave_timer",
+          "on": {
+            "FORCE_SAVE": "saving"
+          }
+        }
+      }
+    },
+    "presence": {
+      "initial": "active",
+      "states": {
+        "active": {
+          "on": {
+            "USER_JOINED": {
+              "actions": "spawn_collaborator_cursor"
+            },
+            "USER_LEFT": {
+              "actions": "destroy_collaborator_cursor"
+            }
+          }
+        }
+      }
+    }
+  },
+  "type": "parallel"
+}

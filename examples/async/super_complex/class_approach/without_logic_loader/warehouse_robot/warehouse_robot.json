@@ -1,0 +1,111 @@
+{
+  "context": {
+    "current_location": "A1",
+    "error": null,
+    "order_items": [],
+    "path": [],
+    "picked_items": [],
+    "target_location": null
+  },
+  "id": "warehouseRobot",
+  "initial": "idle",
+  "on": {
+    "FATAL_ERROR": ".failed"
+  },
+  "states": {
+    "complete": {
+      "type": "final"
+    },
+    "failed": {},
+    "fulfilling": {
+      "onDone": "returning_to_base",
+      "states": {
+        "manipulation": {
+          "initial": "waiting_for_arrival",
+          "states": {
+            "all_items_picked": {
+              "type": "final"
+            },
+            "pick_failure": {
+              "type": "final"
+            },
+            "picking_item": {
+              "invoke": {
+                "onDone": {
+                  "actions": "store_picked_item",
+                  "target": "waiting_for_arrival"
+                },
+                "onError": {
+                  "actions": "set_manipulation_error",
+                  "target": "pick_failure"
+                },
+                "src": "pick_item_service"
+              }
+            },
+            "waiting_for_arrival": {
+              "on": {
+                "ALL_ITEMS_PICKED": "all_items_picked",
+                "ARRIVED": "picking_item"
+              }
+            }
+          }
+        },
+        "movement": {
+          "initial": "planning_route",
+          "states": {
+            "all_items_navigated": {
+              "type": "final"
+            },
+            "arrived_at_item": {
+              "on": {
+                "ALL_ITEMS_LOCATED": "all_items_navigated",
+                "NEXT_ITEM": "planning_route"
+              }
+            },
+            "moving": {
+              "invoke": {
+                "onDone": "arrived_at_item",
+                "onError": {
+                  "actions": "set_movement_error",
+                  "target": "route_failure"
+                },
+                "src": "follow_path_service"
+              }
+            },
+            "planning_route": {
+              "entry": "spawn_pathfinder_actor",
+              "on": {
+                "PATH_CALCULATED": {
+                  "actions": "store_path",
+                  "target": "moving"
+                },
+                "PATH_FAILED": {
+                  "actions": "set_movement_error",
+                  "target": "route_failure"
+                }
+              }
+            },
+            "route_failure": {
+              "type": "final"
+            }
+          }
+        }
+      },
+      "type": "parallel"
+    },
+    "idle": {
+      "on": {
+        "ASSIGN_ORDER": {
+          "actions": "assign_order",
+          "target": "fulfilling"
+        }
+      }
+    },
+    "returning_to_base": {
+      "invoke": {
+        "onDone": "complete",
+        "src": "return_to_base_service"
+      }
+    }
+  }
+}

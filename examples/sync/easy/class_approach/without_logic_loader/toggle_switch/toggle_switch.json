@@ -1,0 +1,29 @@
+{
+  "context": {
+    "toggleCount": 0
+  },
+  "id": "toggleSwitch",
+  "initial": "off",
+  "states": {
+    "off": {
+      "on": {
+        "TOGGLE": {
+          "actions": [
+            "increment_toggles"
+          ],
+          "target": "on"
+        }
+      }
+    },
+    "on": {
+      "on": {
+        "TOGGLE": {
+          "actions": [
+            "increment_toggles"
+          ],
+          "target": "off"
+        }
+      }
+    }
+  }
+}

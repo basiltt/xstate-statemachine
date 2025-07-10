@@ -1,0 +1,29 @@
+{
+  "context": {
+    "charCount": 0,
+    "limit": 15,
+    "text": ""
+  },
+  "id": "charCounter",
+  "initial": "editing",
+  "states": {
+    "editing": {
+      "on": {
+        "TRIM": {
+          "cond": "is_over_limit",
+          "target": "limit_reached"
+        },
+        "TYPE": {
+          "actions": "update_text_and_count",
+          "guard": "is_under_limit"
+        }
+      }
+    },
+    "limit_reached": {
+      "entry": "log_limit_reached",
+      "on": {
+        "RESET": "editing"
+      }
+    }
+  }
+}

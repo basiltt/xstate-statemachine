@@ -1,0 +1,43 @@
+{
+  "context": {
+    "items": [],
+    "lastAction": null
+  },
+  "id": "shoppingCart",
+  "initial": "empty",
+  "states": {
+    "Browse": {
+      "on": {
+        "ADD_ITEM": {
+          "actions": "add_item_to_cart"
+        },
+        "CHECKOUT": {
+          "guard": "cart_is_not_empty",
+          "target": "processing_payment"
+        },
+        "EMPTY_CART": {
+          "actions": "clear_cart",
+          "target": "empty"
+        }
+      }
+    },
+    "empty": {
+      "on": {
+        "ADD_ITEM": {
+          "actions": "add_item_to_cart",
+          "target": "Browse"
+        }
+      }
+    },
+    "processing_payment": {
+      "invoke": {
+        "onDone": "purchased",
+        "onError": "Browse",
+        "src": "process_payment_sync"
+      }
+    },
+    "purchased": {
+      "type": "final"
+    }
+  }
+}

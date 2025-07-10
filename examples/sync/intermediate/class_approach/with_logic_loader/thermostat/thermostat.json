@@ -1,0 +1,51 @@
+{
+  "context": {
+    "current_temp": 70,
+    "target_temp": 70
+  },
+  "id": "thermostat",
+  "initial": "idle",
+  "states": {
+    "cooling": {
+      "entry": "start_cooling",
+      "on": {
+        "CHECK_TEMP": {
+          "guard": "is_at_target",
+          "target": "idle"
+        },
+        "TEMPERATURE_DROP": {
+          "actions": "update_current_temp"
+        }
+      }
+    },
+    "heating": {
+      "entry": "start_heating",
+      "on": {
+        "CHECK_TEMP": {
+          "guard": "is_at_target",
+          "target": "idle"
+        },
+        "TEMPERATURE_RISE": {
+          "actions": "update_current_temp"
+        }
+      }
+    },
+    "idle": {
+      "on": {
+        "CHECK_TEMP": [
+          {
+            "guard": "is_below_target",
+            "target": "heating"
+          },
+          {
+            "guard": "is_above_target",
+            "target": "cooling"
+          }
+        ],
+        "SET_TARGET": {
+          "actions": "set_target_temperature"
+        }
+      }
+    }
+  }
+}

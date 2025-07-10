@@ -1,0 +1,26 @@
+{
+  "context": {
+    "last_seen": null,
+    "user_id": null
+  },
+  "id": "userPresence",
+  "initial": "offline",
+  "states": {
+    "offline": {
+      "on": {
+        "CONNECT": {
+          "actions": "update_last_seen",
+          "target": "online"
+        }
+      }
+    },
+    "online": {
+      "on": {
+        "DISCONNECT": {
+          "actions": "update_last_seen",
+          "target": "offline"
+        }
+      }
+    }
+  }
+}

@@ -1,114 +1,93 @@
-# src/xstate_statemachine/resolver.py
+# /src/xstate_statemachine/resolver.py
+# -----------------------------------------------------------------------------
+# 🗺️ State Target Resolver
+# -----------------------------------------------------------------------------
+# This module provides the crucial logic for resolving state target strings,
+# a key feature for XState compatibility. Statechart transitions can target
+# other states in various ways (e.g., relative to a parent, or absolutely
+# from the root), and this resolver correctly interprets those targets.
+#
+# The `resolve_target_state` function acts as a "Strategy" selector, choosing
+# the correct resolution method based on the format of the target string
+# (e.g., does it start with '#', '.', or is it a plain ID?). This ensures
+# a robust and predictable mechanism for navigating the statechart tree.
+# -----------------------------------------------------------------------------
+"""
+Provides a centralized function for resolving transition target states.
+
+This module is responsible for interpreting the `target` strings found in a
+machine's configuration and resolving them to the correct `StateNode` object
+within the statechart tree.
+"""
+
+# -----------------------------------------------------------------------------
+# 📦 Standard Library Imports
+# -----------------------------------------------------------------------------
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import logging
+from typing import TYPE_CHECKING, List, Optional
 
+# -----------------------------------------------------------------------------
+# 📥 Project-Specific Imports
+# -----------------------------------------------------------------------------
 from .exceptions import StateNotFoundError
 
+# -----------------------------------------------------------------------------
+# ⚙️ Type Hinting for Forward References
+# -----------------------------------------------------------------------------
 if TYPE_CHECKING:
-    from .models import StateNode
+    # This avoids circular import errors at runtime while providing type hints.
+    from .models import StateNode, MachineNode
+
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
 
 
 # -----------------------------------------------------------------------------
-# 🗺️ State Resolver
-# -----------------------------------------------------------------------------
-# This module is responsible for the critical task of finding a target state
-# node based on a target string from a reference state. It implements the full
-# XState resolution logic, forming a core part of the state transition
-# algorithm. Its functions are pure and have no side effects, adhering to the
-# principle of Separation of Concerns.
+# 🛠️ Private Helper Functions
 # -----------------------------------------------------------------------------
 
 
-def resolve_target_state(
-    target: str, reference_state: "StateNode"
-) -> "StateNode":
-    """Resolves a target string to a specific StateNode within the machine.
+def _validate_segments(
+    segments: List[str], target: str, reference_id: str
+) -> None:
+    """Checks for invalid path segments like empty strings.
 
-    This function implements the state resolution algorithm according to the
-    standard XState specification for resolving state targets:
-    1.  **Absolute**: If the target starts with '#', it's an absolute path
-        from the machine root (e.g., "#machine.state.child").
-    2.  **Relative**: If the target starts with '.', it's a relative path
-        from the parent of the reference state (or the state itself if it's the root).
-    3.  **Sibling**: Otherwise, it's treated as a sibling of the reference
-        state, bubbling up through ancestors if not found immediately.
+    This helper ensures that target paths like 'state..child' or 'state.'
+    are rejected early, as they are syntactically invalid.
 
     Args:
-        target: The target string to resolve.
-        reference_state: The `StateNode` where the transition is defined.
-
-    Returns:
-        The resolved `StateNode`.
+        segments: The list of path segments produced by `split('.')`.
+        target: The original target string, for error reporting.
+        reference_id: The ID of the state where resolution started, for context.
 
     Raises:
-        StateNotFoundError: If the target string cannot be resolved to a valid
-                            state node in the machine.
-        TypeError: If the provided target is not a string.
+        StateNotFoundError: If any segment is an empty string.
     """
-    # 🧪 Validate input to prevent downstream errors.
-    if not isinstance(target, str):
-        raise TypeError(
-            f"Transition target must be a string, but got {type(target)}"
+    # 🛡️ Reject targets with consecutive or trailing dots (e.g., 'a..b', 'a.').
+    if any(seg == "" for seg in segments):
+        logger.error(
+            "❌ Invalid target path '%s' contains empty segments.", target
         )
-
-    machine = reference_state.machine
-
-    # 1. 🆔 Absolute path from root (e.g., "#some.state")
-    if target.startswith("#"):
-        path = target[1:].split(".")
-        if path[0] != machine.key:
-            raise StateNotFoundError(target, reference_state.id)
-        node = machine
-        for key in path[1:]:
-            if key not in node.states:
-                raise StateNotFoundError(target, reference_state.id)
-            node = node.states[key]
-        return node
-
-    # 2. 🎯 Relative path from parent (e.g., ".sibling")
-    if target.startswith("."):
-        path = target[1:].split(".")
-        # ✨ FIX: If the reference state is the root, resolve from the root itself.
-        # Otherwise, resolve from the parent.
-        start_node = reference_state.parent or reference_state
-        return _find_descendant(start_node, path)
-
-    # 3. 👯 Sibling or ancestor's child (e.g., "other_state")
-    path = target.split(".")
-    node = reference_state
-    while node.parent:
-        try:
-            # ✅ Attempt to find the target as a descendant of the parent.
-            return _find_descendant(node.parent, path)
-        except StateNotFoundError:
-            # 🤷 Not found, so bubble up to the next ancestor.
-            node = node.parent
-
-    # ❌ If we've bubbled up to the root and still not found it, fail.
-    raise StateNotFoundError(target, reference_state.id)
+        raise StateNotFoundError(target, reference_id)
 
 
-# -----------------------------------------------------------------------------
-# Private Helpers
-# -----------------------------------------------------------------------------
-
-
-def _find_descendant(start_node: "StateNode", path: list[str]) -> "StateNode":
-    """A private helper to find a descendant state from a path list.
-
-    This function traverses down the state tree from a given starting node.
+def _find_descendant(start_node: "StateNode", path: List[str]) -> "StateNode":
+    """Traverses down the state tree to find a descendant node.
 
     Args:
         start_node: The `StateNode` from which to begin the search.
         path: A list of state keys representing the path to the descendant.
 
     Returns:
-        The found descendant `StateNode`.
+        The descendant `StateNode`.
 
     Raises:
         StateNotFoundError: If any key in the path does not correspond to a
-                            valid child state.
+            child state at that level of the traversal.
     """
     current = start_node
     for key in path:
@@ -116,3 +95,116 @@ def _find_descendant(start_node: "StateNode", path: list[str]) -> "StateNode":
             raise StateNotFoundError(".".join(path), start_node.id)
         current = current.states[key]
     return current
+
+
+# -----------------------------------------------------------------------------
+# 🗺️ Public Resolver Function
+# -----------------------------------------------------------------------------
+
+
+def resolve_target_state(
+    target: str, reference_state: "StateNode"
+) -> "StateNode":
+    """Resolves a target string to a specific `StateNode` in the machine.
+
+    This function implements the XState resolution algorithm, which provides
+    flexible ways to target states from anywhere in the machine. The resolution
+    is attempted in a specific order based on the target string's format.
+
+    Args:
+        target: The target string to resolve (e.g., "#foo", ".bar", "baz").
+        reference_state: The `StateNode` from which the transition originates.
+
+    Returns:
+        The resolved `StateNode` object.
+
+    Raises:
+        TypeError: If the target is not a string.
+        StateNotFoundError: If the target string is empty or cannot be
+            resolved to a valid state in the machine.
+
+    Resolution Order:
+        1.  **Absolute Path**: If `target` starts with '#', it's resolved from
+            the machine's root (e.g., `"#machine.state.child"`).
+        2.  **Parent State**: If `target` is exactly '.', it resolves to the
+            parent of the `reference_state`.
+        3.  **Relative Path**: If `target` starts with '.', it's resolved
+            relative to the parent of the `reference_state`.
+        4.  **Plain Identifier**: Otherwise, it's treated as a plain ID and
+            the function searches for a matching state by "bubbling up"
+            the hierarchy from the `reference_state`.
+    """
+    # 🧪 Validate input type.
+    if not isinstance(target, str):
+        raise TypeError(
+            f"Transition target must be a string, but got {type(target)}"
+        )
+    if not target:
+        raise StateNotFoundError(target, reference_state.id)
+
+    machine: "MachineNode" = reference_state.machine
+    logger.debug(
+        "🗺️ Resolving target '%s' from state '%s'", target, reference_state.id
+    )
+
+    # -------------------------------------------------------------------------
+    # 🏛️ Strategy 1: Absolute path resolution (e.g., "#machine.state.child")
+    # -------------------------------------------------------------------------
+    if target.startswith("#"):
+        logger.debug("  -> Attempting absolute path resolution...")
+        segments = target[1:].split(".")
+        _validate_segments(segments, target, reference_state.id)
+        if segments[0] != machine.key:
+            raise StateNotFoundError(target, reference_state.id)
+
+        # ✅ Traverse from the absolute root of the machine.
+        return _find_descendant(machine, segments[1:])
+
+    # -------------------------------------------------------------------------
+    # 🏛️ Strategy 2: Parent state resolution ('.')
+    # -------------------------------------------------------------------------
+    if target == ".":
+        logger.debug("  -> Attempting parent state resolution...")
+        # ✅ Return parent, or self if at the root.
+        return reference_state.parent or reference_state
+
+    # -------------------------------------------------------------------------
+    # 🏛️ Strategy 3: Relative path resolution (e.g., '.sibling')
+    # -------------------------------------------------------------------------
+    if target.startswith("."):
+        logger.debug("  -> Attempting relative path resolution...")
+        segments = target[1:].split(".")
+        _validate_segments(segments, target, reference_state.id)
+        # ✅ Base the search from the parent of the current state.
+        base = reference_state.parent or reference_state
+        return _find_descendant(base, segments)
+
+    # -------------------------------------------------------------------------
+    # 🏛️ Strategy 4: Plain ID resolution (e.g., 'myState')
+    # -------------------------------------------------------------------------
+    logger.debug("  -> Attempting plain ID resolution (bubbling up)...")
+    segments = target.split(".")
+    _validate_segments(segments, target, reference_state.id)
+
+    current: Optional["StateNode"] = reference_state
+    while current:
+        # 4a. Is it a descendant of the current node?
+        try:
+            return _find_descendant(current, segments)
+        except StateNotFoundError:
+            pass  # If not, continue to the next check.
+
+        # 4b. Is it the current node's key itself? (for non-dotted targets)
+        if len(segments) == 1 and segments[0] == current.key:
+            return current
+
+        # 4c. 🛁 Bubble up to the parent and try again.
+        current = current.parent
+
+    # ❌ If we've bubbled up to the top and found nothing, the target is invalid.
+    logger.error(
+        "❌ Failed to resolve target '%s' from reference '%s'",
+        target,
+        reference_state.id,
+    )
+    raise StateNotFoundError(target, reference_state.id)

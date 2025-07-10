@@ -1,0 +1,23 @@
+{
+  "context": {
+    "brightness": 100,
+    "color": "white"
+  },
+  "id": "lightBulb",
+  "initial": "on",
+  "states": {
+    "off": {
+      "on": {
+        "TURN_ON": "on"
+      }
+    },
+    "on": {
+      "on": {
+        "SET_COLOR": {
+          "actions": "set_color"
+        },
+        "TURN_OFF": "off"
+      }
+    }
+  }
+}

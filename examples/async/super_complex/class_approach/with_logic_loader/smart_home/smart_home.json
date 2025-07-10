@@ -1,0 +1,95 @@
+{
+  "context": {
+    "error": null,
+    "lights": {},
+    "security_code": "1234",
+    "target_temp": 70,
+    "temperature": 70
+  },
+  "id": "smartHome",
+  "states": {
+    "climate": {
+      "initial": "idle",
+      "states": {
+        "adjusting": {
+          "invoke": {
+            "onDone": "idle",
+            "onError": {
+              "actions": "set_climate_error",
+              "target": "idle"
+            },
+            "src": "adjust_temperature_service"
+          }
+        },
+        "idle": {
+          "on": {
+            "SET_TEMP": {
+              "actions": "set_target_temp",
+              "target": "adjusting"
+            }
+          }
+        }
+      }
+    },
+    "lighting": {
+      "initial": "on",
+      "states": {
+        "off": {},
+        "on": {
+          "entry": [
+            {
+              "params": {
+                "id": "living_room_light"
+              },
+              "type": "spawn_light_bulb"
+            },
+            {
+              "params": {
+                "id": "bedroom_light"
+              },
+              "type": "spawn_light_bulb"
+            }
+          ],
+          "on": {
+            "TURN_OFF_ALL": "off"
+          }
+        }
+      }
+    },
+    "security": {
+      "initial": "disarmed",
+      "states": {
+        "armed_away": {
+          "on": {
+            "DISARM": {
+              "guard": "is_code_correct",
+              "target": "disarmed"
+            },
+            "MOTION_DETECTED": "triggered"
+          }
+        },
+        "arming": {
+          "after": {
+            "3000": "armed_away"
+          },
+          "entry": "log_arming_delay"
+        },
+        "disarmed": {
+          "on": {
+            "ARM_AWAY": "arming"
+          }
+        },
+        "triggered": {
+          "entry": "trigger_alarm",
+          "on": {
+            "DISARM": {
+              "guard": "is_code_correct",
+              "target": "disarmed"
+            }
+          }
+        }
+      }
+    }
+  },
+  "type": "parallel"
+}

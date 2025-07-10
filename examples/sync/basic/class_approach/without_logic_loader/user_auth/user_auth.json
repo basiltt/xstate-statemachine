@@ -1,0 +1,55 @@
+{
+  "context": {
+    "credentials": null,
+    "error": null,
+    "loginAttempts": 0,
+    "username": null
+  },
+  "id": "userAuth",
+  "initial": "loggedOut",
+  "states": {
+    "loggedIn": {
+      "on": {
+        "LOGOUT": "loggedOut"
+      }
+    },
+    "loggedOut": {
+      "entry": "clear_context",
+      "on": {
+        "LOGIN": {
+          "actions": [
+            "increment_attempts",
+            "cache_credentials"
+          ],
+          "guard": "is_not_locked_out",
+          "target": "loggingIn"
+        }
+      }
+    },
+    "loggingIn": {
+      "invoke": {
+        "onDone": {
+          "actions": "set_user",
+          "target": "loggedIn"
+        },
+        "onError": {
+          "actions": "set_error",
+          "target": "loginFailed"
+        },
+        "src": "attempt_login"
+      }
+    },
+    "loginFailed": {
+      "on": {
+        "LOGIN": {
+          "actions": [
+            "increment_attempts",
+            "cache_credentials"
+          ],
+          "guard": "is_not_locked_out",
+          "target": "loggingIn"
+        }
+      }
+    }
+  }
+}

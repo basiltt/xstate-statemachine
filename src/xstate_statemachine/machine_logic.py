@@ -1,135 +1,147 @@
-# src/xstate_statemachine/machine_logic.py
-from __future__ import annotations
-import logging  # 📝 Added import for logging
+# /src/xstate_statemachine/machine_logic.py
+# -----------------------------------------------------------------------------
+# 🧠 Machine Logic Container
+# -----------------------------------------------------------------------------
+# This module defines the `MachineLogic` class, which serves as a centralized
+# container or "registry" for all custom behaviors (actions, guards, and
+# services) that a state machine can invoke.
+#
+# This class is fundamental to the "Separation of Concerns" principle that
+# underpins the library. It allows developers to keep the declarative state
+# machine definition (the JSON) separate from its imperative implementation
+# details (the Python code). This makes both the logic and the state flow
+# easier to manage, test, and reason about.
+# -----------------------------------------------------------------------------
+"""
+Provides a data structure for holding a state machine's implementation logic.
+
+This module contains the `MachineLogic` class, which is used to explicitly
+bind the string names of actions, guards, and services from a machine's
+configuration to their corresponding Python callable functions.
+"""
+# -----------------------------------------------------------------------------
+# 📦 Standard Library Imports
+# -----------------------------------------------------------------------------
+from __future__ import (
+    annotations,
+)  # Enables postponed evaluation of type annotations
+
+import logging
 from typing import (
     Any,
     Awaitable,
     Callable,
     Dict,
-    Union,
-    TypeVar,
     Generic,
-    TYPE_CHECKING,
     Optional,
+    TYPE_CHECKING,
+    TypeVar,
+    Union,
 )
+
+# -----------------------------------------------------------------------------
+# 📥 Project-Specific Imports
+# -----------------------------------------------------------------------------
 from .events import Event
 
 # -----------------------------------------------------------------------------
-# Logger Configuration
+# 🪵 Logger Configuration
 # -----------------------------------------------------------------------------
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
 
 # -----------------------------------------------------------------------------
-# ⚙️ Type Hinting for External Dependencies
+# ⚙️ Type Hinting for Forward References
 # -----------------------------------------------------------------------------
-# These imports are only for type checking purposes to avoid circular
-# dependencies at runtime.
-# -----------------------------------------------------------------------------
+# This block is used for type hinting to prevent circular import errors at
+# runtime, which can occur when two modules depend on each other. The type
+# hints are only evaluated by static type checkers.
 if TYPE_CHECKING:
-    from .interpreter import Interpreter
-    from .models import (
-        ActionDefinition,
-    )  # ✅ Corrected import for ActionDefinition
-
+    from .base_interpreter import BaseInterpreter  # noqa: F401
+    from .models import ActionDefinition  # noqa: F401
 
 # -----------------------------------------------------------------------------
-# 🧬 Type Variables & Callables
+# 🧬 Type Variables & Callable Signatures
 # -----------------------------------------------------------------------------
-# Defining generic TypeVars and Callable types for actions, guards, and services
-# ensures strong static type checking and improves code readability by clearly
-# specifying the expected signatures of these machine logic components.
+# These generic TypeVars and specific Callable type aliases are used to
+# document the ideal function signatures for actions, guards, and services.
+# They provide strong typing support for developers implementing machine logic.
 # -----------------------------------------------------------------------------
 
 TContext = TypeVar("TContext", bound=Dict[str, Any])
 TEvent = TypeVar("TEvent", bound=Dict[str, Any])
 
+# A blueprint for any action function. It receives the interpreter instance,
+# the mutable context, the triggering event, and its own definition.
 ActionCallable = Callable[
-    [
-        "Interpreter",
-        TContext,
-        Event,
-        "ActionDefinition",
-    ],  # ✅ Event is now a full object
+    ["BaseInterpreter", TContext, Event, "ActionDefinition"],
     Union[None, Awaitable[None]],
 ]
-GuardCallable = Callable[
-    [TContext, Event], bool
-]  # ✅ Event is now a full object
+
+# A blueprint for any guard function. It must be a pure, synchronous function
+# that returns a boolean.
+GuardCallable = Callable[[TContext, Event], bool]
+
+# A blueprint for any service function. It can be sync or async.
 ServiceCallable = Callable[
-    ["Interpreter", TContext, Event], Awaitable[Any]
-]  # ✅ Event is now a full object
+    ["BaseInterpreter", TContext, Event], Union[Any, Awaitable[Any]]
+]
 
 
 # -----------------------------------------------------------------------------
-# 🧠 Machine Logic Implementation
-# -----------------------------------------------------------------------------
-# The `MachineLogic` class acts as a centralized registry for all custom
-# behaviors (actions, guards, and services) that a state machine can invoke.
-# This adheres to the "Separation of Concerns" principle, keeping the machine
-# definition declarative and the implementation details separate.
+# 🧠 MachineLogic Class Definition
 # -----------------------------------------------------------------------------
 
 
 class MachineLogic(Generic[TContext, TEvent]):
-    """
-    A container for the implementation logic of a state machine.
+    """A container for the implementation logic of a state machine.
 
-    This class serves as a registry for custom actions, guards (conditional
-    logic for transitions), and services (asynchronous operations) that are
-    referenced by name within a state machine's declarative configuration.
-    It separates the "what" (machine definition) from the "how" (logic implementation).
+    This class serves as a simple registry for custom actions, guards, and
+    services. An instance of this class is passed to `create_machine` when
+    using the "explicit binding" pattern. It cleanly separates the "what"
+    (the machine's JSON definition) from the "how" (the Python code that
+    executes the defined behaviors).
 
     Attributes:
-        actions (Dict[str, ActionCallable]): A dictionary mapping action names
-            (as strings) to their executable `ActionCallable` implementations.
-            These functions typically modify context or trigger side effects.
-        guards (Dict[str, GuardCallable]): A dictionary mapping guard names
-            (as strings) to their `GuardCallable` implementations. These are
-            functions that return a boolean, determining if a transition is allowed.
-        services (Dict[str, ServiceCallable]): A dictionary mapping service names
-            (as strings) to their `ServiceCallable` implementations. These are
-            asynchronous functions that can be invoked by the machine.
+        actions: A dictionary mapping action names to their callable
+                 implementations.
+        guards: A dictionary mapping guard names to their boolean-returning
+                callable implementations.
+        services: A dictionary mapping service names to their callable
+                  implementations, which can be sync or async.
     """
 
     def __init__(
         self,
-        actions: Optional[
-            Dict[str, ActionCallable]
-        ] = None,  # ✅ Used Optional for default None
-        guards: Optional[
-            Dict[str, GuardCallable]
-        ] = None,  # ✅ Used Optional for default None
-        services: Optional[
-            Dict[str, ServiceCallable]
-        ] = None,  # ✅ Used Optional for default None
-    ):
-        """
-        Initializes the MachineLogic instance.
+        actions: Optional[Dict[str, Callable[..., Any]]] = None,
+        guards: Optional[Dict[str, Callable[..., bool]]] = None,
+        services: Optional[Dict[str, Callable[..., Any]]] = None,
+    ) -> None:
+        """Initializes the MachineLogic instance.
 
-        All parameters are optional and default to empty dictionaries, allowing
-        a machine to be defined with only the logic it requires.
+        This constructor accepts dictionaries of callables. Using a more
+        generic `Callable[..., Any]` hint makes the class flexible, allowing
+        users to provide functions with more specific interpreter type hints
+        (e.g., `SyncInterpreter` instead of `BaseInterpreter`) without causing
+        type-checking errors.
 
         Args:
-            actions (Optional[Dict[str, ActionCallable]]): A dictionary of
-                action implementations. Keys are action names (str), values are
-                callable functions. Defaults to an empty dictionary if not provided.
-            guards (Optional[Dict[str, GuardCallable]]): A dictionary of
-                guard implementations. Keys are guard names (str), values are
-                callable functions returning a boolean. Defaults to an empty
-                dictionary if not provided.
-            services (Optional[Dict[str, ServiceCallable]]): A dictionary of
-                asynchronous service implementations. Keys are service names (str),
-                values are awaitable callable functions. Defaults to an empty
-                dictionary if not provided.
+            actions: A dictionary mapping action names (str) to their
+                Python function implementations. Defaults to an empty dict.
+            guards: A dictionary mapping guard names (str) to their
+                Python function implementations. Defaults to an empty dict.
+            services: A dictionary mapping service names (str) to their
+                Python function implementations. Defaults to an empty dict.
         """
-        logger.info("Initializing MachineLogic...")
-        self.actions: Dict[str, ActionCallable] = actions or {}
-        self.guards: Dict[str, GuardCallable] = guards or {}
-        self.services: Dict[str, ServiceCallable] = services or {}
+        logger.info("🧠 Initializing MachineLogic container...")
+
+        # ✅ Use `or {}` as a robust way to default to an empty dictionary
+        #    if None is passed.
+        self.actions: Dict[str, Callable[..., Any]] = actions or {}
+        self.guards: Dict[str, Callable[..., bool]] = guards or {}
+        self.services: Dict[str, Callable[..., Any]] = services or {}
+
         logger.info(
-            "MachineLogic initialized with %d actions, %d guards, %d services.",
+            "✅ MachineLogic initialized with %d actions, %d guards, and %d services.",
             len(self.actions),
             len(self.guards),
             len(self.services),

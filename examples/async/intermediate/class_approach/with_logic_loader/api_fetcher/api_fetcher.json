@@ -1,0 +1,45 @@
+{
+  "context": {
+    "error_message": null,
+    "user_data": null,
+    "user_id_to_fetch": null
+  },
+  "id": "apiFetcher",
+  "initial": "idle",
+  "states": {
+    "failure": {
+      "on": {
+        "RETRY": "loading"
+      }
+    },
+    "idle": {
+      "on": {
+        "FETCH": {
+          "actions": "set_user_id_to_fetch",
+          "target": "loading"
+        }
+      }
+    },
+    "loading": {
+      "invoke": {
+        "onDone": {
+          "actions": "set_user_data",
+          "target": "success"
+        },
+        "onError": {
+          "actions": "set_error_message",
+          "target": "failure"
+        },
+        "src": "fetch_user_from_api"
+      }
+    },
+    "success": {
+      "on": {
+        "FETCH": {
+          "actions": "set_user_id_to_fetch",
+          "target": "loading"
+        }
+      }
+    }
+  }
+}

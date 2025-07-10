@@ -1,0 +1,41 @@
+{
+  "context": {
+    "speed": 0
+  },
+  "id": "fanController",
+  "initial": "off",
+  "states": {
+    "off": {
+      "on": {
+        "TURN_ON": {
+          "actions": [
+            "set_speed_low"
+          ],
+          "target": "on"
+        }
+      }
+    },
+    "on": {
+      "initial": "low",
+      "on": {
+        "TURN_OFF": {
+          "actions": "set_speed_zero",
+          "target": "off"
+        }
+      },
+      "states": {
+        "high": {},
+        "low": {
+          "on": {
+            "INCREASE_SPEED": "medium"
+          }
+        },
+        "medium": {
+          "on": {
+            "INCREASE_SPEED": "high"
+          }
+        }
+      }
+    }
+  }
+}

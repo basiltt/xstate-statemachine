@@ -1,0 +1,38 @@
+{
+  "context": {
+    "error": null,
+    "password": "",
+    "username": ""
+  },
+  "id": "loginForm",
+  "initial": "editing",
+  "states": {
+    "editing": {
+      "on": {
+        "SUBMIT": {
+          "guard": "are_fields_filled",
+          "target": "submitting"
+        },
+        "UPDATE_FIELD": {
+          "actions": "update_field"
+        }
+      }
+    },
+    "submitting": {
+      "invoke": {
+        "onDone": {
+          "actions": "clear_error",
+          "target": "success"
+        },
+        "onError": {
+          "actions": "set_error",
+          "target": "editing"
+        },
+        "src": "verify_credentials"
+      }
+    },
+    "success": {
+      "type": "final"
+    }
+  }
+}

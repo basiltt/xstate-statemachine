@@ -1,0 +1,20 @@
+{
+  "context": {
+    "claimed_by": null
+  },
+  "id": "offerClaim",
+  "initial": "available",
+  "states": {
+    "available": {
+      "on": {
+        "CLAIM": {
+          "actions": "set_claimant",
+          "target": "claimed"
+        }
+      }
+    },
+    "claimed": {
+      "type": "final"
+    }
+  }
+}

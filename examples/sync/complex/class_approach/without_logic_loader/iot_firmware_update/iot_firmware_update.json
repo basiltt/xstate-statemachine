@@ -1,0 +1,66 @@
+{
+  "context": {
+    "current_version": "1.0.0",
+    "error": null,
+    "latest_version_info": null,
+    "update_package_path": null
+  },
+  "id": "iotFirmwareUpdate",
+  "initial": "idle",
+  "states": {
+    "applying_update": {
+      "after": {
+        "5000": "rebooting"
+      },
+      "entry": "log_applying_update"
+    },
+    "check_failed": {},
+    "checking": {
+      "invoke": {
+        "onDone": [
+          {
+            "actions": "store_update_info",
+            "cond": "is_update_available",
+            "target": "downloading"
+          },
+          {
+            "target": "up_to_date"
+          }
+        ],
+        "onError": {
+          "actions": "set_error",
+          "target": "check_failed"
+        },
+        "src": "check_for_update_service"
+      }
+    },
+    "download_failed": {},
+    "downloading": {
+      "invoke": {
+        "onDone": {
+          "actions": "store_package_path",
+          "target": "applying_update"
+        },
+        "onError": {
+          "actions": "set_error",
+          "target": "download_failed"
+        },
+        "src": "download_firmware_service"
+      }
+    },
+    "idle": {
+      "on": {
+        "CHECK_FOR_UPDATE": "checking"
+      }
+    },
+    "rebooting": {
+      "entry": "update_current_version",
+      "on": {
+        "": "up_to_date"
+      }
+    },
+    "up_to_date": {
+      "type": "final"
+    }
+  }
+}

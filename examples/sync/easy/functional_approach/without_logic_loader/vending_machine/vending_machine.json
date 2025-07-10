@@ -1,0 +1,38 @@
+{
+  "context": {
+    "coins": 0
+  },
+  "id": "vendingMachine",
+  "initial": "idle",
+  "states": {
+    "dispensing": {
+      "entry": [
+        "dispense_drink"
+      ],
+      "on": {
+        "": {
+          "target": "idle"
+        }
+      }
+    },
+    "idle": {
+      "on": {
+        "INSERT_COIN": {
+          "actions": "add_coin",
+          "target": "selecting"
+        }
+      }
+    },
+    "selecting": {
+      "on": {
+        "INSERT_COIN": {
+          "actions": "add_coin"
+        },
+        "SELECT_DRINK": {
+          "guard": "enough_coins",
+          "target": "dispensing"
+        }
+      }
+    }
+  }
+}

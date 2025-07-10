@@ -1,0 +1,79 @@
+{
+  "context": {
+    "error": null,
+    "selectedFile": null,
+    "uploadResult": null
+  },
+  "id": "fileUploader",
+  "initial": "idle",
+  "states": {
+    "completed": {
+      "entry": "log_complete",
+      "on": {
+        "NEW_UPLOAD": {
+          "actions": "clear_context",
+          "target": "idle"
+        }
+      }
+    },
+    "failed": {
+      "on": {
+        "CANCEL": {
+          "actions": "clear_context",
+          "target": "idle"
+        },
+        "RETRY": {
+          "guard": "is_file_selected",
+          "target": "uploading"
+        }
+      }
+    },
+    "idle": {
+      "on": {
+        "SELECT_FILE": {
+          "actions": "set_selected_file",
+          "target": "selecting"
+        }
+      }
+    },
+    "processing": {
+      "invoke": {
+        "id": "processService",
+        "onDone": {
+          "target": "completed"
+        },
+        "onError": {
+          "actions": "set_error",
+          "target": "failed"
+        },
+        "src": "process_file_sync"
+      }
+    },
+    "selecting": {
+      "on": {
+        "CANCEL": {
+          "actions": "clear_context",
+          "target": "idle"
+        },
+        "UPLOAD": {
+          "guard": "is_file_selected",
+          "target": "uploading"
+        }
+      }
+    },
+    "uploading": {
+      "invoke": {
+        "id": "uploadService",
+        "onDone": {
+          "actions": "set_upload_result",
+          "target": "processing"
+        },
+        "onError": {
+          "actions": "set_error",
+          "target": "failed"
+        },
+        "src": "upload_file_sync"
+      }
+    }
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "context": {
+    "currentEpisode": null,
+    "error": null,
+    "playbackPosition": 0
+  },
+  "id": "podcastPlayer",
+  "initial": "idle",
+  "states": {
+    "idle": {
+      "on": {
+        "LOAD_EPISODE": "loading"
+      }
+    },
+    "loading": {
+      "invoke": {
+        "onDone": {
+          "actions": [
+            "set_episode_details",
+            "clear_error"
+          ],
+          "target": "ready_to_play"
+        },
+        "onError": {
+          "actions": "set_error",
+          "target": "idle"
+        },
+        "src": "load_episode_data"
+      }
+    },
+    "paused": {
+      "on": {
+        "PLAY": "playing",
+        "STOP": {
+          "actions": "reset_playback",
+          "target": "idle"
+        }
+      }
+    },
+    "playing": {
+      "on": {
+        "PAUSE": "paused",
+        "STOP": {
+          "actions": "reset_playback",
+          "target": "idle"
+        }
+      }
+    },
+    "ready_to_play": {
+      "on": {
+        "PLAY": "playing"
+      }
+    }
+  }
+}

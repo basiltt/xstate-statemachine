@@ -1,0 +1,46 @@
+{
+  "context": {},
+  "id": "trafficLight",
+  "initial": "green",
+  "states": {
+    "green": {
+      "after": {
+        "5000": "yellow"
+      },
+      "entry": {
+        "params": {
+          "color": "GREEN"
+        },
+        "type": "log_light_change"
+      },
+      "on": {
+        "PEDESTRIAN_WAITING": {
+          "guard": "is_safe_to_change",
+          "target": "yellow"
+        }
+      }
+    },
+    "red": {
+      "after": {
+        "5000": "green"
+      },
+      "entry": {
+        "params": {
+          "color": "RED"
+        },
+        "type": "log_light_change"
+      }
+    },
+    "yellow": {
+      "after": {
+        "2000": "red"
+      },
+      "entry": {
+        "params": {
+          "color": "YELLOW"
+        },
+        "type": "log_light_change"
+      }
+    }
+  }
+}
