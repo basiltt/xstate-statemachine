@@ -71,6 +71,19 @@ class Event(NamedTuple):
     # 📦 A dictionary for any additional, dynamic data. Defaults to an empty dict.
     payload: Dict[str, Any] = {}
 
+    @property
+    def data(self) -> Dict[str, Any]:
+        """Alias for `payload` to maintain compatibility with older versions."""
+        # This property allows access to the payload using the `data` attribute,
+        # which is a common convention in state machine libraries.
+        # It ensures that existing code using `data` will continue to work.
+        if not isinstance(self.payload, dict):
+            raise TypeError(
+                f"Expected payload to be a dict, got {type(self.payload).__name__}"
+            )
+
+        return self.payload
+
 
 class DoneEvent(NamedTuple):
     """Represents the completion of a background service or a final state.

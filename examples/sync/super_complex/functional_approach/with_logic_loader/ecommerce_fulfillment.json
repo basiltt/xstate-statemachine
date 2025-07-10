@@ -37,7 +37,7 @@
         "outOfSync": {
           "invoke": {
             "onDone": "inSync",
-            "src": "debouncedSave"
+            "src": "debounced_save"
           }
         }
       }
@@ -45,7 +45,7 @@
     "orderFlow": {
       "initial": "new",
       "onDone": {
-        "actions": "logOrderCompletion"
+        "actions": "log_order_completion"
       },
       "states": {
         "cancelled": {
@@ -59,10 +59,10 @@
                   "params": {
                     "status": "PAID"
                   },
-                  "type": "markOrderStatus"
+                  "type": "mark_order_status"
                 },
                 {
-                  "type": "reserveInventory"
+                  "type": "reserve_inventory"
                 }
               ],
               "target": "paymentConfirmed"
@@ -73,18 +73,18 @@
                   "params": {
                     "status": "PAYMENT_FAILED"
                   },
-                  "type": "markOrderStatus"
+                  "type": "mark_order_status"
                 },
                 {
                   "params": {
                     "template": "payment_failed"
                   },
-                  "type": "sendEmail"
+                  "type": "send_email"
                 }
               ],
               "target": "paymentFailed"
             },
-            "src": "chargePayment"
+            "src": "charge_payment"
           }
         },
         "checkoutPending": {
@@ -92,25 +92,25 @@
             "CANCEL_ORDER": {
               "actions": [
                 {
-                  "type": "releaseInventory"
+                  "type": "release_inventory"
                 },
                 {
                   "params": {
                     "status": "CANCELLED"
                   },
-                  "type": "markOrderStatus"
+                  "type": "mark_order_status"
                 },
                 {
                   "params": {
                     "template": "cancelled"
                   },
-                  "type": "sendEmail"
+                  "type": "send_email"
                 }
               ],
               "target": "cancelled"
             },
             "SUBMIT_PAYMENT": {
-              "guard": "paymentIsValid",
+              "guard": "payment_is_valid",
               "target": "charging"
             }
           }
@@ -125,9 +125,9 @@
                 "params": {
                   "status": "PENDING_PAYMENT"
                 },
-                "type": "markOrderStatus"
+                "type": "mark_order_status"
               },
-              "guard": "cartIsNotEmpty",
+              "guard": "cart_is_not_empty",
               "target": "checkoutPending"
             }
           }
@@ -139,7 +139,7 @@
                 "params": {
                   "status": "READY_TO_SHIP"
                 },
-                "type": "markOrderStatus"
+                "type": "mark_order_status"
               },
               "target": "shipping"
             }
@@ -150,13 +150,13 @@
             "RESERVE_FAILED": {
               "actions": [
                 {
-                  "type": "queueRefund"
+                  "type": "queue_refund"
                 },
                 {
                   "params": {
                     "template": "stock_unavailable"
                   },
-                  "type": "sendEmail"
+                  "type": "send_email"
                 }
               ],
               "target": "cancelled"
@@ -166,7 +166,7 @@
                 "params": {
                   "status": "PACKING"
                 },
-                "type": "markOrderStatus"
+                "type": "mark_order_status"
               },
               "target": "packing"
             }
@@ -190,10 +190,10 @@
                 "requesting": {
                   "invoke": {
                     "onDone": {
-                      "actions": "addTrackingNumber",
+                      "actions": "add_tracking_number",
                       "target": "ready"
                     },
-                    "src": "arrangeShipment"
+                    "src": "arrange_shipment"
                   }
                 }
               }
@@ -212,13 +212,13 @@
                           "params": {
                             "status": "DELIVERED"
                           },
-                          "type": "markOrderStatus"
+                          "type": "mark_order_status"
                         },
                         {
                           "params": {
                             "template": "delivered"
                           },
-                          "type": "sendEmail"
+                          "type": "send_email"
                         }
                       ],
                       "target": "delivered"
@@ -233,13 +233,13 @@
                           "params": {
                             "status": "SHIPPED"
                           },
-                          "type": "markOrderStatus"
+                          "type": "mark_order_status"
                         },
                         {
                           "params": {
                             "template": "shipped"
                           },
-                          "type": "sendEmail"
+                          "type": "send_email"
                         }
                       ],
                       "target": "inTransit"

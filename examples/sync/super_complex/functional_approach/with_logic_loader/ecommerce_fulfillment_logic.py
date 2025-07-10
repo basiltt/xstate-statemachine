@@ -1,85 +1,167 @@
-# examples/sync/super_complex/class_approach/with_logic_loader/ecommerce_fulfillment/ecommerce_fulfillment_logic.py
+# examples/sync/super_complex/class_approach/with_logic_loader/ecommerce_fulfillment_logic.py
+# -------------------------------------------------------------------------------
+# 🛒 E-Commerce Fulfillment Logic
+# -------------------------------------------------------------------------------
+"""
+Class-based logic for E-Commerce order fulfillment, with snake_case
+action and guard names matching the JSON definition above.
+"""
+
 import logging
-import time
 import random
-from typing import Dict, Any
+import time
+from typing import Any, Dict
 
 from src.xstate_statemachine import SyncInterpreter, Event, ActionDefinition
 
+logger = logging.getLogger(__name__)
+
 
 class ECommerceFulfillmentLogic:
-    """Class-based logic for the E-Commerce Fulfillment state machine."""
+    """Encapsulates actions, guards, and services for order fulfillment."""
 
-    # --- Actions ---
-    def markOrderStatus(
-        self, i: SyncInterpreter, ctx: Dict, e: Event, ad: ActionDefinition
-    ):
-        status = ad.params.get("status", "UNKNOWN")
-        ctx["orderStatus"] = status
-        logging.info(f"📦 Order status updated to: {status}")
+    # -------------------------------------------------------------------------
+    # ⚙️ Actions
+    # -------------------------------------------------------------------------
 
-    def sendEmail(
-        self, i: SyncInterpreter, ctx: Dict, e: Event, ad: ActionDefinition
-    ):
-        template = ad.params.get("template", "general")
-        logging.info(f"📧 Sending email with template: '{template}'")
+    def mark_order_status(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,
+    ) -> None:
+        """📦 Action: Update order status from action params."""
+        status = action_def.params.get("status", "UNKNOWN")
+        context["orderStatus"] = status
+        logger.info("📦 Order status updated to: %s", status)
 
-    def logOrderCompletion(
-        self, i: SyncInterpreter, ctx: Dict, e: Event, ad: ActionDefinition
-    ):
-        logging.info(
-            f"🏁 Order flow for orderId '{ctx['orderId']}' has completed with status: {ctx['orderStatus']}."
+    def send_email(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],  # noqa
+        event: Event,  # noqa
+        action_def: ActionDefinition,
+    ) -> None:
+        """📧 Action: Send notification email using template param."""
+        template = action_def.params.get("template", "general")
+        logger.info("📧 Sending email with template: '%s'", template)
+
+    def log_order_completion(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🏁 Action: Log completion of the entire order flow."""
+        order_id = context.get("orderId")
+        status = context.get("orderStatus")
+        logger.info(
+            "🏁 Order '%s' completed with status '%s'.", order_id, status
         )
 
-    def addTrackingNumber(
-        self, i: SyncInterpreter, ctx: Dict, e: Event, ad: ActionDefinition
-    ):
-        ctx["trackingNumber"] = e.data.get("trackingId")
-        logging.info(f"🚚 Tracking number added: {ctx['trackingNumber']}")
+    def add_tracking_number(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🚚 Action: Save shipment tracking ID from service data."""
+        tracking = event.data.get("trackingId")
+        context["trackingNumber"] = tracking
+        logger.info("🚚 Tracking number added: %s", tracking)
 
-    def releaseInventory(self, i, c, e, a):
-        logging.info("🏬 Inventory released.")
+    def reserve_inventory(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],  # noqa
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🏬 Action: Reserve inventory (no-op simulation)."""
+        logger.info("🏬 Inventory reserved.")
 
-    def reserveInventory(self, i, c, e, a):
-        logging.info("🏬 Inventory reserved.")
+    def release_inventory(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],  # noqa
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🏬 Action: Release inventory on cancellation."""
+        logger.info("🏬 Inventory released.")
 
-    def queueRefund(self, i, c, e, a):
-        logging.info("💰 Refund queued.")
+    def queue_refund(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],  # noqa
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """💰 Action: Queue a customer refund."""
+        logger.info("💰 Refund queued.")
 
-    # --- Guards ---
-    def cartIsNotEmpty(self, ctx: Dict, e: Event) -> bool:
-        is_valid = len(ctx.get("cart", [])) > 0
-        if not is_valid:
-            logging.warning("Guard: Cart is empty, checkout blocked.")
-        return is_valid
+    # -------------------------------------------------------------------------
+    # 🛡️ Guards
+    # -------------------------------------------------------------------------
 
-    def paymentIsValid(self, ctx: Dict, e: Event) -> bool:
-        is_valid = e.payload and e.payload.get("card_number")
-        if not is_valid:
-            logging.warning("Guard: Payment info is invalid, charge blocked.")
-        return is_valid
+    def cart_is_not_empty(
+        self, context: Dict[str, Any], event: Event
+    ) -> bool:  # noqa
+        """✔️ Guard: Ensure the cart has at least one item."""
+        valid = bool(context.get("cart"))
+        if not valid:
+            logger.warning("🛡️ Cannot checkout: Cart is empty.")
+        return valid
 
-    # --- Services ---
-    def chargePayment(
-        self, i: SyncInterpreter, ctx: Dict, e: Event
+    def payment_is_valid(
+        self, context: Dict[str, Any], event: Event
+    ) -> bool:  # noqa
+        """✔️ Guard: Validate presence of a card_number."""
+        valid = bool(event.payload.get("card_number"))
+        if not valid:
+            logger.warning("🛡️ Payment info invalid, charge blocked.")
+        return valid
+
+    # -------------------------------------------------------------------------
+    # 🔄 Services
+    # -------------------------------------------------------------------------
+
+    def charge_payment(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],  # noqa
+        event: Event,
     ) -> Dict[str, Any]:
-        logging.info("💳 Attempting to charge payment...")
-        time.sleep(1)  # Simulate payment gateway latency
-        if e.payload.get("card_number") == "fail_card":
-            raise ConnectionError("Payment gateway declined the transaction.")
-        return {"transactionId": f"txn_{random.randint(1000, 9999)}"}
+        """💳 Service: Charge payment synchronously."""
+        logger.info("💳 Attempting to charge payment...")
+        time.sleep(1)
+        if event.payload.get("card_number") == "fail_card":
+            raise ConnectionError("Payment gateway declined transaction.")
+        txn = f"txn_{random.randint(1000, 9999)}"
+        return {"transactionId": txn}
 
-    def arrangeShipment(
-        self, i: SyncInterpreter, ctx: Dict, e: Event
+    def arrange_shipment(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],  # noqa
+        event: Event,  # noqa
     ) -> Dict[str, Any]:
-        logging.info("🚚 Arranging shipment with carrier...")
-        time.sleep(1)  # Simulate API call to shipping provider
-        return {"trackingId": f"1Z{random.randint(100000, 999999)}"}
+        """🚚 Service: Arrange shipping synchronously."""
+        logger.info("🚚 Arranging shipment...")
+        time.sleep(1)
+        tracking = f"1Z{random.randint(100000, 999999)}"
+        return {"trackingId": tracking}
 
-    def debouncedSave(
-        self, i: SyncInterpreter, ctx: Dict, e: Event
+    def debounced_save(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],  # noqa
+        event: Event,  # noqa
     ) -> Dict[str, Any]:
-        logging.info("💾 Inventory change detected, saving...")
-        time.sleep(0.5)  # Simulate debounced save
-        logging.info("💾 Inventory synced.")
+        """💾 Service: Debounced inventory sync."""
+        logger.info("💾 Inventory change detected, saving...")
+        time.sleep(0.5)
         return {"synced": True}

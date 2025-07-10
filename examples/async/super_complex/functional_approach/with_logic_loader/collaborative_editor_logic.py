@@ -1,122 +1,154 @@
+# -------------------------------------------------------------------------------
+# 📝 Collaborative Editor Logic
 # examples/async/super_complex/functional_approach/with_logic_loader/collaborative_editor/collaborative_editor_logic.py
+# -------------------------------------------------------------------------------
+"""
+Functional logic for the Collaborative Editor example.
+
+Illustrates:
+  • Spawning collaborator cursor actors.
+  • Debounced autosave using 'after' transitions.
+  • Inter-actor communication and cleanup.
+"""
 import asyncio
 import json
 import logging
 import os
 import random
 import time
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 
 from src.xstate_statemachine import (
     Interpreter,
     Event,
     ActionDefinition,
-    create_machine,
     MachineLogic,
+    create_machine,
 )
 from src.xstate_statemachine.models import MachineNode
 
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
 
-# --- Main Machine Actions ---
+_actor_config: Optional[Dict[str, Any]] = None
+_actor_logic: Optional[MachineLogic] = None
+
+
 async def update_local_content(
-    i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-):
-    ctx["local_content"] += e.payload.get("key", "")
-    await i.send("CONTENT_CHANGED")
+    interpreter: Interpreter,
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """✍️ Append typed character and trigger content-changed event."""
+    context["local_content"] += event.payload.get("key", "")
+    await interpreter.send("CONTENT_CHANGED")
 
 
 def start_autosave_timer(
-    i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-):
-    logging.info(
-        "✍️ Content changed. Unsaved changes present. Auto-saving in 3s."
-    )
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],  # noqa
+    event: Event,  # noqa
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """⏲️ Log that an autosave timer has started."""
+    logger.info("⏲️ Content changed; auto-saving in 3s...")
 
 
 def update_server_content(
-    i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-):
-    ctx["server_content"] = e.data.get("content")
-    ctx["last_saved"] = time.time()
-    logging.info("✅ Document saved and synced successfully.")
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """☁️ Update context with saved content and timestamp."""
+    context["server_content"] = event.data.get("content")
+    context["last_saved"] = time.time()
+    logger.info("✅ Document saved to server.")
 
 
-def set_sync_error(i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition):
-    ctx["error"] = str(e.data)
-    logging.error(f"❌ Could not save document: {ctx['error']}")
+def set_sync_error(
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """❌ Store sync error and log it."""
+    context["error"] = str(event.data)
+    logger.error(f"❌ Sync failed: {context['error']}")
 
 
 async def destroy_collaborator_cursor(
-    i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-):
-    user_id_to_remove = e.payload.get("user_id")
+    interpreter: Interpreter,
+    context: Dict[str, Any],  # noqa
+    event: Event,
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """🗑️ Stop and remove a cursor actor for a leaving collaborator."""
+    user_id = event.payload.get("user_id")
     actor_to_stop = next(
         (
-            actor
-            for actor in i._actors.values()
-            if actor.context.get("user_id") == user_id_to_remove
+            a
+            for a in interpreter._actors.values()  # noqa
+            if a.context.get("user_id") == user_id
         ),
         None,
     )
-
     if actor_to_stop:
-        logging.info(
-            f"👤 Collaborator '{user_id_to_remove}' left. Destroying cursor actor."
-        )
+        logger.info(f"🗑️ Removing cursor for {user_id}")
         await actor_to_stop.stop()
-        if actor_to_stop.id in i._actors:
-            del i._actors[actor_to_stop.id]
+        interpreter._actors.pop(actor_to_stop.id, None)  # noqa
 
 
-# --- Main Machine Services ---
 async def save_to_server_service(
-    i: Interpreter, ctx: Dict, e: Event
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,  # noqa
 ) -> Dict[str, Any]:
-    logging.info("  -> ☁️ Invoking service: Saving content to server...")
+    """☁️ Async service to save content to server."""
+    logger.info("☁️ Saving content...")
     await asyncio.sleep(1.5)
     if random.random() < 0.1:
-        raise ConnectionError("Failed to connect to server.")
-    return {"content": ctx["local_content"]}
+        raise ConnectionError("Server unavailable.")
+    return {"content": context["local_content"]}
 
 
-# --- Actor Logic ---
-_actor_config = None
-_actor_logic = None
-
-
-def load_actor_defs():
+def collaborator_cursor(
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],  # noqa
+    event: Event,
+) -> MachineNode:
+    """👤 Service to spawn a new collaborator cursor actor."""
     global _actor_config, _actor_logic
     if _actor_config is None:
-        with open("collaborator_cursor_actor.json", "r") as f:
+        path = os.path.join("collaborator_cursor_actor.json")
+        with open(path, "r", encoding="utf-8") as f:
             _actor_config = json.load(f)
         _actor_logic = MachineLogic(
             actions={"update_position": actor_update_position}
         )
 
-
-def collaborator_cursor(i: Interpreter, ctx: Dict, e: Event) -> "MachineNode":
-    """
-    This service is called by the interpreter's `spawn_` logic.
-    It uses the event payload to set the initial context of the new actor.
-    """
-    load_actor_defs()
-    # Create a fresh copy of the config to avoid state pollution
-    machine_config = _actor_config.copy()
-
-    # ✅ FIX: Set initial context for the spawned actor
-    machine_config["context"] = machine_config.get("context", {})
-    machine_config["context"]["user_id"] = e.payload.get("user_id")
-    machine_config["context"]["color"] = random.choice(
-        ["orange", "purple", "green"]
+    cfg = _actor_config.copy()
+    cfg.setdefault("context", {})
+    cfg["context"].update(
+        {
+            "user_id": event.payload.get("user_id"),
+            "color": random.choice(["orange", "purple", "green"]),
+        }
     )
-
-    return create_machine(machine_config, logic=_actor_logic)
+    return create_machine(cfg, logic=_actor_logic)
 
 
 def actor_update_position(
-    i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-):
-    ctx["position"] = e.payload.get("position")
-    logging.info(
-        f"  -> 🖱️  Cursor for user '{ctx['user_id']}' (color: {ctx['color']}) moved to {ctx['position']}"
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """🖱️ Update cursor position for a collaborator actor."""
+    context["position"] = event.payload.get("position")
+    logger.info(
+        f"🖱️ Cursor {context['user_id']} moved to {context['position']}"
     )

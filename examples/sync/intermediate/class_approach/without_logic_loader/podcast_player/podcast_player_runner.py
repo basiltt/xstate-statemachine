@@ -1,32 +1,22 @@
 # examples/sync/intermediate/class_approach/without_logic_loader/podcast_player_runner.py
+# -----------------------------------------------------------------------------
+# 🎧 Intermediate Example: Podcast Player (Explicit Logic)
+# -----------------------------------------------------------------------------
+"""
+Runner for a synchronous podcast player state machine.
 
-# -----------------------------------------------------------------------------
-# 🎧 Intermediate Example: Synchronous Podcast Player (Class-Based)
-# -----------------------------------------------------------------------------
-# This script simulates a simple podcast player.
-#
-# Key Concepts Illustrated:
-#   - Synchronous Execution: Uses the `SyncInterpreter`.
-#   - Class-Based Logic: The `PodcastPlayer` class encapsulates all logic.
-#   - Explicit Logic Binding: A `MachineLogic` object is manually created
-#     to map logic names from the JSON to the class's instance methods,
-#     demonstrating the "without_logic_loader" approach.
-#   - Sync Service with Error Handling: The `invoke` of `load_episode_data`
-#     can succeed (`onDone`) or fail (`onError`).
-# -----------------------------------------------------------------------------
+Key Concepts:
+  • SyncInterpreter for blocking execution.
+  • Explicit MachineLogic binding of actions and services.
+  • Error handling in sync service.
+"""
 
 import json
 import logging
 import os
-import sys
 import time
 from typing import Any, Dict
 
-# --- Path Setup ---
-sys.path.insert(
-    0,
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../..")),
-)
 from src.xstate_statemachine import (
     create_machine,
     SyncInterpreter,
@@ -35,20 +25,23 @@ from src.xstate_statemachine import (
     ActionDefinition,
 )
 
-# --- Logger Configuration ---
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
-# -----------------------------------------------------------------------------
-# 🏛️ PodcastPlayer Class
-# -----------------------------------------------------------------------------
 class PodcastPlayer:
-    """Encapsulates the logic and interpreter for a podcast player."""
+    """Encapsulates logic and interpreter for a podcast player state machine."""
 
-    def __init__(self, config: Dict[str, Any]):
-        """Initializes the PodcastPlayer."""
-        # 1. Manually create the MachineLogic object, binding names to methods.
-        machine_logic = MachineLogic(
+    def __init__(self, config: Dict[str, Any]) -> None:
+        """Initialize PodcastPlayer with explicit MachineLogic binding.
+
+        Args:
+            config: The JSON-loaded state machine configuration.
+        """
+        logic = MachineLogic(
             actions={
                 "set_episode_details": self.set_episode_details,
                 "set_error": self.set_error,
@@ -57,91 +50,125 @@ class PodcastPlayer:
             },
             services={"load_episode_data": self.load_episode_data},
         )
-
-        # 2. Create the machine and interpreter with the explicit logic.
-        machine = create_machine(config, logic=machine_logic)
+        machine = create_machine(config, logic=logic)
         self.interpreter = SyncInterpreter(machine)
 
-    # --- Actions ---
-    def set_episode_details(self, i, ctx, e, ad):
-        ctx["currentEpisode"] = e.data
-        logging.info(f"🎧 Loaded: '{e.data.get('title')}'")
+    def set_episode_details(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🎧 Action: Store loaded episode details in context."""
+        context["currentEpisode"] = event.data
+        title = event.data.get("title")
+        logger.info(f"🎧 Loaded episode: '{title}'")
 
-    def set_error(self, i, ctx, e, ad):
-        ctx["error"] = str(e.data)
-        logging.warning(f"🚨 Error: {ctx['error']}")
+    def set_error(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🚨 Action: Record error from failed service."""
+        context["error"] = str(event.data)
+        logger.warning(f"🚨 Error: {context['error']}")
 
-    def clear_error(self, i, ctx, e, ad):
-        ctx["error"] = None
+    def clear_error(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🧹 Action: Clear existing error in context."""
+        context["error"] = None
 
-    def reset_playback(self, i, ctx, e, ad):
-        ctx["currentEpisode"] = None
-        ctx["playbackPosition"] = 0
-        logging.info("⏹️ Playback stopped and reset.")
+    def reset_playback(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """⏹️ Action: Reset playback position and clear episode."""
+        context["currentEpisode"] = None
+        context["playbackPosition"] = 0
+        logger.info("⏹️ Playback stopped and reset.")
 
-    # --- Services ---
-    def load_episode_data(
-        self, i: SyncInterpreter, ctx: Dict, e: Event
-    ) -> Dict:
-        """A synchronous service to simulate fetching episode metadata."""
-        episode_id = e.payload.get("episodeId")
-        logging.info(f"⚙️ Service: Loading data for episode '{episode_id}'...")
-        time.sleep(1)  # Simulate blocking I/O
+    def load_episode_data(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],  # noqa
+        event: Event,
+    ) -> Dict[str, Any]:
+        """⚙️ Service: Simulate synchronous loading of episode metadata.
+
+        Args:
+            interpreter: The running SyncInterpreter.
+            context: Mutable context dictionary.
+            event: Event carrying payload {'episodeId': str}.
+
+        Returns:
+            A dict with episode details.
+
+        Raises:
+            ValueError: If the episode is not found.
+        """
+        episode_id = event.payload.get("episodeId")
+        logger.info(f"⚙️ Loading episode '{episode_id}'...")
+        time.sleep(1)
 
         if episode_id == "ep123":
             return {"id": "ep123", "title": "The Art of State Machines"}
-        else:
-            raise ValueError("Episode not found")
+        raise ValueError("Episode not found")
 
-    def run_simulation(self):
-        """Runs a predefined simulation of using the podcast player."""
-        print("\n--- 🎧 Synchronous Podcast Player Simulation ---")
+    def run_simulation(self) -> None:
+        """🚀 Execute a predefined podcast player simulation."""
+        print("\n--- 🎧 Podcast Player Simulation ---")
         self.interpreter.start()
-        logging.info(f"Initial State: {self.interpreter.current_state_ids}")
+        logger.info(f"Initial State: {self.interpreter.current_state_ids}")
 
-        print("\n--- Scenario 1: Load a non-existent episode ---")
+        time.sleep(1)  # Simulate initial delay
+
+        print("\n--- Scenario 1: Load missing episode ---")
         self.interpreter.send("LOAD_EPISODE", episodeId="ep999")
-        logging.info(
-            f"State after failed load: {self.interpreter.current_state_ids}"
-        )
-        logging.info(f"Context: {self.interpreter.context}\n")
+        logger.info(f"State: {self.interpreter.current_state_ids}")
+        logger.info(f"Context: {self.interpreter.context}\n")
 
-        print("--- Scenario 2: Load and play an existing episode ---")
+        time.sleep(1)  # Simulate delay for error handling
+
+        print("--- Scenario 2: Load and play episode ---")
         self.interpreter.send("LOAD_EPISODE", episodeId="ep123")
-        logging.info(
-            f"State after successful load: {self.interpreter.current_state_ids}"
-        )
-
+        logger.info(f"State: {self.interpreter.current_state_ids}")
         self.interpreter.send("PLAY")
-        logging.info(
-            f"State after playing: {self.interpreter.current_state_ids}"
-        )
+        logger.info(f"State after PLAY: {self.interpreter.current_state_ids}")
 
-        print("\n--- Scenario 3: Pause and Stop ---")
+        time.sleep(2)  # Simulate playback time
+
+        print("\n--- Scenario 3: Pause and stop ---")
         self.interpreter.send("PAUSE")
-        logging.info(
-            f"State after pausing: {self.interpreter.current_state_ids}"
-        )
+        logger.info(f"State after PAUSE: {self.interpreter.current_state_ids}")
         self.interpreter.send("STOP")
-        logging.info(f"Final State: {self.interpreter.current_state_ids}")
-        logging.info(f"Final Context: {self.interpreter.context}")
+        logger.info(f"Final State: {self.interpreter.current_state_ids}")
+        logger.info(f"Final Context: {self.interpreter.context}")
+
+        time.sleep(1)  # Simulate final delay
 
         self.interpreter.stop()
-        print("\n--- ✅ Simulation Complete ---")
 
 
-# -----------------------------------------------------------------------------
-# 🚀 Main Execution
-# -----------------------------------------------------------------------------
-def main():
-    """Loads config and runs the podcast player simulation."""
+def main() -> None:
+    """Load configuration and run the podcast player simulation."""
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    json_path = os.path.join(current_dir, "podcast_player.json")
+    config_path = os.path.join(current_dir, "podcast_player.json")
     try:
-        with open(json_path, "r") as f:
-            config = json.load(f)
+        with open(config_path, "r", encoding="utf-8") as f:
+            config: Dict[str, Any] = json.load(f)
     except FileNotFoundError:
-        logging.error(f"❌ Configuration file not found at '{json_path}'")
+        logger.error(f"❌ Config not found: '{config_path}'")
         return
 
     player = PodcastPlayer(config)

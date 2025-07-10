@@ -1,124 +1,206 @@
-# examples/hybrid_manufacturing.py
-
-# -----------------------------------------------------------------------------
+# examples/hybrid/manufacturing_line/hybrid_manufacturing.py
+# -------------------------------------------------------------------------------
 # 🏭 Complex Example: Hybrid Sync & Async Manufacturing Line
-# -----------------------------------------------------------------------------
-# This script demonstrates a sophisticated use case where an asynchronous
-# parent machine (the AssemblyLine) invokes a synchronous child machine
-# (the QualityCheck) to get an immediate result before proceeding.
-#
-# Key Concepts Illustrated:
-#   - Hybrid Execution: Combining async and sync interpreters in one system.
-#   - Programmatic Invocation: The async machine's action creates and runs the
-#     sync machine, inspects its final state, and sends an event to itself.
-#   - Pythonic Naming: All functions and logic keys now follow snake_case.
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
+"""
+Demonstrates a hybrid manufacturing workflow combining:
+
+  • 🔧 AssemblyLine (async): assembles and packages parts.
+  • 🔬 QualityCheck (sync): runs an immediate quality inspection.
+  • ↔️ Hybrid Execution: an async action spins up a sync interpreter,
+       inspects its final state, and feeds the result back into the async flow.
+
+Key Concepts:
+  - Programmatic Invocation of SyncInterpreter from async code.
+  - Event-driven handoff of synchronous results back to the async machine.
+  - Snake_case naming, rich emoji logging, and Google-style docstrings.
+"""
 
 import asyncio
 import json
 import logging
 import os
 import random
-from typing import Dict, Any
-
 import sys
-
-
-sys.path.insert(
-    0, os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-)
+from typing import Any, Dict
 
 from src.xstate_statemachine import (
     create_machine,
-    Interpreter,
-    SyncInterpreter,
-    MachineLogic,
     Event,
+    Interpreter,
+    MachineLogic,
     ActionDefinition,
+    SyncInterpreter,
 )
 
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
 )
+logger = logging.getLogger(__name__)
+
+# Ensure the examples folder is on the path for JSON imports
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 
 # -----------------------------------------------------------------------------
-# ⚙️ Logic for the Asynchronous AssemblyLine
+# 🔧 AssemblyLine Logic (Async Services & Actions)
 # -----------------------------------------------------------------------------
 
 
-async def assemble_part_service(i: Interpreter, c: Dict, e: Event) -> Dict:
-    """Async service to simulate assembling a part."""
-    logging.info(f"🔧 Assembling part {c['partId']}... (3 seconds)")
+async def assemble_part_service(
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,  # noqa
+) -> Dict[str, Any]:
+    """🔩 Simulate part assembly over 3 seconds.
+
+    Args:
+        interpreter: The running async interpreter.
+        context: Mutable machine context.
+        event: Triggering PART_RECEIVED event.
+
+    Returns:
+        A dict indicating assembly status.
+    """
+    part_id = context.get("partId")
+    logger.info(f"🔧 Assembling part '{part_id}' (3s)...")
     await asyncio.sleep(3)
     return {"status": "assembled"}
 
 
-async def package_part_service(i: Interpreter, c: Dict, e: Event) -> Dict:
-    """Async service to simulate packaging a part."""
-    logging.info(f"📦 Packaging part {c['partId']}... (2 seconds)")
+async def package_part_service(
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,  # noqa
+) -> Dict[str, Any]:
+    """📦 Simulate part packaging over 2 seconds.
+
+    Args:
+        interpreter: The running async interpreter.
+        context: Mutable machine context.
+        event: Triggering ASSEMBLY_COMPLETE event.
+
+    Returns:
+        A dict indicating packaging status.
+    """
+    part_id = context.get("partId")
+    logger.info(f"📦 Packaging part '{part_id}' (2s)...")
     await asyncio.sleep(2)
     return {"status": "packaged"}
 
 
 def assign_part_id_action(
-    i: Interpreter, c: Dict, e: Event, a: ActionDefinition
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,  # noqa
 ) -> None:
-    """Action to assign the part ID to the context."""
-    c["partId"] = e.payload.get("partId")
-    logging.info(f"🔩 Part {c['partId']} received on assembly line.")
+    """🆔 Store the incoming part ID into context.
+
+    Args:
+        interpreter: The running async interpreter.
+        context: Mutable machine context.
+        event: Triggering PART_RECEIVED event carrying payload {'partId'}.
+        action_def: Metadata for this action.
+    """
+    part_id = event.payload.get("partId")
+    context["partId"] = part_id
+    logger.info(f"🔩 Part '{part_id}' received on assembly line.")
 
 
 # -----------------------------------------------------------------------------
-# ⚙️ Logic for the Synchronous QualityCheck Machine
+# 🔬 QualityCheck Logic (Sync Actions & Guards)
 # -----------------------------------------------------------------------------
 
 
 def run_inspection_action(
-    i: SyncInterpreter, c: Dict, e: Event, a: ActionDefinition
+    interpreter: SyncInterpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,  # noqa
+    action_def: ActionDefinition,  # noqa
 ) -> None:
-    """Action for the sync machine to run a quality inspection."""
-    logging.info("🔬 [QC] Running synchronous inspection...")
-    c["inspectionCount"] += 1
-    c["isPassed"] = random.random() > 0.2  # 80% chance of passing
+    """🔬 Perform a synchronous quality inspection.
+
+    Args:
+        interpreter: The SyncInterpreter instance.
+        context: Mutable machine context for QC.
+        event: Internal inspection trigger.
+        action_def: Metadata for this action.
+    """
+    context["inspectionCount"] += 1
+    context["isPassed"] = random.random() > 0.2  # 80% pass rate
+    logger.info("🔬 [QC] Inspection executed.")
 
 
-def did_pass_guard(c: Dict, e: Event) -> bool:
-    """Guard for the sync machine to check if the part passed."""
-    return c["isPassed"]
+def did_pass_guard(
+    context: Dict[str, Any],
+    event: Event,  # noqa
+) -> bool:
+    """✔️ Guard: Check if the part passed QC.
+
+    Args:
+        context: Mutable machine context for QC.
+        event: Internal inspection trigger.
+
+    Returns:
+        True if the part passed; False otherwise.
+    """
+    passed = bool(context.get("isPassed"))
+    logger.info(f"✔️ [QC] did_pass_guard -> {passed}")
+    return passed
 
 
 def set_passed_action(
-    i: SyncInterpreter, c: Dict, e: Event, a: ActionDefinition
+    interpreter: SyncInterpreter,  # noqa
+    context: Dict[str, Any],  # noqa
+    event: Event,  # noqa
+    action_def: ActionDefinition,  # noqa
 ) -> None:
-    """Action for the sync machine to log a successful check."""
-    logging.info("✅ [QC] Part has passed quality check.")
+    """✅ Log successful quality check.
+
+    Args:
+        interpreter: The SyncInterpreter instance.
+        context: Mutable machine context for QC.
+        event: onDone QC transition.
+        action_def: Metadata for this action.
+    """
+    logger.info("✅ [QC] Part passed quality check.")
 
 
 # -----------------------------------------------------------------------------
-# 🚀 Hybrid Orchestration Action
+# 🔄 Hybrid Orchestration Action
 # -----------------------------------------------------------------------------
 
 
 def run_quality_check_action(
     interpreter: Interpreter,
-    context: Dict,
-    event: Event,
-    action_def: ActionDefinition,
+    context: Dict[str, Any],
+    event: Event,  # noqa
+    action_def: ActionDefinition,  # noqa
 ) -> None:
-    """
-    An action on the ASYNC machine that creates and runs the SYNC QC machine.
-    """
-    logging.info("----------")
-    logging.info(
-        "🔍 Entering Quality Control. Running synchronous QC check..."
-    )
+    """↔️ Spawn and run the sync QC machine, then feed its result back.
 
-    # 1. Load the synchronous machine's config
-    with open("quality_check_sync.json", "r") as f:
+    Args:
+        interpreter: The running async interpreter.
+        context: Mutable async machine context.
+        event: Triggering QC_RUN event.
+        action_def: Metadata for this action.
+    """
+    logger.info("----------")
+    logger.info("🔍 Running synchronous QualityCheck...")
+
+    # Load sync machine definition
+    qc_path = os.path.join(
+        os.path.dirname(__file__), "quality_check_sync.json"
+    )
+    with open(qc_path, "r", encoding="utf-8") as f:
         qc_config = json.load(f)
 
-    # 2. Define its logic using snake_case keys
+    # Build its logic
     qc_logic = MachineLogic(
         actions={
             "run_inspection": run_inspection_action,
@@ -127,33 +209,42 @@ def run_quality_check_action(
         guards={"did_pass": did_pass_guard},
     )
 
-    # 3. Create and run the SYNC interpreter
+    # Create & start SyncInterpreter
     qc_machine = create_machine(qc_config, logic=qc_logic)
-    qc_interpreter = SyncInterpreter(qc_machine).start()
+    qc_interpreter = SyncInterpreter(qc_machine)
+    qc_interpreter.start()
 
-    # 4. Check the final state of the sync machine to get the result
-    if "qualityCheck.passed" in qc_interpreter.current_state_ids:
+    # Inspect the final state and dispatch back to async flow
+    final_states = qc_interpreter.current_state_ids
+    if "qualityCheck.passed" in final_states:
         context["qcResult"] = "PASSED"
-        # 5. Send an event back to the parent async machine
         asyncio.create_task(interpreter.send("QC_PASSED"))
     else:
         context["qcResult"] = "FAILED"
         asyncio.create_task(interpreter.send("QC_FAILED"))
 
-    logging.info(
-        f"🏁 Synchronous QC check complete. Result: {context['qcResult']}"
+    logger.info(f"🏁 QC result: {context['qcResult']}")
+    logger.info("----------")
+
+
+# -----------------------------------------------------------------------------
+# 🚀 Main Entry Point
+# -----------------------------------------------------------------------------
+
+
+async def main() -> None:
+    """🚀 Launch the hybrid manufacturing simulation."""
+    logger.info("\n--- 🏭 Hybrid Manufacturing Line Start ---")
+
+    # Load async machine config
+    asm_path = os.path.join(
+        os.path.dirname(__file__), "manufacturing_line_async.json"
     )
-    logging.info("----------")
+    with open(asm_path, "r", encoding="utf-8") as f:
+        asm_config = json.load(f)
 
-
-async def main():
-    """Runs the hybrid manufacturing simulation."""
-    print("\n--- 🏭 Hybrid Sync/Async Manufacturing Line ---")
-
-    with open("manufacturing_line_async.json", "r") as f:
-        assembly_config = json.load(f)
-
-    assembly_logic = MachineLogic(
+    # Bind async logic
+    asm_logic = MachineLogic(
         actions={
             "assign_part_id": assign_part_id_action,
             "run_quality_check": run_quality_check_action,
@@ -164,20 +255,24 @@ async def main():
         },
     )
 
-    assembly_machine = create_machine(assembly_config, logic=assembly_logic)
+    # Create and start async interpreter
+    assembly_machine = create_machine(asm_config, logic=asm_logic)
     interpreter = await Interpreter(assembly_machine).start()
 
-    logging.info("▶️ Starting production for part #P-123")
-    await interpreter.send("PART_RECEIVED", partId="P-123")
+    # Kick off the production run
+    part_id = "P-123"
+    logger.info(f"▶️ Sending PART_RECEIVED('{part_id}')")
+    await interpreter.send("PART_RECEIVED", partId=part_id)
 
-    # Wait for the entire async process to finish
+    # Allow time for full assembly→QC→packaging flow
     await asyncio.sleep(8)
 
-    logging.info("\n✅ Production run complete.")
-    logging.info(f"Final State: {interpreter.current_state_ids}")
-    logging.info(f"Final Context: {interpreter.context}")
+    logger.info("✅ Production run complete.")
+    logger.info(f"Final States: {interpreter.current_state_ids}")
+    logger.info(f"Final Context: {interpreter.context}")
 
     await interpreter.stop()
+    logger.info("--- Simulation End ---")
 
 
 if __name__ == "__main__":

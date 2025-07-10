@@ -1,117 +1,91 @@
-# examples/async/super_complex/functional_approach/with_logic_loader/collaborative_editor_runner.py
-# -----------------------------------------------------------------------------
-# 📝 Super-Complex Example: Collaborative Editor (Functional / LogicLoader)
-# -----------------------------------------------------------------------------
-#
-# Key Concepts Illustrated:
-#   - Three top-level parallel states managing different concerns.
-#   - Spawning actors for each collaborator that joins.
-#   - A debounced auto-save mechanism using `after`.
-#   - Communication between states (typing triggers saving).
-#   - Functional approach with automatic logic discovery.
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
+# 📝 Collaborative Editor Runner
+# examples/async/super_complex/functional_approach/with_logic_loader/collaborative_editor/collaborative_editor_runner.py
+# -------------------------------------------------------------------------------
+"""
+Runner for the Collaborative Editor simulation.
+
+Illustrates:
+  • Spawning multiple cursor actors via LogicLoader.
+  • Simulated user typing and autosave.
+  • Actor communication and cleanup.
+"""
 import asyncio
 import json
 import logging
 import os
-import sys
-import random
+from typing import Any, Dict
 
-# --- Path Setup ---
-sys.path.insert(
-    0,
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../..")),
-)
+import collaborative_editor_logic  # noqa: E402
 from src.xstate_statemachine import create_machine, Interpreter
-import collaborative_editor_logic
 
-# --- Logger Configuration ---
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
-async def simulate_user_activity(interpreter: Interpreter):
-    """A background task to simulate users joining, leaving, and moving cursors."""
+async def simulate_user_activity(interpreter: Interpreter) -> None:
+    """👥 Simulate users joining, moving, and leaving."""
     await asyncio.sleep(2)
-    logging.info("\n--- User 'Alice' joins the session ---")
+    logger.info("👤 Alice joined")
     await interpreter.send("USER_JOINED", user_id="Alice")
 
-    await asyncio.sleep(1)
-    # ✅ FIX: Find the actor robustly by checking its context.
     alice_actor = next(
         (
-            actor
-            for actor in interpreter._actors.values()
-            if actor.context.get("user_id") == "Alice"
-        ),
+            a
+            for a in interpreter._actors.values()
+            if a.context.get("user_id") == "Alice"
+        ),  # noqa
         None,
     )
-
     if alice_actor:
         await alice_actor.send(
             "UPDATE_CURSOR_POS", position={"x": 100, "y": 150}
         )
-    else:
-        logging.error("Runner could not find Alice's actor to move cursor.")
 
     await asyncio.sleep(2)
-    logging.info("\n--- User 'Bob' joins the session ---")
+    logger.info("👤 Bob joined")
     await interpreter.send("USER_JOINED", user_id="Bob")
 
     await asyncio.sleep(2)
-    logging.info("\n--- User 'Alice' leaves the session ---")
+    logger.info("👤 Alice left")
     await interpreter.send("USER_LEFT", user_id="Alice")
 
 
-async def main():
-    print(
-        "\n--- 📝 Async Collaborative Editor Simulation (Functional / LogicLoader) ---"
-    )
+async def main() -> None:
+    """🚀 Execute the Collaborative Editor simulation."""
+    logger.info("\n--- 📝 Collaborative Editor Simulation ---")
+    root = os.path.dirname(__file__)
+    config_path = os.path.join(root, "collaborative_editor.json")
+    with open(config_path, "r", encoding="utf-8") as f:  # noqa
+        config: Dict[str, Any] = json.load(f)
 
-    with open("collaborative_editor.json", "r") as f:
-        config = json.load(f)
-
-    # The LogicLoader will now correctly find `collaborator_cursor` as a required service.
     machine = create_machine(
         config, logic_modules=[collaborative_editor_logic]
     )
     interpreter = await Interpreter(machine).start()
+    logger.info(f"Initial states: {interpreter.current_state_ids}")
 
-    logging.info(f"Initial states: {interpreter.current_state_ids}")
+    user_task = asyncio.create_task(simulate_user_activity(interpreter))
 
-    user_activity_task = asyncio.create_task(
-        simulate_user_activity(interpreter)
-    )
+    # Simulate primary user typing
+    for char in "Hello":
+        await interpreter.send("KEY_PRESS", key=char)
+        await asyncio.sleep(0.2)
 
-    # ... (rest of the simulation is the same) ...
-    await asyncio.sleep(1)
-    logging.info("\n--- Primary user starts typing ---")
-    await interpreter.send("KEY_PRESS", key="H")
-    await asyncio.sleep(0.2)
-    await interpreter.send("KEY_PRESS", key="e")
-    await asyncio.sleep(0.2)
-    await interpreter.send("KEY_PRESS", key="l")
-    await asyncio.sleep(0.2)
-    await interpreter.send("KEY_PRESS", key="l")
-    await asyncio.sleep(0.2)
-    await interpreter.send("KEY_PRESS", key="o")
+    logger.info("...waiting for autosave...")
+    await asyncio.sleep(8.0)
 
-    logging.info("...user pauses typing, waiting for auto-save...")
-    await asyncio.sleep(8)
-
-    await user_activity_task
-
-    logging.info("\n--- Editor Summary ---")
-    logging.info(f"Final state: {interpreter.current_state_ids}")
-    serializable_context = interpreter.context.copy()
-    serializable_context.pop(
-        "actors", None
-    )  # Remove actors if they were added
-    logging.info(
-        f"Final context: {json.dumps(serializable_context, indent=2)}"
-    )
+    await user_task
+    ctx = interpreter.context.copy()
+    ctx.pop("actors", None)
+    logger.info(f"Final states: {interpreter.current_state_ids}")
+    logger.info(f"Final context: {json.dumps(ctx, indent=2)}")
 
     await interpreter.stop()
-    print("\n--- ✅ Simulation Complete ---")
+    logger.info("--- ✅ Simulation Complete ---")
 
 
 if __name__ == "__main__":

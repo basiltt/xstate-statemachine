@@ -1,55 +1,67 @@
-# examples/async/easy/class_approach/with_logic_loader/light_switch_runner.py
-# -----------------------------------------------------------------------------
-# 💡 Easy Example: Async Light Switch (Class-Based with LogicLoader)
-# -----------------------------------------------------------------------------
-#
-# Key Concepts Illustrated:
-#   - Asynchronous Execution: Uses the `Interpreter` class.
-#   - snake_case Naming: Action name `increment_flips` matches Python style.
-#   - Automatic Logic Discovery: `logic_providers` is used to bind methods.
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
+# 💡 Async Light Switch Runner
+# examples/async/easy/class_approach/with_logic_loader/light_switch/light_switch_runner.py
+# -------------------------------------------------------------------------------
+"""
+Runner for the async light switch simulation using LogicLoader.
+
+Demonstrates:
+  • Automatic binding of class-based actions.
+  • Simple TOGGLE events driving state transitions.
+"""
+
 import asyncio
 import json
 import logging
 import os
 import sys
+from typing import Any, Dict
 
-from light_switch_logic import LightSwitchLogic
-
-# --- Path Setup ---
+# --- Ensure project root on PYTHONPATH ---
 sys.path.insert(
     0,
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../..")),
 )
+
 from src.xstate_statemachine import create_machine, Interpreter
+from light_switch_logic import LightSwitchLogic
 
-
-# --- Logger Configuration ---
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
-async def main():
-    print("\n--- 💡 Async Light Switch Simulation (Class / LogicLoader) ---")
+async def main() -> None:
+    """🚦 Execute the light switch state machine."""
+    logger.info("\n--- 💡 Async Light Switch Simulation ---")
 
-    with open("light_switch.json", "r") as f:
-        config = json.load(f)
+    # Load machine definition
+    config_path = os.path.join(os.path.dirname(__file__), "light_switch.json")
+    with open(config_path, "r", encoding="utf-8") as f:
+        config: Dict[str, Any] = json.load(f)
 
-    logic_provider = LightSwitchLogic()
-    machine = create_machine(config, logic_providers=[logic_provider])
+    # Create machine with logic provider
+    logic = LightSwitchLogic()
+    machine = create_machine(config, logic_providers=[logic])
 
+    # Start interpreter
     interpreter = await Interpreter(machine).start()
-    logging.info(f"Initial state: {interpreter.current_state_ids}")
+    logger.info(f"Initial state: {interpreter.current_state_ids}")
+
+    # Toggle twice
+    await interpreter.send("TOGGLE")
+    await asyncio.sleep(0.01)
+    logger.info(f"State after TOGGLE: {interpreter.current_state_ids}")
 
     await interpreter.send("TOGGLE")
     await asyncio.sleep(0.01)
-    logging.info(f"State after TOGGLE: {interpreter.current_state_ids}")
+    logger.info(f"State after second TOGGLE: {interpreter.current_state_ids}")
 
-    await interpreter.send("TOGGLE")
-    await asyncio.sleep(0.01)
-    logging.info(f"State after second TOGGLE: {interpreter.current_state_ids}")
-
+    # Stop interpreter
     await interpreter.stop()
-    print("\n--- ✅ Simulation Complete ---")
+    logger.info("--- ✅ Simulation Complete ---")
 
 
 if __name__ == "__main__":

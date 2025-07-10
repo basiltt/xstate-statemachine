@@ -1,61 +1,128 @@
+# -------------------------------------------------------------------------------
+# 🔐 Auth Flow Logic
 # examples/async/intermediate/functional_approach/with_logic_loader/auth_flow/auth_flow_logic.py
+# -------------------------------------------------------------------------------
+"""
+Functional logic for the async authentication flow demonstration.
+
+Includes actions to cache credentials, handle success/failure, and a service
+to simulate credential validation.
+"""
+
 import asyncio
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
 
-from src.xstate_statemachine import Interpreter, Event, ActionDefinition
+from src.xstate_statemachine import ActionDefinition, Event, Interpreter
+
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
 
 
-# --- Actions ---
 def cache_credentials(
-    i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-):
-    # This action runs on the LOGIN transition
-    ctx["credentials_to_try"] = e.payload
-    logging.info(
-        f"📋 Caching credentials for user '{e.payload.get('username')}'"
-    )
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """🔒 Cache incoming credentials for authentication.
+
+    Args:
+        interpreter: The state machine interpreter.
+        context: Mutable context dictionary.
+        event: The triggering Event carrying `payload`.
+        action_def: Metadata about this action.
+    """
+    context["credentials_to_try"] = event.payload
+    user = event.payload.get("username")
+    logger.info(f"📋 Caching credentials for user '{user}'")
 
 
 def assign_user_to_context(
-    i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-):
-    ctx["username"] = e.data.get("username")
-    ctx["error"] = None
-    ctx["credentials_to_try"] = None  # Clean up
-    logging.info(f"🔑 User '{ctx['username']}' authenticated successfully.")
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """✅ Store authenticated user info into context.
+
+    Args:
+        interpreter: The state machine interpreter.
+        context: Mutable context dictionary.
+        event: The DoneEvent carrying user data.
+        action_def: Metadata about this action.
+    """
+    context["username"] = event.data.get("username")
+    context["error"] = None
+    context["credentials_to_try"] = None
+    logger.info(f"🔑 User '{context['username']}' authenticated successfully.")
 
 
 def assign_error_to_context(
-    i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-):
-    ctx["error"] = str(e.data)
-    ctx["credentials_to_try"] = None  # Clean up
-    logging.warning(f"🛡️ Authentication failed: {ctx['error']}")
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """⚠️ Store authentication error into context.
+
+    Args:
+        interpreter: The state machine interpreter.
+        context: Mutable context dictionary.
+        event: The DoneEvent carrying error data.
+        action_def: Metadata about this action.
+    """
+    context["error"] = str(event.data)
+    context["credentials_to_try"] = None
+    logger.warning(f"🛡️ Authentication failed: {context['error']}")
 
 
-def clear_context(i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition):
-    logging.info(f"User '{ctx['username']}' logged out.")
-    ctx["username"] = None
-    ctx["error"] = None
-    ctx["credentials_to_try"] = None
+def clear_context(
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,  # noqa
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """🔄 Clear all authentication-related context on logout.
+
+    Args:
+        interpreter: The state machine interpreter.
+        context: Mutable context dictionary.
+        event: The triggering Event.
+        action_def: Metadata about this action.
+    """
+    user = context.get("username")
+    logger.info(f"User '{user}' logged out.")
+    context["username"] = None
+    context["error"] = None
+    context["credentials_to_try"] = None
 
 
-# --- Services ---
 async def authenticate_user(
-    i: Interpreter, ctx: Dict, e: Event
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,  # noqa
 ) -> Dict[str, Any]:
-    # The service now reads from the context
-    credentials = ctx.get("credentials_to_try", {})
-    username = credentials.get("username")
-    password = credentials.get("password")
+    """🔐 Async service to validate cached credentials.
 
-    logging.info(
-        f"🔐 Invoking service: Authenticating '{username}' from context..."
-    )
-    await asyncio.sleep(1.0)  # Simulate call to auth service
+    Args:
+        interpreter: The state machine interpreter.
+        context: Mutable context dictionary.
+        event: The triggering Event.
 
+    Returns:
+        A dict with authenticated user details.
+
+    Raises:
+        PermissionError: If credentials are invalid.
+    """
+    creds = context.get("credentials_to_try", {})
+    username = creds.get("username")
+    password = creds.get("password")
+    logger.info(f"🔐 Authenticating '{username}'...")
+    await asyncio.sleep(1.0)
     if username == "admin" and password == "password123":
         return {"username": "admin", "role": "administrator"}
-    else:
-        raise PermissionError("Invalid credentials provided.")
+    raise PermissionError("Invalid credentials provided.")

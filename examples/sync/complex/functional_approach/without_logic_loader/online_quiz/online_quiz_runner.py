@@ -1,25 +1,32 @@
-# examples/async/complex/functional_approach/without_logic_loader/online_quiz_runner.py
 # -----------------------------------------------------------------------------
-# 📚 Complex Example: Online Quiz (Functional / Explicit Logic)
+# 📚 Online Quiz Runner
+# examples/async/complex/functional_approach/without_logic_loader/online_quiz/online_quiz_runner.py
 # -----------------------------------------------------------------------------
-#
-# Key Concepts Illustrated:
-#   - A multi-stage async process with two distinct `invoke` calls.
-#   - `after` for enforcing a time limit.
-#   - Explicit Logic Binding for all standalone `async` and `sync` functions.
-# -----------------------------------------------------------------------------
+"""
+Runs the async online quiz simulation:
+
+  • START_QUIZ → load_quiz_data_service → store_quiz_data
+  • on entry → log_quiz_start
+  • ANSWER_QUESTION → store_answer
+  • after timeout → log_timeout
+  • SUBMIT_QUIZ → grade_quiz_service → store_final_score
+  • onError → set_error
+"""
+
 import asyncio
 import json
 import logging
 import os
 import sys
+from typing import Any, Dict
 
-# --- Path Setup ---
+from src.xstate_statemachine import create_machine, Interpreter, MachineLogic
+
+# Ensure project root on path
 sys.path.insert(
     0,
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../..")),
 )
-from src.xstate_statemachine import create_machine, Interpreter, MachineLogic
 from online_quiz_logic import (
     set_quiz_id,
     store_quiz_data,
@@ -32,34 +39,34 @@ from online_quiz_logic import (
     grade_quiz_service,
 )
 
-# --- Logger Configuration ---
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
 async def wait_for_state(
     interpreter: Interpreter, state_id: str, timeout: float = 5.0
 ) -> bool:
-    """Polls the interpreter until it enters the desired state or times out."""
-    start_time = asyncio.get_event_loop().time()
+    """⏳ Poll until the interpreter enters state_id or timeout."""  # noqa
+    start = asyncio.get_event_loop().time()  # noqa
     while True:
         if state_id in interpreter.current_state_ids:
-            logging.info(f"--> Reached expected state '{state_id}'")
+            logger.info(f"--> Reached '{state_id}'")
             return True
-        if asyncio.get_event_loop().time() - start_time > timeout:
-            logging.error(
-                f"--> Timed out waiting for state '{state_id}'. Current state: {interpreter.current_state_ids}"
-            )
+        if asyncio.get_event_loop().time() - start > timeout:
+            logger.error(f"--> Timeout waiting for '{state_id}'")
             return False
         await asyncio.sleep(0.1)
 
 
-async def main():
-    print(
-        "\n--- 📚 Async Online Quiz Simulation (Functional / Explicit Logic) ---"
-    )
-
-    with open("online_quiz.json", "r") as f:
-        config = json.load(f)
+async def main() -> None:
+    """🚀 Execute Quiz scenarios."""
+    print("\n--- 📚 Async Online Quiz Simulation ---")
+    config_path = "online_quiz.json"
+    with open(config_path, "r", encoding="utf-8") as f:
+        config: Dict[str, Any] = json.load(f)
 
     machine_logic = MachineLogic(
         actions={
@@ -76,44 +83,34 @@ async def main():
             "grade_quiz_service": grade_quiz_service,
         },
     )
-
     machine = create_machine(config, logic=machine_logic)
 
-    # --- Scenario 1: Successful Completion ---
-    print("\n--- Scenario 1: User completes quiz in time ---")
-    interpreter1 = await Interpreter(machine).start()
-    await interpreter1.send("START_QUIZ", quiz_id="python_basics")
-
-    if await wait_for_state(interpreter1, "onlineQuiz.in_progress"):
-        await interpreter1.send("ANSWER_QUESTION", question_id=1, answer="4")
-        await interpreter1.send(
-            "ANSWER_QUESTION", question_id=2, answer="Wrong Answer"
-        )
+    # Scenario 1: Complete in time
+    print("\n--- Scenario 1: Complete in time ---")
+    interp1 = await Interpreter(machine).start()
+    await interp1.send("START_QUIZ", quiz_id="python_basics")
+    if await wait_for_state(interp1, "onlineQuiz.in_progress"):
+        await interp1.send("ANSWER_QUESTION", question_id=1, answer="4")
+        await interp1.send("ANSWER_QUESTION", question_id=2, answer="Paris")
         await asyncio.sleep(1)
-        await interpreter1.send("SUBMIT_QUIZ")
+        await interp1.send("SUBMIT_QUIZ")
+        await wait_for_state(interp1, "onlineQuiz.finished", timeout=3.0)
+        logger.info(f"Context: {interp1.context}")
+    await interp1.stop()
 
-        await wait_for_state(interpreter1, "onlineQuiz.finished", timeout=3.0)
-        logging.info(f"Final context for Scenario 1: {interpreter1.context}")
-
-    await interpreter1.stop()
-
-    # --- Scenario 2: User times out ---
-    print("\n--- Scenario 2: User runs out of time ---")
-    interpreter2 = await Interpreter(machine).start()
-    await interpreter2.send("START_QUIZ", quiz_id="python_basics")
-
-    if await wait_for_state(interpreter2, "onlineQuiz.in_progress"):
-        await interpreter2.send("ANSWER_QUESTION", question_id=1, answer="4")
-        logging.info("...user is thinking and time runs out...")
-        # Wait for the 8-second 'after' timer to fire + grading service
-        await asyncio.sleep(10.5)
-        logging.info(f"Final context for Scenario 2: {interpreter2.context}")
-
-    await interpreter2.stop()
+    # Scenario 2: Time out
+    print("\n--- Scenario 2: Time out ---")
+    interp2 = await Interpreter(machine).start()
+    await interp2.send("START_QUIZ", quiz_id="python_basics")
+    if await wait_for_state(interp2, "onlineQuiz.in_progress"):
+        await interp2.send("ANSWER_QUESTION", question_id=1, answer="4")
+        logger.info("...waiting for timeout...")
+        await asyncio.sleep(10)
+        logger.info(f"Context: {interp2.context}")
+    await interp2.stop()
 
     print("\n--- ✅ All Simulations Complete ---")
 
 
 if __name__ == "__main__":
-    # ✅ FIX: Use asyncio.run() to execute the async main function
     asyncio.run(main())

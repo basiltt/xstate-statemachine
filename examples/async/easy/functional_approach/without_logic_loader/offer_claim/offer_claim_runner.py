@@ -1,60 +1,68 @@
-# examples/async/easy/functional_approach/without_logic_loader/offer_claim_runner.py
-# -----------------------------------------------------------------------------
-# 🎉 Easy Example: Async One-Time Offer (Functional / Explicit Logic)
-# -----------------------------------------------------------------------------
-#
-# Key Concepts Illustrated:
-#   - Asynchronous Execution with a simulated delay.
-#   - Explicit Logic Binding of a standalone `async` function.
-#   - Use of a "final" state.
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
+# 🎉 Async Offer Claim Runner
+# examples/async/easy/functional_approach/without_logic_loader/offer_claim/offer_claim_runner.py
+# -------------------------------------------------------------------------------
+"""
+Runner for the async one-time offer claim simulation with explicit logic.
+
+Demonstrates:
+  • A final state after CLAIM.
+  • Ignoring repeated CLAIM events.
+"""
+
 import asyncio
 import json
 import logging
 import os
 import sys
+from typing import Any, Dict
 
+from src.xstate_statemachine import create_machine, Interpreter, MachineLogic
 from offer_claim_logic import set_claimant
 
-# --- Path Setup ---
+# -----------------------------------------------------------------------------
+# 📂 Project Path Setup
+# -----------------------------------------------------------------------------
 sys.path.insert(
     0,
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../..")),
 )
-from src.xstate_statemachine import create_machine, Interpreter, MachineLogic
 
-
-# --- Logger Configuration ---
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
-async def main():
-    print(
-        "\n--- 🎉 Async One-Time Offer Simulation (Functional / Explicit Logic) ---"
-    )
+async def main() -> None:
+    """🚀 Execute the one-time offer claim state machine."""
+    logger.info("\n--- 🎉 Async Offer Claim Simulation ---")
 
-    with open("offer_claim.json", "r") as f:
-        config = json.load(f)
+    config_path = os.path.join(os.path.dirname(__file__), "offer_claim.json")
+    with open(config_path, "r", encoding="utf-8") as f:
+        config: Dict[str, Any] = json.load(f)
 
     machine_logic = MachineLogic(actions={"set_claimant": set_claimant})
-
     machine = create_machine(config, logic=machine_logic)
 
     interpreter = await Interpreter(machine).start()
-    logging.info(f"Initial state: {interpreter.current_state_ids}")
+    logger.info(f"Initial state: {interpreter.current_state_ids}")
 
-    logging.info("Sending CLAIM event...")
+    # First claim attempt
+    logger.info("➡️ Sending CLAIM event...")
     await interpreter.send("CLAIM", user="basil")
-    await asyncio.sleep(1.1)  # Wait for the long async action to complete
-    logging.info(f"State after claim: {interpreter.current_state_ids}")
+    await asyncio.sleep(1.1)
+    logger.info(f"State after first CLAIM: {interpreter.current_state_ids}")
 
-    logging.info("Attempting to claim again (should be ignored)...")
+    # Second claim should be ignored
+    logger.info("➡️ Sending CLAIM event again...")
     await interpreter.send("CLAIM", user="another_user")
-    await asyncio.sleep(0.1)  # Give it time to process (it won't do anything)
-    logging.info(f"Final state is unchanged: {interpreter.current_state_ids}")
+    await asyncio.sleep(0.1)
+    logger.info(f"Final state (unchanged): {interpreter.current_state_ids}")
 
     await interpreter.stop()
-    print("\n--- ✅ Simulation Complete ---")
+    logger.info("--- ✅ Simulation Complete ---")
 
 
 if __name__ == "__main__":

@@ -1,70 +1,74 @@
-# examples/sync/complex/class_approach/with_logic_loader/file_uploader_runner.py
 # -----------------------------------------------------------------------------
-# 📂 Complex Example: File Uploader (Class-Based with LogicLoader)
+# 📂 File Uploader Runner
+# examples/sync/complex/class_approach/with_logic_loader/file_uploader/file_uploader_runner.py
 # -----------------------------------------------------------------------------
-# This script simulates a file upload process with multiple steps.
-#
-# Key Concepts Illustrated:
-#   - Synchronous Execution: Uses the `SyncInterpreter`.
-#   - Class-Based Logic: `FileUploaderLogic` class encapsulates all logic.
-#   - Automatic Logic Discovery: `logic_providers` is used to bind methods.
-#   - Sync Services (`invoke`): Simulates blocking upload and processing steps.
-#   - Error Handling (`onError`): Catches exceptions from services.
-#   - Guards: `is_file_selected` prevents actions on invalid states.
-# -----------------------------------------------------------------------------
+"""
+Simulates the synchronous file upload workflow:
+
+  • SELECT_FILE → UPLOAD (invoke upload_file_sync)
+  • onDone → process_file_sync
+  • onDone → log_complete
+  • onError transitions on failure
+  • Guards prevent invalid actions
+"""
+
 import json
 import logging
 import os
 import sys
+from typing import Any, Dict
 
-# --- Path Setup ---
+from src.xstate_statemachine import create_machine, SyncInterpreter
+
+# Ensure project root on path
 sys.path.insert(
     0,
     os.path.abspath(
         os.path.join(os.path.dirname(__file__), "../../../../../..")
     ),
 )
-from src.xstate_statemachine import create_machine, SyncInterpreter
-from examples.sync.complex.class_approach.with_logic_loader.file_uploader.file_uploader_logic import (
+from examples.sync.complex.class_approach.with_logic_loader.file_uploader.file_uploader_logic import (  # noqa: E501
     FileUploaderLogic,
 )
 
-# --- Logger Configuration ---
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
-def main():
+def main() -> None:
+    """🚀 Execute File Uploader scenarios."""
     print("\n--- 📂 Synchronous File Uploader Simulation ---")
-    with open("file_uploader.json", "r") as f:
-        config = json.load(f)
+    config_path = "file_uploader.json"
+    with open(config_path, "r", encoding="utf-8") as f:
+        config: Dict[str, Any] = json.load(f)
 
-    # Instantiate the logic provider
-    uploader_logic = FileUploaderLogic()
-
-    # Create the machine, passing the instance for auto-discovery
-    machine = create_machine(config, logic_providers=[uploader_logic])
+    logic = FileUploaderLogic()
+    machine = create_machine(config, logic_providers=[logic])
     interpreter = SyncInterpreter(machine)
     interpreter.start()
 
-    # --- Scenario 1: Successful Upload ---
+    # Scenario 1: Successful upload
     print("\n--- Scenario 1: Successful Upload ---")
     interpreter.send("SELECT_FILE", file="document.pdf")
     interpreter.send("UPLOAD")
-    logging.info(f"Final State: {interpreter.current_state_ids}")
+    logger.info(f"Final State: {interpreter.current_state_ids}")
 
-    # --- Scenario 2: Upload Fails ---
+    # Scenario 2: Upload failure
     print("\n--- Scenario 2: Network Failure During Upload ---")
     interpreter.send("NEW_UPLOAD")
     interpreter.send("SELECT_FILE", file="report_fail.docx")
     interpreter.send("UPLOAD")
-    logging.info(f"State after failure: {interpreter.current_state_ids}")
+    logger.info(f"State after failure: {interpreter.current_state_ids}")
 
-    # --- Scenario 3: Processing Fails ---
+    # Scenario 3: Processing failure
     print("\n--- Scenario 3: Invalid File Format During Processing ---")
     interpreter.send("CANCEL")
     interpreter.send("SELECT_FILE", file="image_invalid.jpg")
     interpreter.send("UPLOAD")
-    logging.info(f"State after failure: {interpreter.current_state_ids}")
+    logger.info(f"State after failure: {interpreter.current_state_ids}")
 
     interpreter.stop()
     print("\n--- ✅ Simulation Complete ---")

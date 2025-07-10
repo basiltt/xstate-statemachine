@@ -1,45 +1,59 @@
+# -------------------------------------------------------------------------------
+# ⚙️ Async File Processor Runner
 # examples/async/intermediate/class_approach/without_logic_loader/file_processor_runner.py
-# -----------------------------------------------------------------------------
-# ⚙️ Intermediate Example: Async File Processor (Class-Based / Explicit Logic)
-# -----------------------------------------------------------------------------
-#
-# Key Concepts Illustrated:
-#   - Asynchronous Services (`invoke`) to simulate a long-running task.
-#   - `onDone`/`onError` for branching based on the service outcome.
-#   - Explicit Logic Binding of an `async` service method.
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
+"""
+Runner for the async File Processor simulation with explicit logic binding.
+
+Illustrates:
+  • Async service invocation (`invoke`).
+  • `onDone` / `onError` transitions.
+  • Explicit MachineLogic for actions and service.
+"""
+
 import asyncio
 import json
 import logging
 import os
 import sys
+from typing import Any, Dict
 
-# --- Path Setup ---
+from src.xstate_statemachine import Interpreter, MachineLogic, create_machine
+
+# -----------------------------------------------------------------------------
+# 🛠️ Project Path Setup
+# -----------------------------------------------------------------------------
 sys.path.insert(
     0,
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../..")),
 )
-from src.xstate_statemachine import create_machine, Interpreter, MachineLogic
-from file_processor_logic import FileProcessorLogic
+from file_processor_logic import FileProcessorLogic  # noqa: E402
 
-# --- Logger Configuration ---
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
-async def run_simulation(config, logic):
+async def run_simulation(
+    config: Dict[str, Any], logic: MachineLogic
+) -> Interpreter:
+    """🔧 Helper to start an interpreter with given config and logic."""
     interpreter = await Interpreter(
         create_machine(config, logic=logic)
     ).start()
     return interpreter
 
 
-async def main():
-    print(
-        "\n--- ⚙️ Async File Processor Simulation (Class / Explicit Logic) ---"
-    )
+async def main() -> None:
+    """🚀 Execute the File Processor state machine simulation."""
+    logger.info("\n--- ⚙️ Async File Processor Simulation ---")
 
-    with open("file_processor.json", "r") as f:
-        config = json.load(f)
+    root = os.path.dirname(__file__)
+    config_path = os.path.join(root, "file_processor.json")
+    with open(config_path, "r", encoding="utf-8") as f:
+        config: Dict[str, Any] = json.load(f)
 
     logic_provider = FileProcessorLogic()
     machine_logic = MachineLogic(
@@ -51,21 +65,21 @@ async def main():
         services={"process_file": logic_provider.process_file},
     )
 
-    # --- Scenario 1: Process a supported file type ---
-    print("\n--- Scenario 1: Successful Image Processing ---")
-    interpreter1 = await run_simulation(config, machine_logic)
-    await interpreter1.send("UPLOAD", name="vacation.jpg", type="image")
-    await asyncio.sleep(2.5)  # Wait for invoke
-    await interpreter1.stop()
+    # Scenario 1: supported file
+    logger.info("\n--- Scenario 1: Successful Image Processing ---")
+    interp1 = await run_simulation(config, machine_logic)
+    await interp1.send("UPLOAD", name="vacation.jpg", type="image")
+    await asyncio.sleep(2.5)
+    await interp1.stop()
 
-    # --- Scenario 2: Process an unsupported file type ---
-    print("\n--- Scenario 2: Failed PDF Processing ---")
-    interpreter2 = await run_simulation(config, machine_logic)
-    await interpreter2.send("UPLOAD", name="report.pdf", type="pdf")
-    await asyncio.sleep(2.5)  # Wait for invoke
-    await interpreter2.stop()
+    # Scenario 2: unsupported file
+    logger.info("\n--- Scenario 2: Failed PDF Processing ---")
+    interp2 = await run_simulation(config, machine_logic)
+    await interp2.send("UPLOAD", name="report.pdf", type="pdf")
+    await asyncio.sleep(2.5)
+    await interp2.stop()
 
-    print("\n--- ✅ Simulation Complete ---")
+    logger.info("\n--- ✅ Simulation Complete ---")
 
 
 if __name__ == "__main__":

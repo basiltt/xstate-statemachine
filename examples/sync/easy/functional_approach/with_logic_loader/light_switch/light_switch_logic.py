@@ -1,36 +1,43 @@
 # examples/sync/easy/functional_approach/with_logic_loader/light_switch/light_switch_logic.py
+# -----------------------------------------------------------------------------
+# 💡 Light Switch Logic (Functional with LogicLoader)
+# -----------------------------------------------------------------------------
+"""
+Provides standalone actions for a light switch machine.
 
-# -----------------------------------------------------------------------------
-# 💡 Light Switch Logic (Functional)
-# -----------------------------------------------------------------------------
-# This module provides standalone functions for the light switch state machine.
-# These functions are designed to be discovered automatically by the LogicLoader.
-# -----------------------------------------------------------------------------
+Key Concepts:
+  • Functional Approach: Top-level functions auto-discovered.
+  • LogicLoader: binds functions by name conventions.
+"""
+
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
 
 from src.xstate_statemachine import SyncInterpreter, Event, ActionDefinition
 
-# --- Logger ---
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
 logger = logging.getLogger(__name__)
 
 
-# --- Actions ---
-
-
 def set_brightness_to_default(
-    i: SyncInterpreter, ctx: Dict, e: Event, a: ActionDefinition
+    interpreter: SyncInterpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,  # noqa
+    action_def: ActionDefinition,  # noqa
 ) -> None:
-    """Action to set the brightness to 100 when the light is turned on."""
-    ctx["brightness"] = 100
-    logger.info(f"💡 Light turned ON. Brightness set to {ctx['brightness']}%.")
+    """💡 Action: Turn light ON (brightness 100%)."""
+    context["brightness"] = 100
+    logger.info(f"💡 Light ON. Brightness set to {context['brightness']}%.")
 
 
 def set_brightness_to_zero(
-    i: SyncInterpreter, ctx: Dict, e: Event, a: ActionDefinition
+    interpreter: SyncInterpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,  # noqa
+    action_def: ActionDefinition,  # noqa
 ) -> None:
-    """Action to set the brightness to 0 when the light is turned off."""
-    ctx["brightness"] = 0
-    logger.info(
-        f"🌑 Light turned OFF. Brightness set to {ctx['brightness']}%."
-    )
+    """🌑 Action: Turn light OFF (brightness 0%)."""
+    context["brightness"] = 0
+    logger.info(f"🌑 Light OFF. Brightness set to {context['brightness']}%.")

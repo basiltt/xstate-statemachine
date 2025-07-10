@@ -1,28 +1,45 @@
+# -------------------------------------------------------------------------------
+# 🤖 Warehouse Robot Logic
 # examples/async/super_complex/class_approach/without_logic_loader/warehouse_robot/warehouse_robot_logic.py
+# -------------------------------------------------------------------------------
+"""
+Class-based logic for Warehouse Robot and its Pathfinder actor.
+
+Illustrates:
+  • Parallel states and actor spawning.
+  • Communication between parent machine and actor.
+  • Async actions and services for movement and picking.
+"""
 import asyncio
 import json
 import logging
-import os
 import random
-from typing import Dict, Any
+from typing import Any, Dict
 
 from src.xstate_statemachine import (
     Interpreter,
     Event,
     ActionDefinition,
-    create_machine,
     MachineLogic,
+    create_machine,
 )
 from src.xstate_statemachine.models import MachineNode
 
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
+
 
 class WarehouseRobotLogic:
-    """Class-based logic for the Warehouse Robot and its Pathfinder actor."""
+    """Implements actions, guards, and services for the warehouse robot."""
 
-    def __init__(self):
-        with open("pathfinder_actor.json", "r") as f:
-            self.pathfinder_config = json.load(f)
-        self.pathfinder_logic = MachineLogic(
+    def __init__(self) -> None:
+        """Load the pathfinder actor definition and logic once."""
+        with open("pathfinder_actor.json", "r", encoding="utf-8") as f:
+            config = json.load(f)
+        self.pathfinder_config: Dict[str, Any] = config
+        self.pathfinder_logic: MachineLogic = MachineLogic(
             actions={
                 "send_path_to_parent": self.pathfinder_send_path,
                 "send_failure_to_parent": self.pathfinder_send_failure,
@@ -33,121 +50,173 @@ class WarehouseRobotLogic:
             },
         )
 
-    # --- Main Robot Actions ---
-    def assign_order(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["order_items"] = e.payload.get("items", [])
-        logging.info(f"🤖 New order assigned with items: {ctx['order_items']}")
-        ctx["target_location"] = ctx["order_items"][0]["location"]
+    def assign_order(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """📦 Assign a new order and record target location."""
+        items = event.payload.get("items", [])
+        context["order_items"] = items
+        context["picked_items"] = []
+        context["target_location"] = items[0]["location"] if items else None
+        logger.info(f"🤖 Order assigned with items: {items}")
 
-    def store_path(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["path"] = e.payload.get("path")
-        logging.info(f"🗺️  Path received: {' -> '.join(ctx['path'])}")
+    def store_path(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🗺️ Store a calculated path in context."""
+        path = event.data.get("path", [])
+        context["path"] = path
+        logger.info(f"🗺️ Path received: {' -> '.join(path)}")
 
-    async def store_picked_item(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        """This action is now async to allow sending events and having them processed."""
-        item = e.data.get("item_picked")
-        ctx["picked_items"].append(item)
-        logging.info(
-            f"✅ Item '{item}' picked. Total picked: {len(ctx['picked_items'])}/{len(ctx['order_items'])}"
-        )
-
-        if len(ctx["picked_items"]) == len(ctx["order_items"]):
-            logging.info("🎉 All items picked!")
-            # Send events to both parallel regions to move them to their final states.
-            await i.send("ALL_ITEMS_PICKED")
-            await i.send("ALL_ITEMS_LOCATED")
+    async def store_picked_item(  # noqa
+        self,
+        interpreter: Interpreter,
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """✅ Record picked item and notify on completion or next."""
+        item = event.data.get("item_picked")
+        context["picked_items"].append(item)
+        total = len(context["picked_items"])
+        needed = len(context["order_items"])
+        logger.info(f"✅ Picked '{item}'. {total}/{needed} done.")
+        if total == needed:
+            await interpreter.send("ALL_ITEMS_PICKED")
+            await interpreter.send("ALL_ITEMS_LOCATED")
         else:
-            # If more items, send an event to the movement region to get the next path.
-            ctx["target_location"] = ctx["order_items"][
-                len(ctx["picked_items"])
-            ]["location"]
-            await i.send("NEXT_ITEM")
+            context["target_location"] = context["order_items"][total][
+                "location"
+            ]
+            await interpreter.send("NEXT_ITEM")
 
-    def set_movement_error(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["error"] = e.payload.get("error", "Unknown movement error")
-        logging.error(f"MOVEMENT ERROR: {ctx['error']}")
-        asyncio.create_task(i.send("FATAL_ERROR"))
+    def set_movement_error(  # noqa
+        self,
+        interpreter: Interpreter,
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """⚠️ Handle movement errors by notifying parent."""
+        error = event.payload.get("error", "Unknown movement error")
+        context["error"] = error
+        logger.error(f"⚠️ Movement error: {error}")
+        asyncio.create_task(interpreter.send("FATAL_ERROR"))
 
-    def set_manipulation_error(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["error"] = str(e.data)
-        logging.error(f"MANIPULATION ERROR: {ctx['error']}")
-        asyncio.create_task(i.send("FATAL_ERROR"))
+    def set_manipulation_error(  # noqa
+        self,
+        interpreter: Interpreter,
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """⚠️ Handle manipulation errors by notifying parent."""
+        error = str(event.data)
+        context["error"] = error
+        logger.error(f"⚠️ Manipulation error: {error}")
+        asyncio.create_task(interpreter.send("FATAL_ERROR"))
 
-    # --- Main Robot Services ---
     def pathfinder_actor(
-        self, i: Interpreter, ctx: Dict, e: Event
-    ) -> "MachineNode":
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],  # noqa
+        event: Event,  # noqa
+    ) -> MachineNode:
+        """🔧 Service to spawn a new pathfinder actor machine."""
         return create_machine(
             self.pathfinder_config, logic=self.pathfinder_logic
         )
 
-    async def follow_path_service(self, i: Interpreter, ctx: Dict, e: Event):
-        logging.info(
-            f"  -> 🏃 Invoking service: Following path to {ctx['path'][-1]}..."
-        )
-        for step in ctx["path"]:
+    async def follow_path_service(  # noqa
+        self,
+        interpreter: Interpreter,
+        context: Dict[str, Any],
+        event: Event,  # noqa
+    ) -> Dict[str, Any]:
+        """🏃 Service that moves the robot along the stored path."""
+        for step in context.get("path", []):
             await asyncio.sleep(0.5)
-            ctx["current_location"] = step
-            logging.info(f"     ...moved to {step}")
-        logging.info(f"  -> ✅ Arrived at {ctx['current_location']}")
-        await i.send("ARRIVED")
+            context["current_location"] = step
+            logger.info(f"🏃 Moved to {step}")
+        await interpreter.send("ARRIVED")
+        return {"arrived": True}
 
-    async def pick_item_service(self, i: Interpreter, ctx: Dict, e: Event):
-        item_to_pick = ctx["order_items"][len(ctx["picked_items"])]
-        logging.info(
-            f"  -> 🦾 Invoking service: Picking item '{item_to_pick['name']}'..."
-        )
+    async def pick_item_service(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
+    ) -> Dict[str, Any]:
+        """🦾 Service that picks the next item in the order."""
+        index = len(context.get("picked_items", []))
+        item = context["order_items"][index]
         await asyncio.sleep(1.5)
         if random.random() < 0.1:
-            raise RuntimeError(
-                f"Arm failed to grip item '{item_to_pick['name']}'."
-            )
-        return {"item_picked": item_to_pick["name"]}
+            raise RuntimeError(f"Grip failed for '{item['name']}'")
+        return {"item_picked": item["name"]}
 
-    async def return_to_base_service(
-        self, i: Interpreter, ctx: Dict, e: Event
-    ):
-        logging.info("🤖 Returning to charging base...")
-        await asyncio.sleep(2)
+    async def return_to_base_service(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],  # noqa
+        event: Event,  # noqa
+    ) -> None:
+        """🔙 Service to return robot to its charging base."""
+        logger.info("🔙 Returning to base...")
+        await asyncio.sleep(2.0)
 
-    # --- Pathfinder Actor Logic ---
-    async def pathfinder_send_path(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        path_data = e.data.get("path")
-        await i.parent.send({"type": "PATH_CALCULATED", "path": path_data})
+    async def pathfinder_send_path(  # noqa
+        self,
+        interpreter: Interpreter,
+        context: Dict[str, Any],  # noqa
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """📤 Actor action: send a calculated path back to parent."""
+        path = event.data.get("path", [])
+        await interpreter.parent.send("PATH_CALCULATED", path=path)
 
-    async def pathfinder_send_failure(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        await i.parent.send({"type": "PATH_FAILED", "error": str(e.data)})
+    async def pathfinder_send_failure(  # noqa
+        self,
+        interpreter: Interpreter,
+        context: Dict[str, Any],  # noqa
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """❌ Actor action: notify parent of failure."""
+        await interpreter.parent.send("PATH_FAILED", error=str(event.data))
 
-    async def pathfinder_send_timeout_failure(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        await i.parent.send(
-            {"type": "PATH_FAILED", "error": "Pathfinder timed out"}
+    async def pathfinder_send_timeout_failure(  # noqa
+        self,
+        interpreter: Interpreter,
+        context: Dict[str, Any],  # noqa
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """⌛ Actor action: notify parent of timeout failure."""
+        await interpreter.parent.send(
+            "PATH_FAILED", error="Pathfinder timed out"
         )
 
-    async def pathfinder_calculate_path(
-        self, i: Interpreter, ctx: Dict, e: Event
-    ):
-        start = i.parent.context["current_location"]
-        end = i.parent.context["target_location"]
-        logging.info(
-            f"      -> 🤖 Pathfinder Actor: Calculating path from {start} to {end}..."
-        )
-        await asyncio.sleep(2)
+    async def pathfinder_calculate_path(  # noqa
+        self,
+        interpreter: Interpreter,
+        context: Dict[str, Any],  # noqa
+        event: Event,  # noqa
+    ) -> Dict[str, Any]:
+        """🛣️ Service: calculate a random path between two points."""
+        start = interpreter.parent.context.get("current_location")
+        end = interpreter.parent.context.get("target_location")
+        logger.info(f"🛣️ Calculating path from {start} to {end}...")
+        await asyncio.sleep(2.0)
         path = [
             start,
             f"R{random.randint(1, 5)}",

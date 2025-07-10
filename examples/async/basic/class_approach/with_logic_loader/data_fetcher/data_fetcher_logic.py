@@ -1,42 +1,81 @@
+# -------------------------------------------------------------------------------
+# 📡 Data Fetcher Logic
 # examples/async/basic/class_approach/with_logic_loader/data_fetcher/data_fetcher_logic.py
+# -------------------------------------------------------------------------------
+"""
+Class-based logic for async data fetching with retry support.
+"""
+
 import asyncio
 import logging
 import random
-from typing import Dict
+from typing import Any, Dict
 
-from xstate_statemachine import ActionDefinition, Interpreter, Event
+from src.xstate_statemachine import ActionDefinition, Event, Interpreter
+
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
 
 
 class DataFetcherLogic:
-    """Class-based logic for a data fetcher with retries."""
+    """Implements data fetch action, retry wait logging, and retry guard."""
 
-    MAX_RETRIES = 2
+    MAX_RETRIES: int = 2
 
-    async def fetch_data_action(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        logging.info(
-            f"📡 Attempting to fetch data (Attempt #{ctx['retries'] + 1})..."
-        )
+    async def fetch_data_action(  # noqa
+        self,
+        interpreter: Interpreter,
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🐡 Attempt to fetch data, retrying up to MAX_RETRIES on failure.
+
+        Args:
+            interpreter: The state machine interpreter.
+            context: Mutable machine context dict.
+            event: The triggering Event.
+            action_def: Metadata for this action.
+        """
+        attempt = context.get("retries", 0) + 1
+        logger.info(f"📡 Fetch attempt #{attempt}...")
         await asyncio.sleep(0.5)
-
-        # Simulate a failing API call
         if random.random() > 0.4:
-            logging.info("✅ Data fetched successfully!")
-            ctx["data"] = {"id": 123, "content": "Hello, world!"}
-            await i.send("FETCH_SUCCESS")
+            context["data"] = {"id": 123, "content": "Hello, world!"}
+            logger.info("✅ Data fetched successfully!")
+            await interpreter.send("FETCH_SUCCESS")
         else:
-            logging.warning("❌ Fetch failed.")
-            ctx["retries"] += 1
-            await i.send("FETCH_FAILURE")
+            context["retries"] = attempt
+            logger.warning("❌ Fetch failed, will retry.")
+            await interpreter.send("FETCH_FAILURE")
 
-    def log_wait(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        logging.info("⏳ Waiting 1 second before retrying...")
+    def log_wait(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],  # noqa
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """⏳ Log waiting message before next retry."""
+        logger.info("⏳ Waiting 1 second before retrying...")
 
-    def has_retries_left(self, ctx: Dict, e: Event) -> bool:
-        has_retries = ctx["retries"] < self.MAX_RETRIES
-        if not has_retries:
-            logging.error("🚫 No retries left. Moving to final failed state.")
-        return has_retries
+    def has_retries_left(
+        self,
+        context: Dict[str, Any],
+        event: Event,
+    ) -> bool:
+        """✔️ Guard: Allow retry if retries < MAX_RETRIES.
+
+        Args:
+            context: Mutable machine context dict.
+            event: The triggering Event.
+
+        Returns:
+            True if retries remain; False otherwise.
+        """
+        remaining = context.get("retries", 0) < self.MAX_RETRIES
+        if not remaining:
+            logger.error("🚫 No retries left. Transitioning to failure.")
+        return remaining

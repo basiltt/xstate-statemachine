@@ -1,33 +1,23 @@
 # examples/sync/intermediate/functional_approach/without_logic_loader/shopping_cart_runner.py
+# -----------------------------------------------------------------------------
+# 🛒 Intermediate Example: Shopping Cart (Explicit Logic)
+# -----------------------------------------------------------------------------
+"""
+Runner for a synchronous shopping cart state machine.
 
-# -----------------------------------------------------------------------------
-# 🛒 Intermediate Example: Synchronous Shopping Cart (Functional)
-# -----------------------------------------------------------------------------
-# This script simulates a basic e-commerce shopping cart.
-#
-# Key Concepts Illustrated:
-#   - Synchronous Execution: Uses the `SyncInterpreter`.
-#   - Functional Approach: Logic is implemented as standalone functions.
-#   - Explicit Logic Binding: A `MachineLogic` object is manually created
-#     to map function names from the JSON to the Python functions.
-#   - Guards for Validation: `cart_is_not_empty` prevents checking out
-#     with an empty cart.
-#   - Synchronous Service: `process_payment_sync` is an invoked service
-#     that can succeed or fail.
-# -----------------------------------------------------------------------------
+Key Concepts:
+  • SyncInterpreter for blocking execution.
+  • Explicit MachineLogic binding of actions, guards, and services.
+  • Guard prevents checkout on empty cart.
+  • Sync service simulates payment processing.
+"""
 
 import json
 import logging
 import os
-import sys
 import time
 from typing import Any, Dict
 
-# --- Path Setup ---
-sys.path.insert(
-    0,
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../..")),
-)
 from src.xstate_statemachine import (
     create_machine,
     SyncInterpreter,
@@ -36,68 +26,75 @@ from src.xstate_statemachine import (
     ActionDefinition,
 )
 
-# --- Logger Configuration ---
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
-# -----------------------------------------------------------------------------
-# ⚙️ Machine Logic (Actions, Guards, Services)
-# -----------------------------------------------------------------------------
-
-
-# --- Actions ---
 def add_item_to_cart(
-    i: SyncInterpreter, ctx: Dict, e: Event, a: ActionDefinition
+    interpreter: SyncInterpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,  # noqa
 ) -> None:
-    """Adds a new item to the 'items' list in the context."""
-    item = e.payload.get("item")
-    if item:
-        ctx["items"].append(item)
-        logging.info(
-            f"🛒 Added '{item}'. Cart now has {len(ctx['items'])} item(s)."
-        )
+    """🛒 Action: Add payload['item'] to the cart."""
+    item = event.payload.get("item")
+    context.setdefault("items", []).append(item)
+    logger.info(
+        f"🛒 Added '{item}'. Cart now has {len(context['items'])} item(s)."
+    )
 
 
 def clear_cart(
-    i: SyncInterpreter, ctx: Dict, e: Event, a: ActionDefinition
+    interpreter: SyncInterpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,  # noqa
+    action_def: ActionDefinition,  # noqa
 ) -> None:
-    """Clears all items from the cart."""
-    ctx["items"] = []
-    logging.info("🗑️ Cart has been emptied.")
+    """🗑️ Action: Clear all items from the cart."""
+    context["items"] = []
+    logger.info("🗑️ Cart has been emptied.")
 
 
-# --- Guards ---
-def cart_is_not_empty(ctx: Dict, e: Event) -> bool:
-    """Checks if the 'items' list in the context is not empty."""
-    is_not_empty = len(ctx.get("items", [])) > 0
-    if not is_not_empty:
-        logging.warning("🛡️ Guard Failed: Cannot check out with an empty cart.")
-    return is_not_empty
+def cart_is_not_empty(context: Dict[str, Any], event: Event) -> bool:  # noqa
+    """🛡️ Guard: Ensure the cart contains at least one item."""
+    valid = len(context.get("items", [])) > 0
+    if not valid:
+        logger.warning("🛡️ Cannot checkout: Cart is empty.")
+    return valid
 
 
-# --- Services ---
-def process_payment_sync(i: SyncInterpreter, ctx: Dict, e: Event) -> Dict:
-    """A synchronous service that simulates processing a payment."""
-    logging.info("💳 Service: Processing payment...")
-    time.sleep(1)  # Simulate blocking work
-    logging.info("✅ Service: Payment successful.")
+def process_payment_sync(
+    interpreter: SyncInterpreter,  # noqa
+    context: Dict[str, Any],  # noqa
+    event: Event,  # noqa
+) -> Dict[str, Any]:
+    """💳 Service: Simulate payment processing synchronously.
+
+    Args:
+        interpreter: The running SyncInterpreter.
+        context: Mutable context dictionary.
+        event: The triggering Event.
+
+    Returns:
+        A dict with confirmation code.
+    """
+    logger.info("💳 Processing payment...")
+    time.sleep(1)
+    logger.info("✅ Payment successful.")
     return {"confirmation": "XYZ-789"}
 
 
-# -----------------------------------------------------------------------------
-# 🚀 Main Simulation
-# -----------------------------------------------------------------------------
-def main():
-    """Initializes and runs the shopping cart simulation."""
-    print("\n--- 🛒 Synchronous Shopping Cart Simulation ---")
-
-    # 1. Load the machine configuration from JSON.
+def main() -> None:
+    """Load configuration and run the shopping cart simulation."""
+    print("\n--- 🛒 Shopping Cart Simulation ---")
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    json_path = os.path.join(current_dir, "shopping_cart.json")
-    with open(json_path, "r") as f:
-        config = json.load(f)
+    config_path = os.path.join(current_dir, "shopping_cart.json")
+    with open(config_path, "r", encoding="utf-8") as f:
+        config: Dict[str, Any] = json.load(f)
 
-    # 2. Manually create the MachineLogic object.
     logic = MachineLogic(
         actions={
             "add_item_to_cart": add_item_to_cart,
@@ -106,25 +103,27 @@ def main():
         guards={"cart_is_not_empty": cart_is_not_empty},
         services={"process_payment_sync": process_payment_sync},
     )
-
-    # 3. Create the machine and interpreter.
     machine = create_machine(config, logic=logic)
     interpreter = SyncInterpreter(machine)
-
-    # 4. Run the simulation.
     interpreter.start()
-    logging.info(f"Initial State: {interpreter.current_state_ids}")
+    logger.info(f"Initial State: {interpreter.current_state_ids}")
 
-    print("\n--- Scenario 1: Attempt to checkout while empty ---")
-    interpreter.send("CHECKOUT")  # Will be blocked by guard
-    logging.info(f"State is still: {interpreter.current_state_ids}\n")
+    time.sleep(1)  # Allow time for initial state logging
 
-    print("--- Scenario 2: Add items and checkout successfully ---")
+    print("\n--- Scenario 1: Checkout with empty cart ---")
+    interpreter.send("CHECKOUT")
+    logger.info(f"State: {interpreter.current_state_ids}\n")
+
+    time.sleep(1)  # Allow time for state logging
+
+    print("--- Scenario 2: Add items and checkout ---")
     interpreter.send("ADD_ITEM", item="Milk")
     interpreter.send("ADD_ITEM", item="Bread")
     interpreter.send("CHECKOUT")
-    logging.info(f"Final State: {interpreter.current_state_ids}")
-    logging.info(f"Final Context: {interpreter.context}")
+    logger.info(f"Final State: {interpreter.current_state_ids}")
+    logger.info(f"Final Context: {interpreter.context}")
+
+    time.sleep(3)  # Allow time for final state logging
 
     interpreter.stop()
     print("\n--- ✅ Simulation Complete ---")

@@ -1,83 +1,152 @@
 # examples/sync/super_complex/class_approach/with_logic_loader/install_wizard/install_wizard_logic.py
+# -----------------------------------------------------------------------------
+# 🛠️ Install Wizard Logic
+# -----------------------------------------------------------------------------
+"""
+Class-based logic for a multistep installation wizard:
+
+  • Stores network/database/admin configs
+  • Logs start, success, and failure
+  • Runs synchronous installation steps service
+"""
 
 import logging
 import time
-from typing import Dict, Any
+from typing import Any, Dict
 
 from src.xstate_statemachine import SyncInterpreter, Event, ActionDefinition
 
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
+
 
 class InstallWizardLogic:
-    """Class-based logic for the multi-step installation wizard."""
+    """Encapsulates actions and services for the installation wizard."""
 
-    # --- Actions ---
-    def store_network_config(
-        self, i: SyncInterpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["config"]["network"] = e.payload
-        logging.info(f"🔧 Configured Network: {e.payload}")
+    # -------------------------------------------------------------------------
+    # ⚙️ Actions
+    # -------------------------------------------------------------------------
 
-    def store_database_config(
-        self, i: SyncInterpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["config"]["database"] = e.payload
-        logging.info(f"🔧 Configured Database: {e.payload}")
+    def store_network_config(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        ctx: Dict[str, Any],
+        evt: Event,
+        _action: ActionDefinition,
+    ) -> None:
+        """🌐 Action: Save network settings from payload."""
+        ctx.setdefault("config", {})["network"] = evt.payload
+        logger.info("🔧 Configured Network: %s", evt.payload)
 
-    def store_admin_config(
-        self, i: SyncInterpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["config"]["admin"] = e.payload
-        logging.info(f"🔧 Configured Admin User: {e.payload}")
-        logging.info("✅ Configuration complete. Proceeding to installation.")
+    def store_database_config(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        ctx: Dict[str, Any],
+        evt: Event,
+        _action: ActionDefinition,
+    ) -> None:
+        """🗄️ Action: Save database settings from payload."""
+        ctx.setdefault("config", {})["database"] = evt.payload
+        logger.info("🔧 Configured Database: %s", evt.payload)
 
-    def set_error(
-        self, i: SyncInterpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["error"] = str(e.data)
-        logging.error(f"❌ Installation failed: {ctx['error']}")
+    def store_admin_config(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        ctx: Dict[str, Any],
+        evt: Event,
+        _action: ActionDefinition,
+    ) -> None:
+        """👤 Action: Save admin user settings and proceed."""
+        ctx.setdefault("config", {})["admin"] = evt.payload
+        logger.info("🔧 Configured Admin User: %s", evt.payload)
+        logger.info("✅ Configuration complete. Proceeding to installation.")
 
-    def log_install_start(
-        self, i: SyncInterpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        logging.info("🚀 Starting installation process...")
+    def set_error(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        ctx: Dict[str, Any],
+        evt: Event,
+        _action: ActionDefinition,
+    ) -> None:
+        """❌ Action: Record installation error from service data."""
+        ctx["error"] = str(evt.data)
+        logger.error("❌ Installation failed: %s", ctx["error"])
 
-    def log_success(
-        self, i: SyncInterpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        logging.info("🎉🎉🎉 Installation finished successfully! 🎉🎉🎉")
+    def log_install_start(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        ctx: Dict[str, Any],  # noqa
+        _evt: Event,
+        _action: ActionDefinition,
+    ) -> None:
+        """🚀 Action: Log beginning of installation service."""
+        logger.info("🚀 Starting installation process...")
 
-    def log_failure(
-        self, i: SyncInterpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        logging.error("💥 Installation failed. Please check the logs.")
+    def log_success(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        ctx: Dict[str, Any],  # noqa
+        _evt: Event,
+        _action: ActionDefinition,
+    ) -> None:
+        """🎉 Action: Log successful installation completion."""
+        logger.info("🎉 Installation finished successfully!")
 
-    # --- Services ---
-    def run_installation_steps(
-        self, i: SyncInterpreter, ctx: Dict, e: Event
+    def log_failure(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        ctx: Dict[str, Any],  # noqa
+        _evt: Event,
+        _action: ActionDefinition,
+    ) -> None:
+        """💥 Action: Log installation failure."""
+        logger.error("💥 Installation failed. Please check logs.")
+
+    # -------------------------------------------------------------------------
+    # 🛠️ Services
+    # -------------------------------------------------------------------------
+
+    def run_installation_steps(  # noqa
+        self,
+        interpreter: SyncInterpreter,
+        ctx: Dict[str, Any],
+        _evt: Event,
     ) -> Dict[str, Any]:
-        """A synchronous service simulating the entire installation process."""
-        db_config = ctx["config"]["database"]
+        """🔧 Service: Perform all installation steps synchronously.
+
+        Args:
+            interpreter: The SyncInterpreter instance.
+            ctx: Mutable context holding install_log and config.
+            _evt: Triggering Event.
+
+        Returns:
+            Dict with status and number of steps executed.
+
+        Raises:
+            SystemError: On an unsupported database version.
+        """
+        ctx.setdefault("install_log", [])
+        db_cfg = ctx["config"].get("database", {})
 
         # Step 1: Copy files
-        i.send({"type": "INSTALL_STEP", "step": "copying_files"})
-        logging.info("  -> Copying application files...")
+        interpreter.send({"type": "INSTALL_STEP", "step": "copying_files"})
+        logger.info("  -> Copying application files...")
         time.sleep(1)
         ctx["install_log"].append("Copied files.")
 
         # Step 2: Run scripts
-        i.send({"type": "INSTALL_STEP", "step": "running_scripts"})
-        logging.info("  -> Running database migration scripts...")
+        interpreter.send({"type": "INSTALL_STEP", "step": "running_scripts"})
+        logger.info("  -> Running DB migration scripts...")
         time.sleep(1.5)
-
-        # Simulate a potential failure
-        if db_config.get("type") == "unsupported_db":
+        if db_cfg.get("type") == "unsupported_db":
             raise SystemError("Database version is not supported.")
-
         ctx["install_log"].append("Ran DB migrations.")
 
         # Step 3: Finalize
-        i.send({"type": "INSTALL_STEP", "step": "finalizing"})
-        logging.info("  -> Finalizing installation...")
+        interpreter.send({"type": "INSTALL_STEP", "step": "finalizing"})
+        logger.info("  -> Finalizing installation...")
         time.sleep(0.5)
         ctx["install_log"].append("Finalized setup.")
 

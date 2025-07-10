@@ -1,50 +1,109 @@
+# -------------------------------------------------------------------------------
+# 📁 File Processor Logic
 # examples/async/intermediate/class_approach/without_logic_loader/file_processor/file_processor_logic.py
+# -------------------------------------------------------------------------------
+"""
+Class-based logic for the async File Processor demonstration.
+
+Includes actions to record upload info, handle success/failure, and a service
+to simulate file processing based on type.
+"""
+
 import asyncio
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
 
-from src.xstate_statemachine import Interpreter, Event, ActionDefinition
+from src.xstate_statemachine import ActionDefinition, Event, Interpreter
+
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
 
 
 class FileProcessorLogic:
-    """Class-based logic for processing a file asynchronously."""
+    """Encapsulates actions and service for file processing."""
 
-    # --- Actions ---
-    def set_file_info(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["file_name"] = e.payload.get("name")
-        ctx["file_type"] = e.payload.get("type")
-        logging.info(
-            f"📤 File '{ctx['file_name']}' uploaded. Beginning processing."
+    def set_file_info(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """📤 Store file metadata into context on UPLOAD event.
+
+        Args:
+            interpreter: The state machine interpreter.
+            context: Mutable context dictionary.
+            event: The triggering Event carrying `payload['name']` & `['type']`.
+            action_def: Metadata about this action.
+        """
+        context["file_name"] = event.payload.get("name")
+        context["file_type"] = event.payload.get("type")
+        logger.info(
+            f"📤 File '{context['file_name']}' uploaded. Beginning processing."
         )
 
-    def log_success(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["processed_data"] = e.data
-        logging.info(
-            f"🎉 File processing successful! Result: {ctx['processed_data']}"
-        )
+    def log_success(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🎉 Log processing result on success.
 
-    def log_failure(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        logging.error(f"🔥 File processing failed: {e.data}")
+        Args:
+            interpreter: The state machine interpreter.
+            context: Mutable context dictionary.
+            event: The DoneEvent carrying `data`.
+            action_def: Metadata about this action.
+        """
+        context["processed_data"] = event.data
+        logger.info(f"🎉 File processing successful! Result: {event.data}")
 
-    # --- Services ---
-    async def process_file(
-        self, i: Interpreter, ctx: Dict, e: Event
+    def log_failure(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],  # noqa
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🔥 Log error on service failure.
+
+        Args:
+            interpreter: The state machine interpreter.
+            context: Mutable context dictionary.
+            event: The DoneEvent carrying error `data`.
+            action_def: Metadata about this action.
+        """
+        logger.error(f"🔥 File processing failed: {event.data}")
+
+    async def process_file(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
     ) -> Dict[str, Any]:
-        file_type = ctx.get("file_type")
-        logging.info(
-            f"⚙️  Invoking service: Processing file of type '{file_type}'..."
-        )
-        await asyncio.sleep(2.0)
+        """⚙️ Async service to process a file based on its type.
 
+        Args:
+            interpreter: The state machine interpreter.
+            context: Mutable context dictionary.
+            event: The triggering Event.
+
+        Returns:
+            A dict with processing results (`dimensions` or `word_count`).
+
+        Raises:
+            ValueError: If the file type is unsupported.
+        """
+        file_type = context.get("file_type")
+        logger.info(f"⚙️ Processing file of type '{file_type}'...")
+        await asyncio.sleep(2.0)
         if file_type == "image":
             return {"dimensions": "1920x1080", "format": "jpeg"}
-        elif file_type == "text":
+        if file_type == "text":
             return {"word_count": 250, "encoding": "utf-8"}
-        else:
-            raise ValueError(f"Unsupported file type: {file_type}")
+        raise ValueError(f"Unsupported file type: {file_type}")

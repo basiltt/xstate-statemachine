@@ -1,89 +1,84 @@
-# examples/async/complex/class_approach/with_logic_loader/two_factor_auth_runner.py
-# -----------------------------------------------------------------------------
-# 🔐 Complex Example: Async 2FA System (Class-Based / LogicLoader)
-# -----------------------------------------------------------------------------
-#
-# Key Concepts Illustrated:
-#   - Parallel States for concurrent activities (code delivery, code entry).
-#   - `invoke` for an async service in one parallel region.
-#   - `after` for a timeout in the other parallel region.
-#   - Communication between parallel states via events.
-#   - Guards for validating user input.
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
+# 🔐 Async 2FA Runner
+# examples/async/complex/class_approach/with_logic_loader/two_factor_auth/two_factor_auth_runner.py
+# -------------------------------------------------------------------------------
+"""
+Runner for the asynchronous two-factor authentication simulation
+using :class:`TwoFactorAuthLogic` via LogicLoader.
+"""
+
 import asyncio
 import json
 import logging
 import os
 import sys
+from typing import Any, Dict
 
-# --- Path Setup ---
+from src.xstate_statemachine import create_machine, Interpreter
+
+# -----------------------------------------------------------------------------
+# 📂 Project Path Setup
+# -----------------------------------------------------------------------------
 sys.path.insert(
     0,
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../..")),
 )
-from src.xstate_statemachine import create_machine, Interpreter
-from two_factor_auth_logic import TwoFactorAuthLogic
+from two_factor_auth_logic import TwoFactorAuthLogic  # noqa: E402
 
-# --- Logger Configuration ---
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
-async def main():
-    print("\n--- 🔐 Async 2FA Simulation (Class / LogicLoader) ---")
+async def main() -> None:
+    """🚀 Execute two-factor authentication scenarios."""
+    logger.info("\n--- 🔐 Async 2FA Simulation (Class / LogicLoader) ---")
 
-    with open("two_factor_auth.json", "r") as f:
-        config = json.load(f)
+    # Load state machine configuration
+    path = os.path.join(os.path.dirname(__file__), "two_factor_auth.json")
+    with open(path, "r", encoding="utf-8") as f:
+        config: Dict[str, Any] = json.load(f)
 
-    logic_provider = TwoFactorAuthLogic()
-    machine = create_machine(config, logic_providers=[logic_provider])
+    # Instantiate logic provider and create machine
+    logic = TwoFactorAuthLogic()
+    machine = create_machine(config, logic_providers=[logic])
 
     # --- Scenario 1: Successful Authentication ---
-    print("\n--- Scenario 1: Successful Authentication ---")
+    logger.info("\n--- Scenario 1: Successful Authentication ---")
     interpreter1 = await Interpreter(machine).start()
     await interpreter1.send("START_2FA")
-    await asyncio.sleep(2.5)  # Wait for code delivery
+    await asyncio.sleep(2.5)
 
-    # Get the code from the context of the *currently running* interpreter
     correct_code = interpreter1.context.get("generated_code")
-    logging.info(
-        f"Runner: Retrieved generated code '{correct_code}' to submit."
-    )
-
+    logger.info(f"Runner: Submitting correct code '{correct_code}'")
     await interpreter1.send("SUBMIT_CODE", code=correct_code)
-    await asyncio.sleep(1.0)  # Wait for validation
-
-    logging.info(
-        f"Final state for Scenario 1: {interpreter1.current_state_ids}"
-    )
+    await asyncio.sleep(1.0)
+    logger.info(f"Final state: {interpreter1.current_state_ids}")
     await interpreter1.stop()
 
-    # --- Scenario 2: Incorrect Code, then Correct ---
-    print("\n--- Scenario 2: Incorrect Code, then Correct ---")
+    # --- Scenario 2: Incorrect then Correct Code ---
+    logger.info("\n--- Scenario 2: Incorrect then Correct Code ---")
     interpreter2 = await Interpreter(machine).start()
     await interpreter2.send("START_2FA")
-    await asyncio.sleep(2.5)  # Wait for code delivery
+    await asyncio.sleep(2.5)
 
-    correct_code_2 = interpreter2.context.get("generated_code")
-    logging.info(
-        f"Runner: Retrieved generated code '{correct_code_2}'. Submitting wrong code first."
+    generated = interpreter2.context.get("generated_code")
+    logger.info(
+        f"Runner: Generated code is '{generated}', sending wrong first."
     )
-
-    await interpreter2.send("SUBMIT_CODE", code="000000")  # Submit wrong code
+    await interpreter2.send("SUBMIT_CODE", code="000000")
     await asyncio.sleep(0.5)
-    logging.info(f"State after wrong code: {interpreter2.current_state_ids}")
+    logger.info(f"State after wrong code: {interpreter2.current_state_ids}")
 
-    logging.info("Runner: Submitting correct code now.")
-    await interpreter2.send(
-        "SUBMIT_CODE", code=correct_code_2
-    )  # Submit correct code
+    logger.info("Runner: Now submitting correct code.")
+    await interpreter2.send("SUBMIT_CODE", code=generated)
     await asyncio.sleep(1.0)
-
-    logging.info(
-        f"Final state for Scenario 2: {interpreter2.current_state_ids}"
-    )
+    logger.info(f"Final state: {interpreter2.current_state_ids}")
     await interpreter2.stop()
 
-    print("\n--- ✅ All Simulations Complete ---")
+    logger.info("\n--- ✅ All Scenarios Complete ---")
 
 
 if __name__ == "__main__":

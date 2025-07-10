@@ -1,110 +1,145 @@
+# examples/sync/super_complex/class_approach/with_logic_loader/audio_wizard_logic.py
+# -------------------------------------------------------------------------------
+# 🎙️ Audio Wizard Logic
+# -------------------------------------------------------------------------------
 """
-Implementation logic for the “Audio recording with websocket” machine
-(class-based, ready for LogicLoader auto-discovery).
-
-⚠️  NOTE on strange guard / action names
----------------------------------------
-The JSON uses names that contain spaces or emojis.  Python identifiers
-can’t, so we:
-1. implement a *normal* snake-case function, e.g.  websocket_token_is_defined
-2. add an **alias attribute** on `self` that matches the exact string in
-   the JSON.  LogicLoader will then find it.
-
-The same trick is used for emojis like “🟢 sessionSubmitSucces”.
+Class-based logic for the “Audio recording with websocket” state machine,
+with snake_case action and guard names to match the JSON contract.
 """
-
-from __future__ import annotations
 
 import logging
 from typing import Any, Dict
 
 from src.xstate_statemachine import Event, SyncInterpreter, ActionDefinition
 
-_log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class AudioWizardLogic:
-    # ------------------------------------------------------------------#
-    # Guards                                                             #
-    # ------------------------------------------------------------------#
-    def websocket_token_is_defined(self, ctx: Dict, _evt: Event) -> bool:
-        return bool(ctx.get("token"))
+    """Provides all guards and actions needed for the audio‐over‐WebSocket scenario."""
 
-    def session_expired(self, ctx: Dict, _evt: Event) -> bool:
-        return ctx.get("token_expired", False)
-
-    def message_is_stop_recording(self, _ctx: Dict, evt: Event) -> bool:
-        return evt.payload.get("message") == "stop_recording"
-
-    def websocket_is_connected(self, ctx: Dict, _evt: Event) -> bool:
-        return ctx.get("ws_connected", False)
-
-    # ------------------------------------------------------------------#
-    # Actions                                                            #
-    # ------------------------------------------------------------------#
-    # ── websocket branch ──────────────────────────────────────────────
-    def connect(
-        self, i: SyncInterpreter, ctx: Dict, _evt: Event, _a: ActionDefinition
-    ) -> None:
-        """Pretend to connect; in demo we just flag context & emit a success."""
-        _log.info("🔌 Connecting WebSocket …")
-        ctx["ws_connected"] = True
-        # Queue a synthetic success event for the state machine.
-        i.send("🟢 wsConnectSuccess")
-
-    def udpdateToken(
-        self, _i: SyncInterpreter, ctx: Dict, evt: Event, _a: ActionDefinition
-    ) -> None:
-        """Typo kept as-is to match JSON."""
-        ctx["token"] = evt.payload.get("token", "DEMO_TOKEN")
-        ctx["token_expired"] = False
-        _log.info("🔑 Token updated → %s", ctx["token"])
-
-    def unqueueData(
-        self, _i: SyncInterpreter, ctx: Dict, _evt: Event, _a: ActionDefinition
-    ) -> None:
-        if ctx.get("data_queue"):
-            data = ctx["data_queue"].pop(0)
-            _log.info("📤 Sent chunk → %s", data)
-
-    def saveRealtimeMessage(
-        self, _i: SyncInterpreter, ctx: Dict, evt: Event, _a: ActionDefinition
-    ) -> None:
-        ctx.setdefault("messages", []).append(evt.payload.get("message"))
-        _log.info("📥 Realtime msg saved → %s", evt.payload.get("message"))
-
-    # ── media-recorder branch ─────────────────────────────────────────
-    def queueStartRecording(
-        self, _i: SyncInterpreter, ctx: Dict, _evt: Event, _a: ActionDefinition
-    ) -> None:
-        _log.info("🎙️  Start recording queued")
-        ctx["data_queue"] = []
-
-    def queueStopRecording(
-        self, _i: SyncInterpreter, ctx: Dict, _evt: Event, _a: ActionDefinition
-    ) -> None:
-        _log.info("🛑 Stop recording queued")
-        ctx["data_queue"].append("stop_recording")
-
-    def queueData(
-        self, _i: SyncInterpreter, ctx: Dict, evt: Event, _a: ActionDefinition
-    ) -> None:
-        chunk = evt.payload.get("message")
-        ctx["data_queue"].append(chunk)
-        _log.info("➕ Audio chunk queued")
-
-    # ------------------------------------------------------------------#
-    # Aliases so LogicLoader can match exotic names verbatim            #
-    # ------------------------------------------------------------------#
     def __init__(self) -> None:
-        # Guards
-        self.__dict__["websocket token is defined"] = (
+        """🔗 Register alias names for LogicLoader auto‐discovery (to support exotic JSON keys)."""
+        self.__dict__["websocket_token_is_defined"] = (
             self.websocket_token_is_defined
         )
-        self.__dict__["Session expired"] = self.session_expired
-        self.__dict__["message is stop_recording"] = (
+        self.__dict__["session_expired"] = self.session_expired
+        self.__dict__["message_is_stop_recording"] = (
             self.message_is_stop_recording
         )
-        self.__dict__["websocket is connected"] = self.websocket_is_connected
-        # Actions – the ones above are already legal identifiers;
-        # no spaces or emojis to alias here.
+        self.__dict__["websocket_is_connected"] = self.websocket_is_connected
+
+    # -------------------------------------------------------------------------
+    # 🛡️ Guards
+    # -------------------------------------------------------------------------
+
+    def websocket_token_is_defined(
+        self, context: Dict[str, Any], event: Event
+    ) -> bool:  # noqa
+        """✔️ Guard: Ensure a WebSocket token exists in context."""
+        return bool(context.get("token"))
+
+    def session_expired(
+        self, context: Dict[str, Any], event: Event
+    ) -> bool:  # noqa
+        """⏱️ Guard: Check if the stored token is expired."""
+        return bool(context.get("token_expired", False))
+
+    def message_is_stop_recording(
+        self, context: Dict[str, Any], event: Event
+    ) -> bool:  # noqa
+        """🛑 Guard: Detect `stop_recording` marker in the message payload."""
+        return event.payload.get("message") == "stop_recording"
+
+    def websocket_is_connected(
+        self, context: Dict[str, Any], event: Event
+    ) -> bool:  # noqa
+        """✔️ Guard: Check if WebSocket connection flag is set."""
+        return bool(context.get("ws_connected", False))
+
+    # -------------------------------------------------------------------------
+    # ⚙️ Actions
+    # -------------------------------------------------------------------------
+
+    def connect(  # noqa
+        self,
+        interpreter: SyncInterpreter,
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🔌 Action: Simulate WebSocket connect and enqueue success event."""
+        logger.info("🔌 Connecting WebSocket…")
+        context["ws_connected"] = True
+        interpreter.send("🟢 wsConnectSuccess")
+
+    def update_token(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🔑 Action: Update or set authentication token in context."""
+        context["token"] = event.payload.get("token", "DEMO_TOKEN")
+        context["token_expired"] = False
+        logger.info(f"🔑 Token updated → {context['token']}")
+
+    def unqueue_data(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """📤 Action: Pop and send the next audio chunk, if any."""
+        queue = context.get("data_queue", [])
+        if queue:
+            chunk = queue.pop(0)
+            logger.info(f"📤 Sent chunk → {chunk}")
+
+    def save_realtime_message(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """📥 Action: Append an incoming realtime message into log."""
+        msg = event.payload.get("message")
+        context.setdefault("messages", []).append(msg)
+        logger.info(f"📥 Realtime msg saved → {msg}")
+
+    def queue_start_recording(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🎙️ Action: Initialize the recording queue."""
+        logger.info("🎙️ Start recording queued")
+        context["data_queue"] = []
+
+    def queue_stop_recording(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🛑 Action: Enqueue the stop‐recording marker."""
+        logger.info("🛑 Stop recording queued")
+        context.setdefault("data_queue", []).append("stop_recording")
+
+    def queue_data(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """➕ Action: Enqueue an audio chunk from the payload."""
+        chunk = event.payload.get("message")
+        context.setdefault("data_queue", []).append(chunk)
+        logger.info("➕ Audio chunk queued")

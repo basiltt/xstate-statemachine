@@ -1,24 +1,49 @@
+# -------------------------------------------------------------------------------
+# 🟢 User Presence Logic
 # examples/async/easy/class_approach/without_logic_loader/user_presence/user_presence_logic.py
+# -------------------------------------------------------------------------------
+"""
+Class-based logic for the async user presence tracker.
+
+Simulates network I/O to update last-seen timestamps.
+"""
+
 import asyncio
 import logging
 import time
-from typing import Dict
+from typing import Any, Dict
 
 from src.xstate_statemachine import Interpreter, Event, ActionDefinition
 
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
+
 
 class UserPresenceLogic:
-    """Class-based logic for the user presence tracker with async actions."""
+    """Provides actions for tracking user online/offline presence."""
 
-    async def update_last_seen(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        logging.info("  (Action: Simulating network call to update status...)")
-        await asyncio.sleep(0.5)  # Simulate I/O delay
+    async def update_last_seen(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🌐 Simulate I/O delay and update last-seen timestamp.
 
-        ctx["last_seen"] = time.time()
-        if e.type == "CONNECT":
-            ctx["user_id"] = e.payload.get("user_id")
-            logging.info(f"🟢 User '{ctx['user_id']}' is now online.")
+        Args:
+            interpreter: The running state machine interpreter.
+            context: Mutable context dictionary.
+            event: The triggering Event (CONNECT or DISCONNECT).
+            action_def: Metadata about this action.
+        """
+        logger.info("⏳ Simulating network call to update presence...")
+        await asyncio.sleep(0.5)
+        context["last_seen"] = time.time()
+        if event.type == "CONNECT":
+            context["user_id"] = event.payload.get("user_id")
+            logger.info(f"🟢 User '{context['user_id']}' is now online.")
         else:
-            logging.info(f"🔴 User '{ctx['user_id']}' went offline.")
+            logger.info(f"🔴 User '{context.get('user_id')}' went offline.")

@@ -1,8 +1,10 @@
+# examples/sync/super_complex/class_approach/with_logic_loader/audio_wizard_runner.py
+# -------------------------------------------------------------------------------
+# 🎙️ Audio Wizard Runner
+# -------------------------------------------------------------------------------
 """
-Demo runner for the “Audio recording with websocket” machine
-   • loads the JSON config
-   • wires AudioWizardLogic via LogicLoader
-   • drives two scenarios to exercise most branches
+Demo runner for the “Audio recording with websocket” machine,
+using snake_case action & guard names aligned to the updated JSON.
 """
 
 import json
@@ -10,74 +12,62 @@ import logging
 import pathlib
 import sys
 import time
-
-from src.xstate_statemachine import create_machine, SyncInterpreter
-
-# -------------------------------------------------------------------#
-# logging                                                            #
-# -------------------------------------------------------------------#
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s | %(message)s", datefmt="%H:%M:%S"
-)
-_log = logging.getLogger(__name__)
-
-# -------------------------------------------------------------------#
-# project import path                                                #
-# -------------------------------------------------------------------#
-ROOT = pathlib.Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT.parent.parent.parent.parent))  # adjust if needed
+from typing import Any, Dict
 
 from audio_wizard_logic import AudioWizardLogic  # noqa: E402
+from src.xstate_statemachine import create_machine, SyncInterpreter
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(message)s",
+    datefmt="%H:%M:%S",
+)
+
+# ensure project root on sys.path if needed
+ROOT = pathlib.Path(__file__).parent
+sys.path.insert(0, str(ROOT.parents[4]))  # adjust to reach examples folder
 
 
-def load_config() -> dict:
-    cfg_path = ROOT / "audio_wizard.json"
-    if not cfg_path.exists():  # fall-back to inline string
-        return json.loads(CONFIG_JSON)
-    return json.loads(cfg_path.read_text(encoding="utf-8"))
+def load_config() -> Dict[str, Any]:
+    """🔍 Load the JSON config from disk."""
+    return json.loads((ROOT / "audio_wizard.json").read_text(encoding="utf-8"))
 
 
-def scenario_happy(interpreter: SyncInterpreter) -> None:
-    """
-    Successful flow:
-       1. open WebSocket ► token missing ► submitting ► token received
-       2. auto connect ► wsConnectSuccess ► connected
-       3. start recording ► send 3 chunks ► stop ► done ► closed
-    """
-    _log.info("🚩  Running HAPPY path")
-    interpreter.send("startWebsocket")
-    interpreter.send("🟢 sessionSubmitSucces", token="TOK123")
-
-    # start the recorder once websocket connected
-    interpreter.send("startOrResumeRecording")
+def scenario_happy(interp: SyncInterpreter) -> None:
+    """🏆 Happy‐path: connect, record chunks, stop, and close."""
+    logger.info("🚩 Running HAPPY path")
+    time.sleep(1)  # simulate some delay before starting
+    interp.send("startWebsocket")
+    time.sleep(1)  # simulate connection delay
+    interp.send("🟢 wsConnectSuccess", token="TOK123")
+    time.sleep(1)  # simulate processing time
+    interp.send("startOrResumeRecording")
+    time.sleep(1)  # simulate recording setup delay
     for i in range(3):
-        interpreter.send("dataAvailable", message=f"chunk-{i}".encode(), seq=i)
-        time.sleep(0.01)
-    interpreter.send("stopRecording")  # queues stop_recording message
-
-    # drain send/receive loop
-    time.sleep(0.05)
-    _log.info("✅  End state → %s", interpreter.current_state_ids)
+        interp.send("dataAvailable", message=f"chunk-{i}")
+        time.sleep(1)
+    interp.send("stopRecording")
+    time.sleep(2)
+    logger.info("✅ End state → %s", interp.current_state_ids)
 
 
-def scenario_token_expired(interpreter: SyncInterpreter) -> None:
-    """
-    Token expires → submitting again → abandoned on error
-    """
-    _log.info("🚩  Running EXPIRE path")
-    interpreter.context["token"] = "OLD"
-    interpreter.context["token_expired"] = True
-
-    interpreter.send("startWebsocket")  # goes to disconnected.waiting
-    # waiting always → guard “Session expired” true?  yes → submitting
-    interpreter.send("🔴 sessionSubmitError")  # onError branch
-    _log.info("🛑  End state → %s", interpreter.current_state_ids)
+def scenario_token_expired(interp: SyncInterpreter) -> None:
+    """⚠️ Expiry‐path: preset expired token leads to `abandonned`."""
+    logger.info("🚩 Running EXPIRE path")
+    interp.context["token"] = "OLD"
+    interp.context["token_expired"] = True
+    interp.send("startWebsocket")
+    time.sleep(1)  # simulate connection delay
+    interp.send("🔴 wsConnectError")
+    time.sleep(1)  # simulate error handling delay
+    logger.info("🛑 End state → %s", interp.current_state_ids)
 
 
 def main() -> None:
+    """🚀 Build interpreter and run both scenarios end-to-end."""
     config = load_config()
     logic = AudioWizardLogic()
-
     machine = create_machine(config, logic_providers=[logic])
     interp = SyncInterpreter(machine)
     interp.start()
@@ -85,19 +75,12 @@ def main() -> None:
     scenario_happy(interp)
     interp.stop()
 
-    # fresh interpreter for second run
+    # fresh interpreter for expiry scenario
     interp = SyncInterpreter(machine)
     interp.start()
     scenario_token_expired(interp)
     interp.stop()
 
-
-# -------------------------------------------------------------------#
-# inline JSON in case you don’t store it as a separate file          #
-# -------------------------------------------------------------------#
-CONFIG_JSON = r"""
-PUT-THE-LONG-JSON-YOU-PASTED-HERE
-"""
 
 if __name__ == "__main__":
     main()

@@ -1,90 +1,164 @@
+# -------------------------------------------------------------------------------
+# 🍔 Food Delivery Logic
 # examples/async/complex/class_approach/without_logic_loader/food_delivery/food_delivery_logic.py
+# -------------------------------------------------------------------------------
+"""
+Class-based logic for simulating a food delivery order workflow.
+"""
+
 import asyncio
 import logging
 import random
-from typing import Dict, Any
+from typing import Any, Dict
 
 from src.xstate_statemachine import Interpreter, Event, ActionDefinition
 
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
+
 
 class FoodDeliveryLogic:
-    """Class-based logic for a food delivery order tracker."""
+    """Provides actions and a service for a food delivery state machine."""
 
-    # --- Actions ---
-    def set_pending_status(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["order_id"] = e.payload.get("order_id")
-        ctx["status"] = "PENDING_CONFIRMATION"
-        logging.info(
-            f"🧾 Order #{ctx['order_id']} placed. Awaiting restaurant confirmation."
+    # -------------------------------------------------------------------------
+    # 🛠️ Actions
+    # -------------------------------------------------------------------------
+
+    def set_pending_status(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🧾 Mark order as pending confirmation."""
+        context["order_id"] = event.payload.get("order_id")
+        context["status"] = "PENDING_CONFIRMATION"
+        logger.info(f"🧾 Order #{context['order_id']} placed.")
+
+    def log_confirmation(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """✅ Log restaurant confirmation result."""
+        result = event.data
+        logger.info(
+            f"✅ Restaurant confirmed #{context['order_id']}: {result}"
         )
 
-    def log_confirmation(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        logging.info(
-            f"✅ Restaurant confirmed order #{ctx['order_id']}. Result: {e.data}"
+    def set_rejection_error(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """❌ Record rejection reason and status."""
+        context["error"] = str(event.data)
+        context["status"] = "REJECTED_BY_RESTAURANT"
+        logger.error(
+            f"❌ Order #{context['order_id']} rejected: {context['error']}"
         )
 
-    def set_rejection_error(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["error"] = str(e.data)
-        ctx["status"] = "REJECTED_BY_RESTAURANT"
+    def set_timeout_error(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """⌛ Record timeout error for missing driver."""
+        context["error"] = "No driver found in time."
+        context["status"] = "FAILED_NO_DRIVER"
+        logger.error(f"⌛ Timeout: {context['error']}")
 
-    def set_timeout_error(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["error"] = "Could not find a nearby driver in time."
-        ctx["status"] = "FAILED_NO_DRIVER"
+    def update_status_to_finding_driver(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🤝 Transition to driver search state."""
+        context["status"] = "FINDING_DRIVER"
+        logger.info("🤝 Searching for delivery driver...")
 
-    def update_status_to_finding_driver(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["status"] = "FINDING_DRIVER"
-        logging.info("🤝 Order confirmed. Searching for a delivery driver...")
+    def update_status_to_preparing(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """👨‍🍳 Mark food as being prepared."""
+        context["status"] = "PREPARING_FOOD"
+        driver = event.payload.get("driver_name")
+        logger.info(f"👨‍🍳 Driver {driver} picked up order.")
 
-    def update_status_to_preparing(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["status"] = "PREPARING_FOOD"
-        driver = e.payload.get("driver_name")
-        logging.info(
-            f"👨‍🍳 Driver '{driver}' assigned! The restaurant is now preparing your order."
+    def update_status_to_delivering(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🛵 Mark order as out for delivery."""
+        context["status"] = "OUT_FOR_DELIVERY"
+        logger.info("🛵 Order is out for delivery.")
+
+    def update_status_to_delivered(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """🎉 Mark order as delivered."""
+        context["status"] = "DELIVERED"
+        logger.info("🎉 Order delivered! Enjoy your meal.")
+
+    def log_failure_reason(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
+    ) -> None:
+        """⚠️ Log final failure reason."""
+        logger.error(
+            f"❌ Order #{context['order_id']} failed: {context['error']}"
         )
 
-    def update_status_to_delivering(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["status"] = "OUT_FOR_DELIVERY"
-        logging.info("🛵 Your order is out for delivery!")
+    # -------------------------------------------------------------------------
+    # 🚀 Services
+    # -------------------------------------------------------------------------
 
-    def update_status_to_delivered(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        ctx["status"] = "DELIVERED"
-        logging.info("🎉🎉🎉 Your order has been delivered! Enjoy your meal.")
-
-    def log_failure_reason(
-        self, i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-    ):
-        logging.error(
-            f"❌ Order #{ctx['order_id']} failed. Reason: {ctx['error']}"
-        )
-
-    # --- Services ---
-    async def confirm_with_restaurant(
-        self, i: Interpreter, ctx: Dict, e: Event
+    async def confirm_with_restaurant(  # noqa
+        self,
+        interpreter: Interpreter,  # noqa
+        context: Dict[str, Any],  # noqa
+        event: Event,  # noqa
     ) -> Dict[str, Any]:
-        logging.info("📞 Invoking service: Contacting restaurant...")
+        """📞 Async service to confirm order with restaurant.
+
+        Args:
+            interpreter: The running interpreter.
+            context: Mutable context dict.
+            event: The triggering Event.
+
+        Returns:
+            Confirmation result and prep time.
+
+        Raises:
+            ConnectionError: If restaurant cannot accept orders.
+        """
+        logger.info("📞 Contacting restaurant...")
         await asyncio.sleep(2.0)
-
-        # Simulate restaurant being too busy or closed
         if random.random() < 0.2:
-            raise ConnectionError(
-                "Restaurant is not accepting orders at this time."
-            )
-
-        logging.info("👍 Restaurant ACKNOWLEDGED the order.")
-        return {"confirmed": True, "estimated_prep_time": "20 minutes"}
+            raise ConnectionError("Restaurant unavailable.")
+        return {"confirmed": True, "estimated_prep_time": "20m"}

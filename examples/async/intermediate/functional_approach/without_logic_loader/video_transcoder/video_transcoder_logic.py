@@ -1,60 +1,111 @@
+# -------------------------------------------------------------------------------
+# 🎬 Video Transcoder Logic
 # examples/async/intermediate/functional_approach/without_logic_loader/video_transcoder/video_transcoder_logic.py
+# -------------------------------------------------------------------------------
+"""
+Functional logic for the async video transcoder demonstration.
+
+Includes actions to upload, handle success/failure, and a service to simulate
+transcoding into multiple formats.
+"""
+
 import asyncio
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
 
-from src.xstate_statemachine import Interpreter, Event, ActionDefinition
+from src.xstate_statemachine import ActionDefinition, Event, Interpreter
 
-
-# --- Actions ---
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
 
 
 async def upload_video_file(
-    i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-):
-    """Simulates uploading a file by setting context and waiting."""
-    ctx["source_file"] = e.payload.get("file_name")
-    logging.info(f"📤 Action: Starting upload for '{ctx['source_file']}'...")
+    interpreter: Interpreter,
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """📤 Simulate uploading a video file and send next event.
 
-    await asyncio.sleep(2.0)  # Simulate a 2-second upload time
-
-    if "fail" in ctx["source_file"]:
-        logging.error("❌ Upload failed due to a simulated network error.")
-        await i.send("UPLOAD_FAILED")
+    Args:
+        interpreter: The state machine interpreter.
+        context: Mutable context dictionary.
+        event: The triggering Event carrying `payload['file_name']`.
+        action_def: Metadata about this action.
+    """
+    file_name = event.payload.get("file_name")
+    context["source_file"] = file_name
+    logger.info(f"📤 Uploading '{file_name}'...")
+    await asyncio.sleep(2.0)
+    if "fail" in file_name:
+        logger.error("❌ Upload failed.")
+        await interpreter.send("UPLOAD_FAILED")
     else:
-        ctx["upload_path"] = f"/uploads/{ctx['source_file']}"
-        logging.info(f"✅ Upload complete. Path: {ctx['upload_path']}")
-        await i.send("UPLOAD_COMPLETE")
+        path = f"/uploads/{file_name}"
+        context["upload_path"] = path
+        logger.info(f"✅ Upload complete. Path: {path}")
+        await interpreter.send("UPLOAD_COMPLETE")
 
 
 def set_transcoding_status(
-    i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-):
-    """Sets the final transcoding status from the service result."""
-    ctx["transcoding_status"] = e.data
-    logging.info(f"🎉 Transcoding successful! Details: {e.data}")
+    interpreter: Interpreter,
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,
+) -> None:
+    """🎉 Store transcoding result into context.
+
+    Args:
+        interpreter: The state machine interpreter.
+        context: Mutable context dictionary.
+        event: The DoneEvent carrying `data`.
+        action_def: Metadata about this action.
+    """
+    context["transcoding_status"] = event.data
+    logger.info(f"🎉 Transcoding successful! Details: {event.data}")
 
 
-def set_error(i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition):
-    """Stores the error from a failed service."""
-    ctx["error"] = str(e.data)
-    logging.error(f"🔥 An error occurred: {ctx['error']}")
+def set_error(
+    interpreter: Interpreter,
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,
+) -> None:
+    """🔥 Store error from failed transcoding.
 
-
-# --- Services ---
+    Args:
+        interpreter: The state machine interpreter.
+        context: Mutable context dictionary.
+        event: The DoneEvent carrying error `data`.
+        action_def: Metadata about this action.
+    """
+    context["error"] = str(event.data)
+    logger.error(f"🔥 An error occurred: {context['error']}")
 
 
 async def transcode_video_service(
-    i: Interpreter, ctx: Dict, e: Event
+    interpreter: Interpreter,
+    context: Dict[str, Any],
+    event: Event,
 ) -> Dict[str, Any]:
-    """Simulates a long-running video transcoding process."""
-    file_path = ctx.get("upload_path")
-    logging.info(f"⚙️  Invoke: Starting to transcode '{file_path}'...")
+    """⚙️ Async service to simulate video transcoding.
 
-    # Simulate processing time
+    Args:
+        interpreter: The state machine interpreter.
+        context: Mutable context dictionary.
+        event: The triggering Event.
+
+    Returns:
+        A dict with `status` and available `formats`.
+
+    Raises:
+        TypeError: If the codec is unsupported.
+    """
+    path = context.get("upload_path")
+    logger.info(f"⚙️ Transcoding '{path}'...")
     await asyncio.sleep(3.0)
-
-    if "unsupported" in file_path:
-        raise TypeError("Unsupported video codec in source file.")
-
+    if "unsupported" in path:
+        raise TypeError("Unsupported video codec.")
     return {"status": "success", "formats": ["1080p", "720p", "480p"]}

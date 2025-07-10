@@ -1,89 +1,141 @@
+# -----------------------------------------------------------------------------
+# 📚 Online Quiz Logic
 # examples/async/complex/functional_approach/without_logic_loader/online_quiz/online_quiz_logic.py
+# -----------------------------------------------------------------------------
+"""
+Functional logic for an async online quiz:
+
+  • set_quiz_id         – action on START_QUIZ
+  • store_quiz_data     – onDone of load_quiz_data_service
+  • log_quiz_start      – entry log for quiz
+  • store_answer        – record each answer
+  • store_final_score   – onDone of grade_quiz_service
+  • log_timeout         – on after transition
+  • set_error           – error handler
+  • load_quiz_data_service – fetch questions
+  • grade_quiz_service      – compute score
+"""
+
 import asyncio
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
 
 from src.xstate_statemachine import Interpreter, Event, ActionDefinition
 
-
-# --- Actions ---
-def set_quiz_id(i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition):
-    ctx["quiz_id"] = e.payload.get("quiz_id")
-    logging.info(f"📚 Starting quiz with ID: {ctx['quiz_id']}")
-
-
-def store_quiz_data(i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition):
-    ctx["questions"] = e.data.get("questions")
-    logging.info(
-        f"✅ Questions loaded successfully. Total: {len(ctx['questions'])}"
-    )
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
 
 
-def log_quiz_start(i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition):
-    logging.info("⏱️  Quiz in progress! You have 8 seconds to complete it.")
+def set_quiz_id(
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """📚 Store quiz ID in context to start loading data."""
+    context["quiz_id"] = event.payload.get("quiz_id")
+    context["user_answers"] = {}
+    logger.info(f"📚 Starting quiz with ID: {context['quiz_id']}")
 
 
-def store_answer(i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition):
-    q_id = e.payload.get("question_id")
-    answer = e.payload.get("answer")
-    ctx["user_answers"][q_id] = answer
-    logging.info(f"  -> ✍️  Answered question {q_id} with '{answer}'")
+def store_quiz_data(
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """✅ Store loaded questions for the quiz."""
+    context["questions"] = event.data.get("questions", [])
+    logger.info(f"✅ Questions loaded. Total: {len(context['questions'])}")
 
 
-def log_timeout(i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition):
-    logging.warning("⏰ Time's up! Submitting answers automatically.")
+def log_quiz_start(
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],  # noqa
+    event: Event,  # noqa
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """⏱️ Log that quiz has begun with a time limit."""
+    logger.info("⏱️ Quiz in progress! You have 8 seconds to complete it.")
+
+
+def store_answer(
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """✍️ Record an answer for a given question ID."""
+    q_id = event.payload.get("question_id")
+    answer = event.payload.get("answer")
+    context["user_answers"][q_id] = answer
+    logger.info(f"✍️ Answered question {q_id} with '{answer}'")
+
+
+def log_timeout(
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],  # noqa
+    event: Event,  # noqa
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """⌛ Log when the quiz time limit has been reached."""
+    logger.warning("⌛ Time's up! Submitting answers automatically.")
 
 
 def store_final_score(
-    i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition
-):
-    ctx["final_score"] = e.data
-    logging.info(f"🎉 Quiz graded! Your score: {e.data.get('score')}%")
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """🏆 Store the final quiz score after grading."""
+    context["final_score"] = event.data
+    logger.info(f"🏆 Quiz graded! Your score: {event.data.get('score')}%")
 
 
-def set_error(i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition):
-    ctx["error"] = str(e.data)
-    logging.error(f"❌ An error occurred: {ctx['error']}")
+def set_error(
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,
+    action_def: ActionDefinition,  # noqa
+) -> None:
+    """❌ Record any error encountered during quiz flow."""
+    context["error"] = str(event.data)
+    logger.error(f"❌ An error occurred: {context['error']}")
 
 
-# --- Services ---
 async def load_quiz_data_service(
-    i: Interpreter, ctx: Dict, e: Event
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,  # noqa
 ) -> Dict[str, Any]:
-    quiz_id = ctx.get("quiz_id")
-    logging.info(
-        f"  -> ☁️  Invoking service: Fetching data for quiz '{quiz_id}'..."
-    )
+    """☁️ Async service: Fetch quiz questions based on quiz_id."""
+    quiz_id = context.get("quiz_id")
+    logger.info(f"☁️ Fetching questions for quiz '{quiz_id}'...")
     await asyncio.sleep(1.5)
-
     if quiz_id == "python_basics":
         return {
             "questions": [
                 {"id": 1, "text": "What is 2+2?", "correct": "4"},
-                {
-                    "id": 2,
-                    "text": "What is the capital of France?",
-                    "correct": "Paris",
-                },
+                {"id": 2, "text": "Capital of France?", "correct": "Paris"},
             ]
         }
-    else:
-        raise FileNotFoundError(f"Quiz with ID '{quiz_id}' not found.")
+    raise FileNotFoundError(f"Quiz '{quiz_id}' not found.")
 
 
 async def grade_quiz_service(
-    i: Interpreter, ctx: Dict, e: Event
+    interpreter: Interpreter,  # noqa
+    context: Dict[str, Any],
+    event: Event,  # noqa
 ) -> Dict[str, Any]:
-    logging.info("  -> 📝 Invoking service: Grading answers...")
+    """📝 Async service: Grade user answers and compute score."""
+    questions = context.get("questions", [])
+    user_answers = context.get("user_answers", {})
+    correct = sum(
+        1 for q in questions if user_answers.get(q["id"]) == q["correct"]
+    )
+    score = round((correct / len(questions)) * 100 if questions else 0.0, 2)
     await asyncio.sleep(2.0)
-
-    correct_answers = 0
-    questions = ctx.get("questions", [])
-    user_answers = ctx.get("user_answers", {})
-
-    for question in questions:
-        if user_answers.get(question["id"]) == question["correct"]:
-            correct_answers += 1
-
-    score = (correct_answers / len(questions)) * 100 if questions else 0
-    return {"score": round(score, 2), "correct": correct_answers}
+    return {"score": score, "correct": correct}

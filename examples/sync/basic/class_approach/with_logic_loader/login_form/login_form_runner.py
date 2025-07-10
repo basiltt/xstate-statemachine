@@ -1,31 +1,29 @@
 # examples/sync/basic/class_approach/with_logic_loader/login_form_runner.py
-
 # -----------------------------------------------------------------------------
 # 🔒 Basic Example: Synchronous Login Form (Class-Based with LogicLoader)
 # -----------------------------------------------------------------------------
-# This script simulates a basic login form.
-#
-# Key Concepts Illustrated:
-#   - Synchronous Execution: Uses the `SyncInterpreter`.
-#   - Class-Based Logic: The `LoginForm` class encapsulates all logic.
-#   - Automatic Logic Discovery: An instance of the `LoginForm` class is
-#     passed to `create_machine` via `logic_providers`, allowing the
-#     LogicLoader to auto-discover and bind its methods.
-#   - Guards & Services: Demonstrates a guard (`are_fields_filled`) and a
-#     synchronous service (`verify_credentials`).
-# -----------------------------------------------------------------------------
+"""
+Runner script for a synchronous login form state machine.
+
+Key Concepts:
+  • Uses `SyncInterpreter` for sync execution.
+  • Class-based logic auto-discovered via `logic_providers`.
+  • Guards & services demonstrate form validation and credential check.
+"""
 
 import json
 import logging
 import os
 import sys
-from typing import Dict, Any
+import time
+from typing import Any, Dict
 
-# --- Path Setup ---
+# 🛠️ Ensure project root is on PYTHONPATH
 sys.path.insert(
     0,
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../..")),
 )
+
 from src.xstate_statemachine import (
     create_machine,
     SyncInterpreter,
@@ -33,112 +31,170 @@ from src.xstate_statemachine import (
     ActionDefinition,
 )
 
-# --- Logger Configuration ---
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
-# -----------------------------------------------------------------------------
-# 🏛️ LoginForm Class
-# -----------------------------------------------------------------------------
 class LoginForm:
-    """Encapsulates the logic and interpreter for a login form."""
+    """Encapsulates the login form state machine and its logic."""
 
-    def __init__(self, config: Dict[str, Any]):
-        """Initializes the LoginForm."""
-        # Create the machine, passing `self` to `logic_providers`.
-        # The LogicLoader will inspect this instance and bind its methods.
+    def __init__(self, config: Dict[str, Any]) -> None:
+        """Initialize the machine and its SyncInterpreter.
+
+        Args:
+            config: The JSON-loaded machine configuration.
+        """
         machine = create_machine(config, logic_providers=[self])
         self.interpreter = SyncInterpreter(machine)
 
-    # --- Actions ---
-    def update_field(
-        self, i: SyncInterpreter, ctx: Dict, e: Event, a: ActionDefinition
+    def update_field(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
     ) -> None:
-        """Updates the username or password in the context."""
-        field = e.payload.get("field")
-        value = e.payload.get("value")
-        if field in ctx:
-            ctx[field] = value
-            logging.info(f"📝 Field '{field}' updated.")
+        """📝 Update username or password field in context.
 
-    def set_error(
-        self, i: SyncInterpreter, ctx: Dict, e: Event, a: ActionDefinition
+        Args:
+            interpreter: The running SyncInterpreter.
+            context: Mutable machine context.
+            event: Event carrying 'field' and 'value' in payload.
+            action_def: Metadata about this action.
+        """
+        field = event.payload.get("field")
+        value = event.payload.get("value")
+        if field in context:
+            context[field] = value
+            logger.info(f"📝 Field '{field}' updated to '{value}'.")
+
+    def set_error(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,
+        action_def: ActionDefinition,  # noqa
     ) -> None:
-        """Sets the error message from a failed service."""
-        ctx["error"] = str(e.data)
-        logging.warning(f"🚨 Error set: {ctx['error']}")
+        """🚨 Record an error message after a failed service.
 
-    def clear_error(
-        self, i: SyncInterpreter, ctx: Dict, e: Event, a: ActionDefinition
+        Args:
+            interpreter: The running SyncInterpreter.
+            context: Mutable machine context.
+            event: DoneEvent carrying error in `data`.
+            action_def: Metadata about this action.
+        """
+        context["error"] = str(event.data)
+        logger.warning(f"🚨 Error set: {context['error']}")
+
+    def clear_error(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
     ) -> None:
-        """Clears the error message on success."""
-        ctx["error"] = None
+        """🧹 Clear the error message on successful login."""
+        context["error"] = None
+        logger.info("🧹 Error cleared.")
 
-    # --- Guards ---
-    def are_fields_filled(self, ctx: Dict, e: Event) -> bool:
-        """Checks if both username and password fields have values."""
-        is_filled = bool(ctx["username"] and ctx["password"])
-        if not is_filled:
-            logging.warning("🛡️ Guard failed: Both fields are required.")
-        return is_filled
+    def are_fields_filled(
+        self, context: Dict[str, Any], event: Event
+    ) -> bool:  # noqa
+        """🛡️ Guard: Ensure both username and password are provided.
 
-    # --- Services ---
-    def verify_credentials(
-        self, i: SyncInterpreter, c: Dict, e: Event
+        Args:
+            context: Mutable machine context.
+            event: The triggering Event.
+
+        Returns:
+            True if both fields are non-empty; False otherwise.
+        """
+        filled = bool(context.get("username") and context.get("password"))
+        if not filled:
+            logger.warning("🛡️ Guard failed: Both fields must be filled.")
+        return filled
+
+    def verify_credentials(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
     ) -> Dict[str, str]:
-        """A synchronous service to simulate credential verification."""
-        logging.info("⚙️ Service: Verifying credentials...")
-        if c["username"] == "user" and c["password"] == "pass":
-            logging.info("✅ Credentials verified.")
-            return {"status": "ok"}
-        else:
-            raise ValueError("Invalid credentials")
+        """⚙️ Service: Synchronous credential verification.
 
-    def run_simulation(self):
-        """Runs a predefined simulation of the login form."""
+        Args:
+            interpreter: The running SyncInterpreter.
+            context: Mutable machine context.
+            event: The triggering Event.
+
+        Returns:
+            A dict with status on success.
+
+        Raises:
+            ValueError: If credentials are invalid.
+        """
+        logger.info("⚙️ Verifying credentials...")
+        if (
+            context.get("username") == "user"
+            and context.get("password") == "pass"
+        ):
+            logger.info("✅ Credentials verified.")
+            return {"status": "ok"}
+        raise ValueError("Invalid credentials")
+
+    def run_simulation(self) -> None:
+        """🚀 Execute a predefined simulation of login scenarios."""
         print("\n--- 🔐 Synchronous Login Form Simulation ---")
         self.interpreter.start()
-        logging.info(f"Initial State: {self.interpreter.current_state_ids}")
+        logger.info(f"Initial State: {self.interpreter.current_state_ids}")
+
+        time.sleep(2)
 
         print("\n--- Scenario 1: Submit with empty fields ---")
-        self.interpreter.send("SUBMIT")  # Should be blocked by guard
-        logging.info(f"State is still: {self.interpreter.current_state_ids}\n")
+        self.interpreter.send("SUBMIT")
+        logger.info(f"State remains: {self.interpreter.current_state_ids}")
 
-        print("--- Scenario 2: Enter wrong credentials ---")
+        time.sleep(2)
+
+        print("\n--- Scenario 2: Wrong credentials ---")
         self.interpreter.send("UPDATE_FIELD", field="username", value="user")
         self.interpreter.send("UPDATE_FIELD", field="password", value="wrong")
         self.interpreter.send("SUBMIT")
-        logging.info(
-            f"State after failed login: {self.interpreter.current_state_ids}"
+        logger.info(
+            f"State after failure: {self.interpreter.current_state_ids}"
         )
-        logging.info(f"Context: {self.interpreter.context}\n")
+        logger.info(f"Context: {self.interpreter.context}")
 
-        print("--- Scenario 3: Enter correct credentials ---")
+        time.sleep(2)
+
+        print("\n--- Scenario 3: Correct credentials ---")
         self.interpreter.send("UPDATE_FIELD", field="password", value="pass")
         self.interpreter.send("SUBMIT")
-        logging.info(f"Final State: {self.interpreter.current_state_ids}")
-        logging.info(f"Final Context: {self.interpreter.context}")
+        logger.info(f"Final State: {self.interpreter.current_state_ids}")
+        logger.info(f"Final Context: {self.interpreter.context}")
+
+        time.sleep(1)
 
         self.interpreter.stop()
         print("\n--- ✅ Simulation Complete ---")
 
 
-# -----------------------------------------------------------------------------
-# 🚀 Main Execution
-# -----------------------------------------------------------------------------
-def main():
-    """Loads config and runs the login form simulation."""
+def main() -> None:
+    """Load configuration and run the login form simulation."""
     current_dir = os.path.dirname(os.path.abspath(__file__))
     json_path = os.path.join(current_dir, "login_form.json")
     try:
-        with open(json_path, "r") as f:
+        with open(json_path, "r", encoding="utf-8") as f:
             config = json.load(f)
     except FileNotFoundError:
-        logging.error(f"❌ Configuration file not found at '{json_path}'")
+        logger.error(f"❌ Config not found at '{json_path}'")
         return
 
-    login_form = LoginForm(config)
-    login_form.run_simulation()
+    form = LoginForm(config)
+    form.run_simulation()
 
 
 if __name__ == "__main__":

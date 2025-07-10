@@ -1,29 +1,21 @@
 # examples/sync/easy/class_approach/with_logic_loader/fan_controller_runner.py
-
 # -----------------------------------------------------------------------------
 # 💨 Easy Example: Synchronous Fan Controller (Class-Based with LogicLoader)
 # -----------------------------------------------------------------------------
-# This script showcases the powerful combination of a class-based approach
-# with the automatic discovery feature of the `LogicLoader`.
-#
-# Key Concepts Illustrated:
-#   - Synchronous Execution: Uses the `SyncInterpreter`.
-#   - Class-Based Logic: The `FanController` class encapsulates the logic.
-#   - Logic Provider: An *instance* of the `FanController` class is passed to
-#     `create_machine` via the `logic_providers` argument, allowing the
-#     `LogicLoader` to discover and bind its methods automatically.
-# -----------------------------------------------------------------------------
+"""
+Runner for a synchronous fan controller demonstration.
+
+Key Concepts:
+  • Synchronous Execution: Uses SyncInterpreter for blocking state transitions.
+  • Class-Based Logic: FanController encapsulates all actions.
+  • Automatic Discovery: LogicLoader inspects the FanController instance.
+"""
 
 import json
 import logging
-import os
-import sys
-from typing import Dict, Any
+import time
+from typing import Any, Dict
 
-# --- Path Setup ---
-# sys.path.insert(
-#     0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../.."))
-# )
 from src.xstate_statemachine import (
     create_machine,
     SyncInterpreter,
@@ -31,88 +23,91 @@ from src.xstate_statemachine import (
     ActionDefinition,
 )
 
-# --- Logger Configuration ---
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 
-# -----------------------------------------------------------------------------
-# 🏛️ FanController Class
-# -----------------------------------------------------------------------------
 class FanController:
-    """Encapsulates the logic and state for a fan controller simulation."""
+    """Encapsulates logic and interpreter for the fan controller machine."""
 
-    def __init__(self, config: Dict[str, Any]):
-        """Initializes the FanController."""
-        # 1. Create the machine. Instead of building a `MachineLogic` object
-        #    manually, we pass `self` (the instance of this class) into the
-        #    `logic_providers` list. The LogicLoader will inspect this instance
-        #    and bind its methods to the action names in the config.
+    def __init__(self, config: Dict[str, Any]) -> None:
+        """🛠️ Initialize machine and SyncInterpreter.
+
+        Args:
+            config: JSON-loaded state machine configuration.
+        """
         machine = create_machine(config, logic_providers=[self])
         self.interpreter = SyncInterpreter(machine)
 
-    # --- Actions ---
-    def set_speed_low(
-        self, i: SyncInterpreter, ctx: Dict, e: Event, a: ActionDefinition
+    def set_speed_low(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
     ) -> None:
-        """Action to set the fan speed to low."""
-        ctx["speed"] = 1
-        logging.info(f"💨 Fan ON. Speed set to {ctx['speed']}.")
+        """⚙️ Action: Set fan speed to low (1)."""
+        context["speed"] = 1
+        logger.info(f"💨 Fan ON. Speed set to {context['speed']}.")
 
-    def set_speed_zero(
-        self, i: SyncInterpreter, ctx: Dict, e: Event, a: ActionDefinition
+    def set_speed_zero(  # noqa
+        self,
+        interpreter: SyncInterpreter,  # noqa
+        context: Dict[str, Any],
+        event: Event,  # noqa
+        action_def: ActionDefinition,  # noqa
     ) -> None:
-        """Action to turn the fan off by setting speed to zero."""
-        ctx["speed"] = 0
-        logging.info(f"🌑 Fan OFF. Speed set to {ctx['speed']}.")
+        """⚙️ Action: Turn the fan off (speed 0)."""
+        context["speed"] = 0
+        logger.info(f"🌑 Fan OFF. Speed set to {context['speed']}.")
 
-    def run_simulation(self):
-        """Runs a predefined simulation of using the fan controller."""
-        print("\n--- 💨 Synchronous Fan Controller Simulation ---")
+    def run_simulation(self) -> None:
+        """🚀 Execute a predefined sequence of FAN events."""
+        print("\n--- 💨 Fan Controller Simulation ---")
         self.interpreter.start()
-        logging.info(f"Initial State: {self.interpreter.current_state_ids}")
+        logger.info(f"Initial State: {self.interpreter.current_state_ids}")
+
+        time.sleep(1)  # Simulate initial delay
 
         print("\n--- Turning fan ON ---")
         self.interpreter.send("TURN_ON")
-        logging.info(f"Current State: {self.interpreter.current_state_ids}")
-        logging.info(f"Context: {self.interpreter.context}")
+        logger.info(f"State: {self.interpreter.current_state_ids}")
+        logger.info(f"Context: {self.interpreter.context}")
+
+        time.sleep(1)  # Simulate delay for action to complete
 
         print("\n--- Increasing speed ---")
         self.interpreter.send("INCREASE_SPEED")
-        logging.info(f"Current State: {self.interpreter.current_state_ids}")
-        logging.info(f"Context: {self.interpreter.context}")
+        logger.info(f"State: {self.interpreter.current_state_ids}")
+        logger.info(f"Context: {self.interpreter.context}")
 
-        print("\n--- Increasing speed again ---")
-        self.interpreter.send("INCREASE_SPEED")
-        logging.info(f"Current State: {self.interpreter.current_state_ids}")
-        logging.info(f"Context: {self.interpreter.context}")
+        time.sleep(1)  # Simulate delay for action to complete
 
         print("\n--- Turning fan OFF ---")
         self.interpreter.send("TURN_OFF")
-        logging.info(f"Current State: {self.interpreter.current_state_ids}")
-        logging.info(f"Context: {self.interpreter.context}")
+        logger.info(f"State: {self.interpreter.current_state_ids}")
+        logger.info(f"Context: {self.interpreter.context}")
+
+        time.sleep(1)  # Simulate delay for action to complete
 
         self.interpreter.stop()
         print("\n--- ✅ Simulation Complete ---")
 
 
-# -----------------------------------------------------------------------------
-# 🚀 Main Execution
-# -----------------------------------------------------------------------------
-def main():
-    """Loads config and runs the fan controller simulation."""
-    # current_dir = os.path.dirname(os.path.abspath(__file__))
-    # json_path = os.path.join(current_dir, "fan_controller.json")
+def main() -> None:
+    """🔧 Load configuration and run the fan controller simulation."""
     try:
-        with open("fan_controller.json", "r") as f:
+        with open("fan_controller.json", "r", encoding="utf-8") as f:
             config = json.load(f)
     except FileNotFoundError:
-        logging.error(
-            "❌ Configuration file not found at 'fan_controller.json'."
-        )
+        logger.error("❌ Config not found: 'fan_controller.json'")
         return
 
-    fan_controller = FanController(config)
-    fan_controller.run_simulation()
+    controller = FanController(config)
+    controller.run_simulation()
 
 
 if __name__ == "__main__":

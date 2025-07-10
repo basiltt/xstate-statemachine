@@ -9,11 +9,9 @@
             "startOrResumeRecording": [
               {
                 "actions": [
-                  {
-                    "type": "queueStartRecording"
-                  }
+                  "queue_start_recording"
                 ],
-                "guard": "websocket is connected",
+                "guard": "websocket_is_connected",
                 "target": "recording"
               }
             ]
@@ -34,7 +32,7 @@
                     "params": {
                       "message": {}
                     },
-                    "type": "queueData"
+                    "type": "queue_data"
                   }
                 ],
                 "target": "recording"
@@ -49,9 +47,7 @@
             "stopRecording": [
               {
                 "actions": [
-                  {
-                    "type": "queueStopRecording"
-                  }
+                  "queue_stop_recording"
                 ],
                 "target": "stopped"
               }
@@ -88,7 +84,7 @@
                         "params": {
                           "message": {}
                         },
-                        "type": "saveRealtimeMessage"
+                        "type": "save_realtime_message"
                       }
                     ],
                     "target": "Receive"
@@ -110,7 +106,7 @@
                   "always": [
                     {
                       "actions": [],
-                      "guard": "message is stop_recording",
+                      "guard": "message_is_stop_recording",
                       "target": "done"
                     },
                     {
@@ -119,7 +115,7 @@
                     }
                   ],
                   "entry": {
-                    "type": "unqueueData"
+                    "type": "unqueue_data"
                   }
                 }
               }
@@ -141,7 +137,7 @@
                 "\ud83d\udd34 wsConnectError": [
                   {
                     "actions": [],
-                    "guard": "Session expired",
+                    "guard": "session_expired",
                     "target": "submitting"
                   },
                   {
@@ -165,12 +161,10 @@
                     "target": "abandonned"
                   }
                 ],
-                "\ud83d\udfe2 sessionSubmitSucces": [
+                "\ud83d\udfe2 sessionSubmitSuccess": [
                   {
                     "actions": [
-                      {
-                        "type": "udpdateToken"
-                      }
+                      "update_token"
                     ],
                     "target": "waiting"
                   }
@@ -181,7 +175,7 @@
               "always": [
                 {
                   "actions": [],
-                  "guard": "websocket token is defined",
+                  "guard": "websocket_token_is_defined",
                   "target": "connecting"
                 },
                 {
