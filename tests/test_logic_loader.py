@@ -1,25 +1,41 @@
-# tests/test_logic_loader.py
-import importlib
-
+# /tests/test_logic_loader.py
 # -----------------------------------------------------------------------------
 # 🧪 Test Suite: LogicLoader
 # -----------------------------------------------------------------------------
-# This suite provides comprehensive testing for the `LogicLoader` class, which
-# is responsible for the automatic discovery of state machine logic. It verifies
-# the singleton pattern, module registration, and the discovery process using
-# module paths, class instances, and direct module objects. It also ensures
-# correct error handling for missing implementations and invalid inputs.
+# This module contains the test suite for the `LogicLoader` class, a core
+# component responsible for the automatic discovery and binding of state machine
+# logic (actions, guards, and services).
+#
+# The tests are designed to be comprehensive, covering:
+#   - The Singleton pattern implementation (`get_instance`).
+#   - Logic discovery from various sources:
+#       - Module paths (strings).
+#       - Imported module objects.
+#       - Class instances (providers).
+#       - Globally registered modules.
+#   - Name resolution strategies, including camelCase to snake_case mapping.
+#   - Conflict resolution when logic is defined in multiple sources.
+#   - Robust error handling for missing implementations and invalid inputs.
+#   - Edge cases to ensure stability and predictability.
+#
+# Each test is isolated to prevent side effects, with careful management of
+# temporary files and the Python import system.
 # -----------------------------------------------------------------------------
 
+# -----------------------------------------------------------------------------
+# 📦 Standard Library Imports
+# -----------------------------------------------------------------------------
+import importlib
+import inspect
 import logging
 import os
 import sys
 import unittest
-from types import ModuleType
-from typing import Any, Dict
-import inspect
+from typing import Any, Dict, Set, Tuple
 
-# ✅ FIX: Changed relative imports to absolute imports from the src package.
+# -----------------------------------------------------------------------------
+# 📥 Project-Specific Imports
+# -----------------------------------------------------------------------------
 from src.xstate_statemachine import (
     ImplementationMissingError,
     InvalidConfigError,
@@ -27,11 +43,12 @@ from src.xstate_statemachine import (
     MachineLogic,
     create_machine,
 )
-from xstate_statemachine.models import MachineNode
+from src.xstate_statemachine.models import MachineNode
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
 # -----------------------------------------------------------------------------
+# Set up a detailed logger to provide insight into the test execution flow.
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] (%(name)s) %(message)s",
@@ -42,6 +59,7 @@ logger = logging.getLogger(__name__)
 # 🛠️ Test Helpers & Mocks
 # -----------------------------------------------------------------------------
 
+# A temporary module for general logic discovery tests.
 _TEST_LOGIC_MODULE_NAME = "temp_logic_for_testing"
 _TEST_LOGIC_FILE_CONTENT = """
 # Dummy logic functions for discovery tests.
@@ -51,7 +69,9 @@ async def a_service(): return "data"
 def anotherActionInCamel(): pass
 def action_for_snake_case(): pass
 """
-_MACHINE_CONFIG = {
+
+# A generic machine configuration that requires various logic implementations.
+_MACHINE_CONFIG: Dict[str, Any] = {
     "id": "test",
     "initial": "idle",
     "states": {
@@ -72,30 +92,38 @@ _MACHINE_CONFIG = {
     },
 }
 
-_FACTORY_MACHINE_CONFIG = {
+# A temporary module specifically for factory/provider conflict tests.
+_TEST_FACTORY_LOGIC_MODULE_NAME = "temp_factory_logic_module"
+_TEST_FACTORY_LOGIC_CONTENT = "def factory_action(): pass"
+
+# Machine config referencing the factory action.
+_FACTORY_MACHINE_CONFIG: Dict[str, Any] = {  # noqa
     "id": "factory_test_machine",
     "initial": "active",
     "states": {"active": {"entry": ["factory_action"]}},
 }
 
-_PROVIDER_MACHINE_CONFIG = {
+# Machine config referencing the provider action.
+_PROVIDER_MACHINE_CONFIG: Dict[str, Any] = {
     "id": "provider_test_machine",
     "initial": "active",
     "states": {"active": {"entry": ["provider_action"]}},
 }
 
-# This content is now used by the new tests as well
-_TEST_FACTORY_LOGIC_MODULE_NAME = "temp_factory_logic_module"
-_TEST_FACTORY_LOGIC_CONTENT = "def factory_action(): pass"
-
 
 class LogicProvider:
-    """A simple class with methods to test instance-based discovery."""
+    """A simple class with methods to test instance-based logic discovery.
 
-    def provider_action(self):
+    This class demonstrates how the `LogicLoader` can inspect an object
+    and bind its public methods as implementations for actions and guards.
+    """
+
+    def provider_action(self) -> None:
+        """A sample action method."""
         pass
 
-    def provider_guard(self):
+    def provider_guard(self) -> bool:  # noqa
+        """A sample guard method."""
         return True
 
 
@@ -105,57 +133,106 @@ class LogicProvider:
 
 
 class TestLogicLoader(unittest.TestCase):
-    """Test suite for the `LogicLoader` class."""
+    """Verifies all functionality of the LogicLoader singleton.
+
+    This test suite ensures the loader correctly implements the Singleton
+    pattern, discovers logic from all supported source types, handles naming
+    conventions and conflicts, and raises appropriate errors for invalid
+    configurations or missing implementations.
+    """
+
+    # -------------------------------------------------------------------------
+    # ♻️ Test Lifecycle Methods
+    # -------------------------------------------------------------------------
 
     @classmethod
     def setUpClass(cls) -> None:
-        """Creates a temporary logic module file for all tests."""
+        """Creates a temporary logic module file available to all tests.
+
+        This runs once before any tests in the class. It writes a temporary
+        Python file to disk and ensures its directory is in the system path,
+        making it importable by the tests.
+        """
+        logger.info("🛠️ Creating temporary logic module for the test class...")
         with open(f"{_TEST_LOGIC_MODULE_NAME}.py", "w") as f:
             f.write(_TEST_LOGIC_FILE_CONTENT)
+        # Ensure the current directory is on the path for imports.
         if os.getcwd() not in sys.path:
             sys.path.insert(0, os.getcwd())
 
     @classmethod
     def tearDownClass(cls) -> None:
-        """Removes the temporary logic module file after all tests."""
+        """Removes the temporary logic module file after all tests are run.
+
+        This runs once after all tests in the class have completed, cleaning
+        up the file created in `setUpClass`.
+        """
+        logger.info("🗑️ Removing temporary logic module for the test class...")
         os.remove(f"{_TEST_LOGIC_MODULE_NAME}.py")
         if os.getcwd() in sys.path:
+            # Clean up the path modification.
             sys.path.pop(0)
 
     def tearDown(self) -> None:
-        """Resets the LogicLoader singleton after each test."""
+        """Resets the LogicLoader singleton and caches after each test.
+
+        This instance method runs after every single test, ensuring a clean
+        slate and preventing state from leaking between tests. It resets the
+        singleton instance and unloads the temporary module from memory.
+        """
+        logger.info("🧹 Resetting LogicLoader singleton for next test...")
         LogicLoader._instance = None
+        # Unload the module from Python's cache if it was imported.
         if _TEST_LOGIC_MODULE_NAME in sys.modules:
             del sys.modules[_TEST_LOGIC_MODULE_NAME]
 
+    # -------------------------------------------------------------------------
+    # ⚙️ Core Singleton and Discovery Tests
+    # -------------------------------------------------------------------------
+
     def test_singleton_instance(self) -> None:
         """Should return the same LogicLoader instance on every call."""
+        logger.info("🧪 Testing LogicLoader follows the Singleton pattern.")
+        # 🚀 Act: Get the instance twice.
         instance1 = LogicLoader.get_instance()
         instance2 = LogicLoader.get_instance()
+        # ✅ Assert: Both variables should point to the exact same object.
         self.assertIs(instance1, instance2)
 
     def test_discover_logic_from_string_path(self) -> None:
         """Should discover logic from a list of module paths (strings)."""
+        logger.info("🧪 Testing logic discovery from module name strings.")
+        # 📋 Arrange
         loader = LogicLoader()
+        # 🚀 Act: Discover logic using the temporary module's name.
         logic = loader.discover_and_build_logic(
             _MACHINE_CONFIG, logic_modules=[_TEST_LOGIC_MODULE_NAME]
         )
+        # ✅ Assert: All relevant functions from the module should be categorized.
         self.assertIn("an_action", logic.actions)
         self.assertIn("a_guard", logic.guards)
         self.assertIn("a_service", logic.services)
 
     def test_discover_logic_from_module_object(self) -> None:
         """Should discover logic from a list of imported module objects."""
-        import temp_logic_for_testing
+        logger.info("🧪 Testing logic discovery from module objects.")
+        # 📋 Arrange: Import the module directly.
+        # ✅ FIX: Ignore the type checker warning. This module is created dynamically
+        # by the test suite's setUpClass method and will exist at runtime.
+        import temp_logic_for_testing  # type: ignore
 
         loader = LogicLoader()
+        # 🚀 Act: Discover logic passing the module object.
         logic = loader.discover_and_build_logic(
             _MACHINE_CONFIG, logic_modules=[temp_logic_for_testing]
         )
+        # ✅ Assert: The action is successfully found.
         self.assertIn("an_action", logic.actions)
 
     def test_discover_logic_from_class_instance(self) -> None:
-        """Should discover methods from a provided class instance."""
+        """Should discover methods from a provided class instance provider."""
+        logger.info("🧪 Testing logic discovery from a class instance.")
+        # 📋 Arrange
         provider = LogicProvider()
         config = {
             "id": "p",
@@ -168,76 +245,27 @@ class TestLogicLoader(unittest.TestCase):
             },
         }
 
+        # 🚀 Act: Create a machine with the provider instance.
         machine = create_machine(config, logic_providers=[provider])
 
+        # ✅ Assert: The provider's methods are bound correctly.
         self.assertIn("provider_action", machine.logic.actions)
         self.assertIn("provider_guard", machine.logic.guards)
         self.assertEqual(
             machine.logic.actions["provider_action"], provider.provider_action
         )
 
-    def test_discover_logic_from_registered_module(self) -> None:
-        """Should discover logic from a globally pre-registered module."""
-        import temp_logic_for_testing
-
-        loader = LogicLoader.get_instance()
-        loader.register_logic_module(temp_logic_for_testing)
-        logic = loader.discover_and_build_logic(_MACHINE_CONFIG)
-        self.assertIn("an_action", logic.actions)
-
-    def test_name_matching_for_camel_and_snake_case(self) -> None:
-        """Should correctly map between camelCase and snake_case names."""
-        import temp_logic_for_testing
-
-        loader = LogicLoader()
-        logic = loader.discover_and_build_logic(
-            _MACHINE_CONFIG, logic_modules=[temp_logic_for_testing]
-        )
-        self.assertIn("anotherActionInCamel", logic.actions)
-        self.assertIn("actionForSnakeCase", logic.actions)
-        self.assertIs(
-            logic.actions["actionForSnakeCase"],
-            temp_logic_for_testing.action_for_snake_case,
-        )
-
-    def test_raises_error_for_missing_implementation(self) -> None:
-        """Should raise error if a referenced function is not found."""
-        loader = LogicLoader()
-        faulty_config = {
-            "id": "faulty",
-            "initial": "a",
-            "states": {"a": {"entry": ["nonExistentAction"]}},
-        }
-        with self.assertRaises(ImplementationMissingError):
-            loader.discover_and_build_logic(
-                faulty_config, logic_modules=[_TEST_LOGIC_MODULE_NAME]
-            )
-
-    def test_raises_error_for_invalid_module_path(self) -> None:
-        """Should raise ImportError for an invalid module path string."""
-        loader = LogicLoader()
-        with self.assertRaises(ImportError):
-            loader.discover_and_build_logic(
-                _MACHINE_CONFIG, logic_modules=["invalid.path.does.not.exist"]
-            )
-
-    def test_raises_error_for_invalid_module_list_type(self) -> None:
-        """Should raise TypeError if logic_modules list contains an invalid type."""
-        loader = LogicLoader()
-        with self.assertRaises(TypeError):
-            loader.discover_and_build_logic(
-                _MACHINE_CONFIG, logic_modules=[123]
-            )
-
     def test_discover_from_multiple_providers(self) -> None:
         """Should discover logic from a list of multiple class instance providers."""
+        logger.info("🧪 Testing discovery from a list of multiple providers.")
 
+        # 📋 Arrange: Define two provider classes.
         class Provider1:
-            def action_one(self):
+            def action_one(self) -> None:
                 pass
 
         class Provider2:
-            def action_two(self):
+            def action_two(self) -> None:
                 pass
 
         config = {
@@ -245,232 +273,75 @@ class TestLogicLoader(unittest.TestCase):
             "initial": "a",
             "states": {"a": {"entry": ["action_one", "action_two"]}},
         }
+        # 🚀 Act: Create the machine with a list of provider instances.
         machine = create_machine(
             config, logic_providers=[Provider1(), Provider2()]
         )
+        # ✅ Assert: Actions from both providers should be discovered.
         self.assertIn("action_one", machine.logic.actions)
         self.assertIn("action_two", machine.logic.actions)
 
     def test_discover_from_mixed_string_and_module_objects(self) -> None:
-        """
-        Should discover logic from a mixed list of module paths and module objects.
-        """
-        # 📝 Define the path for the temporary file for reliable cleanup.
+        """Should discover logic from a mixed list of module paths and objects."""
+        logger.info(
+            "🧪 Testing discovery from mixed module strings and objects."
+        )
+        # 📋 Arrange
         module_path = "temp_logic_for_testing_two.py"
         module_name = "temp_logic_for_testing_two"
+        config = {
+            "id": "mixed_modules",
+            "initial": "a",
+            "states": {"a": {"entry": ["an_action", "another_test_action"]}},
+        }
 
         # ⚙️ Use a try...finally block to ensure the temp file is always deleted.
         try:
             with open(module_path, "w") as f:
                 f.write("def another_test_action(): pass")
 
-            # ✅ FIX: Invalidate Python's import caches to ensure it finds the
-            # new file we just created before we try to import it.
+            # Invalidate Python's import caches to ensure it finds the new file.
             importlib.invalidate_caches()
+            import temp_logic_for_testing_two  # type: ignore
 
-            # Now the import will succeed.
-            import temp_logic_for_testing_two
-
-            config = {
-                "id": "mixed_modules",
-                "initial": "a",
-                "states": {
-                    "a": {"entry": ["an_action", "another_test_action"]}
-                },
-            }
-
-            # This call uses both a string path and an imported module object.
+            # 🚀 Act: Create the machine with a mixed list of sources.
             machine = create_machine(
                 config,
                 logic_modules=[
-                    _TEST_LOGIC_MODULE_NAME,  # Imported by string name
-                    temp_logic_for_testing_two,  # Passed as a module object
+                    _TEST_LOGIC_MODULE_NAME,  # By string name
+                    temp_logic_for_testing_two,  # As module object
                 ],
             )
 
-            # 🧪 Assert that both actions were successfully discovered.
+            # ✅ Assert: Actions from both modules were successfully discovered.
             self.assertIn("an_action", machine.logic.actions)
             self.assertIn("another_test_action", machine.logic.actions)
 
         finally:
-            # 🧹 Clean up the temporary file and the module from the system
-            # to ensure test isolation.
+            # 🧹 Clean up the temporary file and module to ensure test isolation.
             if os.path.exists(module_path):
                 os.remove(module_path)
             if module_name in sys.modules:
                 del sys.modules[module_name]
 
-    def test_last_module_wins_on_function_conflict(self) -> None:
-        """
-        If two modules define a function with the same name, the last one
-        in the list should be used.
-        """
-        # 📝 Define file paths to ensure they are created and removed reliably.
-        module_a_path = "conflict_module_a.py"
-        module_b_path = "conflict_module_b.py"
-
-        # ⚙️ Use a try...finally block to GUARANTEE cleanup, even if asserts fail.
-        try:
-            # Create the temporary python files for the test
-            with open(module_a_path, "w") as f:
-                f.write("def a_guard(): return 'A'")
-            with open(module_b_path, "w") as f:
-                f.write("def a_guard(): return 'B'")
-
-            # ✅ FIX: Invalidate Python's import caches so it can find the
-            # new files we just created on the filesystem.
-            importlib.invalidate_caches()
-
-            # Define the machine config that uses the conflicting guard
-            conflict_config = {
-                "id": "conflict_test",
-                "initial": "a",
-                "states": {
-                    "a": {"on": {"EVENT": {"target": "a", "guard": "a_guard"}}}
-                },
-            }
-
-            # This should now succeed without a ModuleNotFoundError
-            machine = create_machine(
-                conflict_config,
-                logic_modules=["conflict_module_a", "conflict_module_b"],
-            )
-
-            # 🧪 Assert that the function from the *second* module was used.
-            self.assertIn("a_guard", machine.logic.guards)
-            guard_func = machine.logic.guards["a_guard"]
-            # We can check the source file of the loaded function
-            self.assertIn(module_b_path, inspect.getsourcefile(guard_func))  # type: ignore
-
-        finally:
-            # 🧹 Clean up the temporary files and system modules for test isolation.
-            if os.path.exists(module_a_path):
-                os.remove(module_a_path)
-            if os.path.exists(module_b_path):
-                os.remove(module_b_path)
-
-            # Also remove the modules from sys.modules if they were loaded
-            if "conflict_module_a" in sys.modules:
-                del sys.modules["conflict_module_a"]
-            if "conflict_module_b" in sys.modules:
-                del sys.modules["conflict_module_b"]
-
-    def test_discover_logic_with_no_required_implementations(self) -> None:
-        """Should create logic successfully even if the machine config requires no implementations."""
-        config = {"id": "simple", "initial": "a", "states": {"a": {}}}
-        loader = LogicLoader()
-        logic = loader.discover_and_build_logic(
-            config, logic_modules=[_TEST_LOGIC_MODULE_NAME]
-        )
-        self.assertEqual(len(logic.actions), 0)
-        self.assertEqual(len(logic.guards), 0)
-        self.assertEqual(len(logic.services), 0)
-
-    def test_logic_providers_list_with_non_class_instance_is_ignored(
-        self,
-    ) -> None:
-        """Should ignore non-class-instance items in the logic_providers list."""
-        config = {"id": "test", "initial": "a", "states": {"a": {}}}
-        machine = create_machine(config, logic_providers=[123])  # type: ignore
-        self.assertEqual(len(machine.logic.actions), 0)
-
-    def test_empty_config_raises_error(self) -> None:
-        """Should raise InvalidConfigError for an empty configuration dictionary."""
-        with self.assertRaises(InvalidConfigError):
-            create_machine({})
-
-    def test_config_with_non_dict_states_raises_error(self) -> None:
-        """Should raise an error if the 'states' value is not a dictionary."""
-        config = {"id": "test", "initial": "a", "states": "not_a_dict"}
-        with self.assertRaises(AttributeError):
-            create_machine(config)
-
     def test_discover_and_bind_all_logic_types_at_once(self) -> None:
         """Should discover and correctly categorize actions, guards, and services."""
+        logger.info("🧪 Testing discovery of all logic types simultaneously.")
+        # 📋 Arrange
         loader = LogicLoader()
+        # 🚀 Act
         logic = loader.discover_and_build_logic(
             _MACHINE_CONFIG, logic_modules=[_TEST_LOGIC_MODULE_NAME]
         )
+        # ✅ Assert
         self.assertIn("an_action", logic.actions)
         self.assertIn("a_guard", logic.guards)
         self.assertIn("a_service", logic.services)
 
-    def test_loader_ignores_dunder_methods_in_providers(self) -> None:
-        """Should ignore 'dunder' methods (like __init__) in logic providers."""
-
-        class ProviderWithDunder:
-            def __init__(self):
-                self.some_prop = 1
-
-            def my_action(self):
-                pass
-
-        config = {
-            "id": "dunder",
-            "initial": "a",
-            "states": {"a": {"entry": "my_action"}},
-        }
-        machine = create_machine(
-            config, logic_providers=[ProviderWithDunder()]
-        )
-        self.assertIn("my_action", machine.logic.actions)
-        self.assertNotIn("__init__", machine.logic.actions)
-
-    def test_loader_ignores_private_methods_in_providers(self) -> None:
-        """Should ignore methods starting with an underscore in logic providers."""
-
-        class ProviderWithPrivate:
-            def _private_action(self):
-                pass
-
-            def public_action(self):
-                pass
-
-        config = {
-            "id": "private_provider",
-            "initial": "a",
-            "states": {"a": {"entry": "public_action"}},
-        }
-        machine = create_machine(
-            config, logic_providers=[ProviderWithPrivate()]
-        )
-        self.assertIn("public_action", machine.logic.actions)
-        self.assertNotIn("_private_action", machine.logic.actions)
-
-    def test_create_machine_with_empty_logic_module_list(self) -> None:
-        """Should run without error if `logic_modules` is an empty list."""
-        with open(f"{_TEST_FACTORY_LOGIC_MODULE_NAME}.py", "w") as f:
-            f.write(_TEST_FACTORY_LOGIC_CONTENT)
-        with self.assertRaises(ImplementationMissingError):
-            loader = LogicLoader()
-            loader.discover_and_build_logic(
-                _FACTORY_MACHINE_CONFIG, logic_modules=[]
-            )
-
-    def test_create_machine_with_empty_logic_providers_list(self) -> None:
-        """Should run without error if `logic_providers` is an empty list."""
-        with self.assertRaises(ImplementationMissingError):
-            loader = LogicLoader()
-            loader.discover_and_build_logic(
-                _PROVIDER_MACHINE_CONFIG, logic_providers=[]
-            )
-
-    def test_discover_logic_from_statically_registered_module(self) -> None:
-        """Should discover logic from a module object registered globally."""
-        import temp_logic_for_testing
-
-        loader = LogicLoader.get_instance()
-        # Correctly register the imported module object
-        loader.register_logic_module(temp_logic_for_testing)
-
-        logic = loader.discover_and_build_logic(_MACHINE_CONFIG)
-        self.assertIn("an_action", logic.actions)
-        self.assertIs(
-            logic.actions["an_action"], temp_logic_for_testing.an_action
-        )
-
     def test_discover_logic_from_nested_config(self) -> None:
-        """Should correctly extract logic names from deeply nested states."""
+        """Should extract logic names from deeply nested state nodes."""
+        logger.info("🧪 Testing logic extraction from nested configurations.")
+        # 📋 Arrange
         config = {
             "id": "deep",
             "initial": "a",
@@ -488,96 +359,376 @@ class TestLogicLoader(unittest.TestCase):
                 "c": {"on": {"NEXT": {"target": "a", "guard": "guardC"}}},
             },
         }
-        required_actions, required_guards, required_services = (
-            set(),
-            set(),
-            set(),
-        )
+        # Create a dummy machine to parse the config.
         temp_machine = MachineNode(config=config, logic=MachineLogic())
         loader = LogicLoader()
-        loader._extract_logic_from_node(
-            temp_machine, required_actions, required_guards, required_services
+        # These sets will be populated by the extraction method.
+        required: Tuple[Set[str], Set[str], Set[str]] = (set(), set(), set())
+
+        # 🚀 Act: Call the private extraction method directly for this unit test.
+        loader._extract_logic_from_node(temp_machine, *required)
+
+        # ✅ Assert: All logic names were correctly extracted and categorized.
+        self.assertEqual(required[0], {"actionA1", "actionB"})  # Actions
+        self.assertEqual(required[1], {"guardC"})  # Guards
+        self.assertEqual(required[2], {"serviceB"})  # Services
+
+    # -------------------------------------------------------------------------
+    # 🌍 Global Registration and Precedence
+    # -------------------------------------------------------------------------
+
+    def test_discover_logic_from_registered_module(self) -> None:
+        """Should discover logic from a globally pre-registered module."""
+        logger.info("🧪 Testing discovery from globally registered modules.")
+        # 📋 Arrange: Import the module and register it with the loader instance.
+        # ✅ FIX: Ignore the type checker warning for the dynamically created module.
+        import temp_logic_for_testing  # type: ignore
+
+        loader = LogicLoader.get_instance()
+        loader.register_logic_module(temp_logic_for_testing)
+        # 🚀 Act: Discover logic without providing any local sources.
+        logic = loader.discover_and_build_logic(_MACHINE_CONFIG)
+        # ✅ Assert: The action from the globally registered module is found.
+        self.assertIn("an_action", logic.actions)
+
+    def test_last_module_wins_on_function_conflict(self) -> None:
+        """If two modules define a function with the same name, the last one wins."""
+        logger.info("🧪 Testing conflict resolution between logic modules.")
+        # 📋 Arrange
+        module_a_path = "conflict_module_a.py"
+        module_b_path = "conflict_module_b.py"
+        conflict_config = {
+            "id": "conflict_test",
+            "initial": "a",
+            "states": {"a": {"on": {"EVENT": {"guard": "a_guard"}}}},
+        }
+
+        with open(module_a_path, "w") as f:
+            f.write("def a_guard(): return 'A'")
+        with open(module_b_path, "w") as f:
+            f.write("def a_guard(): return 'B'")
+
+        importlib.invalidate_caches()
+
+        # 🚀 Act: Create a machine with conflicting modules. 'b' is last.
+        machine = create_machine(
+            conflict_config,
+            logic_modules=["conflict_module_a", "conflict_module_b"],
         )
 
-        self.assertEqual(required_actions, {"actionA1", "actionB"})
-        self.assertEqual(required_guards, {"guardC"})
-        self.assertEqual(required_services, {"serviceB"})
+        # ✅ Assert: The function from the *second* module was used.
+        self.assertIn("a_guard", machine.logic.guards)
+        guard_func = machine.logic.guards["a_guard"]
+        # We can inspect the function's source file to confirm.
+        self.assertIn(module_b_path, inspect.getsourcefile(guard_func))
+
+        for path in [module_a_path, module_b_path]:
+            if os.path.exists(path):
+                os.remove(path)
+        for name in ["conflict_module_a", "conflict_module_b"]:
+            if name in sys.modules:
+                del sys.modules[name]
+
+    def test_provider_method_overrides_module_function(self) -> None:
+        """If a provider and a module have a conflict, the provider should win."""
+        logger.info("🧪 Testing that provider logic overrides module logic.")
+
+        # ------------------------------------------------------------------ #
+        # 🤖 Arrange                                                         #
+        # ------------------------------------------------------------------ #
+        class MyProvider:
+            def factory_action(self) -> str:  # noqa
+                return "from_provider"
+
+        module_path = f"{_TEST_FACTORY_LOGIC_MODULE_NAME}.py"
+        try:
+            with open(module_path, "w") as f:
+                f.write("def factory_action(): return 'from_module'")
+
+            importlib.invalidate_caches()  # 👈 make the new file importable
+            if os.getcwd() not in sys.path:  # 👈 safety: ensure cwd is on path
+                sys.path.insert(0, os.getcwd())  # 👈
+
+            # ------------------------------------------------------------------ #
+            # ⚡ Act                                                              #
+            # ------------------------------------------------------------------ #
+            machine = create_machine(
+                _FACTORY_MACHINE_CONFIG,
+                logic_modules=[_TEST_FACTORY_LOGIC_MODULE_NAME],
+                logic_providers=[MyProvider()],
+            )
+
+            # ------------------------------------------------------------------ #
+            # ✨ Assert                                                           #
+            # ------------------------------------------------------------------ #
+            action_func = machine.logic.actions["factory_action"]
+            self.assertTrue(
+                hasattr(action_func, "__self__"),
+                "Action should be a bound method",
+            )
+            self.assertIsInstance(action_func.__self__, MyProvider)
+
+        finally:
+            # 🧹 Clean-up (file + import cache)
+            if os.path.exists(module_path):
+                os.remove(module_path)
+            if _TEST_FACTORY_LOGIC_MODULE_NAME in sys.modules:
+                del sys.modules[_TEST_FACTORY_LOGIC_MODULE_NAME]
+
+    # -------------------------------------------------------------------------
+    # 💅 Name Matching Conventions
+    # -------------------------------------------------------------------------
+
+    def test_name_matching_for_camel_and_snake_case(self) -> None:
+        """Should correctly map between camelCase and snake_case names."""
+        logger.info("🧪 Testing camelCase/snake_case name resolution.")
+        # 📋 Arrange
+        # ✅ FIX: Ignore the type checker warning for the dynamically created module.
+        import temp_logic_for_testing  # type: ignore
+
+        loader = LogicLoader()
+        # 🚀 Act
+        logic = loader.discover_and_build_logic(
+            _MACHINE_CONFIG, logic_modules=[temp_logic_for_testing]
+        )
+        # ✅ Assert: Both naming conventions were resolved correctly.
+        self.assertIn("anotherActionInCamel", logic.actions)
+        self.assertIn("actionForSnakeCase", logic.actions)
+        self.assertIs(
+            logic.actions["actionForSnakeCase"],
+            temp_logic_for_testing.action_for_snake_case,
+        )
+
+    def test_case_insensitivity_in_name_matching(self) -> None:
+        """Logic discovery should be case-sensitive for function names."""
+        logger.info("🧪 Testing that logic discovery is case-sensitive.")
+        # 📋 Arrange
+        logic_path = "case_logic.py"
+        config = {
+            "id": "case",
+            "initial": "a",
+            "states": {"a": {"entry": "myaction"}},  # Lowercase
+        }
+        with open(logic_path, "w") as f:
+            f.write("def MyAction(): pass")  # CamelCase
+
+        # 🚀 Act & Assert: This should fail because 'myaction' != 'MyAction'.
+        with self.assertRaises(ImplementationMissingError):
+            create_machine(config, logic_modules=["case_logic"])
+
+        # 🧹 Cleanup
+        os.remove(logic_path)
+
+    # -------------------------------------------------------------------------
+    # 🚫 Ignored Items and Methods
+    # -------------------------------------------------------------------------
+
+    def test_loader_ignores_dunder_methods_in_providers(self) -> None:
+        """Should ignore 'dunder' methods (like __init__) in logic providers."""
+        logger.info("🧪 Testing that dunder methods are ignored in providers.")
+
+        # 📋 Arrange
+        class ProviderWithDunder:
+            def __init__(self) -> None:
+                pass
+
+            def my_action(self) -> None:
+                pass
+
+        config = {
+            "id": "dunder",
+            "initial": "a",
+            "states": {"a": {"entry": "my_action"}},
+        }
+        # 🚀 Act
+        machine = create_machine(
+            config, logic_providers=[ProviderWithDunder()]
+        )
+        # ✅ Assert
+        self.assertIn("my_action", machine.logic.actions)
+        self.assertNotIn("__init__", machine.logic.actions)
+
+    def test_loader_ignores_private_methods_in_providers(self) -> None:
+        """Should ignore methods starting with an underscore in logic providers."""
+        logger.info(
+            "🧪 Testing that private methods are ignored in providers."
+        )
+
+        # 📋 Arrange
+        class ProviderWithPrivate:
+            def _private_action(self) -> None:
+                pass
+
+            def public_action(self) -> None:
+                pass
+
+        config = {
+            "id": "private_provider",
+            "initial": "a",
+            "states": {"a": {"entry": "public_action"}},
+        }
+        # 🚀 Act
+        machine = create_machine(
+            config, logic_providers=[ProviderWithPrivate()]
+        )
+        # ✅ Assert
+        self.assertIn("public_action", machine.logic.actions)
+        self.assertNotIn("_private_action", machine.logic.actions)
 
     def test_logic_loader_does_not_mutate_registered_modules_list(
         self,
     ) -> None:
-        """The loader should not add locally provided modules to the global registry."""
+        """The loader should not add local modules to the global registry."""
+        logger.info("🧪 Testing that the global registry is not mutated.")
+        # 📋 Arrange
         loader = LogicLoader.get_instance()
         self.assertEqual(len(loader._registered_logic_modules), 0)
 
+        # 🚀 Act: Discover logic with a locally-provided module.
         loader.discover_and_build_logic(
             _MACHINE_CONFIG, logic_modules=[_TEST_LOGIC_MODULE_NAME]
         )
 
+        # ✅ Assert: The globally registered list should still be empty.
         self.assertEqual(len(loader._registered_logic_modules), 0)
 
-    def test_case_insensitivity_in_name_matching(self) -> None:
-        """Logic discovery should be case-sensitive for function names."""
-        with open("case_logic.py", "w") as f:
-            f.write("def MyAction(): pass")
+    # -------------------------------------------------------------------------
+    # 💥 Error Handling & Invalid Inputs
+    # -------------------------------------------------------------------------
 
-        config = {
-            "id": "case",
+    def test_raises_error_for_missing_implementation(self) -> None:
+        """Should raise ImplementationMissingError if a required function is not found."""
+        logger.info("🧪 Testing error for a missing implementation.")
+        # 📋 Arrange
+        loader = LogicLoader()
+        faulty_config = {
+            "id": "faulty",
             "initial": "a",
-            "states": {"a": {"entry": "myaction"}},
+            "states": {"a": {"entry": ["nonExistentAction"]}},
         }
+        # 🚀 Act & Assert
         with self.assertRaises(ImplementationMissingError):
-            create_machine(config, logic_modules=["case_logic"])
+            loader.discover_and_build_logic(
+                faulty_config, logic_modules=[_TEST_LOGIC_MODULE_NAME]
+            )
 
-        os.remove("case_logic.py")
+    def test_raises_error_for_invalid_module_path(self) -> None:
+        """Should raise ImportError for an invalid module path string."""
+        logger.info("🧪 Testing error for an unresolvable module path.")
+        # 📋 Arrange
+        loader = LogicLoader()
+        # 🚀 Act & Assert
+        with self.assertRaises(ImportError):
+            loader.discover_and_build_logic(
+                _MACHINE_CONFIG, logic_modules=["invalid.path.does.not.exist"]
+            )
 
-    def test_provider_method_overrides_module_function(self) -> None:
-        """If a provider and a module have a conflict, the provider should win."""
+    def test_raises_error_for_invalid_module_list_type(self) -> None:
+        """Should raise TypeError if `logic_modules` contains an invalid type."""
+        logger.info("🧪 Testing error for invalid type in `logic_modules`.")
+        # 📋 Arrange
+        loader = LogicLoader()
+        # 🚀 Act & Assert
+        with self.assertRaises(TypeError):
+            # The list contains an integer, which is not a valid source.
+            loader.discover_and_build_logic(
+                _MACHINE_CONFIG, logic_modules=[123]  # type: ignore
+            )
 
-        class MyProvider:
-            def factory_action(self):
-                return "from_provider"
+    def test_logic_providers_list_with_non_class_instance_is_ignored(
+        self,
+    ) -> None:
+        """Should ignore non-class-instance items in `logic_providers`."""
+        logger.info("🧪 Testing that invalid provider types are ignored.")
+        # 📋 Arrange
+        config = {"id": "test", "initial": "a", "states": {"a": {}}}
+        # 🚀 Act: Create a machine with an invalid item in the providers list.
+        machine = create_machine(config, logic_providers=[123])  # type: ignore
+        # ✅ Assert: The machine is created with no actions, as the provider was ignored.
+        self.assertEqual(len(machine.logic.actions), 0)
 
-        # Create the temp module file for this test specifically
-        with open(f"{_TEST_FACTORY_LOGIC_MODULE_NAME}.py", "w") as f:
-            f.write("def factory_action(): return 'from_module'")
+    def test_empty_config_raises_error(self) -> None:
+        """Should raise InvalidConfigError for an empty configuration dict."""
+        logger.info("🧪 Testing error for an empty machine configuration.")
+        with self.assertRaises(InvalidConfigError):
+            create_machine({})
 
-        machine = create_machine(
-            _FACTORY_MACHINE_CONFIG,
-            logic_modules=[_TEST_FACTORY_LOGIC_MODULE_NAME],
-            logic_providers=[MyProvider()],
+    def test_config_with_non_dict_states_raises_error(self) -> None:
+        """Should raise an error if the 'states' value is not a dictionary."""
+        logger.info("🧪 Testing error for a non-dictionary `states` property.")
+        config = {"id": "test", "initial": "a", "states": "not_a_dict"}
+        with self.assertRaises(AttributeError):
+            create_machine(config)
+
+    def test_logic_loader_with_no_sources(self) -> None:
+        """Should raise error if logic is required but no sources are given."""
+        logger.info(
+            "🧪 Testing error when logic is required but no sources provided."
         )
+        loader = LogicLoader()
+        with self.assertRaises(ImplementationMissingError):
+            # _MACHINE_CONFIG requires actions/guards, but no sources are given.
+            loader.discover_and_build_logic(_MACHINE_CONFIG)
 
-        action_func = machine.logic.actions["factory_action"]
-        self.assertTrue(
-            hasattr(action_func, "__self__"), "Action should be a bound method"
+    # -------------------------------------------------------------------------
+    # 🏕️ Edge Case Scenarios
+    # -------------------------------------------------------------------------
+
+    def test_discover_logic_with_no_required_implementations(self) -> None:
+        """Should succeed if a machine config requires no implementations."""
+        logger.info("🧪 Testing discovery for a machine with no logic needs.")
+        # 📋 Arrange
+        config = {"id": "simple", "initial": "a", "states": {"a": {}}}
+        loader = LogicLoader()
+        # 🚀 Act: Discover logic, even though none is needed.
+        logic = loader.discover_and_build_logic(
+            config, logic_modules=[_TEST_LOGIC_MODULE_NAME]
         )
-        self.assertIsInstance(
-            action_func.__self__,
-            MyProvider,
-            "Action should be bound to the provider instance",
+        # ✅ Assert: The resulting logic object is empty.
+        self.assertEqual(len(logic.actions), 0)
+        self.assertEqual(len(logic.guards), 0)
+        self.assertEqual(len(logic.services), 0)
+
+    def test_create_machine_with_empty_logic_module_list(self) -> None:
+        """Should raise error if logic is needed but `logic_modules` is empty."""
+        logger.info("🧪 Testing discovery with an empty `logic_modules` list.")
+        # 📋 Arrange
+        loader = LogicLoader()
+        # This config requires 'factory_action'.
+        # 🚀 Act & Assert
+        with self.assertRaises(ImplementationMissingError):
+            loader.discover_and_build_logic(
+                _FACTORY_MACHINE_CONFIG, logic_modules=[]
+            )
+
+    def test_create_machine_with_empty_logic_providers_list(self) -> None:
+        """Should raise error if logic is needed but `logic_providers` is empty."""
+        logger.info(
+            "🧪 Testing discovery with an empty `logic_providers` list."
         )
+        # 📋 Arrange
+        loader = LogicLoader()
+        # This config requires 'provider_action'.
+        # 🚀 Act & Assert
+        with self.assertRaises(ImplementationMissingError):
+            loader.discover_and_build_logic(
+                _PROVIDER_MACHINE_CONFIG, logic_providers=[]
+            )
 
     def test_provider_with_no_relevant_methods(self) -> None:
-        """Should not raise error if a provider has no methods matching the config."""
+        """Should raise error if a provider has no methods matching the config."""
+        logger.info("🧪 Testing a provider that lacks required methods.")
 
+        # 📋 Arrange
         class UselessProvider:
-            def some_other_method(self):
+            def some_other_method(self) -> None:
                 pass
 
-        with open(f"{_TEST_FACTORY_LOGIC_MODULE_NAME}.py", "w") as f:
-            f.write(_TEST_FACTORY_LOGIC_CONTENT)
-
+        # 🚀 Act & Assert: The required 'factory_action' is not in the provider.
         with self.assertRaises(ImplementationMissingError):
             create_machine(
                 _FACTORY_MACHINE_CONFIG, logic_providers=[UselessProvider()]
             )
-
-    def test_logic_loader_with_no_sources(self) -> None:
-        """Should raise ImplementationMissingError if logic is required but no sources are given."""
-        loader = LogicLoader()
-        with self.assertRaises(ImplementationMissingError):
-            loader.discover_and_build_logic(_MACHINE_CONFIG)
 
 
 if __name__ == "__main__":
