@@ -50,7 +50,11 @@ class TestExceptions(unittest.TestCase):
     def test_state_not_found_error_message_without_reference(self) -> None:
         """StateNotFoundError should format its message correctly without a reference state."""
         err = StateNotFoundError(target="nonexistent")
-        expected_msg = "Could not resolve target state 'nonexistent'."
+
+        # ✅ FIX: Updated the expected message to match the new, more precise
+        # error string from the updated StateNotFoundError class.
+        expected_msg = "Could not find state with ID 'nonexistent'."
+
         self.assertEqual(str(err), expected_msg)
 
     # ---------- 10 New Tests ----------

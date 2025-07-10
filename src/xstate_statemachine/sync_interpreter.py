@@ -1,30 +1,41 @@
-# src/xstate_statemachine/sync_interpreter.py
-
+# /src/xstate_statemachine/sync_interpreter.py
 # -----------------------------------------------------------------------------
-# ⛓️ Synchronous Interpreter
+# ⛓️ Synchronous State Machine Interpreter
 # -----------------------------------------------------------------------------
 # This module provides the `SyncInterpreter`, a fully synchronous engine for
 # executing state machines. It inherits from `BaseInterpreter` and implements
-# a synchronous event processing model.
+# a blocking, sequential event processing model.
 #
 # This interpreter is designed for use cases where asynchronous programming is
-# not necessary or desired. It does not support timed transitions (`after`)
-# or long-running asynchronous services (`invoke`), as these are fundamentally
-# asynchronous operations. It overrides the core async methods from the base
-# class to provide a purely blocking execution flow.
+# not necessary or desired, such as in command-line tools, desktop GUI
+# event loops, or for simpler, predictable testing scenarios.
 #
-# This design adheres to the "Template Method" pattern by overriding specific
-# steps (like action execution and task scheduling/cancellation) defined in
-# the `BaseInterpreter` to provide a synchronous implementation.
+# It adheres to the "Template Method" pattern by overriding the abstract async
+# methods from `BaseInterpreter` with concrete synchronous implementations,
+# while intentionally raising `NotSupportedError` for features that are
+# fundamentally asynchronous (e.g., `after` timers).
 # -----------------------------------------------------------------------------
+"""
+Provides the synchronous interpreter for running state machines.
 
+The `SyncInterpreter` class manages the state machine's lifecycle in a
+blocking fashion. Each call to `.send()` processes an event and any resulting
+transitions to completion before returning.
+"""
+
+# -----------------------------------------------------------------------------
+# 📦 Standard Library Imports
+# -----------------------------------------------------------------------------
 import logging
 from collections import deque
-from typing import Any, Deque, Dict, List, Union, overload, Callable, Optional
+from typing import Any, Callable, Deque, Dict, List, Optional, Union, overload
 
+# -----------------------------------------------------------------------------
+# 📥 Project-Specific Imports
+# -----------------------------------------------------------------------------
 from .base_interpreter import BaseInterpreter
 from .events import AfterEvent, DoneEvent, Event
-from .exceptions import NotSupportedError, ImplementationMissingError
+from .exceptions import ImplementationMissingError, NotSupportedError
 from .models import (
     ActionDefinition,
     InvokeDefinition,
@@ -45,8 +56,6 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # ⛓️ SyncInterpreter Class Definition
 # -----------------------------------------------------------------------------
-
-
 class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     """
     Brings a state machine definition to life by interpreting its behavior
@@ -66,7 +75,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     `NotSupportedError`.
 
     Attributes:
-        _event_queue (Deque[Union[Event, AfterEvent, DoneEvent]]): A deque used to manage the event processing sequence.
+        _event_queue (Deque[Union[Event, AfterEvent, DoneEvent]]): A deque used
+            to manage the event processing sequence.
         _is_processing (bool): A flag to prevent re-entrant event processing.
     """
 
@@ -78,27 +88,31 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             machine (MachineNode[TContext, TEvent]): The machine definition
                 (`MachineNode` instance) that this interpreter will run.
         """
+        # 🤝 Initialize the base interpreter
         super().__init__(machine, interpreter_class=SyncInterpreter)
         logger.info("⛓️ Initializing Synchronous Interpreter... 🚀")
+
+        # ⚙️ Initialize synchronous-specific attributes
         self._event_queue: Deque[Union[Event, AfterEvent, DoneEvent]] = deque()
         self._is_processing: bool = False
+
         logger.info("Synchronous Interpreter '%s' initialized. 🎉", self.id)
 
     # -------------------------------------------------------------------------
-    # Public API (Synchronous Implementation)
+    # 🌐 Public API
     # -------------------------------------------------------------------------
 
     def start(self) -> "SyncInterpreter":
         """
-        Starts the interpreter by transitioning it to its initial state and
-        begins processing events from the queue. It is idempotent; calling
-        `start` on an already running interpreter has no effect.
+        Starts the interpreter and transitions it to its initial state.
 
-        Unlike the async version, this does not start a background event loop.
-        It simply sets the machine to its entry state.
+        This method is idempotent; calling `start` on an already running or
+        stopped interpreter has no effect. Unlike asynchronous interpreters,
+        this does not start a background event loop but simply sets the machine
+        to its entry state and processes any immediate transitions.
 
         Returns:
-            SyncInterpreter: The interpreter instance for method chaining.
+            The interpreter instance, allowing for method chaining.
         """
         # 🚦 Check if the interpreter is already running or stopped.
         if self.status != "uninitialized":
@@ -111,23 +125,24 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         logger.info("🏁 Starting sync interpreter '%s'...", self.id)
         self.status = "running"
 
-        # ✅ Explicitly notify plugins about the initial transition.
+        # ✅ Define the initial pseudo-transition for logging and plugins
         initial_transition = TransitionDefinition(
             event="___xstate_statemachine_init___",
             config={},
             source=self.machine,
         )
-        # 🔌 Iterate through all registered plugins and call their on_interpreter_start method.
+
+        # 🔌 Notify plugins about the interpreter start and initial transition
         for plugin in self._plugins:
             plugin.on_interpreter_start(self)
-            # Pass empty set as from_states for the initial transition
+            # Pass an empty set as from_states for the initial transition
             plugin.on_transition(
                 self, set(), self._active_state_nodes, initial_transition
             )
 
         # ➡️ Enter the machine's initial states.
         self._enter_states([self.machine])
-        # 🔄 Process any immediate transient transitions.
+        # 🔄 Process any immediate "always" transitions upon startup.
         self._process_transient_transitions()
 
         logger.info(
@@ -139,12 +154,10 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
     def stop(self) -> None:
         """
-        Stops the interpreter by updating its status.
+        Stops the interpreter, preventing further event processing.
 
-        This prevents further events from being processed.
-
-        Returns:
-            None
+        This method is idempotent; calling it on an already stopped interpreter
+        has no effect.
         """
         # 🚦 Check if the interpreter is currently running.
         if self.status != "running":
@@ -156,9 +169,11 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         logger.info("🛑 Stopping sync interpreter '%s'...", self.id)
         self.status = "stopped"
+
         # 🔌 Notify all registered plugins about the interpreter stopping.
         for plugin in self._plugins:
             plugin.on_interpreter_stop(self)
+
         logger.info(
             "✅ Sync interpreter '%s' stopped successfully. 🕊️", self.id
         )
@@ -182,40 +197,34 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         Sends an event to the machine for immediate, synchronous processing.
 
         Events are queued and processed sequentially. If an event is sent while
-        the interpreter is already processing another event, it will be added
-        to the queue and handled once the current processing cycle completes.
+        the interpreter is already processing another, it's added to the queue
+        and handled once the current processing cycle completes.
 
         Args:
-            event_or_type (Union[str, Dict[str, Any], Event, DoneEvent, AfterEvent]):
-                The event to send. This can be:
-                - A `str`: The type of the event, with optional `payload` as keyword arguments.
-                - A `dict`: A dictionary representing the event, which must contain a 'type' key.
-                - An `Event`, `DoneEvent`, or `AfterEvent` object.
-            **payload (Any): Additional keyword arguments representing the event's payload,
-                used only if `event_or_type` is a `str`.
-
-        Returns:
-            None
+            event_or_type: The event to send. This can be:
+                - A `str`: The type of the event, with `payload` as kwargs.
+                - A `dict`: An event object, which must contain a 'type' key.
+                - An `Event`, `DoneEvent`, or `AfterEvent` instance.
+            **payload: Additional keyword arguments for the event's payload,
+                used only when `event_or_type` is a string.
 
         Raises:
             TypeError: If an unsupported event type is passed.
         """
-        # 🚦 Check if the interpreter is in a running state before processing events.
+        # 🚦 Halt if the interpreter is not in a 'running' state.
         if self.status != "running":
             logger.warning(
                 "⚠️ Cannot send event. Interpreter is not running. 🚫"
             )
             return
 
+        # 📦 Normalize the input into a standardized Event object.
         event_obj: Union[Event, DoneEvent, AfterEvent]
-        # 📋 Normalize the input into an Event object.
         if isinstance(event_or_type, str):
             event_obj = Event(type=event_or_type, payload=payload)
         elif isinstance(event_or_type, dict):
             local_payload = event_or_type.copy()
-            event_type = local_payload.pop(
-                "type", "UnnamedEvent"
-            )  # ℹ️ Default type if not provided.
+            event_type = local_payload.pop("type", "UnnamedEvent")
             event_obj = Event(type=event_type, payload=local_payload)
         elif isinstance(event_or_type, (Event, DoneEvent, AfterEvent)):
             event_obj = event_or_type
@@ -225,9 +234,11 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 f"Unsupported event type passed to send(): {type(event_or_type)} 🤷"
             )
 
-        # 📥 Add the event to the processing queue.
+        # 📥 Add the normalized event to the processing queue.
         self._event_queue.append(event_obj)
-        # 🔒 If already processing, simply return and let the existing loop handle the new event.
+
+        # 🔒 If already processing, the event is queued and will be handled
+        # by the existing processing loop.
         if self._is_processing:
             logger.debug(
                 "🔄 Interpreter already processing. Event queued: %s",
@@ -235,117 +246,101 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             )
             return
 
+        # 🎬 Start the event processing loop.
         self._is_processing = True
         try:
             # 🔁 Process events from the queue until it's empty.
             while self._event_queue:
                 event = self._event_queue.popleft()
                 logger.info("➡️ Processing event: '%s' ⚙️", event.type)
-                # 🔌 Notify plugins that an event has been received.
+
+                # 🔌 Notify plugins that an event is being processed.
                 for plugin in self._plugins:
                     plugin.on_event_received(self, event)
-                # 🎯 Process the event, which may lead to state transitions.
+
+                # 🎯 Find and execute the transition for the current event.
                 self._process_event(event)
-                # 🔄 After processing an external event, check for any resulting transient transitions.
+                # 🔄 Check for any resulting event-less ("always") transitions.
                 self._process_transient_transitions()
         finally:
-            # 🔓 Ensure the processing flag is reset even if an error occurs.
+            # 🔓 Reset the processing flag, allowing new events to trigger the loop.
             self._is_processing = False
             logger.debug(
                 "✅ Event processing cycle completed. Queue empty. 🎉"
             )
 
     # -------------------------------------------------------------------------
-    # Core Synchronous State Transition Logic (Overrides BaseInterpreter)
+    # ⚙️ Core State Transition Logic
     # -------------------------------------------------------------------------
-
-    def _process_transient_transitions(self) -> None:
-        """
-        Continuously processes event-less ("always") transitions until the state stabilizes.
-
-        These transitions occur immediately after state entry or other transitions,
-        without requiring an external event. They are typically used for conditional
-        logic or immediate state changes based on context.
-
-        Returns:
-            None
-        """
-        logger.debug("🔍 Checking for transient transitions...")
-        while True:
-            # 👻 Use a dummy event for guard evaluation if needed for "always" transitions.
-            transient_event = Event(
-                type=""
-            )  # Empty type signifies an always transition.
-            # 🎯 Find the most appropriate transient transition to take.
-            transition = self._find_optimal_transition(transient_event)
-
-            # 🚦 An event-less transition is one with an empty event string.
-            if transition and transition.event == "":
-                logger.info(
-                    "⚡ Processing transient transition: from %s to %s (target: %s) 🚀",
-                    transition.source.id,
-                    transition.target_str or "self",
-                    transition.target_str if transition.target_str else "self",
-                )
-                # ➡️ Recursively call _process_event to handle the transition logic.
-                self._process_event(transient_event)
-            else:
-                # 🛑 No more transient transitions to take. State has stabilized.
-                logger.debug(
-                    "✅ No more transient transitions found. State stable. 🧘"
-                )
-                break
 
     def _process_event(
         self, event: Union[Event, AfterEvent, DoneEvent]
     ) -> None:
-        """Synchronously finds and executes a transition."""
+        """
+        Finds the optimal transition for an event and executes it.
+
+        This is the heart of the state transition logic, handling both external
+        and internal transitions.
+
+        Args:
+            event: The event object to process.
+        """
+        # 🎯 Find the best transition based on the current state and event.
         transition = self._find_optimal_transition(event)
+
+        # 🚫 If no transition is found, the event is ignored.
         if not transition:
-            # 🚫 No transition found, nothing to do.
             return
 
-        # ⚡ Execute actions associated with the transition BEFORE state change
+        # ⚡ Execute actions associated with the transition BEFORE state change.
         self._execute_actions(transition.actions, event)
 
-        # 🚦 If there is NO target state (internal transition or action-only)
+        # 🚦 If there is NO target state, it's an internal transition.
         if not transition.target_str:
-            # For internal transitions or transitions without target,
-            # we still want to notify plugins of an "identity" transition.
-            # The active states do not change, so from_states == to_states
-            for plugin in self._plugins:
-                plugin.on_transition(
-                    self,
-                    self._active_state_nodes,  # Current states
-                    self._active_state_nodes,  # Same as current states
-                    transition,
-                )
             logger.debug(
                 "✅ Internal transition or action-only completed. State remains: %s",
                 self.current_state_ids,
             )
-            return  # IMPORTANT: Exit after handling internal transition
+            # 🔌 Notify plugins of an "identity" transition where state doesn't change.
+            for plugin in self._plugins:
+                plugin.on_transition(
+                    self,
+                    self._active_state_nodes,  # from_states
+                    self._active_state_nodes,  # to_states
+                    transition,
+                )
+            return  # 🛑 IMPORTANT: Exit after handling the internal transition.
 
-        # 🔄 For external transitions that DO change the active state
+        # --- For external transitions that DO change the active state ---
+
+        # 📸 Take a snapshot of the states we are transitioning from.
         from_states_snapshot = self._active_state_nodes.copy()
+
+        # 🌳 Find the common ancestor domain for the transition.
         domain = self._find_transition_domain(transition)
+
+        # 🚪 Determine which states to exit based on the transition domain.
         states_to_exit = {
             s
             for s in self._active_state_nodes
             if self._is_descendant(s, domain) and s != domain
         }
+        # 🔻 Exit states from deepest child to shallowest parent.
         self._exit_states(
             sorted(list(states_to_exit), key=lambda s: len(s.id), reverse=True)
         )
-        # Note: actions were already executed above for all transition types.
 
+        # 🗺️ Determine the full path of states to enter to reach the target.
         target_state_node = resolve_target_state(
             transition.target_str, transition.source
         )
         path_to_enter = self._get_path_to_state(
             target_state_node, stop_at=domain
         )
+        # ▶️ Enter states from shallowest parent to deepest child.
         self._enter_states(path_to_enter)
+
+        # 🔌 Notify plugins about the completed external transition.
         for plugin in self._plugins:
             plugin.on_transition(
                 self,
@@ -354,43 +349,66 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 transition,
             )
 
+    def _process_transient_transitions(self) -> None:
+        """
+        Continuously processes event-less ("always") transitions.
+
+        These transitions occur immediately after a state entry or another
+        transition, allowing for conditional logic without external events.
+        The loop continues until no more "always" transitions are available,
+        at which point the state is considered stable.
+        """
+        logger.debug("🔍 Checking for transient ('always') transitions...")
+        while True:
+            # 👻 Use a dummy event for guard evaluation in "always" transitions.
+            transient_event = Event(type="")  # Empty type signifies "always".
+
+            # 🎯 Find the most specific transient transition available.
+            transition = self._find_optimal_transition(transient_event)
+
+            # ⚡ An event-less transition is one with an empty event string.
+            if transition and transition.event == "":
+                logger.info(
+                    "⚡ Processing transient transition: from %s to target: %s 🚀",
+                    transition.source.id,
+                    transition.target_str or "self",
+                )
+                # 🔄 Recursively call _process_event to handle the transition.
+                self._process_event(transient_event)
+            else:
+                # ✅ No more transient transitions found. State has stabilized.
+                logger.debug("🧘 No more transient transitions. State stable.")
+                break
+
     def _enter_states(
         self, states_to_enter: List[StateNode], event: Optional[Event] = None
     ) -> None:
         """
-        Synchronously enters a list of states.
+        Synchronously enters a list of states and executes their entry logic.
 
-        This method handles adding states to the active state set, executing
-        entry actions, and recursively entering child states for compound
-        and parallel states. It also checks for "done" conditions.
+        This method handles adding states to the active set, executing entry
+        actions, and recursively entering child states for compound/parallel
+        states.
 
         Args:
-            states_to_enter (List[StateNode]): A list of `StateNode` objects
-                representing the states to be entered.
-            event (Optional[Event]): An optional event that triggered the state entry.
-
-        Returns:
-            None
+            states_to_enter: A list of `StateNode` objects to enter.
+            event: The optional event that triggered the state entry.
         """
         for state in states_to_enter:
             logger.info("➡️ Entering state: '%s' 🟢", state.id)
-            # ➕ Add the state to the set of currently active states.
             self._active_state_nodes.add(state)
-            # ⚡ Execute entry actions defined for the state.
             self._execute_actions(state.entry, Event(f"entry.{state.id}"))
 
-            # 🎯 Special handling for final states.
+            # 🏁 Handle final state logic.
             if state.type == "final":
                 logger.debug(
-                    "🏁 Final state '%s' entered. Checking parent done status.",
+                    "🏁 Final state '%s' entered. Checking parent 'done' status.",
                     state.id,
                 )
                 self._check_and_fire_on_done(state)
-            # 📦 Special handling for compound states.
-            if (
-                state.type == "compound" and state.initial
-            ):  # Changed from 'if' to 'if' as original was 'if' for `state.initial in state.states` and original image shows 'if' as well.
-                # 🔍 Ensure the initial state is a valid child.
+
+            # 📦 Handle compound state initial entry.
+            if state.type == "compound" and state.initial:
                 if state.initial in state.states:
                     logger.debug(
                         "🌲 Entering initial state '%s' for compound state '%s'.",
@@ -400,22 +418,21 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     # ➡️ Recursively enter the initial child state.
                     self._enter_states([state.states[state.initial]])
                 else:
-                    # ❌ Log an error if the initial state is misconfigured.
                     logger.error(
                         "❌ Initial state '%s' not found for compound state '%s'. Check machine definition. 🐛",
                         state.initial,
                         state.id,
                     )
-            # 🤝 Special handling for parallel states.
+            # 🤝 Handle parallel state entry.
             elif state.type == "parallel":
                 logger.debug(
                     "🌐 Entering all parallel regions for state '%s'.",
                     state.id,
                 )
-                # ➡️ Recursively enter all child states of a parallel state.
+                # ➡️ Recursively enter all child states of the parallel state.
                 self._enter_states(list(state.states.values()))
 
-            # ⏰ Schedule any tasks associated with the state (no-op for SyncInterpreter).
+            # ⏰ "Schedule" any tasks (no-op for SyncInterpreter, but part of the template).
             self._schedule_state_tasks(state)
             logger.debug("✅ State '%s' entered successfully.", state.id)
 
@@ -423,70 +440,68 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         self, states_to_exit: List[StateNode], event: Optional[Event] = None
     ) -> None:
         """
-        Synchronously exits a list of states.
+        Synchronously exits a list of states and executes their exit logic.
 
-        This method handles canceling tasks, executing exit actions, and
-        removing states from the active state set.
+        Handles canceling tasks, executing exit actions, and removing states
+        from the active set.
 
         Args:
-            states_to_exit (List[StateNode]): A list of `StateNode` objects
-                representing the states to be exited.
-            event (Optional[Event]): An optional event that triggered the state exit.
-
-        Returns:
-            None
+            states_to_exit: A list of `StateNode` objects to exit.
+            event: The optional event that triggered the state exit.
         """
         for state in states_to_exit:
             logger.info("⬅️ Exiting state: '%s' 🔴", state.id)
-            # ⏰ Cancel any scheduled tasks for the state (no-op in sync interpreter).
+            # ⏰ Cancel any scheduled tasks (no-op in sync mode).
             self._cancel_state_tasks(state)
-            # ⚡ Execute exit actions defined for the state.
+            # ⚡ Execute exit actions.
             self._execute_actions(state.exit, Event(f"exit.{state.id}"))
-            # ➖ Remove the state from the set of currently active states.
+            # ➖ Remove the state from the active set.
             self._active_state_nodes.discard(state)
             logger.debug("✅ State '%s' exited successfully.", state.id)
 
     # -------------------------------------------------------------------------
-    # Helper Methods
+    # 🛠️ Helper Methods
     # -------------------------------------------------------------------------
 
     def _check_and_fire_on_done(self, final_state: StateNode) -> None:
         """
-        Synchronously checks if an ancestor state is "done" and queues the corresponding
-        `done.state` event if all its child states are in their final configurations.
+        Checks if an ancestor state is "done" and queues a `done.state` event.
+
+        This is triggered when a final state is entered. It checks if the parent
+        state (or any ancestor) has met its completion criteria (e.g., all its
+        parallel regions are in final states).
 
         Args:
-            final_state (StateNode): The final state that was just entered,
-                triggering the check.
-
-        Returns:
-            None
+            final_state: The final state that was just entered.
         """
-        current_ancestor: Union[StateNode, None] = final_state.parent
+        current_ancestor: Optional[StateNode] = final_state.parent
         logger.debug(
             "🔍 Checking 'done' status for ancestors of final state '%s'.",
             final_state.id,
         )
         while current_ancestor:
-            # 🧐 Check if the current ancestor has an on_done handler and if it's considered done.
+            # 🧐 Check if the ancestor has an `on_done` handler and is fully completed.
             if current_ancestor.on_done and self._is_state_done(
                 current_ancestor
             ):
+                done_event_type = f"done.state.{current_ancestor.id}"
                 logger.info(
                     "✅ State '%s' is done, queuing onDone event: '%s' 🥳",
                     current_ancestor.id,
-                    f"done.state.{current_ancestor.id}",
+                    done_event_type,
                 )
-                # 📬 Send the `done.state` event, which will be processed in the next cycle.
-                self.send(Event(type=f"done.state.{current_ancestor.id}"))
-                return  # 🛑 Only fire done.state for the immediate done ancestor.
+                # 📬 Send the `done.state.*` event for the next processing cycle.
+                self.send(Event(type=done_event_type))
+                return  # 🛑 Only fire the event for the first completed ancestor.
+
             current_ancestor = current_ancestor.parent
+
         logger.debug(
             "No 'done' ancestors found for state '%s'.", final_state.id
         )
 
     # -------------------------------------------------------------------------
-    # Internal Execution and Unsupported Feature Handling (Overrides BaseInterpreter)
+    # 🚫 Unsupported Feature Handling (Overrides from BaseInterpreter)
     # -------------------------------------------------------------------------
 
     def _execute_actions(
@@ -495,27 +510,19 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         """
         Synchronously executes a list of action definitions.
 
-        This method iterates through the provided actions, executes the corresponding
-        callable from the machine's logic, and specifically raises an error if an
-        asynchronous action is encountered, as `SyncInterpreter` does not support them.
+        This method validates that actions are synchronous and raises an error
+        if an async action or `spawn` is encountered.
 
         Args:
-            actions (List[ActionDefinition]): A list of `ActionDefinition` objects
-                to be executed.
-            event (Event): The event that triggered these actions.
-
-        Returns:
-            None
+            actions: A list of `ActionDefinition` objects to execute.
+            event: The event that triggered these actions.
 
         Raises:
-            ImplementationMissingError: If an action's implementation is not found
-                in the machine's logic.
-            NotSupportedError: If an attempt is made to execute an asynchronous
-                action or to spawn an actor (which is not supported).
+            ImplementationMissingError: If an action's implementation is not found.
+            NotSupportedError: If an async action or spawn is attempted.
         """
         if not actions:
-            logger.debug("No actions to execute. Skipping. 🤷")
-            return
+            return  # 🤔 No actions to execute.
 
         for action_def in actions:
             logger.debug(
@@ -523,21 +530,18 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 action_def.type,
                 event.type,
             )
-            # 🔌 Notify plugins before executing each action.
             for plugin in self._plugins:
                 plugin.on_action_execute(self, action_def)
 
-            # 🚫 Handle unsupported `spawn_` actions.
+            # 🚫 Explicitly block `spawn_` actions.
             if action_def.type.startswith("spawn_"):
                 self._spawn_actor(
                     action_def, event
-                )  # This will raise NotSupportedError.
-                continue  # Should not be reached if _spawn_actor raises.
+                )  # Raises NotSupportedError
+                continue  # Should not be reached.
 
-            # 🔍 Retrieve the callable associated with the action type.
             action_callable = self.machine.logic.actions.get(action_def.type)
             if not action_callable:
-                # ❌ Raise an error if the action is not implemented.
                 logger.error(
                     "❌ Action '%s' not implemented in machine logic. 🛠️",
                     action_def.type,
@@ -546,22 +550,18 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     f"Action '{action_def.type}' not implemented."
                 )
 
-            # 🚫 Validate that the action is not an asynchronous function.
-            # We use `hasattr(action_callable, '__await__')` as a general check for awaitables
-            # as `asyncio.iscoroutinefunction` might not catch all cases (e.g., async methods
-            # of objects that aren't functions directly).
-            if (
-                hasattr(action_callable, "__await__")
-                or hasattr(action_callable, "__call__")
-                and getattr(action_callable, "__code__", None)
-                and (action_callable.__code__.co_flags & 0x80)
-            ):  # noqa
+            # 🧐 Validate that the action is not an async function.
+            is_async = hasattr(action_callable, "__await__") or (
+                hasattr(action_callable, "__code__")
+                and (action_callable.__code__.co_flags & 0x80)  # noqa
+            )
+            if is_async:
                 logger.error(
-                    "❌ Action '%s' is async/awaitable and not supported by SyncInterpreter. 🚫",
+                    "❌ Action '%s' is async and not supported by SyncInterpreter. 🚫",
                     action_def.type,
                 )
                 raise NotSupportedError(
-                    f"Action '{action_def.type}' is async/awaitable and not supported by SyncInterpreter."
+                    f"Action '{action_def.type}' is async and not supported by SyncInterpreter."
                 )
 
             # ✅ Execute the synchronous action.
@@ -572,18 +572,17 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
     def _spawn_actor(self, action_def: ActionDefinition, event: Event) -> None:
         """
-        Raises a `NotSupportedError` as actor spawning is not supported in the
-        synchronous interpreter.
+        Raises `NotSupportedError` as actor spawning is not supported.
 
         Args:
-            action_def (ActionDefinition): The action definition for spawning an actor.
-            event (Event): The event that triggered this action.
+            action_def: The definition for the spawn action.
+            event: The event that triggered this action.
 
         Raises:
-            NotSupportedError: Always, as actor spawning is not supported.
+            NotSupportedError: Always, as this feature is unsupported.
         """
         logger.error(
-            "❌ Actor spawning action '%s' is not supported by SyncInterpreter. 🎭",
+            "❌ Actor spawning ('%s') is not supported by SyncInterpreter. 🎭",
             action_def.type,
         )
         raise NotSupportedError(
@@ -592,39 +591,34 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
     def _cancel_state_tasks(self, state: StateNode) -> None:
         """
-        A no-operation method, as the synchronous interpreter does not manage
-        background tasks or timers.
+        No-op method, as the sync interpreter does not manage background tasks.
 
         This method exists to satisfy the `BaseInterpreter` interface.
 
         Args:
-            state (StateNode): The state for which tasks might be cancelled (no-op).
-
-        Returns:
-            None
+            state: The state for which tasks would be cancelled.
         """
         logger.debug(
-            "Skipping state task cancellation for sync interpreter (no-op). 🧹"
+            "🧹 Skipping state task cancellation for sync interpreter (no-op)."
         )
-        pass  # 🚫 No-op, as the sync interpreter has no background tasks.
+        # 🤫 Nothing to do here in a synchronous world.
 
     def _after_timer(
         self, delay_sec: float, event: AfterEvent, owner_id: str
     ) -> None:
         """
-        Raises a `NotSupportedError` as `after` transitions (timed events) are
-        not supported by the synchronous interpreter.
+        Raises `NotSupportedError` as `after` transitions are not supported.
 
         Args:
-            delay_sec (float): The delay in seconds.
-            event (AfterEvent): The after event.
-            owner_id (str): The ID of the state node that owns this timer.
+            delay_sec: The delay in seconds.
+            event: The after event.
+            owner_id: The ID of the state node owning the timer.
 
         Raises:
-            NotSupportedError: Always, as `after` transitions are not supported.
+            NotSupportedError: Always, as this feature is unsupported.
         """
         logger.error(
-            "❌ `after` transitions are not supported by SyncInterpreter. ⏰"
+            "❌ Timed 'after' transitions are not supported by SyncInterpreter. ⏰"
         )
         raise NotSupportedError(
             "`after` transitions are not supported by SyncInterpreter."
@@ -639,34 +633,29 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         """
         Handles invoked services, supporting only synchronous callables.
 
-        If an asynchronous service is provided, a `NotSupportedError` is raised.
-        Synchronous services are executed immediately, and their results (or errors)
-        are translated into `done.invoke` or `error.platform` events.
+        Synchronous services are executed immediately. Their results are sent
+        as a `done.invoke` event, or errors are sent as `error.platform`.
 
         Args:
-            invocation (InvokeDefinition): The definition of the invoked service.
-            service (Callable[..., Any]): The callable representing the service logic.
-            owner_id (str): The ID of the state node that owns this invocation.
-
-        Returns:
-            None
+            invocation: The definition of the invoked service.
+            service: The callable representing the service logic.
+            owner_id: The ID of the state node owning this invocation.
 
         Raises:
-            NotSupportedError: If the provided service is an asynchronous function.
+            NotSupportedError: If the provided service is asynchronous.
         """
-        # 🚫 Validate that the service is not an asynchronous function.
-        if (
-            hasattr(service, "__await__")
-            or hasattr(service, "__call__")
-            and getattr(service, "__code__", None)
-            and (service.__code__.co_flags & 0x80)
-        ):  # noqa
+        # 🧐 Validate that the service is not an async function.
+        is_async = hasattr(service, "__await__") or (
+            hasattr(service, "__code__")
+            and (service.__code__.co_flags & 0x80)  # noqa
+        )
+        if is_async:
             logger.error(
-                "❌ Service '%s' is async/awaitable and not supported by SyncInterpreter. 🚫",
+                "❌ Service '%s' is async and not supported by SyncInterpreter. 🚫",
                 invocation.src,
             )
             raise NotSupportedError(
-                f"Service '{invocation.src}' is async/awaitable and not supported by SyncInterpreter."
+                f"Service '{invocation.src}' is async and not supported by SyncInterpreter."
             )
 
         logger.info(
@@ -681,7 +670,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             )
             # 🚀 Execute the synchronous service.
             result = service(self, self.context, invoke_event)
-            # ✅ Send a done.invoke event with the service's result.
+            # ✅ Send a 'done' event with the service's result.
             self.send(
                 DoneEvent(
                     f"done.invoke.{invocation.id}",
@@ -694,12 +683,12 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 invocation.src,
             )
         except Exception as e:
-            # 💥 Handle any exceptions during service execution and send an error.platform event.
+            # 💥 Handle any exceptions and send an 'error' event.
             logger.error(
                 "💥 Sync service '%s' failed: %s 💔",
                 invocation.src,
                 e,
-                exc_info=True,  # Include traceback in logs for debugging.
+                exc_info=True,  # 📝 Include traceback in logs.
             )
             self.send(
                 DoneEvent(

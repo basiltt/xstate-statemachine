@@ -1,4 +1,5 @@
 # tests/test_logic_loader.py
+import importlib
 
 # -----------------------------------------------------------------------------
 # 🧪 Test Suite: LogicLoader
@@ -251,56 +252,108 @@ class TestLogicLoader(unittest.TestCase):
         self.assertIn("action_two", machine.logic.actions)
 
     def test_discover_from_mixed_string_and_module_objects(self) -> None:
-        """Should discover logic from a mixed list of module paths and module objects."""
-        with open("temp_logic_for_testing_two.py", "w") as f:
-            f.write("def another_test_action(): pass")
-        import temp_logic_for_testing_two
+        """
+        Should discover logic from a mixed list of module paths and module objects.
+        """
+        # 📝 Define the path for the temporary file for reliable cleanup.
+        module_path = "temp_logic_for_testing_two.py"
+        module_name = "temp_logic_for_testing_two"
 
-        config = {
-            "id": "mixed_modules",
-            "initial": "a",
-            "states": {"a": {"entry": ["an_action", "another_test_action"]}},
-        }
-        machine = create_machine(
-            config,
-            logic_modules=[
-                _TEST_LOGIC_MODULE_NAME,
-                temp_logic_for_testing_two,
-            ],
-        )
+        # ⚙️ Use a try...finally block to ensure the temp file is always deleted.
+        try:
+            with open(module_path, "w") as f:
+                f.write("def another_test_action(): pass")
 
-        self.assertIn("an_action", machine.logic.actions)
-        self.assertIn("another_test_action", machine.logic.actions)
+            # ✅ FIX: Invalidate Python's import caches to ensure it finds the
+            # new file we just created before we try to import it.
+            importlib.invalidate_caches()
 
-        os.remove("temp_logic_for_testing_two.py")
+            # Now the import will succeed.
+            import temp_logic_for_testing_two
+
+            config = {
+                "id": "mixed_modules",
+                "initial": "a",
+                "states": {
+                    "a": {"entry": ["an_action", "another_test_action"]}
+                },
+            }
+
+            # This call uses both a string path and an imported module object.
+            machine = create_machine(
+                config,
+                logic_modules=[
+                    _TEST_LOGIC_MODULE_NAME,  # Imported by string name
+                    temp_logic_for_testing_two,  # Passed as a module object
+                ],
+            )
+
+            # 🧪 Assert that both actions were successfully discovered.
+            self.assertIn("an_action", machine.logic.actions)
+            self.assertIn("another_test_action", machine.logic.actions)
+
+        finally:
+            # 🧹 Clean up the temporary file and the module from the system
+            # to ensure test isolation.
+            if os.path.exists(module_path):
+                os.remove(module_path)
+            if module_name in sys.modules:
+                del sys.modules[module_name]
 
     def test_last_module_wins_on_function_conflict(self) -> None:
-        """If two modules define a function with the same name, the last one in the list should be used."""
-        with open("conflict_module_a.py", "w") as f:
-            f.write("def a_guard(): return 'A'")
-        with open("conflict_module_b.py", "w") as f:
-            f.write("def a_guard(): return 'B'")
+        """
+        If two modules define a function with the same name, the last one
+        in the list should be used.
+        """
+        # 📝 Define file paths to ensure they are created and removed reliably.
+        module_a_path = "conflict_module_a.py"
+        module_b_path = "conflict_module_b.py"
 
-        # Use a config that only requires the conflicting guard
-        conflict_config = {
-            "id": "conflict_test",
-            "initial": "a",
-            "states": {
-                "a": {"on": {"EVENT": {"target": "a", "guard": "a_guard"}}}
-            },
-        }
+        # ⚙️ Use a try...finally block to GUARANTEE cleanup, even if asserts fail.
+        try:
+            # Create the temporary python files for the test
+            with open(module_a_path, "w") as f:
+                f.write("def a_guard(): return 'A'")
+            with open(module_b_path, "w") as f:
+                f.write("def a_guard(): return 'B'")
 
-        machine = create_machine(
-            conflict_config,
-            logic_modules=["conflict_module_a", "conflict_module_b"],
-        )
-        self.assertIn("a_guard", machine.logic.guards)
+            # ✅ FIX: Invalidate Python's import caches so it can find the
+            # new files we just created on the filesystem.
+            importlib.invalidate_caches()
 
-        guard_func = machine.logic.guards["a_guard"]
-        self.assertIn("conflict_module_b.py", inspect.getsourcefile(guard_func))  # type: ignore
+            # Define the machine config that uses the conflicting guard
+            conflict_config = {
+                "id": "conflict_test",
+                "initial": "a",
+                "states": {
+                    "a": {"on": {"EVENT": {"target": "a", "guard": "a_guard"}}}
+                },
+            }
 
-        os.remove("conflict_module_a.py")
-        os.remove("conflict_module_b.py")
+            # This should now succeed without a ModuleNotFoundError
+            machine = create_machine(
+                conflict_config,
+                logic_modules=["conflict_module_a", "conflict_module_b"],
+            )
+
+            # 🧪 Assert that the function from the *second* module was used.
+            self.assertIn("a_guard", machine.logic.guards)
+            guard_func = machine.logic.guards["a_guard"]
+            # We can check the source file of the loaded function
+            self.assertIn(module_b_path, inspect.getsourcefile(guard_func))  # type: ignore
+
+        finally:
+            # 🧹 Clean up the temporary files and system modules for test isolation.
+            if os.path.exists(module_a_path):
+                os.remove(module_a_path)
+            if os.path.exists(module_b_path):
+                os.remove(module_b_path)
+
+            # Also remove the modules from sys.modules if they were loaded
+            if "conflict_module_a" in sys.modules:
+                del sys.modules["conflict_module_a"]
+            if "conflict_module_b" in sys.modules:
+                del sys.modules["conflict_module_b"]
 
     def test_discover_logic_with_no_required_implementations(self) -> None:
         """Should create logic successfully even if the machine config requires no implementations."""

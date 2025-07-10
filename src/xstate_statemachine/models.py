@@ -7,20 +7,28 @@
 # parse and build a traversable tree from a JSON or dictionary configuration,
 # adhering to XState conventions.
 #
-# The primary classes are:
-#   - `StateNode`: Represents a single state (atomic, compound, parallel, or final).
-#     This class, along with its children, forms a Composite design pattern,
-#     creating a tree structure for the entire statechart.
-#   - `MachineNode`: A specialized `StateNode` that acts as the root of the
-#     state machine tree, providing machine-wide utilities.
-#   - `ActionDefinition`, `TransitionDefinition`, `InvokeDefinition`: These are
-#     data-holding classes that represent the executable or dynamic parts of
-#     the state machine, such as actions, transitions, and services.
+# The primary classes (`StateNode` and `MachineNode`) implement the "Composite"
+# design pattern. This allows a tree of state objects to be composed, where
+# both individual states (leaves) and groups of states (composites) can be
+# treated uniformly. This is fundamental to modeling hierarchical and parallel
+# statecharts.
 #
-# This structured representation enables robust validation, introspection, and
-# serves as the foundation for the interpreter to execute the machine's logic.
+# This structured in-memory representation enables robust validation, easy
+# introspection, and serves as the foundation for the interpreter to execute
+# the machine's logic.
 # -----------------------------------------------------------------------------
+"""
+Defines the object-oriented data models for the state machine.
 
+This module is responsible for parsing a state machine configuration dictionary
+and building a traversable graph of `StateNode` objects. It also defines the
+data-holding classes for dynamic parts of the machine like actions, transitions,
+and invoked services.
+"""
+
+# -----------------------------------------------------------------------------
+# 📦 Standard Library Imports
+# -----------------------------------------------------------------------------
 import logging
 from typing import (
     Any,
@@ -34,20 +42,25 @@ from typing import (
     Union,
 )
 
+# -----------------------------------------------------------------------------
+# 📥 Project-Specific Imports
+# -----------------------------------------------------------------------------
 from .events import Event
 from .exceptions import InvalidConfigError, StateNotFoundError
 from .machine_logic import MachineLogic
 from .resolver import resolve_target_state
 
-# 🪵 Initialize the logger for this module
+# -----------------------------------------------------------------------------
+# 🪵 Logger Configuration
+# -----------------------------------------------------------------------------
 logger = logging.getLogger(__name__)
 
 # -----------------------------------------------------------------------------
 # 🧬 Type Variables & Generics
 # -----------------------------------------------------------------------------
-# Using TypeVars allows for creating generic machine definitions. This provides
-# a foundation for full static type checking of a machine's context and events,
-# leading to more robust and self-documenting code.
+# Using TypeVars for TContext and TEvent allows for creating generic machine
+# definitions. This provides a foundation for full static type checking of a
+# machine's context and events, leading to more robust and self-documenting code.
 # -----------------------------------------------------------------------------
 
 TContext = TypeVar("TContext", bound=Dict[str, Any])
@@ -58,49 +71,53 @@ StateType = Literal["atomic", "compound", "parallel", "final"]
 
 
 # -----------------------------------------------------------------------------
-# 🎬 Action & Transition Models
+# 🎬 Action, Transition, and Invoke Models (Data Transfer Objects)
 # -----------------------------------------------------------------------------
-# These classes serve as the data structures for representing the executable
-# parts of the state machine, such as actions, transitions, and invocations.
-# They provide a standardized, object-oriented way to interact with the parsed
-# JSON configuration.
+# These classes are simple, immutable data structures for representing the
+# executable parts of the state machine. They provide a standardized,
+# object-oriented way to interact with the parsed JSON configuration.
 # -----------------------------------------------------------------------------
 
 
 class ActionDefinition:
-    """Represents a single action to be executed within the state machine.
+    """Represents a single action to be executed.
 
     This class standardizes the representation of an action defined in the
     machine's configuration, accommodating both shorthand string definitions
-    and more detailed object definitions that can include parameters.
+    (e.g., `"myAction"`) and more detailed object definitions that can include
+    static parameters.
 
     Attributes:
-        type (str): The name or type identifier of the action.
-        params (Optional[Dict[str, Any]]): Optional dictionary of parameters
-                                           associated with the action.
+        type: The name or type identifier of the action.
+        params: An optional dictionary of static parameters associated with
+                the action, defined directly in the JSON.
     """
 
     def __init__(self, config: Union[str, Dict[str, Any]]):
-        """Initializes the ActionDefinition by parsing its configuration.
+        """Initializes the ActionDefinition from its configuration.
 
         Args:
-            config (Union[str, Dict[str, Any]]): The action configuration.
-                It can be a `str` (action name) or a `Dict` (action object).
+            config: The action configuration from the machine definition.
+                    It can be a simple `str` (the action name) or a `Dict`
+                    (e.g., `{"type": "myAction", "params": {...}}`).
 
         Raises:
             InvalidConfigError: If the config is not a string or dictionary.
         """
         if isinstance(config, str):
+            # 📝 Handle shorthand string definition: "myAction"
             logger.debug(
                 "🔧 Parsing action definition from string: '%s'", config
             )
             self.type: str = config
             self.params: Optional[Dict[str, Any]] = None
         elif isinstance(config, dict):
+            # 📝 Handle object definition: {"type": "myAction", ...}
             logger.debug("🔧 Parsing action definition from dict: %s", config)
             self.type: str = config.get("type", "UnknownAction")
             self.params: Optional[Dict[str, Any]] = config.get("params")
         else:
+            # ❌ Reject invalid definitions
             logger.error(
                 "❌ Invalid action configuration type: %s (expected str or dict)",
                 type(config),
@@ -117,15 +134,15 @@ class ActionDefinition:
 class TransitionDefinition:
     """Represents a potential transition between states for a given event.
 
-    It holds all information about a transition, including its target state,
-    the actions to execute, and any conditional guard.
+    This class holds all information about a transition, including its target
+    state, the actions to execute, and any conditional guard.
 
     Attributes:
-        event (str): The name of the event that triggers this transition.
-        source (StateNode): The source `StateNode` where this transition originates.
-        target_str (Optional[str]): The string representation of the target state.
-        actions (List[ActionDefinition]): A list of actions to execute on this transition.
-        guard (Optional[str]): The name of the guard condition to evaluate.
+        event: The name of the event that triggers this transition.
+        source: The source `StateNode` where this transition originates.
+        target_str: The string representation of the target state.
+        actions: A list of `ActionDefinition` objects to execute.
+        guard: The name of the guard condition to evaluate.
     """
 
     def __init__(
@@ -138,12 +155,11 @@ class TransitionDefinition:
         """Initializes the TransitionDefinition.
 
         Args:
-            event (str): The name of the event that triggers this transition.
-            config (Dict[str, Any]): The dictionary defining the transition's
-                                     properties (target, guard).
-            source (StateNode): The `StateNode` where this transition is defined.
-            actions (Optional[List[ActionDefinition]]): A list of actions.
-                Default values to an empty list if not provided.
+            event: The name of the event that triggers this transition.
+            config: The dictionary defining the transition's properties
+                    (e.g., `target`, `guard`).
+            source: The `StateNode` where this transition is defined.
+            actions: A list of `ActionDefinition` objects to be executed.
         """
         logger.debug(
             "🔧 Creating transition for event '%s' from config: %s",
@@ -153,10 +169,7 @@ class TransitionDefinition:
         self.event: str = event
         self.source: "StateNode" = source
         self.target_str: Optional[str] = config.get("target")
-        # ✅ FIX: Default to an empty list if actions are None.
-        self.actions: List[ActionDefinition] = (
-            actions if actions is not None else []
-        )
+        self.actions: List[ActionDefinition] = actions or []
         self.guard: Optional[str] = config.get("guard")
 
         logger.debug(
@@ -164,7 +177,7 @@ class TransitionDefinition:
             self.event,
             self.target_str,
             len(self.actions),
-            self.guard,
+            self.guard or "None",
         )
 
     def __repr__(self) -> str:
@@ -176,12 +189,12 @@ class InvokeDefinition:
     """Represents an invoked service or child actor within a state.
 
     Attributes:
-        id (str): The unique identifier for this invocation instance.
-        src (Optional[str]): The name of the service to be invoked.
-        input (Optional[Dict[str, Any]]): Data to pass to the invoked service.
-        on_done (List[TransitionDefinition]): Transitions for successful completion.
-        on_error (List[TransitionDefinition]): Transitions for errors.
-        source (StateNode): The `StateNode` that hosts this invocation.
+        id: The unique identifier for this invocation instance.
+        src: The name of the service to be invoked.
+        input: Static data to pass to the invoked service.
+        on_done: A list of transitions to take on successful completion.
+        on_error: A list of transitions to take on failure.
+        source: The `StateNode` that hosts this invocation.
     """
 
     def __init__(
@@ -195,14 +208,14 @@ class InvokeDefinition:
         """Initializes the InvokeDefinition.
 
         Args:
-            invoke_id (str): The pre-calculated unique ID for the invocation.
-            config (Dict[str, Any]): The raw dictionary from the `invoke` key.
-            source (StateNode): The `StateNode` that hosts this invocation.
-            on_done (List[TransitionDefinition]): Pre-parsed 'onDone' transitions.
-            on_error (List[TransitionDefinition]): Pre-parsed 'onError' transitions.
+            invoke_id: The pre-calculated unique ID for the invocation.
+            config: The raw dictionary from the `invoke` key in the JSON.
+            source: The `StateNode` that hosts this invocation.
+            on_done: A pre-parsed list of 'onDone' transitions.
+            on_error: A pre-parsed list of 'onError' transitions.
         """
         logging.debug(
-            "🔧 Creating invoke definition for source state '%s' with config: %s",
+            "🔧 Creating invoke definition for state '%s' with config: %s",
             source.id,
             config,
         )
@@ -213,6 +226,7 @@ class InvokeDefinition:
         self.on_done: List[TransitionDefinition] = on_done
         self.on_error: List[TransitionDefinition] = on_error
 
+        # ⚠️ Warn if the service source is missing, as it's a common error.
         if not self.src:
             logging.warning(
                 "⚠️ Invoke definition in state '%s' is missing a 'src' property.",
@@ -226,7 +240,7 @@ class InvokeDefinition:
 
 
 # -----------------------------------------------------------------------------
-# 🌳 Core State Tree Models
+# 🌳 Core State Tree Models (Composite Pattern)
 # -----------------------------------------------------------------------------
 # The `StateNode` and `MachineNode` classes implement the Composite design
 # pattern to build a traversable graph (a tree) of the state machine's
@@ -239,22 +253,25 @@ class StateNode(Generic[TContext, TEvent]):
 
     A `StateNode` can be atomic, compound, parallel, or final. It encapsulates
     all its own behavior, including transitions, actions, services, and child states.
-
-    Attributes:
-        key (str): The local key of the state within its parent (e.g., "idle").
-        parent (Optional[StateNode]): The parent `StateNode`, or `None` for the root.
-        machine (MachineNode): A reference to the root `MachineNode`.
-        id (str): The fully qualified, unique ID of the state (e.g., "machine.parent.child").
-        type (StateType): The type of the state.
-        initial (Optional[str]): The key of the initial substate for compound states.
-        on (Dict[str, List[TransitionDefinition]]): Event-to-transition mappings.
-        on_done (Optional[TransitionDefinition]): Transition for when a state is "done".
-        after (Dict[int, List[TransitionDefinition]]): Delayed transitions.
-        entry (List[ActionDefinition]): Actions to execute upon entering this state.
-        exit (List[ActionDefinition]): Actions to execute upon exiting this state.
-        invoke (List[InvokeDefinition]): Services to invoke when entering this state.
-        states (Dict[str, StateNode]): Child state key-to-`StateNode` mappings.
+    This class is the core of the in-memory representation of the statechart.
     """
+
+    # ✅ FIX: Pre-declare all instance attributes at the class level.
+    # This makes the class structure explicit for static analysis tools,
+    # resolving the "Unresolved attribute reference" warnings in IDEs.
+    id: str
+    key: str
+    parent: Optional["StateNode"]
+    machine: "MachineNode"
+    type: StateType
+    initial: Optional[str]
+    on: Dict[str, List[TransitionDefinition]]
+    on_done: Optional[TransitionDefinition]
+    after: Dict[int, List[TransitionDefinition]]
+    entry: List[ActionDefinition]
+    exit: List[ActionDefinition]
+    invoke: List[InvokeDefinition]
+    states: Dict[str, "StateNode"]
 
     def __init__(
         self,
@@ -263,72 +280,77 @@ class StateNode(Generic[TContext, TEvent]):
         key: str,
         parent: Optional["StateNode"] = None,
     ):
-        """Initializes a StateNode and its subtree from a configuration dictionary.
+        """Initializes a StateNode and its subtree from a configuration.
+
+        This constructor recursively parses a piece of the configuration
+        dictionary and builds the corresponding node and all of its children,
+        linking them together to form the statechart tree.
 
         Args:
-            machine (MachineNode): The root machine node.
-            config (Dict[str, Any]): The configuration dictionary for this state.
-            key (str): The key for this state within its parent's `states` object.
-            parent (Optional[StateNode]): The parent state node, if any.
+            machine: The root machine node.
+            config: The configuration dictionary for *this specific state*.
+            key: The key for this state within its parent's `states` object.
+            parent: The parent state node, if any.
         """
         logger.debug(
             "🚀 Initializing StateNode: key='%s', parent_id='%s'",
             key,
             parent.id if parent else "ROOT",
         )
-        self.key: str = key
-        self.parent: Optional["StateNode"] = parent
-        self.machine: "MachineNode" = machine
-        self.id: str = f"{parent.id}.{key}" if parent else key
+        # 🧍‍♂️ Core Properties
+        self.key = key
+        self.parent = parent
+        self.machine = machine
+        self.id = f"{parent.id}.{key}" if parent else key
 
-        # ⚙️ Determine and strictly type the state's type.
-        self.type: StateType
-        if "states" in config:
-            state_type = config.get("type", "compound")
-            if state_type not in ["compound", "parallel"]:
-                logger.warning(
-                    "⚠️ Invalid 'type' ('%s') for state '%s' with children. Defaulting to 'compound'.",
-                    state_type,
-                    self.id,
-                )
-                self.type = "compound"
-            else:
-                self.type = state_type  # type: ignore
-        elif config.get("type") == "final":
-            self.type = "final"
-        else:
-            self.type = "atomic"
+        # ⚙️ Determine and strictly type the state's `type` attribute.
+        self.type = self._determine_state_type(config)
         logger.debug(
             "  -> StateNode '%s' identified as type: '%s'", self.id, self.type
         )
 
-        # ⚙️ Parse all properties. The parsing logic is now encapsulated here.
-        self.initial: Optional[str] = self._parse_initial(config)
-        self.on: Dict[str, List[TransitionDefinition]] = self._parse_on(config)
-        self.on_done: Optional[TransitionDefinition] = self._parse_on_done(
-            config
-        )
-        self.after: Dict[int, List[TransitionDefinition]] = self._parse_after(
-            config
-        )
-        self.entry: List[ActionDefinition] = self._parse_actions(
-            config.get("entry")
-        )
-        self.exit: List[ActionDefinition] = self._parse_actions(
-            config.get("exit")
-        )
-        self.invoke: List[InvokeDefinition] = self._parse_invoke(config)
+        # ⚙️ Parse all properties from the configuration dictionary.
+        # This encapsulates the parsing logic within the model itself.
+        self.initial = self._parse_initial(config)
+        self.entry = self._parse_actions(config.get("entry"))
+        self.exit = self._parse_actions(config.get("exit"))
+        self.on = self._parse_on(config)
+        self.on_done = self._parse_on_done(config)
+        self.after = self._parse_after(config)
+        self.invoke = self._parse_invoke(config)
 
-        #  Recursively build child states.
-        self.states: Dict[str, "StateNode"] = {
+        # 🌳 Recursively build child states, forming the Composite pattern.
+        self.states = {
             state_key: StateNode(machine, state_config, state_key, self)
             for state_key, state_config in config.get("states", {}).items()
         }
-        logger.debug("✅ StateNode '%s' initialized successfully.", self.id)
+        logger.debug(
+            "✅ StateNode '%s' and its children initialized.", self.id
+        )
 
     # -------------------------------------------------------------------------
     # Internal Parsing Methods (Encapsulated Logic)
     # -------------------------------------------------------------------------
+
+    def _determine_state_type(self, config: Dict[str, Any]) -> StateType:
+        """Determines the type of the state based on its configuration."""
+        if "states" in config:
+            # A state with children is either compound or parallel
+            state_type = config.get("type", "compound")
+            if state_type in ["compound", "parallel"]:
+                return state_type  # type: ignore
+            else:
+                logger.warning(
+                    "⚠️ Invalid 'type' ('%s') for state '%s' with children. "
+                    "Defaulting to 'compound'.",
+                    state_type,
+                    self.id,
+                )
+                return "compound"
+        elif config.get("type") == "final":
+            return "final"
+        else:
+            return "atomic"
 
     def _parse_initial(self, config: Dict[str, Any]) -> Optional[str]:
         """Parses the initial state key from the config."""
@@ -348,7 +370,7 @@ class StateNode(Generic[TContext, TEvent]):
     def _parse_on(
         self, config: Dict[str, Any]
     ) -> Dict[str, List[TransitionDefinition]]:
-        """Parses all event transitions from the 'on' property."""  # noqa: E501
+        """Parses all event transitions from the 'on' property."""
         on_map: Dict[str, List[TransitionDefinition]] = {}
         for event, transitions_config in config.get("on", {}).items():
             normalized_configs = self._normalize_transitions(
@@ -358,11 +380,6 @@ class StateNode(Generic[TContext, TEvent]):
                 self._create_transition(event, t_config)
                 for t_config in normalized_configs
             ]
-            logger.debug(
-                "  -> Parsed %d transitions for event '%s'",
-                len(on_map[event]),
-                event,
-            )
         return on_map
 
     def _parse_on_done(
@@ -377,6 +394,7 @@ class StateNode(Generic[TContext, TEvent]):
         if not normalized_list:
             return None
 
+        # There can be only one onDone transition, so we take the first.
         transition = self._create_transition(
             f"done.state.{self.id}", normalized_list[0]
         )
@@ -408,7 +426,10 @@ class StateNode(Generic[TContext, TEvent]):
         for i_config in invoke_configs:
             if not isinstance(i_config, dict):
                 continue
+
+            # The invoke ID defaults to the state's ID if not provided.
             invoke_id = i_config.get("id", self.id)
+
             on_done_transitions = [
                 self._create_transition(f"done.invoke.{invoke_id}", t)
                 for t in self._normalize_transitions(
@@ -435,25 +456,31 @@ class StateNode(Generic[TContext, TEvent]):
     def _create_transition(
         self, event: str, config: Dict[str, Any]
     ) -> TransitionDefinition:
-        """Factory method to create a TransitionDefinition, handling action parsing."""
+        """A factory method to create a TransitionDefinition."""
         actions = self._parse_actions(config.get("actions"))
         return TransitionDefinition(
             event=event, config=config, source=self, actions=actions
         )
 
     # -------------------------------------------------------------------------
-    # Static Helpers (for internal use by the class)
+    # Static Helpers for Configuration Normalization
     # -------------------------------------------------------------------------
 
     @staticmethod
     def _normalize_transitions(config: Any) -> List[Dict[str, Any]]:
-        """Ensures transition configs are always a list of dictionaries."""
+        """Ensures transition configs are always a list of dictionaries.
+
+        This handles XState's various shorthands for defining transitions.
+        """
         if isinstance(config, str):
+            # Shorthand: "on": { "EVENT": "target_state" }
             return [{"target": config}]
         if isinstance(config, dict):
+            # Standard: "on": { "EVENT": { "target": ... } }
             return [config]
         if isinstance(config, list):
-            normalized_list = []
+            # List of transitions for multiple potential targets
+            normalized_list: List[Dict[str, Any]] = []
             for item in config:
                 if isinstance(item, str):
                     normalized_list.append({"target": item})
@@ -461,12 +488,14 @@ class StateNode(Generic[TContext, TEvent]):
                     normalized_list.append(item)
                 else:
                     raise InvalidConfigError(
-                        f"❌ Invalid transition item in list: {item}. Must be str or dict."
+                        f"❌ Invalid transition item in list: {item}. "
+                        "Must be a string or dictionary."
                     )
             return normalized_list
         if config is not None:
             raise InvalidConfigError(
-                f"❌ Invalid transition config: {config}. Must be str, dict, or list."
+                f"❌ Invalid transition config: {config}. "
+                "Must be a string, dictionary, or list."
             )
         return []
 
@@ -476,6 +505,45 @@ class StateNode(Generic[TContext, TEvent]):
         if config_item is None:
             return []
         return config_item if isinstance(config_item, list) else [config_item]
+
+        # -------------------------------------------------------------------------
+        # Tree Traversal Helpers
+        # -------------------------------------------------------------------------
+
+    def _get_ancestors(self) -> Set["StateNode"]:
+        """Gets a set of all ancestors of a node, including the node itself."""
+        ancestors: Set["StateNode"] = set()
+        # FIX: Changed 'node' back to 'self' to act as an instance method.
+        current: Optional[StateNode] = self
+        while current:
+            ancestors.add(current)
+            current = current.parent
+        return ancestors
+
+    def _is_descendant(  # noqa
+        self, node: "StateNode", ancestor: Optional["StateNode"]
+    ) -> bool:
+        """Checks if a node is a descendant of a specified ancestor."""
+        # The 'self' parameter is unused here, but the method is part of the
+        # class's public contract and called from instances.
+        if not ancestor:
+            return True
+        return node == ancestor or node.id.startswith(f"{ancestor.id}.")
+
+    def _get_path_to_state(  # noqa
+        self,
+        to_state: "StateNode",
+        *,
+        stop_at: Optional["StateNode"] = None,
+    ) -> List["StateNode"]:
+        """Builds the list of states to enter to reach a target state."""
+        path: List[StateNode] = []
+        current: Optional[StateNode] = to_state
+        while current and current is not stop_at:
+            path.append(current)
+            current = current.parent
+        path.reverse()
+        return path
 
     # -------------------------------------------------------------------------
     # Public Properties & Representations
@@ -495,94 +563,76 @@ class StateNode(Generic[TContext, TEvent]):
         """Provides a developer-friendly string representation."""
         return f"StateNode(id='{self.id}', type='{self.type}')"
 
-    # -------------------------------------------------------------------------
-    # Tree Traversal Helpers
-    # -------------------------------------------------------------------------
-
-    def _get_ancestors(self) -> Set["StateNode"]:
-        """Gets a set of all ancestors of a node, including the node itself."""
-        ancestors: Set["StateNode"] = set()
-        current: Optional[StateNode] = self
-        while current:
-            ancestors.add(current)
-            current = current.parent
-        return ancestors
-
-    @staticmethod
-    def _is_descendant(
-        node: "StateNode", ancestor: Optional["StateNode"]
-    ) -> bool:
-        """Checks if a node is a descendant of a specified ancestor."""
-        if not ancestor:
-            return True
-        return node == ancestor or node.id.startswith(f"{ancestor.id}.")
-
-    def _get_path_to_state(  # noqa
-        self,
-        to_state: "StateNode",
-        *,
-        stop_at: Optional["StateNode"] = None,
-    ) -> List["StateNode"]:
-        """Builds the list of states to enter to reach a target state."""
-        path: List["StateNode"] = []
-        current: Optional[StateNode] = to_state
-        while current and current is not stop_at:
-            path.append(current)
-            current = current.parent
-        path.reverse()
-        return path
-
 
 class MachineNode(StateNode[TContext, TEvent]):
-    """The root node of a state machine, with added developer utilities.
+    """The root node of a state machine, with added machine-wide utilities.
+
+    This class extends `StateNode` and acts as the entry point to the entire
+    statechart tree. It holds the machine's logic and initial context and
+    provides helpful methods for introspection and testing.
 
     Attributes:
-        logic (MachineLogic): The implementation for the machine's logic.
-        initial_context (TContext): The initial context of the machine.
+        logic: The `MachineLogic` instance containing the implementation
+               for the machine's actions, guards, and services.
+        initial_context: The initial context of the machine, which will be
+                         deep-copied for each new interpreter instance.
     """
+
+    # ✅ FIX: Pre-declare instance attributes for this subclass as well.
+    logic: MachineLogic[TContext, TEvent]
+    initial_context: TContext
 
     def __init__(
         self, config: Dict[str, Any], logic: MachineLogic[TContext, TEvent]
     ):
-        """Initializes the root MachineNode and builds the entire state tree.
+        """Initializes the root MachineNode and builds the state tree.
 
         Args:
-            config (Dict[str, Any]): The root JSON configuration of the machine.
-            logic (MachineLogic[TContext, TEvent]): The implementation of logic.
+            config: The root JSON configuration of the machine.
+            logic: The implementation of the machine's business logic.
 
         Raises:
             InvalidConfigError: If the machine configuration lacks a root 'id'.
         """
+        # 🛡️ The root of any machine must have a non-empty ID.
         if not config.get("id"):
             raise InvalidConfigError(
                 "❌ Machine configuration must have a root 'id'."
             )
-        self.logic: MachineLogic[TContext, TEvent] = logic
-        self.initial_context: TContext = config.get("context", {})
+        self.logic = logic
+        self.initial_context = config.get("context", {})
+
+        # 🚀 Call the parent constructor to build the entire state tree.
         super().__init__(self, config, config["id"])
 
     def get_state_by_id(self, state_id: str) -> Optional[StateNode]:
-        """Finds a state node by its full ID, returning None if not found.
+        """Finds a state node by its fully qualified ID.
+
+        This method traverses the state tree to find a specific node.
 
         Args:
-            state_id (str): The fully qualified ID of the state to find.
+            state_id: The fully qualified ID of the state to find
+                      (e.g., "myMachine.parent.child").
 
         Returns:
-            Optional[StateNode]: The `StateNode` if found, otherwise `None`.
+            The `StateNode` if found, otherwise `None`.
         """
         logger.debug("🔍 Searching for state with ID: '%s'", state_id)
-        path = state_id.split(".")
+        path_segments = state_id.split(".")
 
-        if not path or path[0] != self.key:
+        # 🛡️ The path must start with the machine's own ID.
+        if not path_segments or path_segments[0] != self.key:
             logger.warning(
-                "⚠️ State ID '%s' does not start with machine ID '%s'. Lookup will fail.",
+                "⚠️ State ID '%s' does not start with machine ID '%s'. "
+                "Lookup will fail.",
                 state_id,
                 self.key,
             )
             return None
 
+        # 🌳 Traverse the tree segment by segment.
         node: StateNode = self
-        for key in path[1:]:
+        for key in path_segments[1:]:
             if key not in node.states:
                 logger.warning(
                     "❌ State not found. Could not find key '%s' in state '%s'.",
@@ -602,19 +652,23 @@ class MachineNode(StateNode[TContext, TEvent]):
     def get_next_state(
         self, from_state_id: str, event: Event
     ) -> Optional[Set[str]]:
-        """Calculates the target state(s) for an event without executing actions.
+        """Calculates the target state(s) for an event without side effects.
 
-        This is a pure function for testing transition logic. It finds the first
-        valid transition by bubbling up the state hierarchy.
-        Note: This utility does not evaluate guards.
+        This is a pure function intended for **testing** your machine's flow
+        logic. It finds the first valid transition by bubbling up the state
+        hierarchy from a given state.
+
+        Note:
+            This utility does **not** evaluate guards. It assumes any guard
+            would pass to show the potential transition target.
 
         Args:
-            from_state_id (str): The ID of the current state.
-            event (Event): The event to process.
+            from_state_id: The fully qualified ID of the starting state.
+            event: The `Event` object to process.
 
         Returns:
-            Optional[Set[str]]: A set of target state IDs, or `None` if no
-                                transition is found.
+            A set containing the target state ID(s), or `None` if no
+            transition is found for that event from that state.
         """
         from_node = self.get_state_by_id(from_state_id)
         if not from_node:
@@ -624,6 +678,7 @@ class MachineNode(StateNode[TContext, TEvent]):
         while current:
             if event.type in current.on:
                 for transition in current.on[event.type]:
+                    # Return the first valid transition found
                     if transition.target_str:
                         try:
                             target_node = resolve_target_state(
@@ -631,6 +686,8 @@ class MachineNode(StateNode[TContext, TEvent]):
                             )
                             return {target_node.id}
                         except StateNotFoundError:
+                            # This can happen if a target is valid but the guard
+                            # is what makes it take a different path. Ignore.
                             pass
             current = current.parent
 
@@ -643,8 +700,11 @@ class MachineNode(StateNode[TContext, TEvent]):
     def to_plantuml(self) -> str:
         """Generates a PlantUML string representation of the state machine.
 
+        This can be used to automatically generate diagrams from your machine
+        configuration, ensuring your documentation always stays in sync.
+
         Returns:
-            str: A string formatted for PlantUML.
+            A string formatted for rendering with PlantUML.
         """
         content = ["@startuml", "hide empty description"]
 
@@ -704,8 +764,11 @@ class MachineNode(StateNode[TContext, TEvent]):
     def to_mermaid(self) -> str:
         """Generates a Mermaid.js string representation of the state machine.
 
+        This can be used to automatically generate diagrams in markdown files
+        (e.g., on GitHub, or with tools like MkDocs).
+
         Returns:
-            str: A string formatted for Mermaid.js.
+            A string formatted for rendering with Mermaid.js.
         """
         content = ["stateDiagram-v2"]
 

@@ -1,17 +1,27 @@
-# src/xstate_statemachine/interpreter.py
-
+# /src/xstate_statemachine/interpreter.py
 # -----------------------------------------------------------------------------
 # 🚀 Asynchronous Interpreter
 # -----------------------------------------------------------------------------
 # This module contains the `Interpreter` class, the primary asynchronous state
 # machine engine. It inherits from `BaseInterpreter` and implements all the
 # necessary `asyncio`-based functionality for event handling, background tasks
-# (`after`, `invoke`), and actor management. This class is the workhorse that
-# brings a machine definition to life in an async environment.
+# (`after`, `invoke`), and actor management.
+#
+# This class is the workhorse that brings a machine definition to life in an
+# async environment, making it suitable for I/O-bound applications like web
+# servers, IoT clients, and automation scripts.
 # -----------------------------------------------------------------------------
+"""
+Provides the primary asynchronous interpreter for running state machines.
+
+The `Interpreter` class manages the state machine's lifecycle in a non-blocking
+fashion using Python's `asyncio` library. It processes events from a queue,
+handles timed transitions, and invokes asynchronous services, making it the
+recommended choice for most modern applications.
+"""
 
 # -----------------------------------------------------------------------------
-# 📦 Imports
+# 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import asyncio
 import logging
@@ -27,6 +37,9 @@ from typing import (
     overload,
 )
 
+# -----------------------------------------------------------------------------
+# 📥 Project-Specific Imports
+# -----------------------------------------------------------------------------
 from .base_interpreter import BaseInterpreter
 from .events import AfterEvent, DoneEvent, Event
 from .exceptions import ActorSpawningError, ImplementationMissingError
@@ -61,10 +74,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
     timed delays, and spawned child actors (other interpreters).
 
     Attributes:
-        task_manager (TaskManager): Manages all background `asyncio` tasks.
-        _event_queue (asyncio.Queue): An internal queue for incoming events.
-        _event_loop_task (Optional[asyncio.Task]): The task running the main
-            event processing loop.
+        task_manager: An instance of `TaskManager` to manage all background
+                      `asyncio.Task` objects created by this interpreter.
     """
 
     def __init__(self, machine: MachineNode[TContext, TEvent]) -> None:
@@ -73,6 +84,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         Args:
             machine: The `MachineNode` instance that this interpreter will run.
         """
+        # 🏛️ Initialize the base class, passing our own class for snapshotting.
         super().__init__(machine, interpreter_class=Interpreter)
         logger.info(
             "🚀 Initializing Asynchronous Interpreter for '%s'...", self.id
@@ -83,7 +95,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         self._event_queue: asyncio.Queue[
             Union[Event, AfterEvent, DoneEvent]
         ] = asyncio.Queue()
-        self._event_loop_task: Optional[asyncio.Task] = None
+        self._event_loop_task: Optional[asyncio.Task[None]] = None
 
         logger.info("✅ Asynchronous Interpreter '%s' initialized.", self.id)
 
@@ -91,7 +103,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
     # ⏯️ Public Control API (Start, Stop, Send)
     # -------------------------------------------------------------------------
 
-    async def start(self) -> "Interpreter":
+    async def start(self) -> "Interpreter[TContext, TEvent]":
         """Starts the interpreter and its main event-processing loop.
 
         This method initializes the machine by transitioning it to its initial
@@ -169,14 +181,18 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         self._actors.clear()
 
         # ❌ Cancel all background tasks managed by this interpreter.
-        # ✅ FIX: Use the public method from TaskManager to respect encapsulation.
         await self.task_manager.cancel_all()
 
         # 🔌 Terminate the main event loop.
         if self._event_loop_task:
             self._event_loop_task.cancel()
             # Wait for the loop to acknowledge cancellation.
-            await asyncio.gather(self._event_loop_task, return_exceptions=True)
+            try:
+                await self._event_loop_task
+            except asyncio.CancelledError:
+                logger.debug(
+                    "Event loop task successfully caught cancellation."
+                )
             self._event_loop_task = None
 
         logger.info("✅ Interpreter '%s' stopped successfully.", self.id)
@@ -200,7 +216,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
         This method provides a flexible API to send events, accepting either
         a string type with keyword arguments for the payload, a dictionary,
-        or a pre-constructed `Event` object (or its subclasses).
+        or a pre-constructed `Event` object (or its subclasses). This is an
+        async operation that returns immediately after queueing the event.
 
         Args:
             event_or_type: The event to send. Can be an event type string,
@@ -209,8 +226,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             **payload: Keyword arguments that become the event's payload if
                 `event_or_type` is a string.
         """
-        # ✅ FIX: Use the centralized helper from the base class to prepare the
-        # event object, adhering to the DRY principle.
+        #  DRY: Use the centralized helper from the base class to prepare
+        # the event object.
         event_obj = self._prepare_event(event_or_type, **payload)
 
         # 📥 Place the standardized event object into the async queue.
@@ -231,10 +248,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                     "🔥 Event '%s' dequeued for processing.", event.type
                 )
 
+                # 🔌 Notify plugins that an event has been received.
                 for plugin in self._plugins:
                     plugin.on_event_received(self, event)
 
-                # 🧠 Process the event to determine if a state transition occurs.
+                # 🧠 Process the event, which may cause a state transition.
                 await self._process_event(event)
 
                 # ⚡ After processing, check for and handle any "transient"
@@ -248,12 +266,15 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                         )
                         await self._process_event(transient_event)
                     else:
-                        break  # No more transient transitions; state is stable.
+                        # No more transient transitions; state is stable.
+                        break
 
                 self._event_queue.task_done()
 
         except asyncio.CancelledError:
             logger.debug("🛑 Event loop for '%s' was cancelled.", self.id)
+            # This is an expected, clean shutdown.
+            raise
         except Exception as exc:
             logger.critical(
                 "💥 Fatal error in event loop for '%s': %s",
@@ -261,7 +282,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 exc,
                 exc_info=True,
             )
-            # Ensure the interpreter is marked as stopped on catastrophic failure.
+            # On catastrophic failure, ensure the interpreter is stopped.
             self.status = "stopped"
             raise
         finally:
@@ -303,7 +324,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                     f"Action '{action_def.type}' is not implemented."
                 )
 
-            # 🏃‍♂️ Execute the action, awaiting if it's async.
+            # 🏃‍♂️ Execute the action, awaiting if it's an async function.
             if asyncio.iscoroutinefunction(action_callable):
                 await action_callable(self, self.context, event, action_def)
             else:
@@ -319,12 +340,13 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         """Handles the logic for spawning a child state machine actor.
 
         Args:
-            action_def: The "spawn_" action definition.
+            action_def: The "spawn_" action definition from the config.
             event: The event that triggered the spawn action.
 
         Raises:
-            ActorSpawningError: If the source for the actor is not a valid
-                `MachineNode` or a function that returns one.
+            ActorSpawningError: If the source for the actor in the machine's
+                `services` logic is not a valid `MachineNode` or a
+                function that returns one.
         """
         logger.info("👶 Spawning actor for action: '%s'", action_def.type)
         actor_machine_key = action_def.type.replace("spawn_", "")
@@ -335,25 +357,25 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         if isinstance(actor_source, MachineNode):
             actor_machine = actor_source
         elif callable(actor_source):
-            # Pass context and event to the factory function.
+            # 🏭 If the source is a callable, treat it as a factory.
             result = actor_source(self, self.context, event)
             if isinstance(result, MachineNode):
                 actor_machine = result
 
         if not actor_machine:
             raise ActorSpawningError(
-                f"Cannot spawn '{actor_machine_key}'. "
-                "Source in `services` is not a valid MachineNode or a function that returns one."
+                f"Cannot spawn '{actor_machine_key}'. Source in `services` "
+                "is not a valid MachineNode or a function that returns one."
             )
 
         # 🧬 Create and start the new child interpreter.
         actor_id = f"{self.id}:{actor_machine_key}:{uuid.uuid4()}"
-        actor_interpreter = Interpreter(actor_machine)
-        actor_interpreter.parent = self
-        actor_interpreter.id = actor_id
-        await actor_interpreter.start()
+        child_interpreter = Interpreter(actor_machine)
+        child_interpreter.parent = self
+        child_interpreter.id = actor_id
+        await child_interpreter.start()
 
-        self._actors[actor_id] = actor_interpreter
+        self._actors[actor_id] = child_interpreter
         logger.info(
             "✅ Actor '%s' spawned and started successfully.", actor_id
         )
@@ -362,12 +384,13 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         """Asynchronously cancels all background tasks associated with a state.
 
         When a state is exited, this method ensures that any running timers
-        or invoked services belonging to that state are properly cancelled.
+        or invoked services belonging to that state are properly cancelled
+        to prevent orphaned tasks and race conditions.
 
         Args:
             state: The `StateNode` being exited.
         """
-        # ✅ FIX: Use the public `cancel_by_owner` method to respect encapsulation.
+        # Encapsulation: Delegate cancellation to the TaskManager.
         await self.task_manager.cancel_by_owner(state.id)
 
     async def _after_timer_task(
@@ -384,9 +407,12 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             logger.info("🕒 'after' timer fired for event '%s'.", event.type)
             await self.send(event)
         except asyncio.CancelledError:
+            # This is expected when a state is exited before the timer fires.
             logger.debug(
                 "🚫 'after' timer for event '%s' was cancelled.", event.type
             )
+            # Re-raise to ensure the task is properly cleaned up.
+            raise
 
     def _after_timer(
         self, delay_sec: float, event: AfterEvent, owner_id: str
@@ -422,8 +448,10 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             invocation.id,
         )
         try:
+            # Create a synthetic event to pass to the service if needed.
             invoke_event = Event(
-                f"invoke.{invocation.id}", {"input": invocation.input or {}}
+                type=f"invoke.{invocation.id}",
+                payload={"input": invocation.input or {}},
             )
             # 🏃‍♂️ Await the actual service coroutine.
             result = await service(self, self.context, invoke_event)
@@ -431,7 +459,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             # ✅ Service completed successfully, send 'done' event.
             await self.send(
                 DoneEvent(
-                    f"done.invoke.{invocation.id}",
+                    type=f"done.invoke.{invocation.id}",
                     data=result,
                     src=invocation.id,
                 )
@@ -449,8 +477,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 invocation.src,
                 invocation.id,
             )
-            # Re-raise to ensure the task is marked as cancelled.
-            raise
+            raise  # Re-raise to ensure the task is marked as cancelled.
 
         except Exception as e:
             # 💥 Service raised an unhandled exception.
@@ -461,17 +488,20 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 e,
                 exc_info=True,
             )
-            # Send 'error' event.
+            # Send 'error' event so the machine can transition to a failure state.
             await self.send(
                 DoneEvent(
-                    f"error.platform.{invocation.id}",
+                    type=f"error.platform.{invocation.id}",
                     data=e,
                     src=invocation.id,
                 )
             )
 
     def _invoke_service(
-        self, invocation: InvokeDefinition, service: Callable, owner_id: str
+        self,
+        invocation: InvokeDefinition,
+        service: Callable[..., Any],
+        owner_id: str,
     ) -> None:
         """Creates and registers a task to run an invoked service.
 
@@ -482,10 +512,12 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         """
 
         async def _invoke_wrapper() -> None:
-            # Yield control briefly to ensure the task is registered in the
-            # TaskManager before the service is awaited. This prevents a race
-            # condition where a state could exit and try to cancel a task
-            # that hasn't been registered yet.
+            # 🧠 This is a subtle but important detail to prevent a race
+            # condition. We yield control briefly (await sleep(0)) to ensure
+            # the task is fully registered in the TaskManager *before* the
+            # potentially long-running service is awaited. This prevents a
+            # state from exiting and trying to cancel a task that hasn't
+            # been added to the manager yet.
             await asyncio.sleep(0)
             await self._invoke_service_task(invocation, service)
 

@@ -173,7 +173,7 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                     "active": {"on": {"INC": {"actions": ["increment"]}}}
                 },
             },
-            MachineLogic(actions={"increment": mock_action}),
+            logic=MachineLogic(actions={"increment": mock_action}),
         )
         interpreter = await Interpreter(machine_def).start()
         self.assertEqual(interpreter.context["count"], 0)
@@ -194,7 +194,7 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
         # --- Scenario 1: Guard Fails ---
         logic_fail = MachineLogic(guards={"canLogin": lambda ctx, evt: False})
         interp_fail = await Interpreter(
-            create_machine(self.guard_machine_config, logic_fail)
+            create_machine(self.guard_machine_config, logic=logic_fail)
         ).start()
         await interp_fail.send("LOGIN")
         await asyncio.sleep(0.05)
@@ -206,7 +206,7 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
             guards={"canLogin": lambda ctx, evt: True}
         )
         interp_succ = await Interpreter(
-            create_machine(self.guard_machine_config, logic_success)
+            create_machine(self.guard_machine_config, logic=logic_success)
         ).start()
         await interp_succ.send("LOGIN")
         await self.wait_for_state(interp_succ, {"auth.success"})
@@ -230,7 +230,7 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                     "success": {},
                 },
             },
-            MachineLogic(services={"fetchUser": mock_service}),
+            logic=MachineLogic(services={"fetchUser": mock_service}),
         )
         interpreter = await Interpreter(machine_def).start()
         await self.wait_for_state(interpreter, {"fetch.success"})
@@ -252,7 +252,7 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                     "failure": {},
                 },
             },
-            MachineLogic(services={"fetchUser": mock_service}),
+            logic=MachineLogic(services={"fetchUser": mock_service}),
         )
         interpreter = await Interpreter(machine_def).start()
         await self.wait_for_state(interpreter, {"fetch.failure"})
@@ -291,7 +291,7 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                 "initial": "active",
                 "states": {"active": {"on": {"PING": {"actions": ["pong"]}}}},
             },
-            MachineLogic(
+            logic=MachineLogic(
                 actions={
                     "pong": lambda interp, ctx, evt, ad: asyncio.create_task(
                         interp.parent.send("PONG_RECEIVED")
@@ -312,7 +312,7 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                 },
                 "on": {"PONG_RECEIVED": ".ponged"},
             },
-            parent_logic,
+            logic=parent_logic,
         )
 
         interpreter = await Interpreter(parent_machine).start()
@@ -350,7 +350,7 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                     "second": {},
                 },
             },
-            MachineLogic(
+            logic=MachineLogic(
                 actions={
                     "setData": lambda i, c, e, a: c.update({"data": "updated"})
                 }
@@ -384,7 +384,7 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                     "active": {"on": {"EVENT": {"actions": "doSomething"}}}
                 },
             },
-            MachineLogic(actions={"doSomething": mock_action}),
+            logic=MachineLogic(actions={"doSomething": mock_action}),
         )
         interpreter = await Interpreter(machine).start()
         self.assertEqual(interpreter.current_state_ids, {"internal.active"})
@@ -408,7 +408,9 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                     "a": {"on": {"EVENT": {"actions": ["action1", "action2"]}}}
                 },
             },
-            MachineLogic(actions={"action1": action1, "action2": action2}),
+            logic=MachineLogic(
+                actions={"action1": action1, "action2": action2}
+            ),
         )
         interpreter = await Interpreter(machine).start()
         await interpreter.send("EVENT")
@@ -433,7 +435,7 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                     "b": {"entry": "onEnterB"},
                 },
             },
-            MachineLogic(
+            logic=MachineLogic(
                 actions={"onEnterB": entry_action, "onExitA": exit_action}
             ),
         )
@@ -550,7 +552,7 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                     }
                 },
             },
-            MachineLogic(
+            logic=MachineLogic(
                 actions={"myAction": mock_action},
                 guards={"myGuard": mock_guard},
             ),
@@ -580,7 +582,7 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                 "initial": "a",
                 "states": {"a": {"on": {"EVENT": {"guard": "nonexistent"}}}},
             },
-            MachineLogic(),
+            logic=MachineLogic(),
         )
         interpreter = await Interpreter(machine).start()
         await interpreter.send("EVENT")
@@ -607,7 +609,7 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                 "initial": "a",
                 "states": {"a": {"invoke": {"src": "nonexistent"}}},
             },
-            MachineLogic(),
+            logic=MachineLogic(),
         )
         with self.assertRaises(ImplementationMissingError) as cm:
             await Interpreter(machine).start()
@@ -630,7 +632,7 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                 "initial": "active",
                 "states": {"active": {"entry": "spawn_badActor"}},
             },
-            MachineLogic(services={"badActor": bad_actor_service}),
+            logic=MachineLogic(services={"badActor": bad_actor_service}),
         )
         with self.assertRaises(ActorSpawningError) as cm:
             await Interpreter(machine).start()
@@ -1110,7 +1112,7 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                     "c": {},
                 },
             },
-            logic,
+            logic=logic,
         )
 
         interpreter = await Interpreter(machine).start()

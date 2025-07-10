@@ -12,6 +12,7 @@ from src.xstate_statemachine.models import (
     ActionDefinition,
     InvokeDefinition,
     MachineNode,
+    StateNode,
 )
 from xstate_statemachine import Event
 
@@ -123,6 +124,7 @@ class TestModels(unittest.TestCase):
         state_a1 = machine.get_state_by_id("tester.a.a1")
         state_b = machine.get_state_by_id("tester.b")
 
+        # ✅ FIX: Call the method on the instance `root`, not the class `StateNode`.
         self.assertTrue(root._is_descendant(state_a1, root))
         self.assertTrue(state_a._is_descendant(state_a1, state_a))
         self.assertFalse(state_a._is_descendant(state_b, state_a))
@@ -141,7 +143,10 @@ class TestModels(unittest.TestCase):
             }
         )
         state_b = machine.get_state_by_id("t.b")
+
+        # ✅ FIX: Call the method on the instance `machine`, not the class `StateNode`.
         path = machine._get_path_to_state(state_b, stop_at=machine)
+
         self.assertEqual([p.id for p in path], ["t.b"])
 
     def test_invalid_config_with_non_string_id(self) -> None:

@@ -230,7 +230,7 @@ class TestSyncInterpreter(unittest.TestCase):
                     "success": {},
                 },
             },
-            logic,
+            logic=logic,
         )
         interpreter = SyncInterpreter(machine).start()
         interpreter.send("LOGIN")
@@ -252,7 +252,7 @@ class TestSyncInterpreter(unittest.TestCase):
                     "success": {},
                 },
             },
-            logic,
+            logic=logic,
         )
         interpreter = SyncInterpreter(machine).start()
         interpreter.send("LOGIN")
@@ -401,7 +401,7 @@ class TestSyncInterpreter(unittest.TestCase):
                     "b": {"entry": "enterB"},
                 },
             },
-            logic,
+            logic=logic,
         )
         interpreter = SyncInterpreter(machine).start()
         interpreter.send("NEXT")
@@ -419,7 +419,7 @@ class TestSyncInterpreter(unittest.TestCase):
                 "enterB": lambda i, c, e, a: call_order.append("enterB"),
             }
         )
-        machine = create_machine(self.nested_machine_config, logic)
+        machine = create_machine(self.nested_machine_config, logic=logic)
         interpreter = SyncInterpreter(machine).start()
         self.assertEqual(call_order, ["enterA", "enterA1"])
         call_order.clear()
@@ -535,7 +535,7 @@ class TestSyncInterpreter(unittest.TestCase):
                     "success": {},
                 },
             },
-            logic,
+            logic=logic,
         )
         interpreter = SyncInterpreter(machine).start()
         self.assertEqual(interpreter.current_state_ids, {"fetcher.success"})
@@ -558,7 +558,7 @@ class TestSyncInterpreter(unittest.TestCase):
                     "failure": {},
                 },
             },
-            logic,
+            logic=logic,
         )
         interpreter = SyncInterpreter(machine).start()
         self.assertEqual(interpreter.current_state_ids, {"fetcher.failure"})
@@ -589,7 +589,7 @@ class TestSyncInterpreter(unittest.TestCase):
                     "success": {},
                 },
             },
-            logic,
+            logic=logic,
         )
         interpreter = SyncInterpreter(machine).start()
         self.assertEqual(
@@ -620,7 +620,7 @@ class TestSyncInterpreter(unittest.TestCase):
                     "done": {},
                 },
             },
-            logic,
+            logic=logic,
         )
         interpreter = SyncInterpreter(machine).start()
         self.assertEqual(interpreter.current_state_ids, {"none_service.done"})
@@ -939,9 +939,12 @@ class TestSyncInterpreter(unittest.TestCase):
             {"id": "m", "initial": "s1", "states": {"s1": {}}}
         )
         snapshot = '{"status": "running", "context": {}, "state_ids": ["m.nonexistent"]}'
+
+        # ✅ FIX: Updated the regular expression to match the new, more
+        # precise error message produced by the exception.
         with self.assertRaisesRegex(
             StateNotFoundError,
-            "Could not resolve target state 'm.nonexistent'",
+            "Could not find state with ID 'm.nonexistent'",
         ):
             SyncInterpreter.from_snapshot(snapshot, machine)
 
@@ -954,7 +957,7 @@ class TestSyncInterpreter(unittest.TestCase):
                 "initial": "working",
                 "states": {"working": {"invoke": {"src": "doNothing"}}},
             },
-            logic,
+            logic=logic,
         )
         # The machine should start and simply remain in the 'working' state.
         interpreter = SyncInterpreter(machine).start()
@@ -985,7 +988,7 @@ class TestSyncInterpreter(unittest.TestCase):
                     "b": {},
                 },
             },
-            logic,
+            logic=logic,
         )
         interpreter = SyncInterpreter(machine).start()
         interpreter.send("E")
@@ -1019,7 +1022,7 @@ class TestSyncInterpreter(unittest.TestCase):
                     }
                 },
             },
-            logic,
+            logic=logic,
         )
         SyncInterpreter(machine).start()
         self.assertEqual(call_order, ["A", "B", "C"])
@@ -1058,7 +1061,7 @@ class TestSyncInterpreter(unittest.TestCase):
                     "d": {},
                 },
             },
-            logic,
+            logic=logic,
         )
         interpreter = SyncInterpreter(machine).start()
         interpreter.send("FINISH")
