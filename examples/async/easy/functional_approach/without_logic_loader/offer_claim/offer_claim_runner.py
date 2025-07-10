@@ -49,6 +49,8 @@ async def main() -> None:
     interpreter = await Interpreter(machine).start()
     logger.info(f"Initial state: {interpreter.current_state_ids}")
 
+    await asyncio.sleep(1)
+
     # First claim attempt
     logger.info("➡️ Sending CLAIM event...")
     await interpreter.send("CLAIM", user="basil")
@@ -58,7 +60,7 @@ async def main() -> None:
     # Second claim should be ignored
     logger.info("➡️ Sending CLAIM event again...")
     await interpreter.send("CLAIM", user="another_user")
-    await asyncio.sleep(0.1)
+    await asyncio.sleep(2)
     logger.info(f"Final state (unchanged): {interpreter.current_state_ids}")
 
     await interpreter.stop()

@@ -55,9 +55,13 @@ async def main() -> None:
     await asyncio.sleep(0.01)
     logger.info(f"State after TOGGLE: {interpreter.current_state_ids}")
 
+    await asyncio.sleep(1)  # Simulate some delay before next toggle
+
     await interpreter.send("TOGGLE")
     await asyncio.sleep(0.01)
     logger.info(f"State after second TOGGLE: {interpreter.current_state_ids}")
+
+    await asyncio.sleep(1)  # Simulate some delay before next toggle
 
     # Stop interpreter
     await interpreter.stop()

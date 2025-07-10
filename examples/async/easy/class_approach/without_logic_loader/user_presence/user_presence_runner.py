@@ -52,12 +52,12 @@ async def main() -> None:
 
     logger.info("➡️ Sending CONNECT event...")
     await interpreter.send("CONNECT", user_id="user-123")
-    await asyncio.sleep(0.6)
+    await asyncio.sleep(3)
     logger.info(f"State after CONNECT: {interpreter.current_state_ids}")
 
     logger.info("➡️ Sending DISCONNECT event...")
     await interpreter.send("DISCONNECT")
-    await asyncio.sleep(0.6)
+    await asyncio.sleep(2)
     logger.info(f"Final state: {interpreter.current_state_ids}")
 
     await interpreter.stop()

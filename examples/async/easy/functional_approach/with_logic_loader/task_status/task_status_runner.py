@@ -45,14 +45,16 @@ async def main() -> None:
     interpreter = await Interpreter(machine).start()
     logger.info(f"Initial state: {interpreter.current_state_ids}")
 
+    await asyncio.sleep(1)
+
     logger.info("➡️ Sending START event...")
     await interpreter.send("START", id="job-456")
-    await asyncio.sleep(0.8)
+    await asyncio.sleep(2)
     logger.info(f"State after START: {interpreter.current_state_ids}")
 
     logger.info("➡️ Sending FINISH event...")
     await interpreter.send("FINISH")
-    await asyncio.sleep(0.4)
+    await asyncio.sleep(1)
     logger.info(f"Final state: {interpreter.current_state_ids}")
 
     await interpreter.stop()

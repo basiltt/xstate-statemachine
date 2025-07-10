@@ -104,19 +104,39 @@ class PluginBase(Generic[TInterpreter]):
         """
         pass
 
-    def on_event_received(
-        self, interpreter: TInterpreter, event: "Event"
+    def on_event_received(  # noqa: D401  – imperative mood is appropriate
+        self,
+        interpreter: "BaseInterpreter[Any, Any]",
+        event: "Event",
     ) -> None:
-        """Hook called immediately after an event is received, before processing.
+        """Log an event without ever triggering ``Event.data`` errors.
 
-        This provides a look at the raw event that is about to trigger a
-        potential state transition.
+        A plain ``Event`` raises a ``TypeError`` if its ``payload`` is *not*
+        a ``dict`` and code accesses ``event.data``.  This version:
 
-        Args:
-            interpreter: The interpreter instance processing the event.
-            event: The `Event` object that was received.
+        1. Uses ``event.payload`` **only** when the attribute exists.
+        2. Falls back to ``event.data`` for internal events
+           (``DoneEvent``, ``AfterEvent``).
+        3. Emits a concise log line – no helper that re-accesses ``event.data``.
+
+        That makes the inspector safe for string, ``None``, or other primitive
+        payloads and fixes the failing test cases.
         """
-        pass
+        # ---------------------------------------------------------------------
+        # 1️⃣  Determine what we can safely display
+        # ---------------------------------------------------------------------
+        if hasattr(event, "payload"):  # Standard Event
+            data_to_log = event.payload  # may be str / int / None / dict
+        else:  # DoneEvent / AfterEvent
+            data_to_log = getattr(event, "data", None)
+
+        # ---------------------------------------------------------------------
+        # 2️⃣  Build & emit the log message
+        # ---------------------------------------------------------------------
+        message = f"🕵️ [INSPECT] Event Received: {event.type}"
+        if data_to_log is not None:
+            message += f" | Data: {data_to_log}"
+        logger.info(message)
 
     def on_transition(
         self,
@@ -172,30 +192,34 @@ class LoggingInspector(PluginBase[Any]):
     sync and async interpreters.
     """
 
-    def on_event_received(
-        self, interpreter: "BaseInterpreter[Any, Any]", event: "Event"
+    def on_event_received(  # noqa: D401 – “Log …” (imperative) is acceptable
+        self,
+        interpreter: "BaseInterpreter[Any, Any]",
+        event: "Event",
     ) -> None:
-        """Logs the details of every event processed by the machine.
+        """Log the event in a **TypeError-free** fashion.
 
-        This method robustly handles different event structures (like `Event`
-        and `DoneEvent`) to prevent errors during inspection.
+        The inspector must *never* raise when the event’s ``payload`` is a
+        primitive (``str``, ``int``, ``None``).  The old implementation
+        accessed ``event.data`` unconditionally, which *raises* for such
+        cases.  The logic is now:
 
-        Args:
-            interpreter: The interpreter instance processing the event.
-            event: The `Event` object that was received.
+        1. **If** the event has a ``payload`` attribute (standard ``Event``),
+           log that *value as-is* — do **not** touch ``event.data``.
+        2. **Else** (``DoneEvent`` / ``AfterEvent``), safely read
+           ``event.data``.
         """
-        # ⚙️ Safely access event data. Some event types (like DoneEvent)
-        # have a `data` attribute, while standard events have `payload`.
-        # Using getattr provides a safe way to check for either.
-        data_or_payload = getattr(
-            event, "payload", getattr(event, "data", None)
-        )
+        # 1️⃣  Extract something loggable without risking TypeError
+        if hasattr(event, "payload"):
+            data_to_log = event.payload  # may be primitive / dict / None
+        else:
+            data_to_log = getattr(event, "data", None)
 
-        log_message = f"🕵️ [INSPECT] Event Received: {event.type}"
-        if data_or_payload is not None:
-            log_message += f" | Data: {data_or_payload}"
-
-        logger.info(log_message)
+        # 2️⃣  Compose and emit log line
+        msg = f"🕵️ [INSPECT] Event Received: {event.type}"
+        if data_to_log is not None:
+            msg += f" | Data: {data_to_log}"
+        logger.info(msg)
 
     def on_transition(
         self,
