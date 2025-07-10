@@ -333,6 +333,8 @@ Because the **graph never mutates**, every team-mate sees the same reality. Chan
 
 ## 🎨 Visual-First Development<a name="visual-first-development"></a>
 
+
+
 1. **Design** in the **Stately Editor** → drag states, draw arrows.
 2. **Export** to JSON (one click).
 3. **Run** with `create_machine(config)` in Python.
@@ -343,6 +345,61 @@ Because the **graph never mutates**, every team-mate sees the same reality. Chan
 * **Stakeholder Friendly** — Product managers & QA can _read_ and _play_ with the diagram.
 * **Zero Drift** — Diagram **is** the code. Update one, you update both.
 * **Faster On-Boarding** — New hires grok the flow in minutes, not days.
+
+---
+
+
+### 🖼️ Designing with Stately Visual Editor<a name="stately-visual-editor"></a>
+
+> “If a picture is worth a thousand words, a *statechart* is worth a thousand **unit-tests**.”
+
+The **[Stately Visual Editor](https://stately.ai/editor) →** is the *single most productive tool* in the XState ecosystem.
+It lets you **draw** your machine, **simulate** it in real‑time, and **export** a perfectly–valid JSON blueprint that runs *unchanged* in `xstate‑statemachine` for Python.
+
+### 🔑 Why the Editor Matters
+
+| Benefit | What it Means for You |
+|---------|-----------------------|
+| **WYSIWYG Modelling** | Drag‑and‑drop states, draw transitions, and tweak guards—no JSON eye‑strain. |
+| **Instant Simulation** | Play events, watch timers fire, and inspect context mutations live before writing Python code. |
+| **Team Collaboration** | Share a link; PMs and QA can *see* the flow and leave comments, killing a whole back‑and‑forth thread of screenshots. |
+| **Source of Truth** | The exported JSON *is* the code—zero drift between docs and implementation. |
+| **Version Control Friendly** | Download the JSON (or embed it in your repo) and diff it like any other text asset. |
+
+### 🛠️ Typical Workflow
+
+1. **Sketch** the high‑level flow on a whiteboard (or directly in the editor).
+2. **Model** it in the Stately Editor:
+   * Add *states* (double‑click canvas)
+   * Create *transitions* (drag arrow from one state to another)
+   * Configure *events*, *guards*, *actions*, *after* timers, and *invoke* services in the side‑panel UI.
+3. **Simulate**: hit ▶️, dispatch events, and watch the visual debugger update in real time.
+4. **Export** → **“Machine JSON”** (⚙️ menu → *Export → Machine JSON*).
+   Save as `my_machine.json` in your project’s `statecharts/` folder.
+5. **Run** it with:
+
+   ```python
+   from xstate_statemachine import create_machine, Interpreter
+   import json, asyncio
+
+   cfg = json.load(open("statecharts/my_machine.json"))
+   machine = create_machine(cfg, logic_modules=[my_logic])
+   await Interpreter(machine).start()
+   ```
+
+6. **Iterate**: tweak the diagram, re‑export, rerun tests. Your Python logic remains untouched.
+
+### 🎨 Pro Tips for Power Users
+
+| Tip | Shortcut / Action |
+|-----|-------------------|
+| **Multi‑Select** | <kbd>Shift</kbd> + Click or drag marquee to move/align groups of states. |
+| **Quick Transition** | Hold <kbd>A</kbd>, click source state, then click target state. |
+| **Relative Targets** | Double‑click a self‑transition arrow to toggle between **internal** and **external** (re‑entry) semantics. |
+| **Context Visualisation** | In the *Simulate* tab, expand **Context** to live‑edit values while the machine is running—great for guard testing. |
+| **Export Diagram** | *Export → SVG / PNG* to embed in GitHub docs; keep diagrams and JSON in‑sync ✨. |
+| **Embed Gist** | Publish the machine as a sharable, *live* gist you can link in PR descriptions. |
+
 
 ---
 
