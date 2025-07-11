@@ -1584,6 +1584,184 @@ class TestSyncInterpreter(unittest.TestCase):
         # ✨ Assert: The stop hook of the plugin was not called.
         mock_plugin.on_interpreter_stop.assert_not_called()
 
+    # -------------------------------------------------------------------------
+    # 🔌 Plugin System: New Hooks Tests
+    # -------------------------------------------------------------------------
+
+    def test_plugin_on_guard_evaluated_hook(self) -> None:
+        """
+        Tests that the `on_guard_evaluated` plugin hook is called for sync interpreters.
+        """
+        logger.info(
+            "🧪 Testing `on_guard_evaluated` plugin hook with SyncInterpreter."
+        )
+        # 🤖 Arrange
+        mock_plugin = MagicMock(spec=PluginBase)
+        logic = MachineLogic(
+            guards={
+                "canProceed": lambda _c, _e: True,
+                "cannotProceed": lambda _c, _e: False,
+            }
+        )
+        machine_config: Dict[str, Any] = {
+            "id": "guarded_sync_machine",
+            "initial": "start",
+            "states": {
+                "start": {
+                    "on": {
+                        "GO": [
+                            {"target": "success", "guard": "canProceed"},
+                            {"target": "failure", "guard": "cannotProceed"},
+                        ]
+                    }
+                },
+                "success": {},
+                "failure": {},
+            },
+        }
+        machine = create_machine(machine_config, logic=logic)
+        interpreter = SyncInterpreter(machine).use(mock_plugin).start()
+        test_event = Event("GO", payload={"value": 10})
+
+        # ⚡ Act
+        interpreter.send(test_event)
+
+        # ✨ Assert
+        # Two guards evaluated: "canProceed" (True) and "cannotProceed" (False)
+        self.assertEqual(mock_plugin.on_guard_evaluated.call_count, 2)
+
+        # Check call for "canProceed"
+        first_call_args = mock_plugin.on_guard_evaluated.call_args_list[0].args
+        self.assertEqual(first_call_args[0], interpreter)
+        self.assertEqual(first_call_args[1], "canProceed")
+        self.assertEqual(first_call_args[2].type, test_event.type)
+        self.assertTrue(first_call_args[3])  # result
+
+        # Check call for "cannotProceed"
+        second_call_args = mock_plugin.on_guard_evaluated.call_args_list[
+            1
+        ].args
+        self.assertEqual(second_call_args[0], interpreter)
+        self.assertEqual(second_call_args[1], "cannotProceed")
+        self.assertEqual(second_call_args[2].type, test_event.type)
+        self.assertFalse(second_call_args[3])  # result
+
+        self.assertEqual(
+            interpreter.current_state_ids, {"guarded_sync_machine.success"}
+        )
+
+    def test_plugin_on_service_start_hook(self) -> None:
+        """
+        Tests that the `on_service_start` plugin hook is called for sync services.
+        """
+        logger.info(
+            "🧪 Testing `on_service_start` plugin hook with SyncInterpreter."
+        )
+        # 🤖 Arrange
+        mock_plugin = MagicMock(spec=PluginBase)
+        mock_service = MagicMock(return_value="sync_data")
+        logic = MachineLogic(services={"mySyncService": mock_service})
+        machine_config: Dict[str, Any] = {
+            "id": "sync_service_machine",
+            "initial": "invoke_state",
+            "states": {
+                "invoke_state": {
+                    "invoke": {"src": "mySyncService", "onDone": "done"}
+                },
+                "done": {},
+            },
+        }
+        machine = create_machine(machine_config, logic=logic)
+        interpreter = SyncInterpreter(machine).use(mock_plugin).start()
+
+        # ⚡ Act - Service invocation is on entry, so it's already done by .start()
+        # No additional send needed.
+
+        # ✨ Assert
+        mock_plugin.on_service_start.assert_called_once()
+        args, kwargs = mock_plugin.on_service_start.call_args
+        self.assertEqual(args[0], interpreter)
+        self.assertEqual(args[1].src, "mySyncService")
+        self.assertTrue(mock_service.called)
+
+    def test_plugin_on_service_done_hook(self) -> None:
+        """
+        Tests that the `on_service_done` plugin hook is called on successful sync service completion.
+        """
+        logger.info(
+            "🧪 Testing `on_service_done` plugin hook with SyncInterpreter."
+        )
+        # 🤖 Arrange
+        mock_plugin = MagicMock(spec=PluginBase)
+        service_result = {"status": "sync_success"}
+        mock_service = MagicMock(return_value=service_result)
+        logic = MachineLogic(services={"mySyncService": mock_service})
+        machine_config: Dict[str, Any] = {
+            "id": "sync_service_done_machine",
+            "initial": "invoke_state",
+            "states": {
+                "invoke_state": {
+                    "invoke": {"src": "mySyncService", "onDone": "done"}
+                },
+                "done": {},
+            },
+        }
+        machine = create_machine(machine_config, logic=logic)
+        interpreter = SyncInterpreter(machine).use(mock_plugin).start()
+
+        # ⚡ Act - Service invocation is on entry.
+
+        # ✨ Assert
+        mock_plugin.on_service_done.assert_called_once()
+        args, kwargs = mock_plugin.on_service_done.call_args
+        self.assertEqual(args[0], interpreter)
+        self.assertEqual(args[1].src, "mySyncService")
+        self.assertEqual(args[2], service_result)
+        self.assertEqual(
+            interpreter.current_state_ids, {"sync_service_done_machine.done"}
+        )
+
+    def test_plugin_on_service_error_hook(self) -> None:
+        """
+        Tests that the `on_service_error` plugin hook is called on sync service failure.
+        """
+        logger.info(
+            "🧪 Testing `on_service_error` plugin hook with SyncInterpreter."
+        )
+        # 🤖 Arrange
+        mock_plugin = MagicMock(spec=PluginBase)
+        service_error = RuntimeError("Sync service failed!")
+        mock_service = MagicMock(side_effect=service_error)
+        logic = MachineLogic(services={"failingSyncService": mock_service})
+        machine_config: Dict[str, Any] = {
+            "id": "sync_service_error_machine",
+            "initial": "invoke_state",
+            "states": {
+                "invoke_state": {
+                    "invoke": {
+                        "src": "failingSyncService",
+                        "onError": "failed",
+                    }
+                },
+                "failed": {},
+            },
+        }
+        machine = create_machine(machine_config, logic=logic)
+        interpreter = SyncInterpreter(machine).use(mock_plugin).start()
+
+        # ⚡ Act - Service invocation is on entry.
+
+        # ✨ Assert
+        mock_plugin.on_service_error.assert_called_once()
+        args, kwargs = mock_plugin.on_service_error.call_args
+        self.assertEqual(args[0], interpreter)
+        self.assertEqual(args[1].src, "failingSyncService")
+        self.assertEqual(args[2], service_error)
+        self.assertEqual(
+            interpreter.current_state_ids,
+            {"sync_service_error_machine.failed"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

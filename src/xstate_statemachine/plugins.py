@@ -42,7 +42,12 @@ from .logger import logger
 if TYPE_CHECKING:
     from .base_interpreter import BaseInterpreter
     from .events import Event
-    from .models import ActionDefinition, StateNode, TransitionDefinition
+    from .models import (
+        ActionDefinition,
+        StateNode,
+        TransitionDefinition,
+        InvokeDefinition,
+    )
 
 # -----------------------------------------------------------------------------
 # 🔹 Type Variable for Generic Plugin
@@ -176,6 +181,64 @@ class PluginBase(Generic[TInterpreter]):
         """
         pass
 
+    def on_guard_evaluated(
+        self,
+        interpreter: TInterpreter,
+        guard_name: str,
+        event: "Event",
+        result: bool,
+    ) -> None:
+        """Hook called after a guard condition has been evaluated.
+
+        Args:
+            interpreter: The interpreter instance.
+            guard_name: The name of the guard function that was evaluated.
+            event: The event that triggered the guard evaluation.
+            result: The boolean result of the guard evaluation (True if passed, False if failed).
+        """
+        pass
+
+    def on_service_start(
+        self, interpreter: TInterpreter, invocation: "InvokeDefinition"
+    ) -> None:
+        """Hook called when an invoked service is about to start.
+
+        Args:
+            interpreter: The interpreter instance.
+            invocation: The `InvokeDefinition` of the service about to start.
+        """
+        pass
+
+    def on_service_done(
+        self,
+        interpreter: TInterpreter,
+        invocation: "InvokeDefinition",
+        result: Any,
+    ) -> None:
+        """Hook called when an invoked service completes successfully.
+
+        Args:
+            interpreter: The interpreter instance.
+            invocation: The `InvokeDefinition` of the service that completed.
+            result: The return value of the completed service.
+        """
+        pass
+
+    def on_service_error(
+        self,
+        interpreter: TInterpreter,
+        invocation: "InvokeDefinition",
+        error: Exception,
+    ) -> None:
+        """Hook called when an invoked service fails with an error.
+
+        Args:
+            interpreter: The interpreter instance.
+            invocation: The `InvokeDefinition` of the service that failed.
+            error: The exception raised by the service.
+        """
+        pass
+
 
 # -----------------------------------------------------------------------------
 # 🕵️ Built-in Logging Plugin
@@ -274,3 +337,83 @@ class LoggingInspector(PluginBase[Any]):
             action: The `ActionDefinition` of the action to be run.
         """
         logger.info("🕵️ [INSPECT] Executing Action: %s", action.type)
+
+    def on_guard_evaluated(
+        self,
+        interpreter: "BaseInterpreter[Any, Any]",
+        guard_name: str,
+        event: "Event",
+        result: bool,
+    ) -> None:
+        """Logs the evaluation of a guard.
+
+        Args:
+            interpreter: The interpreter instance.
+            guard_name: The name of the guard.
+            event: The event being processed.
+            result: The result of the guard evaluation.
+        """
+        logger.info(
+            "🕵️ [INSPECT] Guard '%s' evaluated: %s for event '%s'",
+            guard_name,
+            "Passed" if result else "Failed",
+            event.type,
+        )
+
+    def on_service_start(
+        self,
+        interpreter: "BaseInterpreter[Any, Any]",
+        invocation: "InvokeDefinition",
+    ) -> None:
+        """Logs when an invoked service starts.
+
+        Args:
+            interpreter: The interpreter instance.
+            invocation: The invocation definition.
+        """
+        logger.info(
+            "🕵️ [INSPECT] Service '%s' (ID: %s) starting...",
+            invocation.src,
+            invocation.id,
+        )
+
+    def on_service_done(
+        self,
+        interpreter: "BaseInterpreter[Any, Any]",
+        invocation: "InvokeDefinition",
+        result: Any,
+    ) -> None:
+        """Logs when an invoked service completes successfully.
+
+        Args:
+            interpreter: The interpreter instance.
+            invocation: The invocation definition.
+            result: The result from the service.
+        """
+        logger.info(
+            "🕵️ [INSPECT] Service '%s' (ID: %s) completed. Result: %s",
+            invocation.src,
+            invocation.id,
+            result,
+        )
+
+    def on_service_error(
+        self,
+        interpreter: "BaseInterpreter[Any, Any]",
+        invocation: "InvokeDefinition",
+        error: Exception,
+    ) -> None:
+        """Logs when an invoked service fails.
+
+        Args:
+            interpreter: The interpreter instance.
+            invocation: The invocation definition.
+            error: The error from the service.
+        """
+        logger.error(
+            "🕵️ [INSPECT] Service '%s' (ID: %s) failed. Error: %s",
+            invocation.src,
+            invocation.id,
+            error,
+            exc_info=True,
+        )

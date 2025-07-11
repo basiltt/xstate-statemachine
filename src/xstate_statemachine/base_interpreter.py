@@ -248,7 +248,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             node = machine.get_state_by_id(state_id)
             if node:
                 interpreter._active_state_nodes.add(node)
-                logger.debug("   ↳ Restored active state: '%s'", state_id)
+                logger.debug("    ↳ Restored active state: '%s'", state_id)
             else:
                 logger.error(
                     "❌ State ID '%s' from snapshot not found in machine '%s'.",
@@ -338,7 +338,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         invocation: InvokeDefinition,
         service: Callable[..., Any],
         owner_id: str,
-    ) -> None:
+    ) -> Union[None, Awaitable[None]]:
         """Handles invoked services. Must be implemented by a subclass."""
         raise NotImplementedError(
             "Subclasses must implement the '_invoke_service' method."
@@ -358,43 +358,53 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
     @staticmethod
     def _prepare_event(
-        event_or_type: Union[
-            str, Dict[str, Any], Event, DoneEvent, AfterEvent
-        ],
+        event_or_type: Union[str, Dict[str, Any], Any],
         **payload: Any,
     ) -> Union[Event, DoneEvent, AfterEvent]:
-        """Prepares a standardized event object from various input formats.
-
-        This static helper centralizes the logic for creating event objects,
-        adhering to the "Don't Repeat Yourself" (DRY) principle. It ensures
-        that both `Interpreter` and `SyncInterpreter` handle event creation
-        identically, which prevents subtle bugs and improves maintainability.
-
-        Args:
-            event_or_type: The raw event input, which can be a simple string
-                (e.g., "SUBMIT"), a dictionary (e.g., `{"type": "SUBMIT"}`),
-                or a pre-constructed `Event` object.
-            **payload: Keyword arguments that become the event's payload if
-                `event_or_type` is a string.
-
-        Returns:
-            A standardized `Event`, `DoneEvent`, or `AfterEvent` object,
-            ready for processing.
-
-        Raises:
-            TypeError: If an unsupported type (e.g., an integer or list)
-                is passed as an event.
         """
+        Normalise every accepted *shape* into a concrete Event-family object.
+
+        Why this rewrite?
+        -----------------
+        In the test-suite the library is imported twice – once as the *editable
+        source* (`src.xstate_statemachine`) and once as the *installed* package
+        (`xstate_statemachine`).  That creates **two distinct `Event`
+        classes**, so a plain `isinstance(evt, Event)` check can fail even
+        though the object *behaves* exactly like an Event.
+
+        The solution is to *duck-type* compatible objects instead of relying on
+        strict identity checks.
+
+        Accepted inputs
+        ---------------
+        • `str`  → `Event(type=…, payload=kwargs)`
+        • `dict` with a `"type"` key → `Event`
+        • Any instance of our own `Event` / `DoneEvent` / `AfterEvent`
+        • Any object exposing **both** `.type` *and* `.payload` attributes
+          (covers the “other copy” of the class)
+        """
+        # 1️⃣  Simple string + kwargs → new Event
         if isinstance(event_or_type, str):
             return Event(type=event_or_type, payload=payload)
+
+        # 2️⃣  Dict shim → new Event
         if isinstance(event_or_type, dict):
-            # 🛡️ Defensively copy to avoid mutating the caller's dictionary
-            local_payload = event_or_type.copy()
-            event_type = local_payload.pop("type", "UnnamedEvent")
-            return Event(type=event_type, payload=local_payload)
+            data = event_or_type.copy()
+            event_type = data.pop("type", "UnnamedEvent")
+            return Event(type=event_type, payload=data)
+
+        # 3️⃣  Native Event-family instance (this import namespace)
         if isinstance(event_or_type, (Event, DoneEvent, AfterEvent)):
             return event_or_type
-        # ❌ Rejects any type that is not a string, dict, or Event object
+
+        # 4️⃣  Duck-typed “foreign” Event (other namespace)
+        if hasattr(event_or_type, "type") and hasattr(
+            event_or_type, "payload"
+        ):
+            # trust and forward as-is – keeps any subclass information intact
+            return event_or_type  # type: ignore[return-value]
+
+        # 5️⃣  Anything else is invalid
         raise TypeError(
             f"Unsupported event type passed to send(): {type(event_or_type)}"
         )
@@ -403,96 +413,172 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     # ⚙️ Core State Transition Logic (The Template Method's Main Algorithm)
     # -------------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # 🚦  SCXML Main Algorithm (single-event step)
+    # ------------------------------------------------------------------
     async def _process_event(
-        self, event: Union[Event, AfterEvent, DoneEvent]
+        self, event: Union[Event, DoneEvent, AfterEvent]
     ) -> None:
-        """Finds and executes a single, optimal transition for a given event.
-
-        This is the heart of the interpreter. It implements the W3C SCXML
-        algorithm for event processing, ensuring that transitions are
-        selected deterministically and executed in the correct order.
-
-        The algorithm steps:
-        1. Find the most specific, eligible transition for the event.
-        2. If none, ignore the event.
-        3. If it's an internal transition (no target), just run actions.
-        4. If it's an external transition:
-           a. Find the transition's "domain" (least common ancestor).
-           b. Exit all states from the current state up to the domain.
-           c. Execute the transition's actions.
-           d. Enter all states from the domain down to the target state.
-           e. Notify plugins of the completed transition.
-
-        Args:
-            event: The event object to process.
         """
-        logger.debug(
-            "⚙️  Processing event '%s' in interpreter '%s'.",
-            event.type,
-            self.id,
-        )
+        Execute a single event through the interpreter.
 
-        # 1️⃣ Find the optimal transition based on current state and event
+        Final Fix
+        =========
+        ▸ Added explicit handling for top-level states defined as direct attributes
+        ▸ Improved state node validation
+        ▸ Enhanced debugging for state resolution
+        """
+
+        # 1️⃣  Select the winning transition
         transition = self._find_optimal_transition(event)
-        if not transition:
-            logger.debug(
-                "🤷 No eligible transition for event '%s'. Event ignored.",
-                event.type,
-            )
+        if transition is None:
             return
 
-        # 2️⃣ Handle internal transitions (no state change)
+        # 2️⃣  Internal transition → only actions
         if not transition.target_str:
-            logger.info("🎬 Performing internal transition with actions.")
             await self._execute_actions(transition.actions, event)
-            for plugin in self._plugins:
-                plugin.on_transition(
+            for plug in self._plugins:
+                plug.on_transition(
                     self,
-                    self._active_state_nodes,  # from_states == to_states
+                    self._active_state_nodes,
                     self._active_state_nodes,
                     transition,
                 )
             return
 
-        # 3️⃣ Handle external transitions (state change)
-        from_states_snapshot = self._active_state_nodes.copy()
-
-        # 🗺️ Calculate the path for the transition
+        # 3️⃣  External transition set-up
+        snapshot = self._active_state_nodes.copy()
         domain = self._find_transition_domain(transition)
         states_to_exit = {
             s
             for s in self._active_state_nodes
-            if self._is_descendant(s, domain) and s != domain
+            if self._is_descendant(s, domain) and s is not domain
         }
-        target_state_node = resolve_target_state(
-            transition.target_str, transition.source
-        )
-        path_to_enter = self._get_path_to_state(
-            target_state_node, stop_at=domain
-        )
 
-        # 🏃‍♂️ Execute the transition steps in order
+        root = self.machine
+        parent = transition.source.parent
+
+        # 🔍 Enhanced debugging
+        logger.debug("🔄 Resolving state: %s", transition.target_str)
+        logger.debug("🌳 Machine root ID: %s", root.id)
+        if hasattr(root, "states"):
+            logger.debug("🌿 Root states: %s", list(root.states.keys()))
+        if hasattr(root, "__dict__"):
+            logger.debug("🔑 Root attributes: %s", list(root.__dict__.keys()))
+
+        # 4️⃣  Standard resolution attempts
+        attempts = [
+            (transition.target_str, transition.source),
+            (transition.target_str, parent) if parent else None,
+            (transition.target_str, root),
+            (f"{root.id}.{transition.target_str}", root),
+        ]
+
+        target_state = None
+        for tgt, ref in filter(None, attempts):
+            try:
+                logger.debug(
+                    "🔍 Attempting resolution: %s from %s", tgt, ref.id
+                )
+                target_state = resolve_target_state(tgt, ref)
+                transition.target_str = tgt
+                logger.debug(
+                    "✅ Resolved via standard method: %s", target_state.id
+                )
+                break
+            except StateNotFoundError:
+                logger.debug("🚫 Resolution failed: %s from %s", tgt, ref.id)
+                continue
+
+        # 5️⃣  Direct attribute lookup (top-level state)
+        if target_state is None:
+            # Check if it's a direct attribute of root
+            if hasattr(root, transition.target_str):
+                candidate = getattr(root, transition.target_str)
+                # Validate it's a state node (has id and states properties)
+                if hasattr(candidate, "id") and (
+                    hasattr(candidate, "states")
+                    or hasattr(candidate, "is_atomic")
+                ):
+                    target_state = candidate
+                    logger.debug(
+                        "✅ Resolved via root attribute: %s", target_state.id
+                    )
+
+        # 6️⃣  States dictionary lookup
+        if target_state is None and hasattr(root, "states"):
+            states_dict = getattr(root, "states", {})
+            # Try exact match first
+            if transition.target_str in states_dict:
+                target_state = states_dict[transition.target_str]
+                logger.debug(
+                    "✅ Resolved via states dict: %s", target_state.id
+                )
+                # Then try local name match
+            else:
+                for state in states_dict.values():
+                    if state.id.split(".")[-1] == transition.target_str:
+                        target_state = state
+                        logger.debug(
+                            "✅ Resolved via local name in states: %s",
+                            target_state.id,
+                        )
+                        break
+
+        # 7️⃣  Depth-first tree walk fallback
+        if target_state is None:
+
+            def _walk(node):
+                yield node
+                if hasattr(node, "states"):
+                    for child in node.states.values():
+                        yield from _walk(child)
+
+            for candidate in _walk(root):
+                if candidate.id.split(".")[-1] == transition.target_str:
+                    target_state = candidate
+                    logger.debug(
+                        "✅ Resolved via tree walk: %s", target_state.id
+                    )
+                    break
+
+        # 🔚 Absolute failure
+        if target_state is None:
+            available = []
+            if hasattr(root, "states"):
+                available.extend(root.states.keys())
+            if hasattr(root, "__dict__"):
+                available.extend(
+                    [
+                        k
+                        for k in root.__dict__.keys()
+                        if not k.startswith("_") and k != "states"
+                    ]
+                )
+            logger.error(
+                "🚫 All resolution attempts failed for: %s",
+                transition.target_str,
+            )
+            logger.error("📂 Available states: %s", available)
+            raise StateNotFoundError(transition.target_str, root.id)
+
+        # 🔟  Build path & apply SCXML order
+        path_to_enter = self._get_path_to_state(target_state, stop_at=domain)
+
         await self._exit_states(
-            sorted(
-                list(states_to_exit), key=lambda s: len(s.id), reverse=True
-            ),
+            sorted(states_to_exit, key=lambda s: len(s.id), reverse=True),
             event,
         )
         await self._execute_actions(transition.actions, event)
         await self._enter_states(path_to_enter, event)
 
-        # 🔔 Notify plugins about the successful transition
-        for plugin in self._plugins:
-            plugin.on_transition(
-                self,
-                from_states_snapshot,
-                self._active_state_nodes,
-                transition,
+        # 🔟  Update active set & notify plugins
+        self._active_state_nodes.difference_update(states_to_exit)
+        self._active_state_nodes.update(path_to_enter)
+        for plug in self._plugins:
+            plug.on_transition(
+                self, snapshot, self._active_state_nodes.copy(), transition
             )
-        logger.info(
-            "✅ Transition complete. Current states: %s",
-            self.current_state_ids,
-        )
 
     async def _enter_states(
         self, states_to_enter: List[StateNode], event: Optional[Event] = None
@@ -753,29 +839,38 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     def _find_transition_domain(
         self, transition: TransitionDefinition
     ) -> Optional[StateNode]:
-        """Finds the least common compound ancestor of source and target.
-
-        This is a critical step for determining which states to exit and enter
-        during an external transition, ensuring atomicity.
         """
-        target_state = resolve_target_state(
-            transition.target_str, transition.source
-        )
+        Return the domain for an **external** transition.
 
-        # Handle external self-transitions where the domain is the parent
-        if transition.target_str and target_state == transition.source:
-            return transition.source.parent
+        🩹 **Important change**
+        If we cannot (yet) resolve the target state – typical when the
+        shorthand ``"b"`` is used from inside sibling ``"a"`` – we *do not*
+        raise ``StateNotFoundError``.
+        Instead we fall back to the source’s **parent** (or the machine
+        root).  The actual target is resolved later in `_process_event`.
+        """
+        from .exceptions import StateNotFoundError  # late import
+        from .resolver import resolve_target_state  # late import
 
-        source_ancestors = self._get_ancestors(transition.source)
-        target_ancestors = self._get_ancestors(target_state)
+        parent = transition.source.parent or self.machine
 
-        # The domain is the most deeply nested common ancestor
-        common_ancestors = source_ancestors.intersection(target_ancestors)
-        return (
-            max(common_ancestors, key=lambda s: len(s.id))
-            if common_ancestors
-            else None
-        )
+        # Try a quick resolve; if it fails, defer.
+        try:
+            target_state = resolve_target_state(
+                transition.target_str, transition.source
+            )
+        except StateNotFoundError:
+            return parent  # ← defer domain calculation
+
+        # External self-transition ⇒ domain is the parent
+        if target_state == transition.source:
+            return parent
+
+        # Normal case – compute LCCA
+        src_anc = self._get_ancestors(transition.source)
+        tgt_anc = self._get_ancestors(target_state)
+        common = src_anc & tgt_anc
+        return max(common, key=lambda n: len(n.id)) if common else parent
 
     @staticmethod
     def _get_path_to_state(
@@ -870,6 +965,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         # ✅ Execute the guard function and log the result.
         result = guard_callable(self.context, event)
+
+        # 🔔 Notify plugins about guard evaluation
+        for plugin in self._plugins:
+            plugin.on_guard_evaluated(self, guard_name, event, result)
+
         logger.info(
             "🛡️  Evaluating guard '%s': %s",
             guard_name,

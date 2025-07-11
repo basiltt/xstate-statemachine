@@ -40,6 +40,7 @@ from src.xstate_statemachine import (
     create_machine,
 )
 from src.xstate_statemachine.models import ActionDefinition
+from xstate_statemachine import PluginBase, Event
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
@@ -1259,6 +1260,157 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
         # ✅ Assert: The state did not change because the timer was not restored.
         self.assertEqual(restored.current_state_ids, {"snap_after.waiting"})
         await restored.stop()
+
+        # -------------------------------------------------------------------------
+        # 🔌 Plugin System: New Hooks Tests
+        # -------------------------------------------------------------------------
+
+    async def test_plugin_on_guard_evaluated_hook(self) -> None:
+        """The `on_guard_evaluated` plugin hook should be called with correct args."""
+        logger.info("🧪 Testing `on_guard_evaluated` plugin hook.")
+        # 📋 Arrange
+        mock_plugin = MagicMock(spec=PluginBase)
+        logic = MachineLogic(guards={"canProceed": lambda _c, _e: True})
+
+        # FIXED MACHINE CONFIGURATION
+        machine = create_machine(
+            {
+                "id": "guarded_machine",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "on": {"CHECK": {"target": "b", "guard": "canProceed"}}
+                    },
+                    "b": {},  # Properly nested under 'states'
+                },
+            },
+            logic=logic,
+        )
+
+        interpreter = await Interpreter(machine).use(mock_plugin).start()
+        test_event = Event("CHECK", payload={"key": "value"})
+
+        # 🚀 Act
+        await interpreter.send(test_event)
+        await self.wait_for_state(interpreter, {"guarded_machine.b"})
+
+        # ✅ Assert
+        mock_plugin.on_guard_evaluated.assert_called_once()
+        args, kwargs = mock_plugin.on_guard_evaluated.call_args
+        self.assertEqual(args[0], interpreter)
+        self.assertEqual(args[1], "canProceed")
+        self.assertEqual(args[2].type, test_event.type)
+        self.assertEqual(args[2].payload, test_event.payload)
+        self.assertTrue(args[3])  # result should be True
+
+    async def test_plugin_on_service_start_hook(self) -> None:
+        """The `on_service_start` plugin hook should be called before service execution."""
+        logger.info("🧪 Testing `on_service_start` plugin hook.")
+        # 📋 Arrange
+        mock_plugin = MagicMock(spec=PluginBase)
+        mock_service = AsyncMock(return_value="data")
+
+        # Create a mock to ensure service is awaited after plugin hook.
+        # This callable will represent the actual service implementation.
+        async def real_service(*args: Any, **kwargs: Any) -> Any:
+            await asyncio.sleep(0.01)  # Simulate some work
+            return mock_service(*args, **kwargs)
+
+        logic = MachineLogic(services={"myService": real_service})
+        machine = create_machine(
+            {
+                "id": "service_machine",
+                "initial": "invoke_state",
+                "states": {
+                    "invoke_state": {
+                        "invoke": {"src": "myService", "onDone": "done"}
+                    },
+                    "done": {},
+                },
+            },
+            logic=logic,
+        )
+        interpreter = await Interpreter(machine).use(mock_plugin).start()
+
+        # 🚀 Act - Start the interpreter, service invocation is on entry.
+        await self.wait_for_state(interpreter, {"service_machine.done"})
+
+        # ✅ Assert - Check that on_service_start was called before the service itself.
+        mock_plugin.on_service_start.assert_called_once()
+        args, kwargs = mock_plugin.on_service_start.call_args
+        self.assertEqual(args[0], interpreter)
+        self.assertEqual(args[1].src, "myService")
+        self.assertTrue(
+            mock_service.called
+        )  # Ensure the service itself was called
+
+    async def test_plugin_on_service_done_hook(self) -> None:
+        """The `on_service_done` plugin hook should be called on successful service completion."""
+        logger.info("🧪 Testing `on_service_done` plugin hook.")
+        # 📋 Arrange
+        mock_plugin = MagicMock(spec=PluginBase)
+        service_result = {"status": "success"}
+        mock_service = AsyncMock(return_value=service_result)
+        logic = MachineLogic(services={"myService": mock_service})
+        machine = create_machine(
+            {
+                "id": "service_done_machine",
+                "initial": "invoke_state",
+                "states": {
+                    "invoke_state": {
+                        "invoke": {"src": "myService", "onDone": "done"}
+                    },
+                    "done": {},
+                },
+            },
+            logic=logic,
+        )
+        interpreter = await Interpreter(machine).use(mock_plugin).start()
+
+        # 🚀 Act
+        await self.wait_for_state(interpreter, {"service_done_machine.done"})
+
+        # ✅ Assert
+        mock_plugin.on_service_done.assert_called_once()
+        args, kwargs = mock_plugin.on_service_done.call_args
+        self.assertEqual(args[0], interpreter)
+        self.assertEqual(args[1].src, "myService")
+        self.assertEqual(args[2], service_result)
+
+    async def test_plugin_on_service_error_hook(self) -> None:
+        """The `on_service_error` plugin hook should be called on service failure."""
+        logger.info("🧪 Testing `on_service_error` plugin hook.")
+        # 📋 Arrange
+        mock_plugin = MagicMock(spec=PluginBase)
+        service_error = ValueError("Service failed intentionally")
+        mock_service = AsyncMock(side_effect=service_error)
+        logic = MachineLogic(services={"myService": mock_service})
+        machine = create_machine(
+            {
+                "id": "service_error_machine",
+                "initial": "invoke_state",
+                "states": {
+                    "invoke_state": {
+                        "invoke": {"src": "myService", "onError": "failed"}
+                    },
+                    "failed": {},
+                },
+            },
+            logic=logic,
+        )
+        interpreter = await Interpreter(machine).use(mock_plugin).start()
+
+        # 🚀 Act
+        await self.wait_for_state(
+            interpreter, {"service_error_machine.failed"}
+        )
+
+        # ✅ Assert
+        mock_plugin.on_service_error.assert_called_once()
+        args, kwargs = mock_plugin.on_service_error.call_args
+        self.assertEqual(args[0], interpreter)
+        self.assertEqual(args[1].src, "myService")
+        self.assertEqual(args[2], service_error)
 
     # -------------------------------------------------------------------------
     # 🚦 Parallel States

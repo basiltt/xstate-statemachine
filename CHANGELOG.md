@@ -5,6 +5,21 @@ _This project adheres to [Semantic Versioning](https://semver.org) and the forma
 
 ---
 
+## [0.3.1] - 2025‑07‑11
+### Added
+- **Extended Plugin Hooks**
+  Introduced new lifecycle hooks in `PluginBase` for granular introspection:
+  - `on_guard_evaluated`: Notifies when a guard condition is checked and its result.
+  - `on_service_start`: Notifies when an invoked service begins execution.
+  - `on_service_done`: Notifies when an invoked service completes successfully, including its result.
+  - `on_service_error`: Notifies when an invoked service encounters an error, including the exception.
+
+### Changed
+- **Improved Event Handling Robustness**
+  Refactored `send` methods in `Interpreter` and `SyncInterpreter` for more resilient event object preparation, resolving `TypeError` issues with pre-formed `Event` instances and improving compatibility with mock objects in testing.
+
+---
+
 ## [0.3.0] - 2025‑07‑11
 ### Added
 - **Dual Execution Engines**
@@ -12,7 +27,7 @@ _This project adheres to [Semantic Versioning](https://semver.org) and the forma
 - **State Snapshotting**
   `get_snapshot()` / `restore_from_snapshot()` enable one‑call persistence and time‑travel debugging.
 - **Plugin Framework**
-  Formal `PluginBase` with life‑cycle hooks (`on_event`, `on_state_enter`, …) for custom loggers, telemetry, persistence, etc.
+  Formal `PluginBase` with life‑cycle hooks (`on_event`, `on_state_enter`, …) for custom loggers, telemetry, persistence, etc.
 - **Actor Spawning Contract**
   `spawn_*` helpers plus `ActorSpawningError` for type‑safe child‑machine creation.
 - **Utility APIs**

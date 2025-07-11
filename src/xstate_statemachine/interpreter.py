@@ -115,7 +115,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
         Raises:
             Exception: Propagates any exception that occurs during the initial
-                state entry, ensuring a clean failure state.
+            state entry, ensuring a clean failure state.
         """
         if self.status != "uninitialized":
             logger.warning(
@@ -303,7 +303,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
         Raises:
             ImplementationMissingError: If a named action is not defined in the
-                machine's logic.
+            machine's logic.
         """
         if not actions:
             return
@@ -345,8 +345,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
         Raises:
             ActorSpawningError: If the source for the actor in the machine's
-                `services` logic is not a valid `MachineNode` or a
-                function that returns one.
+            `services` logic is not a valid `MachineNode` or a
+            function that returns one.
         """
         logger.info("👶 Spawning actor for action: '%s'", action_def.type)
         actor_machine_key = action_def.type.replace("spawn_", "")
@@ -359,6 +359,10 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         elif callable(actor_source):
             # 🏭 If the source is a callable, treat it as a factory.
             result = actor_source(self, self.context, event)
+            if asyncio.iscoroutine(result):
+                result = (
+                    await result
+                )  # Await the factory if it's an async function
             if isinstance(result, MachineNode):
                 actor_machine = result
 
@@ -447,6 +451,10 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             invocation.src,
             invocation.id,
         )
+        # 🔔 Notify plugins that the service is starting.
+        for plugin in self._plugins:
+            plugin.on_service_start(self, invocation)
+
         try:
             # Create a synthetic event to pass to the service if needed.
             invoke_event = Event(
@@ -469,6 +477,9 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 invocation.src,
                 invocation.id,
             )
+            # 🔔 Notify plugins that the service completed.
+            for plugin in self._plugins:
+                plugin.on_service_done(self, invocation, result)
 
         except asyncio.CancelledError:
             # 🚫 Service was cancelled (due to state exit).
@@ -477,7 +488,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 invocation.src,
                 invocation.id,
             )
-            raise  # Re-raise to ensure the task is marked as cancelled.
+            # Re-raise to ensure the task is marked as cancelled.
+            raise
 
         except Exception as e:
             # 💥 Service raised an unhandled exception.
@@ -496,6 +508,9 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                     src=invocation.id,
                 )
             )
+            # 🔔 Notify plugins that the service failed.
+            for plugin in self._plugins:
+                plugin.on_service_error(self, invocation, e)
 
     def _invoke_service(
         self,
