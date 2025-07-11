@@ -82,12 +82,13 @@ from .logic_loader import LogicLoader
 # ✉️ Event & Model Definitions
 # -----------------------------------------------------------------------------
 from .events import Event
-from .models import ActionDefinition
+from .models import ActionDefinition, MachineNode
 
 # -----------------------------------------------------------------------------
 # 🔌 Extensibility & Plugins
 # -----------------------------------------------------------------------------
 from .plugins import LoggingInspector, PluginBase
+
 
 # -----------------------------------------------------------------------------
 # 🚨 Custom Exception Hierarchy
@@ -136,4 +137,5 @@ __all__ = [
     "ImplementationMissingError",
     "ActorSpawningError",
     "NotSupportedError",
+    "MachineNode",
 ]

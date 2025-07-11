@@ -39,6 +39,7 @@ from typing import (
     Type,
     Union,
     overload,
+    TypeVar,
 )
 
 # -----------------------------------------------------------------------------
@@ -57,6 +58,9 @@ from .models import (
 )
 from .plugins import PluginBase
 from .resolver import resolve_target_state
+
+# This TypeVar allows methods to return the specific subclass instance (self).
+TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter")
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
@@ -164,8 +168,8 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         }
 
     def use(
-        self, plugin: PluginBase["BaseInterpreter[Any, Any]"]
-    ) -> "BaseInterpreter[TContext, TEvent]":
+        self: TInterpreter, plugin: PluginBase["BaseInterpreter[Any, Any]"]
+    ) -> TInterpreter:
         """Registers a plugin with the interpreter via the Observer pattern.
 
         Plugins hook into the interpreter's lifecycle (e.g., `on_transition`,
@@ -174,12 +178,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         logic. This promotes a clean and extensible architecture.
 
         Args:
-            plugin (PluginBase): The plugin instance to register.
+            plugin: The plugin instance to register.
 
         Returns:
-            BaseInterpreter[TContext, TEvent]: The interpreter instance (`self`)
-            to allow for convenient method chaining, e.g.,
-            `Interpreter(m).use(p1).use(p2).start()`.
+            The interpreter instance (`self`) with the correct subclass type
+            to allow for convenient and type-safe method chaining.
         """
         self._plugins.append(plugin)
         logger.info(
@@ -900,7 +903,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         # 🏆 The winning transition is the one defined on the deepest state.
         return max(
-            eligible_transitions, key=lambda t: len(t.source.id)
+            eligible_transitions, key=lambda t: len(t.source.id)  # noqa
         )  # noqa
 
     def _find_transition_domain(

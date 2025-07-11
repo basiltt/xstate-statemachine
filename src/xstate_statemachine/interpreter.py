@@ -273,23 +273,9 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                     plugin.on_event_received(self, event)
 
                 # 🧠 Process the event using the core algorithm from BaseInterpreter.
-                await self._process_event(event)
-
-                # ⚡ After processing, check for "transient" (event-less)
-                # transitions. These are transitions that should be taken
-                # immediately without an external event, as long as their
-                # conditions are met. This loop continues until the state is stable.
-                while True:
-                    transient_event = Event(type="")
-                    transition = self._find_optimal_transition(transient_event)
-                    if transition and transition.event == "":
-                        logger.info(
-                            "⚡ Processing transient (event-less) transition in '%s'.",
-                            self.id,
-                        )
-                        await self._process_event(transient_event)
-                    else:
-                        break  # No more transient transitions; state is stable.
+                # This single step will handle the event and any subsequent
+                # "always" transitions until the machine is in a stable state.
+                await self._process_event_and_transient_transitions(event)
 
                 self._event_queue.task_done()
 
@@ -310,6 +296,37 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             raise
         finally:
             logger.debug("⚓ Event loop for '%s' has exited.", self.id)
+
+    async def _process_event_and_transient_transitions(
+        self, event: Union[Event, AfterEvent, DoneEvent]
+    ) -> None:
+        """Processes a single event and any resulting event-less transitions.
+
+        This method ensures that after an event is processed, the machine
+        immediately checks for and takes any available "always" transitions
+        until it settles into a stable state. This entire sequence is treated
+        as a single, atomic "step".
+
+        Args:
+            event: The external event to process first.
+        """
+        # 1️⃣ Process the initial event that was dequeued.
+        await self._process_event(event)
+
+        # 2️⃣ Immediately loop to handle any event-less ("always") transitions.
+        #    This continues until no more "always" transitions are available,
+        #    at which point the machine state is considered stable.
+        while True:
+            transient_event = Event(type="")
+            transition = self._find_optimal_transition(transient_event)
+            if transition and transition.event == "":
+                logger.info(
+                    "⚡ Processing transient (event-less) transition in '%s'.",
+                    self.id,
+                )
+                await self._process_event(transient_event)
+            else:
+                break  # No more transient transitions; state is stable.
 
     async def _execute_actions(
         self, actions: List[ActionDefinition], event: Event
@@ -553,25 +570,109 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         service: Callable[..., Any],
         owner_id: str,
     ) -> None:
-        """Creates and registers a background task to run an invoked service.
+        """Creates and registers a background task to run an invoked service or actor.
+
+        This method acts as a dispatcher.
+        - If the service is a `MachineNode`, it's spawned as a child actor.
+        - If the service is a `Callable`, it's run as a standard async task.
 
         Args:
-            invocation (InvokeDefinition): The invoke definition from the state config.
-            service (Callable[..., Any]): The service implementation from logic.
-            owner_id (str): The ID of the state that owns this service invocation.
+            invocation: The invoke definition from the state config.
+            service: The service implementation or MachineNode from logic.
+            owner_id: The ID of the state that owns this invocation.
         """
+        # 🎭 Case 1: The service is a MachineNode, so we spawn it as an actor.
+        if isinstance(service, MachineNode):
+            # Create a task to manage the actor's lifecycle and handle onDone/onError.
+            task = asyncio.create_task(
+                self._spawn_and_manage_actor(invocation, service)
+            )
+            self.task_manager.add(owner_id, task)
+            return
 
+        # 📞 Case 2: The service is a standard callable.
         async def _invoke_wrapper() -> None:
-            # 🧠 This `sleep(0)` is a subtle but critical best practice for
-            # preventing a race condition. It yields control to the asyncio
-            # event loop *once* before the service starts. This ensures that
-            # the task created by `_invoke_service` is fully registered in the
-            # TaskManager *before* the potentially long-running service is
-            # awaited. This prevents the rare case where a state could exit
-            # and try to cancel a task that hasn't been added to the manager yet.
+            # This sleep(0) is a critical best practice to prevent a race
+            # condition, ensuring the task is registered before the service
+            # code runs.
             await asyncio.sleep(0)
             await self._invoke_service_task(invocation, service)
 
         task = asyncio.create_task(_invoke_wrapper())
         # Register the task with its owner for lifecycle management.
         self.task_manager.add(owner_id, task)
+
+    async def _spawn_and_manage_actor(
+        self, invocation: InvokeDefinition, actor_machine: MachineNode
+    ) -> None:
+        """Spawns, starts, and manages an actor, sending events on completion.
+
+        This coroutine wraps the entire lifecycle of a child actor that was
+        created via `invoke`. It waits for the child to finish and then sends
+        the appropriate `onDone` or `onError` event to the parent.
+
+        Args:
+            invocation: The invoke definition containing the actor's config.
+            actor_machine: The MachineNode definition for the actor.
+        """
+        child_interpreter = None
+        try:
+            # 🧬 Create, configure, and start the new child interpreter.
+            actor_id = f"{self.id}:{invocation.src}:{uuid.uuid4()}"
+            child_interpreter = Interpreter(actor_machine)
+            child_interpreter.parent = self
+            child_interpreter.id = actor_id
+            self._actors[actor_id] = child_interpreter
+
+            for plugin in self._plugins:
+                plugin.on_service_start(self, invocation)
+            logger.info(
+                "🚀 Actor '%s' (ID: %s) invoked by '%s'...",
+                invocation.src,
+                actor_id,
+                self.id,
+            )
+            # This will run the child interpreter's event loop until it stops.
+            await child_interpreter.start()
+
+            # ✅ Child finished cleanly (reached a top-level final state).
+            done_event = DoneEvent(
+                type=f"done.invoke.{invocation.id}",
+                data=child_interpreter.context,  # Return child's final context
+                src=invocation.id,
+            )
+            await self.send(done_event)
+            for plugin in self._plugins:
+                plugin.on_service_done(self, invocation, done_event.data)
+
+        except asyncio.CancelledError:
+            # 🚫 Parent state was exited, cleanly cancel the actor.
+            logger.debug(
+                "🚫 Actor '%s' (ID: %s) was cancelled.",
+                invocation.src,
+                invocation.id,
+            )
+            if child_interpreter:
+                await child_interpreter.stop()
+            raise
+
+        except Exception as e:
+            # 💥 Child actor failed with an unhandled exception.
+            logger.error(
+                "💥 Actor '%s' (ID: '%s') failed: %s",
+                invocation.src,
+                invocation.id,
+                e,
+                exc_info=True,
+            )
+            error_event = DoneEvent(
+                type=f"error.platform.{invocation.id}",
+                data=e,
+                src=invocation.id,
+            )
+            await self.send(error_event)
+            for plugin in self._plugins:
+                plugin.on_service_error(self, invocation, e)
+        finally:
+            if child_interpreter and child_interpreter.id in self._actors:
+                del self._actors[child_interpreter.id]

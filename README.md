@@ -1836,20 +1836,35 @@ When writing **white‑box tests**, REPL experiments, or CLI tools you often nee
 to poke the state tree *without* spinning up a full interpreter.
 Two small but mighty helpers live right on the `MachineNode`:
 
-| Method | Returns | What it does | Typical Use‑Case |
-|--------|---------|--------------|------------------|
-| `machine.get_state_by_id(state_id)` | `StateNode \| None` | Deep‑searches the tree for an exact, fully‑qualified state ID. | Assert a specific node exists, fetch its metadata in tests |
-| `machine.get_next_state(from_state_id, event)` | `Set[str] \| None` | **Pure** function that calculates *where the machine would go* from a given leaf state if `event` were sent – guards are **ignored**. | Fast unit tests for transition maps, generating coverage matrices |
+| Method | Returns | What it does                                                                                                                                | Typical Use‑Case |
+|--------|---------|---------------------------------------------------------------------------------------------------------------------------------------------|------------------|
+| `machine.get_state_by_id(state_id)` | `StateNode \| None` | Deep‑searches the tree for an exact, fully‑qualified state ID.                                                                              | Assert a specific node exists, fetch its metadata in tests |
+| `machine.get_next_state(from_state_id, event)` | `Set[str] \| None` | **Pure** function that calculates *where the machine would go* from a given leaf state if `event` were sent.  **Note: Guards are ignored**. | Fast unit tests for transition maps, generating coverage matrices |
 
 ```python
-from xstate_statemachine import Event
+from xstate_statemachine import create_machine, Event
 
-# 🔎 Look up a node object (or None if typo)
-node = machine.get_state_by_id("myMachine.inner.foo")
+# Assume light_config is loaded from your JSON
+light_config = {
+    "id": "light",
+    "initial": "green",
+    "states": {
+        "green": {"on": {"TIMER": "yellow"}},
+        "yellow": {}
+    }
+}
 
-# 🧪 Predict the next leaf state set
-next_leaf_ids = machine.get_next_state("myMachine.idle", Event("CLICK"))
-assert next_leaf_ids == {"myMachine.loading"}
+# 1. Get the MachineNode instance
+machine = create_machine(light_config)
+
+# 2. Look up a specific node object
+green_node = machine.get_state_by_id("light.green")
+print(f"Found node: {green_node.id}")
+
+# 3. Predict the outcome of an event without an interpreter
+next_states = machine.get_next_state("light.green", Event(type="TIMER"))
+assert next_states == {"light.yellow"}
+print(f"From 'green', a 'TIMER' event would transition to: {next_states}")
 ```
 
 > 💡 **Tip:** Because `get_next_state` is side‑effect‑free, you can call it in
@@ -1858,6 +1873,7 @@ assert next_leaf_ids == {"myMachine.loading"}
 
 | Class             | Description                                                                                                  |
 |-------------------|--------------------------------------------------------------------------------------------------------------|
+| `MachineNode`    | The parsed, in-memory representation of your entire state machine graph. Returned by `create_machine`, it's the central object passed to interpreters and used for static analysis                                               |
 | `MachineLogic`    | Container for explicit action, guard, and service bindings.                                                  |
 | `Event`           | `NamedTuple(type, payload)` for events sent to the machine.                                                  |
 | `ActionDefinition`| Represents a configured action from JSON, including `.params` for static data.                               |

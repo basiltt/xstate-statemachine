@@ -107,14 +107,16 @@ class MachineLogic(Generic[TContext, TEvent]):
         guards: A dictionary mapping guard names to their boolean-returning
                 callable implementations.
         services: A dictionary mapping service names to their callable
-                  implementations, which can be sync or async.
+                  implementations or the `MachineNode`s they spawn.
     """
 
     def __init__(
         self,
         actions: Optional[Dict[str, Callable[..., Any]]] = None,
         guards: Optional[Dict[str, Callable[..., bool]]] = None,
-        services: Optional[Dict[str, Callable[..., Any]]] = None,
+        services: Optional[
+            Dict[str, Union[Callable[..., Any], "MachineNode"]]  # noqa: F821
+        ] = None,
     ) -> None:
         """Initializes the MachineLogic instance.
 
@@ -122,7 +124,8 @@ class MachineLogic(Generic[TContext, TEvent]):
         generic `Callable[..., Any]` hint makes the class flexible, allowing
         users to provide functions with more specific interpreter type hints
         (e.g., `SyncInterpreter` instead of `BaseInterpreter`) without causing
-        type-checking errors.
+        type-checking errors. It also accepts `MachineNode` as a service, which
+        is the pattern used for spawning actors.
 
         Args:
             actions: A dictionary mapping action names (str) to their
@@ -130,7 +133,8 @@ class MachineLogic(Generic[TContext, TEvent]):
             guards: A dictionary mapping guard names (str) to their
                 Python function implementations. Defaults to an empty dict.
             services: A dictionary mapping service names (str) to their
-                Python function implementations. Defaults to an empty dict.
+                Python function or `MachineNode` implementations. Defaults
+                to an empty dict.
         """
         logger.info("🧠 Initializing MachineLogic container...")
 
@@ -138,7 +142,11 @@ class MachineLogic(Generic[TContext, TEvent]):
         #    if None is passed.
         self.actions: Dict[str, Callable[..., Any]] = actions or {}
         self.guards: Dict[str, Callable[..., bool]] = guards or {}
-        self.services: Dict[str, Callable[..., Any]] = services or {}
+        self.services: Dict[
+            str, Union[Callable[..., Any], "MachineNode"]  # noqa
+        ] = (  # noqa
+            services or {}
+        )
 
         logger.info(
             "✅ MachineLogic initialized with %d actions, %d guards, and %d services.",

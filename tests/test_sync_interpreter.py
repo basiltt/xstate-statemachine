@@ -99,8 +99,8 @@ class TestSyncInterpreter(unittest.TestCase):
     # -------------------------------------------------------------------------
     # 헬퍼 Helper Methods for Creating Machines
     # -------------------------------------------------------------------------
-
-    def _create_auth_machine_config(self) -> Dict[str, Any]:
+    @staticmethod
+    def _create_auth_machine_config() -> Dict[str, Any]:
         """Creates the configuration for the authentication machine."""
         return {
             "id": "auth",
@@ -113,7 +113,8 @@ class TestSyncInterpreter(unittest.TestCase):
             },
         }
 
-    def _create_chooser_machine_config(self) -> Dict[str, Any]:
+    @staticmethod
+    def _create_chooser_machine_config() -> Dict[str, Any]:
         """Creates the configuration for the chooser machine."""
         return {
             "id": "chooser",
@@ -813,7 +814,7 @@ class TestSyncInterpreter(unittest.TestCase):
         """
         logger.info("🧪 Testing `onDone` from a parallel state...")
         # 🤖 Arrange
-        machine_config: Dict[str, Any] = {
+        machine_config: Dict[str, Any] = {  # noqa
             "id": "parallel",
             "initial": "active",
             "states": {
@@ -947,7 +948,7 @@ class TestSyncInterpreter(unittest.TestCase):
             "🧪 Testing one final region does not trigger parent `onDone`..."
         )
         # 🤖 Arrange
-        machine_config: Dict[str, Any] = {
+        machine_config: Dict[str, Any] = {  # noqa
             "id": "p_final",
             "type": "parallel",
             "states": {
@@ -1389,9 +1390,9 @@ class TestSyncInterpreter(unittest.TestCase):
 
         # Action that *attempts* to spawn the child service
         def spawn_something(
-            ctx: Any,  # noqa: ANN401
-            event: Any,  # noqa: ANN401
-            send: Any,  # noqa: ANN401
+            ctx: Any,  # noqa:
+            event: Any,  # noqa
+            send: Any,  # noqa
             spawn: Callable[[str], None],
             **__: Any,  # noqa: ANN401
         ) -> None:
@@ -1671,7 +1672,7 @@ class TestSyncInterpreter(unittest.TestCase):
                 "done": {},
             },
         }
-        machine = create_machine(machine_config, logic=logic)
+        machine = create_machine(machine_config, logic=logic)  # noqa
         interpreter = SyncInterpreter(machine).use(mock_plugin).start()
 
         # ⚡ Act - Service invocation is on entry, so it's already done by .start()
@@ -1706,7 +1707,7 @@ class TestSyncInterpreter(unittest.TestCase):
                 "done": {},
             },
         }
-        machine = create_machine(machine_config, logic=logic)
+        machine = create_machine(machine_config, logic=logic)  # noqa
         interpreter = SyncInterpreter(machine).use(mock_plugin).start()
 
         # ⚡ Act - Service invocation is on entry.
