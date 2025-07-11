@@ -622,8 +622,13 @@ An empty‑string event (`""`) models *automatic* logic that should run
 "checking": {
   "on": {
     "": [
-      { "guard": "isValid",   "target": "approved" },
-      {                     "target": "rejected" }
+      {
+        "guard": "isValid",
+        "target": "approved"
+      },
+      {
+        "target": "rejected"
+      }
     ]
   }
 }
