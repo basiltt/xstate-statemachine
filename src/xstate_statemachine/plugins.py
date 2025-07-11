@@ -8,15 +8,15 @@
 # logic like logging, debugging, or persistence can be added without modifying
 # the core interpreter code.
 #
-# This makes the system highly extensible and maintainable, allowing developers
-# to "observe" the state machine's lifecycle and react accordingly.
+# This design makes the system highly extensible and maintainable, allowing
+# developers to "observe" the state machine's lifecycle and react accordingly.
+# It is a cornerstone of the library's flexibility.
 # -----------------------------------------------------------------------------
-"""
-Provides an extensible plugin system for the state machine interpreter.
+"""Provides an extensible plugin system for the state machine interpreter.
 
 This module contains the `PluginBase` abstract class, which defines the
 interface for creating new plugins, and `LoggingInspector`, a powerful,
-built-in plugin for debugging.
+built-in plugin for debugging state machine execution.
 """
 
 # -----------------------------------------------------------------------------
@@ -25,123 +25,107 @@ built-in plugin for debugging.
 from __future__ import (
     annotations,
 )  # Enables postponed evaluation of type annotations
-
-from typing import TYPE_CHECKING, Generic, Set, TypeVar, Any
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    Set,
+    TypeVar,
+)  # Core typing utilities
 
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
-from .logger import logger
+from .logger import logger  # Centralized logger instance
 
 # -----------------------------------------------------------------------------
 # ⚙️ Type Hinting for Forward References
 # -----------------------------------------------------------------------------
-# The `if TYPE_CHECKING:` block allows us to import types for hinting
-# without causing circular import errors at runtime. This is a standard
-# practice for type-safe architectures with interdependent modules.
+# This `if TYPE_CHECKING:` block prevents circular import errors at runtime
+# by only importing types for static analysis. This is a standard Python
+# practice for creating type-safe, decoupled modules.
 if TYPE_CHECKING:
     from .base_interpreter import BaseInterpreter
     from .events import Event
     from .models import (
         ActionDefinition,
+        InvokeDefinition,
         StateNode,
         TransitionDefinition,
-        InvokeDefinition,
     )
 
 # -----------------------------------------------------------------------------
 # 🔹 Type Variable for Generic Plugin
 # -----------------------------------------------------------------------------
-
-# This TypeVar is the key to making the plugin system fully type-safe.
-# It allows a plugin to be defined for a specific subclass of BaseInterpreter,
-# such as `Interpreter` or `SyncInterpreter`, enabling precise autocompletion
-# and static analysis in the developer's IDE.
-# The `noqa` comment below is to suppress a linter warning about "BaseInterpreter"
-# not being defined yet, which is handled by the forward reference string.
-TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter")  # noqa: F821
+# This TypeVar is key to a fully type-safe plugin system. It allows a plugin
+# to be defined for a specific `BaseInterpreter` subclass (e.g., `AsyncInterpreter`
+# or `SyncInterpreter`), enabling precise autocompletion and static analysis
+# in the developer's IDE.
+TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter[Any, Any]")
 
 
 # -----------------------------------------------------------------------------
 # 🏛️ Base Plugin Class (The "Observer" Interface)
 # -----------------------------------------------------------------------------
-
-
 class PluginBase(Generic[TInterpreter]):
     """Abstract base class for creating an interpreter plugin.
 
     Plugins hook into the interpreter's lifecycle to add features like logging,
-    debugging, or persistence. Subclasses should override the methods they are
-    interested in. This class is generic, enabling plugins to be type-safe
-    with the specific interpreter (`Interpreter` or `SyncInterpreter`) they
-    are designed to work with.
+    debugging, or persistence. This class implements the "Observer" design
+    pattern, where each method represents a different event in the interpreter's
+    lifecycle that can be "observed."
+
+    Subclasses should override the methods they are interested in. This class
+    is generic, enabling plugins to be type-safe with the specific interpreter
+    they are designed to work with.
 
     Example:
-        A simple plugin that only works with the async `Interpreter`.
+        A simple plugin that prints events and only works with the async `Interpreter`.
 
         >>> from xstate_statemachine import Interpreter, PluginBase, Event
         >>>
-        >>> class AsyncOnlyDebugger(PluginBase[Interpreter]):
+        >>> class AsyncEventDebugger(PluginBase[Interpreter]):
         ...     def on_event_received(self, interpreter: Interpreter, event: Event):
-        ...         # This plugin now has full autocompletion for the async Interpreter
-        ...         print(f"Async event received: {event.type}")
+        ...         # `interpreter` is correctly typed as `Interpreter`,
+        ...         # enabling full IDE autocompletion for async-specific methods.
+        ...         print(f"🕵️ Async event received: {event.type}")
     """
 
     def on_interpreter_start(self, interpreter: TInterpreter) -> None:
-        """Hook called when the interpreter's `start()` method begins.
+        """Called when the interpreter's `start()` method begins.
 
         This hook is useful for setup tasks, such as connecting to a
-        database or initializing a metrics counter.
+        database, initializing a metrics counter, or logging the start time.
 
         Args:
             interpreter: The interpreter instance that has been started.
         """
-        pass
+        pass  # pragma: no cover
 
     def on_interpreter_stop(self, interpreter: TInterpreter) -> None:
-        """Hook called when the interpreter's `stop()` method begins.
+        """Called when the interpreter's `stop()` method begins.
 
-        This hook is useful for teardown tasks, like flushing log buffers or
-        closing network connections.
+        This hook is useful for teardown tasks, like flushing log buffers,
+        closing network connections, or calculating total run time.
 
         Args:
             interpreter: The interpreter instance that is being stopped.
         """
-        pass
+        pass  # pragma: no cover
 
-    def on_event_received(  # noqa: D401  – imperative mood is appropriate
-        self,
-        interpreter: "BaseInterpreter[Any, Any]",
-        event: "Event",
+    def on_event_received(
+        self, interpreter: TInterpreter, event: "Event"
     ) -> None:
-        """Log an event without ever triggering ``Event.data`` errors.
+        """Called immediately after an event is passed to the interpreter.
 
-        A plain ``Event`` raises a ``TypeError`` if its ``payload`` is *not*
-        a ``dict`` and code accesses ``event.data``.  This version:
+        This hook allows for inspecting raw events before they are processed,
+        which can be useful for debugging event sources or data payloads.
 
-        1. Uses ``event.payload`` **only** when the attribute exists.
-        2. Falls back to ``event.data`` for internal events
-           (``DoneEvent``, ``AfterEvent``).
-        3. Emits a concise log line – no helper that re-accesses ``event.data``.
-
-        That makes the inspector safe for string, ``None``, or other primitive
-        payloads and fixes the failing test cases.
+        Args:
+            interpreter: The interpreter instance receiving the event.
+            event: The `Event` object that was received.
         """
-        # ---------------------------------------------------------------------
-        # 1️⃣  Determine what we can safely display
-        # ---------------------------------------------------------------------
-        if hasattr(event, "payload"):  # Standard Event
-            data_to_log = event.payload  # may be str / int / None / dict
-        else:  # DoneEvent / AfterEvent
-            data_to_log = getattr(event, "data", None)
-
-        # ---------------------------------------------------------------------
-        # 2️⃣  Build & emit the log message
-        # ---------------------------------------------------------------------
-        message = f"🕵️ [INSPECT] Event Received: {event.type}"
-        if data_to_log is not None:
-            message += f" | Data: {data_to_log}"
-        logger.info(message)
+        pass  # pragma: no cover
 
     def on_transition(
         self,
@@ -150,36 +134,35 @@ class PluginBase(Generic[TInterpreter]):
         to_states: Set["StateNode"],
         transition: "TransitionDefinition",
     ) -> None:
-        """Hook called after a successful state transition has completed.
+        """Called after a successful state transition has completed.
 
         This hook fires after states have been exited, actions executed, and
-        new states have been entered. It provides a complete picture of the
-        change that occurred, which is ideal for state-based analytics or
-        detailed logging.
+        new states entered. It provides a complete snapshot of the change,
+        which is ideal for state-based analytics or detailed logging.
 
         Args:
             interpreter: The interpreter instance.
-            from_states: A set of `StateNode`s that were active before the
-                         transition.
-            to_states: A set of `StateNode`s that are active after the
-                       transition.
+            from_states: A set of `StateNode` objects that were active before
+                the transition.
+            to_states: A set of `StateNode` objects that are active after the
+                transition.
             transition: The `TransitionDefinition` that was taken.
         """
-        pass
+        pass  # pragma: no cover
 
     def on_action_execute(
         self, interpreter: TInterpreter, action: "ActionDefinition"
     ) -> None:
-        """Hook called right before an action's implementation is executed.
+        """Called right before an action's implementation is executed.
 
         This allows for inspection or logging of which specific actions are
-        being run as part of a transition or state entry/exit.
+        being run as part of a transition or state entry/exit event.
 
         Args:
             interpreter: The interpreter instance.
             action: The `ActionDefinition` of the action about to be executed.
         """
-        pass
+        pass  # pragma: no cover
 
     def on_guard_evaluated(
         self,
@@ -188,26 +171,29 @@ class PluginBase(Generic[TInterpreter]):
         event: "Event",
         result: bool,
     ) -> None:
-        """Hook called after a guard condition has been evaluated.
+        """Called after a guard condition has been evaluated.
+
+        This is useful for debugging why certain transitions are (or are not)
+        being taken based on the current context and event.
 
         Args:
             interpreter: The interpreter instance.
             guard_name: The name of the guard function that was evaluated.
             event: The event that triggered the guard evaluation.
-            result: The boolean result of the guard evaluation (True if passed, False if failed).
+            result: The boolean result (`True` if passed, `False` if failed).
         """
-        pass
+        pass  # pragma: no cover
 
     def on_service_start(
         self, interpreter: TInterpreter, invocation: "InvokeDefinition"
     ) -> None:
-        """Hook called when an invoked service is about to start.
+        """Called when an invoked service is about to start.
 
         Args:
             interpreter: The interpreter instance.
             invocation: The `InvokeDefinition` of the service about to start.
         """
-        pass
+        pass  # pragma: no cover
 
     def on_service_done(
         self,
@@ -215,14 +201,14 @@ class PluginBase(Generic[TInterpreter]):
         invocation: "InvokeDefinition",
         result: Any,
     ) -> None:
-        """Hook called when an invoked service completes successfully.
+        """Called when an invoked service completes successfully.
 
         Args:
             interpreter: The interpreter instance.
             invocation: The `InvokeDefinition` of the service that completed.
-            result: The return value of the completed service.
+            result: The data returned by the completed service.
         """
-        pass
+        pass  # pragma: no cover
 
     def on_service_error(
         self,
@@ -230,21 +216,19 @@ class PluginBase(Generic[TInterpreter]):
         invocation: "InvokeDefinition",
         error: Exception,
     ) -> None:
-        """Hook called when an invoked service fails with an error.
+        """Called when an invoked service fails with an error.
 
         Args:
             interpreter: The interpreter instance.
             invocation: The `InvokeDefinition` of the service that failed.
-            error: The exception raised by the service.
+            error: The `Exception` object raised by the service.
         """
-        pass
+        pass  # pragma: no cover
 
 
 # -----------------------------------------------------------------------------
 # 🕵️ Built-in Logging Plugin
 # -----------------------------------------------------------------------------
-
-
 class LoggingInspector(PluginBase[Any]):
     """A built-in plugin for detailed, real-time inspection of a machine.
 
@@ -255,34 +239,33 @@ class LoggingInspector(PluginBase[Any]):
     sync and async interpreters.
     """
 
-    def on_event_received(  # noqa: D401 – “Log …” (imperative) is acceptable
-        self,
-        interpreter: "BaseInterpreter[Any, Any]",
-        event: "Event",
+    def on_event_received(
+        self, interpreter: "BaseInterpreter[Any, Any]", event: "Event"
     ) -> None:
-        """Log the event in a **TypeError-free** fashion.
+        """Logs received events in a type-safe manner.
 
-        The inspector must *never* raise when the event’s ``payload`` is a
-        primitive (``str``, ``int``, ``None``).  The old implementation
-        accessed ``event.data`` unconditionally, which *raises* for such
-        cases.  The logic is now:
+        This implementation is carefully designed to never raise a `TypeError`
+        when an event's payload is a primitive type (like `str`, `int`, or
+        `None`). It safely accesses the correct data attribute based on the
+        event's structure.
 
-        1. **If** the event has a ``payload`` attribute (standard ``Event``),
-           log that *value as-is* — do **not** touch ``event.data``.
-        2. **Else** (``DoneEvent`` / ``AfterEvent``), safely read
-           ``event.data``.
+        Args:
+            interpreter: The interpreter instance receiving the event.
+            event: The `Event` object that was received.
         """
-        # 1️⃣  Extract something loggable without risking TypeError
+        # 1️⃣ Safely determine what data to log from the event.
+        #    For a standard `Event`, the data is in the `payload` attribute.
         if hasattr(event, "payload"):
-            data_to_log = event.payload  # may be primitive / dict / None
+            data_to_log = event.payload
+        #    For internal events like `DoneEvent` or `AfterEvent`, it's in `data`.
         else:
             data_to_log = getattr(event, "data", None)
 
-        # 2️⃣  Compose and emit log line
-        msg = f"🕵️ [INSPECT] Event Received: {event.type}"
+        # 2️⃣ Compose and emit the final log message.
+        message = f"🕵️ [INSPECT] Event Received: {event.type}"
         if data_to_log is not None:
-            msg += f" | Data: {data_to_log}"
-        logger.info(msg)
+            message += f" | Data: {data_to_log}"
+        logger.info(message)
 
     def on_transition(
         self,
@@ -298,29 +281,27 @@ class LoggingInspector(PluginBase[Any]):
 
         Args:
             interpreter: The interpreter instance.
-            from_states: The set of `StateNode`s active before the transition.
-            to_states: The set of `StateNode`s active after the transition.
+            from_states: The set of `StateNode` objects active before the transition.
+            to_states: The set of `StateNode` objects active after the transition.
             transition: The `TransitionDefinition` that was taken.
         """
-        # Get the string IDs of the leaf states for clean logging.
+        # 🍃 Extract leaf state IDs for clean and concise logging.
         from_ids = {s.id for s in from_states if s.is_atomic or s.is_final}
         to_ids = {s.id for s in to_states if s.is_atomic or s.is_final}
 
-        # ✅ Only log a full transition if a state change actually happened.
+        #  зовнішній (External) transition: A state change occurred.
         if from_ids != to_ids:
             logger.info(
                 "🕵️ [INSPECT] Transition: %s -> %s on Event '%s'",
-                from_ids,
-                to_ids,
+                sorted(list(from_ids)),
+                sorted(list(to_ids)),
                 transition.event,
             )
             logger.info("🕵️ [INSPECT] New Context: %s", interpreter.context)
-        # 🎬 For internal transitions (no state change but with actions),
-        # still log the context, as it may have changed.
+        # внутрішній (Internal) transition: No state change, but actions ran.
         elif transition.actions:
             logger.info(
-                "🕵️ [INSPECT] Internal transition on Event '%s'. "
-                "Context may have changed.",
+                "🕵️ [INSPECT] Internal transition on Event '%s'",
                 transition.event,
             )
             logger.info("🕵️ [INSPECT] New Context: %s", interpreter.context)
@@ -345,19 +326,21 @@ class LoggingInspector(PluginBase[Any]):
         event: "Event",
         result: bool,
     ) -> None:
-        """Logs the evaluation of a guard.
+        """Logs the result of a guard evaluation.
 
         Args:
             interpreter: The interpreter instance.
-            guard_name: The name of the guard.
-            event: The event being processed.
-            result: The result of the guard evaluation.
+            guard_name: The name of the guard function.
+            event: The event that triggered the evaluation.
+            result: The boolean result of the guard.
         """
+        # ✅ Determine the outcome for logging.
+        outcome = "✅ Passed" if result else "❌ Failed"
         logger.info(
-            "🕵️ [INSPECT] Guard '%s' evaluated: %s for event '%s'",
+            "🕵️ [INSPECT] Guard '%s' evaluated for event '%s' -> %s",
             guard_name,
-            "Passed" if result else "Failed",
             event.type,
+            outcome,
         )
 
     def on_service_start(
@@ -365,14 +348,14 @@ class LoggingInspector(PluginBase[Any]):
         interpreter: "BaseInterpreter[Any, Any]",
         invocation: "InvokeDefinition",
     ) -> None:
-        """Logs when an invoked service starts.
+        """Logs when an invoked service is about to start.
 
         Args:
             interpreter: The interpreter instance.
-            invocation: The invocation definition.
+            invocation: The definition of the service being invoked.
         """
         logger.info(
-            "🕵️ [INSPECT] Service '%s' (ID: %s) starting...",
+            "🚀 [INSPECT] Service '%s' (ID: %s) starting...",
             invocation.src,
             invocation.id,
         )
@@ -387,11 +370,11 @@ class LoggingInspector(PluginBase[Any]):
 
         Args:
             interpreter: The interpreter instance.
-            invocation: The invocation definition.
-            result: The result from the service.
+            invocation: The definition of the completed service.
+            result: The data returned by the service.
         """
         logger.info(
-            "🕵️ [INSPECT] Service '%s' (ID: %s) completed. Result: %s",
+            "✅ [INSPECT] Service '%s' (ID: %s) completed. Result: %s",
             invocation.src,
             invocation.id,
             result,
@@ -403,17 +386,17 @@ class LoggingInspector(PluginBase[Any]):
         invocation: "InvokeDefinition",
         error: Exception,
     ) -> None:
-        """Logs when an invoked service fails.
+        """Logs when an invoked service fails with an error.
 
         Args:
             interpreter: The interpreter instance.
-            invocation: The invocation definition.
-            error: The error from the service.
+            invocation: The definition of the failed service.
+            error: The exception raised by the service.
         """
         logger.error(
-            "🕵️ [INSPECT] Service '%s' (ID: %s) failed. Error: %s",
+            "❌ [INSPECT] Service '%s' (ID: %s) failed. Error: %s",
             invocation.src,
             invocation.id,
             error,
-            exc_info=True,
+            exc_info=True,  # 🐛 Include full traceback for debugging.
         )

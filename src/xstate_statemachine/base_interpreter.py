@@ -2,15 +2,15 @@
 # -----------------------------------------------------------------------------
 # 🏛️ Base State Machine Interpreter
 # -----------------------------------------------------------------------------
-# This module defines the `BaseInterpreter`, the abstract foundation for state
-# machine execution. It leverages the "Template Method" design pattern to
-# establish a consistent algorithm for state transitions (`_process_event`),
-# while deferring mode-specific implementations (like synchronous vs.
-# asynchronous action execution) to its concrete subclasses.
+# This module provides the `BaseInterpreter` class, which contains the
+# core, mode-agnostic logic for state machine execution. It embodies the
+# "Template Method" design pattern, where the overall algorithm for state
+# transition is defined, but specific steps (like how actions are executed
+# or events are dispatched) are deferred to subclasses.
 #
-# This architectural choice promotes high cohesion and low coupling, cleanly
-# separating the universal statechart algorithm from the execution strategy,
-# which significantly enhances code reuse and maintainability.
+# This design cleanly separates the fundamental statechart algorithm from
+# the execution mode (synchronous vs. asynchronous), promoting code reuse
+# and maintainability.
 # -----------------------------------------------------------------------------
 """
 Provides the foundational, mode-agnostic logic for interpreting a state machine.
@@ -74,22 +74,29 @@ logger = logging.getLogger(__name__)
 class BaseInterpreter(Generic[TContext, TEvent]):
     """Provides the foundational logic for state machine interpretation.
 
-    This class implements the "Template Method" design pattern. It defines the
-    main algorithm for state transitions but allows subclasses to redefine
-    certain steps, thereby separating the core statechart logic from the
-    execution mode (e.g., synchronous vs. asynchronous).
+    This abstract base class implements the "Template Method" design pattern.
+    It defines the complete, final algorithm for processing events and
+    transitioning between states (`_process_event`), but it defers the
+    implementation of specific execution steps (like running actions or timers)
+    to its concrete subclasses. This architecture cleanly separates the universal
+    statechart algorithm from the execution strategy (e.g., synchronous vs.
+    asynchronous).
 
-    This class should not be instantiated directly. Use concrete subclasses like
-    `Interpreter` (async) or `SyncInterpreter` (sync).
+    This class should not be instantiated directly. Use `Interpreter` (async)
+    or `SyncInterpreter` (sync).
 
     Attributes:
-        machine: The static `MachineNode` definition.
-        context: The current extended state (context) of the machine.
-        status: The operational status: 'uninitialized', 'running', 'stopped'.
-        id: The unique identifier for this interpreter instance, inherited
+        machine (MachineNode[TContext, TEvent]): The static `MachineNode`
+            definition that represents the statechart's structure.
+        context (TContext): The current extended state (context) of the
+            machine, holding all dynamic data.
+        status (str): The operational status of the interpreter:
+            'uninitialized', 'running', or 'stopped'.
+        id (str): A unique identifier for this interpreter instance, inherited
             from the machine's ID.
-        parent: A reference to the parent interpreter if this is a
-                spawned actor, or `None` if it is a root machine.
+        parent (Optional[BaseInterpreter[Any, Any]]): A reference to the parent
+            interpreter if this instance was spawned as part of an actor model,
+            otherwise `None`.
     """
 
     def __init__(
@@ -100,12 +107,14 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         """Initializes the BaseInterpreter instance.
 
         Args:
-            machine: The `MachineNode` instance that defines the statechart's
-                     structure, transitions, and logic references.
-            interpreter_class: The concrete class being instantiated (e.g.,
-                `Interpreter` or `SyncInterpreter`). This is used for
-                correctly restoring an interpreter from a snapshot. If not
-                provided, it defaults to the class of the current instance.
+            machine (MachineNode[TContext, TEvent]): The `MachineNode` instance
+                that defines the statechart's structure, transitions, and
+                logic references.
+            interpreter_class (Optional[Type["BaseInterpreter"]]): The concrete
+                class being instantiated (e.g., `Interpreter` or
+                `SyncInterpreter`). This is used internally for correctly
+                restoring an interpreter from a snapshot. If not provided, it
+                defaults to the class of the current instance.
         """
         logger.info(
             "🧠 Initializing BaseInterpreter for machine '%s'...", machine.id
@@ -144,10 +153,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         This property is the primary way to check the current state of the
         machine from outside the interpreter. Since a machine can be in
         multiple states at once (due to parallel states), this always
-        returns a set.
+        returns a set of the most specific, leaf-node state identifiers.
 
         Returns:
-            A set of unique string identifiers for the active leaf states.
+            Set[str]: A set of unique string identifiers for the active atomic
+            or final leaf states.
         """
         return {
             s.id for s in self._active_state_nodes if s.is_atomic or s.is_final
@@ -158,16 +168,18 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     ) -> "BaseInterpreter[TContext, TEvent]":
         """Registers a plugin with the interpreter via the Observer pattern.
 
-        Plugins hook into the interpreter's lifecycle to add cross-cutting
-        concerns like logging, analytics, or persistence without modifying the
-        core interpreter logic.
+        Plugins hook into the interpreter's lifecycle (e.g., `on_transition`,
+        `on_guard_evaluated`) to add cross-cutting concerns like logging,
+        analytics, or state persistence without modifying the core interpreter
+        logic. This promotes a clean and extensible architecture.
 
         Args:
-            plugin: The plugin instance to register.
+            plugin (PluginBase): The plugin instance to register.
 
         Returns:
-            The interpreter instance (`self`) to allow for method chaining,
-            e.g., `Interpreter(m).use(p1).use(p2).start()`.
+            BaseInterpreter[TContext, TEvent]: The interpreter instance (`self`)
+            to allow for convenient method chaining, e.g.,
+            `Interpreter(m).use(p1).use(p2).start()`.
         """
         self._plugins.append(plugin)
         logger.info(
@@ -184,13 +196,14 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     def get_snapshot(self) -> str:
         """Returns a JSON-serializable snapshot of the interpreter's state.
 
-        This method implements the Memento pattern, capturing the essential
-        state (status, context, and active states) without exposing the
-        internal implementation details of the interpreter. The resulting
-        string can be persisted to disk or a database.
+        This method implements the Memento design pattern by capturing the
+        essential state of the interpreter (its status, context, and active
+        states) without exposing its internal implementation details. The
+        resulting JSON string can be persisted to a file, database, or sent
+        over a network.
 
         Returns:
-            A JSON string representing the interpreter's current state.
+            str: A JSON string representing the interpreter's current state.
         """
         logger.info("📸 Capturing snapshot for interpreter '%s'...", self.id)
         snapshot = {
@@ -198,9 +211,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             "context": self.context,
             "state_ids": list(self.current_state_ids),
         }
-        # Use a default handler to gracefully handle non-serializable types
+        # Use a default handler to gracefully handle non-serializable types.
         json_snapshot = json.dumps(snapshot, indent=2, default=str)
-        logger.debug("🖼️ Snapshot captured: %s", json_snapshot)
+        logger.debug(
+            "🖼️ Snapshot for '%s' captured: %s", self.id, json_snapshot
+        )
         return json_snapshot
 
     @classmethod
@@ -211,38 +226,48 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     ) -> "BaseInterpreter[TContext, TEvent]":
         """Creates and restores an interpreter instance from a saved snapshot.
 
-        This class method acts as a factory for restoring an interpreter to a
-        previous state. It deserializes the snapshot and carefully reconstructs
-        the interpreter's `context` and `_active_state_nodes`.
+        This factory method reconstructs an interpreter's state from a JSON
+        snapshot. It deserializes the snapshot, finds the corresponding state
+        nodes in the provided machine definition, and sets the context and
+        status, effectively restoring the machine to a previous point in time.
 
         Note:
-            This method does not re-run entry actions or restart services from
-            the snapshot's state. It provides a static restoration.
+            This method performs a static restoration. It does not re-run
+            entry actions of the restored states or restart any invoked
+            services or `after` timers that were active when the snapshot
+            was taken.
 
         Args:
-            snapshot_str: The JSON string generated by `get_snapshot()`.
-            machine: The corresponding `MachineNode` definition for the snapshot.
+            snapshot_str (str): The JSON string previously generated by
+                `get_snapshot()`.
+            machine (MachineNode[TContext, TEvent]): The corresponding
+                `MachineNode` definition that the snapshot belongs to.
 
         Returns:
-            A new interpreter instance restored to the snapshot's state.
+            BaseInterpreter[TContext, TEvent]: A new interpreter instance
+                restored to the snapshot's state.
 
         Raises:
-            StateNotFoundError: If a state ID from the snapshot is not found
+            StateNotFoundError: If a state ID from the snapshot cannot be found
                 in the provided machine definition.
             json.JSONDecodeError: If the snapshot string is not valid JSON.
         """
         logger.info(
-            "🔄 Restoring interpreter from snapshot for machine '%s'...",
+            "🔄 Restoring interpreter for machine '%s' from snapshot...",
             machine.id,
         )
-        snapshot = json.loads(snapshot_str)
+        try:
+            snapshot = json.loads(snapshot_str)
+        except json.JSONDecodeError as e:
+            logger.error("❌ Invalid JSON in snapshot string: %s", e)
+            raise
 
         # 🧪 Create a new instance of the correct interpreter class (sync/async)
         interpreter = cls(machine)
         interpreter.context = snapshot["context"]
         interpreter.status = snapshot["status"]
 
-        # 🌳 Reconstruct the set of active state nodes
+        # 🌳 Reconstruct the set of active state nodes from their IDs
         interpreter._active_state_nodes.clear()
         for state_id in snapshot["state_ids"]:
             node = machine.get_state_by_id(state_id)
@@ -270,7 +295,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     # -------------------------------------------------------------------------
     # These methods define the "pluggable" parts of the state transition
     # algorithm. Concrete subclasses MUST override them to provide
-    # mode-specific (sync or async) behavior.
+    # mode-specific (synchronous or asynchronous) behavior.
 
     def start(
         self,
@@ -278,13 +303,23 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         "BaseInterpreter[TContext, TEvent]",
         Awaitable["BaseInterpreter[TContext, TEvent]"],
     ]:
-        """Starts the interpreter. Must be implemented by a subclass."""
+        """Starts the interpreter by entering the initial state.
+
+        Raises:
+            NotImplementedError: This method must be implemented by a concrete
+                subclass (e.g., `Interpreter`, `SyncInterpreter`).
+        """
         raise NotImplementedError(
             "Subclasses must implement the 'start' method."
         )
 
     def stop(self) -> Union[None, Awaitable[None]]:
-        """Stops the interpreter. Must be implemented by a subclass."""
+        """Stops the interpreter and cleans up resources.
+
+        Raises:
+            NotImplementedError: This method must be implemented by a concrete
+                subclass.
+        """
         raise NotImplementedError(
             "Subclasses must implement the 'stop' method."
         )
@@ -304,7 +339,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         ],
         **payload: Any,
     ) -> Any:
-        """Sends an event for processing. Must be implemented by a subclass."""
+        """Sends an event to the running interpreter for processing.
+
+        Raises:
+            NotImplementedError: This method must be implemented by a concrete
+                subclass.
+        """
         raise NotImplementedError(
             "Subclasses must implement the 'send' method."
         )
@@ -312,7 +352,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     def _execute_actions(
         self, actions: List[ActionDefinition], event: Event
     ) -> Union[None, Awaitable[None]]:
-        """Executes actions. Must be implemented by a subclass."""
+        """Executes a list of action definitions.
+
+        Raises:
+            NotImplementedError: This method must be implemented by a concrete
+                subclass to handle sync/async execution.
+        """
         raise NotImplementedError(
             "Subclasses must implement the '_execute_actions' method."
         )
@@ -320,7 +365,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     def _cancel_state_tasks(
         self, state: StateNode
     ) -> Union[None, Awaitable[None]]:
-        """Cancels tasks for a state. Must be implemented by a subclass."""
+        """Cancels all background tasks associated with a given state.
+
+        Raises:
+            NotImplementedError: This method must be implemented by a concrete
+                subclass.
+        """
         raise NotImplementedError(
             "Subclasses must implement the '_cancel_state_tasks' method."
         )
@@ -328,7 +378,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     def _after_timer(
         self, delay_sec: float, event: AfterEvent, owner_id: str
     ) -> None:
-        """Handles delayed events. Must be implemented by a subclass."""
+        """Handles a delayed event (`after` transition).
+
+        Raises:
+            NotImplementedError: This method must be implemented by a concrete
+                subclass.
+        """
         raise NotImplementedError(
             "Subclasses must implement the '_after_timer' method."
         )
@@ -339,7 +394,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         service: Callable[..., Any],
         owner_id: str,
     ) -> Union[None, Awaitable[None]]:
-        """Handles invoked services. Must be implemented by a subclass."""
+        """Handles an invoked service.
+
+        Raises:
+            NotImplementedError: This method must be implemented by a concrete
+                subclass.
+        """
         raise NotImplementedError(
             "Subclasses must implement the '_invoke_service' method."
         )
@@ -347,13 +407,18 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     def _spawn_actor(
         self, action_def: ActionDefinition, event: Event
     ) -> Union[None, Awaitable[None]]:
-        """Handles spawning child actors. Must be implemented by a subclass."""
+        """Handles the spawning of a child state machine actor.
+
+        Raises:
+            NotImplementedError: This method must be implemented by a concrete
+                subclass.
+        """
         raise NotImplementedError(
             "Subclasses must implement the '_spawn_actor' method."
         )
 
     # -------------------------------------------------------------------------
-    # ✉️ Event Preparation Helper (Static Method & DRY Principle)
+    # ✉️ Event Preparation Helper
     # -------------------------------------------------------------------------
 
     @staticmethod
@@ -361,82 +426,91 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         event_or_type: Union[str, Dict[str, Any], Any],
         **payload: Any,
     ) -> Union[Event, DoneEvent, AfterEvent]:
+        """Normalizes various event inputs into a concrete `Event` object.
+
+        This helper ensures that the interpreter can robustly handle events
+        passed as strings, dictionaries, or `Event` instances. It uses
+        duck-typing to handle a specific edge case where the library might be
+        imported twice in a testing environment, resulting in two distinct
+        `Event` class identities.
+
+        Args:
+            event_or_type (Union[str, Dict[str, Any], Any]): The event to be
+                normalized. Can be:
+                - A string (`"EVENT_TYPE"`)
+                - A dictionary with a "type" key (`{"type": "EVENT_TYPE", ...}`)
+                - An instance of `Event`, `DoneEvent`, or `AfterEvent`.
+                - A duck-typed object with `.type` and `.payload` attributes.
+            **payload (Any): Additional keyword arguments to be used as the
+                event's payload if `event_or_type` is a string.
+
+        Returns:
+            Union[Event, DoneEvent, AfterEvent]: A concrete event object ready
+            for processing.
+
+        Raises:
+            TypeError: If the input cannot be resolved into a valid event format.
         """
-        Normalise every accepted *shape* into a concrete Event-family object.
-
-        Why this rewrite?
-        -----------------
-        In the test-suite the library is imported twice – once as the *editable
-        source* (`src.xstate_statemachine`) and once as the *installed* package
-        (`xstate_statemachine`).  That creates **two distinct `Event`
-        classes**, so a plain `isinstance(evt, Event)` check can fail even
-        though the object *behaves* exactly like an Event.
-
-        The solution is to *duck-type* compatible objects instead of relying on
-        strict identity checks.
-
-        Accepted inputs
-        ---------------
-        • `str`  → `Event(type=…, payload=kwargs)`
-        • `dict` with a `"type"` key → `Event`
-        • Any instance of our own `Event` / `DoneEvent` / `AfterEvent`
-        • Any object exposing **both** `.type` *and* `.payload` attributes
-          (covers the “other copy” of the class)
-        """
-        # 1️⃣  Simple string + kwargs → new Event
+        # 1️⃣ Input is a simple string: create a new Event.
         if isinstance(event_or_type, str):
             return Event(type=event_or_type, payload=payload)
 
-        # 2️⃣  Dict shim → new Event
+        # 2️⃣ Input is a dictionary: convert to an Event.
         if isinstance(event_or_type, dict):
             data = event_or_type.copy()
             event_type = data.pop("type", "UnnamedEvent")
             return Event(type=event_type, payload=data)
 
-        # 3️⃣  Native Event-family instance (this import namespace)
+        # 3️⃣ Input is already a native Event instance: use as-is.
         if isinstance(event_or_type, (Event, DoneEvent, AfterEvent)):
             return event_or_type
 
-        # 4️⃣  Duck-typed “foreign” Event (other namespace)
+        # 4️⃣ Duck-typing: handle "foreign" Event objects (for testing robustness).
         if hasattr(event_or_type, "type") and hasattr(
             event_or_type, "payload"
         ):
-            # trust and forward as-is – keeps any subclass information intact
+            # Trust and forward as-is to preserve any subclass information.
             return event_or_type  # type: ignore[return-value]
 
-        # 5️⃣  Anything else is invalid
+        # 5️⃣ Anything else is an unsupported format.
         raise TypeError(
             f"Unsupported event type passed to send(): {type(event_or_type)}"
         )
 
     # -------------------------------------------------------------------------
-    # ⚙️ Core State Transition Logic (The Template Method's Main Algorithm)
+    # ⚙️ Core State Transition Logic (The Template Method)
     # -------------------------------------------------------------------------
 
-    # ------------------------------------------------------------------
-    # 🚦  SCXML Main Algorithm (single-event step)
-    # ------------------------------------------------------------------
     async def _process_event(
         self, event: Union[Event, DoneEvent, AfterEvent]
     ) -> None:
-        """
-        Execute a single event through the interpreter.
+        """Executes a single, complete "step" of the SCXML algorithm.
 
-        Final Fix
-        =========
-        ▸ Added explicit handling for top-level states defined as direct attributes
-        ▸ Improved state node validation
-        ▸ Enhanced debugging for state resolution
-        """
+        This method is the heart of the interpreter. It takes a single event
+        and orchestrates the entire state transition process:
+        1.  Finds the optimal transition to take based on the current state and event.
+        2.  Calculates the set of states to exit and enter.
+        3.  Executes exit actions, transition actions, and entry actions in the
+            correct SCXML-specified order.
+        4.  Updates the set of active states.
 
-        # 1️⃣  Select the winning transition
+        Args:
+            event (Union[Event, DoneEvent, AfterEvent]): The event to process.
+        """
+        # 1️⃣ Select the winning transition based on event, current state, and guards.
         transition = self._find_optimal_transition(event)
         if transition is None:
-            return
+            logger.debug("🍃 No transition found for event '%s'.", event.type)
+            return  # ➡️ No transition matched, so the step is complete.
 
-        # 2️⃣  Internal transition → only actions
+        # 2️⃣ Handle "internal" transitions (no state change).
+        # These transitions only execute actions without exiting or entering any states.
         if not transition.target_str:
+            logger.debug(
+                "🎬 Executing internal transition for event '%s'.", event.type
+            )
             await self._execute_actions(transition.actions, event)
+            # Notify plugins about the self-transition.
             for plug in self._plugins:
                 plug.on_transition(
                     self,
@@ -446,8 +520,8 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 )
             return
 
-        # 3️⃣  External transition set-up
-        snapshot = self._active_state_nodes.copy()
+        # 3️⃣ Set up for an "external" transition (state change).
+        snapshot_before = self._active_state_nodes.copy()
         domain = self._find_transition_domain(transition)
         states_to_exit = {
             s
@@ -455,77 +529,77 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             if self._is_descendant(s, domain) and s is not domain
         }
 
+        # 🚀 Begin multi-stage target state resolution.
         root = self.machine
         parent = transition.source.parent
+        target_str = transition.target_str
+        target_state: Optional[StateNode] = None
 
-        # 🔍 Enhanced debugging
-        logger.debug("🔄 Resolving state: %s", transition.target_str)
-        logger.debug("🌳 Machine root ID: %s", root.id)
-        if hasattr(root, "states"):
-            logger.debug("🌿 Root states: %s", list(root.states.keys()))
-        if hasattr(root, "__dict__"):
-            logger.debug("🔑 Root attributes: %s", list(root.__dict__.keys()))
+        logger.debug(
+            "🔄 Resolving target state '%s' from source '%s'.",
+            target_str,
+            transition.source.id,
+        )
 
-        # 4️⃣  Standard resolution attempts
-        attempts = [
-            (transition.target_str, transition.source),
-            (transition.target_str, parent) if parent else None,
-            (transition.target_str, root),
-            (f"{root.id}.{transition.target_str}", root),
+        # 4️⃣ Standard resolution attempts (most common paths).
+        resolution_attempts = [
+            (target_str, transition.source),  # Relative to source
+            (target_str, parent) if parent else None,  # Relative to parent
+            (target_str, root),  # Relative to root
+            (
+                f"{root.id}.{target_str}",
+                root,
+            ),  # Assuming relative from root ID
         ]
 
-        target_state = None
-        for tgt, ref in filter(None, attempts):
+        for tgt, ref in filter(None, resolution_attempts):
             try:
-                logger.debug(
-                    "🔍 Attempting resolution: %s from %s", tgt, ref.id
-                )
                 target_state = resolve_target_state(tgt, ref)
-                transition.target_str = tgt
+                transition.target_str = (
+                    tgt  # Update transition with fully resolved path
+                )
                 logger.debug(
-                    "✅ Resolved via standard method: %s", target_state.id
+                    "✅ Resolved via standard method: '%s'", target_state.id
                 )
                 break
             except StateNotFoundError:
-                logger.debug("🚫 Resolution failed: %s from %s", tgt, ref.id)
+                logger.debug(
+                    "    ↳ Failed standard resolution of '%s' from '%s'",
+                    tgt,
+                    ref.id,
+                )
                 continue
 
-        # 5️⃣  Direct attribute lookup (top-level state)
-        if target_state is None:
-            # Check if it's a direct attribute of root
-            if hasattr(root, transition.target_str):
-                candidate = getattr(root, transition.target_str)
-                # Validate it's a state node (has id and states properties)
-                if hasattr(candidate, "id") and (
-                    hasattr(candidate, "states")
-                    or hasattr(candidate, "is_atomic")
-                ):
-                    target_state = candidate
-                    logger.debug(
-                        "✅ Resolved via root attribute: %s", target_state.id
-                    )
+        # 5️⃣ Fallback 1: Direct attribute lookup on the root machine.
+        if target_state is None and hasattr(root, target_str):
+            candidate = getattr(root, target_str)
+            if isinstance(candidate, StateNode):
+                target_state = candidate
+                logger.debug(
+                    "✅ Resolved via root attribute lookup: '%s'",
+                    target_state.id,
+                )
 
-        # 6️⃣  States dictionary lookup
+        # 6️⃣ Fallback 2: Lookup in the root's `states` dictionary.
         if target_state is None and hasattr(root, "states"):
             states_dict = getattr(root, "states", {})
-            # Try exact match first
-            if transition.target_str in states_dict:
-                target_state = states_dict[transition.target_str]
+            if target_str in states_dict:
+                target_state = states_dict[target_str]
                 logger.debug(
-                    "✅ Resolved via states dict: %s", target_state.id
+                    "✅ Resolved via root states dict (exact match): '%s'",
+                    target_state.id,
                 )
-                # Then try local name match
-            else:
+            else:  # Check for local name match
                 for state in states_dict.values():
-                    if state.id.split(".")[-1] == transition.target_str:
+                    if state.id.split(".")[-1] == target_str:
                         target_state = state
                         logger.debug(
-                            "✅ Resolved via local name in states: %s",
+                            "✅ Resolved via root states dict (local name): '%s'",
                             target_state.id,
                         )
                         break
 
-        # 7️⃣  Depth-first tree walk fallback
+        # 7️⃣ Fallback 3: Exhaustive depth-first tree walk.
         if target_state is None:
 
             def _walk(node):
@@ -535,34 +609,29 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                         yield from _walk(child)
 
             for candidate in _walk(root):
-                if candidate.id.split(".")[-1] == transition.target_str:
+                if candidate.id.split(".")[-1] == target_str:
                     target_state = candidate
                     logger.debug(
-                        "✅ Resolved via tree walk: %s", target_state.id
+                        "✅ Resolved via full tree walk: '%s'", target_state.id
                     )
                     break
 
-        # 🔚 Absolute failure
+        # 8️⃣ Final failure if no resolution succeeded.
         if target_state is None:
-            available = []
-            if hasattr(root, "states"):
-                available.extend(root.states.keys())
-            if hasattr(root, "__dict__"):
-                available.extend(
-                    [
-                        k
-                        for k in root.__dict__.keys()
-                        if not k.startswith("_") and k != "states"
-                    ]
-                )
+            available = list(getattr(root, "states", {}).keys())
             logger.error(
-                "🚫 All resolution attempts failed for: %s",
-                transition.target_str,
+                "🚫 All resolution attempts failed for target: '%s'",
+                target_str,
             )
-            logger.error("📂 Available states: %s", available)
-            raise StateNotFoundError(transition.target_str, root.id)
+            logger.error(
+                "📂 Available top-level states in machine '%s': %s",
+                root.id,
+                available,
+            )
+            raise StateNotFoundError(target_str, root.id)
 
-        # 🔟  Build path & apply SCXML order
+        # 9️⃣ Calculate path to enter and execute the transition sequence.
+        # This order is mandated by SCXML: exit -> transition -> enter.
         path_to_enter = self._get_path_to_state(target_state, stop_at=domain)
 
         await self._exit_states(
@@ -572,86 +641,96 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         await self._execute_actions(transition.actions, event)
         await self._enter_states(path_to_enter, event)
 
-        # 🔟  Update active set & notify plugins
+        # 🔟 Finalize the new state configuration and notify plugins.
         self._active_state_nodes.difference_update(states_to_exit)
         self._active_state_nodes.update(path_to_enter)
         for plug in self._plugins:
             plug.on_transition(
-                self, snapshot, self._active_state_nodes.copy(), transition
+                self,
+                snapshot_before,
+                self._active_state_nodes.copy(),
+                transition,
             )
+
+    # -------------------------------------------------------------------------
+    # ⏯️ State Management Sub-Routines
+    # -------------------------------------------------------------------------
 
     async def _enter_states(
         self, states_to_enter: List[StateNode], event: Optional[Event] = None
     ) -> None:
-        """Recursively enters a list of states and their children.
+        """Enters a list of states in order, running actions and tasks.
 
-        This method executes entry actions and schedules tasks for each state
-        in the entry path. It handles entering compound and parallel states
-        by recursively calling itself for the appropriate child states.
+        This method follows the SCXML algorithm for state entry. For each
+        state, it:
+        1.  Adds the state to the active configuration.
+        2.  Executes all 'entry' actions.
+        3.  Schedules any `after` timers or `invoke` services defined on the state.
+        4.  If the state is a final state, it checks if its parent is now "done".
+        5.  Recursively enters the initial substate of a compound state or all
+            substates of a parallel state.
 
         Args:
-            states_to_enter: A list of `StateNode` objects to enter, ordered
-                from outermost to innermost.
-            event: The event that triggered this state entry.
+            states_to_enter (List[StateNode]): An ordered list of states to
+                enter, from the outermost ancestor to the innermost child.
+            event (Optional[Event]): The event that triggered this state entry.
         """
-        # 🎁 Use a synthetic event for initial state entry
-        triggering_event = event or Event(
-            type="___xstate_statemachine_init___"
-        )
+        trigger_event = event or Event(type="___xstate_statemachine_init___")
 
         for state in states_to_enter:
             self._active_state_nodes.add(state)
             logger.debug("➡️  Entering state: '%s'.", state.id)
 
-            # ⚙️ Run entry actions and schedule tasks
-            await self._execute_actions(state.entry, triggering_event)
-            self._schedule_state_tasks(state)  # Schedules `after` and `invoke`
+            # ⚙️ Run entry actions and schedule background tasks.
+            await self._execute_actions(state.entry, trigger_event)
+            self._schedule_state_tasks(state)
 
-            # ✅ If we entered a final state, check if its parent is now done
+            # 🎉 If we entered a final state, check if its parent is now complete.
             if state.is_final:
                 await self._check_and_fire_on_done(state)
 
-            # Recursively enter children for compound/parallel states
+            # 🗺️ Handle automatic entry into child states.
             if state.type == "compound" and state.initial:
                 initial_child = state.states.get(state.initial)
                 if initial_child:
-                    await self._enter_states([initial_child], triggering_event)
+                    await self._enter_states([initial_child], trigger_event)
                 else:
                     logger.error(
-                        "❌ Misconfiguration: Initial state '%s' not found "
-                        "in compound state '%s'.",
+                        "❌ Misconfiguration: Initial state '%s' not found in compound state '%s'.",
                         state.initial,
                         state.id,
                     )
             elif state.type == "parallel":
+                # For parallel states, enter all child regions simultaneously.
                 await self._enter_states(
-                    list(state.states.values()), triggering_event
+                    list(state.states.values()), trigger_event
                 )
 
     async def _exit_states(
         self, states_to_exit: List[StateNode], event: Optional[Event] = None
     ) -> None:
-        """Recursively exits a list of states.
+        """Exits a list of states in order, canceling tasks and running actions.
 
-        This method cancels any running tasks for the exited states and
-        executes their exit actions.
+        This method follows the SCXML algorithm for state exit. For each state, it:
+        1.  Cancels any running tasks (`after` timers, `invoke` services)
+            owned by the state.
+        2.  Executes all 'exit' actions.
+        3.  Removes the state from the active configuration.
 
         Args:
-            states_to_exit: A list of `StateNode` objects to exit, ordered
-                from innermost to outermost.
-            event: The event that triggered this state exit.
+            states_to_exit (List[StateNode]): An ordered list of states to
+                exit, from the innermost child to the outermost ancestor.
+            event (Optional[Event]): The event that triggered the state exit.
         """
-        triggering_event = event or Event(
-            type="___xstate_statemachine_exit___"
-        )
+        trigger_event = event or Event(type="___xstate_statemachine_exit___")
 
         for state in states_to_exit:
             logger.debug("⬅️  Exiting state: '%s'.", state.id)
-            # 🛑 Cancel any background tasks owned by this state FIRST
+            # 🛑 Crucially, cancel tasks before running exit actions.
             await self._cancel_state_tasks(state)
-            # ⚙️ Then, run exit actions
-            await self._execute_actions(state.exit, triggering_event)
-            # 🗑️ Finally, remove from the set of active states
+            # ⚙️ Then, run the synchronous exit actions.
+            await self._execute_actions(state.exit, trigger_event)
+            # 🗑️ Finally, remove from the active set.
             self._active_state_nodes.discard(state)
 
     # -------------------------------------------------------------------------
@@ -659,28 +738,25 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     # -------------------------------------------------------------------------
 
     def _is_state_done(self, state_node: StateNode) -> bool:
-        """Determines if a compound or parallel state is "done".
+        """Recursively determines if a compound or parallel state is "done".
 
-        This is a key part of the SCXML algorithm, especially for `onDone`
-        transitions. The logic is recursive to handle deeply nested states.
-
-        - A state is done if its `type` is `final`.
-        - A `compound` state is done if its active child state is also done.
+        This is a key part of the SCXML algorithm for `onDone` transitions.
+        - A state with `type: 'final'` is always done.
+        - A `compound` state is done if its currently active child state is done.
         - A `parallel` state is done only if ALL of its child regions are done.
 
         Args:
-            state_node: The compound or parallel state to check.
+            state_node (StateNode): The state to check for completion.
 
         Returns:
-            `True` if the state is considered done, `False` otherwise.
+            bool: `True` if the state is considered "done", otherwise `False`.
         """
-        # 🔑 A final state is the base case for the recursion.
+        # 🏁 Base case: A final state is inherently "done".
         if state_node.is_final:
             return True
 
-        # 🧠 For a compound state, its "doneness" is determined by its child.
+        # 🧠 Compound state: Its "doneness" is determined by its active child.
         if state_node.type == "compound":
-            # Find the single active child of this compound state.
             active_child = next(
                 (
                     s
@@ -689,205 +765,237 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 ),
                 None,
             )
+            # If no child is active, it cannot be done.
             if not active_child:
                 return False
-
-            # ✅ FIX: Recursively call _is_state_done on the child.
-            # This correctly handles cases where the child is also a
-            # compound or parallel state.
+            # Recursively check the child, handling nested complex states.
             return self._is_state_done(active_child)
 
-        #  parallelism: all children must be done
+        # 🌐 Parallel state: All child regions must be independently "done".
         if state_node.type == "parallel":
-            # 🌐 For a parallel state, every single region must be "done".
             for region in state_node.states.values():
-                # Find all active states within this region.
-                active_descendants = [
-                    s
-                    for s in self._active_state_nodes
-                    if self._is_descendant(s, region)
+                active_in_region = [
+                    d
+                    for d in self._active_state_nodes
+                    if self._is_descendant(d, region)
                 ]
-
-                # If a region has no active descendants, it can't be done.
-                if not active_descendants:
+                # If a region is not active, the parallel state is not done.
+                if not active_in_region:
                     return False
-
-                # ✅ FIX: Check if ANY active descendant in the region is "done".
-                # The original logic was more robust and is restored here.
-                if not any(self._is_state_done(d) for d in active_descendants):
+                # The region itself is "done" if any of its active states are done.
+                if not any(self._is_state_done(d) for d in active_in_region):
                     return False
-
             # If all regions passed the check, the parallel state is done.
             return True
 
+        # For atomic, non-final states.
         return False
 
     async def _check_and_fire_on_done(self, final_state: StateNode) -> None:
-        """Checks if an ancestor is "done" and fires its `onDone` event.
+        """Bubbles up from a final state to fire parent `onDone` transitions.
 
-        This method bubbles up from a newly entered final state to check if
-        any of its parents have now met their completion criteria.
+        When a state machine enters a `final` state, this method is called to
+        check if the parent (or any ancestor) is now considered "done"
+        according to `_is_state_done`. If so, it dispatches the corresponding
+        `done.state.*` event to trigger the `onDone` transition.
 
         Args:
-            final_state: The final state that was just entered.
+            final_state (StateNode): The final state that was just entered.
         """
-        current_ancestor = final_state.parent
-        while current_ancestor:
-            if current_ancestor.on_done and self._is_state_done(
-                current_ancestor
-            ):
+        ancestor = final_state.parent
+        while ancestor:
+            if ancestor.on_done and self._is_state_done(ancestor):
                 logger.info(
-                    "🎉 State '%s' is done, firing onDone event.",
-                    current_ancestor.id,
+                    "🎉 State '%s' is done, firing onDone event.", ancestor.id
                 )
-                # 📨 Send the synthetic `done.state.*` event to be processed
-                await self.send(
-                    Event(type=f"done.state.{current_ancestor.id}")
-                )
-                return  # Only fire for the first completed ancestor
-            current_ancestor = current_ancestor.parent
+                # 📨 Create and send the synthetic `done.state.*` event.
+                done_event = Event(type=f"done.state.{ancestor.id}")
+                await self.send(done_event)
+                # Per SCXML, only fire for the first completed ancestor.
+                return
+            ancestor = ancestor.parent
 
     def _find_optimal_transition(
         self, event: Union[Event, AfterEvent, DoneEvent]
     ) -> Optional[TransitionDefinition]:
         """Finds the most specific, eligible transition for an event.
 
-        This implements the logic for selecting which transition to take when
-        multiple could potentially handle an event. The rule is to choose
-        the transition defined on the most deeply nested state that is
-        currently active. This ensures that child states can override parent
-        behavior.
+        This implements the SCXML rule for transition selection: choose the
+        transition defined on the most deeply nested active state that matches
+        the event and satisfies its guard condition. This ensures that child
+        states can override the behavior of their parents.
 
         Args:
-            event: The event to find a transition for.
+            event (Union[Event, AfterEvent, DoneEvent]): The event being processed.
 
         Returns:
-            The highest-priority `TransitionDefinition` if one is found,
-            otherwise `None`.
+            Optional[TransitionDefinition]: The highest-priority transition
+            that should be taken, or `None` if no eligible transition is found.
         """
         eligible_transitions: List[TransitionDefinition] = []
 
-        # Sort active states by depth, so we check deepest children first.
-        sorted_active_nodes = sorted(
+        # 1️⃣ Sort active states by depth (most specific first).
+        sorted_nodes = sorted(
             list(self._active_state_nodes),
             key=lambda s: len(s.id),
             reverse=True,
         )
 
+        # 2️⃣ Determine if we should check for transient ("always") transitions.
         is_transient_check = not event.type.startswith(
             ("done.", "error.", "after.")
         )
         is_explicit_transient_event = event.type == ""
 
-        # 🌳 Traverse up the tree from each active leaf node
-        for state in sorted_active_nodes:
+        # 3️⃣ Traverse up the tree from each active leaf node.
+        for state in sorted_nodes:
             current: Optional[StateNode] = state
             while current:
-                # Standard `on` transitions
+                # Check standard `on` event transitions.
                 if (
                     not is_explicit_transient_event
                     and event.type in current.on
                 ):
-                    for transition in current.on[event.type]:
-                        if self._is_guard_satisfied(transition.guard, event):
-                            eligible_transitions.append(transition)
+                    for t in current.on[event.type]:
+                        if self._is_guard_satisfied(t.guard, event):
+                            eligible_transitions.append(t)
 
-                # Transient ("always") transitions
+                # Check transient `""` (always) transitions.
                 if is_transient_check and "" in current.on:
-                    for transition in current.on[""]:
-                        if self._is_guard_satisfied(transition.guard, event):
-                            eligible_transitions.append(transition)
+                    for t in current.on[""]:
+                        if self._is_guard_satisfied(t.guard, event):
+                            eligible_transitions.append(t)
 
-                # `onDone` transitions for compound states
+                # Check `onDone` transitions for compound/parallel states.
                 if current.on_done and current.on_done.event == event.type:
                     if self._is_guard_satisfied(current.on_done.guard, event):
                         eligible_transitions.append(current.on_done)
 
-                # `after` transitions for timed events
+                # Check `after` transitions for timed events.
                 if isinstance(event, AfterEvent):
                     for transitions in current.after.values():
-                        for t_def in transitions:
+                        for t in transitions:
                             if (
-                                t_def.event == event.type
-                                and self._is_guard_satisfied(
-                                    t_def.guard, event
-                                )
+                                t.event == event.type
+                                and self._is_guard_satisfied(t.guard, event)
                             ):
-                                eligible_transitions.append(t_def)
+                                eligible_transitions.append(t)
 
-                # `onDone`/`onError` for invoked services
+                # Check `onDone`/`onError` for invoked services.
                 if isinstance(event, DoneEvent):
                     for inv in current.invoke:
                         if event.src == inv.id:
-                            transitions_to_check = inv.on_done + inv.on_error
-                            for t_def in transitions_to_check:
+                            for t in inv.on_done + inv.on_error:
                                 if (
-                                    t_def.event == event.type
+                                    t.event == event.type
                                     and self._is_guard_satisfied(
-                                        t_def.guard, event
+                                        t.guard, event
                                     )
                                 ):
-                                    eligible_transitions.append(t_def)
+                                    eligible_transitions.append(t)
                 current = current.parent
 
         if not eligible_transitions:
             return None
 
-        # 🏆 Return the most deeply nested (highest priority) transition
-        return max(eligible_transitions, key=lambda t: len(t.source.id))
+        # 🏆 The winning transition is the one defined on the deepest state.
+        return max(
+            eligible_transitions, key=lambda t: len(t.source.id)
+        )  # noqa
 
     def _find_transition_domain(
         self, transition: TransitionDefinition
     ) -> Optional[StateNode]:
-        """
-        Return the domain for an **external** transition.
+        """Calculates the transition domain (LCCA) for an external transition.
 
-        🩹 **Important change**
-        If we cannot (yet) resolve the target state – typical when the
-        shorthand ``"b"`` is used from inside sibling ``"a"`` – we *do not*
-        raise ``StateNotFoundError``.
-        Instead we fall back to the source’s **parent** (or the machine
-        root).  The actual target is resolved later in `_process_event`.
+        The "domain" is the least common compound ancestor (LCCA) of the source
+        and target states. It determines which states are exited and entered.
+
+        A key feature of this implementation is that if the target state cannot
+        be immediately resolved (e.g., using a shorthand like `"sibling_state"`),
+        it does not fail. Instead, it conservatively falls back to the source's
+        parent as the domain, deferring final resolution to `_process_event`.
+
+        Args:
+            transition (TransitionDefinition): The external transition to analyze.
+
+        Returns:
+            Optional[StateNode]: The state node that is the LCCA, or None if the
+            root is the domain.
         """
-        from .exceptions import StateNotFoundError  # late import
-        from .resolver import resolve_target_state  # late import
+        # 🩹 Late imports to avoid circular dependency issues.
+        from .exceptions import StateNotFoundError
+        from .resolver import resolve_target_state
 
         parent = transition.source.parent or self.machine
 
-        # Try a quick resolve; if it fails, defer.
+        # 1️⃣ Attempt a quick resolution of the target state.
         try:
             target_state = resolve_target_state(
                 transition.target_str, transition.source
             )
         except StateNotFoundError:
-            return parent  # ← defer domain calculation
+            # If it fails, defer by using the parent as a safe domain.
+            logger.debug(
+                "⏳ Target '%s' not immediately resolvable. Deferring domain calculation.",
+                transition.target_str,
+            )
+            return parent
 
-        # External self-transition ⇒ domain is the parent
+        # 2️⃣ An external self-transition's domain is always the parent.
         if target_state == transition.source:
             return parent
 
-        # Normal case – compute LCCA
-        src_anc = self._get_ancestors(transition.source)
-        tgt_anc = self._get_ancestors(target_state)
-        common = src_anc & tgt_anc
-        return max(common, key=lambda n: len(n.id)) if common else parent
+        # 3️⃣ Standard case: Compute the Least Common Compound Ancestor.
+        source_ancestors = self._get_ancestors(transition.source)
+        target_ancestors = self._get_ancestors(target_state)
+        common_ancestors = source_ancestors & target_ancestors
+
+        if not common_ancestors:
+            return parent  # Fallback to parent (or root) if no commonality.
+
+        # The LCCA is the common ancestor with the longest (deepest) ID.
+        return max(common_ancestors, key=lambda n: len(n.id))
 
     @staticmethod
     def _get_path_to_state(
         to_state: StateNode, *, stop_at: Optional[StateNode] = None
     ) -> List[StateNode]:
-        """Builds the list of states to enter to reach a target state."""
+        """Builds the ordered list of states to enter to reach a target.
+
+        This method traces the ancestry from the target state (`to_state`) up
+        to, but not including, a specified `stop_at` ancestor (typically the
+        transition domain). The resulting path is then reversed to provide the
+        correct parent-to-child entry order.
+
+        Args:
+            to_state (StateNode): The destination state.
+            stop_at (Optional[StateNode]): The ancestor at which to stop
+                traversing.
+
+        Returns:
+            List[StateNode]: A list of states to be entered, from outermost
+            to innermost.
+        """
         path: List[StateNode] = []
         current: Optional[StateNode] = to_state
         while current and current is not stop_at:
             path.append(current)
             current = current.parent
-        path.reverse()  # reversing to get parent -> child order
+        # Reverse to get parent -> child order for correct state entry.
+        path.reverse()
         return path
 
     @staticmethod
     def _get_ancestors(node: StateNode) -> Set[StateNode]:
-        """Gets a set of all ancestors of a node, including the node itself."""
+        """Gets the set of all ancestors of a node, including the node itself.
+
+        Args:
+            node (StateNode): The node from which to find ancestors.
+
+        Returns:
+            Set[StateNode]: A set containing the node and all of its parents.
+        """
         ancestors: Set[StateNode] = set()
         current: Optional[StateNode] = node
         while current:
@@ -897,9 +1005,24 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
     @staticmethod
     def _is_descendant(node: StateNode, ancestor: Optional[StateNode]) -> bool:
-        """Checks if a node is a descendant of a specified ancestor."""
+        """Checks if a node is a descendant of a specified ancestor.
+
+        A node is considered a descendant of another if its ID starts with the
+        ancestor's ID followed by a dot, or if it is the ancestor itself.
+
+        Args:
+            node (StateNode): The potential descendant node.
+            ancestor (Optional[StateNode]): The potential ancestor node. If
+                `None`, it represents the machine root, and this method will
+                always return `True`.
+
+        Returns:
+            bool: `True` if `node` is a descendant of `ancestor`.
+        """
+        # If no ancestor is specified, it's the machine root, so all nodes are descendants.
         if not ancestor:
-            return True  # All nodes are descendants of the machine's null root
+            return True
+        # Check for self or if the ID indicates a child relationship.
         return node.id.startswith(f"{ancestor.id}.") or node == ancestor
 
     # -------------------------------------------------------------------------
@@ -907,30 +1030,45 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     # -------------------------------------------------------------------------
 
     def _schedule_state_tasks(self, state: StateNode) -> None:
-        """Schedules `after` and `invoke` tasks for a state upon entry.
+        """Schedules `after` and `invoke` tasks for a state upon its entry.
 
         This method dispatches to the abstract `_after_timer` and
         `_invoke_service` methods, which are implemented by the concrete
-        sync/async subclasses.
+        sync/async subclasses to handle the actual execution.
+
+        Args:
+            state (StateNode): The state being entered.
         """
-        # Schedule `after` timers
-        for delay, transitions in state.after.items():
+        # 🕒 Schedule `after` timers.
+        for delay_ms, transitions in state.after.items():
             for t_def in transitions:
-                delay_sec = float(delay) / 1000.0
+                delay_sec = float(delay_ms) / 1000.0
                 after_event = AfterEvent(type=t_def.event)
                 self._after_timer(delay_sec, after_event, owner_id=state.id)
+                logger.debug(
+                    "🕒 Scheduled 'after' event '%s' in %.2fs for state '%s'.",
+                    t_def.event,
+                    delay_sec,
+                    state.id,
+                )
 
-        # Schedule `invoke` services
+        # 📞 Schedule `invoke` services.
         for invocation in state.invoke:
             service_callable = self.machine.logic.services.get(invocation.src)
-            # 💥 Fail-fast if the implementation is missing
+            # 💥 Fail-fast if the service implementation is missing.
             if service_callable is None:
+                # FIX: Reverted error message to match test suite expectations.
                 raise ImplementationMissingError(
                     f"Service '{invocation.src}' referenced by "
                     f"state '{state.id}' is not registered."
                 )
             self._invoke_service(
                 invocation, service_callable, owner_id=state.id
+            )
+            logger.debug(
+                "📞 Invoking service '%s' for state '%s'.",
+                invocation.src,
+                state.id,
             )
 
     def _is_guard_satisfied(
@@ -940,39 +1078,45 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     ) -> bool:
         """Checks if a guard condition (a synchronous, pure function) is met.
 
+        Guard functions receive the current context and event, and must return
+        `True` (allow transition) or `False` (block transition).
+
         Args:
-            guard_name: The name of the guard function to check. If `None`,
-                the guard is considered to have passed.
-            event: The current event being processed, which is passed to the
-                guard function for context-aware decisions.
+            guard_name (Optional[str]): The name of the guard function to
+                execute. If `None`, the guard is considered to have passed.
+            event (Union[Event, AfterEvent, DoneEvent]): The current event
+                being processed, which is passed to the guard function.
 
         Returns:
-            `True` if the guard passes or if there is no guard, `False` otherwise.
+            bool: `True` if the guard passes or if there is no guard, `False`
+            otherwise.
 
         Raises:
-            ImplementationMissingError: If the guard function is named in the
-                machine definition but not provided in the machine's logic.
+            ImplementationMissingError: If a `guard_name` is provided but no
+                corresponding function is found in the machine's logic.
         """
-        # ✅ A transition without a guard is always allowed to proceed.
+        # ✅ A transition without a guard is always allowed.
         if not guard_name:
             return True
 
+        # 🔍 Find the guard function in the machine's logic.
         guard_callable = self.machine.logic.guards.get(guard_name)
         if not guard_callable:
+            # FIX: Reverted error message to match test suite expectations.
             raise ImplementationMissingError(
                 f"Guard '{guard_name}' not implemented."
             )
 
-        # ✅ Execute the guard function and log the result.
+        # 🏃 Execute the guard function.
         result = guard_callable(self.context, event)
-
-        # 🔔 Notify plugins about guard evaluation
-        for plugin in self._plugins:
-            plugin.on_guard_evaluated(self, guard_name, event, result)
-
         logger.info(
             "🛡️  Evaluating guard '%s': %s",
             guard_name,
             "✅ Passed" if result else "❌ Failed",
         )
+
+        # 🔔 Notify any registered plugins about the evaluation.
+        for plugin in self._plugins:
+            plugin.on_guard_evaluated(self, guard_name, event, result)
+
         return result
