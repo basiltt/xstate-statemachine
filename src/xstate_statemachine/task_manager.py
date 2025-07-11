@@ -143,7 +143,7 @@ class TaskManager:
         machine.
         """
         logger.info("🛑 Cancelling all managed tasks...")
-        #  একত্রিত Flatten the dictionary of sets into a single list of all tasks.
+        #   Flatten the dictionary of sets into a single list of all tasks.
         all_tasks = [
             task for tasks in self._tasks_by_owner.values() for task in tasks
         ]
