@@ -45,7 +45,7 @@ from src.xstate_statemachine import (
     SyncInterpreter,
     create_machine,
 )
-from xstate_statemachine.models import MachineNode
+from src.xstate_statemachine.models import MachineNode
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration

@@ -2128,16 +2128,16 @@ def test_timer_transition(light_machine):
 
 ## 🤝 Contributing<a name="contributing"></a>
 
-1. **Fork → Feature Branch → PR** — conventional commits (`feat:`, `fix:`).
-2. `poetry install` to get dev deps.
-3. `pre-commit install` ensures black, isort, flake8 pass.
-4. Add **unit tests** in `tests/` plus an example in `examples/`.
-5. Update `docs/CHANGELOG.md` (next release header).
+Contributions are welcome and greatly appreciated! This project thrives on community involvement, and we're excited to see what you'll bring.
 
-All PRs run:
+We follow a standard "Fork & Pull Request" workflow. Before submitting, please ensure your changes are well-tested, formatted correctly, and documented in the changelog.
 
-* ` python -m unittest discover`
+For a full, step-by-step guide on how to:
+-   Set up your development environment
+-   Run tests and linting checks
+-   Submit your changes
 
+Please see our **[Contributing Guide](CONTRIBUTING.md)**.
 ---
 
 ## 📜 License<a name="license"></a>

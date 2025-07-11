@@ -29,9 +29,9 @@ from unittest.mock import MagicMock
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from src.xstate_statemachine import Event, LoggingInspector, PluginBase
-from xstate_statemachine import Interpreter
-from xstate_statemachine.events import DoneEvent, AfterEvent
-from xstate_statemachine.models import StateNode, ActionDefinition
+from src.xstate_statemachine import Interpreter
+from src.xstate_statemachine.events import DoneEvent, AfterEvent
+from src.xstate_statemachine.models import StateNode, ActionDefinition
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration

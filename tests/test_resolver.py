@@ -34,7 +34,7 @@ from src.xstate_statemachine.resolver import (
     _find_descendant,
     resolve_target_state,
 )
-from xstate_statemachine import create_machine
+from src.xstate_statemachine import create_machine
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
