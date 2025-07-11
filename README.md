@@ -1478,8 +1478,6 @@ async def fetch_data_action(
 
 #### When to Use...
 
-#### When to Use...
-
 | Aspect | Use `invoke` | Use an `async` Action |
 | :--- | :--- | :--- |
 | **Clarity** | When the flow is a clear `success`/`failure` branch. | When you have multiple, custom outcomes. |
@@ -1566,8 +1564,7 @@ def test_timer_transition(light_machine):
     next_states = light_machine.get_next_state("light.green", event)
 
     assert next_states == {"light.yellow"}
-
----
+```
 
 ## 🎨 Style Guide (for actions/guards/services)
 
@@ -1576,10 +1573,11 @@ def test_timer_transition(light_machine):
 3. **Guards** are pure, side-effect-free, < 20 LOC.
 4. **Services** should raise domain errors, not swallow them.
 5. **Log** at source:
-   ```python
+
+```python
    logger = logging.getLogger("machine.payments")
    logger.info("Charging card %s...", ctx["card_id"])
-   ```
+```
 6. Use **emoji** prefixes in logs for quick grep (consistent across repo).
 
 ---
