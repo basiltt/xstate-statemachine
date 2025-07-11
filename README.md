@@ -85,7 +85,7 @@ Whether you’re a **junior dev** struggling with spaghetti `if/else` trees 🌱
 | **Declarative `invoke`** | Handle async tasks with declarative `onDone`/`onError` handlers. | Any interaction with a database, API, or external service that can succeed or fail. |
 | **Declarative `after`** | Create time-based transitions without manual `sleep()` calls. | Implementing timeouts, polling, debouncing, or slideshow-like delays. |
 | **Automatic Logic Binding**| Drastically reduce boilerplate by auto-linking your code to the JSON. | Rapid development and keeping your implementation code clean and decoupled. |
-| **Plugin System** | Hook into the interpreter lifecycle to add custom functionality. | Adding cross-cutting concerns like logging, analytics, or persistence without touching core logic. |
+| **Plugin System** | Hook into the interpreter lifecycle with fine-grained callbacks (e.g., on guard evaluation, service start/done/error). | Adding cross-cutting concerns like logging, analytics, or persistence without touching core logic. |
 | **Diagram Generators** | Keep your documentation perfectly in sync with your code. | Projects that require accurate, up-to-date architectural diagrams. |
 
 ---
@@ -1411,15 +1411,13 @@ behaviour. Any violation raises `NotSupportedError` instantly:
 
 ## 🐞 Debugging & Visualization (Preview)<a name="debugging--visualization"></a>
 
-Part 3 dives into:
+This section dives into:
 
-1. **LoggingInspector** patterns (verbosity, custom format).
-2. **Writing plugins** (Prometheus metrics, OTEL tracing).
-3. **Snapshots** for crash‑recovery & golden tests.
-4. **Auto‑diagrams** (Mermaid & PlantUML).
-5. **REPL live‑tinkering** with `await interp.send(...)`.
-
-Stay tuned! 🔍
+1.  **LoggingInspector** patterns (verbosity, custom format).
+2.  **Writing plugins** with detailed lifecycle hooks.
+3.  **Snapshots** for crash‑recovery & golden tests.
+4.  **Auto‑diagrams** (Mermaid & PlantUML).
+5.  **REPL live‑tinkering** with `await interp.send(...)`.
 
 ---
 
@@ -1518,14 +1516,13 @@ Below are the **stable hooks available today** (everything else is  considered e
 | ✉️ **`on_event_received`** | `on_event_received(self, interpreter, event)` | Every time an event is dequeued for processing | Audit trails, event‑level analytics |
 | 🔀 **`on_transition`** | `on_transition(self, interpreter, from_states, to_states, transition)` | After states are exited → actions run → new states entered | Tracing, Prometheus counters, BI pipelines |
 | ⚙️ **`on_action_execute`** | `on_action_execute(self, interpreter, action)` | Immediately before an individual action implementation runs | Profiling, APM spans, debugging prints |
+| 🛡️ **`on_guard_evaluated`** | `on_guard_evaluated(self, interpreter, guard_name, event, result)` | After a guard function's condition is evaluated | Debugging guard logic, conditional analytics |
+| 📞 **`on_service_start`** | `on_service_start(self, interpreter, invocation)` | Just before an invoked service begins execution | Logging service calls, tracing external interactions |
+| ✅ **`on_service_done`** | `on_service_done(self, interpreter, invocation, result)` | When an invoked service returns successfully | Logging successful outcomes, result processing |
+| 💥 **`on_service_error`** | `on_service_error(self, interpreter, invocation, error)` | When an invoked service raises an exception | Error reporting, failure handling, alerting |
 
 > 🛠️ **Tip:** Implement only the hooks you need; methods left un‑overridden
 > incur **zero** overhead thanks to Python’s dynamic dispatch. 🚀
-
-**Planned hooks** (not yet implemented, subject to change):
-
-* `on_guard_evaluated`
-* `on_service_start` / `on_service_done` / `on_service_error`
 
 ```python
 from xstate_statemachine import PluginBase
