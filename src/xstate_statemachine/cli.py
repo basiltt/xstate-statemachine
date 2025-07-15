@@ -22,12 +22,19 @@ import argparse
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Dict, List, Set, Any
 
 from . import __version__ as package_version
 
 logger = logging.getLogger(__name__)
+
+
+def camel_to_snake(name: str) -> str:
+    """Converts camelCase or PascalCase to snake_case."""
+    name = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
+    return re.sub("([a-z0-9])([A-Z])", r"\1_\2", name).lower()
 
 
 def extract_logic_names(  # noqa C901
@@ -170,6 +177,8 @@ def generate_logic_code(
         code += "import asyncio\n"
         code += "from typing import Awaitable\n"
     code += "import logging\nfrom typing import Any, Dict\n\n"
+    if not is_async and services:
+        code += "import time\n"
     code += "from xstate_statemachine import Interpreter, SyncInterpreter, Event, ActionDefinition\n\n"
     code += "# -----------------------------------------------------------------------------\n"
     code += "# 🪵 Logger Configuration\n"
@@ -178,7 +187,10 @@ def generate_logic_code(
 
     class_indent = ""
     func_self = ""
-    base_name = machine_name.replace("_", "").capitalize() + "Logic"
+    base_name = (
+        "".join(word.capitalize() for word in machine_name.split("_"))
+        + "Logic"
+    )
     if style == "class":
         code += "# -----------------------------------------------------------------------------\n"
         code += "# 🧠 Class-based Logic\n"
@@ -188,13 +200,17 @@ def generate_logic_code(
         func_self = "self, "
 
     # Actions section
-    code += f"{class_indent}# -----------------------------------------------------------------------------\n"
     code += f"{class_indent}# ⚙️ Actions\n"
-    code += f"{class_indent}# -----------------------------------------------------------------------------\n"
     for act in sorted(actions):
         async_prefix = "async " if is_async else ""
         ret_type = " Awaitable[None]" if is_async else " None"
-        code += f"{class_indent}{async_prefix}def {act}({func_self}interpreter: Interpreter if {is_async} else SyncInterpreter, context: Dict[str, Any], event: Event, action_def: ActionDefinition) ->{ret_type}:\n"
+        code += f"{class_indent}{async_prefix}def {act}(\n"
+        code += f"{class_indent}        {func_self}\n"
+        code += f"{class_indent}        interpreter: Interpreter if {is_async} else SyncInterpreter,\n"
+        code += f"{class_indent}        context: Dict[str, Any],\n"
+        code += f"{class_indent}        event: Event,\n"
+        code += f"{class_indent}        action_def: ActionDefinition\n"
+        code += f"{class_indent}) ->{ret_type}:\n"
         inner_indent = class_indent + "    "
         code += f'{inner_indent}"""Action: {act}."""\n'
         if log:
@@ -204,11 +220,13 @@ def generate_logic_code(
         code += f"{inner_indent}pass  # TODO: Implement action\n\n"
 
     # Guards section
-    code += f"{class_indent}# -----------------------------------------------------------------------------\n"
     code += f"{class_indent}# 🛡️ Guards\n"
-    code += f"{class_indent}# -----------------------------------------------------------------------------\n"
     for g in sorted(guards):
-        code += f"{class_indent}def {g}({func_self}context: Dict[str, Any], event: Event) -> bool:\n"
+        code += f"{class_indent}def {g}(\n"
+        code += f"{class_indent}        {func_self}\n"
+        code += f"{class_indent}        context: Dict[str, Any],\n"
+        code += f"{class_indent}        event: Event\n"
+        code += f"{class_indent}) -> bool:\n"
         inner_indent = class_indent + "    "
         code += f'{inner_indent}"""Guard: {g}."""\n'
         if log:
@@ -216,15 +234,18 @@ def generate_logic_code(
         code += f"{inner_indent}return True  # TODO: Implement guard\n\n"
 
     # Services section
-    code += f"{class_indent}# -----------------------------------------------------------------------------\n"
     code += f"{class_indent}# 🔄 Services\n"
-    code += f"{class_indent}# -----------------------------------------------------------------------------\n"
     for s in sorted(services):
         async_prefix = "async " if is_async else ""
         ret_type = (
             " Awaitable[Dict[str, Any]]" if is_async else " Dict[str, Any]"
         )
-        code += f"{class_indent}{async_prefix}def {s}({func_self}interpreter: Interpreter if {is_async} else SyncInterpreter, context: Dict[str, Any], event: Event) ->{ret_type}:\n"
+        code += f"{class_indent}{async_prefix}def {s}(\n"
+        code += f"{class_indent}        {func_self}\n"
+        code += f"{class_indent}        interpreter: Interpreter if {is_async} else SyncInterpreter,\n"
+        code += f"{class_indent}        context: Dict[str, Any],\n"
+        code += f"{class_indent}        event: Event\n"
+        code += f"{class_indent}) ->{ret_type}:\n"
         inner_indent = class_indent + "    "
         code += f'{inner_indent}"""Service: {s}."""\n'
         if log:
@@ -268,19 +289,20 @@ from xstate_statemachine import create_machine, """
         code += "logger = logging.getLogger(__name__)\n\n"
 
     if file_count == 2:
-        if len(machine_names) == 1:
-            machine_name = machine_names[0]
-            logic_file_name = f"{machine_name}_logic"
-            class_name = machine_name.replace("_", "").capitalize() + "Logic"
-            if style == "class":
-                logic_import = f"from {logic_file_name} import {class_name} as LogicProvider\n"
-            else:
-                logic_import = f"import {logic_file_name}\n"
+        base_name = (
+            "_".join(machine_names)
+            if len(machine_names) > 1
+            else machine_names[0]
+        )
+        logic_file_name = f"{base_name}_logic"
+        if style == "class":
+            class_name = (
+                "".join(word.capitalize() for word in base_name.split("_"))
+                + "Logic"
+            )
+            logic_import = f"from {logic_file_name} import {class_name} as LogicProvider\n"
         else:
-            if style == "class":
-                logic_import = "from generated_logic import GeneratedLogic as LogicProvider\n"
-            else:
-                logic_import = "import generated_logic\n"
+            logic_import = f"import {logic_file_name}\n"
         code += logic_import + "\n"
 
     if len(machine_names) == 1:
@@ -509,7 +531,8 @@ def main():
                 parser.error(f"JSON file not found: {jp}")
             with open(path, "r") as f:
                 conf = json.load(f)
-            name = conf.get("id", path.stem).replace(" ", "_").lower()
+            raw_name = conf.get("id", path.stem)
+            name = camel_to_snake(raw_name).lower()
             machine_names.append(name)
             configs.append(conf)
             json_filenames.append(path.name)

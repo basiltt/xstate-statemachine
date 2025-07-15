@@ -65,8 +65,9 @@ Whether you’re a **junior dev** struggling with spaghetti `if/else` trees 🌱
 
 * A **Pythonic** runtime for the world-famous **[XState](https://stately.ai)** architecture.
 * **100 % JSON-spec-compatible**, so you can design your chart in the Stately editor and run it untouched.
-* **Async first** (`asyncio`), yet ships a **blocking** `SyncInterpreter` for CLI tools, GUI apps, or tests.
+* **Async first** (`asyncio`), yet ships a **blocking** `SyncInterpreter` for CLI tools or tests, now with non-blocking support for `after` timers.
 * Packed with goodies: **hierarchy, parallelism, invoke**, **after**, timers, **actors**, auto-binding logic loaders, plugin hooks, diagram generators, and more.
+
 
 > **TL;DR** — If you know XState in JS, everything 👉 “just works” in Python.
 > If you don’t, keep reading—this guide is for you.
@@ -78,7 +79,7 @@ Whether you’re a **junior dev** struggling with spaghetti `if/else` trees 🌱
 | Feature | Why You Care | Best For |
 | :--- | :--- | :--- |
 | **100% XState Compatibility** | Design visually, export JSON, run in Python. | Teams that want to use visual tools like the Stately Editor for collaboration and design. |
-| **Async & Sync Interpreters** | Use the same machine logic for a web server or a desktop app. | Building flexible libraries or applications that need to run in different Python environments. |
+| **Async & Sync Interpreters** | Use the same machine logic for an `asyncio` server or a sync app, with both now supporting `after` timers. | Building flexible applications that need to run in different Python environments without sacrificing timer functionality. |
 | **Hierarchical States** | Organize complex logic by nesting states (e.g., `editing.typing`). | Modeling UI components, wizards, or any process that has distinct sub-steps. |
 | **Parallel States** | Model independent, concurrent state regions. | Complex systems where multiple things happen at once, like a smart home (`lighting`, `climate`). |
 | **The Actor Model** | Spawn child machines for ultimate concurrency and isolation. | Orchestrating multiple, independent components like IoT devices, user sessions, or background jobs. |
@@ -87,7 +88,6 @@ Whether you’re a **junior dev** struggling with spaghetti `if/else` trees 🌱
 | **Automatic Logic Binding**| Drastically reduce boilerplate by auto-linking your code to the JSON. | Rapid development and keeping your implementation code clean and decoupled. |
 | **Plugin System** | Hook into the interpreter lifecycle with fine-grained callbacks (e.g., on guard evaluation, service start/done/error). | Adding cross-cutting concerns like logging, analytics, or persistence without touching core logic. |
 | **Diagram Generators** | Keep your documentation perfectly in sync with your code. | Projects that require accurate, up-to-date architectural diagrams. |
-
 ---
 
 ## 🛠️ Installation<a name="installation"></a>
@@ -1370,9 +1370,8 @@ Your library supports two primary ways of organizing your logic: **functional** 
 | Concern | `Interpreter` (asyncio) | `SyncInterpreter` (blocking) |
 |---------|-------------------------|------------------------------|
 | Queue | `asyncio.Queue` | `collections.deque` |
-| Tick | Background task | While‑loop |
-| Concurrency | Cooperative | Serial |
-| Thread‑safe | `call_soon_threadsafe` needed | Yes (GIL) |
+| Tick | Background task | While‑loop in `send()` |
+| `after` Timers | `asyncio.create_task` | `threading.Thread` (Non-blocking) |
 | I/O | Non‑blocking | Blocks |
 | CPU | Slight overhead | Faster per event |
 
@@ -1380,26 +1379,17 @@ Your library supports two primary ways of organizing your logic: **functional** 
 *Desktop / CLI* → **SyncInterpreter**
 *Web / IoT / pipelines* → **Interpreter**
 
+#### ⚠️ Features *not* Supported by `SyncInterpreter`
 
-
-#### 🚫 Features *not* Supported by `SyncInterpreter`
-
-While the synchronous engine is perfect for CLI tools and deterministic tests,
-it enforces **three hard constraints** to guarantee blocking, side‑effect‑free
-behaviour. Any violation raises `NotSupportedError` instantly:
+While the synchronous engine now supports timers via background threads, it still enforces **two hard constraints** to guarantee predictable behavior. Any violation raises `NotSupportedError` instantly:
 
 | Attempted Feature | Exception Raised | Guarding Method | 📄 Source |
 |-------------------|------------------|-----------------|-----------|
-| **`after` timers** – declarative delays | `NotSupportedError` | `SyncInterpreter._after_timer` | [`sync_interpreter.py`](src/xstate_statemachine/sync_interpreter.py) |
-| **`spawn_*` actions** – child actor creation | `NotSupportedError` | `SyncInterpreter._spawn_actor` | same |
+| **`spawn_*` actions** – child actor creation | `NotSupportedError` | `SyncInterpreter._spawn_actor` | [`sync_interpreter.py`](src/xstate_statemachine/sync_interpreter.py) |
 | **Async callables** in actions **or** services (coroutines / `async def`) | `NotSupportedError` | `SyncInterpreter._execute_actions` & `SyncInterpreter._invoke_service` | same |
 
 > 🧘 **Why so strict?**
-> The sync interpreter must finish **everything** before returning control to
-> the caller. Timers, background actors, or coroutine functions would break
-> that guarantee and lead to hidden concurrency. The hard error surfaces the
-> issue early, nudging you towards either the full `Interpreter` or a
-> refactoring to synchronous logic.
+> The `SyncInterpreter`'s core `send` method must finish its event processing loop before returning control to the caller. Spawning background actors or awaiting coroutines would break that guarantee. The hard error surfaces this design mismatch early, nudging you towards either the full async `Interpreter` or a refactoring to synchronous logic.
 
 ### Migrating Sync→Async
 
