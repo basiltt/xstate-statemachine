@@ -6,13 +6,14 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "xstate-statemachine"
-version = "0.3.1"
+version = "0.4.0"
 authors = [
   { name="Basil T T", email="tt.basil@gmail.com" },
 ]
 description = "A robust Python library for parsing and running XState JSON state machines."
 readme = "README.md"
 requires-python = ">=3.8"
+license = { text = "MIT" } # Modern PEP 621 license format
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -24,3 +25,8 @@ classifiers = [
 [project.urls]
 "Homepage" = "https://github.com/basiltt/xstate-statemachine"
 "Bug Tracker" = "https://github.com/basiltt/xstate-statemachine/issues"
+
+# 💡 This is the key addition for the CLI tool, following PEP 621.
+#    Poetry will correctly interpret this and create the executable.
+[project.scripts]
+xstate-statemachine = "xstate_statemachine.cli:main"

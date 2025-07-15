@@ -20,6 +20,8 @@
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import logging
+import threading
+import time
 from collections import deque
 from typing import (
     Any,
@@ -32,6 +34,8 @@ from typing import (
     Union,
     overload,
 )
+
+from typing import Dict as TypeDict
 
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
@@ -109,8 +113,12 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         logger.info("⛓️ Initializing Synchronous Interpreter... 🚀")
 
         # ⚙️ Initialize synchronous-specific attributes
-        self._event_queue: Deque[Union[Event, AfterEvent, DoneEvent]] = deque()
+        self._event_queue: Deque[Union[Event, DoneEvent, AfterEvent]] = deque()
         self._is_processing: bool = False
+
+        # 🆕 Add thread tracking for after transitions
+        self._after_threads: TypeDict[str, threading.Thread] = {}
+        self._after_events: TypeDict[str, threading.Event] = {}
 
         logger.info("✅ Synchronous Interpreter '%s' initialized. 🎉", self.id)
 
@@ -184,9 +192,15 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             return
 
         logger.info("🛑 Stopping sync interpreter '%s'...", self.id)
+
+        # 🧹 Clean up all after timers
+        for state_id in list(self._after_events.keys()):
+            self._after_events[state_id].set()
+        self._after_events.clear()
+        self._after_threads.clear()
+
         self.status = "stopped"
 
-        # 🔌 Notify all registered plugins that the interpreter is stopping.
         for plugin in self._plugins:
             plugin.on_interpreter_stop(self)
 
@@ -469,13 +483,14 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 ordered from child to parent.
             event: The optional event that triggered the state exit.
         """
+        # Cancel timers BEFORE any other processing
+        for state in states_to_exit:
+            self._cancel_state_tasks(state)
+
+        # Then proceed with normal exit processing
         for state in states_to_exit:
             logger.info("⬅️ Exiting state: '%s'", state.id)
-            # ⏰ Cancel any running tasks/services associated with this state.
-            self._cancel_state_tasks(state)
-            # ⚡ Execute all 'on_exit' actions.
             self._execute_actions(state.exit, Event(f"exit.{state.id}"))
-            # ➖ Remove the state from the active configuration.
             self._active_state_nodes.discard(state)
             logger.debug("✅ State '%s' exited successfully.", state.id)
 
@@ -753,11 +768,15 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         Args:
             state: The state for which tasks would be cancelled.
         """
-        logger.debug(
-            "🧹 Skipping state task cancellation for '%s' (no-op in sync mode).",
-            state.id,
-        )
-        # 🤫 Nothing to do here in a synchronous world.
+        state_id = state.id
+        if state_id in self._after_events:
+            logger.debug("🧹 Cancelling after timer for state '%s'", state_id)
+            self._after_events[state_id].set()  # Signal cancellation
+            # Immediate cleanup
+            self._after_events.pop(state_id, None)
+            self._after_threads.pop(state_id, None)
+
+        logger.debug("🧹 State task cancellation complete for '%s'", state_id)
 
     def _after_timer(
         self, delay_sec: float, event: AfterEvent, owner_id: str
@@ -770,12 +789,40 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         Raises:
             NotSupportedError: Always, as this feature is unsupported.
         """
-        logger.error(
-            "⏰ Timed 'after' transitions are not supported by SyncInterpreter."
+        logger.info(
+            "⏰ Scheduling after transition in %.2fs for state '%s'",
+            delay_sec,
+            owner_id,
         )
-        raise NotSupportedError(
-            "`after` transitions are not supported by SyncInterpreter."
-        )
+
+        # Create cancellation event for this timer
+        cancel_event = threading.Event()
+        self._after_events[owner_id] = cancel_event
+
+        def timer_thread():
+            """Background thread that waits and then sends the event."""
+            try:
+                # Use precise timing
+                if cancel_event.wait(timeout=delay_sec):
+                    return  # Cancelled, exit early
+
+                # Verify state is still active before sending
+                if self.status == "running" and owner_id in {
+                    s.id for s in self._active_state_nodes
+                }:
+                    self.send(event)
+
+            except Exception as e:
+                logger.error("Error in after timer thread: %s", e)
+            finally:
+                # Clean up
+                self._after_threads.pop(owner_id, None)
+                self._after_events.pop(owner_id, None)
+
+        # Start the background thread
+        thread = threading.Thread(target=timer_thread, daemon=True)
+        self._after_threads[owner_id] = thread
+        thread.start()
 
     def _invoke_service(
         self,

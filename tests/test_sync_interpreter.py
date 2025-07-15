@@ -26,6 +26,7 @@ Unit test suite for the synchronous `SyncInterpreter`.
 # -----------------------------------------------------------------------------
 import json
 import logging
+import time
 import unittest
 from typing import Any, Dict, List, Callable
 from unittest.mock import MagicMock
@@ -1294,26 +1295,6 @@ class TestSyncInterpreter(unittest.TestCase):
     # ⚠️ Error Handling & Edge Case Tests
     # -------------------------------------------------------------------------
 
-    def test_error_on_unsupported_after_transition(self) -> None:
-        """
-        Tests that `SyncInterpreter` raises a `NotSupportedError` for `after`
-        (timed) transitions.
-        """
-        logger.info("❌ Testing error for unsupported `after` transitions...")
-        # 🤖 Arrange
-        machine_config: Dict[str, Any] = {
-            "id": "timer",
-            "initial": "active",
-            "states": {
-                "active": {"after": {"100": "finished"}},
-                "finished": {},
-            },
-        }
-        machine = create_machine(machine_config)
-        # ⚡ Act & ✨ Assert
-        with self.assertRaisesRegex(NotSupportedError, "`after` transitions"):
-            SyncInterpreter(machine).start()
-
     def test_error_on_unsupported_async_action(self) -> None:
         """
         Tests that `SyncInterpreter` raises `NotSupportedError` for async actions.
@@ -1762,6 +1743,98 @@ class TestSyncInterpreter(unittest.TestCase):
             interpreter.current_state_ids,
             {"sync_service_error_machine.failed"},
         )
+
+    def test_after_transition_is_scheduled_and_fires(self) -> None:
+        """
+        Tests that `SyncInterpreter` correctly schedules and fires an `after`
+        (timed) transition using a background thread.
+        """
+        logger.info("🧪 Testing successful `after` transition...")
+        # 🤖 Arrange
+        machine_config: Dict[str, Any] = {
+            "id": "timer",
+            "initial": "waiting",
+            "states": {
+                "waiting": {
+                    "after": {0.05: "finished"}
+                },  # Reduced to 50ms for faster test
+                "finished": {},
+            },
+        }
+        machine = create_machine(machine_config)
+        interpreter = SyncInterpreter(machine).start()
+
+        # ✨ Assert: We start in the waiting state.
+        self.assertEqual(interpreter.current_state_ids, {"timer.waiting"})
+
+        # ⚡ Act: Wait with timeout for the transition
+        import time
+
+        timeout = 0.2  # 200ms max wait
+        start_time = time.time()
+
+        while (
+            "timer.waiting" in interpreter.current_state_ids
+            and time.time() - start_time < timeout
+        ):
+            time.sleep(0.005)  # Small polling interval
+
+        # ✨ Assert: Should have transitioned
+        self.assertEqual(interpreter.current_state_ids, {"timer.finished"})
+        interpreter.stop()
+
+    def test_after_transition_is_cancelled_on_state_exit(self) -> None:
+        """
+        Tests that an `after` transition is correctly cancelled if the state
+        is exited before the timer fires.
+        """
+        logger.info("🧪 Testing cancellation of `after` transition...")
+        # 🤖 Arrange
+        machine_config: Dict[str, Any] = {
+            "id": "timer_cancel",
+            "initial": "waiting",
+            "states": {
+                "waiting": {
+                    "after": {
+                        1.0: "timeout"
+                    },  # Longer delay to ensure cancellation
+                    "on": {"CANCEL": "cancelled"},
+                },
+                "timeout": {},
+                "cancelled": {},
+            },
+        }
+        machine = create_machine(machine_config)
+        interpreter = SyncInterpreter(machine).start()
+
+        # ✨ Assert: We start in the waiting state
+        self.assertEqual(
+            interpreter.current_state_ids, {"timer_cancel.waiting"}
+        )
+
+        # ⚡ Act: Immediately send CANCEL event
+        interpreter.send("CANCEL")
+
+        # ✨ Assert: Should immediately transition to cancelled
+        self.assertEqual(
+            interpreter.current_state_ids, {"timer_cancel.cancelled"}
+        )
+
+        # ⚡ Act: Wait longer than the original timer would have fired
+        time.sleep(0.1)  # Much shorter than 1.0s timer
+
+        # ✨ Assert: Should still be in cancelled state
+        self.assertEqual(
+            interpreter.current_state_ids, {"timer_cancel.cancelled"}
+        )
+
+        # Wait even longer to be sure
+        time.sleep(0.2)
+        self.assertEqual(
+            interpreter.current_state_ids, {"timer_cancel.cancelled"}
+        )
+
+        interpreter.stop()
 
 
 if __name__ == "__main__":
