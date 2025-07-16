@@ -201,13 +201,9 @@ class LogicLoader:
             if transition.guard:
                 guards.add(transition.guard)
 
-        # Categorize actions vs. spawnable services
+        # Categorize actions (no special treatment for spawn_)
         for action_def in all_actions:
-            if action_def.type.startswith("spawn_"):
-                service_name = action_def.type.replace("spawn_", "")
-                services.add(service_name)
-            else:
-                actions.add(action_def.type)
+            actions.add(action_def.type)
 
         # Logic from `invoke` definitions
         for invoke_def in node.invoke:
@@ -216,11 +212,7 @@ class LogicLoader:
             # Also check for logic within the `onDone` and `onError` transitions
             for transition in invoke_def.on_done + invoke_def.on_error:
                 for action_def in transition.actions:
-                    if action_def.type.startswith("spawn_"):
-                        service_name = action_def.type.replace("spawn_", "")
-                        services.add(service_name)
-                    else:
-                        actions.add(action_def.type)
+                    actions.add(action_def.type)
                 if transition.guard:
                     guards.add(transition.guard)
 

@@ -329,11 +329,14 @@ from xstate_statemachine import create_machine, """
             logic_import = f"import {logic_file_name}\n"
         code += logic_import + "\n"
 
+    func_prefix = "async " if is_async else ""
+    await_prefix = "await " if is_async else ""
+
     if len(machine_names) == 1:
         name = machine_names[0]
         config = configs[0]
         json_filename = json_filenames[0]
-        code += "def main() -> None:\n"
+        code += f"{func_prefix}def main() -> None:\n"
         inner_indent = "    "
         code += f'{inner_indent}"""Executes the simulation for the {name} machine."""\n\n'
         code += f"{inner_indent}# ---------------------------------------------------------------------------\n"
@@ -363,7 +366,6 @@ from xstate_statemachine import create_machine, """
         )
         code += f"{inner_indent}interpreter = {interp_type}\n"
         code += f"{inner_indent}interpreter.use(LoggingInspector())\n"
-        await_prefix = "await " if is_async else ""
         code += f"{inner_indent}{await_prefix}interpreter.start()\n"
         code += f'{inner_indent}logger.info(f"Initial state: {{interpreter.current_state_ids}}")\n\n'
         code += f"{inner_indent}# ---------------------------------------------------------------------------\n"
@@ -374,7 +376,9 @@ from xstate_statemachine import create_machine, """
         )
         dummy_event = next(iter(config.get("on", {})), "PEDESTRIAN_WAITING")
         code += f"{inner_indent}logger.info('→ Sending initial event: {dummy_event}')\n"
-        code += f"{inner_indent}interpreter.send('{dummy_event}')\n"
+        code += (
+            f"{inner_indent}{await_prefix}interpreter.send('{dummy_event}')\n"
+        )
         if sleep:
             code += f"{inner_indent}time.sleep({sleep_time})\n"
         code += f"{inner_indent}logger.info(f'--- ✅ Simulation ended in state: {{interpreter.current_state_ids}} ---')\n"
@@ -387,7 +391,6 @@ from xstate_statemachine import create_machine, """
         for idx, name in enumerate(machine_names):
             config = configs[idx]
             json_filename = json_filenames[idx]
-            func_prefix = "async " if is_async else ""
             code += f"{func_prefix}def run_{name}() -> None:\n"
             inner_indent = "    "
             code += f'{inner_indent}"""Executes the simulation for the {name} machine."""\n\n'
@@ -422,7 +425,6 @@ from xstate_statemachine import create_machine, """
             )
             code += f"{inner_indent}interpreter = {interp_type}\n"
             code += f"{inner_indent}interpreter.use(LoggingInspector())\n"
-            await_prefix = "await " if is_async else ""
             code += f"{inner_indent}{await_prefix}interpreter.start()\n"
             code += f'{inner_indent}logger.info(f"Initial state: {{interpreter.current_state_ids}}")\n\n'
             code += f"{inner_indent}# ---------------------------------------------------------------------------\n"
@@ -431,17 +433,15 @@ from xstate_statemachine import create_machine, """
             code += f"{inner_indent}logger.info('--- Kicking off simulation... ---')\n"
             dummy_event = next(iter(config.get("on", {})), "EVENT1")
             code += f"{inner_indent}logger.info('→ Sending initial event: {dummy_event}')\n"
-            code += f"{inner_indent}interpreter.send('{dummy_event}')\n"
+            code += f"{inner_indent}{await_prefix}interpreter.send('{dummy_event}')\n"
             if sleep:
                 code += f"{inner_indent}time.sleep({sleep_time})\n"
             code += f"{inner_indent}logger.info(f'--- ✅ Simulation ended in state: {{interpreter.current_state_ids}} ---')\n"
             code += f"{inner_indent}{await_prefix}interpreter.stop()\n\n"
 
-        func_prefix = "async " if is_async else ""
         code += f"{func_prefix}def main() -> None:\n"
         inner_indent = "    "
         for name in machine_names:
-            await_prefix = "await " if is_async else ""
             code += f"{inner_indent}{await_prefix}run_{name}()\n\n"
         if is_async:
             code += "if __name__ == '__main__':\n    asyncio.run(main())\n"
