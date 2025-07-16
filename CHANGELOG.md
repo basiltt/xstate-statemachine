@@ -1,9 +1,27 @@
-# Changelog
-All notable changes to **xstate_statemachine** will be documented in this file.
+## Changelog
 
-_This project adheres to [Semantic Versioning](https://semver.org) and the format follows [Keep a Changelog](https://keepachangelog.com)._
+All notable changes to this project will be documented in this file.
 
----
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.4.0] - 2025-07-16
+
+### Added
+
+- **CLI Tool**: Introduced a new command-line interface (CLI) tool for interacting with state machines, including commands for creating, validating, and running machines from JSON configurations. This enhances usability for developers and enables easier integration into scripts and CI/CD pipelines.
+- **'after' Transition Support in SyncInterpreter**: Added support for timed 'after' transitions in the synchronous interpreter (`SyncInterpreter`). This allows for delayed transitions without requiring an asynchronous event loop, using blocking sleep mechanisms for simplicity in synchronous environments. Note: This feature is limited to deterministic, non-concurrent use cases and may block the main thread.
+
+### Changed
+
+- Updated the `SyncInterpreter` to handle delayed events synchronously, ensuring compatibility with basic timing requirements while maintaining the blocking execution model.
+- Minor internal refactoring in the `SyncInterpreter` to accommodate the new 'after' logic, including updates to task scheduling and event processing loops.
+- Removed special treatment for 'spawn_' actions in the logic loader (`LogicLoader`), now treating them as regular actions. This may require users to adjust bindings for actor spawning in configurations.
+
+### Fixed
+
+- Resolved potential re-entrancy issues in the synchronous event queue by adding safeguards during processing cycles.
+- Improved error messages for unsupported asynchronous features in `SyncInterpreter` to provide clearer guidance on limitations.
 
 ## [0.3.1] - 2025‑07‑11
 ### Added
