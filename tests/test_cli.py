@@ -1107,8 +1107,8 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("CUSTOM_EVENT", code)
 
     def test_generate_default_dummy_event(self) -> None:
-        """Verifies the default fallback event when none is in the config."""
-        logger.info("🧪 Testing default dummy event.")
+        """Verifies the fallback when no events are defined in the config."""
+        logger.info("🧪 Testing fallback for no events in config.")
         code = generate_runner_code(
             self.machine_names,
             False,
@@ -1121,7 +1121,10 @@ class TestGenerateRunnerCode(unittest.TestCase):
             [{}],
             self.json_filenames,
         )
-        self.assertIn("PEDESTRIAN_WAITING", code)
+        self.assertIn(
+            "# No events defined in the machine. Add manual sends here.", code
+        )
+        self.assertIn("pass", code)  # Ensures the placeholder is present
 
     def test_generate_path_config_load(self) -> None:
         """Ensures the correct JSON filename is used for loading the config."""
@@ -1316,7 +1319,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
 
     def test_generate_simulation_log_messages(self) -> None:
         """Verifies the standard log messages for starting and ending the simulation."""
-        logger.info("🧪 Testing simulation logs.")
+        logger.info("🧪 Testing simulation log messages.")
         code = generate_runner_code(
             self.machine_names,
             False,
@@ -1329,7 +1332,10 @@ class TestGenerateRunnerCode(unittest.TestCase):
             self.configs,
             self.json_filenames,
         )
-        self.assertIn("logger.info('--- Kicking off simulation... ---')", code)
+        self.assertIn(
+            "logger.info('--- Running simulation with all defined events ---')",
+            code,
+        )
         self.assertIn(
             "logger.info(f'--- ✅ Simulation ended in state: {interpreter.current_state_ids} ---')",
             code,
