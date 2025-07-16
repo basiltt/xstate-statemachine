@@ -1755,9 +1755,7 @@ class TestSyncInterpreter(unittest.TestCase):
             "id": "timer",
             "initial": "waiting",
             "states": {
-                "waiting": {
-                    "after": {0.05: "finished"}
-                },  # Reduced to 50ms for faster test
+                "waiting": {"after": {50: "finished"}},  # 50ms delay
                 "finished": {},
             },
         }
@@ -1767,7 +1765,6 @@ class TestSyncInterpreter(unittest.TestCase):
         # ✨ Assert: We start in the waiting state.
         self.assertEqual(interpreter.current_state_ids, {"timer.waiting"})
 
-        # ⚡ Act: Wait with timeout for the transition
         import time
 
         timeout = 0.2  # 200ms max wait
