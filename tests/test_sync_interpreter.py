@@ -897,7 +897,7 @@ class TestSyncInterpreter(unittest.TestCase):
         """
         logger.info("🧪 Testing `onDone` from a nested parallel state...")
         # 🤖 Arrange: A machine where a parallel state is inside another state.
-        machine_config: Dict[str, Any] = {
+        machine_config: Dict[str, Any] = {  # noqa
             "id": "m",
             "initial": "s1",
             "states": {
