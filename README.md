@@ -7,8 +7,6 @@
 
 ## 📜 Table of Contents
 
-## 📜 Table of Contents
-
 1.  **[Introduction](#introduction)**
 2.  **[Why State Machines?](#why-state-machines)**
 3.  **[What is XState-StateMachine?](#what-is-xstate-statemachine)**
