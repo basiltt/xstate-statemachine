@@ -13,7 +13,7 @@
 # It adheres to the "Template Method" pattern by overriding the abstract async
 # methods from `BaseInterpreter` with concrete synchronous implementations,
 # while intentionally raising `NotSupportedError` for features that are
-# fundamentally asynchronous (e.g., `after` timers, spawning actors).
+# fundamentally asynchronous (e.g., spawning actors).
 # -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
@@ -21,7 +21,6 @@
 # -----------------------------------------------------------------------------
 import logging
 import threading
-import time
 from collections import deque
 from typing import (
     Any,
@@ -34,7 +33,6 @@ from typing import (
     Union,
     overload,
 )
-
 from typing import Dict as TypeDict
 
 # -----------------------------------------------------------------------------
@@ -86,26 +84,20 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     defined in `BaseInterpreter`. It provides synchronous versions of abstract
     methods related to action execution and service invocation.
 
-    **Limitations**:
-    This interpreter does not support features that require a background event
-    loop or timer. Any attempt to use a machine with these features will
-    result in a `NotSupportedError`. Unsupported features include:
-    - ⏰ Timed `after` transitions.
-    - 🎭 Spawning child actors (`spawn_` actions).
-    - ⏳ Asynchronous `invoke` services that need to run in the background.
-
     Attributes:
         _event_queue (Deque[Union[Event, AfterEvent, DoneEvent]]): A queue to
             manage the event processing sequence in a first-in, first-out (FIFO) manner.
         _is_processing (bool): A flag to prevent re-entrant event processing,
             ensuring atomicity of a single `send` call's execution loop.
+        _after_threads (TypeDict[str, threading.Thread]): Tracks background threads for `after` timers.
+        _after_events (TypeDict[str, threading.Event]): Manages cancellation signals for `after` timers.
     """
 
     def __init__(self, machine: MachineNode[TContext, TEvent]) -> None:
         """Initializes a new synchronous Interpreter instance.
 
         Args:
-            machine: The state machine definition (`MachineNode` instance)
+            machine (MachineNode[TContext, TEvent]): The state machine definition
                 that this interpreter will run.
         """
         # 🤝 Initialize the base interpreter first
@@ -135,7 +127,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         to its entry state and processes any immediate "always" transitions.
 
         Returns:
-            The interpreter instance itself, allowing for method chaining.
+            "SyncInterpreter": The interpreter instance itself, allowing for method chaining.
             Example:
                 `interpreter = SyncInterpreter(machine).start()`
         """
@@ -193,7 +185,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         logger.info("🛑 Stopping sync interpreter '%s'...", self.id)
 
-        # 🧹 Clean up all after timers
+        # 🧹 Clean up all after timers by signaling their cancellation events.
         for state_id in list(self._after_events.keys()):
             self._after_events[state_id].set()
         self._after_events.clear()
@@ -201,6 +193,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         self.status = "stopped"
 
+        # 🔌 Notify plugins that the interpreter has stopped.
         for plugin in self._plugins:
             plugin.on_interpreter_stop(self)
 
@@ -229,11 +222,11 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         blocks until the entire event processing loop is finished.
 
         Args:
-            event_or_type: The event to send. This can be:
+            event_or_type (Union[str, Dict[str, Any], Event, DoneEvent, AfterEvent]): The event to send. This can be:
                 - A `str`: The type of the event, with `payload` as kwargs.
                 - A `dict`: An event object, which must contain a 'type' key.
                 - An `Event`, `DoneEvent`, or `AfterEvent` instance.
-            **payload: Additional keyword arguments for the event's payload,
+            **payload (Any): Additional keyword arguments for the event's payload,
                 used only when `event_or_type` is a string.
 
         Raises:
@@ -294,7 +287,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             logger.debug("🎉 Event processing cycle completed. Queue empty.")
 
     # -------------------------------------------------------------------------
-    # ⚙️ Core State Transition Logic
+    # ⚙️ Core State Transition Logic (Private)
     # -------------------------------------------------------------------------
 
     def _process_event(
@@ -308,11 +301,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         3.  Executes exit actions, transition actions, and entry actions in order.
         4.  Updates the set of active states.
 
-        The state resolution logic is robust, attempting to find the target state
-        through multiple strategies for maximum flexibility in machine definition.
-
         Args:
-            event: The event object to process.
+            event (Union[Event, DoneEvent, AfterEvent]): The event object to process.
         """
         # 1️⃣ Select the winning transition based on event, guards, and state depth.
         transition = self._find_optimal_transition(event)
@@ -406,7 +396,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 break
 
     # -------------------------------------------------------------------------
-    # ➡️⬅️ State Lifecycle Hooks
+    # ➡️⬅️ State Lifecycle Hooks (Private)
     # -------------------------------------------------------------------------
 
     def _enter_states(
@@ -421,9 +411,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         - Recursively entering initial states for compound/parallel states.
 
         Args:
-            states_to_enter: A list of `StateNode` objects to enter, typically
-                ordered from parent to child.
-            event: The optional event that triggered the state entry.
+            states_to_enter (List[StateNode]): A list of `StateNode` objects to enter,
+                typically ordered from parent to child.
+            event (Optional[Event]): The optional event that triggered the state entry.
         """
         for state in states_to_enter:
             logger.info("➡️ Entering state: '%s'", state.id)
@@ -463,8 +453,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 )
                 self._enter_states(list(state.states.values()))
 
-            # ⚙️ "Schedule" any tasks (invokes, etc.). In sync mode, this means
-            #    immediate execution for synchronous services.
+            # ⚙️ Schedule any tasks (invokes, timers).
             self._schedule_state_tasks(state)
             logger.debug("✅ State '%s' entered successfully.", state.id)
 
@@ -479,23 +468,285 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         - Removing states from the active set.
 
         Args:
-            states_to_exit: A list of `StateNode` objects to exit, typically
-                ordered from child to parent.
-            event: The optional event that triggered the state exit.
+            states_to_exit (List[StateNode]): A list of `StateNode` objects to exit,
+                typically ordered from child to parent.
+            event (Optional[Event]): The optional event that triggered the state exit.
         """
-        # Cancel timers BEFORE any other processing
+        # 🧹 Cancel tasks BEFORE any other processing to prevent race conditions.
         for state in states_to_exit:
             self._cancel_state_tasks(state)
 
-        # Then proceed with normal exit processing
+        # 🏃‍♂️ Then proceed with normal exit processing.
         for state in states_to_exit:
             logger.info("⬅️ Exiting state: '%s'", state.id)
             self._execute_actions(state.exit, Event(f"exit.{state.id}"))
             self._active_state_nodes.discard(state)
             logger.debug("✅ State '%s' exited successfully.", state.id)
 
+    def _check_and_fire_on_done(self, final_state: StateNode) -> None:
+        """Checks if an ancestor state is "done" and queues a `done.state.*` event.
+
+        This is triggered when a final state is entered. It checks if the parent
+        state (or any ancestor) has met its completion criteria (e.g., all its
+        parallel regions are in final states). If so, it queues the corresponding
+        `on_done` event.
+
+        Args:
+            final_state (StateNode): The final state that was just entered.
+        """
+        ancestor = final_state.parent
+        logger.debug(
+            "🔍 Checking 'done' status for ancestors of final state '%s'.",
+            final_state.id,
+        )
+        while ancestor:
+            # 🧐 Check if the ancestor has an `on_done` handler and is fully completed.
+            if ancestor.on_done and self._is_state_done(ancestor):
+                done_event_type = f"done.state.{ancestor.id}"
+                logger.info(
+                    "🥳 State '%s' is done! Queuing onDone event: '%s'",
+                    ancestor.id,
+                    done_event_type,
+                )
+                # 📬 Send the `done.state.*` event for the next processing cycle.
+                self.send(Event(type=done_event_type))
+                return  # 🛑 Only fire the event for the nearest completed ancestor.
+
+            ancestor = ancestor.parent
+
     # -------------------------------------------------------------------------
-    # 🛠️ Helper & Private Methods
+    # 🚫 Asynchronous Feature Handlers (Private Overrides)
+    # -------------------------------------------------------------------------
+
+    def _execute_actions(
+        self, actions: List[ActionDefinition], event: Event
+    ) -> None:
+        """Synchronously executes a list of action definitions.
+
+        This method validates that actions are synchronous callables. It will
+        intentionally fail if an `async def` function is provided as an action
+        implementation, as this is not supported in the `SyncInterpreter`.
+
+        Args:
+            actions (List[ActionDefinition]): A list of action definitions to execute.
+            event (Event): The event that triggered these actions.
+
+        Raises:
+            ImplementationMissingError: If an action's implementation is not found.
+            NotSupportedError: If an async action (`async def`) or a `spawn`
+                action is attempted.
+        """
+        if not actions:
+            return  # 🤔 No actions to execute.
+
+        for action_def in actions:
+            logger.debug(
+                "⚡ Executing action '%s' for event '%s'.",
+                action_def.type,
+                event.type,
+            )
+            for plugin in self._plugins:
+                plugin.on_action_execute(self, action_def)
+
+            # 🚫 Explicitly block `spawn_` actions.
+            if action_def.type.startswith("spawn_"):
+                self._spawn_actor(action_def, event)  # This will raise
+
+            # 🔎 Look up the action's implementation in the machine logic.
+            action_callable = self.machine.logic.actions.get(action_def.type)
+            if not action_callable:
+                logger.error(
+                    "🛠️ Action '%s' not implemented in machine logic.",
+                    action_def.type,
+                )
+                raise ImplementationMissingError(
+                    f"Action '{action_def.type}' not implemented."
+                )
+
+            # 🧐 Validate that the action is not an async function.
+            if self._is_async_callable(action_callable):
+                logger.error(
+                    "🚫 Action '%s' is async and not supported by SyncInterpreter.",
+                    action_def.type,
+                )
+                raise NotSupportedError(
+                    f"Action '{action_def.type}' is async and not supported by SyncInterpreter."
+                )
+
+            # ✅ Execute the synchronous action.
+            action_callable(self, self.context, event, action_def)
+            logger.debug(
+                "✨ Action '%s' executed successfully.", action_def.type
+            )
+
+    def _spawn_actor(self, action_def: ActionDefinition, event: Event) -> None:
+        """Raises `NotSupportedError` as actor spawning is not supported.
+
+        This override explicitly prevents the use of `spawn_` actions, which
+        are inherently asynchronous.
+
+        Args:
+            action_def (ActionDefinition): The spawn action definition.
+            event (Event): The triggering event.
+
+        Raises:
+            NotSupportedError: Always, as this feature is unsupported.
+        """
+        logger.error(
+            "🎭 Actor spawning ('%s') is not supported by SyncInterpreter.",
+            action_def.type,
+        )
+        raise NotSupportedError(
+            "Actor spawning is not supported by SyncInterpreter."
+        )
+
+    def _cancel_state_tasks(self, state: StateNode) -> None:
+        """Cancels any running `after` timers associated with a state.
+
+        Args:
+            state (StateNode): The state for which tasks should be cancelled.
+        """
+        state_id = state.id
+        if state_id in self._after_events:
+            logger.debug("🧹 Cancelling after timer for state '%s'", state_id)
+            self._after_events[state_id].set()  # Signal cancellation
+            # Immediate cleanup
+            self._after_events.pop(state_id, None)
+            self._after_threads.pop(state_id, None)
+
+        logger.debug("🧹 State task cancellation complete for '%s'", state_id)
+
+    def _after_timer(
+        self, delay_sec: float, event: AfterEvent, owner_id: str
+    ) -> None:
+        """Schedules a delayed `AfterEvent` using a background thread.
+
+        Args:
+            delay_sec (float): The delay in seconds before the event is sent.
+            event (AfterEvent): The event to send after the delay.
+            owner_id (str): The ID of the state owning this timer.
+        """
+        logger.info(
+            "⏰ Scheduling after transition in %.2fs for state '%s'",
+            delay_sec,
+            owner_id,
+        )
+
+        # 🎫 Create a cancellation event for this specific timer.
+        cancel_event = threading.Event()
+        self._after_events[owner_id] = cancel_event
+
+        def timer_thread() -> None:
+            """Background thread that waits and then sends the event."""
+            try:
+                # ⏸️ Wait for the specified delay, but exit early if cancelled.
+                if cancel_event.wait(timeout=delay_sec):
+                    logger.debug("Timer for '%s' cancelled.", owner_id)
+                    return
+
+                # 🩺 Verify state is still active and interpreter is running.
+                if self.status == "running" and owner_id in {
+                    s.id for s in self._active_state_nodes
+                }:
+                    logger.debug(
+                        "Timer for '%s' expired, sending event '%s'.",
+                        owner_id,
+                        event.type,
+                    )
+                    self.send(event)
+
+            except Exception as e:
+                logger.error("💥 Error in after timer thread: %s", e)
+            finally:
+                # 🧹 Clean up resources after the thread finishes.
+                self._after_threads.pop(owner_id, None)
+                self._after_events.pop(owner_id, None)
+
+        # 🚀 Start the background daemon thread.
+        thread = threading.Thread(target=timer_thread, daemon=True)
+        self._after_threads[owner_id] = thread
+        thread.start()
+
+    def _invoke_service(
+        self,
+        invocation: InvokeDefinition,
+        service: Callable[..., Any],
+        owner_id: str,
+    ) -> None:
+        """Handles invoked services, supporting only synchronous callables.
+
+        Synchronous services are executed immediately and block the interpreter.
+        The service's return value is sent as a `done.invoke.*` event. If the
+        service raises an exception, an `error.platform.*` event is sent.
+
+        Args:
+            invocation (InvokeDefinition): The definition of the invoked service.
+            service (Callable[..., Any]): The callable representing the service logic.
+            owner_id (str): The ID of the state node owning this invocation.
+
+        Raises:
+            NotSupportedError: If the provided service is an `async def` function.
+        """
+        # 🧐 Validate that the service is not an async function.
+        if self._is_async_callable(service):
+            logger.error(
+                "🚫 Service '%s' is async and not supported by SyncInterpreter.",
+                invocation.src,
+            )
+            raise NotSupportedError(
+                f"Service '{invocation.src}' is async and not supported by SyncInterpreter."
+            )
+
+        logger.info(
+            "📞 Invoking sync service '%s' (id: '%s')...",
+            invocation.src,
+            invocation.id,
+        )
+        # 🔌 Notify plugins that the service is starting.
+        for plugin in self._plugins:
+            plugin.on_service_start(self, invocation)
+
+        try:
+            # 🎁 Prepare a synthetic event for the service.
+            invoke_event = Event(
+                f"invoke.{invocation.id}", {"input": invocation.input or {}}
+            )
+            # 🚀 Execute the synchronous service.
+            result = service(self, self.context, invoke_event)
+            # ✅ On success, immediately queue a 'done' event with the result.
+            done_event = DoneEvent(
+                f"done.invoke.{invocation.id}",
+                data=result,
+                src=invocation.id,
+            )
+            self.send(done_event)
+            logger.info(
+                "✅ Sync service '%s' completed successfully.", invocation.src
+            )
+            # 🔌 Notify plugins about successful completion.
+            for plugin in self._plugins:
+                plugin.on_service_done(self, invocation, result)
+
+        except Exception as e:
+            # 💥 On failure, immediately queue an 'error' event with the exception.
+            logger.error(
+                "💔 Sync service '%s' failed: %s",
+                invocation.src,
+                e,
+                exc_info=True,  # Include traceback in logs for debugging.
+            )
+            error_event = DoneEvent(
+                f"error.platform.{invocation.id}",
+                data=e,
+                src=invocation.id,
+            )
+            self.send(error_event)
+            # 🔌 Notify plugins about the failure.
+            for plugin in self._plugins:
+                plugin.on_service_error(self, invocation, e)
+
+    # -------------------------------------------------------------------------
+    # 🛠️ Static Helper Methods
     # -------------------------------------------------------------------------
 
     @staticmethod
@@ -503,16 +754,16 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         """Checks if a callable is an async function (`async def`).
 
         Args:
-            callable_obj: The function or method to check.
+            callable_obj (Callable[..., Any]): The function or method to check.
 
         Returns:
-            True if the callable is an awaitable coroutine, False otherwise.
+            bool: True if the callable is an awaitable coroutine, False otherwise.
         """
+        # Check for the __await__ attribute for awaitable objects (like coroutines).
+        # Also check the function's code object flags for the CO_COROUTINE flag.
         return hasattr(callable_obj, "__await__") or (
             hasattr(callable_obj, "__code__")
-            and (
-                callable_obj.__code__.co_flags & 0x80
-            )  # CO_COROUTINE flag  # noqa
+            and (callable_obj.__code__.co_flags & 0x80)  # noqa
         )
 
     @staticmethod
@@ -523,10 +774,10 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         state targets when standard resolution methods fail.
 
         Args:
-            node: The root `StateNode` from which to start the traversal.
+            node (StateNode): The root `StateNode` from which to start the traversal.
 
         Yields:
-            Each `StateNode` in the tree, starting with the root.
+            StateNode: Each `StateNode` in the tree, starting with the root.
         """
         # 🚶‍♂️ Yield the current node first
         yield node
@@ -550,14 +801,13 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         4.  Depth-first search of the entire state tree as a final fallback.
 
         Args:
-            transition: The transition definition containing the target string.
+            transition (TransitionDefinition): The transition containing the target string.
 
         Returns:
-            The resolved `StateNode` object.
+            StateNode: The resolved `StateNode` object.
 
         Raises:
-            StateNotFoundError: If the target state cannot be found after all
-                attempts have failed.
+            StateNotFoundError: If the target state cannot be found after all attempts.
         """
         target_str = transition.target_str
         if not target_str:  # Should not happen for external transitions
@@ -643,261 +893,3 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             list(set(available)),
         )
         raise StateNotFoundError(target_str, root.id)
-
-    def _check_and_fire_on_done(self, final_state: StateNode) -> None:
-        """Checks if an ancestor state is "done" and queues a `done.state.*` event.
-
-        This is triggered when a final state is entered. It checks if the parent
-        state (or any ancestor) has met its completion criteria (e.g., all its
-        parallel regions are in final states). If so, it queues the corresponding
-        `on_done` event.
-
-        Args:
-            final_state: The final state that was just entered.
-        """
-        ancestor = final_state.parent
-        logger.debug(
-            "🔍 Checking 'done' status for ancestors of final state '%s'.",
-            final_state.id,
-        )
-        while ancestor:
-            # 🧐 Check if the ancestor has an `on_done` handler and is fully completed.
-            if ancestor.on_done and self._is_state_done(ancestor):
-                done_event_type = f"done.state.{ancestor.id}"
-                logger.info(
-                    "🥳 State '%s' is done! Queuing onDone event: '%s'",
-                    ancestor.id,
-                    done_event_type,
-                )
-                # 📬 Send the `done.state.*` event for the next processing cycle.
-                self.send(Event(type=done_event_type))
-                return  # 🛑 Only fire the event for the nearest completed ancestor.
-
-            ancestor = ancestor.parent
-
-    # -------------------------------------------------------------------------
-    # 🚫 Unsupported Asynchronous Feature Handlers (Overrides from BaseInterpreter)
-    # -------------------------------------------------------------------------
-
-    def _execute_actions(
-        self, actions: List[ActionDefinition], event: Event
-    ) -> None:
-        """Synchronously executes a list of action definitions.
-
-        This method validates that actions are synchronous callables. It will
-        intentionally fail if an `async def` function is provided as an action
-        implementation, as this is not supported in the `SyncInterpreter`.
-
-        Args:
-            actions: A list of `ActionDefinition` objects to execute.
-            event: The event that triggered these actions.
-
-        Raises:
-            ImplementationMissingError: If an action's implementation is not
-                found in the machine's logic.
-            NotSupportedError: If an async action (`async def`) or a `spawn`
-                action is attempted.
-        """
-        if not actions:
-            return  # 🤔 No actions to execute.
-
-        for action_def in actions:
-            logger.debug(
-                "⚡ Executing action '%s' for event '%s'.",
-                action_def.type,
-                event.type,
-            )
-            for plugin in self._plugins:
-                plugin.on_action_execute(self, action_def)
-
-            # 🚫 Explicitly block `spawn_` actions.
-            if action_def.type.startswith("spawn_"):
-                self._spawn_actor(action_def, event)  # This will raise
-
-            # 🔎 Look up the action's implementation in the machine logic.
-            action_callable = self.machine.logic.actions.get(action_def.type)
-            if not action_callable:
-                logger.error(
-                    "🛠️ Action '%s' not implemented in machine logic.",
-                    action_def.type,
-                )
-                raise ImplementationMissingError(
-                    f"Action '{action_def.type}' not implemented."
-                )
-
-            # 🧐 Validate that the action is not an async function.
-            if self._is_async_callable(action_callable):
-                logger.error(
-                    "🚫 Action '%s' is async and not supported by SyncInterpreter.",
-                    action_def.type,
-                )
-                raise NotSupportedError(
-                    f"Action '{action_def.type}' is async and not supported by SyncInterpreter."
-                )
-
-            # ✅ Execute the synchronous action.
-            action_callable(self, self.context, event, action_def)
-            logger.debug(
-                "✨ Action '%s' executed successfully.", action_def.type
-            )
-
-    def _spawn_actor(self, action_def: ActionDefinition, event: Event) -> None:
-        """Raises `NotSupportedError` as actor spawning is not supported.
-
-        This override explicitly prevents the use of `spawn_` actions, which
-        are inherently asynchronous.
-
-        Raises:
-            NotSupportedError: Always, as this feature is unsupported.
-        """
-        logger.error(
-            "🎭 Actor spawning ('%s') is not supported by SyncInterpreter.",
-            action_def.type,
-        )
-        raise NotSupportedError(
-            "Actor spawning is not supported by SyncInterpreter."
-        )
-
-    def _cancel_state_tasks(self, state: StateNode) -> None:
-        """A no-op method, as the sync interpreter does not manage background tasks.
-
-        This method exists to satisfy the `BaseInterpreter` interface. In a
-        synchronous context, there are no long-running timers or services to cancel
-        upon state exit.
-
-        Args:
-            state: The state for which tasks would be cancelled.
-        """
-        state_id = state.id
-        if state_id in self._after_events:
-            logger.debug("🧹 Cancelling after timer for state '%s'", state_id)
-            self._after_events[state_id].set()  # Signal cancellation
-            # Immediate cleanup
-            self._after_events.pop(state_id, None)
-            self._after_threads.pop(state_id, None)
-
-        logger.debug("🧹 State task cancellation complete for '%s'", state_id)
-
-    def _after_timer(
-        self, delay_sec: float, event: AfterEvent, owner_id: str
-    ) -> None:
-        """Raises `NotSupportedError` as `after` transitions are not supported.
-
-        This override explicitly prevents the use of timed `after` transitions,
-        which require an event loop and timers.
-
-        Raises:
-            NotSupportedError: Always, as this feature is unsupported.
-        """
-        logger.info(
-            "⏰ Scheduling after transition in %.2fs for state '%s'",
-            delay_sec,
-            owner_id,
-        )
-
-        # Create cancellation event for this timer
-        cancel_event = threading.Event()
-        self._after_events[owner_id] = cancel_event
-
-        def timer_thread():
-            """Background thread that waits and then sends the event."""
-            try:
-                # Use precise timing
-                if cancel_event.wait(timeout=delay_sec):
-                    return  # Cancelled, exit early
-
-                # Verify state is still active before sending
-                if self.status == "running" and owner_id in {
-                    s.id for s in self._active_state_nodes
-                }:
-                    self.send(event)
-
-            except Exception as e:
-                logger.error("Error in after timer thread: %s", e)
-            finally:
-                # Clean up
-                self._after_threads.pop(owner_id, None)
-                self._after_events.pop(owner_id, None)
-
-        # Start the background thread
-        thread = threading.Thread(target=timer_thread, daemon=True)
-        self._after_threads[owner_id] = thread
-        thread.start()
-
-    def _invoke_service(
-        self,
-        invocation: InvokeDefinition,
-        service: Callable[..., Any],
-        owner_id: str,
-    ) -> None:
-        """Handles invoked services, supporting only synchronous callables.
-
-        Synchronous services are executed immediately and block the interpreter.
-        The service's return value is sent as a `done.invoke.*` event. If the
-        service raises an exception, an `error.platform.*` event is sent.
-
-        Args:
-            invocation: The definition of the invoked service.
-            service: The callable representing the service logic.
-            owner_id: The ID of the state node owning this invocation.
-
-        Raises:
-            NotSupportedError: If the provided service is an `async def` function.
-        """
-        # 🧐 Validate that the service is not an async function.
-        if self._is_async_callable(service):
-            logger.error(
-                "🚫 Service '%s' is async and not supported by SyncInterpreter.",
-                invocation.src,
-            )
-            raise NotSupportedError(
-                f"Service '{invocation.src}' is async and not supported by SyncInterpreter."
-            )
-
-        logger.info(
-            "📞 Invoking sync service '%s' (id: '%s')...",
-            invocation.src,
-            invocation.id,
-        )
-        # 🔌 Notify plugins that the service is starting.
-        for plugin in self._plugins:
-            plugin.on_service_start(self, invocation)
-
-        try:
-            # 🎁 Prepare a synthetic event for the service.
-            invoke_event = Event(
-                f"invoke.{invocation.id}", {"input": invocation.input or {}}
-            )
-            # 🚀 Execute the synchronous service.
-            result = service(self, self.context, invoke_event)
-            # ✅ On success, immediately queue a 'done' event with the result.
-            done_event = DoneEvent(
-                f"done.invoke.{invocation.id}",
-                data=result,
-                src=invocation.id,
-            )
-            self.send(done_event)
-            logger.info(
-                "✅ Sync service '%s' completed successfully.", invocation.src
-            )
-            # 🔌 Notify plugins about successful completion.
-            for plugin in self._plugins:
-                plugin.on_service_done(self, invocation, result)
-
-        except Exception as e:
-            # 💥 On failure, immediately queue an 'error' event with the exception.
-            logger.error(
-                "💔 Sync service '%s' failed: %s",
-                invocation.src,
-                e,
-                exc_info=True,  # Include traceback in logs for debugging.
-            )
-            error_event = DoneEvent(
-                f"error.platform.{invocation.id}",
-                data=e,
-                src=invocation.id,
-            )
-            self.send(error_event)
-            # 🔌 Notify plugins about the failure.
-            for plugin in self._plugins:
-                plugin.on_service_error(self, invocation, e)
