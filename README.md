@@ -7,15 +7,17 @@
 
 ## 📜 Table of Contents
 
-1. **[Introduction](#introduction)**
-2. **[Why State Machines?](#why-state-machines)**
-3. **[What is XState-StateMachine?](#what-is-xstate-statemachine)**
-4. **[Key Features](#key-features)**
-5. **[Installation](#installation)**
-6. **[Quick Start](#quick-start)**
-7. **[The State Machine Philosophy](#the-state-machine-philosophy)**
-8. **[Visual-First Development](#visual-first-development)**
-9. **[Anatomy of an XState JSON Blueprint](#anatomy-of-an-xstate-json-blueprint)**
+## 📜 Table of Contents
+
+1.  **[Introduction](#introduction)**
+2.  **[Why State Machines?](#why-state-machines)**
+3.  **[What is XState-StateMachine?](#what-is-xstate-statemachine)**
+4.  **[Key Features](#key-features)**
+5.  **[Installation](#installation)**
+6.  **[Quick Start](#quick-start)**
+7.  **[The State Machine Philosophy](#the-state-machine-philosophy)**
+8.  **[Visual-First Development](#visual-first-development)**
+9.  **[Anatomy of an XState JSON Blueprint](#anatomy-of-an-xstate-json-blueprint)**
 10. **[States — Atomic, Compound, Parallel, Final](#states-—-atomic-compound-parallel-final)**
 11. **[Transitions & Events](#transitions--events)**
 12. **[Actions, Guards & Services](#actions-guards--services)**
@@ -25,13 +27,13 @@
 16. **[Architectural Patterns](#architectural-patterns)**
 17. **[Synchronous vs Asynchronous Execution](#synchronous-vs-asynchronous-execution)**
 18. **[Debugging & Visualization](#debugging--visualization)**
-19. **[API Reference](#api-reference)**
-20. **[Advanced Concepts](#advanced-concepts)**
-21. **[Best Practices](#best-practices)**
-22. **[FAQ](#faq)**
-23. **[Contributing](#contributing)**
-24. **[License](#license)**
-
+19. **[CLI: Boilerplate Generation](#cli-tool)**
+20. **[API Reference](#api-reference)**
+21. **[Advanced Concepts](#advanced-concepts)**
+22. **[Best Practices](#best-practices)**
+23. **[FAQ](#faq)**
+24. **[Contributing](#contributing)**
+25. **[License](#license)**
 ---
 
 ## 🏁 Introduction<a name="introduction"></a>
@@ -1404,7 +1406,106 @@ While the synchronous engine now supports timers via background threads, it stil
 
 ---
 
-## 🐞 Debugging & Visualization (Preview)<a name="debugging--visualization"></a>
+## 🤖 CLI: Boilerplate Generation<a name="cli-tool"></a>
+
+To accelerate development, the library includes a powerful command-line tool for scaffolding project files directly from your state machine's JSON definition. It reads one or more JSON files, extracts all required actions, guards, and services, and generates clean, ready-to-use `logic` and `runner` Python files.
+
+This saves you from writing boilerplate code and ensures your implementation skeleton perfectly matches your machine's contract.
+
+### Core Usage
+
+The main command is `generate-template`. You can pass JSON files as positional arguments or using the `--json` flag.
+
+```bash
+# Basic usage with one file
+xstate-statemachine generate-template path/to/my_machine.json
+
+# Generating from multiple files into a combined output
+xstate-statemachine generate-template machine1.json machine2.json --output ./combined
+```
+
+### Command-Line Arguments
+
+The generator is highly configurable via command-line options:
+
+| Argument | Shorthand | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `json_files...` | (none) | One or more positional paths to your JSON machine definitions. | (required) |
+| `--json` | (none) | An alternative way to specify a JSON file. Can be used multiple times. | (none) |
+| `--output` | `-o` | The directory where generated files will be saved. **It will be created if it doesn't exist.** | Same directory as the first input JSON file. |
+| `--style` | (none) | The programming style for logic: `class` or `function`. | `class` |
+| `--loader` | (none) | Whether to use the automatic `LogicLoader` (`yes`) or generate explicit `MachineLogic` bindings (`no`). | `yes` |
+| `--file-count` | (none) | `2` for separate logic/runner files, `1` for a single combined file. | `2` |
+| `--async-mode`| (none) | Generate `async` code and use the `Interpreter` (`yes`) or synchronous code with `SyncInterpreter` (`no`). | `yes` |
+| `--log` | (none) | Automatically add `logger.info(...)` stubs inside each generated function. | `yes` |
+| `--sleep` | (none) | Add `time.sleep()` or `asyncio.sleep()` calls to the generated runner for simulation pauses. | `yes` |
+| `--sleep-time`| (none) | The duration (in seconds) for the sleep calls in the runner. | `2` |
+| `--force` | (none) | Force overwrite of existing files without prompting. | (disabled) |
+| `--version` | (none) | Displays the current version of the library. | (N/A) |
+
+> **Note on Boolean Arguments**: Options like `--loader`, `--async-mode`, `--log`, and `--sleep` accept case-insensitive boolean values: `yes`/`no`, `true`/`false`, `1`/`0`.
+
+### Examples in Action
+
+#### 1. Default Generation (Async, Class-based, Auto-discovered)
+
+This is the most common use case. It generates a class-based logic file and an async runner that uses `logic_providers` for clean, automatic binding.
+
+**Command:**
+```bash
+xstate-statemachine generate-template examples/async/basic/traffic_light.json
+```
+
+**Result:**
+* `examples/async/basic/traffic_light_logic.py` (with a `TrafficLightLogic` class)
+* `examples/async/basic/traffic_light_runner.py` (with an `async def main()` function)
+
+#### 2. Synchronous & Functional Code
+
+Generate a synchronous, function-based template suitable for a CLI tool or simple script.
+
+**Command:**
+```bash
+xstate-statemachine generate-template login_form.json --async-mode no --style function
+```
+
+**Result:**
+* `login_form_logic.py` (with standalone functions like `update_field`, `verify_credentials`, etc.)
+* `login_form_runner.py` (with a synchronous `def main()` and using `SyncInterpreter`)
+
+#### 3. Single File with Explicit Bindings
+
+For small projects or quick tests, you might want everything in one file with explicit `MachineLogic` bindings, disabling the auto-loader.
+
+**Command:**
+```bash
+xstate-statemachine generate-template stopwatch.json --file-count 1 --loader no
+```
+
+**Result:**
+* `stopwatch.py`: A single file containing:
+    1.  The action functions (`record_time`, `reset_time`).
+    2.  An explicit `MachineLogic` instance mapping string names to those functions.
+    3.  The runner code to execute the simulation.
+
+#### 4. Combining Multiple Machines
+
+If your system uses multiple statecharts that are orchestrated together, you can generate a unified boilerplate for all of them. The CLI will merge all unique action, guard, and service names from all input files.
+
+**Command:**
+```bash
+# Combine a parent machine and its actor definition
+xstate-statemachine generate-template warehouse_robot.json pathfinder_actor.json --output ./generated/warehouse
+```
+
+**Result:**
+* `./generated/warehouse/warehouse_robot_pathfinder_actor_logic.py`: Contains a single class with the combined logic stubs from both machines (e.g., `assign_order`, `store_path`, `send_path_to_parent`, etc.).
+* `./generated/warehouse/warehouse_robot_pathfinder_actor_runner.py`: Contains a runner with two separate simulation functions, `run_warehouse_robot()` and `run_pathfinder_actor()`, called from a main orchestrator function.
+*
+
+---
+
+## 🐞 Debugging & Visualization<a name="debugging--visualization"></a>
 
 This section dives into:
 
@@ -1413,10 +1514,6 @@ This section dives into:
 3.  **Snapshots** for crash‑recovery & golden tests.
 4.  **Auto‑diagrams** (Mermaid & PlantUML).
 5.  **REPL live‑tinkering** with `await interp.send(...)`.
-
----
-
-## 🐞 Debugging & Visualization<a name="debugging--visualization"></a>
 
 When something goes sideways at 2 AM you need **clarity, not guess-work**.
 XState-StateMachine ships with an **instrumentation layer** that lets you inspect, log, snapshot and _draw_ every heartbeat of your machine.
