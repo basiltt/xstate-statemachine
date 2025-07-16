@@ -1745,7 +1745,7 @@ Launch IPython with the pre‑wired objects:
 ipython --autoawait asyncio -i light_repl.py
 ```
 
-### 5.3  Play!
+#### 5.3  Play!
 
 ```pycon
 In [1]: await service.start()
