@@ -55,11 +55,15 @@ def extract_logic_names(  # noqa C901
                 for act in acts:
                     if isinstance(act, str):
                         actions.add(act)
-                    elif isinstance(act, dict) and "type" in act:
+                    elif (
+                        isinstance(act, dict)
+                        and "type" in act
+                        and isinstance(act["type"], str)
+                    ):
                         actions.add(act["type"])
 
         # Transitions
-        if "on" in node:
+        if "on" in node and isinstance(node["on"], dict):
             for trans_dict in node["on"].values():
                 trans_list = (
                     trans_dict
@@ -67,24 +71,29 @@ def extract_logic_names(  # noqa C901
                     else [trans_dict]
                 )
                 for trans in trans_list:
-                    if "actions" in trans:
-                        acts = (
-                            trans["actions"]
-                            if isinstance(trans["actions"], list)
-                            else [trans["actions"]]
+                    if isinstance(trans, dict):
+                        if "actions" in trans:
+                            acts = (
+                                trans["actions"]
+                                if isinstance(trans["actions"], list)
+                                else [trans["actions"]]
+                            )
+                            for act in acts:
+                                if isinstance(act, str):
+                                    actions.add(act)
+                                elif (
+                                    isinstance(act, dict)
+                                    and "type" in act
+                                    and isinstance(act["type"], str)
+                                ):
+                                    actions.add(act["type"])
+                        guard_key = (
+                            "cond"
+                            if "cond" in trans
+                            else "guard" if "guard" in trans else None
                         )
-                        for act in acts:
-                            if isinstance(act, str):
-                                actions.add(act)
-                            elif isinstance(act, dict) and "type" in act:
-                                actions.add(act["type"])
-                    guard_key = (
-                        "cond"
-                        if "cond" in trans
-                        else "guard" if "guard" in trans else None
-                    )
-                    if guard_key:
-                        guards.add(trans[guard_key])
+                        if guard_key and isinstance(trans[guard_key], str):
+                            guards.add(trans[guard_key])
 
         # Invoke
         if "invoke" in node:
@@ -94,36 +103,46 @@ def extract_logic_names(  # noqa C901
                 else [node["invoke"]]
             )
             for invoke in invokes:
-                if "src" in invoke:
-                    services.add(invoke["src"])
-                for key in ["onDone", "onError"]:
-                    if key in invoke:
-                        trans = invoke[key]
-                        trans = trans if isinstance(trans, list) else [trans]
-                        for t in trans:
-                            if "actions" in t:
-                                acts = (
-                                    t["actions"]
-                                    if isinstance(t["actions"], list)
-                                    else [t["actions"]]
-                                )
-                                for act in acts:
-                                    if isinstance(act, str):
-                                        actions.add(act)
-                                    elif (
-                                        isinstance(act, dict) and "type" in act
-                                    ):
-                                        actions.add(act["type"])
-                            guard_key = (
-                                "cond"
-                                if "cond" in t
-                                else "guard" if "guard" in t else None
+                if isinstance(invoke, dict):
+                    if "src" in invoke and isinstance(invoke["src"], str):
+                        services.add(invoke["src"])
+                    for key in ["onDone", "onError"]:
+                        if key in invoke:
+                            trans = invoke[key]
+                            trans_list = (
+                                trans if isinstance(trans, list) else [trans]
                             )
-                            if guard_key:
-                                guards.add(t[guard_key])
+                            for t in trans_list:
+                                if isinstance(t, dict):
+                                    if "actions" in t:
+                                        acts = (
+                                            t["actions"]
+                                            if isinstance(t["actions"], list)
+                                            else [t["actions"]]
+                                        )
+                                        for act in acts:
+                                            if isinstance(act, str):
+                                                actions.add(act)
+                                            elif (
+                                                isinstance(act, dict)
+                                                and "type" in act
+                                                and isinstance(
+                                                    act["type"], str
+                                                )
+                                            ):
+                                                actions.add(act["type"])
+                                    guard_key = (
+                                        "cond"
+                                        if "cond" in t
+                                        else "guard" if "guard" in t else None
+                                    )
+                                    if guard_key and isinstance(
+                                        t[guard_key], str
+                                    ):
+                                        guards.add(t[guard_key])
 
         # After
-        if "after" in node:
+        if "after" in node and isinstance(node["after"], dict):
             for _, trans_list in node["after"].items():
                 trans_list = (
                     trans_list
@@ -131,27 +150,32 @@ def extract_logic_names(  # noqa C901
                     else [trans_list]
                 )
                 for trans in trans_list:
-                    if "actions" in trans:
-                        acts = (
-                            trans["actions"]
-                            if isinstance(trans["actions"], list)
-                            else [trans["actions"]]
+                    if isinstance(trans, dict):
+                        if "actions" in trans:
+                            acts = (
+                                trans["actions"]
+                                if isinstance(trans["actions"], list)
+                                else [trans["actions"]]
+                            )
+                            for act in acts:
+                                if isinstance(act, str):
+                                    actions.add(act)
+                                elif (
+                                    isinstance(act, dict)
+                                    and "type" in act
+                                    and isinstance(act["type"], str)
+                                ):
+                                    actions.add(act["type"])
+                        guard_key = (
+                            "cond"
+                            if "cond" in trans
+                            else "guard" if "guard" in trans else None
                         )
-                        for act in acts:
-                            if isinstance(act, str):
-                                actions.add(act)
-                            elif isinstance(act, dict) and "type" in act:
-                                actions.add(act["type"])
-                    guard_key = (
-                        "cond"
-                        if "cond" in trans
-                        else "guard" if "guard" in trans else None
-                    )
-                    if guard_key:
-                        guards.add(trans[guard_key])
+                        if guard_key and isinstance(trans[guard_key], str):
+                            guards.add(trans[guard_key])
 
         # Recurse into states
-        if "states" in node:
+        if "states" in node and isinstance(node["states"], dict):
             for subnode in node["states"].values():
                 traverse(subnode)
 
@@ -559,11 +583,23 @@ def main():
             out_dir / f"{base_name}.py" if args.file_count == 1 else None
         )
 
+        # Check if exists and not force
+        if not args.force:
+            if single_file and single_file.exists():
+                print("Files exist, use --force to overwrite.")
+                return
+            elif logic_file.exists() or runner_file.exists():
+                print("Files exist, use --force to overwrite.")
+                return
+
         # Normalize options
-        loader_bool = normalize_bool(args.loader)
-        sleep_bool = normalize_bool(args.sleep)
-        async_bool = normalize_bool(args.async_mode)
-        log_bool = normalize_bool(args.log)
+        try:
+            loader_bool = normalize_bool(args.loader)
+            sleep_bool = normalize_bool(args.sleep)
+            async_bool = normalize_bool(args.async_mode)
+            log_bool = normalize_bool(args.log)
+        except ValueError as e:
+            parser.error(str(e))
 
         # Force overwrite
         if args.force:
