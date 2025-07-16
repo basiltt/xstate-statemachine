@@ -464,7 +464,7 @@ def generate_runner_code(
             "# 📂 1. Configuration Loading",
             "# --------------------------------------------------------------------------",
             f"config_path = Path(__file__).parent / '{json_filename}'",
-            "with open(config_path, 'r', encoding='utf-8') as f:",  # noqa
+            "with open(config_path, 'r', encoding='utf-8') as f:",
             "    config = json.load(f)",
             "",
             "# --------------------------------------------------------------------------",
@@ -502,7 +502,8 @@ def generate_runner_code(
                 f"interpreter = {interp_import}(machine)",
                 "interpreter.use(LoggingInspector())",
                 f"{await_prefix}interpreter.start()",
-                'logger.info(f"Initial state: {{interpreter.current_state_ids}}")',
+                # ✅ FIX: Use a raw string to prevent f-string escaping issues.
+                'logger.info(f"Initial state: {interpreter.current_state_ids}")',
                 "",
                 "# --------------------------------------------------------------------------",
                 "# 🚀 4. Simulation Scenario",
@@ -522,7 +523,8 @@ def generate_runner_code(
 
         lines.extend(
             [
-                "logger.info(f'--- ✅ Simulation ended in state: {{interpreter.current_state_ids}} ---')",
+                # ✅ FIX: Use a raw string to prevent f-string escaping issues.
+                "logger.info(f'--- ✅ Simulation ended in state: {interpreter.current_state_ids} ---')",
                 f"{await_prefix}interpreter.stop()",
             ]
         )

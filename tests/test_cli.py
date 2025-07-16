@@ -1,20 +1,24 @@
 # /tests/test_cli.py
 # -----------------------------------------------------------------------------
-# 🧪 Test Suite: CLI Tool
+# 🧪 Test Suite: Command-Line Interface (CLI)
 # -----------------------------------------------------------------------------
-# This module provides a comprehensive test suite for the CLI tool in cli.py.
-# It validates all major functions, including logic extraction, code generation,
-# boolean normalization, and the main CLI entry point.
+# This module provides a comprehensive test suite for the CLI tool defined in
+# `cli.py`. It employs a combination of unit tests for individual functions
+# and integration-style tests for the main CLI entry point.
 #
-# The tests cover:
-#   - Extraction of actions, guards, and services from various config structures.
-#   - Code generation for logic and runner files under different options.
-#   - Boolean normalization with valid and invalid inputs.
-#   - Full CLI behavior with argument parsing, file output, and error handling.
-#   - Edge cases, invalid inputs, and robustness against malformed configs.
+# The suite validates all major functionalities, including:
+#   -   🧩 Logic Extraction: Correctly parsing actions, guards, and services
+#       from various state machine configuration structures.
+#   -   📝 Code Generation: Ensuring logic and runner files are generated
+#       correctly based on different user-provided options (e.g., async vs.
+#       sync, class vs. function style).
+#   -   ⚙️ Helper Functions: Verifying utility functions like boolean
+#       normalization.
+#   -   🚀 CLI Entry Point: Testing the full CLI behavior with argument parsing,
+#       file output, error handling, and user feedback messages.
 #
-# Temporary files and mocks are used to isolate tests and verify outputs without
-# side effects on the filesystem.
+# Temporary files and directory mocks are used extensively to isolate tests
+# and verify outputs without side effects on the actual filesystem.
 # -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
@@ -37,8 +41,8 @@ from src.xstate_statemachine.cli import (
     extract_logic_names,
     generate_logic_code,
     generate_runner_code,
-    normalize_bool,
     main,
+    normalize_bool,
 )
 
 # -----------------------------------------------------------------------------
@@ -51,8 +55,22 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # 🛠️ Test Helpers & Fixtures
 # -----------------------------------------------------------------------------
+
+
 def create_temp_json(config: Dict[str, Any]) -> Path:
-    """Creates a temporary JSON file with the given config."""
+    """Creates a temporary JSON file with the given configuration.
+
+    This helper function is crucial for CLI tests that require a file path
+    as an input argument. It writes a dictionary to a temporary JSON file
+    and returns its `Path` object.
+
+    Args:
+        config (Dict[str, Any]): The Python dictionary to dump as JSON.
+
+    Returns:
+        Path: The `pathlib.Path` object pointing to the created temporary file.
+    """
+    # 📝 Create a named temporary file that is not deleted on close.
     with tempfile.NamedTemporaryFile(
         dir=os.getcwd(),
         mode="w",
@@ -61,9 +79,11 @@ def create_temp_json(config: Dict[str, Any]) -> Path:
         encoding="utf-8",
     ) as tmp:
         json.dump(config, tmp)
+    # ✅ Return the path to the newly created file.
     return Path(tmp.name)
 
 
+# --- Test Data Fixtures ---
 SAMPLE_CONFIG_SIMPLE: Dict[str, Any] = {
     "id": "simple",
     "initial": "idle",
@@ -112,11 +132,11 @@ SAMPLE_CONFIG_MULTIPLE: List[Dict[str, Any]] = [
 # 🏛️ Test Class: TestExtractLogicNames
 # -----------------------------------------------------------------------------
 class TestExtractLogicNames(unittest.TestCase):
-    """Tests for the extract_logic_names function."""
+    """Verifies the `extract_logic_names` function across various configs."""
 
     def test_extract_from_simple_config(self) -> None:
-        """Test extraction from a basic flat config."""
-        logger.info("🧪 Testing extraction from simple config.")
+        """Ensures logic names are extracted correctly from a basic, flat config."""
+        logger.info("🧪 Testing extraction from a simple config.")
         actions, guards, services = extract_logic_names(SAMPLE_CONFIG_SIMPLE)
         self.assertEqual(
             actions, {"enter_action", "exit_action", "trans_action"}
@@ -125,15 +145,15 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(services, set())
 
     def test_extract_from_nested_config(self) -> None:
-        """Test extraction from a nested config with invoke and after."""
-        logger.info("🧪 Testing extraction from nested config.")
+        """Ensures logic names are extracted from nested states, `invoke`, and `after`."""
+        logger.info("🧪 Testing extraction from a nested config.")
         actions, guards, services = extract_logic_names(SAMPLE_CONFIG_NESTED)
         self.assertEqual(actions, {"after_action"})
         self.assertEqual(guards, {"always_guard"})
         self.assertEqual(services, {"child_service"})
 
     def test_extract_actions_from_list(self) -> None:
-        """Test extraction when actions are in a list."""
+        """Verifies extraction when actions are defined as a list of strings."""
         logger.info("🧪 Testing extraction of list-based actions.")
         config = {
             "id": "list_actions",
@@ -144,7 +164,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(actions, {"act1", "act2"})
 
     def test_extract_actions_from_dict_type(self) -> None:
-        """Test extraction when actions are dicts with 'type'."""
+        """Verifies extraction when actions are defined as dictionaries with a 'type' key."""
         logger.info("🧪 Testing extraction of dict-type actions.")
         config = {
             "id": "dict_actions",
@@ -155,7 +175,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(actions, {"act_type"})
 
     def test_extract_guards_from_cond_key(self) -> None:
-        """Test extraction using 'cond' key for guards."""
+        """Ensures guards are correctly extracted from the 'cond' key."""
         logger.info("🧪 Testing extraction of guards via 'cond' key.")
         config = {
             "id": "cond_guard",
@@ -166,7 +186,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(guards, {"cond_guard"})
 
     def test_extract_guards_from_guard_key(self) -> None:
-        """Test extraction using 'guard' key."""
+        """Ensures guards are correctly extracted from the 'guard' key."""
         logger.info("🧪 Testing extraction of guards via 'guard' key.")
         config = {
             "id": "guard_key",
@@ -177,7 +197,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(guards, {"g_key"})
 
     def test_extract_services_from_invoke_src(self) -> None:
-        """Test extraction of services from 'invoke' 'src'."""
+        """Ensures services are correctly extracted from an 'invoke' object's 'src' key."""
         logger.info("🧪 Testing extraction of services from invoke src.")
         config = {
             "id": "invoke_src",
@@ -188,7 +208,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(services, {"my_service"})
 
     def test_extract_from_invoke_list(self) -> None:
-        """Test extraction when 'invoke' is a list."""
+        """Verifies extraction when 'invoke' is defined as a list of service objects."""
         logger.info("🧪 Testing extraction from list-based invoke.")
         config = {
             "id": "invoke_list",
@@ -199,7 +219,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(services, {"srv1", "srv2"})
 
     def test_extract_actions_from_invoke_onDone(self) -> None:
-        """Test extraction from 'onDone' in invoke."""
+        """Ensures actions are extracted from an 'onDone' transition within an 'invoke'."""
         logger.info("🧪 Testing extraction from invoke onDone actions.")
         config = {
             "id": "invoke_done",
@@ -210,7 +230,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(actions, {"done_act"})
 
     def test_extract_guards_from_invoke_onError(self) -> None:
-        """Test extraction from 'onError' in invoke."""
+        """Ensures guards are extracted from an 'onError' transition within an 'invoke'."""
         logger.info("🧪 Testing extraction from invoke onError guards.")
         config = {
             "id": "invoke_err",
@@ -221,7 +241,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(guards, {"err_guard"})
 
     def test_extract_from_after_transitions(self) -> None:
-        """Test extraction from 'after' transitions."""
+        """Ensures actions and guards are extracted from delayed 'after' transitions."""
         logger.info("🧪 Testing extraction from after transitions.")
         config = {
             "id": "after_test",
@@ -239,7 +259,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(guards, {"after_guard"})
 
     def test_no_extraction_from_empty_config(self) -> None:
-        """Test extraction from empty states yields empty sets."""
+        """Confirms that an empty state definition yields no logic names."""
         logger.info("🧪 Testing extraction from empty config.")
         config = {"id": "empty", "initial": "a", "states": {"a": {}}}
         actions, guards, services = extract_logic_names(config)
@@ -248,7 +268,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(services, set())
 
     def test_extraction_ignores_unknown_keys(self) -> None:
-        """Test that unknown keys do not cause errors."""
+        """Ensures that unknown keys within the config do not cause errors or extraction."""
         logger.info("🧪 Testing ignore of unknown config keys.")
         config = {
             "id": "unknown",
@@ -261,7 +281,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(services, set())
 
     def test_extraction_from_multiple_transitions(self) -> None:
-        """Test extraction from multiple transition lists."""
+        """Verifies extraction from events that have multiple transition definitions."""
         logger.info("🧪 Testing extraction from multiple transitions.")
         config = {
             "id": "multi_trans",
@@ -274,7 +294,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(actions, {"act1", "act2"})
 
     def test_extraction_actions_from_string_and_dict_mixed(self) -> None:
-        """Test mixed string and dict actions."""
+        """Ensures extraction works with a mix of string and dict action definitions."""
         logger.info("🧪 Testing mixed string/dict actions extraction.")
         config = {
             "id": "mixed_act",
@@ -285,7 +305,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(actions, {"str_act", "dict_act"})
 
     def test_extraction_guards_from_nested_onDone(self) -> None:
-        """Test guards in nested onDone."""
+        """Verifies guard extraction from a nested `onDone` transition list."""
         logger.info("🧪 Testing guards in nested invoke onDone.")
         config = {
             "id": "nested_guard",
@@ -296,7 +316,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(guards, {"nested_g"})
 
     def test_extraction_services_from_nested_invoke(self) -> None:
-        """Test services in nested invoke."""
+        """Confirms service extraction from an `invoke` within a nested state."""
         logger.info("🧪 Testing services in nested invoke.")
         config = {
             "id": "nested_srv",
@@ -309,7 +329,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(services, {"nested_srv"})
 
     def test_extraction_from_parallel_states(self) -> None:
-        """Test extraction from parallel states."""
+        """Ensures logic is extracted correctly from all regions of a parallel state."""
         logger.info("🧪 Testing extraction from parallel states.")
         config = {
             "id": "parallel",
@@ -324,7 +344,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(guards, {"p_guard"})
 
     def test_extraction_ignores_non_string_non_dict_actions(self) -> None:
-        """Test ignore of invalid action types."""
+        """Ensures that malformed action definitions (e.g., numbers) are ignored."""
         logger.info("🧪 Testing ignore of invalid action types.")
         config = {
             "id": "invalid_act",
@@ -335,7 +355,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(actions, set())
 
     def test_extraction_from_after_with_list_trans(self) -> None:
-        """Test extraction from 'after' with list transitions."""
+        """Verifies extraction from an `after` transition with a list of definitions."""
         logger.info("🧪 Testing extraction from after with list trans.")
         config = {
             "id": "after_list",
@@ -348,7 +368,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(actions, {"a1", "a2"})
 
     def test_extraction_from_invoke_onError_list(self) -> None:
-        """Test extraction from 'onError' list."""
+        """Verifies extraction from an `onError` transition with a list of definitions."""
         logger.info("🧪 Testing extraction from invoke onError list.")
         config = {
             "id": "err_list",
@@ -363,7 +383,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(guards, {"g1", "g2"})
 
     def test_extraction_no_duplicates(self) -> None:
-        """Test no duplicates in extracted sets."""
+        """Confirms that duplicate logic names are only recorded once."""
         logger.info("🧪 Testing no duplicates in extraction.")
         config = {
             "id": "dup",
@@ -374,7 +394,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(actions, {"dup_act"})
 
     def test_extraction_from_empty_states(self) -> None:
-        """Test extraction from config with no states."""
+        """Ensures a config without a 'states' key is handled gracefully."""
         logger.info("🧪 Testing extraction from no states.")
         config = {"id": "no_states", "initial": "a"}
         actions, guards, services = extract_logic_names(config)
@@ -383,7 +403,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(services, set())
 
     def test_extraction_from_invalid_invoke(self) -> None:
-        """Test extraction ignores invalid invoke."""
+        """Ensures a malformed `invoke` definition is ignored."""
         logger.info("🧪 Testing ignore of invalid invoke.")
         config = {
             "id": "inv_inv",
@@ -394,7 +414,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(services, set())
 
     def test_extraction_from_after_non_dict(self) -> None:
-        """Test extraction ignores invalid after."""
+        """Ensures a malformed `after` definition is ignored."""
         logger.info("🧪 Testing ignore of invalid after.")
         config = {
             "id": "inv_after",
@@ -405,7 +425,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(actions, set())
 
     def test_extraction_from_on_non_dict(self) -> None:
-        """Test extraction ignores invalid on."""
+        """Ensures a malformed `on` definition is ignored."""
         logger.info("🧪 Testing ignore of invalid on.")
         config = {
             "id": "inv_on",
@@ -416,7 +436,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(actions, set())
 
     def test_extraction_from_entry_non_list_str(self) -> None:
-        """Test extraction ignores invalid entry."""
+        """Ensures a malformed `entry` definition is ignored."""
         logger.info("🧪 Testing ignore of invalid entry.")
         config = {
             "id": "inv_entry",
@@ -427,7 +447,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(actions, set())
 
     def test_extraction_from_trans_non_list_dict(self) -> None:
-        """Test extraction from non-list trans dict."""
+        """Verifies extraction when a transition is a single object, not a list."""
         logger.info("🧪 Testing extraction from non-list trans.")
         config = {
             "id": "non_list_trans",
@@ -438,7 +458,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(actions, {"trans_act"})
 
     def test_extraction_from_invoke_src_non_str(self) -> None:
-        """Test ignore non-str src in invoke."""
+        """Ensures `invoke.src` is ignored if it's not a string."""
         logger.info("🧪 Testing ignore non-str invoke src.")
         config = {
             "id": "non_str_src",
@@ -449,7 +469,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(services, set())
 
     def test_extraction_from_guard_non_str(self) -> None:
-        """Test ignore non-str guard."""
+        """Ensures `guard` is ignored if it's not a string."""
         logger.info("🧪 Testing ignore non-str guard.")
         config = {
             "id": "non_str_g",
@@ -460,7 +480,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(guards, set())
 
     def test_extraction_from_after_trans_non_dict(self) -> None:
-        """Test ignore non-dict after trans."""
+        """Ensures malformed `after` transition objects are ignored."""
         logger.info("🧪 Testing ignore non-dict after trans.")
         config = {
             "id": "non_dict_after",
@@ -471,7 +491,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(actions, set())
 
     def test_extraction_from_onDone_actions_list(self) -> None:
-        """Test extraction from onDone actions list."""
+        """Verifies extraction from `onDone` when `actions` is a list."""
         logger.info("🧪 Testing extraction from onDone actions list.")
         config = {
             "id": "done_list",
@@ -482,7 +502,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(actions, {"d1", "d2"})
 
     def test_extraction_from_onError_guard(self) -> None:
-        """Test extraction from onError guard."""
+        """Verifies guard extraction from a simple `onError` transition."""
         logger.info("🧪 Testing extraction from onError guard.")
         config = {
             "id": "err_guard",
@@ -493,7 +513,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(guards, {"e_g"})
 
     def test_extraction_from_parallel_nested(self) -> None:
-        """Test extraction from nested parallel states."""
+        """Confirms extraction from states nested inside a parallel region."""
         logger.info("🧪 Testing extraction from nested parallel.")
         config = {
             "id": "par_nested",
@@ -504,7 +524,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(actions, {"p_act"})
 
     def test_extraction_from_final_state(self) -> None:
-        """Test no extraction from final state."""
+        """Ensures that final states, which have no logic, yield no names."""
         logger.info("🧪 Testing no extraction from final state.")
         config = {
             "id": "final_state",
@@ -517,7 +537,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(services, set())
 
     def test_extraction_from_history_state(self) -> None:
-        """Test no extraction from history state."""
+        """Ensures that history states, which have no logic, yield no names."""
         logger.info("🧪 Testing no extraction from history state.")
         config = {
             "id": "hist",
@@ -530,7 +550,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(services, set())
 
     def test_extraction_from_invalid_trans_target(self) -> None:
-        """Test extraction ignores target, focuses on actions/guards."""
+        """Ensures extraction succeeds even if a transition's target is malformed."""
         logger.info("🧪 Testing extraction ignores invalid target.")
         config = {
             "id": "inv_target",
@@ -543,7 +563,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(actions, {"inv_act"})
 
     def test_extraction_from_cond_in_after(self) -> None:
-        """Test extraction using 'cond' in after."""
+        """Verifies guard extraction using the 'cond' key in an `after` transition."""
         logger.info("🧪 Testing 'cond' in after.")
         config = {
             "id": "after_cond",
@@ -554,7 +574,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(guards, {"a_cond"})
 
     def test_extraction_from_multiple_invoke_in_list(self) -> None:
-        """Test multiple services in invoke list."""
+        """Confirms service extraction from a list of `invoke` definitions."""
         logger.info("🧪 Testing multiple invoke in list.")
         config = {
             "id": "multi_inv",
@@ -565,7 +585,7 @@ class TestExtractLogicNames(unittest.TestCase):
         self.assertEqual(services, {"s1", "s2"})
 
     def test_extraction_from_onDone_in_after(self) -> None:
-        """Test no onDone in after (not applicable)."""
+        """Ensures `onDone` in `after` is ignored as it's not a valid SCXML pattern."""
         logger.info("🧪 Testing no onDone in after.")
         config = {
             "id": "after_done",
@@ -580,17 +600,17 @@ class TestExtractLogicNames(unittest.TestCase):
 # 🏛️ Test Class: TestGenerateLogicCode
 # -----------------------------------------------------------------------------
 class TestGenerateLogicCode(unittest.TestCase):
-    """Tests for the generate_logic_code function."""
+    """Verifies the `generate_logic_code` function under various options."""
 
     def setUp(self) -> None:
-        """Setup common data for code generation tests."""
+        """Set up common data for code generation tests."""
         self.actions = {"act1", "act2"}
         self.guards = {"guard1"}
         self.services = {"srv1"}
         self.machine_name = "test_machine"
 
     def test_generate_class_style_sync_with_log(self) -> None:
-        """Test class style, sync, with log."""
+        """Ensures correct generation for: class style, sync mode, with logging."""
         logger.info("🧪 Testing class style sync with log.")
         code = generate_logic_code(
             self.actions,
@@ -608,7 +628,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn("import time", code)
 
     def test_generate_function_style_async_no_log(self) -> None:
-        """Test function style, async, no log."""
+        """Ensures correct generation for: function style, async mode, no logging."""
         logger.info("🧪 Testing function style async no log.")
         code = generate_logic_code(
             self.actions,
@@ -626,7 +646,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertNotIn("import time", code)
 
     def test_generate_no_services_no_time_import(self) -> None:
-        """Test no services, no time import in sync."""
+        """Confirms `time` is not imported in sync mode if there are no services."""
         logger.info("🧪 Testing no services, no time import.")
         code = generate_logic_code(
             self.actions,
@@ -640,7 +660,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertNotIn("import time", code)
 
     def test_generate_with_services_time_import(self) -> None:
-        """Test with services, time import in sync."""
+        """Confirms `time` is imported in sync mode when services are present."""
         logger.info("🧪 Testing with services, time import.")
         code = generate_logic_code(
             self.actions,
@@ -654,7 +674,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn("import time", code)
 
     def test_generate_class_name_from_machine_name(self) -> None:
-        """Test class name generation."""
+        """Verifies that the logic class name is correctly derived from the machine name."""
         logger.info("🧪 Testing class name from machine name.")
         code = generate_logic_code(
             set(), set(), set(), "class", False, False, "my_machine"
@@ -662,7 +682,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn("class MyMachineLogic:", code)
 
     def test_generate_no_actions_guards_services(self) -> None:
-        """Test empty logic generation."""
+        """Ensures code is generated gracefully when there are no logic implementations."""
         logger.info("🧪 Testing empty logic code.")
         code = generate_logic_code(
             set(), set(), set(), "function", False, True, self.machine_name
@@ -673,7 +693,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertNotIn("def ", code[code.find("# ⚙️ Actions") :])
 
     def test_generate_async_actions(self) -> None:
-        """Test async actions code."""
+        """Checks for `async def` and `await` keywords in generated async actions."""
         logger.info("🧪 Testing async actions.")
         code = generate_logic_code(
             {"async_act"},
@@ -688,7 +708,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn("await asyncio.sleep(0.1)", code)
 
     def test_generate_sync_guards_no_log(self) -> None:
-        """Test sync guards no log."""
+        """Verifies a simple sync guard is generated without logging when disabled."""
         logger.info("🧪 Testing sync guards no log.")
         code = generate_logic_code(
             set(),
@@ -703,7 +723,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn("return True", code)
 
     def test_generate_services_async(self) -> None:
-        """Test async services."""
+        """Checks for `async def` and `await` in generated async services."""
         logger.info("🧪 Testing async services.")
         code = generate_logic_code(
             set(), set(), {"async_srv"}, "class", True, True, self.machine_name
@@ -713,7 +733,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn('logger.info("Running service async_srv")', code)
 
     def test_generate_services_sync(self) -> None:
-        """Test sync services."""
+        """Checks for `time.sleep` in generated sync services."""
         logger.info("🧪 Testing sync services.")
         code = generate_logic_code(
             set(),
@@ -729,7 +749,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertNotIn("logger.info", code)
 
     def test_generate_interpreter_type_in_params(self) -> None:
-        """Test interpreter type in params."""
+        """Ensures the interpreter type hint changes based on async mode."""
         logger.info("🧪 Testing interpreter type in function params.")
         code_sync = generate_logic_code(
             {"act"}, set(), set(), "class", False, False, self.machine_name
@@ -747,7 +767,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         )
 
     def test_generate_return_type_for_actions(self) -> None:
-        """Test return type for actions."""
+        """Ensures action return type hint changes based on async mode."""
         logger.info("🧪 Testing return type for actions.")
         code_sync = generate_logic_code(
             {"act"}, set(), set(), "class", False, False, self.machine_name
@@ -759,7 +779,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn("-> Awaitable[None]:", code_async)
 
     def test_generate_return_type_for_services(self) -> None:
-        """Test return type for services."""
+        """Ensures service return type hint changes based on async mode."""
         logger.info("🧪 Testing return type for services.")
         code_sync = generate_logic_code(
             set(), set(), {"srv"}, "class", False, False, self.machine_name
@@ -771,7 +791,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn("-> Awaitable[Dict[str, Any]]:", code_async)
 
     def test_generate_guards_return_bool(self) -> None:
-        """Test guards return bool."""
+        """Verifies that generated guards are correctly type-hinted to return `bool`."""
         logger.info("🧪 Testing guards return bool.")
         code = generate_logic_code(
             set(), {"g"}, set(), "class", False, False, self.machine_name
@@ -779,7 +799,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn("-> bool:", code)
 
     def test_generate_function_style_no_self(self) -> None:
-        """Test function style no self param."""
+        """Confirms that 'self' is not included in function-style logic."""
         logger.info("🧪 Testing function style no self.")
         code = generate_logic_code(
             {"act"}, set(), set(), "function", False, False, self.machine_name
@@ -787,17 +807,15 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertNotIn("self, ", code)
 
     def test_generate_no_dummy_sleep_if_no_log(self) -> None:
-        """Test no dummy sleep if no log in actions."""
+        """Ensures dummy async sleep is present even if logging is off."""
         logger.info("🧪 Testing no dummy sleep if no log.")
         code = generate_logic_code(
             {"act"}, set(), set(), "class", False, True, self.machine_name
         )
-        self.assertIn(
-            "await asyncio.sleep(0.1)", code
-        )  # Still has dummy for async
+        self.assertIn("await asyncio.sleep(0.1)", code)
 
     def test_generate_sorted_names(self) -> None:
-        """Test names are sorted in code."""
+        """Verifies that generated functions are sorted alphabetically."""
         logger.info("🧪 Testing sorted names in code.")
         actions = {"z_act", "a_act"}
         code = generate_logic_code(
@@ -806,7 +824,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertTrue(code.find("a_act") < code.find("z_act"))
 
     def test_generate_logger_config(self) -> None:
-        """Test logger config in code."""
+        """Ensures the standard logger configuration is present in the generated file."""
         logger.info("🧪 Testing logger config.")
         code = generate_logic_code(
             set(), set(), set(), "class", False, False, self.machine_name
@@ -814,7 +832,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn("logger = logging.getLogger(__name__)", code)
 
     def test_generate_typing_imports(self) -> None:
-        """Test typing imports."""
+        """Verifies that necessary `typing` imports are included."""
         logger.info("🧪 Testing typing imports.")
         code = generate_logic_code(
             set(), set(), set(), "class", False, False, self.machine_name
@@ -822,7 +840,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn("from typing import Any, Dict", code)
 
     def test_generate_xstate_imports(self) -> None:
-        """Test xstate imports."""
+        """Verifies that necessary `xstate_statemachine` imports are included."""
         logger.info("🧪 Testing xstate imports.")
         code = generate_logic_code(
             set(), set(), set(), "class", False, False, self.machine_name
@@ -833,7 +851,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         )
 
     def test_generate_awaitable_for_async_guards_no(self) -> None:
-        """Test no Awaitable for guards."""
+        """Confirms that guards remain synchronous even in async mode."""
         logger.info("🧪 Testing no Awaitable for guards in async.")
         code = generate_logic_code(
             set(), {"g"}, set(), "class", False, True, self.machine_name
@@ -842,7 +860,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertNotIn("Awaitable[bool]", code)
 
     def test_generate_no_imports_if_no_services_async(self) -> None:
-        """Test no time if no services sync."""
+        """Confirms `time` is not imported if there are no sync services."""
         logger.info("🧪 Testing no time if no services sync.")
         code = generate_logic_code(
             set(), set(), set(), "class", False, False, self.machine_name
@@ -850,7 +868,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertNotIn("import time", code)
 
     def test_generate_class_indent_correct(self) -> None:
-        """Test class indent."""
+        """Checks for correct indentation in class-style generation."""
         logger.info("🧪 Testing class indent.")
         code = generate_logic_code(
             set(), set(), set(), "class", False, False, self.machine_name
@@ -858,7 +876,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn("    # ⚙️ Actions", code)
 
     def test_generate_function_indent_correct(self) -> None:
-        """Test function indent."""
+        """Checks for correct (zero) indentation in function-style generation."""
         logger.info("🧪 Testing function indent.")
         code = generate_logic_code(
             set(), set(), set(), "function", False, False, self.machine_name
@@ -867,7 +885,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertNotIn("    # ⚙️ Actions", code)
 
     def test_generate_docstring_for_actions(self) -> None:
-        """Test docstring for actions."""
+        """Ensures the correct docstring format for generated actions."""
         logger.info("🧪 Testing docstring for actions.")
         code = generate_logic_code(
             {"my_act"}, set(), set(), "class", False, False, self.machine_name
@@ -875,7 +893,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn('"""Action: my_act."""', code)
 
     def test_generate_docstring_for_guards(self) -> None:
-        """Test docstring for guards."""
+        """Ensures the correct docstring format for generated guards."""
         logger.info("🧪 Testing docstring for guards.")
         code = generate_logic_code(
             set(), {"my_g"}, set(), "class", False, False, self.machine_name
@@ -883,7 +901,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn('"""Guard: my_g."""', code)
 
     def test_generate_docstring_for_services(self) -> None:
-        """Test docstring for services."""
+        """Ensures the correct docstring format for generated services."""
         logger.info("🧪 Testing docstring for services.")
         code = generate_logic_code(
             set(), set(), {"my_srv"}, "class", False, False, self.machine_name
@@ -891,7 +909,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn('"""Service: my_srv."""', code)
 
     def test_generate_pass_todo_for_actions(self) -> None:
-        """Test pass TODO for actions."""
+        """Verifies the placeholder `pass` and `TODO` comment for actions."""
         logger.info("🧪 Testing pass TODO for actions.")
         code = generate_logic_code(
             {"act"}, set(), set(), "class", False, False, self.machine_name
@@ -899,7 +917,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn("pass  # TODO: Implement action", code)
 
     def test_generate_return_true_todo_for_guards(self) -> None:
-        """Test return True TODO for guards."""
+        """Verifies the placeholder `return True` and `TODO` comment for guards."""
         logger.info("🧪 Testing return True TODO for guards.")
         code = generate_logic_code(
             set(), {"g"}, set(), "class", False, False, self.machine_name
@@ -907,7 +925,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn("return True  # TODO: Implement guard", code)
 
     def test_generate_return_dict_todo_for_services(self) -> None:
-        """Test return dict TODO for services."""
+        """Verifies the placeholder return dictionary and `TODO` comment for services."""
         logger.info("🧪 Testing return dict TODO for services.")
         code = generate_logic_code(
             set(), set(), {"srv"}, "class", False, False, self.machine_name
@@ -917,7 +935,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         )
 
     def test_generate_logger_info_for_actions_log_true(self) -> None:
-        """Test logger info for actions if log true."""
+        """Verifies the logging statement for actions when logging is enabled."""
         logger.info("🧪 Testing logger info for actions.")
         code = generate_logic_code(
             {"act"}, set(), set(), "class", True, False, self.machine_name
@@ -925,7 +943,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn('logger.info("Executing action act")', code)
 
     def test_generate_no_logger_for_actions_log_false(self) -> None:
-        """Test no logger for actions if log false."""
+        """Ensures no logging statement is generated when logging is disabled."""
         logger.info("🧪 Testing no logger for actions.")
         code = generate_logic_code(
             {"act"}, set(), set(), "class", False, False, self.machine_name
@@ -933,7 +951,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertNotIn("logger.info", code)
 
     def test_generate_logger_for_guards(self) -> None:
-        """Test logger for guards."""
+        """Verifies the logging statement for guards when logging is enabled."""
         logger.info("🧪 Testing logger for guards.")
         code = generate_logic_code(
             set(), {"g"}, set(), "class", True, False, self.machine_name
@@ -941,7 +959,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn('logger.info("Evaluating guard g")', code)
 
     def test_generate_logger_for_services(self) -> None:
-        """Test logger for services."""
+        """Verifies the logging statement for services when logging is enabled."""
         logger.info("🧪 Testing logger for services.")
         code = generate_logic_code(
             set(), set(), {"srv"}, "class", True, False, self.machine_name
@@ -949,7 +967,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn('logger.info("Running service srv")', code)
 
     def test_generate_dummy_async_for_async_actions_no_log(self) -> None:
-        """Test dummy async for async actions no log."""
+        """Ensures dummy `asyncio.sleep` is present in async actions."""
         logger.info("🧪 Testing dummy async for actions no log.")
         code = generate_logic_code(
             {"act"}, set(), set(), "class", False, True, self.machine_name
@@ -957,7 +975,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertIn("await asyncio.sleep(0.1)", code)
 
     def test_generate_no_dummy_for_sync_actions(self) -> None:
-        """Test no dummy for sync actions."""
+        """Ensures no `sleep` call is present in sync actions."""
         logger.info("🧪 Testing no dummy for sync actions.")
         code = generate_logic_code(
             {"act"}, set(), set(), "class", False, False, self.machine_name
@@ -965,7 +983,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         self.assertNotIn("sleep", code)
 
     def test_generate_sorted_actions_guards_services(self) -> None:
-        """Test sorted order in code."""
+        """Confirms that all generated functions are sorted alphabetically within their sections."""
         logger.info("🧪 Testing sorted order in generated code.")
         actions = {"z", "a"}
         guards = {"y", "b"}
@@ -988,17 +1006,17 @@ class TestGenerateLogicCode(unittest.TestCase):
 # 🏛️ Test Class: TestGenerateRunnerCode
 # -----------------------------------------------------------------------------
 class TestGenerateRunnerCode(unittest.TestCase):
-    """Tests for the generate_runner_code function."""
+    """Verifies the `generate_runner_code` function under various options."""
 
     def setUp(self) -> None:
-        """Setup common data for runner code tests."""
+        """Set up common data for runner code generation tests."""
         self.machine_names = ["test_machine"]
         self.configs = [SAMPLE_CONFIG_SIMPLE]
         self.json_filenames = ["test.json"]
         self.machine_name = "test_machine"
 
     def test_generate_single_sync_class_loader_sleep_log_file2(self) -> None:
-        """Test single machine, sync, class, loader, sleep, log, file 2."""
+        """Tests the default generation case: single machine, sync, class-style, 2 files."""
         logger.info("🧪 Testing single sync class loader sleep log file2.")
         code = generate_runner_code(
             self.machine_names,
@@ -1025,7 +1043,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
     def test_generate_single_async_function_no_loader_no_sleep_no_log_file1(
         self,
     ) -> None:
-        """Test single async function no loader no sleep no log file1."""
+        """Tests a non-default case: async, function-style, no loader, 1 file."""
         logger.info(
             "🧪 Testing single async function no loader no sleep no log file1."
         )
@@ -1048,7 +1066,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("asyncio.run(main())", code)
 
     def test_generate_multiple_machines(self) -> None:
-        """Test multiple machines."""
+        """Ensures code is generated correctly for multiple machine inputs."""
         logger.info("🧪 Testing multiple machines.")
         machine_names = ["m1", "m2"]
         configs = [SAMPLE_CONFIG_SIMPLE, SAMPLE_CONFIG_NESTED]
@@ -1071,7 +1089,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("run_m2()", code)
 
     def test_generate_dummy_event_from_config(self) -> None:
-        """Test dummy event from config on."""
+        """Verifies that the initial event is taken from the config if available."""
         logger.info("🧪 Testing dummy event from config.")
         config = {"on": {"CUSTOM_EVENT": {}}}
         code = generate_runner_code(
@@ -1089,7 +1107,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("CUSTOM_EVENT", code)
 
     def test_generate_default_dummy_event(self) -> None:
-        """Test default dummy event."""
+        """Verifies the default fallback event when none is in the config."""
         logger.info("🧪 Testing default dummy event.")
         code = generate_runner_code(
             self.machine_names,
@@ -1106,7 +1124,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("PEDESTRIAN_WAITING", code)
 
     def test_generate_path_config_load(self) -> None:
-        """Test config path load."""
+        """Ensures the correct JSON filename is used for loading the config."""
         logger.info("🧪 Testing config path load.")
         code = generate_runner_code(
             self.machine_names,
@@ -1123,7 +1141,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("custom.json", code)
 
     def test_generate_no_loader_logic(self) -> None:
-        """Test no loader logic binding."""
+        """Verifies that manual logic binding code is generated when loader is off."""
         logger.info("🧪 Testing no loader logic.")
         code = generate_runner_code(
             self.machine_names,
@@ -1140,7 +1158,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("machine_logic = MachineLogic", code)
 
     def test_generate_file_count_1_combined(self) -> None:
-        """Test file count 1 combined."""
+        """Confirms generation for a single combined file runs without error."""
         logger.info("🧪 Testing file count 1.")
         code = generate_runner_code(
             self.machine_names,
@@ -1154,12 +1172,11 @@ class TestGenerateRunnerCode(unittest.TestCase):
             self.configs,
             self.json_filenames,
         )
-        self.assertIn(
-            "def main() -> None:", code
-        )  # Still generates main, but in combined file
+        # The runner code itself is the same, but it won't import its own logic file.
+        self.assertIn("def main() -> None:", code)
 
     def test_generate_async_await_prefix(self) -> None:
-        """Test async await prefix."""
+        """Ensures `await` is correctly prefixed to calls in async mode."""
         logger.info("🧪 Testing async await prefix.")
         code = generate_runner_code(
             self.machine_names,
@@ -1176,7 +1193,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("await interpreter.start()", code)
 
     def test_generate_no_log_no_basicConfig(self) -> None:
-        """Test no log no basicConfig."""
+        """Verifies that `logging.basicConfig` is absent when logging is off."""
         logger.info("🧪 Testing no log no basicConfig.")
         code = generate_runner_code(
             self.machine_names,
@@ -1193,7 +1210,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertNotIn("logging.basicConfig", code)
 
     def test_generate_import_time_if_sleep(self) -> None:
-        """Test import time if sleep."""
+        """Confirms `time` is imported when `sleep` is enabled."""
         logger.info("🧪 Testing import time if sleep.")
         code = generate_runner_code(
             self.machine_names,
@@ -1210,7 +1227,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("import time", code)
 
     def test_generate_no_import_time_if_no_sleep(self) -> None:
-        """Test no import time if no sleep."""
+        """Confirms `time` is not imported when `sleep` is disabled."""
         logger.info("🧪 Testing no import time if no sleep.")
         code = generate_runner_code(
             self.machine_names,
@@ -1227,7 +1244,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertNotIn("import time", code)
 
     def test_generate_async_import_asyncio(self) -> None:
-        """Test import asyncio if async."""
+        """Confirms `asyncio` is imported when `async-mode` is enabled."""
         logger.info("🧪 Testing import asyncio if async.")
         code = generate_runner_code(
             self.machine_names,
@@ -1244,7 +1261,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("import asyncio", code)
 
     def test_generate_no_asyncio_if_sync(self) -> None:
-        """Test no asyncio if sync."""
+        """Confirms `asyncio` is not imported in sync mode."""
         logger.info("🧪 Testing no asyncio if sync.")
         code = generate_runner_code(
             self.machine_names,
@@ -1261,7 +1278,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertNotIn("import asyncio", code)
 
     def test_generate_logging_inspector(self) -> None:
-        """Test LoggingInspector use."""
+        """Ensures the `LoggingInspector` is included by default."""
         logger.info("🧪 Testing LoggingInspector.")
         code = generate_runner_code(
             self.machine_names,
@@ -1278,7 +1295,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("interpreter.use(LoggingInspector())", code)
 
     def test_generate_initial_state_log(self) -> None:
-        """Test initial state log."""
+        """Verifies the log message for the initial machine state."""
         logger.info("🧪 Testing initial state log.")
         code = generate_runner_code(
             self.machine_names,
@@ -1298,7 +1315,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         )
 
     def test_generate_simulation_log_messages(self) -> None:
-        """Test simulation log messages."""
+        """Verifies the standard log messages for starting and ending the simulation."""
         logger.info("🧪 Testing simulation logs.")
         code = generate_runner_code(
             self.machine_names,
@@ -1319,7 +1336,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         )
 
     def test_generate_main_if_async(self) -> None:
-        """Test main if async."""
+        """Ensures the `asyncio.run(main())` block is present in async mode."""
         logger.info("🧪 Testing main if async.")
         code = generate_runner_code(
             self.machine_names,
@@ -1336,7 +1353,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("asyncio.run(main())", code)
 
     def test_generate_main_if_sync(self) -> None:
-        """Test main if sync."""
+        """Ensures a direct `main()` call is present in sync mode."""
         logger.info("🧪 Testing main if sync.")
         code = generate_runner_code(
             self.machine_names,
@@ -1350,11 +1367,11 @@ class TestGenerateRunnerCode(unittest.TestCase):
             self.configs,
             self.json_filenames,
         )
-        self.assertIn("main()", code)
+        self.assertIn("if __name__ == '__main__':\n    main()", code)
         self.assertNotIn("asyncio.run", code)
 
     def test_generate_multiple_async_functions(self) -> None:
-        """Test multiple async functions."""
+        """Checks for correct `async def` and `await` usage with multiple machines."""
         logger.info("🧪 Testing multiple async functions.")
         machine_names = ["m1", "m2"]
         code = generate_runner_code(
@@ -1376,7 +1393,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("await run_m2()", code)
 
     def test_generate_docstring_for_run_functions(self) -> None:
-        """Test docstring for run functions."""
+        """Verifies the docstring format for generated runner functions."""
         logger.info("🧪 Testing docstring for run functions.")
         code = generate_runner_code(
             self.machine_names,
@@ -1395,7 +1412,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         )
 
     def test_generate_config_path_parent(self) -> None:
-        """Test config path using parent."""
+        """Ensures `Path(__file__).parent` is used to locate the config file."""
         logger.info("🧪 Testing config path using parent.")
         code = generate_runner_code(
             self.machine_names,
@@ -1412,7 +1429,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("Path(__file__).parent", code)
 
     def test_generate_utf8_encoding(self) -> None:
-        """Test utf8 encoding in open."""
+        """Ensures config files are opened with 'utf-8' encoding."""
         logger.info("🧪 Testing utf8 encoding.")
         code = generate_runner_code(
             self.machine_names,
@@ -1429,7 +1446,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("encoding='utf-8'", code)
 
     def test_generate_no_sleep_time_sleep_false(self) -> None:
-        """Test no sleep time if sleep false."""
+        """Confirms no `time.sleep` call is generated if `sleep` is disabled."""
         logger.info("🧪 Testing no sleep time if sleep false.")
         code = generate_runner_code(
             self.machine_names,
@@ -1446,7 +1463,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertNotIn("time.sleep", code)
 
     def test_generate_custom_sleep_time(self) -> None:
-        """Test custom sleep time."""
+        """Verifies that a custom sleep time is correctly used."""
         logger.info("🧪 Testing custom sleep time.")
         code = generate_runner_code(
             self.machine_names,
@@ -1463,7 +1480,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("time.sleep(5)", code)
 
     def test_generate_function_style_runner_import(self) -> None:
-        """Test function style runner import."""
+        """Verifies the correct import statement for function-style logic."""
         logger.info("🧪 Testing function style runner import.")
         code = generate_runner_code(
             self.machine_names,
@@ -1480,7 +1497,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("import test_machine_logic", code)
 
     def test_generate_multiple_no_loader(self) -> None:
-        """Test multiple no loader."""
+        """Confirms correct code generation for multiple machines without the loader."""
         logger.info("🧪 Testing multiple no loader.")
         machine_names = ["m1", "m2"]
         code = generate_runner_code(
@@ -1498,13 +1515,13 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("machine_logic = MachineLogic", code)
 
     def test_generate_combined_file_runner_part(self) -> None:
-        """Test combined file runner part."""
+        """A placeholder to acknowledge testing combined files is handled in main CLI tests."""
         logger.info("🧪 Testing combined file runner part.")
-        # Note: generate_runner_code is used in combined, but test the comment in main code
-        # This is tested in main CLI, but assume correct if single works.
+        # This is implicitly tested via the main CLI tests which handle file writing.
+        pass
 
     def test_generate_pathlib_import(self) -> None:
-        """Test pathlib import."""
+        """Ensures `pathlib.Path` is imported."""
         logger.info("🧪 Testing pathlib import.")
         code = generate_runner_code(
             self.machine_names,
@@ -1521,7 +1538,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("from pathlib import Path", code)
 
     def test_generate_logging_inspector_import(self) -> None:
-        """Test LoggingInspector import."""
+        """Ensures `LoggingInspector` is imported."""
         logger.info("🧪 Testing LoggingInspector import.")
         code = generate_runner_code(
             self.machine_names,
@@ -1538,7 +1555,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
         self.assertIn("from xstate_statemachine import LoggingInspector", code)
 
     def test_generate_create_machine_import(self) -> None:
-        """Test create_machine import."""
+        """Ensures `create_machine` is imported."""
         logger.info("🧪 Testing create_machine import.")
         code = generate_runner_code(
             self.machine_names,
@@ -1559,10 +1576,10 @@ class TestGenerateRunnerCode(unittest.TestCase):
 # 🏛️ Test Class: TestNormalizeBool
 # -----------------------------------------------------------------------------
 class TestNormalizeBool(unittest.TestCase):
-    """Tests for the normalize_bool function."""
+    """Verifies the `normalize_bool` utility function."""
 
     def test_normalize_true_values(self) -> None:
-        """Test true values."""
+        """Ensures various 'true' strings are correctly normalized to `True`."""
         logger.info("🧪 Testing true values normalization.")
         self.assertTrue(normalize_bool("true"))
         self.assertTrue(normalize_bool("YES"))
@@ -1570,7 +1587,7 @@ class TestNormalizeBool(unittest.TestCase):
         self.assertTrue(normalize_bool("1"))
 
     def test_normalize_false_values(self) -> None:
-        """Test false values."""
+        """Ensures various 'false' strings are correctly normalized to `False`."""
         logger.info("🧪 Testing false values normalization.")
         self.assertFalse(normalize_bool("false"))
         self.assertFalse(normalize_bool("NO"))
@@ -1578,25 +1595,25 @@ class TestNormalizeBool(unittest.TestCase):
         self.assertFalse(normalize_bool("0"))
 
     def test_normalize_case_insensitive(self) -> None:
-        """Test case insensitive."""
+        """Confirms that normalization is case-insensitive."""
         logger.info("🧪 Testing case insensitive normalization.")
         self.assertTrue(normalize_bool("TrUe"))
         self.assertFalse(normalize_bool("FaLsE"))
 
     def test_normalize_invalid_value(self) -> None:
-        """Test invalid value raises ValueError."""
+        """Verifies that an unrecognized string raises a `ValueError`."""
         logger.info("🧪 Testing invalid value raises error.")
         with self.assertRaises(ValueError):
             normalize_bool("invalid")
 
     def test_normalize_empty_string(self) -> None:
-        """Test empty string raises error."""
+        """Verifies that an empty string raises a `ValueError`."""
         logger.info("🧪 Testing empty string raises error.")
         with self.assertRaises(ValueError):
             normalize_bool("")
 
     def test_normalize_number_string(self) -> None:
-        """Test number string."""
+        """Checks normalization of numeric strings beyond '0' and '1'."""
         logger.info("🧪 Testing number string.")
         self.assertTrue(normalize_bool("1"))
         self.assertFalse(normalize_bool("0"))
@@ -1604,7 +1621,7 @@ class TestNormalizeBool(unittest.TestCase):
             normalize_bool("2")
 
     def test_normalize_yes_no_variations(self) -> None:
-        """Test yes no variations."""
+        """Tests single-letter variations of 'yes' and 'no'."""
         logger.info("🧪 Testing yes no variations.")
         self.assertTrue(normalize_bool("yes"))
         self.assertFalse(normalize_bool("no"))
@@ -1616,22 +1633,22 @@ class TestNormalizeBool(unittest.TestCase):
 # 🏛️ Test Class: TestMainCLI
 # -----------------------------------------------------------------------------
 class TestMainCLI(unittest.TestCase):
-    """Tests for the main CLI function."""
+    """Provides integration tests for the `main` CLI entry point."""
 
     def setUp(self) -> None:
-        """Setup temp dir for file output."""
+        """Set up a temporary directory for file output tests."""
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_cwd = os.getcwd()
         os.chdir(self.temp_dir.name)
 
     def tearDown(self) -> None:
-        """Cleanup temp dir."""
+        """Clean up the temporary directory and restore the CWD."""
         os.chdir(self.original_cwd)
         self.temp_dir.cleanup()
 
     @patch("sys.argv", new_callable=list)
-    def test_main_no_json_error(self, mock_argv) -> None:
-        """Test no json error."""
+    def test_main_no_json_error(self, mock_argv: List[str]) -> None:
+        """Ensures the CLI exits with an error if no JSON file is provided."""
         logger.info("🧪 Testing no json error.")
         mock_argv[:] = ["cli.py", "generate-template"]
         with patch(
@@ -1643,8 +1660,8 @@ class TestMainCLI(unittest.TestCase):
         )
 
     @patch("sys.argv", new_callable=list)
-    def test_main_json_not_found(self, mock_argv) -> None:
-        """Test json not found."""
+    def test_main_json_not_found(self, mock_argv: List[str]) -> None:
+        """Ensures the CLI exits if a specified JSON file does not exist."""
         logger.info("🧪 Testing json not found.")
         mock_argv[:] = ["cli.py", "generate-template", "nonexistent.json"]
         with patch(
@@ -1654,8 +1671,8 @@ class TestMainCLI(unittest.TestCase):
         self.assertIn("JSON file not found", mock_err.getvalue())
 
     @patch("sys.argv", new_callable=list)
-    def test_main_generate_single(self, mock_argv) -> None:
-        """Test generate single file."""
+    def test_main_generate_single(self, mock_argv: List[str]) -> None:
+        """Verifies that the correct files are generated for a single JSON input."""
         logger.info("🧪 Testing generate single.")
         json_path = create_temp_json(SAMPLE_CONFIG_SIMPLE)
         mock_argv[:] = ["cli.py", "generate-template", str(json_path)]
@@ -1666,8 +1683,8 @@ class TestMainCLI(unittest.TestCase):
         self.assertTrue(any("simple_runner.py" in call for call in calls))
 
     @patch("sys.argv", new_callable=list)
-    def test_main_generate_multiple(self, mock_argv) -> None:
-        """Test generate multiple."""
+    def test_main_generate_multiple(self, mock_argv: List[str]) -> None:
+        """Verifies correct combined filenames for multiple JSON inputs."""
         logger.info("🧪 Testing generate multiple.")
         json1 = create_temp_json(SAMPLE_CONFIG_SIMPLE)
         json2 = create_temp_json(SAMPLE_CONFIG_NESTED)
@@ -1683,8 +1700,8 @@ class TestMainCLI(unittest.TestCase):
         )
 
     @patch("sys.argv", new_callable=list)
-    def test_main_force_overwrite(self, mock_argv) -> None:
-        """Test force overwrite."""
+    def test_main_force_overwrite(self, mock_argv: List[str]) -> None:
+        """Ensures that the `--force` flag correctly overwrites existing files."""
         logger.info("🧪 Testing force overwrite.")
         json_path = create_temp_json(SAMPLE_CONFIG_SIMPLE)
         logic_path = Path.cwd() / "simple_logic.py"
@@ -1699,8 +1716,8 @@ class TestMainCLI(unittest.TestCase):
         self.assertNotEqual(logic_path.read_text(encoding="utf-8"), "existing")
 
     @patch("sys.argv", new_callable=list)
-    def test_main_custom_output_dir(self, mock_argv) -> None:
-        """Test custom output dir."""
+    def test_main_custom_output_dir(self, mock_argv: List[str]) -> None:
+        """Verifies that files are created in the specified `--output` directory."""
         logger.info("🧪 Testing custom output dir.")
         json_path = create_temp_json(SAMPLE_CONFIG_SIMPLE)
         out_dir = Path(self.temp_dir.name) / "out"
@@ -1715,10 +1732,11 @@ class TestMainCLI(unittest.TestCase):
             main()
         calls = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("simple_logic.py" in call for call in calls))
+        self.assertTrue(out_dir.joinpath("simple_logic.py").exists())
 
     @patch("sys.argv", new_callable=list)
-    def test_main_invalid_bool_value(self, mock_argv) -> None:
-        """Test invalid bool value."""
+    def test_main_invalid_bool_value(self, mock_argv: List[str]) -> None:
+        """Ensures the CLI exits when an invalid boolean-like value is provided."""
         logger.info("🧪 Testing invalid bool value.")
         json_path = create_temp_json(SAMPLE_CONFIG_SIMPLE)
         mock_argv[:] = [
@@ -1732,8 +1750,8 @@ class TestMainCLI(unittest.TestCase):
             main()
 
     @patch("sys.argv", new_callable=list)
-    def test_main_version(self, mock_argv) -> None:
-        """Test version arg."""
+    def test_main_version(self, mock_argv: List[str]) -> None:
+        """Verifies the `--version` argument prints the package version and exits."""
         logger.info("🧪 Testing version arg.")
         mock_argv[:] = ["cli.py", "--version"]
         from src.xstate_statemachine.cli import package_version
@@ -1745,8 +1763,8 @@ class TestMainCLI(unittest.TestCase):
         self.assertIn(package_version, mock_out.getvalue())
 
     @patch("sys.argv", new_callable=list)
-    def test_main_help(self, mock_argv) -> None:
-        """Test help."""
+    def test_main_help(self, mock_argv: List[str]) -> None:
+        """Verifies the help message is displayed with `-h` or `--help`."""
         logger.info("🧪 Testing help.")
         mock_argv[:] = ["cli.py", "generate-template", "-h"]
         with patch(
@@ -1756,8 +1774,8 @@ class TestMainCLI(unittest.TestCase):
         self.assertIn("usage:", mock_out.getvalue())
 
     @patch("sys.argv", new_callable=list)
-    def test_main_additional_json(self, mock_argv) -> None:
-        """Test --json arg."""
+    def test_main_additional_json(self, mock_argv: List[str]) -> None:
+        """Ensures the `--json` argument can be used to add config files."""
         logger.info("🧪 Testing --json arg.")
         json1 = create_temp_json(SAMPLE_CONFIG_SIMPLE)
         json2 = create_temp_json(SAMPLE_CONFIG_NESTED)
@@ -1777,8 +1795,8 @@ class TestMainCLI(unittest.TestCase):
         )
 
     @patch("sys.argv", new_callable=list)
-    def test_main_invalid_style(self, mock_argv) -> None:
-        """Test invalid style."""
+    def test_main_invalid_style(self, mock_argv: List[str]) -> None:
+        """Ensures the CLI exits for an invalid `--style` choice."""
         logger.info("🧪 Testing invalid style.")
         json_path = create_temp_json(SAMPLE_CONFIG_SIMPLE)
         mock_argv[:] = [
@@ -1792,8 +1810,8 @@ class TestMainCLI(unittest.TestCase):
             main()
 
     @patch("sys.argv", new_callable=list)
-    def test_main_invalid_file_count(self, mock_argv) -> None:
-        """Test invalid file count."""
+    def test_main_invalid_file_count(self, mock_argv: List[str]) -> None:
+        """Ensures the CLI exits for an invalid `--file-count` choice."""
         logger.info("🧪 Testing invalid file count.")
         json_path = create_temp_json(SAMPLE_CONFIG_SIMPLE)
         mock_argv[:] = [
@@ -1807,8 +1825,8 @@ class TestMainCLI(unittest.TestCase):
             main()
 
     @patch("sys.argv", new_callable=list)
-    def test_main_sleep_time_non_int(self, mock_argv) -> None:
-        """Test non int sleep time."""
+    def test_main_sleep_time_non_int(self, mock_argv: List[str]) -> None:
+        """Ensures the CLI exits if `--sleep-time` is not an integer."""
         logger.info("🧪 Testing non int sleep time.")
         json_path = create_temp_json(SAMPLE_CONFIG_SIMPLE)
         mock_argv[:] = [
@@ -1822,8 +1840,8 @@ class TestMainCLI(unittest.TestCase):
             main()
 
     @patch("sys.argv", new_callable=list)
-    def test_main_no_subcommand(self, mock_argv) -> None:
-        """Test no subcommand."""
+    def test_main_no_subcommand(self, mock_argv: List[str]) -> None:
+        """Ensures the CLI shows an error if no subcommand is provided."""
         logger.info("🧪 Testing no subcommand.")
         mock_argv[:] = ["cli.py"]
         with patch(
@@ -1836,8 +1854,8 @@ class TestMainCLI(unittest.TestCase):
         )
 
     @patch("sys.argv", new_callable=list)
-    def test_main_combined_file(self, mock_argv) -> None:
-        """Test combined file."""
+    def test_main_combined_file(self, mock_argv: List[str]) -> None:
+        """Verifies correct filename for a single combined file output."""
         logger.info("🧪 Testing combined file.")
         json_path = create_temp_json(SAMPLE_CONFIG_SIMPLE)
         mock_argv[:] = [
@@ -1851,10 +1869,13 @@ class TestMainCLI(unittest.TestCase):
             main()
         calls = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(any("simple.py" in call for call in calls))
+        self.assertTrue(Path.cwd().joinpath("simple.py").exists())
 
     @patch("sys.argv", new_callable=list)
-    def test_main_output_dir_not_exist_create(self, mock_argv) -> None:
-        """Test output dir create."""
+    def test_main_output_dir_not_exist_create(
+        self, mock_argv: List[str]
+    ) -> None:
+        """Ensures that a non-existent output directory is created."""
         logger.info("🧪 Testing output dir create.")
         json_path = create_temp_json(SAMPLE_CONFIG_SIMPLE)
         out_dir = Path(self.temp_dir.name) / "new_dir"
@@ -1869,8 +1890,10 @@ class TestMainCLI(unittest.TestCase):
         self.assertTrue(out_dir.exists())
 
     @patch("sys.argv", new_callable=list)
-    def test_main_force_no_overwrite_if_not_exist(self, mock_argv) -> None:
-        """Test force no effect if not exist."""
+    def test_main_force_no_overwrite_if_not_exist(
+        self, mock_argv: List[str]
+    ) -> None:
+        """Confirms `--force` runs without error when files don't already exist."""
         logger.info("🧪 Testing force no effect if not exist.")
         json_path = create_temp_json(SAMPLE_CONFIG_SIMPLE)
         mock_argv[:] = [
@@ -1880,17 +1903,23 @@ class TestMainCLI(unittest.TestCase):
             "--force",
         ]
         main()
-        # No error, files created
+        # Test passes if no error is raised and files are created.
+        self.assertTrue(Path.cwd().joinpath("simple_logic.py").exists())
 
     @patch("sys.argv", new_callable=list)
-    def test_main_no_force_no_overwrite(self, mock_argv) -> None:
-        """Test no force no overwrite."""
+    def test_main_no_force_no_overwrite(self, mock_argv: List[str]) -> None:
+        """Ensures a warning is printed and execution stops if files exist without `--force`."""
         logger.info("🧪 Testing no force no overwrite.")
         json_path = create_temp_json(SAMPLE_CONFIG_SIMPLE)
         mock_argv[:] = ["cli.py", "generate-template", str(json_path)]
-        main()  # First run, creates files
+
+        # First run creates the files.
+        main()
+        self.assertTrue(Path.cwd().joinpath("simple_logic.py").exists())
+
+        # Second run should print a warning and exit.
         with patch("builtins.print") as mock_print:
-            main()  # Second run, no force
+            main()
         calls = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(
             any(
@@ -1898,7 +1927,3 @@ class TestMainCLI(unittest.TestCase):
                 for call in calls
             )
         )
-
-    # Note: More tests can be added for content verification by reading generated files.
-
-    # Total tests: extract 20 + logic 20 + runner 20 + bool 6 + main 20 = 86
