@@ -65,9 +65,8 @@ Whether you’re a **junior dev** struggling with spaghetti `if/else` trees 🌱
 
 * A **Pythonic** runtime for the world-famous **[XState](https://stately.ai)** architecture.
 * **100 % JSON-spec-compatible**, so you can design your chart in the Stately editor and run it untouched.
-* **Async first** (`asyncio`), yet ships a **blocking** `SyncInterpreter` for CLI tools or tests, now with non-blocking support for `after` timers.
+* **Async first** (`asyncio`), yet ships a **fully-featured, blocking** `SyncInterpreter` for CLI tools or tests, complete with support for `after` timers and a threaded **actor model**.
 * Packed with goodies: **hierarchy, parallelism, invoke**, **after**, timers, **actors**, auto-binding logic loaders, plugin hooks, diagram generators, and more.
-
 
 > **TL;DR** — If you know XState in JS, everything 👉 “just works” in Python.
 > If you don’t, keep reading—this guide is for you.
@@ -79,7 +78,7 @@ Whether you’re a **junior dev** struggling with spaghetti `if/else` trees 🌱
 | Feature | Why You Care | Best For |
 | :--- | :--- | :--- |
 | **100% XState Compatibility** | Design visually, export JSON, run in Python. | Teams that want to use visual tools like the Stately Editor for collaboration and design. |
-| **Async & Sync Interpreters** | Use the same machine logic for an `asyncio` server or a sync app, with both now supporting `after` timers. | Building flexible applications that need to run in different Python environments without sacrificing timer functionality. |
+| **Async & Sync Interpreters** | Use the same machine logic for an `asyncio` server or a sync app. Both interpreters support `after` timers, and the `SyncInterpreter` includes a complete, threaded actor model. | Building flexible applications that need to run in different Python environments without sacrificing core features like timers or actors. |
 | **Hierarchical States** | Organize complex logic by nesting states (e.g., `editing.typing`). | Modeling UI components, wizards, or any process that has distinct sub-steps. |
 | **Parallel States** | Model independent, concurrent state regions. | Complex systems where multiple things happen at once, like a smart home (`lighting`, `climate`). |
 | **The Actor Model** | Spawn child machines for ultimate concurrency and isolation. | Orchestrating multiple, independent components like IoT devices, user sessions, or background jobs. |
@@ -1009,37 +1008,121 @@ resource‑safe—no leaks, no zombies, no surprises. 🧹🔒
 
 While `invoke` is perfect for calling a single function, the **Actor Model** is for when you need to manage an entire, long-living, stateful process as a child of your main machine. Actors are simply other state machine interpreters that are "spawned" and managed by a parent.
 
-This pattern is the key to unlocking massive architectural freedom and managing complex concurrency with grace.
+This pattern is the key to unlocking massive architectural freedom and managing complex concurrency with grace. It is fully supported in **both** the `Interpreter` (async) and `SyncInterpreter` (sync).
 
 ### 📐 Reference Diagram
 
 The relationship is simple: a parent spawns a child, can send it messages (events), and the child can send messages back to its parent.
 
-```text
-┌───────── Parent Machine ─────────┐
-│                                  │
-│  Action: "spawn_myActor"         │
-│      │                           │
-│      ▼                           │
-│  ╔═════════════╗ Parent can send │
-│  ║ Child Actor ║────────────────►│
-│  ║ Interpreter ║◄────────────────┤
-│  ╚═════════════╝ Child can send  │
-│                  (via i.parent)  │
-│                                  │
-└──────────────────────────────────┘
-```
+    ┌───────── Parent Machine ─────────┐
+    │                                  │
+    │  Action: "spawn_myActor"         │
+    │      │                           │
+    │      ▼                           │
+    │  ╔═════════════╗ Parent can send │
+    │  ║ Child Actor ║────────────────►│
+    │  ║ Interpreter ║◄────────────────┤
+    │  ╚═════════════╝ Child can send  │
+    │                  (via i.parent)  │
+    │                                  │
+    └──────────────────────────────────┘
+
+### 🚀 `spawn_` Actions — How Actors Are Born<a name="spawn-actions"></a>
+
+Spawning a child machine is as simple as defining an **action whose type starts with a `spawn_` prefix**. The library provides two conventions:
+
+| Action Prefix | `Interpreter` (Async) Behavior | `SyncInterpreter` (Sync) Behavior |
+| :--- | :--- | :--- |
+| **`spawn_<name>`** | Non-blocking (default) | **Non-blocking** (runs in a background thread) |
+| **`spawn_blocking_<name>`** | Non-blocking (same as above) | **Blocking** (runs inline, parent waits) |
+
+Behind the scenes, the interpreter performs four deterministic steps:
+
+| Step | What happens |
+| :--- | :--- |
+| **1. Name Resolution** | The interpreter strips the prefix to get `<name>` and looks it up in `machine.logic.services["<name>"]`. |
+| **2. Source Validation**| If the value is a **`MachineNode`**, it's used directly. If it’s a **callable**, it's treated as a factory that must return a `MachineNode`. |
+| **3. ID Assignment**| The child's ID is uniquely generated as `{parentId}:{name}:{uuid4()}` (e.g., `cart:paymentActor:...`). |
+| **4. Start & Register** | A new interpreter is created for the child, started, and stored in the parent's `_actors` dictionary. |
+
+If the source is invalid, the engine raises **`ActorSpawningError`** 🛑.
+
+    # The service registry can contain MachineNode objects directly...
+    services = {
+        "paymentActor": create_machine(payment_cfg, logic=payment_logic)
+    }
+
+    # ...or factories for creating them at runtime (useful for passing context).
+    services = {
+        "dynamicActor": lambda i, ctx, e: create_machine(build_cfg_from_context(ctx))
+    }
 
 ### Messaging Patterns
 
-The actor model enables powerful communication patterns between components.
+The actor model enables powerful, interpreter-agnostic communication patterns.
 
 | Pattern | How It Works | Use Case |
-|---------|--------------|----------|
-| **Request/Reply** | A child actor performs a task and sends a **RESULT** or **FAILURE** event back to its direct parent when it completes. | `warehouseRobot` spawns a `pathfinder` actor to calculate a route and report back. |
-| **Command** | The parent looks up a specific child in its `interpreter._actors` registry and sends it a command event such as `PAUSE` or `UPDATE_CONFIG`. | A `mediaPlayer` machine telling its spawned `volumeControl` actor to mute/un‑mute. |
-| **Broadcast** | The parent iterates over **all** `interpreter._actors.values()` and sends the same event to every child. | A `collaborativeEditor` machine telling all cursor actors to change colour or display an annotation. |
-| **Escalation** | A deeply‑nested child actor hits an unrecoverable error and bubbles it up by calling `await i.parent.parent.send("CHILD_FAILED", error=str(e))`. | A low‑level network actor fails and tells the top‑level app machine to show a global “Offline” banner. |
+| :--- | :--- | :--- |
+| **Request/Reply** | A child actor performs a task and sends a **`RESULT`** or **`FAILURE`** event back to its parent when it completes. | `warehouseRobot` spawns a `pathfinder` actor to calculate a route and report back. |
+| **Command** | The parent looks up a specific child in its `interpreter._actors` registry and sends it a command event like **`PAUSE`**. | A `mediaPlayer` machine tells its spawned `volumeControl` actor to mute. |
+| **Broadcast** | The parent iterates over **all** `interpreter._actors.values()` and sends the same event to every child. | A `collaborativeEditor` machine tells all cursor actors to change color. |
+| **Escalation** | A child actor hits an error and bubbles it up by calling `i.parent.send("CHILD_FAILED", ...)`. | A low-level network actor fails, telling the app to show a global “Offline” banner. |
+
+### Event Flow of an Actor Interaction
+
+Let's trace the `warehouseRobot` example to see how the parent and child communicate:
+
+1.  **Parent (`warehouseRobot`)** enters the `planning_route` state.
+2.  **Parent**'s `entry` action (`spawn_pathfinder_actor`) is executed. An `Interpreter` for the `pathfinder` machine is created and started. This is the **Child Actor**.
+3.  **Child (`pathfinder`)** immediately enters its `calculating` state.
+4.  **Child** `invoke`s its `calculate_path_service`.
+5.  *(...time passes...)*
+6.  **Child**'s service finishes successfully, triggering its `onDone` transition.
+7.  **Child**'s `onDone` action (`send_path_to_parent`) is executed. Inside this action, it calls `i.parent.send("PATH_CALCULATED", ...)`.
+8.  **Parent**'s event loop receives the `PATH_CALCULATED` event.
+9.  **Parent** follows its own transition for this event, running the `store_path` action and moving to the `moving` state.
+10. **Child** moves to its `finished` state and terminates.
+
+This clear, decoupled communication is what makes the Actor Model so powerful for complex systems.
+
+### Supervision Strategies 🛡️
+
+A robust system must know how to handle actor failures. The recommended pattern is for the child to report its own failure to the parent.
+
+**The Pattern:**
+
+1. The child actor has an `onError` handler on its critical invoked service.
+2. The action triggered by `onError` (`report_failure_to_parent`) explicitly sends a custom `CHILD_FAILED` event to its parent.
+3. The parent machine has a global or state-specific handler for `CHILD_FAILED` and decides what to do (e.g., restart the actor).
+
+#### Child Actor's onError Action
+
+```python
+# Inside the child actor's logic (use await for async interpreter)
+def report_failure_to_parent(i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition):
+    # This action is triggered by the child's own onError transition
+    error_details = {"actorId": i.id, "error": str(e.data)}
+
+    # Use the .parent reference to communicate upwards
+    i.parent.send("CHILD_FAILED", **error_details)
+```
+
+#### Parent Machine's Handler
+```json
+// In the parent's state machine definition
+"running_children": {
+  "entry": "spawn_child_actor",
+  "on": {
+    "CHILD_FAILED": {
+      "actions": [
+        "log_child_error",
+        "spawn_child_actor"
+      ],
+      "target": ".running_children" // Re-enter the state to apply the restart strategy
+    }
+  }
+}
+```
 
 ### Event Flow of an Actor Interaction
 
@@ -1368,12 +1451,11 @@ Your library supports two primary ways of organizing your logic: **functional** 
 ## 🔁 Sync vs Async — Under the Hood<a name="synchronous-vs-asynchronous-execution"></a>
 
 | Concern | `Interpreter` (asyncio) | `SyncInterpreter` (blocking) |
-|---------|-------------------------|------------------------------|
-| Queue | `asyncio.Queue` | `collections.deque` |
-| Tick | Background task | While‑loop in `send()` |
-| `after` Timers | `asyncio.create_task` | `threading.Thread` (Non-blocking) |
-| I/O | Non‑blocking | Blocks |
-| CPU | Slight overhead | Faster per event |
+| :--- | :--- | :--- |
+| **Event Loop** | Runs in a background `asyncio.Task` | A `while` loop inside the `.send()` method |
+| **`after` Timers**| Non-blocking (`asyncio.create_task`) | Non-blocking (`threading.Thread`) |
+| **`invoke` Services**| Non-blocking (`asyncio.create_task`) | Blocking (runs inline) |
+| **`spawn` Actors**| Non-blocking (`asyncio.create_task`) | Non-blocking (`threading.Thread`) or Blocking (inline) |
 
 **Rule of Thumb:**
 *Desktop / CLI* → **SyncInterpreter**
@@ -1381,26 +1463,25 @@ Your library supports two primary ways of organizing your logic: **functional** 
 
 #### ⚠️ Features *not* Supported by `SyncInterpreter`
 
-While the synchronous engine now supports timers via background threads, it still enforces **two hard constraints** to guarantee predictable behavior. Any violation raises `NotSupportedError` instantly:
+While the synchronous engine is highly capable, it enforces one hard constraint to guarantee predictable, blocking behavior. Any violation raises `NotSupportedError` instantly:
 
-| Attempted Feature | Exception Raised | Guarding Method | 📄 Source |
-|-------------------|------------------|-----------------|-----------|
-| **`spawn_*` actions** – child actor creation | `NotSupportedError` | `SyncInterpreter._spawn_actor` | [`sync_interpreter.py`](src/xstate_statemachine/sync_interpreter.py) |
-| **Async callables** in actions **or** services (coroutines / `async def`) | `NotSupportedError` | `SyncInterpreter._execute_actions` & `SyncInterpreter._invoke_service` | same |
+| Attempted Feature | Exception Raised | Guarding Method |
+| :--- | :--- | :--- |
+| **Async callables** in actions **or** services (coroutines / `async def`) | `NotSupportedError` | `SyncInterpreter._execute_actions` & `SyncInterpreter._invoke_service` |
 
 > 🧘 **Why so strict?**
-> The `SyncInterpreter`'s core `send` method must finish its event processing loop before returning control to the caller. Spawning background actors or awaiting coroutines would break that guarantee. The hard error surfaces this design mismatch early, nudging you towards either the full async `Interpreter` or a refactoring to synchronous logic.
+> The `SyncInterpreter`'s core `send` method must finish its event processing loop before returning control to the caller. Awaiting a coroutine would break that guarantee. The hard error surfaces this design mismatch early, nudging you towards either the full async `Interpreter` or a refactoring to synchronous logic.
 
 ### Migrating Sync→Async
 
-1. Swap interpreter class.
-2. Make `main()` async, `await` `.start()` / `.send()` / `.stop()`.
-3. Replace blocking sleeps with `await asyncio.sleep()`.
+1. Swap interpreter class from `SyncInterpreter` to `Interpreter`.
+2. Make your main function `async`, and `await` all calls to `.start()`, `.send()`, and `.stop()`.
+3. Replace blocking calls like `time.sleep()` with `await asyncio.sleep()`.
 
 ### Threads & Processes
 
-* Use `loop.call_soon_threadsafe()` for cross‑thread `.send()`.
-* For cross‑process, bridge with a message queue and `.send()` inside process.
+* Use `loop.call_soon_threadsafe()` for cross‑thread `.send()` to an `Interpreter`.
+* For cross‑process, bridge with a message queue and `.send()` from the process.
 
 ---
 
@@ -1996,7 +2077,7 @@ XStateMachineError
 - **StateNotFoundError**: Transition target ID not found in the machine.
 - **ImplementationMissingError**: Missing action, guard, or service implementation.
 - **ActorSpawningError**: Error spawning a child actor/service.
-- **NotSupportedError**: Using async features with `SyncInterpreter`.
+- **NotSupportedError**: Using an `async def` function as an action or service with `SyncInterpreter`.
 
 Use them in `pytest.raises()` to assert mis-configurations early.
 
@@ -2037,11 +2118,10 @@ Enjoy **live editing** of statecharts without losing session data.
 ### 4. Performance Tuning
 
 | Technique | When to use | Effect |
-|-----------|-------------|--------|
+| :--- | :--- | :--- |
 | **Disable event‑loop debug mode** `asyncio.get_running_loop().set_debug(False)` | After you’ve ironed out the bugs and want maximum throughput in production | Removes costly asyncio debug assertions (≈ 5‑10 % speed‑up in micro‑benchmarks) |
-| **Prefer `SyncInterpreter`** when you don’t need `after` timers or `invoke` | CLI tools, deterministic unit tests, CPU‑bound pipelines | Zero coroutine overhead, ~40 % faster per event in tight loops |
+| **Prefer `SyncInterpreter` for synchronous workflows** | CLI tools, deterministic unit tests, or CPU-bound pipelines where `asyncio` is not needed. | Zero coroutine overhead, significantly faster per event in tight loops. |
 | **Bulk‑fire events API** *(planned)* | High‑volume telemetry or log ingestion | Will let you enqueue a list of events in one syscall, minimising context‑switches |
-
 
 ### 5. Architectural Pattern: `invoke` vs. `async` Actions
 
