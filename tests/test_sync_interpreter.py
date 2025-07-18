@@ -26,9 +26,10 @@ Unit test suite for the synchronous `SyncInterpreter`.
 # -----------------------------------------------------------------------------
 import json
 import logging
+import threading
 import time
 import unittest
-from typing import Any, Dict, List, Callable
+from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
 # -----------------------------------------------------------------------------
@@ -46,7 +47,7 @@ from src.xstate_statemachine import (
     SyncInterpreter,
     create_machine,
 )
-from src.xstate_statemachine.models import MachineNode
+from src.xstate_statemachine import ActorSpawningError
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
@@ -114,6 +115,13 @@ class TestSyncInterpreter(unittest.TestCase):
             },
         }
 
+    # ------------------------------------------------------------------
+    # Helper that returns a child machine which NEVER terminates
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _infinite_child_machine() -> dict:
+        return {"id": "infinite", "initial": "loop", "states": {"loop": {}}}
+
     @staticmethod
     def _create_chooser_machine_config() -> Dict[str, Any]:
         """Creates the configuration for the chooser machine."""
@@ -134,6 +142,23 @@ class TestSyncInterpreter(unittest.TestCase):
                 "low": {},
                 "med": {},
                 "high": {},
+            },
+        }
+
+    # ------------------------------------------------------------------
+    # Helper that returns a child machine that *stays alive* for ≥100 ms
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _alive_child_machine() -> Dict[str, Any]:
+        return {
+            "id": "alive",
+            "initial": "alive",
+            "states": {
+                "alive": {
+                    # the actor will remain here for 100 ms
+                    "after": {100: "done"}
+                },
+                "done": {"type": "final"},
             },
         }
 
@@ -1315,7 +1340,9 @@ class TestSyncInterpreter(unittest.TestCase):
             logic=MachineLogic(actions={"badAction": my_async_action}),
         )
         # ⚡ Act & ✨ Assert
-        with self.assertRaisesRegex(NotSupportedError, "is async"):
+        with self.assertRaisesRegex(
+            NotSupportedError, "not supported by SyncInterpreter"
+        ):
             SyncInterpreter(machine).start()
 
     def test_error_on_unsupported_async_service(self) -> None:
@@ -1341,63 +1368,28 @@ class TestSyncInterpreter(unittest.TestCase):
         with self.assertRaisesRegex(NotSupportedError, "is async"):
             SyncInterpreter(machine).start()
 
-    def test_error_on_unsupported_spawn_action(self) -> None:
-        """
-        Ensure that `SyncInterpreter` raises `NotSupportedError`
-        when a machine tries to use the `spawn` action.
-        """
-        logger.info("❌ Testing error for unsupported `spawn` action...")
-
-        # ------------------------------------------------------------------ #
-        # 🤖 Arrange                                                          #
-        # ------------------------------------------------------------------ #
-        child_machine_config: Dict[str, Any] = {
-            "id": "child",
-            "initial": "a",
-            "states": {"a": {}},
-        }
-
-        spawner_machine_config: Dict[str, Any] = {
-            "id": "spawner",
-            "initial": "active",
-            "states": {"active": {"entry": "spawn_something"}},
-        }
-
-        # Service factory — returns a fresh MachineNode each time it’s invoked
-        def make_child_service(
-            *_: Any, **__: Any
-        ) -> MachineNode:  # noqa: ANN401
-            return create_machine(child_machine_config)
-
-        # Action that *attempts* to spawn the child service
-        def spawn_something(
-            ctx: Any,  # noqa:
-            event: Any,  # noqa
-            send: Any,  # noqa
-            spawn: Callable[[str], None],
-            **__: Any,  # noqa: ANN401
-        ) -> None:
-            spawn("something")
-
+    def test_spawn_action_non_blocking_creates_child_actor(self) -> None:
+        """Spawning a service should start at least one actor thread."""
         machine = create_machine(
-            spawner_machine_config,
+            {
+                "id": "parent",
+                "initial": "a",
+                "states": {"a": {"entry": ["spawn_child"]}},
+            },
             logic=MachineLogic(
-                actions={"spawn_something": spawn_something},
                 services={
-                    "something": make_child_service
-                },  # ✅ Callable, not MachineNode
+                    "child": lambda *_: create_machine(
+                        self._infinite_child_machine()
+                    )
+                }
             ),
         )
-
-        interpreter = SyncInterpreter(machine)
-
-        # ------------------------------------------------------------------ #
-        # ⚡ Act & ✨ Assert                                                   #
-        # ------------------------------------------------------------------ #
-        with self.assertRaisesRegex(
-            NotSupportedError, "Actor spawning is not supported"
-        ):
-            interpreter.start()
+        interp = SyncInterpreter(machine).start()
+        time.sleep(0.05)
+        self.assertTrue(
+            any(t.name.startswith("actor-") for t in threading.enumerate())
+        )
+        interp.stop()
 
     def test_error_on_missing_action_implementation(self) -> None:
         """
@@ -1832,6 +1824,539 @@ class TestSyncInterpreter(unittest.TestCase):
         )
 
         interpreter.stop()
+
+    # ---------------------------------------------------------------------
+    # 🆕 Actor-support test cases
+    # ---------------------------------------------------------------------
+
+    def test_spawn_action_blocking_waits_for_child(self) -> None:
+        """Blocking actor runs inline and remains registered afterwards."""
+        logger.info("🧪 blocking actor spawn")
+
+        child_cfg = {
+            "id": "childB",
+            "initial": "step",
+            "states": {"step": {"type": "final"}},
+        }
+
+        parent_cfg = {
+            "id": "parentB",
+            "initial": "a",
+            "states": {
+                "a": {"entry": ["spawn_blocking_childSvc"], "on": {"GO": "b"}},
+                "b": {},
+            },
+        }
+
+        machine = create_machine(
+            parent_cfg,
+            logic=MachineLogic(
+                services={"childSvc": lambda *_: create_machine(child_cfg)}
+            ),
+        )
+
+        interp = SyncInterpreter(machine).start()
+        # Child has finished, but remains in registry (blocking mode)
+        self.assertEqual(len(interp._actors), 1)  # type: ignore[attr-defined]
+        interp.stop()
+
+    def test_spawn_unknown_service_raises(self) -> None:
+        """Unknown service key should raise at *build*-time (ImplementationMissingError)."""
+        logger.info("🧪 unknown service key")
+
+        bad_cfg = {
+            "id": "badSpawn",
+            "initial": "a",
+            "states": {"a": {"entry": ["spawn_missingSvc"]}},
+        }
+
+        # Failure occurs during `create_machine`, not at runtime.
+        with self.assertRaises(ImplementationMissingError):
+            create_machine(bad_cfg)
+
+    def test_multiple_non_blocking_actors_spawned(self) -> None:
+        """Two actor threads should appear when two services are spawned."""
+        factory = lambda *_: create_machine(  # noqa: E731
+            self._infinite_child_machine()
+        )
+        machine = create_machine(
+            {
+                "id": "P",
+                "initial": "s",
+                "states": {"s": {"entry": ["spawn_a", "spawn_b"]}},
+            },
+            logic=MachineLogic(services={"a": factory, "b": factory}),
+        )
+        interp = SyncInterpreter(machine).start()
+        time.sleep(0.05)
+        actor_threads = [
+            t for t in threading.enumerate() if t.name.startswith("actor-")
+        ]
+        self.assertGreaterEqual(len(actor_threads), 2)
+        interp.stop()
+
+    def test_actor_ids_are_unique_and_contain_uuid(self) -> None:
+        """Two spawned services should create two distinct actor threads."""
+        factory = lambda *_: create_machine(  # noqa: E731
+            self._infinite_child_machine()
+        )
+        machine = create_machine(
+            {
+                "id": "parentID",
+                "initial": "start",
+                "states": {"start": {"entry": ["spawn_one", "spawn_two"]}},
+            },
+            logic=MachineLogic(services={"one": factory, "two": factory}),
+        )
+        interp = SyncInterpreter(machine).start()
+        time.sleep(0.05)
+        actor_threads = [
+            t for t in threading.enumerate() if t.name.startswith("actor-")
+        ]
+        ids = {t.name.removeprefix("actor-") for t in actor_threads}
+        self.assertGreaterEqual(len(ids), 2)
+        self.assertEqual(len(ids), len(set(ids)))
+        interp.stop()
+
+    def test_actor_factory_receives_parent_context(self) -> None:
+        """Service factory should see parent context."""
+        logger.info("🧪 Testing factory receives context...")
+        saw_value = {}
+
+        def factory(parent_interp, ctx, _e):
+            saw_value["x"] = ctx["x"]
+            return create_machine(
+                {"id": "c", "initial": "f", "states": {"f": {"type": "final"}}}
+            )
+
+        parent_cfg = {
+            "id": "ctxParent",
+            "initial": "a",
+            "context": {"x": 42},
+            "states": {"a": {"entry": ["spawn_child"]}},
+        }
+
+        machine = create_machine(
+            parent_cfg,
+            logic=MachineLogic(services={"child": factory}),
+        )
+        SyncInterpreter(machine).start()
+        self.assertEqual(saw_value["x"], 42)
+
+    def test_non_blocking_actor_cleanup_after_child_stop(self) -> None:
+        """_actors dictionary should remove entry when child finishes."""
+        logger.info("🧪 Testing actor cleanup...")
+        child_cfg = {
+            "id": "quick",
+            "initial": "final",
+            "states": {"final": {"type": "final"}},
+        }
+
+        machine = create_machine(
+            {
+                "id": "cleanup",
+                "initial": "s",
+                "states": {"s": {"entry": ["spawn_quick"]}},
+            },
+            logic=MachineLogic(
+                services={"quick": lambda *_: create_machine(child_cfg)}
+            ),
+        )
+
+        interp = SyncInterpreter(machine).start()
+        time.sleep(0.02)
+        self.assertEqual(len(interp._actors), 0)  # type: ignore[attr-defined]
+        interp.stop()
+
+    def test_parent_handles_event_queue_while_actor_runs(self) -> None:
+        """Parent should still dequeue its own events during actor execution."""
+        logger.info("🧪 Testing parent event queue during actor...")
+        child_cfg = {
+            "id": "slowChild",
+            "initial": "working",
+            "states": {
+                "working": {"after": {30: "done"}},
+                "done": {"type": "final"},
+            },
+        }
+
+        def factory(*_, **__):
+            return create_machine(child_cfg)
+
+        parent_cfg = {
+            "id": "queueParent",
+            "initial": "idle",
+            "states": {
+                "idle": {
+                    "entry": ["spawn_childSvc"],
+                    "on": {"GO": "finished"},
+                },
+                "finished": {},
+            },
+        }
+
+        machine = create_machine(
+            parent_cfg,
+            logic=MachineLogic(services={"childSvc": factory}),
+        )
+
+        interp = SyncInterpreter(machine).start()
+        # Send event immediately; should not be blocked.
+        interp.send("GO")
+        self.assertEqual(interp.current_state_ids, {"queueParent.finished"})
+        interp.stop()
+
+    def test_nested_actor_spawn(self) -> None:
+        """A child actor can itself spawn another actor."""
+        logger.info("🧪 Testing nested actor spawn...")
+
+        grand_cfg = {
+            "id": "grand",
+            "initial": "final",
+            "states": {"final": {"type": "final"}},
+        }
+
+        def grand_factory(*_, **__):
+            return create_machine(grand_cfg)
+
+        # Child that spawns grand-child on entry.
+        child_cfg = {
+            "id": "childNest",
+            "initial": "init",
+            "states": {"init": {"entry": ["spawn_grand"], "type": "final"}},
+        }
+
+        def child_factory(*_, **__):
+            return create_machine(
+                child_cfg,
+                logic=MachineLogic(services={"grand": grand_factory}),
+            )
+
+        parent_cfg = {
+            "id": "nestParent",
+            "initial": "start",
+            "states": {"start": {"entry": ["spawn_child"]}},
+        }
+
+        machine = create_machine(
+            parent_cfg,
+            logic=MachineLogic(services={"child": child_factory}),
+        )
+
+        interp = SyncInterpreter(machine).start()
+        time.sleep(0.05)
+        # Should have no lingering actors after cascade finish.
+        self.assertEqual(len(interp._actors), 0)  # type: ignore[attr-defined]
+        interp.stop()
+
+    def test_spawn_blocking_prefix_is_case_sensitive(self) -> None:
+        """
+        Wrong casing should fail the build phase – an *implementation* for the
+        accidental action name will be missing, so we expect
+        `ImplementationMissingError`.
+        """
+        logger.info("🧪 case-sensitivity check")
+
+        cfg = {
+            "id": "caseParent",
+            "initial": "a",
+            "states": {"a": {"entry": ["spawn_Blocking_childSvc"]}},  # bad 'B'
+        }
+
+        with self.assertRaises(ImplementationMissingError):
+            create_machine(cfg)  # failure occurs during machine build
+
+    def test_actor_thread_is_daemon(self) -> None:
+        """A non-blocking actor runs in a *daemon* thread named 'actor-<id>'."""
+        machine = create_machine(
+            {
+                "id": "daemonParent",
+                "initial": "s",
+                "states": {"s": {"entry": ["spawn_job"]}},
+            },
+            logic=MachineLogic(
+                services={
+                    "job": lambda *_: create_machine(
+                        self._infinite_child_machine()
+                    )
+                }
+            ),
+        )
+        interp = SyncInterpreter(machine).start()
+        time.sleep(0.05)
+        actor_threads = [
+            t for t in threading.enumerate() if t.name.startswith("actor-")
+        ]
+        self.assertTrue(actor_threads, "No actor thread found")
+        self.assertTrue(all(t.daemon for t in actor_threads))
+        interp.stop()
+
+    def test_spawn_blocking_action_preserves_parent_context(self) -> None:
+        """Blocking child increments a scalar on the shared context."""
+        logger.info("🧪 context sharing scalar")
+
+        def factory(_pi, ctx, _e):
+            ctx["count"] = ctx.get("count", 0) + 1
+            return create_machine(
+                {"id": "noop", "initial": "stay", "states": {"stay": {}}}
+            )
+
+        parent_cfg = {
+            "id": "shareCtx",
+            "initial": "a",
+            "context": {"count": 0},
+            "states": {"a": {"entry": ["spawn_blocking_childSvc"]}},
+        }
+        interp = SyncInterpreter(
+            create_machine(
+                parent_cfg, logic=MachineLogic(services={"childSvc": factory})
+            )
+        ).start()
+        self.assertEqual(interp.context["count"], 1)
+
+    def test_non_blocking_actor_finishes_before_parent_stop(self) -> None:
+        """Stopping parent should eventually clean up actor threads."""
+        machine = create_machine(
+            {
+                "id": "grace",
+                "initial": "a",
+                "states": {"a": {"entry": ["spawn_child"]}},
+            },
+            logic=MachineLogic(
+                services={
+                    "child": lambda *_: create_machine(
+                        self._infinite_child_machine()
+                    )
+                }
+            ),
+        )
+        interp = SyncInterpreter(machine).start()
+        time.sleep(0.05)
+        before = len(
+            [t for t in threading.enumerate() if t.name.startswith("actor-")]
+        )
+        self.assertGreaterEqual(before, 1)
+        interp.stop()
+        time.sleep(0.05)
+        after = len(
+            [t for t in threading.enumerate() if t.name.startswith("actor-")]
+        )
+        self.assertLessEqual(after, before)
+
+    def test_spawn_action_name_must_start_with_spawn(self):
+        """Anything not starting with 'spawn_' should be treated as ordinary action."""
+        dummy = MagicMock()
+        cfg = {
+            "id": "nospawn",
+            "initial": "a",
+            "states": {"a": {"entry": ["spawnWrong"], "type": "final"}},
+        }
+        machine = create_machine(
+            cfg, logic=MachineLogic(actions={"spawnWrong": dummy})
+        )
+        SyncInterpreter(machine).start()
+        dummy.assert_called_once()
+
+    def test_spawn_actor_child_machine_reaches_final_state(self):
+        """Ensure child interpreter actually runs its machine."""
+        reached = {}
+
+        child_cfg = {
+            "id": "runner",
+            "initial": "start",
+            "states": {"start": {"type": "final"}},
+        }
+
+        def factory(*_, **__):
+            reached["done"] = True
+            return create_machine(child_cfg)
+
+        machine = create_machine(
+            {
+                "id": "parentRunner",
+                "initial": "a",
+                "states": {"a": {"entry": ["spawn_child"]}},
+            },
+            logic=MachineLogic(services={"child": factory}),
+        )
+        SyncInterpreter(machine).start()
+        self.assertTrue(reached.get("done", False))
+
+    def test_spawn_actor_service_can_be_machine_node_direct(self):
+        """Service map may contain MachineNode directly (not factory)."""
+        child_node = create_machine(
+            {"id": "node", "initial": "f", "states": {"f": {"type": "final"}}}
+        )
+        machine = create_machine(
+            {
+                "id": "direct",
+                "initial": "a",
+                "states": {"a": {"entry": ["spawn_childNode"]}},
+            },
+            logic=MachineLogic(services={"childNode": child_node}),
+        )
+        interp = SyncInterpreter(machine).start()
+        time.sleep(0.01)
+        self.assertEqual(len(interp._actors), 0)  # finished instantly
+        interp.stop()
+
+    def test_spawn_blocking_actor_removed_even_if_child_errors(self) -> None:
+        """Blocking actor raising error should surface the exception."""
+        logger.info("🧪 blocking actor error")
+
+        child_node = create_machine(
+            {
+                "id": "bad",
+                "initial": "a",
+                "states": {"a": {"entry": "fail"}},
+            },
+            logic=MachineLogic(
+                actions={
+                    "fail": lambda *_: (_ for _ in ()).throw(RuntimeError("x"))
+                }
+            ),
+        )
+
+        parent_cfg = {
+            "id": "parentBad",
+            "initial": "a",
+            "states": {"a": {"entry": ["spawn_blocking_badSvc"]}},
+        }
+
+        machine = create_machine(
+            parent_cfg,
+            logic=MachineLogic(services={"badSvc": lambda *_: child_node}),
+        )
+
+        with self.assertRaises(RuntimeError):
+            SyncInterpreter(machine).start()
+
+    def test_spawn_non_blocking_actor_thread_name_contains_actor_id(
+        self,
+    ) -> None:
+        """Every actor thread name must begin with 'actor-' and contain a UUID."""
+        machine = create_machine(
+            {
+                "id": "threadName",
+                "initial": "x",
+                "states": {"x": {"entry": ["spawn_job"]}},
+            },
+            logic=MachineLogic(
+                services={
+                    "job": lambda *_: create_machine(
+                        self._infinite_child_machine()
+                    )
+                }
+            ),
+        )
+        interp = SyncInterpreter(machine).start()
+        time.sleep(0.05)
+        actor_threads = [
+            t for t in threading.enumerate() if t.name.startswith("actor-")
+        ]
+        self.assertTrue(actor_threads, "No actor threads detected")
+        for t in actor_threads:
+            actor_id = t.name.removeprefix("actor-")
+            parts = actor_id.split(":")
+            self.assertGreaterEqual(len(parts), 3)
+            self.assertRegex(parts[-1], r"^[0-9a-f-]{36}$")
+        interp.stop()
+
+    def test_spawn_actor_parent_can_snapshot_after_child_done(self):
+        """Taking a snapshot after child completion should work."""
+        child_cfg = {
+            "id": "snapC",
+            "initial": "f",
+            "states": {"f": {"type": "final"}},
+        }
+
+        machine = create_machine(
+            {
+                "id": "snapParent",
+                "initial": "a",
+                "states": {"a": {"entry": ["spawn_child"]}},
+            },
+            logic=MachineLogic(
+                services={"child": lambda *_: create_machine(child_cfg)}
+            ),
+        )
+        interp = SyncInterpreter(machine).start()
+        time.sleep(0.02)
+        snap = interp.get_snapshot()
+        self.assertIn('"snapParent.a"', snap)
+
+    def test_spawn_actor_with_after_timer_inside_child(self):
+        """Child containing timer still runs fine under SyncInterpreter actor."""
+        child_cfg = {
+            "id": "timerChild",
+            "initial": "wait",
+            "states": {
+                "wait": {"after": {20: "done"}},
+                "done": {"type": "final"},
+            },
+        }
+
+        machine = create_machine(
+            {
+                "id": "timerParent",
+                "initial": "a",
+                "states": {"a": {"entry": ["spawn_child"]}},
+            },
+            logic=MachineLogic(
+                services={"child": lambda *_: create_machine(child_cfg)}
+            ),
+        )
+        interp = SyncInterpreter(machine).start()
+        time.sleep(0.05)  # Wait for timer
+        self.assertEqual(len(interp._actors), 0)  # type: ignore[attr-defined]
+        interp.stop()
+
+    def test_spawn_actor_child_modifies_shared_list_in_context(self) -> None:
+        """Child mutates parent context directly inside factory."""
+        logger.info("🧪 context sharing list")
+
+        def factory(_pi, ctx, _e):
+            ctx.setdefault("items", []).append("child")
+            return create_machine(
+                {"id": "noop", "initial": "stay", "states": {"stay": {}}}
+            )
+
+        parent_cfg = {
+            "id": "listParent",
+            "initial": "a",
+            "context": {"items": []},
+            "states": {"a": {"entry": ["spawn_blocking_childSvc"]}},
+        }
+        machine = create_machine(
+            parent_cfg, logic=MachineLogic(services={"childSvc": factory})
+        )
+        interp = SyncInterpreter(machine).start()
+        self.assertEqual(interp.context["items"], ["child"])
+
+    def test_spawn_actor_non_blocking_does_not_duplicate_actor_ids(self):
+        """Spawning same service twice should yield different actor IDs."""
+        child_cfg = {
+            "id": "dup",
+            "initial": "f",
+            "states": {"f": {"type": "final"}},
+        }
+
+        def factory(*_, **__):
+            return create_machine(child_cfg)
+
+        cfg = {
+            "id": "dupParent",
+            "initial": "s",
+            "states": {"s": {"entry": ["spawn_child", "spawn_child"]}},
+        }
+        machine = create_machine(
+            cfg, logic=MachineLogic(services={"child": factory})
+        )
+        interp = SyncInterpreter(machine).start()
+        time.sleep(0.01)
+        ids = list(interp._actors.keys())  # type: ignore[attr-defined]
+        self.assertEqual(len(ids), len(set(ids)))  # uniqueness
+        interp.stop()
 
 
 if __name__ == "__main__":

@@ -21,6 +21,8 @@
 # -----------------------------------------------------------------------------
 import logging
 import threading
+import time
+import uuid
 from collections import deque
 from typing import (
     Any,
@@ -44,6 +46,7 @@ from .exceptions import (
     ImplementationMissingError,
     NotSupportedError,
     StateNotFoundError,
+    ActorSpawningError,
 )
 from .models import (
     ActionDefinition,
@@ -170,22 +173,22 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         return self
 
     def stop(self) -> None:
-        """Stops the interpreter, preventing further event processing.
-
-        Once stopped, any subsequent calls to `send` will be ignored.
-        This method is idempotent; calling it on an already stopped interpreter
-        has no effect.
-        """
-        # 🚦 Idempotency check: only stop if currently running.
+        """Stops the interpreter, preventing further event processing."""
         if self.status != "running":
-            logger.debug(
-                "😴 Interpreter '%s' is not running. No need to stop.", self.id
-            )
             return
 
-        logger.info("🛑 Stopping sync interpreter '%s'...", self.id)
+        logger.info(
+            "🛑 Stopping sync interpreter '%s' and its actors…", self.id
+        )
 
-        # 🧹 Clean up all after timers by signaling their cancellation events.
+        # Stop every child actor (blocking & non-blocking)
+        for actor_id, actor in list(self._actors.items()):
+            try:
+                actor.stop()
+            finally:
+                self._actors.pop(actor_id, None)
+
+        # Cancel all `after` timers
         for state_id in list(self._after_events.keys()):
             self._after_events[state_id].set()
         self._after_events.clear()
@@ -193,7 +196,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         self.status = "stopped"
 
-        # 🔌 Notify plugins that the interpreter has stopped.
+        # Notify plugins
         for plugin in self._plugins:
             plugin.on_interpreter_stop(self)
 
@@ -519,86 +522,92 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     # -------------------------------------------------------------------------
 
     def _execute_actions(
-        self, actions: List[ActionDefinition], event: Event
+        self,
+        actions: List[ActionDefinition],
+        event: Event,
     ) -> None:
-        """Synchronously executes a list of action definitions.
-
-        This method validates that actions are synchronous callables. It will
-        intentionally fail if an `async def` function is provided as an action
-        implementation, as this is not supported in the `SyncInterpreter`.
-
-        Args:
-            actions (List[ActionDefinition]): A list of action definitions to execute.
-            event (Event): The event that triggered these actions.
-
-        Raises:
-            ImplementationMissingError: If an action's implementation is not found.
-            NotSupportedError: If an async action (`async def`) or a `spawn`
-                action is attempted.
-        """
+        """Synchronously executes action definitions with actor support."""
         if not actions:
-            return  # 🤔 No actions to execute.
+            return
 
         for action_def in actions:
-            logger.debug(
-                "⚡ Executing action '%s' for event '%s'.",
-                action_def.type,
-                event.type,
-            )
             for plugin in self._plugins:
                 plugin.on_action_execute(self, action_def)
 
-            # 🚫 Explicitly block `spawn_` actions.
-            if action_def.type.startswith("spawn_"):
-                self._spawn_actor(action_def, event)  # This will raise
+            # ---------- actor spawning ----------
+            if action_def.type.startswith(("spawn_", "spawn_blocking_")):
+                self._spawn_actor(action_def, event)
+                continue
 
-            # 🔎 Look up the action's implementation in the machine logic.
-            action_callable = self.machine.logic.actions.get(action_def.type)
-            if not action_callable:
-                logger.error(
-                    "🛠️ Action '%s' not implemented in machine logic.",
-                    action_def.type,
-                )
+            # ---------- normal action ----------
+            action_impl = self.machine.logic.actions.get(action_def.type)
+            if not action_impl:
                 raise ImplementationMissingError(
                     f"Action '{action_def.type}' not implemented."
                 )
-
-            # 🧐 Validate that the action is not an async function.
-            if self._is_async_callable(action_callable):
-                logger.error(
-                    "🚫 Action '%s' is async and not supported by SyncInterpreter.",
-                    action_def.type,
-                )
+            if self._is_async_callable(action_impl):
                 raise NotSupportedError(
-                    f"Action '{action_def.type}' is async and not supported by SyncInterpreter."
+                    f"Async action '{action_def.type}' not supported by SyncInterpreter."
                 )
+            action_impl(self, self.context, event, action_def)
 
-            # ✅ Execute the synchronous action.
-            action_callable(self, self.context, event, action_def)
-            logger.debug(
-                "✨ Action '%s' executed successfully.", action_def.type
+    def _spawn_actor(
+        self,
+        action_def: ActionDefinition,
+        event: Event,
+    ) -> None:
+        """Spawn a child state-machine actor in *blocking* or *non-blocking* mode."""
+        blocking = action_def.type.startswith("spawn_blocking_")
+        key = action_def.type.split("_", 2)[-1]
+
+        source = self.machine.logic.services.get(key)
+        actor_machine = (
+            source
+            if isinstance(source, MachineNode)
+            else (
+                source(self, self.context, event) if callable(source) else None
+            )
+        )
+        if not isinstance(actor_machine, MachineNode):
+            raise ActorSpawningError(
+                f"Cannot spawn '{key}'. Service not a MachineNode or factory."
             )
 
-    def _spawn_actor(self, action_def: ActionDefinition, event: Event) -> None:
-        """Raises `NotSupportedError` as actor spawning is not supported.
+        actor_id = f"{self.id}:{key}:{uuid.uuid4()}"
+        child = SyncInterpreter(actor_machine)
+        child.parent = self
+        child.id = actor_id
+        self._actors[actor_id] = child
 
-        This override explicitly prevents the use of `spawn_` actions, which
-        are inherently asynchronous.
+        if blocking:
+            child.start()
+            return
 
-        Args:
-            action_def (ActionDefinition): The spawn action definition.
-            event (Event): The triggering event.
+        # ---------- non-blocking branch (CORRECTED) ----------
+        def _runner() -> None:
+            """Starts the child and cleans up when it's done or stopped."""
+            try:
+                child.start()
+                # Keep the thread alive while the child runs.
+                # Exit loop if parent stops us OR if the child reaches a final state.
+                while child.status == "running":
+                    # Check if the child machine has reached a top-level final state
+                    if any(
+                        s.is_final and s.parent == child.machine
+                        for s in child._active_state_nodes
+                    ):
+                        break
+                    time.sleep(0.01)
+            finally:
+                # Ensure cleanup happens whether the child finishes or is stopped
+                child.stop()
+                self._actors.pop(actor_id, None)
 
-        Raises:
-            NotSupportedError: Always, as this feature is unsupported.
-        """
-        logger.error(
-            "🎭 Actor spawning ('%s') is not supported by SyncInterpreter.",
-            action_def.type,
-        )
-        raise NotSupportedError(
-            "Actor spawning is not supported by SyncInterpreter."
-        )
+        threading.Thread(
+            target=_runner,
+            daemon=True,
+            name=f"actor-{actor_id}",
+        ).start()
 
     def _cancel_state_tasks(self, state: StateNode) -> None:
         """Cancels any running `after` timers associated with a state.
