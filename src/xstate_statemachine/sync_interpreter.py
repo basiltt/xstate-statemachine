@@ -13,8 +13,6 @@
 # It adheres to the "Template Method" pattern by overriding the abstract async
 # methods from `BaseInterpreter` with concrete synchronous implementations,
 # while intentionally raising `NotSupportedError` for features that are
-# fundamentally asynchronous (e.g., spawning actors).
-# -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
@@ -35,7 +33,6 @@ from typing import (
     Union,
     overload,
 )
-from typing import Dict as TypeDict
 
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
@@ -43,10 +40,10 @@ from typing import Dict as TypeDict
 from .base_interpreter import BaseInterpreter
 from .events import AfterEvent, DoneEvent, Event
 from .exceptions import (
+    ActorSpawningError,
     ImplementationMissingError,
     NotSupportedError,
     StateNotFoundError,
-    ActorSpawningError,
 )
 from .models import (
     ActionDefinition,
@@ -92,16 +89,19 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             manage the event processing sequence in a first-in, first-out (FIFO) manner.
         _is_processing (bool): A flag to prevent re-entrant event processing,
             ensuring atomicity of a single `send` call's execution loop.
-        _after_threads (TypeDict[str, threading.Thread]): Tracks background threads for `after` timers.
-        _after_events (TypeDict[str, threading.Event]): Manages cancellation signals for `after` timers.
+        _after_threads (Dict[str, threading.Thread]): Tracks background threads for `after` timers.
+        _after_events (Dict[str, threading.Event]): Manages cancellation signals for `after` timers.
     """
+
+    # -------------------------------------------------------------------------
+    # 🧙 Magic Methods & Initialization
+    # -------------------------------------------------------------------------
 
     def __init__(self, machine: MachineNode[TContext, TEvent]) -> None:
         """Initializes a new synchronous Interpreter instance.
 
         Args:
-            machine (MachineNode[TContext, TEvent]): The state machine definition
-                that this interpreter will run.
+            machine: The state machine definition that this interpreter will run.
         """
         # 🤝 Initialize the base interpreter first
         super().__init__(machine, interpreter_class=SyncInterpreter)
@@ -110,10 +110,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # ⚙️ Initialize synchronous-specific attributes
         self._event_queue: Deque[Union[Event, DoneEvent, AfterEvent]] = deque()
         self._is_processing: bool = False
-
-        # 🆕 Add thread tracking for after transitions
-        self._after_threads: TypeDict[str, threading.Thread] = {}
-        self._after_events: TypeDict[str, threading.Event] = {}
+        self._after_threads: Dict[str, threading.Thread] = {}
+        self._after_events: Dict[str, threading.Event] = {}
 
         logger.info("✅ Synchronous Interpreter '%s' initialized. 🎉", self.id)
 
@@ -130,9 +128,13 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         to its entry state and processes any immediate "always" transitions.
 
         Returns:
-            "SyncInterpreter": The interpreter instance itself, allowing for method chaining.
-            Example:
-                `interpreter = SyncInterpreter(machine).start()`
+            The interpreter instance itself, allowing for method chaining.
+
+        Example:
+            >>> machine = create_machine(...) # noqa
+            >>> interpreter = SyncInterpreter(machine).start()
+            >>> print(interpreter.status)
+            'running'
         """
         # 🚦 Idempotency check: only start if uninitialized.
         if self.status != "uninitialized":
@@ -173,7 +175,13 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         return self
 
     def stop(self) -> None:
-        """Stops the interpreter, preventing further event processing."""
+        """Stops the interpreter and cleans up all associated resources.
+
+        This method stops all child actors, cancels any pending `after` timers,
+        and sets the interpreter's status to 'stopped', preventing further
+        event processing. It's idempotent.
+        """
+        # 🚦 Idempotency check
         if self.status != "running":
             return
 
@@ -181,22 +189,23 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             "🛑 Stopping sync interpreter '%s' and its actors…", self.id
         )
 
-        # Stop every child actor (blocking & non-blocking)
+        # 1️⃣ Stop every child actor (blocking & non-blocking)
         for actor_id, actor in list(self._actors.items()):
             try:
                 actor.stop()
             finally:
                 self._actors.pop(actor_id, None)
 
-        # Cancel all `after` timers
+        # 2️⃣ Cancel all `after` timers by signaling their cancellation events
         for state_id in list(self._after_events.keys()):
             self._after_events[state_id].set()
         self._after_events.clear()
         self._after_threads.clear()
 
+        # 3️⃣ Update status to prevent further operations
         self.status = "stopped"
 
-        # Notify plugins
+        # 4️⃣ Notify plugins about the stop event
         for plugin in self._plugins:
             plugin.on_interpreter_stop(self)
 
@@ -206,9 +215,10 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     def send(self, event_type: str, **payload: Any) -> None: ...  # noqa: E704
 
     @overload
-    def send(  # noqa
+    def send(  # noqa: PyMethodOverriding
         self, event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent]
-    ) -> None: ...
+    ) -> None:  # noqa
+        ...
 
     def send(
         self,
@@ -222,14 +232,15 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         Events are queued and processed sequentially. If an event is sent while
         the interpreter is already processing another, it's added to the queue
         and handled once the current processing cycle completes. This method
-        blocks until the entire event processing loop is finished.
+        blocks until the sent event and any resulting transient transitions
+        are fully resolved.
 
         Args:
-            event_or_type (Union[str, Dict[str, Any], Event, DoneEvent, AfterEvent]): The event to send. This can be:
+            event_or_type: The event to send. This can be:
                 - A `str`: The type of the event, with `payload` as kwargs.
                 - A `dict`: An event object, which must contain a 'type' key.
                 - An `Event`, `DoneEvent`, or `AfterEvent` instance.
-            **payload (Any): Additional keyword arguments for the event's payload,
+            **payload: Additional keyword arguments for the event's payload,
                 used only when `event_or_type` is a string.
 
         Raises:
@@ -260,7 +271,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         self._event_queue.append(event_obj)
 
         # 🔒 If already processing, the event is queued and will be handled
-        #    by the existing processing loop. Avoid re-entrant execution.
+        #    by the existing processing loop. This prevents re-entrant execution.
         if self._is_processing:
             logger.debug(
                 "🔄 Interpreter already processing. Event '%s' queued.",
@@ -273,15 +284,15 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         try:
             # 🔁 Process events from the queue until it's empty.
             while self._event_queue:
-                event = self._event_queue.popleft()
-                logger.info("⚙️ Processing event: '%s'", event.type)
+                current_event = self._event_queue.popleft()
+                logger.info("⚙️ Processing event: '%s'", current_event.type)
 
                 # 🔌 Notify plugins that an event is being processed.
                 for plugin in self._plugins:
-                    plugin.on_event_received(self, event)
+                    plugin.on_event_received(self, current_event)
 
                 # 🎯 Find and execute the transition for the current event.
-                self._process_event(event)
+                self._process_event(current_event)
                 # 🔄 Check for any resulting event-less ("always") transitions.
                 self._process_transient_transitions()
         finally:
@@ -298,14 +309,11 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     ) -> None:
         """Finds and executes the optimal transition for a given event.
 
-        This method orchestrates the entire state transition process:
-        1.  Finds the best transition that matches the event and its guard.
-        2.  Determines the states to exit and enter.
-        3.  Executes exit actions, transition actions, and entry actions in order.
-        4.  Updates the set of active states.
+        This method acts as the entry point for processing a single event,
+        finding the appropriate transition, and delegating to the processing helper.
 
         Args:
-            event (Union[Event, DoneEvent, AfterEvent]): The event object to process.
+            event: The event object to process.
         """
         # 1️⃣ Select the winning transition based on event, guards, and state depth.
         transition = self._find_optimal_transition(event)
@@ -315,12 +323,27 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             )
             return
 
-        # 2️⃣ Handle internal transitions: only actions are executed, no state change.
+        # ✅ Directly process the found transition
+        self._process_single_transition(transition, event)
+
+    def _process_single_transition(
+        self, transition: TransitionDefinition, event: Event
+    ) -> None:
+        """Processes a single, specific transition that has already been selected.
+
+        This helper executes the full state transition algorithm for a given
+        transition object, handling state exits, action execution, and state entries.
+
+        Args:
+            transition: The specific `TransitionDefinition` to execute.
+            event: The event (often a dummy one) that triggered this transition.
+        """
+        # 1️⃣ Handle internal transitions: only actions are executed, no state change.
         if not transition.target_str:
             logger.info("🔄 Executing internal transition actions.")
             self._execute_actions(transition.actions, event)
-            for plug in self._plugins:
-                plug.on_transition(
+            for plugin in self._plugins:
+                plugin.on_transition(
                     self,
                     self._active_state_nodes,
                     self._active_state_nodes,
@@ -328,14 +351,12 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 )
             return
 
-        # 3️⃣ For external transitions, prepare for state changes.
+        # 2️⃣ For external transitions, prepare for state changes.
         snapshot_before_transition = self._active_state_nodes.copy()
         domain = self._find_transition_domain(transition)
-
-        # 🔍 Resolve the target state node using a multi-step strategy.
         target_state = self._resolve_target_state_robustly(transition)
 
-        # 🗺️ Determine the full path of states to exit and enter.
+        # 3️⃣ Determine the full path of states to exit and enter.
         path_to_enter = self._get_path_to_state(target_state, stop_at=domain)
         states_to_exit: Set[StateNode] = {
             s
@@ -343,10 +364,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             if self._is_descendant(s, domain) and s is not domain
         }
 
-        # 🏃‍♂️ Execute the transition sequence according to SCXML algorithm.
-        #    (Exit -> Transition Actions -> Enter)
+        # 4️⃣ Execute the transition sequence (Exit -> Actions -> Enter)
         self._exit_states(
-            # Sort by depth (desc) to exit deepest children first.
             sorted(
                 list(states_to_exit), key=lambda s: len(s.id), reverse=True
             ),
@@ -355,11 +374,11 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         self._execute_actions(transition.actions, event)
         self._enter_states(path_to_enter, event)
 
-        # ✅ Finalize the state change and notify plugins.
+        # 5️⃣ Finalize the state change and notify plugins.
         self._active_state_nodes.difference_update(states_to_exit)
         self._active_state_nodes.update(path_to_enter)
-        for plug in self._plugins:
-            plug.on_transition(
+        for plugin in self._plugins:
+            plugin.on_transition(
                 self,
                 snapshot_before_transition,
                 self._active_state_nodes.copy(),
@@ -370,9 +389,10 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         """Continuously processes event-less ("always") transitions until stable.
 
         These transitions are checked after any state change. They allow for
-        conditional, immediate jumps without needing an external event, modeling
-        a "while" loop or conditional branching in the statechart. The loop
-        continues until no more "always" transitions are available.
+        conditional, immediate jumps without an external event. The loop
+
+        continues until no more "always" transitions are available and the
+        state configuration is stable.
         """
         logger.debug("🔍 Checking for transient ('always') transitions...")
         while True:
@@ -389,8 +409,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     transition.source.id,
                     transition.target_str or "self (internal)",
                 )
-                # 🔄 Use the main event processor to handle the transition.
-                self._process_event(transient_event)
+                # 🔄 Directly process the *found* transition, which is more efficient.
+                self._process_single_transition(transition, transient_event)
             else:
                 # ✅ No more transient transitions found. The state is stable.
                 logger.debug(
@@ -407,16 +427,14 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     ) -> None:
         """Synchronously enters a list of states and executes their entry logic.
 
-        This method handles:
-        - Adding states to the active set.
-        - Executing 'on_entry' actions.
-        - Invoking services and scheduling tasks.
-        - Recursively entering initial states for compound/parallel states.
+        This method handles adding states to the active set, executing 'on_entry'
+        actions, invoking services, scheduling timers, and recursively entering
+        initial states for compound/parallel states.
 
         Args:
-            states_to_enter (List[StateNode]): A list of `StateNode` objects to enter,
-                typically ordered from parent to child.
-            event (Optional[Event]): The optional event that triggered the state entry.
+            states_to_enter: A list of `StateNode` objects to enter,
+                ordered from parent to child.
+            event: The optional event that triggered the state entry.
         """
         for state in states_to_enter:
             logger.info("➡️ Entering state: '%s'", state.id)
@@ -465,15 +483,13 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     ) -> None:
         """Synchronously exits a list of states and executes their exit logic.
 
-        Handles:
-        - Canceling any tasks associated with the state.
-        - Executing 'on_exit' actions.
-        - Removing states from the active set.
+        This handles canceling any tasks associated with the state, executing
+        'on_exit' actions, and removing states from the active set.
 
         Args:
-            states_to_exit (List[StateNode]): A list of `StateNode` objects to exit,
-                typically ordered from child to parent.
-            event (Optional[Event]): The optional event that triggered the state exit.
+            states_to_exit: A list of `StateNode` objects to exit,
+                ordered from child to parent.
+            event: The optional event that triggered the state exit.
         """
         # 🧹 Cancel tasks BEFORE any other processing to prevent race conditions.
         for state in states_to_exit:
@@ -489,13 +505,12 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     def _check_and_fire_on_done(self, final_state: StateNode) -> None:
         """Checks if an ancestor state is "done" and queues a `done.state.*` event.
 
-        This is triggered when a final state is entered. It checks if the parent
-        state (or any ancestor) has met its completion criteria (e.g., all its
-        parallel regions are in final states). If so, it queues the corresponding
-        `on_done` event.
+        Triggered when a final state is entered. It checks if the parent
+        state has met its completion criteria (e.g., all parallel regions
+        are in final states). If so, it queues the corresponding `on_done` event.
 
         Args:
-            final_state (StateNode): The final state that was just entered.
+            final_state: The final state that was just entered.
         """
         ancestor = final_state.parent
         logger.debug(
@@ -518,48 +533,70 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             ancestor = ancestor.parent
 
     # -------------------------------------------------------------------------
-    # 🚫 Asynchronous Feature Handlers (Private Overrides)
+    # ⚡ Action & Service Execution (Private Overrides)
     # -------------------------------------------------------------------------
 
     def _execute_actions(
-        self,
-        actions: List[ActionDefinition],
-        event: Event,
+        self, actions: List[ActionDefinition], event: Event
     ) -> None:
-        """Synchronously executes action definitions with actor support."""
+        """Synchronously executes a list of actions.
+
+        This method iterates through action definitions, validates them, and
+        executes the corresponding implementation from the machine's logic.
+        It specifically handles spawning actors and raises errors for async actions.
+
+        Args:
+            actions: The list of `ActionDefinition` objects to execute.
+            event: The event that triggered these actions.
+
+        Raises:
+            ImplementationMissingError: If an action implementation is not found.
+            NotSupportedError: If an async action is encountered.
+        """
         if not actions:
             return
 
         for action_def in actions:
+            # 🔌 Notify plugins before execution
             for plugin in self._plugins:
                 plugin.on_action_execute(self, action_def)
 
-            # ---------- actor spawning ----------
+            # 🎭 Handle actor spawning actions
             if action_def.type.startswith(("spawn_", "spawn_blocking_")):
                 self._spawn_actor(action_def, event)
                 continue
 
-            # ---------- normal action ----------
+            # ⚙️ Handle normal actions
             action_impl = self.machine.logic.actions.get(action_def.type)
             if not action_impl:
                 raise ImplementationMissingError(
                     f"Action '{action_def.type}' not implemented."
                 )
+            # 🚫 Reject async actions
             if self._is_async_callable(action_impl):
                 raise NotSupportedError(
                     f"Async action '{action_def.type}' not supported by SyncInterpreter."
                 )
+            # ▶️ Execute the synchronous action
             action_impl(self, self.context, event, action_def)
 
-    def _spawn_actor(
-        self,
-        action_def: ActionDefinition,
-        event: Event,
-    ) -> None:
-        """Spawn a child state-machine actor in *blocking* or *non-blocking* mode."""
+    def _spawn_actor(self, action_def: ActionDefinition, event: Event) -> None:
+        """Spawns a child state machine actor in blocking or non-blocking mode.
+
+        Args:
+            action_def: The action definition for spawning the actor.
+            event: The event that triggered the spawn action.
+
+        Raises:
+            ActorSpawningError: If the specified service is not a valid
+                `MachineNode` or a factory that returns one.
+        """
+        # 🕵️ Determine mode (blocking vs. non-blocking) and service key
         blocking = action_def.type.startswith("spawn_blocking_")
         key = action_def.type.split("_", 2)[-1]
+        logger.info("🎭 Spawning actor '%s' (Blocking: %s)", key, blocking)
 
+        # 🏭 Get the actor's machine definition from the services registry
         source = self.machine.logic.services.get(key)
         actor_machine = (
             source
@@ -573,57 +610,60 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 f"Cannot spawn '{key}'. Service not a MachineNode or factory."
             )
 
+        # 🆔 Create and register the child interpreter (actor)
         actor_id = f"{self.id}:{key}:{uuid.uuid4()}"
         child = SyncInterpreter(actor_machine)
         child.parent = self
         child.id = actor_id
         self._actors[actor_id] = child
 
+        # --- Blocking Execution Path ---
         if blocking:
             child.start()
             return
 
-        # ---------- non-blocking branch (CORRECTED) ----------
+        # --- Non-Blocking Execution Path (via a background thread) ---
         def _runner() -> None:
             """Starts the child and cleans up when it's done or stopped."""
             try:
+                # 🚀 Start the actor in the background thread.
                 child.start()
-                # Keep the thread alive while the child runs.
-                # Exit loop if parent stops us OR if the child reaches a final state.
+                # 🔄 Keep the thread alive while the child runs.
                 while child.status == "running":
-                    # Check if the child machine has reached a top-level final state
+                    # 🏁 Exit loop if the child reaches a top-level final state.
                     if any(
                         s.is_final and s.parent == child.machine
                         for s in child._active_state_nodes
                     ):
                         break
-                    time.sleep(0.01)
+                    time.sleep(0.01)  # 🤏 Yield to prevent busy-waiting.
             finally:
-                # Ensure cleanup happens whether the child finishes or is stopped
+                # 🧹 Ensure cleanup happens whether the child finishes or is stopped.
                 child.stop()
                 self._actors.pop(actor_id, None)
+                logger.info("🧹 Actor thread for '%s' cleaned up.", actor_id)
 
+        # 🚀 Start the thread
         threading.Thread(
-            target=_runner,
-            daemon=True,
-            name=f"actor-{actor_id}",
+            target=_runner, daemon=True, name=f"actor-{actor_id}"
         ).start()
 
     def _cancel_state_tasks(self, state: StateNode) -> None:
         """Cancels any running `after` timers associated with a state.
 
         Args:
-            state (StateNode): The state for which tasks should be cancelled.
+            state: The state for which tasks should be cancelled.
         """
         state_id = state.id
         if state_id in self._after_events:
-            logger.debug("🧹 Cancelling after timer for state '%s'", state_id)
-            self._after_events[state_id].set()  # Signal cancellation
-            # Immediate cleanup
+            logger.debug(
+                "🧹 Cancelling 'after' timer for state '%s'", state_id
+            )
+            # Signal the cancellation event, which the timer thread is waiting on.
+            self._after_events[state_id].set()
+            # 🗑️ Immediate cleanup of tracking dictionaries.
             self._after_events.pop(state_id, None)
             self._after_threads.pop(state_id, None)
-
-        logger.debug("🧹 State task cancellation complete for '%s'", state_id)
 
     def _after_timer(
         self, delay_sec: float, event: AfterEvent, owner_id: str
@@ -631,12 +671,12 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         """Schedules a delayed `AfterEvent` using a background thread.
 
         Args:
-            delay_sec (float): The delay in seconds before the event is sent.
-            event (AfterEvent): The event to send after the delay.
-            owner_id (str): The ID of the state owning this timer.
+            delay_sec: The delay in seconds before the event is sent.
+            event: The event to send after the delay.
+            owner_id: The ID of the state owning this timer.
         """
         logger.info(
-            "⏰ Scheduling after transition in %.2fs for state '%s'",
+            "⏰ Scheduling 'after' transition in %.2fs for state '%s'",
             delay_sec,
             owner_id,
         )
@@ -648,9 +688,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         def timer_thread() -> None:
             """Background thread that waits and then sends the event."""
             try:
-                # ⏸️ Wait for the specified delay, but exit early if cancelled.
+                # ⏸️ Wait for the delay. `wait` returns True if the event is set (cancelled).
                 if cancel_event.wait(timeout=delay_sec):
-                    logger.debug("Timer for '%s' cancelled.", owner_id)
+                    logger.debug("Timer for '%s' was cancelled.", owner_id)
                     return
 
                 # 🩺 Verify state is still active and interpreter is running.
@@ -665,7 +705,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     self.send(event)
 
             except Exception as e:
-                logger.error("💥 Error in after timer thread: %s", e)
+                logger.error(
+                    "💥 Error in after timer thread for '%s': %s", owner_id, e
+                )
             finally:
                 # 🧹 Clean up resources after the thread finishes.
                 self._after_threads.pop(owner_id, None)
@@ -684,14 +726,14 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     ) -> None:
         """Handles invoked services, supporting only synchronous callables.
 
-        Synchronous services are executed immediately and block the interpreter.
-        The service's return value is sent as a `done.invoke.*` event. If the
-        service raises an exception, an `error.platform.*` event is sent.
+        Synchronous services are executed immediately, blocking the interpreter.
+        The service's return value is sent as a `done.invoke.*` event. If it
+        raises an exception, an `error.platform.*` event is sent instead.
 
         Args:
-            invocation (InvokeDefinition): The definition of the invoked service.
-            service (Callable[..., Any]): The callable representing the service logic.
-            owner_id (str): The ID of the state node owning this invocation.
+            invocation: The definition of the invoked service.
+            service: The callable representing the service logic.
+            owner_id: The ID of the state node owns this invocation.
 
         Raises:
             NotSupportedError: If the provided service is an `async def` function.
@@ -703,7 +745,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 invocation.src,
             )
             raise NotSupportedError(
-                f"Service '{invocation.src}' is async and not supported by SyncInterpreter."
+                f"Service '{invocation.src}' is async and not supported."
             )
 
         logger.info(
@@ -711,7 +753,6 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             invocation.src,
             invocation.id,
         )
-        # 🔌 Notify plugins that the service is starting.
         for plugin in self._plugins:
             plugin.on_service_start(self, invocation)
 
@@ -724,15 +765,12 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             result = service(self, self.context, invoke_event)
             # ✅ On success, immediately queue a 'done' event with the result.
             done_event = DoneEvent(
-                f"done.invoke.{invocation.id}",
-                data=result,
-                src=invocation.id,
+                f"done.invoke.{invocation.id}", data=result, src=invocation.id
             )
             self.send(done_event)
             logger.info(
                 "✅ Sync service '%s' completed successfully.", invocation.src
             )
-            # 🔌 Notify plugins about successful completion.
             for plugin in self._plugins:
                 plugin.on_service_done(self, invocation, result)
 
@@ -742,58 +780,18 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 "💔 Sync service '%s' failed: %s",
                 invocation.src,
                 e,
-                exc_info=True,  # Include traceback in logs for debugging.
+                exc_info=True,
             )
             error_event = DoneEvent(
-                f"error.platform.{invocation.id}",
-                data=e,
-                src=invocation.id,
+                f"error.platform.{invocation.id}", data=e, src=invocation.id
             )
             self.send(error_event)
-            # 🔌 Notify plugins about the failure.
             for plugin in self._plugins:
                 plugin.on_service_error(self, invocation, e)
 
     # -------------------------------------------------------------------------
-    # 🛠️ Static Helper Methods
+    # 🛠️ Helper & Utility Methods (Private)
     # -------------------------------------------------------------------------
-
-    @staticmethod
-    def _is_async_callable(callable_obj: Callable[..., Any]) -> bool:
-        """Checks if a callable is an async function (`async def`).
-
-        Args:
-            callable_obj (Callable[..., Any]): The function or method to check.
-
-        Returns:
-            bool: True if the callable is an awaitable coroutine, False otherwise.
-        """
-        # Check for the __await__ attribute for awaitable objects (like coroutines).
-        # Also check the function's code object flags for the CO_COROUTINE flag.
-        return hasattr(callable_obj, "__await__") or (
-            hasattr(callable_obj, "__code__")
-            and (callable_obj.__code__.co_flags & 0x80)  # noqa
-        )
-
-    @staticmethod
-    def _walk_tree(node: StateNode):
-        """Recursively yields all nodes in a state tree using depth-first traversal.
-
-        This is a generator function used as a fallback mechanism for resolving
-        state targets when standard resolution methods fail.
-
-        Args:
-            node (StateNode): The root `StateNode` from which to start the traversal.
-
-        Yields:
-            StateNode: Each `StateNode` in the tree, starting with the root.
-        """
-        # 🚶‍♂️ Yield the current node first
-        yield node
-        # 🌳 If the node has children, recurse into them
-        if hasattr(node, "states"):
-            for child in node.states.values():
-                yield from SyncInterpreter._walk_tree(child)
 
     def _resolve_target_state_robustly(
         self, transition: TransitionDefinition
@@ -803,31 +801,30 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         This method attempts multiple resolution strategies in a specific order
         to provide flexibility in how transitions are defined in the machine.
 
-        The resolution order is:
-        1.  Standard `resolve_target_state` relative to source, its parent, and the root.
-        2.  Direct attribute lookup on the machine root (for top-level states).
-        3.  Key lookup in the machine root's `states` dictionary.
-        4.  Depth-first search of the entire state tree as a final fallback.
-
         Args:
-            transition (TransitionDefinition): The transition containing the target string.
+            transition: The transition containing the target string.
 
         Returns:
-            StateNode: The resolved `StateNode` object.
+            The resolved `StateNode` object.
 
         Raises:
             StateNotFoundError: If the target state cannot be found after all attempts.
+            ValueError: If the target string is empty for an external transition.
         """
         target_str = transition.target_str
-        if not target_str:  # Should not happen for external transitions
+        if not target_str:
             raise ValueError("Target string cannot be empty for resolution.")
 
-        root = self.machine
-        source = transition.source
+        root, source = self.machine, transition.source
         parent = source.parent
-        logger.debug("🔄 Resolving target state: '%s'", target_str)
+        logger.debug(
+            "🔄 Resolving target state: '%s' from source '%s'",
+            target_str,
+            source.id,
+        )
 
-        # 1️⃣ Standard resolution attempts relative to source and parents
+        # 1️⃣ Standard resolution (relative to source, parent, root, and absolute)
+        # This logic is restored from the original implementation to fix the regression.
         attempts = [
             (target_str, source),
             (target_str, parent) if parent else None,
@@ -842,21 +839,22 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     tgt,
                     ref.id,
                 )
-                transition.target_str = tgt  # Update for consistency
+                # ‼️ CRITICAL: This mutation logic is restored from the original code.
+                transition.target_str = tgt
                 return state
             except StateNotFoundError:
                 continue  # Try the next method
 
         # 2️⃣ Direct attribute lookup on root
-        if hasattr(root, target_str):
-            candidate = getattr(root, target_str)
-            if isinstance(candidate, StateNode):
-                logger.debug(
-                    "✅ Resolved '%s' via root attribute lookup.", target_str
-                )
-                return candidate
+        if hasattr(root, target_str) and isinstance(
+            getattr(root, target_str), StateNode
+        ):
+            logger.debug(
+                "✅ Resolved '%s' via root attribute lookup.", target_str
+            )
+            return getattr(root, target_str)
 
-        # 3️⃣ Root states dictionary lookup (by key, then by local name)
+        # 3️⃣ Root states dictionary lookup
         if hasattr(root, "states"):
             states_dict = root.states
             if target_str in states_dict:
@@ -873,9 +871,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     )
                     return state
 
-        # 4️⃣ Depth-first tree walk fallback
+        # 4️⃣ Depth-first tree walk fallback (match local ID part)
         for candidate in self._walk_tree(root):
-            # Check if the last part of the candidate's ID matches the target
             if candidate.id.split(".")[-1] == target_str:
                 logger.debug(
                     "✅ Resolved '%s' via deep tree walk to find '%s'.",
@@ -885,20 +882,52 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 return candidate
 
         # 🔚 Absolute failure
-        available = []
-        if hasattr(root, "states"):
-            available.extend(root.states.keys())
-        if hasattr(root, "__dict__"):
-            available.extend(
-                [
-                    k
-                    for k in root.__dict__.keys()
-                    if not k.startswith("_") and k != "states"
-                ]
-            )
+        available_toplevel = list(root.states.keys())
         logger.error(
             "❌ All resolution attempts failed for target: '%s'. Available top-level states: %s",
             target_str,
-            list(set(available)),
+            available_toplevel,
         )
         raise StateNotFoundError(target_str, root.id)
+
+    # -------------------------------------------------------------------------
+    # 🛠️ Static Helper Methods
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _is_async_callable(callable_obj: Callable[..., Any]) -> bool:
+        """Checks if a callable is an async function (`async def`).
+
+        This helper is used to prevent async logic from being run by the
+        synchronous interpreter, which would cause runtime errors.
+
+        Args:
+            callable_obj: The function or method to check.
+
+        Returns:
+            True if the callable is an awaitable coroutine, False otherwise.
+        """
+        # A coroutine function's code object has the CO_COROUTINE flag set.
+        return hasattr(callable_obj, "__code__") and (
+            callable_obj.__code__.co_flags & 0x80  # noqa
+        )
+
+    @staticmethod
+    def _walk_tree(node: StateNode) -> "SyncInterpreter._walk_tree":
+        """Recursively yields all nodes in a state tree using depth-first traversal.
+
+        This is a generator function used as a fallback mechanism for resolving
+        state targets when standard resolution methods fail.
+
+        Args:
+            node: The root `StateNode` from which to start the traversal.
+
+        Yields:
+            Each `StateNode` in the tree, starting with the root.
+        """
+        # 🚶‍♂️ Yield the current node first
+        yield node
+        # 🌳 If the node has children, recurse into them
+        if hasattr(node, "states"):
+            for child in node.states.values():
+                yield from SyncInterpreter._walk_tree(child)
