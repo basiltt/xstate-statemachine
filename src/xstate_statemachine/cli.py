@@ -1523,8 +1523,10 @@ def main():  # noqa: C901 – function is long but readable
                         merged.extend(extra_imports)
                         injected = True
 
-                # 5️⃣  ensure `logging.basicConfig` appears *once*, right after the imports
-                if not any("logging.basicConfig" in ln for ln in merged):
+                # 5️⃣  ensure basicConfig appears only when --log=yes
+                if log_bool and not any(
+                    "logging.basicConfig" in ln for ln in merged
+                ):
                     # locate the last top‑level import line
                     insert_at = (
                         max(
@@ -1539,7 +1541,8 @@ def main():  # noqa: C901 – function is long but readable
                             merged.insert(insert_at, ln)
                             break
 
-                if not any(
+                # add a module‑level logger only when logging was requested
+                if log_bool and not any(
                     "logger = logging.getLogger" in line_ for line_ in merged
                 ):
                     merged.append("logger = logging.getLogger(__name__)")
