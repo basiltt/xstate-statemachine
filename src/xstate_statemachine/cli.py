@@ -523,6 +523,10 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
         f"{base_name}_logic"  # defined unconditionally (even if unused)
     )
 
+    class_name = (
+        "".join(word.capitalize() for word in base_name.split("_")) + "Logic"
+    )
+
     code_lines = [
         "# -------------------------------------------------------------------------------",
         "# 📡 Generated Runner File",
@@ -554,10 +558,6 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
     # ------------------------------------------------------------------
     if file_count == 2:
         if style == "class":
-            class_name = (
-                "".join(word.capitalize() for word in base_name.split("_"))
-                + "Logic"
-            )
             code_lines.append(
                 f"from {logic_file_name} import {class_name} as LogicProvider"
             )
@@ -609,7 +609,10 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
 
         if loader:
             if style == "class":
-                code_lines.append("    logic_provider = LogicProvider()")
+                if file_count == 1:
+                    code_lines.append(f"    logic_provider = {class_name}()")
+                else:
+                    code_lines.append("    logic_provider = LogicProvider()")
                 code_lines.append(
                     "    parent_machine = create_machine(parent_cfg, logic_providers=[logic_provider])"
                 )
@@ -781,7 +784,7 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
         if loader:
             if style == "class":
                 code_lines.append(
-                    f"{inner_indent}logic_provider = LogicProvider()"
+                    f"{inner_indent}logic_provider = {class_name}()"
                 )
                 code_lines.append(
                     f"{inner_indent}machine = create_machine(config, logic_providers=[logic_provider])"
