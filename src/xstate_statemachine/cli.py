@@ -797,9 +797,17 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
                     f"{inner_indent}machine = create_machine(config, logic_providers=[logic_provider])"
                 )
             else:
-                code_lines.append(
-                    f"{inner_indent}machine = create_machine(config, logic_modules=[{logic_file_name}])"
-                )
+                if file_count == 1:  # single‑file → use current module
+                    code_lines.append(f"{inner_indent}import sys")
+                    code_lines.append(
+                        f"{inner_indent}machine = create_machine("
+                        "config, logic_modules=[sys.modules[__name__]])"
+                    )
+                else:  # two‑file → import the helper module
+                    code_lines.append(
+                        f"{inner_indent}machine = create_machine("
+                        f"config, logic_modules=[{logic_file_name}])"
+                    )
         else:
             code_lines.append(
                 f"{inner_indent}# TODO: Fill actions, guards, services"
@@ -1389,11 +1397,20 @@ def main():  # noqa: C901 – function is long but readable
                         merged.extend(extra_imports)
                         injected = True
 
-                # 5️⃣  ensure `logging.basicConfig` & the *single* logger definition exist once
-                if not any("logging.basicConfig" in line for line in merged):
-                    for line in runner_lines:
-                        if line.startswith("logging.basicConfig"):
-                            merged.append(line)
+                # 5️⃣  ensure `logging.basicConfig` appears *once*, right after the imports
+                if not any("logging.basicConfig" in ln for ln in merged):
+                    # locate the last top‑level import line
+                    insert_at = (
+                        max(
+                            idx
+                            for idx, ln in enumerate(merged)
+                            if ln.startswith(("import ", "from "))
+                        )
+                        + 1
+                    )
+                    for ln in runner_lines:
+                        if ln.startswith("logging.basicConfig"):
+                            merged.insert(insert_at, ln)
                             break
 
                 if not any(
