@@ -43,6 +43,7 @@ from src.xstate_statemachine.cli import (
     generate_runner_code,
     main,
     normalize_bool,
+    extract_events,
 )
 
 # -----------------------------------------------------------------------------
@@ -1975,3 +1976,957 @@ class TestMainCLI(unittest.TestCase):
                 for call in calls
             )
         )
+
+    @patch("sys.argv", new_callable=list)
+    def test_main_deduplicates_paths(self, mock_argv: List[str]) -> None:
+        """SCENARIO 14: Ensures duplicate file paths are handled correctly."""
+        logger.info(
+            "🧪 Testing de-duplication of input JSON paths (Scenario 14)."
+        )
+        json_path = create_temp_json(SAMPLE_CONFIG_SIMPLE)
+
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            str(json_path),  # Positional
+            "--json",
+            str(json_path),  # Via --json flag
+            "--json-parent",
+            str(json_path),  # Via --json-parent flag
+        ]
+
+        with patch("builtins.print") as mock_print:
+            main()
+
+        # The result should be a simple, single-file generation, not hierarchical.
+        # It should NOT create a runner named "simple_simple_runner.py" etc.
+        calls = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(
+            any(
+                "Generated logic file: " in call and "simple_logic.py" in call
+                for call in calls
+            )
+        )
+        self.assertTrue(
+            any(
+                "Generated runner file: " in call
+                and "simple_runner.py" in call
+                for call in calls
+            )
+        )
+        self.assertFalse(
+            Path.cwd().joinpath("simple_simple_logic.py").exists()
+        )
+
+    @patch("sys.argv", new_callable=list)
+    def test_main_multiple_parents_error(self, mock_argv: List[str]) -> None:
+        """SCENARIO 17: Ensures an error is raised if multiple parents are specified."""
+        logger.info(
+            "🧪 Testing error on multiple --json-parent flags (Scenario 17)."
+        )
+        json1 = create_temp_json(SAMPLE_CONFIG_SIMPLE)
+        json2 = create_temp_json(SAMPLE_CONFIG_NESTED)
+
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            "--json-parent",
+            str(json1),
+            "--json-parent",
+            str(json2),
+        ]
+
+        # This test will pass once cli.py is updated to manually check for this error.
+        with patch(
+            "sys.stderr", new=StringIO()
+        ) as mock_err, self.assertRaises(SystemExit):
+            main()
+
+        # Assert the specific error message that your script should raise.
+        self.assertIn(
+            "Only one --json-parent may be supplied.", mock_err.getvalue()
+        )
+
+
+# -----------------------------------------------------------------------------
+# 🏛️ Test Class: TestExtractEvents
+# -----------------------------------------------------------------------------
+class TestExtractEvents(unittest.TestCase):
+    """Verifies the `extract_events` utility function."""
+
+    def test_extract_events_from_simple_on(self) -> None:
+        """Ensures events are extracted from a simple 'on' block."""
+        logger.info("🧪 Testing event extraction from simple 'on'.")
+        config = {"on": {"EVENT1": {}, "EVENT2": {}}}
+        events = extract_events(config)
+        self.assertEqual(events, {"EVENT1", "EVENT2"})
+
+    def test_extract_events_from_nested_states(self) -> None:
+        """Verifies event extraction from 'on' blocks within nested states."""
+        logger.info("🧪 Testing event extraction from nested states.")
+        config = {
+            "states": {
+                "s1": {"on": {"EVENT_S1": {}}},
+                "s2": {"states": {"s2_child": {"on": {"EVENT_S2": {}}}}},
+            }
+        }
+        events = extract_events(config)
+        self.assertEqual(events, {"EVENT_S1", "EVENT_S2"})
+
+    def test_extract_events_no_duplicates(self) -> None:
+        """Confirms that duplicate event names are only included once."""
+        logger.info("🧪 Testing no duplicate events.")
+        config = {
+            "on": {"DUPLICATE_EVENT": {}},
+            "states": {"s1": {"on": {"DUPLICATE_EVENT": {}}}},
+        }
+        events = extract_events(config)
+        self.assertEqual(events, {"DUPLICATE_EVENT"})
+
+    def test_extract_events_empty_config(self) -> None:
+        """Ensures an empty set is returned for a config with no 'on' blocks."""
+        logger.info("🧪 Testing event extraction from empty config.")
+        config = {"id": "empty", "initial": "a", "states": {}}
+        events = extract_events(config)
+        self.assertEqual(events, set())
+
+    def test_extract_events_ignores_other_keys(self) -> None:
+        """Ensures that keys other than 'on' and 'states' are ignored."""
+        logger.info("🧪 Testing event extraction ignores other keys.")
+        config = {"entry": "action", "exit": "action", "invoke": "service"}
+        events = extract_events(config)
+        self.assertEqual(events, set())
+
+    def test_extract_events_from_multiple_levels(self) -> None:
+        """Verifies extraction from multiple levels of nesting."""
+        logger.info(
+            "🧪 Testing event extraction from multiple nesting levels."
+        )
+        config = {
+            "on": {"LEVEL0": {}},
+            "states": {
+                "s1": {
+                    "on": {"LEVEL1": {}},
+                    "states": {"s1_child": {"on": {"LEVEL2": {}}}},
+                }
+            },
+        }
+        events = extract_events(config)
+        self.assertEqual(events, {"LEVEL0", "LEVEL1", "LEVEL2"})
+
+
+# -----------------------------------------------------------------------------
+# 🏛️ Test Class: TestHierarchyCLI
+# -----------------------------------------------------------------------------
+# This new class specifically tests the parent-child machine hierarchy features.
+# -----------------------------------------------------------------------------
+
+HIERARCHY_PARENT_CONFIG: Dict[str, Any] = {
+    "id": "parentMachine",
+    "initial": "idle",
+    "states": {
+        "idle": {
+            "on": {"START": "running"},
+            "invoke": {
+                "id": "child",
+                "src": "childMachine",
+                "onDone": "finished",
+            },
+        },
+        "running": {"on": {"STOP": "idle"}},
+        "finished": {"type": "final"},
+    },
+}
+
+HIERARCHY_CHILD_CONFIG: Dict[str, Any] = {
+    "id": "childMachine",
+    "initial": "active",
+    "states": {
+        "active": {"on": {"CHILD_EVENT": "done"}},
+        "done": {"type": "final"},
+    },
+}
+
+
+class TestHierarchyCLI(unittest.TestCase):
+    """Provides integration tests for the new parent/child hierarchy features."""
+
+    def setUp(self) -> None:
+        """Set up a temporary directory for file output tests."""
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.original_cwd = os.getcwd()
+        os.chdir(self.temp_dir.name)
+        # Create shared configs for hierarchy tests
+        self.parent_json_path = create_temp_json(HIERARCHY_PARENT_CONFIG)
+        self.child_json_path = create_temp_json(HIERARCHY_CHILD_CONFIG)
+
+    def tearDown(self) -> None:
+        """Clean up the temporary directory and restore the CWD."""
+        os.chdir(self.original_cwd)
+        # The TemporaryDirectory context manager handles cleanup automatically.
+        # Manual os.remove calls are no longer needed and caused errors.
+        self.temp_dir.cleanup()
+
+    @patch("sys.argv", new_callable=list)
+    def test_main_explicit_parent_child_args(
+        self, mock_argv: List[str]
+    ) -> None:
+        """Verifies file generation using explicit --json-parent and --json-child flags."""
+        logger.info("🧪 Testing explicit parent/child args.")
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            "--json-parent",
+            str(self.parent_json_path),
+            "--json-child",
+            str(self.child_json_path),
+        ]
+        with patch("builtins.print") as mock_print:
+            main()
+        calls = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(
+            any("parent_machine_logic.py" in call for call in calls)
+        )
+        self.assertTrue(
+            any("parent_machine_runner.py" in call for call in calls)
+        )
+        # Runner should contain logic for both parent and child
+        runner_content = (Path.cwd() / "parent_machine_runner.py").read_text(
+            encoding="utf-8"
+        )  # FIX: Specify UTF-8 encoding
+        self.assertIn("parent_cfg = json.loads", runner_content)
+        self.assertIn("actor_cfgs = {", runner_content)
+        self.assertIn("'child_machine': json.loads", runner_content)
+
+    @patch("sys.argv", new_callable=list)
+    def test_main_child_arg_without_parent_error(
+        self, mock_argv: List[str]
+    ) -> None:
+        """Ensures an error is raised if --json-child is used without a parent."""
+        logger.info("🧪 Testing --json-child without parent raises error.")
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            "--json-child",
+            str(self.child_json_path),
+        ]
+        with patch(
+            "sys.stderr", new=StringIO()
+        ) as mock_err, self.assertRaises(SystemExit):
+            main()
+        self.assertIn("requires a parent machine", mock_err.getvalue())
+
+    @patch("sys.argv", new_callable=list)
+    @patch("builtins.input", side_effect=["y"])
+    def test_main_heuristic_parent_detection_yes(
+        self, mock_input: unittest.mock.MagicMock, mock_argv: List[str]
+    ) -> None:
+        """Tests heuristic parent detection with user confirmation ('y')."""
+        logger.info("🧪 Testing heuristic parent detection (user says 'y').")
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            str(self.child_json_path),
+            str(self.parent_json_path),
+        ]
+        with patch("builtins.print") as mock_print:
+            main()
+        # Verify the parent machine is correctly identified and used for naming
+        calls = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(
+            any("parent_machine_logic.py" in call for call in calls)
+        )
+        self.assertTrue(
+            any("parent_machine_runner.py" in call for call in calls)
+        )
+        # Check that the interactive prompt was shown
+        self.assertTrue(any("looks like parent" in call for call in calls))
+
+    @patch("sys.argv", new_callable=list)
+    @patch("builtins.input", side_effect=["n", "0"])
+    def test_main_heuristic_parent_detection_no(
+        self, mock_input: unittest.mock.MagicMock, mock_argv: List[str]
+    ) -> None:
+        """Tests heuristic parent detection with user rejection ('n'), treating them as flat."""
+        logger.info("🧪 Testing heuristic parent detection (user says 'n').")
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            str(self.parent_json_path),
+            str(self.child_json_path),
+        ]
+        with patch("builtins.print") as mock_print:
+            main()
+        # Without hierarchy, names are combined
+        calls = [call.args[0] for call in mock_print.call_args_list]
+        self.assertTrue(
+            any(
+                "parent_machine_child_machine_logic.py" in call
+                for call in calls
+            )
+        )
+
+    @patch("sys.argv", new_callable=list)
+    @patch(
+        "builtins.input", side_effect=["n", "2"]
+    )  # Select the second machine (parent)
+    def test_main_heuristic_manual_selection(
+        self, mock_input: unittest.mock.MagicMock, mock_argv: List[str]
+    ) -> None:
+        """Tests manual parent selection when the heuristic is rejected."""
+        logger.info("🧪 Testing heuristic manual selection.")
+        # Provide child first, then parent
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            str(self.child_json_path),
+            str(self.parent_json_path),
+        ]
+        with patch("builtins.print"):
+            main()
+
+        runner_content = (Path.cwd() / "parent_machine_runner.py").read_text(
+            encoding="utf-8"
+        )
+        # FIX: Check for the *effect* of hierarchy, not an implementation detail.
+        # The presence of an 'actors' dictionary is a reliable indicator.
+        self.assertIn(
+            "actors = {}",
+            runner_content,
+            "Runner should be in hierarchical mode",
+        )
+        self.assertIn(
+            "Spawn & start every actor interpreter",
+            runner_content,
+            "Runner should spawn actors",
+        )
+
+    def test_hierarchical_runner_event_simulation(self) -> None:
+        """Verifies the hierarchical runner simulates events for both parent and actors."""
+        logger.info("🧪 Testing event simulation in hierarchical runner.")
+        runner_code = generate_runner_code(
+            machine_names=["parentMachine", "childMachine"],
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=False,
+            sleep_time=0,
+            log=True,
+            file_count=2,
+            configs=[HIERARCHY_PARENT_CONFIG, HIERARCHY_CHILD_CONFIG],
+            json_filenames=[
+                str(self.parent_json_path),
+                str(self.child_json_path),
+            ],
+            hierarchy=True,
+        )
+
+        self.assertIn("parent.send('START')", runner_code)
+        self.assertIn("parent.send('STOP')", runner_code)
+        self.assertIn(
+            "actors['childMachine'].send('CHILD_EVENT')", runner_code
+        )
+        self.assertIn("Simulating Actor «childMachine»", runner_code)
+
+    def test_generate_logic_with_noqa_comments(self) -> None:
+        """Ensures generated logic includes noqa comments for IDE warnings."""
+        logger.info("🧪 Testing for noqa comments in generated logic.")
+        logic_code = generate_logic_code(
+            actions={"myAction"},
+            guards={"myGuard"},
+            services={"myService"},
+            style="class",
+            log=True,
+            is_async=True,
+            machine_name="test",
+            file_count=2,
+        )
+        self.assertIn("# noqa: ignore IDE static method warning", logic_code)
+        self.assertIn(
+            "# noqa : ignore IDE return type hint warning", logic_code
+        )
+
+    @patch("sys.argv", new_callable=list)
+    def test_main_explicit_parent_with_positional_children(
+        self, mock_argv: List[str]
+    ) -> None:
+        """SCENARIO 6: Tests explicit parent flag with positional children."""
+        logger.info(
+            "🧪 Testing explicit parent with positional children (Scenario 6)."
+        )
+        # Create a second child to test with
+        child2_config = {
+            "id": "childMachine2",
+            "initial": "idle",
+            "states": {"idle": {}},
+        }
+        child2_path = create_temp_json(child2_config)
+
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            "--json-parent",
+            str(self.parent_json_path),
+            str(self.child_json_path),  # Positional child 1
+            str(child2_path),  # Positional child 2
+        ]
+
+        # No interactive input should be required
+        with patch("builtins.input") as mock_input:
+            main()
+            # Assert that the interactive prompt was NOT triggered
+            mock_input.assert_not_called()
+
+        # Check that the output is hierarchical and named after the parent
+        self.assertTrue(
+            Path.cwd().joinpath("parent_machine_runner.py").exists()
+        )
+        runner_content = (Path.cwd() / "parent_machine_runner.py").read_text(
+            encoding="utf-8"
+        )
+
+        # Verify both children are treated as actors
+        self.assertIn("'child_machine': json.loads", runner_content)
+        # FIX: The snake_case conversion of "childMachine2" is "child_machine2".
+        self.assertIn("'child_machine2': json.loads", runner_content)
+
+    @patch("sys.argv", new_callable=list)
+    def test_main_positional_parent_with_explicit_child(
+        self, mock_argv: List[str]
+    ) -> None:
+        """SCENARIO 13: Tests positional parent with an explicit child flag."""
+        logger.info(
+            "🧪 Testing positional parent with explicit child (Scenario 13)."
+        )
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            str(self.parent_json_path),  # Positional parent
+            "--json-child",
+            str(self.child_json_path),  # Flagged child
+        ]
+
+        # This test correctly expects that the heuristic prompt will NOT be called.
+        with patch("builtins.input") as mock_input:
+            main()
+            mock_input.assert_not_called()
+
+        # This assertion will pass once the bugs in cli.py are fixed.
+        self.assertTrue(
+            Path.cwd().joinpath("parent_machine_runner.py").exists()
+        )
+        runner_content = (Path.cwd() / "parent_machine_runner.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("actor_cfgs = {", runner_content)
+        self.assertIn("'child_machine'", runner_content)
+
+    @patch("sys.argv", new_callable=list)
+    def test_main_hierarchy_with_no_events(self, mock_argv: List[str]) -> None:
+        """Tests hierarchical generation when parent or child has no events."""
+        logger.info("🧪 Testing hierarchical generation with no events.")
+        parent_no_events_config = {
+            "id": "parentNoEvents",
+            "invoke": {"src": "childMachine"},
+        }
+        parent_no_events_path = create_temp_json(parent_no_events_config)
+
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            "--json-parent",
+            str(parent_no_events_path),
+            "--json-child",
+            str(self.child_json_path),
+        ]
+
+        main()
+
+        runner_file = Path.cwd() / "parent_no_events_runner.py"
+        self.assertTrue(runner_file.exists())
+        runner_content = runner_file.read_text(encoding="utf-8")
+
+        # Verify it correctly notes the lack of parent events
+        self.assertIn(
+            "logger.info('No events declared in parent machine.')",
+            runner_content,
+        )
+        # Verify it still includes simulation for the child with events
+        self.assertIn("Simulating Actor «child_machine»", runner_content)
+        # FIX: Add 'await' to the assertion to match the async runner code
+        self.assertIn(
+            "await actors['child_machine'].send('CHILD_EVENT')", runner_content
+        )
+
+    @patch("sys.argv", new_callable=list)
+    def test_main_hierarchy_with_function_style(
+        self, mock_argv: List[str]
+    ) -> None:
+        """Tests hierarchical generation with function-style logic."""
+        logger.info("🧪 Testing hierarchical generation with function style.")
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            "--style",
+            "function",
+            "--json-parent",
+            str(self.parent_json_path),
+            "--json-child",
+            str(self.child_json_path),
+        ]
+
+        main()
+
+        runner_file = Path.cwd() / "parent_machine_runner.py"
+        self.assertTrue(runner_file.exists())
+        runner_content = runner_file.read_text(encoding="utf-8")
+
+        # Verify it imports the logic module directly
+        self.assertIn("import parent_machine_logic", runner_content)
+        # Verify it uses the logic_modules parameter for create_machine
+        self.assertIn("logic_modules=[parent_machine_logic]", runner_content)
+
+    @patch("sys.argv", new_callable=list)
+    def test_main_heuristic_reject_then_manual_select(
+        self, mock_argv: List[str]
+    ) -> None:
+        """Tests rejecting heuristic suggestion then manually selecting a parent."""
+        logger.info("🧪 Testing heuristic reject then manual select.")
+        # We present parent then child, so the heuristic will correctly guess #1
+        # We will reject it and manually select #1 anyway.
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            str(self.parent_json_path),
+            str(self.child_json_path),
+        ]
+
+        with patch("builtins.input", side_effect=["n", "1"]), patch(
+            "builtins.print"
+        ) as mock_print:  # noqa: F841
+            main()
+
+        # Check for correct hierarchical output named after the manually selected parent
+        runner_file = Path.cwd() / "parent_machine_runner.py"
+        self.assertTrue(runner_file.exists())
+        runner_content = runner_file.read_text(encoding="utf-8")
+        self.assertIn(
+            "actor_cfgs = {",
+            runner_content,
+            "Runner should be in hierarchical mode",
+        )
+        self.assertIn("'child_machine'", runner_content)
+
+    @patch("sys.argv", new_callable=list)
+    def test_main_heuristic_invalid_manual_selection(
+        self, mock_argv: List[str]
+    ) -> None:
+        """Tests that invalid manual parent selection defaults to flat mode."""
+        logger.info("🧪 Testing heuristic with invalid manual selection.")
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            str(self.parent_json_path),
+            str(self.child_json_path),
+        ]
+
+        # User rejects heuristic, then enters invalid text "abc"
+        with patch("builtins.input", side_effect=["n", "abc"]), patch(
+            "builtins.print"
+        ) as mock_print:  # noqa: F841
+            main()
+
+        # It should default to flat mode, combining the names
+        runner_file = Path.cwd() / "parent_machine_child_machine_runner.py"
+        self.assertTrue(runner_file.exists())
+        runner_content = runner_file.read_text(encoding="utf-8")
+
+        # FIX: Make the assertion more flexible by checking for 'in' instead of 'startswith'
+        # This correctly handles both 'def ...' and 'async def ...'
+        self.assertTrue(
+            any(
+                "def run_parent_machine" in line
+                for line in runner_content.splitlines()
+            ),
+            "'run_parent_machine' function not found in runner.",
+        )
+        self.assertTrue(
+            any(
+                "def run_child_machine" in line
+                for line in runner_content.splitlines()
+            ),
+            "'run_child_machine' function not found in runner.",
+        )
+
+    @patch("sys.argv", new_callable=list)
+    def test_main_heuristic_tie_breaking(self, mock_argv: List[str]) -> None:
+        """Tests that a heuristic tie is broken by the first-listed machine."""
+        logger.info("🧪 Testing heuristic tie-breaking behavior.")
+        # Create two potential parents with the exact same invoke score
+        p1_config = {"id": "parentOne", "invoke": {"src": "someActor"}}
+        p2_config = {"id": "parentTwo", "invoke": {"src": "someOtherActor"}}
+        p1_path = create_temp_json(p1_config)
+        p2_path = create_temp_json(p2_config)
+
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            str(p1_path),  # parentOne is listed first
+            str(p2_path),
+        ]
+
+        # We expect it to suggest "parentOne" and we will accept.
+        with patch("builtins.input", side_effect=["y"]), patch(
+            "builtins.print"
+        ) as mock_print:
+            main()
+
+        # Verify that the prompt correctly identified the first machine as the parent
+        print_output = "".join(
+            call.args[0] for call in mock_print.call_args_list if call.args
+        )
+        self.assertIn("parentOne (looks like parent", print_output)
+
+        # Verify the output is named after the first machine
+        self.assertTrue(Path.cwd().joinpath("parent_one_runner.py").exists())
+
+    @patch("sys.argv", new_callable=list)
+    def test_main_heuristic_user_correction(
+        self, mock_argv: List[str]
+    ) -> None:
+        """Tests the user correcting an incorrect heuristic guess."""
+        logger.info("🧪 Testing user correction of a wrong heuristic guess.")
+        # Create a "decoy" parent that has more invokes than the real one
+        decoy_config = {
+            "id": "decoyParent",
+            "invoke": [{"src": "a"}, {"src": "b"}],
+        }
+        real_parent_config = {
+            "id": "realParent",
+            "invoke": {"src": "decoyParent"},
+        }
+        decoy_path = create_temp_json(decoy_config)
+        real_path = create_temp_json(real_parent_config)
+
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            str(real_path),  # real parent is first
+            str(decoy_path),  # decoy is second, but has higher score
+        ]
+
+        # Heuristic will wrongly suggest "decoyParent" (index 2).
+        # User says "n", then manually selects the correct parent "realParent" (index 1).
+        with patch("builtins.input", side_effect=["n", "1"]), patch(
+            "builtins.print"
+        ) as mock_print:  # noqa: F841
+            main()
+
+        # Verify the output is named after the manually corrected parent
+        self.assertTrue(Path.cwd().joinpath("real_parent_runner.py").exists())
+        runner_content = (Path.cwd() / "real_parent_runner.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "'decoy_parent'", runner_content
+        )  # Check that the decoy is an actor
+
+    @patch("sys.argv", new_callable=list)
+    def test_main_hierarchy_with_loader_disabled(
+        self, mock_argv: List[str]
+    ) -> None:
+        """Tests hierarchical generation with the auto-discovery loader disabled."""
+        logger.info("🧪 Testing hierarchical generation with --loader=no.")
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            "--loader",
+            "no",
+            "--json-parent",
+            str(self.parent_json_path),
+            "--json-child",
+            str(self.child_json_path),
+        ]
+
+        main()
+
+        runner_file = Path.cwd() / "parent_machine_runner.py"
+        self.assertTrue(runner_file.exists())
+        runner_content = runner_file.read_text(encoding="utf-8")
+
+        # With the loader off, it should still bind the provider explicitly
+        self.assertIn("logic_provider = LogicProvider()", runner_content)
+        self.assertIn("logic_providers=[logic_provider]", runner_content)
+
+
+# -----------------------------------------------------------------------------
+# 🏛️ Test Class: TestHierarchyAndEventUtils
+# -----------------------------------------------------------------------------
+# This class tests the standalone utility functions related to the new
+# hierarchy and event extraction features.
+# -----------------------------------------------------------------------------
+
+
+class TestHierarchyAndEventUtils(unittest.TestCase):
+    """Verifies the utility functions for hierarchy and event extraction."""
+
+    def setUp(self) -> None:
+        """Create common configs for testing."""
+        self.parent_config = {
+            "id": "parent",
+            "invoke": {"src": "child1"},
+            "states": {"s1": {"invoke": {"src": "child2"}}},
+        }
+        self.child1_config = {"id": "child1", "on": {"EVENT1": {}}}
+        self.child2_config = {"id": "child2", "on": {"EVENT2": {}}}
+        self.unrelated_config = {"id": "unrelated"}
+
+        self.parent_path = create_temp_json(self.parent_config)
+        self.child1_path = create_temp_json(self.child1_config)
+        self.child2_path = create_temp_json(self.child2_config)
+        self.unrelated_path = create_temp_json(self.unrelated_config)
+
+    def tearDown(self) -> None:
+        """Clean up temporary files."""
+        os.remove(self.parent_path)
+        os.remove(self.child1_path)
+        os.remove(self.child2_path)
+        os.remove(self.unrelated_path)
+
+    def test_count_invokes(self) -> None:
+        """Ensures _count_invokes correctly counts 'invoke' keys."""
+        logger.info("🧪 Testing _count_invokes utility.")
+        from src.xstate_statemachine.cli import _count_invokes
+
+        self.assertEqual(_count_invokes(self.parent_config), 2)
+        self.assertEqual(_count_invokes(self.child1_config), 0)
+
+    def test_guess_hierarchy_identifies_parent(self) -> None:
+        """Verifies guess_hierarchy correctly identifies the parent by invoke count."""
+        logger.info("🧪 Testing guess_hierarchy parent identification.")
+        from src.xstate_statemachine.cli import guess_hierarchy
+
+        paths = [str(self.child1_path), str(self.parent_path)]
+        parent, children, _ = guess_hierarchy(paths)
+
+        self.assertEqual(parent, str(self.parent_path))
+        self.assertIn(str(self.child1_path), children)
+
+    def test_extract_events_handles_various_configs(self) -> None:
+        """Ensures extract_events correctly pulls all unique event names."""
+        logger.info("🧪 Testing extract_events for comprehensive coverage.")
+        config = {
+            "on": {"TOP_LEVEL": {}},
+            "states": {
+                "s1": {"on": {"S1_EVENT": {}}},
+                "s2": {
+                    "on": {"S2_EVENT": {}},
+                    "states": {"s2_child": {"on": {"S2_CHILD_EVENT": {}}}},
+                },
+            },
+        }
+        events = extract_events(config)
+        self.assertEqual(
+            events, {"TOP_LEVEL", "S1_EVENT", "S2_EVENT", "S2_CHILD_EVENT"}
+        )
+
+
+# -----------------------------------------------------------------------------
+# 🏛️ Test Class: TestAdvancedCodeGeneration
+# -----------------------------------------------------------------------------
+# This class focuses on the new, more complex code generation features, such
+# as noqa comments, aliasing, and hierarchical runner structure.
+# -----------------------------------------------------------------------------
+
+
+class TestAdvancedCodeGeneration(unittest.TestCase):
+    """Verifies advanced features of the code generation functions."""
+
+    def test_generate_logic_code_with_service_aliasing(self) -> None:
+        """Ensures services with names needing conversion are aliased correctly."""
+        logger.info("🧪 Testing logic generation with service aliasing.")
+        logic_code = generate_logic_code(
+            actions=set(),
+            guards=set(),
+            services={"myCoolService"},  # A name that will be converted
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name="test",
+            file_count=2,
+        )
+        self.assertIn("def my_cool_service(", logic_code)
+        self.assertIn("myCoolService = my_cool_service", logic_code)
+
+    def test_hierarchical_runner_generation(self) -> None:
+        """Verifies the structure of a hierarchically generated runner."""
+        logger.info("🧪 Testing hierarchical runner structure.")
+        parent_config = {"id": "p", "invoke": {"src": "c"}}
+        child_config = {"id": "c"}
+        runner_code = generate_runner_code(
+            machine_names=["p", "c"],
+            is_async=True,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=1,
+            log=True,
+            file_count=2,
+            configs=[parent_config, child_config],
+            json_filenames=["p.json", "c.json"],
+            hierarchy=True,  # Explicitly trigger hierarchy mode
+        )
+        # Check for parent setup
+        self.assertIn(
+            "parent_machine = create_machine(parent_cfg", runner_code
+        )
+        self.assertIn("parent = Interpreter(parent_machine)", runner_code)
+        # Check for actor setup loop/block
+        self.assertIn("actors = {}", runner_code)
+        self.assertIn(
+            "machine_c = create_machine(actor_cfgs['c'])", runner_code
+        )
+        # Check for graceful shutdown
+        self.assertIn("await actors['c'].stop()", runner_code)
+        self.assertIn("await parent.stop()", runner_code)
+
+    def test_generate_logic_for_keyword_service_name(self) -> None:
+        """Tests that a service named after a Python keyword is handled correctly."""
+        logger.info("🧪 Testing logic generation for a keyword service name.")
+        logic_code = generate_logic_code(
+            actions=set(),
+            guards=set(),
+            services={"pass", "import"},  # Python keywords
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name="test",
+            file_count=2,
+        )
+        # Check that the function name is sanitized with a trailing underscore
+        self.assertIn("def pass_(", logic_code)
+        self.assertIn("def import_(", logic_code)
+        # Check that an alias is created to map the original keyword name
+        self.assertIn("pass = pass_", logic_code)
+        self.assertIn("import = import_", logic_code)
+
+
+# -----------------------------------------------------------------------------
+# 🏛️ Test Class: TestFullCLIExecution
+# -----------------------------------------------------------------------------
+# This class performs end-to-end tests on the main() function, covering the
+# full CLI execution flow including interactive prompts and file merging.
+# -----------------------------------------------------------------------------
+
+
+class TestFullCLIExecution(unittest.TestCase):
+    """Provides full, end-to-end integration tests for the main CLI entry point."""
+
+    def setUp(self) -> None:
+        """Set up a temporary directory and shared JSON files for tests."""
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.original_cwd = os.getcwd()
+        os.chdir(self.temp_dir.name)
+        # Config where parent 'invokes' child by its ID
+        self.parent_config = {"id": "parent", "invoke": {"src": "child"}}
+        self.child_config = {"id": "child"}
+        self.parent_path = create_temp_json(self.parent_config)
+        self.child_path = create_temp_json(self.child_config)
+
+    def tearDown(self) -> None:
+        """Clean up temporary directory and files."""
+        os.chdir(self.original_cwd)
+        # FIX: The TemporaryDirectory context manager cleans up everything.
+        # Manual deletion is unnecessary and causes errors if files are already gone.
+        self.temp_dir.cleanup()
+
+    @patch("sys.argv", new_callable=list)
+    @patch("builtins.input", side_effect=["y"])  # Auto-confirm heuristic
+    def test_main_heuristic_prompt_and_reorder(
+        self, mock_input, mock_argv
+    ) -> None:
+        """Ensures CLI correctly prompts, reorders files, and generates hierarchical code."""
+        logger.info("🧪 Testing heuristic prompt and file reordering.")
+        # Pass child first to test reordering
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            str(self.child_path),
+            str(self.parent_path),
+        ]
+
+        with patch("builtins.print") as mock_print:
+            main()
+
+        print_calls = "".join(
+            [call.args[0] for call in mock_print.call_args_list if call.args]
+        )
+        self.assertIn("looks like parent", print_calls)
+        self.assertTrue(Path("parent_logic.py").exists())
+        self.assertTrue(Path("parent_runner.py").exists())
+        runner_content = Path("parent_runner.py").read_text(encoding="utf-8")
+        self.assertIn("actor_cfgs = {", runner_content)
+
+    @patch("sys.argv", new_callable=list)
+    def test_main_combined_file_intelligent_merge(
+        self, mock_argv: List[str]
+    ) -> None:
+        """Verifies --file-count 1 correctly merges logic and runner, avoiding duplicate imports."""
+        logger.info("🧪 Testing intelligent merge for combined file output.")
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            str(self.parent_path),
+            "--file-count",
+            "1",
+        ]
+        main()
+
+        combined_file = Path("parent.py")
+        self.assertTrue(combined_file.exists())
+        # FIX: Specify UTF-8 encoding to handle emojis and special characters on all platforms.
+        content = combined_file.read_text(encoding="utf-8")
+
+        self.assertEqual(content.count("import logging"), 1)
+        self.assertEqual(content.count("from pathlib import Path"), 1)
+        self.assertEqual(content.count("import json"), 1)
+        self.assertIn("# 🧠 Class‑based Logic", content)
+        self.assertIn("# Runner part", content)
+        self.assertIn("if __name__ == '__main__':", content)
+
+    @patch("sys.argv", new_callable=list)
+    def test_main_combined_file_in_hierarchy_mode(
+        self, mock_argv: List[str]
+    ) -> None:
+        """Verifies --file-count 1 works correctly in a hierarchical setup."""
+        logger.info("🧪 Testing combined file output in hierarchy mode.")
+        mock_argv[:] = [
+            "cli.py",
+            "generate-template",
+            "--file-count",
+            "1",
+            "--json-parent",
+            str(self.parent_path),
+            "--json-child",
+            str(self.child_path),
+        ]
+
+        main()
+
+        combined_file = Path("parent.py")
+        self.assertTrue(combined_file.exists())
+        content = combined_file.read_text(encoding="utf-8")
+
+        # Check for logic class definition
+        self.assertIn("class ParentLogic:", content)
+        # Check for runner part and hierarchical constructs
+        self.assertIn("# Runner part", content)
+        self.assertIn("actor_cfgs = {", content)
+        self.assertIn("'child': json.loads", content)
+        self.assertIn("parent = Interpreter(parent_machine)", content)
+
+
+# Add this at the end of the file, or integrate the tests into existing classes.
+# For simplicity, I'm showing them as a new class.
+if __name__ == "__main__":
+    unittest.main()

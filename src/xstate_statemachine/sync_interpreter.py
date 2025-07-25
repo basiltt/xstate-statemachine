@@ -649,73 +649,111 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         ).start()
 
     def _cancel_state_tasks(self, state: StateNode) -> None:
-        """Cancels any running `after` timers associated with a state.
+        """Cancel all pending **after** timers that belong to a state.
+
+        This handles *multiple* timers per state by matching a prefix-based key.
+        Older code assumed one timer per state and leaked others.
 
         Args:
-            state: The state for which tasks should be cancelled.
+            state (StateNode): The state whose timers should be cancelled.
         """
-        state_id = state.id
-        if state_id in self._after_events:
+        state_prefix = f"{state.id}::"  # our internal key scheme
+        to_cancel = [
+            k
+            for k in list(self._after_events.keys())
+            if k == state.id or k.startswith(state_prefix)
+        ]
+
+        if not to_cancel:
             logger.debug(
-                "🧹 Cancelling 'after' timer for state '%s'", state_id
+                "🧹 No 'after' timers to cancel for state '%s'.", state.id
             )
-            # Signal the cancellation event, which the timer thread is waiting on.
-            self._after_events[state_id].set()
-            # 🗑️ Immediate cleanup of tracking dictionaries.
-            self._after_events.pop(state_id, None)
-            self._after_threads.pop(state_id, None)
+            return
+
+        for key in to_cancel:
+            try:
+                logger.debug(
+                    "🧹 Cancelling 'after' timer key='%s' (owner='%s')",
+                    key,
+                    state.id,
+                )
+                self._after_events[key].set()  # signal cancellation
+            finally:
+                # Remove from tracking dicts whether the thread is alive or not;
+                # the thread cleans itself up on exit as well.
+                self._after_events.pop(key, None)
+                self._after_threads.pop(key, None)
 
     def _after_timer(
         self, delay_sec: float, event: AfterEvent, owner_id: str
     ) -> None:
-        """Schedules a delayed `AfterEvent` using a background thread.
+        """Schedule a delayed `AfterEvent` on a background thread.
+
+        Supports **multiple timers per owner** by storing them under unique keys.
+        Threads watch a cancellation `Event` so exits cleanly on state leave.
 
         Args:
-            delay_sec: The delay in seconds before the event is sent.
-            event: The event to send after the delay.
-            owner_id: The ID of the state owning this timer.
+            delay_sec (float): Delay (seconds) before firing.
+            event (AfterEvent): Event to send when the timer expires.
+            owner_id (str): ID of the state that owns this timer.
         """
+        # Generate a unique handle so a state can own several timers simultaneously.
+        unique_key = f"{owner_id}::{uuid.uuid4()}"
+        cancel_event = threading.Event()
+
         logger.info(
-            "⏰ Scheduling 'after' transition in %.2fs for state '%s'",
+            "⏰ Scheduling 'after' (%s) in %.2fs for state '%s' [key=%s]",
+            event.type,
             delay_sec,
             owner_id,
+            unique_key,
         )
 
-        # 🎫 Create a cancellation event for this specific timer.
-        cancel_event = threading.Event()
-        self._after_events[owner_id] = cancel_event
+        # Register for lifecycle management.
+        self._after_events[unique_key] = cancel_event
 
         def timer_thread() -> None:
-            """Background thread that waits and then sends the event."""
+            """Worker that waits, checks cancellation, and sends the event."""
             try:
-                # ⏸️ Wait for the delay. `wait` returns True if the event is set (cancelled).
-                if cancel_event.wait(timeout=delay_sec):
-                    logger.debug("Timer for '%s' was cancelled.", owner_id)
+                cancelled = cancel_event.wait(timeout=delay_sec)
+                if cancelled:
+                    logger.debug(
+                        "🚫 Timer cancelled before firing [key=%s].",
+                        unique_key,
+                    )
                     return
 
-                # 🩺 Verify state is still active and interpreter is running.
-                if self.status == "running" and owner_id in {
-                    s.id for s in self._active_state_nodes
-                }:
+                # Fire only if interpreter still running AND owner still active.
+                if self.status == "running" and any(
+                    s.id == owner_id for s in self._active_state_nodes
+                ):
                     logger.debug(
-                        "Timer for '%s' expired, sending event '%s'.",
-                        owner_id,
+                        "🕒 Timer expired -> sending event '%s' [key=%s].",
                         event.type,
+                        unique_key,
                     )
                     self.send(event)
-
-            except Exception as e:
+                else:
+                    logger.debug(
+                        "⚠️ Timer expired but owner inactive or interpreter stopped [key=%s].",
+                        unique_key,
+                    )
+            except Exception as exc:  # pragma: no cover (safety net)
                 logger.error(
-                    "💥 Error in after timer thread for '%s': %s", owner_id, e
+                    "💥 Error in after-timer thread [key=%s]: %s",
+                    unique_key,
+                    exc,
+                    exc_info=True,
                 )
             finally:
-                # 🧹 Clean up resources after the thread finishes.
-                self._after_threads.pop(owner_id, None)
-                self._after_events.pop(owner_id, None)
+                # Ensure we don't leak references.
+                self._after_threads.pop(unique_key, None)
+                self._after_events.pop(unique_key, None)
 
-        # 🚀 Start the background daemon thread.
-        thread = threading.Thread(target=timer_thread, daemon=True)
-        self._after_threads[owner_id] = thread
+        thread = threading.Thread(
+            target=timer_thread, daemon=True, name=f"after-{unique_key}"
+        )
+        self._after_threads[unique_key] = thread
         thread.start()
 
     def _invoke_service(

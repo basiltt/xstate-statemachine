@@ -25,10 +25,12 @@ for customization, enabling rapid development and prototyping.
 # -----------------------------------------------------------------------------
 import argparse
 import json
+import keyword
 import logging
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
+import sys
 
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
@@ -299,13 +301,13 @@ def generate_logic_code(  # noqa: C901 – long but readable, generated code
 
     The output is **PEP‑8 compliant** and aims to be *warning‑free* in IDEs such
     as PyCharm.  Function / method names are converted to ``snake_case`` and
-    sections (Actions / Guards / Services) are emitted **only when non‑empty**.
+    sections (Actions / Guards / Services) are emitted **only when non‑empty**.
 
     Args:
         actions:       Action identifiers collected from the JSON.
         guards:        Guard function identifiers.
         services:      Service names (for ``invoke`` blocks).
-        style:         ``"class"`` → one provider class, ``"function"`` → module funcs.
+        style:         ``"class"`` → one provider class, ``"function"`` → module funcs.
         log:           Insert ``logger.info`` scaffolding when *True*.
         is_async:      Generate ``async def`` stubs instead of sync ones.
         machine_name:  Base name used for the provider class / module.
@@ -328,6 +330,7 @@ def generate_logic_code(  # noqa: C901 – long but readable, generated code
     if is_async:
         header += ["import asyncio", "from typing import Awaitable"]
 
+    # FIX: Add 'import keyword' to handle sanitization of service names
     header += [
         *(["import time"] if (services and not is_async) else []),
         "from typing import Any, Dict, Union",
@@ -451,6 +454,10 @@ def generate_logic_code(  # noqa: C901 – long but readable, generated code
         body.append(f"{indent_cls}# 🔄 Services")
         for original in sorted(services):
             fn = _snake(original)
+            # FIX: Sanitize service names that are Python keywords
+            if keyword.iskeyword(fn):
+                fn = f"{fn}_"
+
             async_kw = "async " if is_async else ""
             ret = "Awaitable[Dict[str, Any]]" if is_async else "Dict[str, Any]"
 
@@ -606,7 +613,7 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
     sleep_cmd = "await asyncio.sleep" if is_async else "time.sleep"
 
     # ==================================================================
-    # 👑  MODE 1 – Hierarchical (parent + actors)
+    # 👑  MODE 1 – Hierarchical (parent + actors)
     # ==================================================================
     if hierarchy and len(machine_names) > 1:
         parent_name, *actor_names = machine_names
@@ -643,29 +650,26 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
             ]
         )
 
-        if loader:
-            if style == "class":
-                if file_count == 1:
-                    code_lines.append(f"    logic_provider = {class_name}()")
-                else:
-                    code_lines.append("    logic_provider = LogicProvider()")
-                code_lines.append(
-                    "    parent_machine = create_machine(parent_cfg, logic_providers=[logic_provider])"
-                )
+        # FIX: Ensure logic is always bound in class-style hierarchy mode,
+        # regardless of the --loader flag.
+        if style == "class":
+            if file_count == 1:
+                code_lines.append(f"    logic_provider = {class_name}()")
             else:
-                if file_count == 2:
-                    code_lines.append(
-                        f"    parent_machine = create_machine(parent_cfg, logic_modules=[{logic_file_name}])"
-                    )
-                else:
-                    code_lines.append("    import sys")
-                    code_lines.append(
-                        "    parent_machine = create_machine(parent_cfg, logic_modules=[sys.modules[__name__]])"
-                    )
-        else:
+                code_lines.append("    logic_provider = LogicProvider()")
             code_lines.append(
-                "    parent_machine = create_machine(parent_cfg)"
+                "    parent_machine = create_machine(parent_cfg, logic_providers=[logic_provider])"
             )
+        else:  # function style – ALWAYS bind the logic module explicitly
+            if file_count == 2:
+                code_lines.append(
+                    f"    parent_machine = create_machine(parent_cfg, logic_modules=[{logic_file_name}])"
+                )
+            else:  # file_count == 1
+                code_lines.append("    import sys")
+                code_lines.append(
+                    "    parent_machine = create_machine(parent_cfg, logic_modules=[sys.modules[__name__]])"
+                )
 
         parent_ctor = "Interpreter" if is_async else "SyncInterpreter"
         code_lines.extend(
@@ -713,13 +717,6 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
                         f"    logger.info('Parent → sending %s', '{ev}')"
                     )
                 code_lines.append(f"    {await_prefix}parent.send('{ev}')")
-                # code_lines.extend(
-                #     [
-                #         f"    # {human}",
-                #         f"    logger.info('Parent → sending %s', '{ev}')",
-                #         f"    {await_prefix}parent.send('{ev}')",
-                #     ]
-                # )
                 if sleep:
                     code_lines.append(f"    {sleep_cmd}({sleep_time})")
                 code_lines.append("")
@@ -750,13 +747,6 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
                     code_lines.append(
                         f"    {await_prefix}actors['{a_name}'].send('{ev}')"
                     )
-                    # code_lines.extend(
-                    #     [
-                    #         f"    # {human}",
-                    #         f"    logger.info('{a_name} → sending %s', '{ev}')",
-                    #         f"    {await_prefix}actors['{a_name}'].send('{ev}')",
-                    #     ]
-                    # )
                     if sleep:
                         code_lines.append(f"    {sleep_cmd}({sleep_time})")
                     code_lines.append("")
@@ -796,7 +786,7 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
         return "\n".join(code_lines)
 
     # ==================================================================
-    # 🟰  MODE 2 – Flat / legacy
+    # 🟰  MODE 2 – Flat / legacy
     # ==================================================================
     if len(machine_names) == 1:
         # ------------------------------------------------------------------
@@ -809,17 +799,6 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
 
         code_lines.append(f"{func_prefix}def main() -> None:")
         inner_indent = "    "
-
-        # if ("/" in json_filename or "\\" in json_filename
-        #         or Path(json_filename).is_absolute()):
-        #     cfg_line0 = f"{inner_indent}config_path = Path(r\"{json_filename}\")"
-        # else:
-        #     # runner is <root>/generated/script.py  →  JSON is <root>/file.json
-        #     cfg_line0 = (
-        #         f"{inner_indent}config_path = "
-        #         "Path(__file__).resolve().parent.parent / "
-        #         f"'{json_filename}'"
-        #     )
 
         cfg_lines = [
             f'{inner_indent}config_path = Path(r"{json_filename}")',
@@ -882,7 +861,7 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
                 code_lines.append(
                     f"{inner_indent}machine = create_machine(config, logic_providers=[logic_provider])"
                 )
-            else:  # function style – pass the module explicitly
+            else:  # function style – pass the module explicitly
                 if file_count == 1:
                     code_lines += [
                         f"{inner_indent}import sys",
@@ -924,11 +903,6 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
         if events:
             for ev in events:
                 human = ev.replace("_", " ").title()
-                # code_lines += [
-                #     f"{inner_indent}# {human}",
-                #     f"{inner_indent}logger.info('→ Sending %s', '{ev}')",
-                #     f"{inner_indent}{await_prefix}interpreter.send('{ev}')",
-                # ]
                 code_lines.append(f"{inner_indent}# {human}")
                 if log:
                     code_lines.append(
@@ -977,14 +951,6 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
 
             code_lines.append(f"{func_prefix}def run_{name}() -> None:")
             inner_indent = "    "
-
-            # ───────────────────────── JSON‑path resolution ──────────────────────────
-            # ❶  If the JSON argument already points to a *folder* (relative or
-            #    absolute) we can use it verbatim.
-            # ❷  Otherwise we try two candidate locations at runtime:
-            #       a) same folder as this runner                (…/runner.py)
-            #       b) one level up (useful when runner lives in …/generated/)
-            #    – no further searching / loops are performed.
 
             cfg_lines = [
                 f'{inner_indent}config_path = Path(r"{json_filename}")',
@@ -1250,6 +1216,9 @@ def main():  # noqa: C901 – function is long but readable
 
     args = parser.parse_args()
 
+    if sys.argv.count("--json-parent") > 1:
+        parser.error("Only one --json-parent may be supplied.")
+
     # -------------------------------------------------------------------------
     # 🚀 2. Generation Logic
     # -------------------------------------------------------------------------
@@ -1262,15 +1231,21 @@ def main():  # noqa: C901 – function is long but readable
 
         json_paths: List[str] = []
 
-        # 1. parent --------------------------------------------------------
+        # 1. parent (explicit or positional)
         if args.json_parent:
             json_paths.append(args.json_parent)
+        else:
+            # If no explicit parent, treat positional files as potential parents
+            json_paths.extend(args.json_files)
 
-        # 2. children ------------------------------------------------------
+        # 2. children (explicit)
         json_paths.extend(args.json_child)
 
-        # 3–4. remaining legacy inputs ------------------------------------
-        json_paths.extend(args.json_files)
+        # 3. Add positional files if they weren't added as parents
+        if args.json_parent:
+            json_paths.extend(args.json_files)
+
+        # 4. legacy --json flag
         json_paths.extend(args.json)
 
         # -----------------------------------------------------------------
@@ -1327,7 +1302,11 @@ def main():  # noqa: C901 – function is long but readable
         # 🤖  Heuristic parent detection & optional prompt  (#8‒#10)
         # -----------------------------------------------------------------
         hierarchy_flag: bool = False  # default → “flat” mode
-        if not args.json_parent and len(json_paths) > 1:
+        if (
+            not args.json_parent
+            and not args.json_child
+            and len(json_paths) > 1
+        ):
             ids = [
                 conf.get("id", fn.stem)
                 for conf, fn in zip(configs, map(Path, json_paths))
@@ -1358,13 +1337,16 @@ def main():  # noqa: C901 – function is long but readable
                 _walk(conf)
                 ref_scores.append(len(refs.intersection(set(ids))))
 
-            max_score: int = max(ref_scores)
+            max_score: int = max(ref_scores) if ref_scores else 0
             candidate_idx: int = -1
-            if max_score > 0 and ref_scores.count(max_score) == 1:
+            if max_score > 0:
                 candidate_idx = ref_scores.index(max_score)
+            else:
+                # Tie-breaker: no machine references another → pick the first listed
+                candidate_idx = 0
 
             # --- interactive confirmation / selection -------------------
-            if candidate_idx != -1:
+            if candidate_idx > -1:
                 confidence = int(round(100 * max_score / (len(ids) - 1)))
                 print(
                     "Found two machines:"
@@ -1408,7 +1390,7 @@ def main():  # noqa: C901 – function is long but readable
                     lst.insert(0, lst.pop(candidate_idx))
 
         # Explicit flags always imply hierarchy ---------------------------
-        if args.json_parent:
+        if args.json_parent or args.json_child:
             hierarchy_flag = True
 
         # 📁 Determine output directory and file paths

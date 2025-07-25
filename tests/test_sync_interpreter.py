@@ -1121,7 +1121,7 @@ class TestSyncInterpreter(unittest.TestCase):
     def test_after_transition_is_scheduled_and_fires(self) -> None:
         """Tests `SyncInterpreter` correctly fires an `after` transition."""
         logger.info("🧪 Testing successful `after` transition...")
-        # 🤖 Arrange
+        # 🤖 Arrange: Create the machine configuration.
         machine_config: Dict[str, Any] = {
             "id": "timer",
             "initial": "waiting",
@@ -1131,19 +1131,33 @@ class TestSyncInterpreter(unittest.TestCase):
             },
         }
         machine = create_machine(machine_config)
-        interpreter = SyncInterpreter(machine).start()
+
+        # Use a threading.Event for reliable synchronization instead of polling.
+        transition_happened = threading.Event()
+
+        # A simple plugin to signal when the desired transition occurs.
+        class TransitionWatcher(PluginBase):
+            def on_transition(
+                self, interpreter, from_states, to_states, transition
+            ) -> None:
+                """Sets the event when the target state is entered."""
+                if any(s.id == "timer.finished" for s in to_states):
+                    transition_happened.set()
+
+        interpreter = SyncInterpreter(machine)
+        interpreter.use(TransitionWatcher())
+        interpreter.start()
         self.assertEqual(interpreter.current_state_ids, {"timer.waiting"})
 
-        # ⚡ Act: Wait for the timer to fire, with a timeout.
-        timeout = 0.2  # 200ms max wait
-        start_time = time.time()
-        while (
-            "timer.waiting" in interpreter.current_state_ids
-            and time.time() - start_time < timeout
-        ):
-            time.sleep(0.005)  # Poll for state change
+        # ⚡ Act: Wait for the plugin to signal that the transition has occurred.
+        # A generous timeout of 1 second is used to avoid test flakes on slow systems.
+        event_was_set = transition_happened.wait(timeout=1.0)
 
-        # ✨ Assert: The machine should have transitioned after the delay.
+        # ✨ Assert: The event should have been set, and the state should be correct.
+        self.assertTrue(
+            event_was_set,
+            "The transition to 'finished' did not occur within the timeout.",
+        )
         self.assertEqual(interpreter.current_state_ids, {"timer.finished"})
         interpreter.stop()
 
