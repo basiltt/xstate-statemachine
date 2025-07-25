@@ -1322,9 +1322,78 @@ def main():  # noqa: C901 – function is long but readable
         if args.file_count == 1:
             if single_file:
                 logger.info(f"💾 Writing combined code to: {single_file}")
-                combined_code = (
-                    f"{logic_code}\n\n\n# Runner part\n{runner_code}"
+                # ---- Merge *intelligently* so imports / logger appear only once -------------
+                logic_lines = logic_code.splitlines()
+                runner_lines = runner_code.splitlines()
+
+                # 1️⃣  collect all top‑level imports already present in the *logic* part
+                seen_imports: Set[str] = {
+                    ln
+                    for ln in logic_lines
+                    if ln.startswith(("import ", "from "))
+                }
+
+                # 2️⃣  pull in only *new* imports from the runner header  (avoid duplicates)
+                extra_imports: List[str] = [
+                    ln
+                    for ln in runner_lines
+                    if ln.startswith(("import ", "from "))
+                    and ln not in seen_imports
+                ]
+
+                # 3️⃣  grab runner body (skip its own logging setup / logger) -----------------
+                start_body = next(
+                    (
+                        idx + 1
+                        for idx, ln in enumerate(runner_lines)
+                        if ln.strip() == "" and idx > 0
+                    ),
+                    0,
                 )
+                runner_body_raw: List[str] = runner_lines[start_body:]
+                runner_body: List[str] = [
+                    ln
+                    for ln in runner_body_raw
+                    if not ln.lstrip().startswith(
+                        ("logging.basicConfig", "logger = logging.getLogger")
+                    )
+                ]
+
+                # 4️⃣  inject the extra imports right after the last import in *logic*
+                merged: List[str] = []
+                injected = False
+                for idx, ln in enumerate(logic_lines):
+                    merged.append(ln)
+                    if (
+                        not injected
+                        and ln.startswith(("import ", "from "))
+                        and (
+                            idx + 1 == len(logic_lines)
+                            or not logic_lines[idx + 1].startswith(
+                                ("import ", "from ")
+                            )
+                        )
+                    ):
+                        merged.extend(extra_imports)
+                        injected = True
+
+                # 5️⃣  ensure `logging.basicConfig` & the *single* logger definition exist once
+                if not any("logging.basicConfig" in line for line in merged):
+                    for line in runner_lines:
+                        if line.startswith("logging.basicConfig"):
+                            merged.append(line)
+                            break
+
+                if not any(
+                    "logger = logging.getLogger" in line_ for line_ in merged
+                ):
+                    merged.append("logger = logging.getLogger(__name__)")
+
+                # 6️⃣  stitch everything together
+                merged.extend(["", "", "# Runner part"])
+                merged.extend(runner_body)
+
+                combined_code = "\n".join(merged)
                 single_file.write_text(combined_code, encoding="utf-8")
                 print(f"Generated combined file: {single_file}")
         else:
