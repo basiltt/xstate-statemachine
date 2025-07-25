@@ -255,7 +255,10 @@ def guess_hierarchy(
     scores_sorted = sorted(scores, key=lambda kv: kv[1], reverse=True)
     parent, top_score = scores_sorted[0]
     total = sum(sc for _, sc in scores_sorted) or 1
-    confidence = int(min(100, (top_score / total) * 100 + 15))  # 15 % floor
+    raw_confidence: float = min(
+        100.0, (top_score / total) * 100 + 15
+    )  # upper‑bound
+    confidence: int = int(raw_confidence)  # cast to int for strong typing
 
     # attach confidence to first tuple for printing
     printable_scores = [(parent, confidence)] + scores_sorted[1:]
@@ -282,7 +285,7 @@ def extract_events(config: Dict[str, Any]) -> Set[str]:
 # -----------------------------------------------------------------------------
 
 
-def generate_logic_code(
+def generate_logic_code(  # noqa: C901 – long but readable, generated code
     actions: Set[str],
     guards: Set[str],
     services: Set[str],
@@ -291,149 +294,167 @@ def generate_logic_code(
     is_async: bool,
     machine_name: str,
 ) -> str:
-    """Generates the logic file content with placeholders.
+    """Return the source for ``*_logic.py`` generated from a machine definition.
 
-    This function constructs the Python code for the logic file (`..._logic.py`)
-    based on the extracted names and user-selected options (e.g., class vs.
-    function style, async vs. sync).
+    The output is **PEP‑8 compliant** and aims to be *warning‑free* in IDEs such
+    as PyCharm.  Function / method names are converted to ``snake_case`` and
+    sections (Actions / Guards / Services) are emitted **only when non‑empty**.
 
     Args:
-        actions (Set[str]): A set of action names.
-        guards (Set[str]): A set of guard names.
-        services (Set[str]): A set of service names.
-        style (str): The code style, either 'class' or 'function'.
-        log (bool): Whether to include logging statements in the stubs.
-        is_async (bool): Whether to generate asynchronous function signatures.
-        machine_name (str): The base name for the logic class.
-
-    Returns:
-        str: The generated Python code as a string.
+        actions:       Action identifiers collected from the JSON.
+        guards:        Guard function identifiers.
+        services:      Service names (for ``invoke`` blocks).
+        style:         ``"class"`` → one provider class, ``"function"`` → module funcs.
+        log:           Insert ``logger.info`` scaffolding when *True*.
+        is_async:      Generate ``async def`` stubs instead of sync ones.
+        machine_name:  Base name used for the provider class / module.
     """
-    code_lines = [
+    # ------------------------------------------------------------------
+    # 📑  Imports & logger
+    # ------------------------------------------------------------------
+    header: List[str] = [
         "# -------------------------------------------------------------------------------",
         "# 📡 Generated Logic File",
         "# -------------------------------------------------------------------------------",
     ]
-
-    # --- Imports ---
     if is_async:
-        code_lines.extend(["import asyncio", "from typing import Awaitable"])
-    code_lines.extend(["import logging", "from typing import Any, Dict"])
-    if not is_async and services:
-        code_lines.append("import time")
+        header += ["import asyncio", "from typing import Awaitable"]
+    header += [
+        "import logging",
+        "import time" if (services and not is_async) else "",
+        "from typing import Any, Dict, Union",
+        "",
+        "from xstate_statemachine import Interpreter, SyncInterpreter, Event, ActionDefinition",
+        "",
+        "# -----------------------------------------------------------------------------",
+        "# 🪵 Logger Configuration",
+        "# -----------------------------------------------------------------------------",
+        "logger = logging.getLogger(__name__)",
+        "",
+    ]
+    # remove the conditional empty string added above when `time` is *not* needed
+    header = [ln for ln in header if ln]
 
-    code_lines.extend(
-        [
-            "from xstate_statemachine import Interpreter, SyncInterpreter, Event, ActionDefinition",
-            "",
-            "# -----------------------------------------------------------------------------",
-            "# 🪵 Logger Configuration",
-            "# -----------------------------------------------------------------------------",
-            "logger = logging.getLogger(__name__)",
-            "",
-        ]
-    )
+    # Handy helpers -----------------------------------------------------
+    def _snake(name: str) -> str:  # local – camelCase → snake_case
+        """Convert *camelCase* / *PascalCase* → *snake_case* without shadowing."""
+        try:
+            from .cli import camel_to_snake  # type: ignore  # runtime import
 
-    class_indent = ""
-    func_self = ""
-    base_name = (
-        "".join(word.capitalize() for word in machine_name.split("_"))
+            return camel_to_snake(name)
+        except Exception:  # pragma: no cover – fallback if not resolvable
+            import re
+
+            snake: str = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+            snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", snake)
+            return snake.lower()
+
+    indent_class = ""
+    self_param = ""
+    class_name = (
+        "".join(part.capitalize() for part in machine_name.split("_"))
         + "Logic"
     )
 
+    body: List[str] = []
     if style == "class":
-        code_lines.extend(
-            [
-                "# -----------------------------------------------------------------------------",
-                "# 🧠 Class-based Logic",
-                "# -----------------------------------------------------------------------------",
-                f"class {base_name}:",
-            ]
-        )
-        class_indent = "    "
-        func_self = "self, "
+        body += [
+            "# -----------------------------------------------------------------------------",
+            "# 🧠 Class‑based Logic",
+            "# -----------------------------------------------------------------------------",
+            f"class {class_name}:",
+        ]
+        indent_class = "    "
+        self_param = "self, "
 
-    # --- Actions ---
-    code_lines.append(f"{class_indent}# ⚙️ Actions")
-    for act in sorted(actions):
-        async_prefix = "async " if is_async else ""
-        ret_type = "Awaitable[None]" if is_async else "None"
-        code_lines.extend(
-            [
-                f"{class_indent}{async_prefix}def {act}(",
-                f"{class_indent}        {func_self}",
-                f"{class_indent}        interpreter: Interpreter if {is_async} else SyncInterpreter,",
-                f"{class_indent}        context: Dict[str, Any],",
-                f"{class_indent}        event: Event,",
-                f"{class_indent}        action_def: ActionDefinition",
-                f"{class_indent}) -> {ret_type}:",
-                f'{class_indent}    """Action: {act}."""',
+    # ------------------------------------------------------------------
+    # ⚙️  ACTIONS
+    # ------------------------------------------------------------------
+    if actions:
+        body.append(f"{indent_class}# ⚙️ Actions")
+        for name in sorted(actions):
+            fn = _snake(name)
+            ret = "Awaitable[None]" if is_async else "None"
+            async_kw = "async " if is_async else ""
+            body += [
+                f"{indent_class}{async_kw}def {fn}(",
+                f"{indent_class}        {self_param}",  # lone comma ✅
+                f"{indent_class}        interpreter: Union[Interpreter, SyncInterpreter],",
+                f"{indent_class}        context: Dict[str, Any],",
+                f"{indent_class}        event: Event,",
+                f"{indent_class}        action_def: ActionDefinition,  # noqa: D401 – lib callback",
+                f"{indent_class}) -> {ret}:",
+                f'{indent_class}    """Action: `{name}`."""',
             ]
-        )
-        if log:
-            code_lines.append(
-                f'{class_indent}    logger.info("Executing action {act}")'
-            )
-        if is_async:
-            code_lines.append(
-                f"{class_indent}    await asyncio.sleep(0.1)  # Dummy async"
-            )
-        code_lines.append(
-            f"{class_indent}    pass  # TODO: Implement action\n"
-        )
 
-    # --- Guards ---
-    code_lines.append(f"{class_indent}# 🛡️ Guards")
-    for g in sorted(guards):
-        code_lines.extend(
-            [
-                f"{class_indent}def {g}(",
-                f"{class_indent}        {func_self}",
-                f"{class_indent}        context: Dict[str, Any],",
-                f"{class_indent}        event: Event",
-                f"{class_indent}) -> bool:",
-                f'{class_indent}    """Guard: {g}."""',
+            if log:
+                body.append(
+                    f'{indent_class}    logger.info("Executing action {name}")'
+                )
+            if is_async:
+                body.append(
+                    f"{indent_class}    await asyncio.sleep(0.1)  # placeholder"
+                )
+            body.append(f"{indent_class}    # TODO: implement\n")
+
+    # ------------------------------------------------------------------
+    # 🛡️  GUARDS
+    # ------------------------------------------------------------------
+    if guards:
+        body.append(f"{indent_class}# 🛡️ Guards")
+        for name in sorted(guards):
+            fn = _snake(name)
+            body += [
+                f"{indent_class}def {fn}(",
+                f"{indent_class}        {self_param}context: Dict[str, Any],",
+                f"{indent_class}        event: Event,",
+                f"{indent_class}) -> bool:",
+                f'{indent_class}    """Guard: `{name}`."""',
             ]
-        )
-        if log:
-            code_lines.append(
-                f'{class_indent}    logger.info("Evaluating guard {g}")'
+            if log:
+                body.append(
+                    f'{indent_class}    logger.info("Evaluating guard {name}")'
+                )
+            body.append(
+                f"{indent_class}    # TODO: implement guard logic\n"
+                f"{indent_class}    return True\n"
             )
-        code_lines.append(
-            f"{class_indent}    return True  # TODO: Implement guard\n"
-        )
 
-    # --- Services ---
-    code_lines.append(f"{class_indent}# 🔄 Services")
-    for s in sorted(services):
-        async_prefix = "async " if is_async else ""
-        ret_type = (
-            "Awaitable[Dict[str, Any]]" if is_async else "Dict[str, Any]"
-        )
-        code_lines.extend(
-            [
-                f"{class_indent}{async_prefix}def {s}(",
-                f"{class_indent}        {func_self}",
-                f"{class_indent}        interpreter: Interpreter if {is_async} else SyncInterpreter,",
-                f"{class_indent}        context: Dict[str, Any],",
-                f"{class_indent}        event: Event",
-                f"{class_indent}) -> {ret_type}:",
-                f'{class_indent}    """Service: {s}."""',
+    # ------------------------------------------------------------------
+    # 🔄  SERVICES
+    # ------------------------------------------------------------------
+    if services:
+        body.append(f"{indent_class}# 🔄 Services")
+        for name in sorted(services):
+            fn = _snake(name)
+            ret = "Awaitable[Dict[str, Any]]" if is_async else "Dict[str, Any]"
+            async_kw = "async " if is_async else ""
+            body += [
+                f"{indent_class}{async_kw}def {fn}(",
+                f"{indent_class}        {self_param}"
+                "interpreter: Union[Interpreter, SyncInterpreter],",
+                f"{indent_class}        context: Dict[str, Any],",
+                f"{indent_class}        event: Event,",
+                f"{indent_class}) -> {ret}:",
+                f'{indent_class}    """Service: `{name}`."""',
             ]
-        )
-        if log:
-            code_lines.append(
-                f'{class_indent}    logger.info("Running service {s}")'
+            if log:
+                body.append(
+                    f'{indent_class}    logger.info("Running service {name}")'
+                )
+            if is_async:
+                body.append(f"{indent_class}    await asyncio.sleep(1)")
+            else:
+                body.append(f"{indent_class}    time.sleep(1)")
+            body.append(
+                f"{indent_class}    # TODO: implement service\n"
+                f"{indent_class}    return {{'result': 'done'}}\n"
             )
-        if is_async:
-            code_lines.append(f"{class_indent}    await asyncio.sleep(1)")
-        else:
-            code_lines.append(f"{class_indent}    time.sleep(1)")
-        code_lines.append(
-            f"{class_indent}    return {{'result': 'done'}}  # TODO: Implement service\n"
-        )
 
-    return "\n".join(code_lines)
+    # ------------------------------------------------------------------
+    # Module‑level return
+    # ------------------------------------------------------------------
+    return "\n".join(header + body)
 
 
 def generate_runner_code(  # noqa: C901 – function is long but readable
