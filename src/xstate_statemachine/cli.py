@@ -519,9 +519,7 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
     base_name = (
         "_".join(machine_names) if len(machine_names) > 1 else machine_names[0]
     )
-    logic_file_name = (
-        f"{base_name}_logic"  # defined unconditionally (even if unused)
-    )
+    logic_file_name = f"{base_name}_logic"  # defined unconditionally
 
     class_name = (
         "".join(word.capitalize() for word in base_name.split("_")) + "Logic"
@@ -533,10 +531,10 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
         "# -------------------------------------------------------------------------------",
         "from pathlib import Path",
         "from xstate_statemachine import LoggingInspector",
-        # 👉 add MachineLogic when the auto‑loader is disabled
+        # add MachineLogic **only** when we plan to emit the stub (loader disabled *and* function‑style)
         "from xstate_statemachine import create_machine, "
         + ("Interpreter" if is_async else "SyncInterpreter")
-        + (", MachineLogic" if not loader else ""),
+        + (", MachineLogic" if (not loader and style == "function") else ""),
         "import json",
         "import logging",
     ]
@@ -748,164 +746,167 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
         return "\n".join(code_lines)
 
     # ==================================================================
-    # 🟰  MODE 2 – Flat / legacy (original implementation, untouched)
+    # 🟰  MODE 2 – Flat / legacy
     # ==================================================================
     if len(machine_names) == 1:
+        # ------------------------------------------------------------------
+        # 🐟  Single‑machine runner
+        # ------------------------------------------------------------------
         name = machine_names[0]
         config = configs[0]
         json_filename = json_filenames[0]
         events = sorted(extract_events(config))
+
         code_lines.append(f"{func_prefix}def main() -> None:")
         inner_indent = "    "
-        code_lines.append(
-            f'{inner_indent}"""Executes the simulation for the {name} machine."""'
-        )
-        code_lines.append("")
-        code_lines.append(
-            f"{inner_indent}# ---------------------------------------------------------------------------"
-        )
-        code_lines.append(f"{inner_indent}# 📂 1. Configuration Loading")
-        code_lines.append(
-            f"{inner_indent}# ---------------------------------------------------------------------------"
-        )
-        code_lines.append(
-            f"{inner_indent}config_path = Path(__file__).parent / '{json_filename}'"
-        )
-        code_lines.append(
-            f"{inner_indent}with open(config_path, 'r', encoding='utf-8') as f:"
-        )
-        code_lines.append(f"{inner_indent}    config = json.load(f)")
-        code_lines.append("")
-        code_lines.append(
-            f"{inner_indent}# ---------------------------------------------------------------------------"
-        )
-        code_lines.append(f"{inner_indent}# 🧠 2. Logic Binding")
-        code_lines.append(
-            f"{inner_indent}# ---------------------------------------------------------------------------"
-        )
-        if loader:
+        code_lines += [
+            f'{inner_indent}"""Executes the simulation for the {name} machine."""',
+            "",
+            f"{inner_indent}# ---------------------------------------------------------------------------",
+            f"{inner_indent}# 📂 1. Configuration Loading",
+            f"{inner_indent}# ---------------------------------------------------------------------------",
+            f"{inner_indent}config_path = Path(__file__).parent / '{json_filename}'",
+            f"{inner_indent}with open(config_path, 'r', encoding='utf-8') as f:",
+            f"{inner_indent}    config = json.load(f)",
+            "",
+            f"{inner_indent}# ---------------------------------------------------------------------------",
+            f"{inner_indent}# 🧠 2. Logic Binding",
+            f"{inner_indent}# ---------------------------------------------------------------------------",
+        ]
+
+        # ------------------------ logic binding ---------------------------------
+        if loader:  # 🔍 auto‑discovery ON
             if style == "class":
+                # → class provider instance (auto‑loader inspects it)
                 if file_count == 1:
-                    # single‑file output – class is already in the same module
                     code_lines.append(
                         f"{inner_indent}logic_provider = {class_name}()"
                     )
                 else:
-                    # two‑file output – use the alias imported as *LogicProvider*
                     code_lines.append(
                         f"{inner_indent}logic_provider = LogicProvider()"
                     )
                 code_lines.append(
                     f"{inner_indent}machine = create_machine(config, logic_providers=[logic_provider])"
                 )
-            else:
-                if file_count == 1:  # single‑file → use current module
-                    code_lines.append(f"{inner_indent}import sys")
+            else:  # function style  – auto‑loader inspects module(s)
+                if file_count == 1:
+                    code_lines += [
+                        f"{inner_indent}import sys",
+                        f"{inner_indent}machine = create_machine(config, logic_modules=[sys.modules[__name__]])",
+                    ]
+                else:
                     code_lines.append(
-                        f"{inner_indent}machine = create_machine("
-                        "config, logic_modules=[sys.modules[__name__]])"
+                        f"{inner_indent}machine = create_machine(config, logic_modules=[{logic_file_name}])"
                     )
-                else:  # two‑file → import the helper module
+        else:  # 📴 auto‑discovery OFF → bind logic **explicitly**
+            if style == "class":
+                if file_count == 1:
                     code_lines.append(
-                        f"{inner_indent}machine = create_machine("
-                        f"config, logic_modules=[{logic_file_name}])"
+                        f"{inner_indent}logic_provider = {class_name}()"
                     )
-        else:
-            code_lines.append(
-                f"{inner_indent}# TODO: Fill actions, guards, services"
-            )
-            code_lines.append(
-                f"{inner_indent}machine_logic = MachineLogic(actions={{}}, guards={{}}, services={{}})"
-            )
-            code_lines.append(
-                f"{inner_indent}machine = create_machine(config, logic=machine_logic)"
-            )
-        code_lines.append("")
-        code_lines.append(
-            f"{inner_indent}# ---------------------------------------------------------------------------"
-        )
-        code_lines.append(f"{inner_indent}# ⚙️  3. Interpreter Setup")
-        code_lines.append(
-            f"{inner_indent}# ---------------------------------------------------------------------------"
-        )
+                else:
+                    code_lines.append(
+                        f"{inner_indent}logic_provider = LogicProvider()"
+                    )
+                code_lines.append(
+                    f"{inner_indent}machine = create_machine(config, logic_providers=[logic_provider])"
+                )
+            else:  # function style – pass the module explicitly
+                if file_count == 1:
+                    code_lines += [
+                        f"{inner_indent}import sys",
+                        f"{inner_indent}machine = create_machine(config, logic_modules=[sys.modules[__name__]])",
+                    ]
+                else:
+                    code_lines.append(
+                        f"{inner_indent}machine = create_machine(config, logic_modules=[{logic_file_name}])"
+                    )
+
+        # ------------------------ interpreter setup -----------------------------
+        code_lines += [
+            "",
+            f"{inner_indent}# ---------------------------------------------------------------------------",
+            f"{inner_indent}# ⚙️  3. Interpreter Setup",
+            f"{inner_indent}# ---------------------------------------------------------------------------",
+        ]
         interp_type = (
             "Interpreter(machine)" if is_async else "SyncInterpreter(machine)"
         )
-        code_lines.append(f"{inner_indent}interpreter = {interp_type}")
-        code_lines.append(f"{inner_indent}interpreter.use(LoggingInspector())")
-        code_lines.append(f"{inner_indent}{await_prefix}interpreter.start()")
-        code_lines.append(
-            f'{inner_indent}logger.info(f"Initial state: {{interpreter.current_state_ids}}")'
-        )
-        code_lines.append("")
-        code_lines.append(
-            f"{inner_indent}# ---------------------------------------------------------------------------"
-        )
-        code_lines.append(f"{inner_indent}# 🚀 4. Simulation Scenario")
-        code_lines.append(
-            f"{inner_indent}# ---------------------------------------------------------------------------"
-        )
+        code_lines += [
+            f"{inner_indent}interpreter = {interp_type}",
+            f"{inner_indent}interpreter.use(LoggingInspector())",
+            f"{inner_indent}{await_prefix}interpreter.start()",
+            f"{inner_indent}logger.info(f'Initial state: {{interpreter.current_state_ids}}')",
+            "",
+            f"{inner_indent}# ---------------------------------------------------------------------------",
+            f"{inner_indent}# 🚀 4. Simulation Scenario",
+            f"{inner_indent}# ---------------------------------------------------------------------------",
+        ]
+
         if events:
             for ev in events:
                 human = ev.replace("_", " ").title()
-                code_lines.extend(
-                    [
-                        f"{inner_indent}# {human}",
-                        f"{inner_indent}logger.info('→ Sending %s', '{ev}')",
-                        f"{inner_indent}{await_prefix}interpreter.send('{ev}')",
-                    ]
-                )
+                code_lines += [
+                    f"{inner_indent}# {human}",
+                    f"{inner_indent}logger.info('→ Sending %s', '{ev}')",
+                    f"{inner_indent}{await_prefix}interpreter.send('{ev}')",
+                ]
                 if sleep:
                     code_lines.append(
                         f"{inner_indent}{sleep_cmd}({sleep_time})"
                     )
                 code_lines.append("")
         else:
-            code_lines.append(
-                f"{inner_indent}logger.info('No events declared in the machine.')"
-            )
-            code_lines.append("")
-        code_lines.append(f"{inner_indent}{await_prefix}interpreter.stop()")
-        code_lines.append("")
+            code_lines += [
+                f"{inner_indent}logger.info('No events declared in the machine.')",
+                "",
+            ]
+
+        code_lines += [
+            f"{inner_indent}{await_prefix}interpreter.stop()",
+            "",
+        ]
+
+        # ------------------------ bootstrap guard -------------------------------
         if is_async:
-            code_lines.append("if __name__ == '__main__':")
-            code_lines.append("    asyncio.run(main())")
+            code_lines += [
+                "if __name__ == '__main__':",
+                "    asyncio.run(main())",
+            ]
         else:
-            code_lines.append("if __name__ == '__main__':")
-            code_lines.append("    main()")
+            code_lines += [
+                "if __name__ == '__main__':",
+                "    main()",
+            ]
+
     else:
+        # ------------------------------------------------------------------
+        # 🐙  Multiple independent machines (flat mode)
+        # ------------------------------------------------------------------
         for idx, name in enumerate(machine_names):
             config = configs[idx]
             json_filename = json_filenames[idx]
             events = sorted(extract_events(config))
+
             code_lines.append(f"{func_prefix}def run_{name}() -> None:")
             inner_indent = "    "
-            code_lines.append(
-                f'{inner_indent}"""Executes the simulation for the {name} machine."""'
-            )
-            code_lines.append("")
-            code_lines.append(
-                f"{inner_indent}# ---------------------------------------------------------------------------"
-            )
-            code_lines.append(f"{inner_indent}# 📂 1. Configuration Loading")
-            code_lines.append(
-                f"{inner_indent}# ---------------------------------------------------------------------------"
-            )
-            code_lines.append(
-                f"{inner_indent}config_path = Path(__file__).parent / '{json_filename}'"
-            )
-            code_lines.append(
-                f"{inner_indent}with open(config_path, 'r', encoding='utf-8') as f:"
-            )
-            code_lines.append(f"{inner_indent}    config = json.load(f)")
-            code_lines.append("")
-            code_lines.append(
-                f"{inner_indent}# ---------------------------------------------------------------------------"
-            )
-            code_lines.append(f"{inner_indent}# 🧠 2. Logic Binding")
-            code_lines.append(
-                f"{inner_indent}# ---------------------------------------------------------------------------"
-            )
+            code_lines += [
+                f'{inner_indent}"""Executes the simulation for the {name} machine."""',
+                "",
+                f"{inner_indent}# ---------------------------------------------------------------------------",
+                f"{inner_indent}# 📂 1. Configuration Loading",
+                f"{inner_indent}# ---------------------------------------------------------------------------",
+                f"{inner_indent}config_path = Path(__file__).parent / '{json_filename}'",
+                f"{inner_indent}with open(config_path, 'r', encoding='utf-8') as f:",
+                f"{inner_indent}    config = json.load(f)",
+                "",
+                f"{inner_indent}# ---------------------------------------------------------------------------",
+                f"{inner_indent}# 🧠 2. Logic Binding",
+                f"{inner_indent}# ---------------------------------------------------------------------------",
+            ]
+
+            # ------------------ logic binding (per machine) --------------------
             if loader:
                 if style == "class":
                     if file_count == 1:
@@ -920,86 +921,102 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
                         f"{inner_indent}machine = create_machine(config, logic_providers=[logic_provider])"
                     )
                 else:
+                    if file_count == 1:
+                        code_lines += [
+                            f"{inner_indent}import sys",
+                            f"{inner_indent}machine = create_machine(config, logic_modules=[sys.modules[__name__]])",
+                        ]
+                    else:
+                        code_lines.append(
+                            f"{inner_indent}machine = create_machine(config, logic_modules=[{logic_file_name}])"
+                        )
+            else:  # loader OFF
+                if style == "class":
+                    if file_count == 1:
+                        code_lines.append(
+                            f"{inner_indent}logic_provider = {class_name}()"
+                        )
+                    else:
+                        code_lines.append(
+                            f"{inner_indent}logic_provider = LogicProvider()"
+                        )
                     code_lines.append(
-                        f"{inner_indent}machine = create_machine(config, logic_modules=[{logic_file_name}])"
+                        f"{inner_indent}machine = create_machine(config, logic_providers=[logic_provider])"
                     )
-            else:
-                code_lines.append(
-                    f"{inner_indent}# TODO: Fill actions, guards, services"
-                )
-                code_lines.append(
-                    f"{inner_indent}machine_logic = MachineLogic(actions={{}}, guards={{}}, services={{}})"
-                )
-                code_lines.append(
-                    f"{inner_indent}machine = create_machine(config, logic=machine_logic)"
-                )
-            code_lines.append("")
-            code_lines.append(
-                f"{inner_indent}# ---------------------------------------------------------------------------"
-            )
-            code_lines.append(f"{inner_indent}# ⚙️  3. Interpreter Setup")
-            code_lines.append(
-                f"{inner_indent}# ---------------------------------------------------------------------------"
-            )
+                else:
+                    if file_count == 1:
+                        code_lines += [
+                            f"{inner_indent}import sys",
+                            f"{inner_indent}machine = create_machine(config, logic_modules=[sys.modules[__name__]])",
+                        ]
+                    else:
+                        code_lines.append(
+                            f"{inner_indent}machine = create_machine(config, logic_modules=[{logic_file_name}])"
+                        )
+
+            # ------------------ interpreter setup ------------------------------
+            code_lines += [
+                "",
+                f"{inner_indent}# ---------------------------------------------------------------------------",
+                f"{inner_indent}# ⚙️  3. Interpreter Setup",
+                f"{inner_indent}# ---------------------------------------------------------------------------",
+            ]
             interp_type = (
                 "Interpreter(machine)"
                 if is_async
                 else "SyncInterpreter(machine)"
             )
-            code_lines.append(f"{inner_indent}interpreter = {interp_type}")
-            code_lines.append(
-                f"{inner_indent}interpreter.use(LoggingInspector())"
-            )
-            code_lines.append(
-                f"{inner_indent}{await_prefix}interpreter.start()"
-            )
-            code_lines.append(
-                f'{inner_indent}logger.info(f"Initial state: {{interpreter.current_state_ids}}")'
-            )
-            code_lines.append("")
-            code_lines.append(
-                f"{inner_indent}# ---------------------------------------------------------------------------"
-            )
-            code_lines.append(f"{inner_indent}# 🚀 4. Simulation Scenario")
-            code_lines.append(
-                f"{inner_indent}# ---------------------------------------------------------------------------"
-            )
+            code_lines += [
+                f"{inner_indent}interpreter = {interp_type}",
+                f"{inner_indent}interpreter.use(LoggingInspector())",
+                f"{inner_indent}{await_prefix}interpreter.start()",
+                f'{inner_indent}logger.info(f"Initial state: {{interpreter.current_state_ids}}")',
+                "",
+                f"{inner_indent}# ---------------------------------------------------------------------------",
+                f"{inner_indent}# 🚀 4. Simulation Scenario",
+                f"{inner_indent}# ---------------------------------------------------------------------------",
+            ]
+
             if events:
                 for ev in events:
                     human = ev.replace("_", " ").title()
-                    code_lines.extend(
-                        [
-                            f"{inner_indent}# {human}",
-                            f"{inner_indent}logger.info('→ Sending %s', '{ev}')",
-                            f"{inner_indent}{await_prefix}interpreter.send('{ev}')",
-                        ]
-                    )
+                    code_lines += [
+                        f"{inner_indent}# {human}",
+                        f"{inner_indent}logger.info('→ Sending %s', '{ev}')",
+                        f"{inner_indent}{await_prefix}interpreter.send('{ev}')",
+                    ]
                     if sleep:
                         code_lines.append(
                             f"{inner_indent}{sleep_cmd}({sleep_time})"
                         )
                     code_lines.append("")
             else:
-                code_lines.append(
-                    f"{inner_indent}logger.info('No events declared in this machine.')"
-                )
-                code_lines.append("")
-            code_lines.append(
-                f"{inner_indent}{await_prefix}interpreter.stop()"
-            )
-            code_lines.append("")
+                code_lines += [
+                    f"{inner_indent}logger.info('No events declared in this machine.')",
+                    "",
+                ]
 
+            code_lines += [
+                f"{inner_indent}{await_prefix}interpreter.stop()",
+                "",
+            ]
+
+        # --------------- top‑level dispatcher (multiple machines) --------------
         code_lines.append(f"{func_prefix}def main() -> None:")
         inner_indent = "    "
         for name in machine_names:
             code_lines.append(f"{inner_indent}{await_prefix}run_{name}()")
         code_lines.append("")
         if is_async:
-            code_lines.append("if __name__ == '__main__':")
-            code_lines.append("    asyncio.run(main())")
+            code_lines += [
+                "if __name__ == '__main__':",
+                "    asyncio.run(main())",
+            ]
         else:
-            code_lines.append("if __name__ == '__main__':")
-            code_lines.append("    main()")
+            code_lines += [
+                "if __name__ == '__main__':",
+                "    main()",
+            ]
 
     return "\n".join(code_lines)
 
