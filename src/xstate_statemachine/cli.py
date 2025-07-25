@@ -36,7 +36,7 @@ from typing import Any, Dict, List, Set, Tuple
 from . import __version__ as package_version
 
 # -----------------------------------------------------------------------------
-# 🪵 Logger Configuration
+# 🧾Logger Configuration
 # -----------------------------------------------------------------------------
 # Emojis are used to provide quick visual cues for different log levels.
 # ℹ️ INFO | ⚠️ WARNING | ❌ ERROR
@@ -293,6 +293,7 @@ def generate_logic_code(  # noqa: C901 – long but readable, generated code
     log: bool,
     is_async: bool,
     machine_name: str,
+    file_count: int,
 ) -> str:
     """Return the source for ``*_logic.py`` generated from a machine definition.
 
@@ -308,31 +309,46 @@ def generate_logic_code(  # noqa: C901 – long but readable, generated code
         log:           Insert ``logger.info`` scaffolding when *True*.
         is_async:      Generate ``async def`` stubs instead of sync ones.
         machine_name:  Base name used for the provider class / module.
+        file_count:    1 → combined file, 2 → separate logic/runner files.
     """
     # ------------------------------------------------------------------
     # 📑  Imports & logger
     # ------------------------------------------------------------------
+    file_title = (
+        "# 📡 Generated Logic File"
+        if file_count != 1
+        else "# 📡 Generated File"
+    )
     header: List[str] = [
         "# -------------------------------------------------------------------------------",
-        "# 📡 Generated Logic File",
+        f"{file_title}",
         "# -------------------------------------------------------------------------------",
+        "",
     ]
     if is_async:
         header += ["import asyncio", "from typing import Awaitable"]
 
     header += [
-        "import logging",
         *(["import time"] if (services and not is_async) else []),
         "from typing import Any, Dict, Union",
         "",
         "from xstate_statemachine import Interpreter, SyncInterpreter, Event, ActionDefinition",
         "",
-        "# -----------------------------------------------------------------------------",
-        "# 🪵 Logger Configuration",
-        "# -----------------------------------------------------------------------------",
-        "logger = logging.getLogger(__name__)",
         "",
     ]
+
+    if log:
+        header.append("import logging")
+        header.append("")
+        header.append(
+            "# -----------------------------------------------------------------------------"
+        )
+        header.append("#🧾Logger Configuration")
+        header.append(
+            "# -----------------------------------------------------------------------------"
+        )
+        header.append("logger = logging.getLogger(__name__)")
+        header.append("")
 
     # ------------------------------------------------------------------
     # Helper – camelCase → snake_case
@@ -536,8 +552,9 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
         + ("Interpreter" if is_async else "SyncInterpreter")
         + (", MachineLogic" if (not loader and style == "function") else ""),
         "import json",
-        "import logging",
     ]
+    if log:
+        code_lines.append("import logging")
     if sleep and not is_async:
         code_lines.append("import time")
     if is_async:
@@ -545,6 +562,17 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
     code_lines.append("")
 
     if log:
+        if file_count != 1:
+            code_lines.append("")
+            code_lines.append(
+                "# -----------------------------------------------------------------------------"
+            )
+            code_lines.append("# 🧾 Logger Configuration")
+            code_lines.append(
+                "# -----------------------------------------------------------------------------"
+            )
+            code_lines.append("")
+
         code_lines.extend(
             [
                 "logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')",
@@ -563,6 +591,7 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
             )
         else:
             code_lines.append(f"import {logic_file_name}")
+        code_lines.append("")
         code_lines.append("")
 
     func_prefix = "async " if is_async else ""
@@ -671,13 +700,19 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
         if parent_events:
             for ev in parent_events:
                 human = ev.replace("_", " ").title()
-                code_lines.extend(
-                    [
-                        f"    # {human}",
-                        f"    logger.info('Parent → sending %s', '{ev}')",
-                        f"    {await_prefix}parent.send('{ev}')",
-                    ]
-                )
+                code_lines.append(f"    # {human}")
+                if log:
+                    code_lines.append(
+                        f"    logger.info('Parent → sending %s', '{ev}')"
+                    )
+                code_lines.append(f"    {await_prefix}parent.send('{ev}')")
+                # code_lines.extend(
+                #     [
+                #         f"    # {human}",
+                #         f"    logger.info('Parent → sending %s', '{ev}')",
+                #         f"    {await_prefix}parent.send('{ev}')",
+                #     ]
+                # )
                 if sleep:
                     code_lines.append(f"    {sleep_cmd}({sleep_time})")
                 code_lines.append("")
@@ -700,13 +735,21 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
             if actor_events:
                 for ev in actor_events:
                     human = ev.replace("_", " ").title()
-                    code_lines.extend(
-                        [
-                            f"    # {human}",
-                            f"    logger.info('{a_name} → sending %s', '{ev}')",
-                            f"    {await_prefix}actors['{a_name}'].send('{ev}')",
-                        ]
+                    code_lines.append(f"    # {human}")
+                    if log:
+                        code_lines.append(
+                            f"    logger.info('{a_name} → sending %s', '{ev}')"
+                        )
+                    code_lines.append(
+                        f"    {await_prefix}actors['{a_name}'].send('{ev}')"
                     )
+                    # code_lines.extend(
+                    #     [
+                    #         f"    # {human}",
+                    #         f"    logger.info('{a_name} → sending %s', '{ev}')",
+                    #         f"    {await_prefix}actors['{a_name}'].send('{ev}')",
+                    #     ]
+                    # )
                     if sleep:
                         code_lines.append(f"    {sleep_cmd}({sleep_time})")
                     code_lines.append("")
@@ -837,7 +880,14 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
             f"{inner_indent}interpreter = {interp_type}",
             f"{inner_indent}interpreter.use(LoggingInspector())",
             f"{inner_indent}{await_prefix}interpreter.start()",
-            f"{inner_indent}logger.info(f'Initial state: {{interpreter.current_state_ids}}')",
+        ]
+
+        if log:
+            code_lines.append(
+                f"{inner_indent}logger.info(f'Initial state: {{interpreter.current_state_ids}}')",
+            )
+
+        code_lines += [
             "",
             f"{inner_indent}# ---------------------------------------------------------------------------",
             f"{inner_indent}# 🚀 4. Simulation Scenario",
@@ -847,11 +897,20 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
         if events:
             for ev in events:
                 human = ev.replace("_", " ").title()
-                code_lines += [
-                    f"{inner_indent}# {human}",
-                    f"{inner_indent}logger.info('→ Sending %s', '{ev}')",
-                    f"{inner_indent}{await_prefix}interpreter.send('{ev}')",
-                ]
+                # code_lines += [
+                #     f"{inner_indent}# {human}",
+                #     f"{inner_indent}logger.info('→ Sending %s', '{ev}')",
+                #     f"{inner_indent}{await_prefix}interpreter.send('{ev}')",
+                # ]
+                code_lines.append(f"{inner_indent}# {human}")
+                if log:
+                    code_lines.append(
+                        f"{inner_indent}logger.info('→ Sending %s', '{ev}')"
+                    )
+                code_lines.append(
+                    f"{inner_indent}{await_prefix}interpreter.send('{ev}')"
+                )
+
                 if sleep:
                     code_lines.append(
                         f"{inner_indent}{sleep_cmd}({sleep_time})"
@@ -970,19 +1029,29 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
                 f"{inner_indent}interpreter = {interp_type}",
                 f"{inner_indent}interpreter.use(LoggingInspector())",
                 f"{inner_indent}{await_prefix}interpreter.start()",
-                f'{inner_indent}logger.info(f"Initial state: {{interpreter.current_state_ids}}")',
                 "",
                 f"{inner_indent}# ---------------------------------------------------------------------------",
                 f"{inner_indent}# 🚀 4. Simulation Scenario",
                 f"{inner_indent}# ---------------------------------------------------------------------------",
             ]
 
+            if log:
+                code_lines.append(
+                    f'{inner_indent}logger.info(f"Initial state: {{interpreter.current_state_ids}}")'
+                )
+
             if events:
                 for ev in events:
                     human = ev.replace("_", " ").title()
                     code_lines += [
                         f"{inner_indent}# {human}",
-                        f"{inner_indent}logger.info('→ Sending %s', '{ev}')",
+                        *(  # first line only when logging is enabled
+                            [
+                                f"{inner_indent}logger.info('→ Sending %s', '{ev}')"
+                            ]
+                            if log
+                            else []
+                        ),
                         f"{inner_indent}{await_prefix}interpreter.send('{ev}')",
                     ]
                     if sleep:
@@ -1342,6 +1411,7 @@ def main():  # noqa: C901 – function is long but readable
             log_bool,
             async_bool,
             base_name,
+            args.file_count,
         )
         runner_code = generate_runner_code(
             machine_names,
