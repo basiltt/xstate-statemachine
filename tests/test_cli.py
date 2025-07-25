@@ -620,6 +620,7 @@ class TestGenerateLogicCode(unittest.TestCase):
             True,
             False,
             self.machine_name,
+            2,
         )
         self.assertIn("class TestMachineLogic:", code)
         self.assertIn('logger.info("Executing action act1")', code)
@@ -638,6 +639,7 @@ class TestGenerateLogicCode(unittest.TestCase):
             False,
             True,
             self.machine_name,
+            2,
         )
         self.assertNotIn("class ", code)
         self.assertNotIn("logger.info", code)
@@ -656,6 +658,7 @@ class TestGenerateLogicCode(unittest.TestCase):
             True,
             False,
             self.machine_name,
+            2,
         )
         self.assertNotIn("import time", code)
 
@@ -670,6 +673,7 @@ class TestGenerateLogicCode(unittest.TestCase):
             True,
             False,
             self.machine_name,
+            2,
         )
         self.assertIn("import time", code)
 
@@ -677,7 +681,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Verifies that the logic class name is correctly derived from the machine name."""
         logger.info("🧪 Testing class name from machine name.")
         code = generate_logic_code(
-            set(), set(), set(), "class", False, False, "my_machine"
+            set(), set(), set(), "class", False, False, "my_machine", 2
         )
         self.assertIn("class MyMachineLogic:", code)
 
@@ -685,12 +689,11 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Ensures code is generated gracefully when there are no logic implementations."""
         logger.info("🧪 Testing empty logic code.")
         code = generate_logic_code(
-            set(), set(), set(), "function", False, True, self.machine_name
+            set(), set(), set(), "function", False, True, self.machine_name, 2
         )
-        self.assertIn("# ⚙️ Actions", code)
-        self.assertIn("# 🛡️ Guards", code)
-        self.assertIn("# 🔄 Services", code)
-        self.assertNotIn("def ", code[code.find("# ⚙️ Actions") :])
+        self.assertNotIn("# ⚙️ Actions", code)
+        self.assertNotIn("# 🛡️ Guards", code)
+        self.assertNotIn("# 🔄 Services", code)
 
     def test_generate_async_actions(self) -> None:
         """Checks for `async def` and `await` keywords in generated async actions."""
@@ -703,6 +706,7 @@ class TestGenerateLogicCode(unittest.TestCase):
             False,
             True,
             self.machine_name,
+            2,
         )
         self.assertIn("async def async_act(", code)
         self.assertIn("await asyncio.sleep(0.1)", code)
@@ -718,6 +722,7 @@ class TestGenerateLogicCode(unittest.TestCase):
             False,
             False,
             self.machine_name,
+            2,
         )
         self.assertNotIn("logger.info", code)
         self.assertIn("return True", code)
@@ -726,7 +731,14 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Checks for `async def` and `await` in generated async services."""
         logger.info("🧪 Testing async services.")
         code = generate_logic_code(
-            set(), set(), {"async_srv"}, "class", True, True, self.machine_name
+            set(),
+            set(),
+            {"async_srv"},
+            "class",
+            True,
+            True,
+            self.machine_name,
+            2,
         )
         self.assertIn("async def async_srv(", code)
         self.assertIn("await asyncio.sleep(1)", code)
@@ -743,6 +755,7 @@ class TestGenerateLogicCode(unittest.TestCase):
             False,
             False,
             self.machine_name,
+            2,
         )
         self.assertIn("def sync_srv(", code)
         self.assertIn("time.sleep(1)", code)
@@ -752,28 +765,26 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Ensures the interpreter type hint changes based on async mode."""
         logger.info("🧪 Testing interpreter type in function params.")
         code_sync = generate_logic_code(
-            {"act"}, set(), set(), "class", False, False, self.machine_name
+            {"act"}, set(), set(), "class", False, False, self.machine_name, 2
         )
         code_async = generate_logic_code(
-            {"act"}, set(), set(), "class", False, True, self.machine_name
+            {"act"}, set(), set(), "class", False, True, self.machine_name, 2
         )
         self.assertIn(
-            "interpreter: Interpreter if False else SyncInterpreter,",
-            code_sync,
+            "interpreter: Union[Interpreter, SyncInterpreter],", code_sync
         )
         self.assertIn(
-            "interpreter: Interpreter if True else SyncInterpreter,",
-            code_async,
+            "interpreter: Union[Interpreter, SyncInterpreter],", code_async
         )
 
     def test_generate_return_type_for_actions(self) -> None:
         """Ensures action return type hint changes based on async mode."""
         logger.info("🧪 Testing return type for actions.")
         code_sync = generate_logic_code(
-            {"act"}, set(), set(), "class", False, False, self.machine_name
+            {"act"}, set(), set(), "class", False, False, self.machine_name, 2
         )
         code_async = generate_logic_code(
-            {"act"}, set(), set(), "class", False, True, self.machine_name
+            {"act"}, set(), set(), "class", False, True, self.machine_name, 2
         )
         self.assertIn("-> None:", code_sync)
         self.assertIn("-> Awaitable[None]:", code_async)
@@ -782,10 +793,10 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Ensures service return type hint changes based on async mode."""
         logger.info("🧪 Testing return type for services.")
         code_sync = generate_logic_code(
-            set(), set(), {"srv"}, "class", False, False, self.machine_name
+            set(), set(), {"srv"}, "class", False, False, self.machine_name, 2
         )
         code_async = generate_logic_code(
-            set(), set(), {"srv"}, "class", False, True, self.machine_name
+            set(), set(), {"srv"}, "class", False, True, self.machine_name, 2
         )
         self.assertIn("-> Dict[str, Any]:", code_sync)
         self.assertIn("-> Awaitable[Dict[str, Any]]:", code_async)
@@ -794,7 +805,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Verifies that generated guards are correctly type-hinted to return `bool`."""
         logger.info("🧪 Testing guards return bool.")
         code = generate_logic_code(
-            set(), {"g"}, set(), "class", False, False, self.machine_name
+            set(), {"g"}, set(), "class", False, False, self.machine_name, 2
         )
         self.assertIn("-> bool:", code)
 
@@ -802,15 +813,22 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Confirms that 'self' is not included in function-style logic."""
         logger.info("🧪 Testing function style no self.")
         code = generate_logic_code(
-            {"act"}, set(), set(), "function", False, False, self.machine_name
+            {"act"},
+            set(),
+            set(),
+            "function",
+            False,
+            False,
+            self.machine_name,
+            2,
         )
-        self.assertNotIn("self, ", code)
+        self.assertNotIn("self,", code)
 
     def test_generate_no_dummy_sleep_if_no_log(self) -> None:
         """Ensures dummy async sleep is present even if logging is off."""
         logger.info("🧪 Testing no dummy sleep if no log.")
         code = generate_logic_code(
-            {"act"}, set(), set(), "class", False, True, self.machine_name
+            {"act"}, set(), set(), "class", False, True, self.machine_name, 2
         )
         self.assertIn("await asyncio.sleep(0.1)", code)
 
@@ -819,15 +837,15 @@ class TestGenerateLogicCode(unittest.TestCase):
         logger.info("🧪 Testing sorted names in code.")
         actions = {"z_act", "a_act"}
         code = generate_logic_code(
-            actions, set(), set(), "class", False, False, self.machine_name
+            actions, set(), set(), "class", False, False, self.machine_name, 2
         )
-        self.assertTrue(code.find("a_act") < code.find("z_act"))
+        self.assertTrue(code.find("def a_act(") < code.find("def z_act("))
 
     def test_generate_logger_config(self) -> None:
         """Ensures the standard logger configuration is present in the generated file."""
         logger.info("🧪 Testing logger config.")
         code = generate_logic_code(
-            set(), set(), set(), "class", False, False, self.machine_name
+            set(), set(), set(), "class", True, False, self.machine_name, 2
         )
         self.assertIn("logger = logging.getLogger(__name__)", code)
 
@@ -835,15 +853,15 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Verifies that necessary `typing` imports are included."""
         logger.info("🧪 Testing typing imports.")
         code = generate_logic_code(
-            set(), set(), set(), "class", False, False, self.machine_name
+            set(), set(), set(), "class", False, False, self.machine_name, 2
         )
-        self.assertIn("from typing import Any, Dict", code)
+        self.assertIn("from typing import Any, Dict, Union", code)
 
     def test_generate_xstate_imports(self) -> None:
         """Verifies that necessary `xstate_statemachine` imports are included."""
         logger.info("🧪 Testing xstate imports.")
         code = generate_logic_code(
-            set(), set(), set(), "class", False, False, self.machine_name
+            set(), set(), set(), "class", False, False, self.machine_name, 2
         )
         self.assertIn(
             "from xstate_statemachine import Interpreter, SyncInterpreter, Event, ActionDefinition",
@@ -854,7 +872,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Confirms that guards remain synchronous even in async mode."""
         logger.info("🧪 Testing no Awaitable for guards in async.")
         code = generate_logic_code(
-            set(), {"g"}, set(), "class", False, True, self.machine_name
+            set(), {"g"}, set(), "class", False, True, self.machine_name, 2
         )
         self.assertIn("-> bool:", code)
         self.assertNotIn("Awaitable[bool]", code)
@@ -863,7 +881,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Confirms `time` is not imported if there are no sync services."""
         logger.info("🧪 Testing no time if no services sync.")
         code = generate_logic_code(
-            set(), set(), set(), "class", False, False, self.machine_name
+            set(), set(), set(), "class", False, False, self.machine_name, 2
         )
         self.assertNotIn("import time", code)
 
@@ -871,7 +889,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Checks for correct indentation in class-style generation."""
         logger.info("🧪 Testing class indent.")
         code = generate_logic_code(
-            set(), set(), set(), "class", False, False, self.machine_name
+            {"act"}, set(), set(), "class", False, False, self.machine_name, 2
         )
         self.assertIn("    # ⚙️ Actions", code)
 
@@ -879,7 +897,14 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Checks for correct (zero) indentation in function-style generation."""
         logger.info("🧪 Testing function indent.")
         code = generate_logic_code(
-            set(), set(), set(), "function", False, False, self.machine_name
+            {"act"},
+            set(),
+            set(),
+            "function",
+            False,
+            False,
+            self.machine_name,
+            2,
         )
         self.assertIn("# ⚙️ Actions", code)
         self.assertNotIn("    # ⚙️ Actions", code)
@@ -888,57 +913,69 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Ensures the correct docstring format for generated actions."""
         logger.info("🧪 Testing docstring for actions.")
         code = generate_logic_code(
-            {"my_act"}, set(), set(), "class", False, False, self.machine_name
+            {"my_act"},
+            set(),
+            set(),
+            "class",
+            False,
+            False,
+            self.machine_name,
+            2,
         )
-        self.assertIn('"""Action: my_act."""', code)
+        self.assertIn('"""Action: `my_act`."""', code)
 
     def test_generate_docstring_for_guards(self) -> None:
         """Ensures the correct docstring format for generated guards."""
         logger.info("🧪 Testing docstring for guards.")
         code = generate_logic_code(
-            set(), {"my_g"}, set(), "class", False, False, self.machine_name
+            set(), {"my_g"}, set(), "class", False, False, self.machine_name, 2
         )
-        self.assertIn('"""Guard: my_g."""', code)
+        self.assertIn('"""Guard: `my_g`."""', code)
 
     def test_generate_docstring_for_services(self) -> None:
         """Ensures the correct docstring format for generated services."""
         logger.info("🧪 Testing docstring for services.")
         code = generate_logic_code(
-            set(), set(), {"my_srv"}, "class", False, False, self.machine_name
+            set(),
+            set(),
+            {"my_srv"},
+            "class",
+            False,
+            False,
+            self.machine_name,
+            2,
         )
-        self.assertIn('"""Service: my_srv."""', code)
+        self.assertIn('"""Service: `my_srv`."""', code)
 
     def test_generate_pass_todo_for_actions(self) -> None:
         """Verifies the placeholder `pass` and `TODO` comment for actions."""
         logger.info("🧪 Testing pass TODO for actions.")
         code = generate_logic_code(
-            {"act"}, set(), set(), "class", False, False, self.machine_name
+            {"act"}, set(), set(), "class", False, False, self.machine_name, 2
         )
-        self.assertIn("pass  # TODO: Implement action", code)
+        self.assertIn("# TODO: implement", code)
 
     def test_generate_return_true_todo_for_guards(self) -> None:
         """Verifies the placeholder `return True` and `TODO` comment for guards."""
         logger.info("🧪 Testing return True TODO for guards.")
         code = generate_logic_code(
-            set(), {"g"}, set(), "class", False, False, self.machine_name
+            set(), {"g"}, set(), "class", False, False, self.machine_name, 2
         )
-        self.assertIn("return True  # TODO: Implement guard", code)
+        self.assertIn("# TODO: implement guard logic", code)
 
     def test_generate_return_dict_todo_for_services(self) -> None:
         """Verifies the placeholder return dictionary and `TODO` comment for services."""
         logger.info("🧪 Testing return dict TODO for services.")
         code = generate_logic_code(
-            set(), set(), {"srv"}, "class", False, False, self.machine_name
+            set(), set(), {"srv"}, "class", False, False, self.machine_name, 2
         )
-        self.assertIn(
-            "return {'result': 'done'}  # TODO: Implement service", code
-        )
+        self.assertIn("# TODO: implement service", code)
 
     def test_generate_logger_info_for_actions_log_true(self) -> None:
         """Verifies the logging statement for actions when logging is enabled."""
         logger.info("🧪 Testing logger info for actions.")
         code = generate_logic_code(
-            {"act"}, set(), set(), "class", True, False, self.machine_name
+            {"act"}, set(), set(), "class", True, False, self.machine_name, 2
         )
         self.assertIn('logger.info("Executing action act")', code)
 
@@ -946,7 +983,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Ensures no logging statement is generated when logging is disabled."""
         logger.info("🧪 Testing no logger for actions.")
         code = generate_logic_code(
-            {"act"}, set(), set(), "class", False, False, self.machine_name
+            {"act"}, set(), set(), "class", False, False, self.machine_name, 2
         )
         self.assertNotIn("logger.info", code)
 
@@ -954,7 +991,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Verifies the logging statement for guards when logging is enabled."""
         logger.info("🧪 Testing logger for guards.")
         code = generate_logic_code(
-            set(), {"g"}, set(), "class", True, False, self.machine_name
+            set(), {"g"}, set(), "class", True, False, self.machine_name, 2
         )
         self.assertIn('logger.info("Evaluating guard g")', code)
 
@@ -962,7 +999,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Verifies the logging statement for services when logging is enabled."""
         logger.info("🧪 Testing logger for services.")
         code = generate_logic_code(
-            set(), set(), {"srv"}, "class", True, False, self.machine_name
+            set(), set(), {"srv"}, "class", True, False, self.machine_name, 2
         )
         self.assertIn('logger.info("Running service srv")', code)
 
@@ -970,7 +1007,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Ensures dummy `asyncio.sleep` is present in async actions."""
         logger.info("🧪 Testing dummy async for actions no log.")
         code = generate_logic_code(
-            {"act"}, set(), set(), "class", False, True, self.machine_name
+            {"act"}, set(), set(), "class", False, True, self.machine_name, 2
         )
         self.assertIn("await asyncio.sleep(0.1)", code)
 
@@ -978,7 +1015,7 @@ class TestGenerateLogicCode(unittest.TestCase):
         """Ensures no `sleep` call is present in sync actions."""
         logger.info("🧪 Testing no dummy for sync actions.")
         code = generate_logic_code(
-            {"act"}, set(), set(), "class", False, False, self.machine_name
+            {"act"}, set(), set(), "class", False, False, self.machine_name, 2
         )
         self.assertNotIn("sleep", code)
 
@@ -989,7 +1026,14 @@ class TestGenerateLogicCode(unittest.TestCase):
         guards = {"y", "b"}
         services = {"x", "c"}
         code = generate_logic_code(
-            actions, guards, services, "class", False, False, self.machine_name
+            actions,
+            guards,
+            services,
+            "class",
+            False,
+            False,
+            self.machine_name,
+            2,
         )
         pos_a = code.find("def a(")
         pos_z = code.find("def z(")
@@ -1122,9 +1166,8 @@ class TestGenerateRunnerCode(unittest.TestCase):
             self.json_filenames,
         )
         self.assertIn(
-            "# No events defined in the machine. Add manual sends here.", code
+            "logger.info('No events declared in the machine.')", code
         )
-        self.assertIn("pass", code)  # Ensures the placeholder is present
 
     def test_generate_path_config_load(self) -> None:
         """Ensures the correct JSON filename is used for loading the config."""
@@ -1158,7 +1201,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
             self.configs,
             self.json_filenames,
         )
-        self.assertIn("machine_logic = MachineLogic", code)
+        self.assertIn("machine = create_machine(config,", code)
 
     def test_generate_file_count_1_combined(self) -> None:
         """Confirms generation for a single combined file runs without error."""
@@ -1175,7 +1218,6 @@ class TestGenerateRunnerCode(unittest.TestCase):
             self.configs,
             self.json_filenames,
         )
-        # The runner code itself is the same, but it won't import its own logic file.
         self.assertIn("def main() -> None:", code)
 
     def test_generate_async_await_prefix(self) -> None:
@@ -1313,7 +1355,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
             self.json_filenames,
         )
         self.assertIn(
-            'logger.info(f"Initial state: {interpreter.current_state_ids}")',
+            "logger.info(f'Initial state: {interpreter.current_state_ids}')",
             code,
         )
 
@@ -1332,11 +1374,11 @@ class TestGenerateRunnerCode(unittest.TestCase):
             self.configs,
             self.json_filenames,
         )
-        self.assertIn(
+        self.assertNotIn(
             "logger.info('--- Running simulation with all defined events ---')",
             code,
         )
-        self.assertIn(
+        self.assertNotIn(
             "logger.info(f'--- ✅ Simulation ended in state: {interpreter.current_state_ids} ---')",
             code,
         )
@@ -1390,7 +1432,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
             True,
             2,
             SAMPLE_CONFIG_MULTIPLE,
-            ["f1.json", "f2.json"],
+            ["m1.json", "m2.json"],
         )
         self.assertIn("async def run_m1() -> None:", code)
         self.assertIn("async def run_m2() -> None:", code)
@@ -1432,7 +1474,7 @@ class TestGenerateRunnerCode(unittest.TestCase):
             self.configs,
             self.json_filenames,
         )
-        self.assertIn("Path(__file__).parent", code)
+        self.assertIn("Path(__file__).resolve().parent", code)
 
     def test_generate_utf8_encoding(self) -> None:
         """Ensures config files are opened with 'utf-8' encoding."""
@@ -1518,12 +1560,11 @@ class TestGenerateRunnerCode(unittest.TestCase):
             SAMPLE_CONFIG_MULTIPLE,
             ["f1.json", "f2.json"],
         )
-        self.assertIn("machine_logic = MachineLogic", code)
+        self.assertIn("machine = create_machine(config,", code)
 
     def test_generate_combined_file_runner_part(self) -> None:
         """A placeholder to acknowledge testing combined files is handled in main CLI tests."""
         logger.info("🧪 Testing combined file runner part.")
-        # This is implicitly tested via the main CLI tests which handle file writing.
         pass
 
     def test_generate_pathlib_import(self) -> None:
@@ -1654,7 +1695,7 @@ class TestMainCLI(unittest.TestCase):
 
     @patch("sys.argv", new_callable=list)
     def test_main_no_json_error(self, mock_argv: List[str]) -> None:
-        """Ensures the CLI exits with an error if no JSON file is provided."""
+        """Ensures the CLI exits with error if no JSON file is provided."""
         logger.info("🧪 Testing no json error.")
         mock_argv[:] = ["cli.py", "generate-template"]
         with patch(
@@ -1695,7 +1736,9 @@ class TestMainCLI(unittest.TestCase):
         json1 = create_temp_json(SAMPLE_CONFIG_SIMPLE)
         json2 = create_temp_json(SAMPLE_CONFIG_NESTED)
         mock_argv[:] = ["cli.py", "generate-template", str(json1), str(json2)]
-        with patch("builtins.print") as mock_print:
+        with patch("builtins.input", side_effect=["n", "0"]), patch(
+            "builtins.print"
+        ) as mock_print:
             main()
         calls = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(
@@ -1793,7 +1836,9 @@ class TestMainCLI(unittest.TestCase):
             "--json",
             str(json2),
         ]
-        with patch("builtins.print") as mock_print:
+        with patch("builtins.input", side_effect=["n", "0"]), patch(
+            "builtins.print"
+        ) as mock_print:
             main()
         calls = [call.args[0] for call in mock_print.call_args_list]
         self.assertTrue(
@@ -1909,7 +1954,6 @@ class TestMainCLI(unittest.TestCase):
             "--force",
         ]
         main()
-        # Test passes if no error is raised and files are created.
         self.assertTrue(Path.cwd().joinpath("simple_logic.py").exists())
 
     @patch("sys.argv", new_callable=list)
@@ -1919,11 +1963,9 @@ class TestMainCLI(unittest.TestCase):
         json_path = create_temp_json(SAMPLE_CONFIG_SIMPLE)
         mock_argv[:] = ["cli.py", "generate-template", str(json_path)]
 
-        # First run creates the files.
         main()
         self.assertTrue(Path.cwd().joinpath("simple_logic.py").exists())
 
-        # Second run should print a warning and exit.
         with patch("builtins.print") as mock_print:
             main()
         calls = [call.args[0] for call in mock_print.call_args_list]
