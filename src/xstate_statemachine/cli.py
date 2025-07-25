@@ -212,6 +212,57 @@ def extract_logic_names(
     return actions, guards, services
 
 
+# -------------------------------------------------------------------------
+# 🔍  Parent‑vs‑child detection helpers
+# -------------------------------------------------------------------------
+def _count_invokes(cfg: Dict[str, Any]) -> int:
+    """Return a crude *actor‑likelihood* score (# of ``invoke`` keys)."""
+    cnt = 0
+
+    def _walk(node: Any) -> None:
+        nonlocal cnt
+        if isinstance(node, dict):
+            if "invoke" in node:
+                cnt += 1
+            for val in node.values():
+                _walk(val)
+        elif isinstance(node, list):
+            for itm in node:
+                _walk(itm)
+
+    _walk(cfg)
+    return cnt
+
+
+def guess_hierarchy(
+    paths: List[str],
+) -> Tuple[str, List[str], List[Tuple[str, int]]]:
+    """Heuristically pick *one* parent and return (parent, children, scores).
+
+    The file with the highest ``invoke`` count wins.  Ties fall back to
+    *first‑seen*.
+    """
+    scores: List[Tuple[str, int]] = []
+    for pth in paths:
+        try:
+            with open(pth, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:  # pragma: no cover – handled earlier in main()
+            cfg = {}
+        scores.append((pth, _count_invokes(cfg)))
+
+    # pick the max score – first element breaks ties
+    scores_sorted = sorted(scores, key=lambda kv: kv[1], reverse=True)
+    parent, top_score = scores_sorted[0]
+    total = sum(sc for _, sc in scores_sorted) or 1
+    confidence = int(min(100, (top_score / total) * 100 + 15))  # 15 % floor
+
+    # attach confidence to first tuple for printing
+    printable_scores = [(parent, confidence)] + scores_sorted[1:]
+    children = [pth for pth, _ in scores_sorted[1:]]
+    return parent, children, printable_scores
+
+
 def extract_events(config: Dict[str, Any]) -> Set[str]:
     events = set()
 
@@ -385,7 +436,7 @@ def generate_logic_code(
     return "\n".join(code_lines)
 
 
-def generate_runner_code(
+def generate_runner_code(  # noqa: C901 – function is long but readable
     machine_names: List[str],
     is_async: bool,
     style: str,
@@ -396,27 +447,44 @@ def generate_runner_code(
     file_count: int,
     configs: List[Dict[str, Any]],
     json_filenames: List[str],
+    hierarchy: bool = False,  # NEW ▸ treat first machine as parent
 ) -> str:
-    """Generates the runner file content to execute the state machine.
+    """Generates the runner file content to execute the state machine(s).
 
-    This function builds the code for the runner file (`..._runner.py`),
-    which sets up and executes a simulation of the state machine(s).
+    The function builds the code for the runner module (``*_runner.py``).
+    It now supports two operating modes:
+
+    * **Flat / legacy** – every JSON is an independent machine (old behaviour).
+    * **Hierarchy** – the *first* machine in *machine_names* is considered the
+      **parent**; all remaining machines are actor definitions that can be
+      spawned by the parent (selected when *hierarchy* is ``True``).
 
     Args:
-        machine_names (List[str]): A list of snake_cased machine names.
-        is_async (bool): Whether to generate an asynchronous runner.
-        style (str): The code style ('class' or 'function') for logic import.
-        loader (bool): Whether to use the auto-discovery loader.
-        sleep (bool): Whether to include a `time.sleep` in the simulation.
-        sleep_time (int): The duration for the sleep.
-        log (bool): Whether to configure and use logging.
-        file_count (int): The number of generated files (1 or 2).
-        configs (List[Dict[str, Any]]): The list of machine configurations.
-        json_filenames (List[str]): The list of original JSON filenames.
+        machine_names:     snake‑cased machine identifiers (order matters).
+        is_async:          generate an asynchronous runner if ``True``.
+        style:             'class' or 'function' logic style.
+        loader:            use auto‑discovery logic loader when ``True``.
+        sleep:             insert ``time.sleep`` / ``asyncio.sleep`` calls?
+        sleep_time:        seconds to sleep between simulated events.
+        log:               configure basic logging output.
+        file_count:        1 → combined file, 2 → separate logic/runner files.
+        configs:           list with the parsed JSON machine configs.
+        json_filenames:    filenames of the original JSON files (same order).
+        hierarchy:         **NEW**; when ``True`` treat list as parent+actors.
 
     Returns:
-        str: The generated Python code for the runner as a string.
+        The generated Python source code as a single string.
     """
+    # ------------------------------------------------------------------
+    # 📄  Preamble & imports
+    # ------------------------------------------------------------------
+    base_name = (
+        "_".join(machine_names) if len(machine_names) > 1 else machine_names[0]
+    )
+    logic_file_name = (
+        f"{base_name}_logic"  # defined unconditionally (even if unused)
+    )
+
     code_lines = [
         "# -------------------------------------------------------------------------------",
         "# 📡 Generated Runner File",
@@ -433,6 +501,7 @@ def generate_runner_code(
     if is_async:
         code_lines.append("import asyncio")
     code_lines.append("")
+
     if log:
         code_lines.extend(
             [
@@ -442,30 +511,185 @@ def generate_runner_code(
             ]
         )
 
+    # ------------------------------------------------------------------
+    # 🧩  Import generated *logic* module (when we have two files)
+    # ------------------------------------------------------------------
     if file_count == 2:
-        base_name = (
-            "_".join(machine_names)
-            if len(machine_names) > 1
-            else machine_names[0]
-        )
-        logic_file_name = f"{base_name}_logic"
         if style == "class":
             class_name = (
                 "".join(word.capitalize() for word in base_name.split("_"))
                 + "Logic"
             )
-            logic_import = (
+            code_lines.append(
                 f"from {logic_file_name} import {class_name} as LogicProvider"
             )
         else:
-            logic_import = f"import {logic_file_name}"
-        code_lines.append(logic_import)
+            code_lines.append(f"import {logic_file_name}")
         code_lines.append("")
 
     func_prefix = "async " if is_async else ""
     await_prefix = "await " if is_async else ""
     sleep_cmd = "await asyncio.sleep" if is_async else "time.sleep"
 
+    # ==================================================================
+    # 👑  MODE 1 – Hierarchical (parent + actors)
+    # ==================================================================
+    if hierarchy and len(machine_names) > 1:
+        parent_name, *actor_names = machine_names
+        parent_json, *actor_jsons = json_filenames
+        parent_cfg = configs[0]
+
+        code_lines.extend(
+            [
+                f"{func_prefix}def main() -> None:",
+                '    """Run the *parent* machine together with all actor machines.\n\n'
+                "    The runner will:\n"
+                "      1. load every JSON config,\n"
+                "      2. start the parent interpreter (with logic bound if requested),\n"
+                "      3. start an interpreter for **each** actor,\n"
+                "      4. replay *all* events discovered in every machine to exercise\n"
+                "         every transition path (best‑effort 100 % coverage),\n"
+                "      5. stop all interpreters gracefully.\n"
+                '    """',
+                "",
+                "    root_dir = Path(__file__).parent",
+                f"    parent_cfg = json.loads((root_dir / '{parent_json}').read_text())",
+                "    actor_cfgs = {",
+            ]
+            + [
+                f"        '{actor_names[idx]}': json.loads((root_dir / '{jfn}').read_text()),"
+                for idx, jfn in enumerate(actor_jsons)
+            ]
+            + [
+                "    }",
+                "",
+                "    # -----------------------------------------------------------------------",
+                "    # 🧠  Parent machine + logic binding",
+                "    # -----------------------------------------------------------------------",
+            ]
+        )
+
+        if loader:
+            if style == "class":
+                code_lines.append("    logic_provider = LogicProvider()")
+                code_lines.append(
+                    "    parent_machine = create_machine(parent_cfg, logic_providers=[logic_provider])"
+                )
+            else:
+                if file_count == 2:
+                    code_lines.append(
+                        f"    parent_machine = create_machine(parent_cfg, logic_modules=[{logic_file_name}])"
+                    )
+                else:
+                    code_lines.append("    import sys")
+                    code_lines.append(
+                        "    parent_machine = create_machine(parent_cfg, logic_modules=[sys.modules[__name__]])"
+                    )
+        else:
+            code_lines.append(
+                "    parent_machine = create_machine(parent_cfg)"
+            )
+
+        parent_ctor = "Interpreter" if is_async else "SyncInterpreter"
+        code_lines.extend(
+            [
+                f"    parent = {parent_ctor}(parent_machine)",
+                "    parent.use(LoggingInspector())",
+                f"    {await_prefix}parent.start()",
+                "    logger.info('Parent started – initial state(s): %s', parent.current_state_ids)",
+                "",
+                "    # -------------------------------------------------------------------",
+                "    # 🎭  Spawn & start every actor interpreter",
+                "    # -------------------------------------------------------------------",
+                f"    actor_ctor = {parent_ctor}  # same sync/async flavour",
+                "    actors = {}  # id → interpreter",
+            ]
+        )
+
+        for a_name in actor_names:
+            code_lines.extend(
+                [
+                    f"    machine_{a_name} = create_machine(actor_cfgs['{a_name}'])",
+                    f"    ai_{a_name} = actor_ctor(machine_{a_name})",
+                    f"    ai_{a_name}.use(LoggingInspector())",
+                    f"    {await_prefix}ai_{a_name}.start()",
+                    f"    actors['{a_name}'] = ai_{a_name}",
+                ]
+            )
+
+        # ---------------------------------------------------------------- Events replay
+        code_lines.extend(
+            [
+                "",
+                "    # -------------------------------------------------------------------",
+                "    # 🚀  Exhaustive event replay – parent first …",
+                "    # -------------------------------------------------------------------",
+            ]
+        )
+        parent_events = sorted(extract_events(parent_cfg))
+        if parent_events:
+            code_lines.append(f"    for ev in {parent_events}:")
+            code_lines.append("        logger.info('Parent → sending %s', ev)")
+            code_lines.append(f"        {await_prefix}parent.send(ev)")
+            if sleep:
+                code_lines.append(f"        {sleep_cmd}({sleep_time})")
+        else:
+            code_lines.append(
+                "    logger.info('No events declared in parent machine.')"
+            )
+
+        code_lines.append("")
+        code_lines.append(
+            "    # … then every actor --------------------------------------------------"
+        )
+        for idx, a_name in enumerate(actor_names):
+            events_var = f"events_{a_name}"
+            code_lines.append(
+                f"    {events_var} = {sorted(extract_events(configs[idx + 1]))}"
+            )
+            code_lines.append(f"    for ev in {events_var}:")
+            code_lines.append(
+                f"        logger.info('{a_name} → sending %s', ev)"
+            )
+            code_lines.append(
+                f"        {await_prefix}actors['{a_name}'].send(ev)"
+            )
+            if sleep:
+                code_lines.append(f"        {sleep_cmd}({sleep_time})")
+            code_lines.append("")
+
+        # ---------------------------------------------------------------- Shutdown
+        code_lines.extend(
+            [
+                "    # -------------------------------------------------------------------",
+                "    # 🛑  Graceful shutdown of actors then parent",
+                "    # -------------------------------------------------------------------",
+            ]
+        )
+        for a_name in actor_names:
+            code_lines.append(f"    {await_prefix}actors['{a_name}'].stop()")
+        code_lines.append(f"    {await_prefix}parent.stop()")
+        code_lines.append("")
+        if is_async:
+            code_lines.extend(
+                [
+                    "if __name__ == '__main__':",
+                    "    asyncio.run(main())",
+                ]
+            )
+        else:
+            code_lines.extend(
+                [
+                    "if __name__ == '__main__':",
+                    "    main()",
+                ]
+            )
+
+        return "\n".join(code_lines)
+
+    # ==================================================================
+    # 🟰  MODE 2 – Flat / legacy (original implementation, untouched)
+    # ==================================================================
     if len(machine_names) == 1:
         name = machine_names[0]
         config = configs[0]
@@ -525,7 +749,7 @@ def generate_runner_code(
         code_lines.append(
             f"{inner_indent}# ---------------------------------------------------------------------------"
         )
-        code_lines.append(f"{inner_indent}# ⚙️ 3. Interpreter Setup")
+        code_lines.append(f"{inner_indent}# ⚙️  3. Interpreter Setup")
         code_lines.append(
             f"{inner_indent}# ---------------------------------------------------------------------------"
         )
@@ -636,7 +860,7 @@ def generate_runner_code(
             code_lines.append(
                 f"{inner_indent}# ---------------------------------------------------------------------------"
             )
-            code_lines.append(f"{inner_indent}# ⚙️ 3. Interpreter Setup")
+            code_lines.append(f"{inner_indent}# ⚙️  3. Interpreter Setup")
             code_lines.append(
                 f"{inner_indent}# ---------------------------------------------------------------------------"
             )
@@ -711,7 +935,7 @@ def generate_runner_code(
 # -----------------------------------------------------------------------------
 
 
-def main():
+def main():  # noqa: C901 – function is long but readable
     """Parses command-line arguments and orchestrates code generation."""
     # -------------------------------------------------------------------------
     # ⚙️ 1. Argument Parsing Setup
@@ -720,16 +944,16 @@ def main():
         description="CLI tool for xstate-statemachine boilerplate generation.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  # Generate from a single file with default options (async, class-based, 2 files)
-  xstate-statemachine generate-template my_machine.json
+        Examples:
+          # Generate from a single file with default options (async, class-based, 2 files)
+          xstate-statemachine generate-template my_machine.json
 
-  # Generate sync, function-style code into a specific directory
-  xstate-statemachine generate-template machine.json --async-mode no --style function --output ./generated
+          # Generate sync, function-style code into a specific directory
+          xstate-statemachine generate-template machine.json --async-mode no --style function --output ./generated
 
-  # Force overwrite of existing files
-  xstate-statemachine generate-template machine.json --force
-""",
+          # Force overwrite of existing files
+          xstate-statemachine generate-template machine.json --force
+        """,
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {package_version}"
@@ -752,6 +976,22 @@ Examples:
         action="append",
         default=[],
         help="Specify a JSON file (can be used multiple times).",
+    )
+
+    gen_parser.add_argument(
+        "--json-parent",
+        metavar="PATH",
+        help="Path to the JSON file that represents the *parent* machine.",
+    )
+    gen_parser.add_argument(
+        "--json-child",
+        metavar="PATH",
+        action="append",
+        default=[],
+        help=(
+            "Path to a JSON file that should be treated as a *child* (actor) "
+            "machine. Can be supplied multiple times."
+        ),
     )
 
     # --- Generation Options ---
@@ -810,8 +1050,46 @@ Examples:
     # 🚀 2. Generation Logic
     # -------------------------------------------------------------------------
     if args.subcommand == "generate-template":
-        # 📂 Collect and load all JSON configuration files
-        json_paths = args.json_files + args.json
+        # 📂 Collect and *order* JSON files:
+        #    1. explicit --json-parent (if given)
+        #    2. explicit --json-child  (repeatable)
+        #    3. positional files       (left‑overs)
+        #    4. --json flags           (legacy)
+
+        json_paths: List[str] = []
+
+        # 1. parent --------------------------------------------------------
+        if args.json_parent:
+            json_paths.append(args.json_parent)
+
+        # 2. children ------------------------------------------------------
+        json_paths.extend(args.json_child)
+
+        # 3–4. remaining legacy inputs ------------------------------------
+        json_paths.extend(args.json_files)
+        json_paths.extend(args.json)
+
+        # -----------------------------------------------------------------
+        # 🛑 Sanity checks for parent/child flags
+        # -----------------------------------------------------------------
+        if args.json_parent and len([args.json_parent]) > 1:
+            logger.error("❌ Only one --json-parent may be supplied.")
+            parser.error("Only one --json-parent may be supplied.")
+
+        # Scenario #7 – child flag without *any* other file ----------------
+        if args.json_child and not (
+            args.json_parent or args.json_files or args.json
+        ):
+            logger.error("❌ --json-child requires a parent machine JSON.")
+            parser.error("--json-child requires a parent machine JSON.")
+
+        if not json_paths:
+            logger.error("❌ No JSON files provided. Aborting.")
+            parser.error("At least one JSON file is required.")
+
+        # 🔄  De‑duplicate while preserving order
+        seen: Set[str] = set()
+        json_paths = [p for p in json_paths if not (p in seen or seen.add(p))]
         if not json_paths:
             logger.error("❌ No JSON files provided. Aborting.")
             parser.error("At least one JSON file is required.")
@@ -840,6 +1118,94 @@ Examples:
             all_actions.update(a)
             all_guards.update(g)
             all_services.update(s)
+
+        # -----------------------------------------------------------------
+        # 🤖  Heuristic parent detection & optional prompt  (#8‒#10)
+        # -----------------------------------------------------------------
+        hierarchy_flag: bool = False  # default → “flat” mode
+        if not args.json_parent and len(json_paths) > 1:
+            ids = [
+                conf.get("id", fn.stem)
+                for conf, fn in zip(configs, map(Path, json_paths))
+            ]
+            # --- simple reference‑count heuristic ------------------------
+            ref_scores: List[int] = []
+            for conf in configs:
+                refs: Set[str] = set()
+
+                def _walk(node: Dict[str, Any]) -> None:  # inner helper
+                    if not isinstance(node, dict):
+                        return
+                    if "invoke" in node:
+                        inv_list = (
+                            node["invoke"]
+                            if isinstance(node["invoke"], list)
+                            else [node["invoke"]]
+                        )
+                        for inv in inv_list:
+                            if isinstance(inv, dict) and isinstance(
+                                inv.get("src"), str
+                            ):
+                                refs.add(inv["src"])
+                    if "states" in node and isinstance(node["states"], dict):
+                        for sub in node["states"].values():
+                            _walk(sub)
+
+                _walk(conf)
+                ref_scores.append(len(refs.intersection(set(ids))))
+
+            max_score: int = max(ref_scores)
+            candidate_idx: int = -1
+            if max_score > 0 and ref_scores.count(max_score) == 1:
+                candidate_idx = ref_scores.index(max_score)
+
+            # --- interactive confirmation / selection -------------------
+            if candidate_idx != -1:
+                confidence = int(round(100 * max_score / (len(ids) - 1)))
+                print(
+                    "Found two machines:"
+                    if len(ids) == 2
+                    else f"Found {len(ids)} machines:"
+                )
+                for i, mid in enumerate(ids, 1):
+                    if i - 1 == candidate_idx:
+                        print(
+                            f"  {i}. {mid} (looks like parent, confidence {confidence} %)"
+                        )
+                    else:
+                        print(f"  {i}. {mid} (looks like child)")
+                answer = input("Is this correct?  [Y/n] ").strip().lower()
+                if answer in ("", "y", "yes"):
+                    hierarchy_flag = True
+                else:
+                    candidate_idx = -1  # fall through to manual selection
+
+            if candidate_idx == -1:
+                print("Multiple machines detected – which one is the parent?")
+                for i, mid in enumerate(ids, 1):
+                    print(f"  {i}. {mid}")
+                sel = input("Enter number (or 0 for none): ").strip()
+                try:
+                    sel_int = int(sel)
+                except ValueError:
+                    sel_int = 0
+                if 1 <= sel_int <= len(ids):
+                    candidate_idx = sel_int - 1
+                    hierarchy_flag = True
+
+            # --- reorder lists so that parent is *first* -----------------
+            if hierarchy_flag and candidate_idx != 0:
+                for lst in (
+                    json_paths,
+                    configs,
+                    machine_names,
+                    json_filenames,
+                ):
+                    lst.insert(0, lst.pop(candidate_idx))
+
+        # Explicit flags always imply hierarchy ---------------------------
+        if args.json_parent:
+            hierarchy_flag = True
 
         # 📁 Determine output directory and file paths
         out_dir = (
@@ -897,6 +1263,7 @@ Examples:
             args.file_count,
             configs,
             json_filenames,
+            hierarchy=hierarchy_flag,  # NEW ▸ informs runner of parent/child
         )
 
         # 💾 Write generated code to file(s)
