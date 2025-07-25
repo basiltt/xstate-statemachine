@@ -802,13 +802,33 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
 
         code_lines.append(f"{func_prefix}def main() -> None:")
         inner_indent = "    "
+
+        # if ("/" in json_filename or "\\" in json_filename
+        #         or Path(json_filename).is_absolute()):
+        #     cfg_line0 = f"{inner_indent}config_path = Path(r\"{json_filename}\")"
+        # else:
+        #     # runner is <root>/generated/script.py  →  JSON is <root>/file.json
+        #     cfg_line0 = (
+        #         f"{inner_indent}config_path = "
+        #         "Path(__file__).resolve().parent.parent / "
+        #         f"'{json_filename}'"
+        #     )
+
+        cfg_lines = [
+            f'{inner_indent}config_path = Path(r"{json_filename}")',
+            f"{inner_indent}if not config_path.is_absolute() and config_path.parent == Path('.'):",
+            f"{inner_indent}    here = Path(__file__).resolve().parent",
+            f"{inner_indent}    candidate = here / config_path.name",
+            f"{inner_indent}    config_path = candidate if candidate.exists() else here.parent / config_path.name",
+        ]
+
         code_lines += [
             f'{inner_indent}"""Executes the simulation for the {name} machine."""',
             "",
             f"{inner_indent}# ---------------------------------------------------------------------------",
             f"{inner_indent}# 📂 1. Configuration Loading",
             f"{inner_indent}# ---------------------------------------------------------------------------",
-            f"{inner_indent}config_path = Path(__file__).parent / '{json_filename}'",
+            *cfg_lines,
             f"{inner_indent}with open(config_path, 'r', encoding='utf-8') as f:",
             f"{inner_indent}    config = json.load(f)",
             "",
@@ -950,13 +970,30 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
 
             code_lines.append(f"{func_prefix}def run_{name}() -> None:")
             inner_indent = "    "
+
+            # ───────────────────────── JSON‑path resolution ──────────────────────────
+            # ❶  If the JSON argument already points to a *folder* (relative or
+            #    absolute) we can use it verbatim.
+            # ❷  Otherwise we try two candidate locations at runtime:
+            #       a) same folder as this runner                (…/runner.py)
+            #       b) one level up (useful when runner lives in …/generated/)
+            #    – no further searching / loops are performed.
+
+            cfg_lines = [
+                f'{inner_indent}config_path = Path(r"{json_filename}")',
+                f"{inner_indent}if not config_path.is_absolute() and config_path.parent == Path('.'):",
+                f"{inner_indent}    here = Path(__file__).resolve().parent",
+                f"{inner_indent}    candidate = here / config_path.name",
+                f"{inner_indent}    config_path = candidate if candidate.exists() else here.parent / config_path.name",
+            ]
+
             code_lines += [
                 f'{inner_indent}"""Executes the simulation for the {name} machine."""',
                 "",
                 f"{inner_indent}# ---------------------------------------------------------------------------",
                 f"{inner_indent}# 📂 1. Configuration Loading",
                 f"{inner_indent}# ---------------------------------------------------------------------------",
-                f"{inner_indent}config_path = Path(__file__).parent / '{json_filename}'",
+                *cfg_lines,
                 f"{inner_indent}with open(config_path, 'r', encoding='utf-8') as f:",
                 f"{inner_indent}    config = json.load(f)",
                 "",
