@@ -617,46 +617,63 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
                 ]
             )
 
-        # ---------------------------------------------------------------- Events replay
+        # ---------------------------------------------------------------- Events replay – parent
         code_lines.extend(
             [
                 "",
                 "    # -------------------------------------------------------------------",
-                "    # 🚀  Exhaustive event replay – parent first …",
+                "    # 🚀  Simulating Parent Machine",
                 "    # -------------------------------------------------------------------",
             ]
         )
         parent_events = sorted(extract_events(parent_cfg))
         if parent_events:
-            code_lines.append(f"    for ev in {parent_events}:")
-            code_lines.append("        logger.info('Parent → sending %s', ev)")
-            code_lines.append(f"        {await_prefix}parent.send(ev)")
-            if sleep:
-                code_lines.append(f"        {sleep_cmd}({sleep_time})")
+            for ev in parent_events:
+                human = ev.replace("_", " ").title()
+                code_lines.extend(
+                    [
+                        f"    # {human}",
+                        f"    logger.info('Parent → sending %s', '{ev}')",
+                        f"    {await_prefix}parent.send('{ev}')",
+                    ]
+                )
+                if sleep:
+                    code_lines.append(f"    {sleep_cmd}({sleep_time})")
+                code_lines.append("")
         else:
             code_lines.append(
                 "    logger.info('No events declared in parent machine.')"
             )
-
-        code_lines.append("")
-        code_lines.append(
-            "    # … then every actor --------------------------------------------------"
-        )
-        for idx, a_name in enumerate(actor_names):
-            events_var = f"events_{a_name}"
-            code_lines.append(
-                f"    {events_var} = {sorted(extract_events(configs[idx + 1]))}"
-            )
-            code_lines.append(f"    for ev in {events_var}:")
-            code_lines.append(
-                f"        logger.info('{a_name} → sending %s', ev)"
-            )
-            code_lines.append(
-                f"        {await_prefix}actors['{a_name}'].send(ev)"
-            )
-            if sleep:
-                code_lines.append(f"        {sleep_cmd}({sleep_time})")
             code_lines.append("")
+
+        # ---------------------------------------------------------------- Events replay – actors
+        for idx, a_name in enumerate(actor_names):
+            actor_events = sorted(extract_events(configs[idx + 1]))
+            code_lines.extend(
+                [
+                    "    # -------------------------------------------------------------------",
+                    f"    # 🚀  Simulating Actor «{a_name}»",
+                    "    # -------------------------------------------------------------------",
+                ]
+            )
+            if actor_events:
+                for ev in actor_events:
+                    human = ev.replace("_", " ").title()
+                    code_lines.extend(
+                        [
+                            f"    # {human}",
+                            f"    logger.info('{a_name} → sending %s', '{ev}')",
+                            f"    {await_prefix}actors['{a_name}'].send('{ev}')",
+                        ]
+                    )
+                    if sleep:
+                        code_lines.append(f"    {sleep_cmd}({sleep_time})")
+                    code_lines.append("")
+            else:
+                code_lines.append(
+                    f"    logger.info('No events declared in actor \"{a_name}\".')"
+                )
+                code_lines.append("")
 
         # ---------------------------------------------------------------- Shutdown
         code_lines.extend(
@@ -770,29 +787,26 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
         code_lines.append(
             f"{inner_indent}# ---------------------------------------------------------------------------"
         )
-        code_lines.append(
-            f"{inner_indent}logger.info('--- Running simulation with all defined events ---')"
-        )
         if events:
-            for event in events:
-                code_lines.append(
-                    f"{inner_indent}logger.info('→ Sending event: {event}')"
-                )
-                code_lines.append(
-                    f"{inner_indent}{await_prefix}interpreter.send('{event}')"
+            for ev in events:
+                human = ev.replace("_", " ").title()
+                code_lines.extend(
+                    [
+                        f"{inner_indent}# {human}",
+                        f"{inner_indent}logger.info('→ Sending %s', '{ev}')",
+                        f"{inner_indent}{await_prefix}interpreter.send('{ev}')",
+                    ]
                 )
                 if sleep:
                     code_lines.append(
                         f"{inner_indent}{sleep_cmd}({sleep_time})"
                     )
+                code_lines.append("")
         else:
             code_lines.append(
-                f"{inner_indent}# No events defined in the machine. Add manual sends here."
+                f"{inner_indent}logger.info('No events declared in the machine.')"
             )
-            code_lines.append(f"{inner_indent}pass")
-        code_lines.append(
-            f"{inner_indent}logger.info(f'--- ✅ Simulation ended in state: {{interpreter.current_state_ids}} ---')"
-        )
+            code_lines.append("")
         code_lines.append(f"{inner_indent}{await_prefix}interpreter.stop()")
         code_lines.append("")
         if is_async:
@@ -887,29 +901,26 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
             code_lines.append(
                 f"{inner_indent}# ---------------------------------------------------------------------------"
             )
-            code_lines.append(
-                f"{inner_indent}logger.info('--- Running simulation with all defined events ---')"
-            )
             if events:
-                for event in events:
-                    code_lines.append(
-                        f"{inner_indent}logger.info('→ Sending event: {event}')"
-                    )
-                    code_lines.append(
-                        f"{inner_indent}{await_prefix}interpreter.send('{event}')"
+                for ev in events:
+                    human = ev.replace("_", " ").title()
+                    code_lines.extend(
+                        [
+                            f"{inner_indent}# {human}",
+                            f"{inner_indent}logger.info('→ Sending %s', '{ev}')",
+                            f"{inner_indent}{await_prefix}interpreter.send('{ev}')",
+                        ]
                     )
                     if sleep:
                         code_lines.append(
                             f"{inner_indent}{sleep_cmd}({sleep_time})"
                         )
+                    code_lines.append("")
             else:
                 code_lines.append(
-                    f"{inner_indent}# No events defined in the machine. Add manual sends here."
+                    f"{inner_indent}logger.info('No events declared in this machine.')"
                 )
-                code_lines.append(f"{inner_indent}pass")
-            code_lines.append(
-                f"{inner_indent}logger.info(f'--- ✅ Simulation ended in state: {{interpreter.current_state_ids}} ---')"
-            )
+                code_lines.append("")
             code_lines.append(
                 f"{inner_indent}{await_prefix}interpreter.stop()"
             )
