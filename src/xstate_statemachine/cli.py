@@ -783,9 +783,16 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
         )
         if loader:
             if style == "class":
-                code_lines.append(
-                    f"{inner_indent}logic_provider = {class_name}()"
-                )
+                if file_count == 1:
+                    # single‑file output – class is already in the same module
+                    code_lines.append(
+                        f"{inner_indent}logic_provider = {class_name}()"
+                    )
+                else:
+                    # two‑file output – use the alias imported as *LogicProvider*
+                    code_lines.append(
+                        f"{inner_indent}logic_provider = LogicProvider()"
+                    )
                 code_lines.append(
                     f"{inner_indent}machine = create_machine(config, logic_providers=[logic_provider])"
                 )
@@ -891,9 +898,14 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
             )
             if loader:
                 if style == "class":
-                    code_lines.append(
-                        f"{inner_indent}logic_provider = LogicProvider()"
-                    )
+                    if file_count == 1:
+                        code_lines.append(
+                            f"{inner_indent}logic_provider = {class_name}()"
+                        )
+                    else:
+                        code_lines.append(
+                            f"{inner_indent}logic_provider = LogicProvider()"
+                        )
                     code_lines.append(
                         f"{inner_indent}machine = create_machine(config, logic_providers=[logic_provider])"
                     )
