@@ -34,17 +34,21 @@ from pathlib import Path
 from typing import Any, Dict, List
 from unittest.mock import patch
 
+from xstate_statemachine.cli import main
+from xstate_statemachine.cli.extractor import (
+    extract_logic_names,
+    extract_events,
+)
+from xstate_statemachine.cli.generator import (
+    generate_logic_code,
+    generate_runner_code,
+)
+from xstate_statemachine.cli.utils import normalize_bool
+
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
-from src.xstate_statemachine.cli import (
-    extract_logic_names,
-    generate_logic_code,
-    generate_runner_code,
-    main,
-    normalize_bool,
-    extract_events,
-)
+
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
@@ -1804,7 +1808,7 @@ class TestMainCLI(unittest.TestCase):
         """Verifies the `--version` argument prints the package version and exits."""
         logger.info("🧪 Testing version arg.")
         mock_argv[:] = ["cli.py", "--version"]
-        from src.xstate_statemachine.cli import package_version
+        from src.xstate_statemachine import __version__ as package_version
 
         with patch(
             "sys.stdout", new=StringIO()
@@ -2696,7 +2700,7 @@ class TestHierarchyAndEventUtils(unittest.TestCase):
     def test_count_invokes(self) -> None:
         """Ensures _count_invokes correctly counts 'invoke' keys."""
         logger.info("🧪 Testing _count_invokes utility.")
-        from src.xstate_statemachine.cli import _count_invokes
+        from src.xstate_statemachine.cli.extractor import _count_invokes
 
         self.assertEqual(_count_invokes(self.parent_config), 2)
         self.assertEqual(_count_invokes(self.child1_config), 0)
@@ -2704,7 +2708,7 @@ class TestHierarchyAndEventUtils(unittest.TestCase):
     def test_guess_hierarchy_identifies_parent(self) -> None:
         """Verifies guess_hierarchy correctly identifies the parent by invoke count."""
         logger.info("🧪 Testing guess_hierarchy parent identification.")
-        from src.xstate_statemachine.cli import guess_hierarchy
+        from src.xstate_statemachine.cli.extractor import guess_hierarchy
 
         paths = [str(self.child1_path), str(self.parent_path)]
         parent, children, _ = guess_hierarchy(paths)

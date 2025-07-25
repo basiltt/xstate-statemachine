@@ -89,7 +89,6 @@ from .models import ActionDefinition, MachineNode
 # -----------------------------------------------------------------------------
 from .plugins import LoggingInspector, PluginBase
 
-
 # -----------------------------------------------------------------------------
 # 🚨 Custom Exception Hierarchy
 # -----------------------------------------------------------------------------
@@ -138,4 +137,5 @@ __all__ = [
     "ActorSpawningError",
     "NotSupportedError",
     "MachineNode",
+    "__version__",
 ]
