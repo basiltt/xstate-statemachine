@@ -379,7 +379,7 @@ def generate_logic_code(  # noqa: C901 – long but readable, generated code
             ret = "Awaitable[None]" if is_async else "None"
 
             body += [
-                f"{indent_cls}{async_kw}def {fn}(",
+                f"{indent_cls}{async_kw}def {fn}(  # noqa: ignore IDE static method warning,"
             ]
             if style == "class":
                 body.append(f"{indent_cls}        self,")
@@ -388,7 +388,7 @@ def generate_logic_code(  # noqa: C901 – long but readable, generated code
                 f"{indent_cls}        context: Dict[str, Any],",
                 f"{indent_cls}        event: Event,",
                 f"{indent_cls}        action_def: ActionDefinition,  # noqa: D401 – lib callback",
-                f"{indent_cls}) -> {ret}:",
+                f"{indent_cls}) -> {ret}:  # noqa : ignore IDE return type hint warning",
                 f'{indent_cls}    """Action: `{original}`."""',
             ]
             if log:
@@ -439,7 +439,7 @@ def generate_logic_code(  # noqa: C901 – long but readable, generated code
             ret = "Awaitable[Dict[str, Any]]" if is_async else "Dict[str, Any]"
 
             body += [
-                f"{indent_cls}{async_kw}def {fn}(",
+                f"{indent_cls}{async_kw}def {fn}(  # noqa: ignore IDE static method warning,"
             ]
             if style == "class":
                 body.append(f"{indent_cls}        self,")
@@ -460,7 +460,7 @@ def generate_logic_code(  # noqa: C901 – long but readable, generated code
                 body.append(f"{indent_cls}    time.sleep(1)")
             body.append(
                 f"{indent_cls}    # TODO: implement service\n"
-                f"{indent_cls}    return {{'result': 'done'}}\n"
+                f"{indent_cls}    return {{'result': 'done'}}  # noqa : ignore IDE return type hint warning\n"
             )
             # keep the original (camel‑case) name available for the loader
             if fn != original:
@@ -602,7 +602,7 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
                 "    }",
                 "",
                 "    # -----------------------------------------------------------------------",
-                "    # 🧠  Parent machine + logic binding",
+                "    # 🧠 Parent machine + logic binding",
                 "    # -----------------------------------------------------------------------",
             ]
         )
@@ -637,7 +637,7 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
                 "    logger.info('Parent started – initial state(s): %s', parent.current_state_ids)",
                 "",
                 "    # -------------------------------------------------------------------",
-                "    # 🎭  Spawn & start every actor interpreter",
+                "    # 🎭 Spawn & start every actor interpreter",
                 "    # -------------------------------------------------------------------",
                 f"    actor_ctor = {parent_ctor}  # same sync/async flavour",
                 "    actors = {}  # id → interpreter",
@@ -660,7 +660,7 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
             [
                 "",
                 "    # -------------------------------------------------------------------",
-                "    # 🚀  Simulating Parent Machine",
+                "    # 🚀 Simulating Parent Machine",
                 "    # -------------------------------------------------------------------",
             ]
         )
@@ -690,7 +690,7 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
             code_lines.extend(
                 [
                     "    # -------------------------------------------------------------------",
-                    f"    # 🚀  Simulating Actor «{a_name}»",
+                    f"    # 🚀 Simulating Actor «{a_name}»",
                     "    # -------------------------------------------------------------------",
                 ]
             )
@@ -717,7 +717,7 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
         code_lines.extend(
             [
                 "    # -------------------------------------------------------------------",
-                "    # 🛑  Graceful shutdown of actors then parent",
+                "    # 🛑 Graceful shutdown of actors then parent",
                 "    # -------------------------------------------------------------------",
             ]
         )
