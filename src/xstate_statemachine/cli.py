@@ -533,8 +533,10 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
         "# -------------------------------------------------------------------------------",
         "from pathlib import Path",
         "from xstate_statemachine import LoggingInspector",
+        # 👉 add MachineLogic when the auto‑loader is disabled
         "from xstate_statemachine import create_machine, "
-        + ("Interpreter" if is_async else "SyncInterpreter"),
+        + ("Interpreter" if is_async else "SyncInterpreter")
+        + (", MachineLogic" if not loader else ""),
         "import json",
         "import logging",
     ]
