@@ -319,9 +319,10 @@ def generate_logic_code(  # noqa: C901 – long but readable, generated code
     ]
     if is_async:
         header += ["import asyncio", "from typing import Awaitable"]
+
     header += [
         "import logging",
-        "import time" if (services and not is_async) else "",
+        *(["import time"] if (services and not is_async) else []),
         "from typing import Any, Dict, Union",
         "",
         "from xstate_statemachine import Interpreter, SyncInterpreter, Event, ActionDefinition",
@@ -332,127 +333,143 @@ def generate_logic_code(  # noqa: C901 – long but readable, generated code
         "logger = logging.getLogger(__name__)",
         "",
     ]
-    # remove the conditional empty string added above when `time` is *not* needed
-    header = [ln for ln in header if ln]
 
-    # Handy helpers -----------------------------------------------------
-    def _snake(name: str) -> str:  # local – camelCase → snake_case
-        """Convert *camelCase* / *PascalCase* → *snake_case* without shadowing."""
+    # ------------------------------------------------------------------
+    # Helper – camelCase → snake_case
+    # ------------------------------------------------------------------
+    def _snake(identifier: str) -> str:
+        """Convert camel/Pascal‑case *identifier* to *snake_case*."""
         try:
-            from .cli import camel_to_snake  # type: ignore  # runtime import
+            from .cli import camel_to_snake  # type: ignore
 
-            return camel_to_snake(name)
-        except Exception:  # pragma: no cover – fallback if not resolvable
+            return camel_to_snake(identifier)
+        except Exception:  # pragma: no cover – fallback regex path
             import re
 
-            snake: str = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
-            snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", snake)
-            return snake.lower()
+            result = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", identifier)
+            result = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", result)
+            return result.lower()
 
-    indent_class = ""
-    self_param = ""
-    class_name = (
-        "".join(part.capitalize() for part in machine_name.split("_"))
-        + "Logic"
-    )
-
+    # ------------------------------------------------------------------
+    # Class / module boilerplate
+    # ------------------------------------------------------------------
+    indent_cls = ""
     body: List[str] = []
+
     if style == "class":
+        class_name = (
+            "".join(p.capitalize() for p in machine_name.split("_")) + "Logic"
+        )
         body += [
             "# -----------------------------------------------------------------------------",
             "# 🧠 Class‑based Logic",
             "# -----------------------------------------------------------------------------",
             f"class {class_name}:",
         ]
-        indent_class = "    "
-        self_param = "self, "
+        indent_cls = "    "
 
     # ------------------------------------------------------------------
     # ⚙️  ACTIONS
     # ------------------------------------------------------------------
     if actions:
-        body.append(f"{indent_class}# ⚙️ Actions")
-        for name in sorted(actions):
-            fn = _snake(name)
-            ret = "Awaitable[None]" if is_async else "None"
+        body.append(f"{indent_cls}# ⚙️ Actions")
+        for original in sorted(actions):
+            fn = _snake(original)
             async_kw = "async " if is_async else ""
-            body += [
-                f"{indent_class}{async_kw}def {fn}(",
-                f"{indent_class}        {self_param}",  # lone comma ✅
-                f"{indent_class}        interpreter: Union[Interpreter, SyncInterpreter],",
-                f"{indent_class}        context: Dict[str, Any],",
-                f"{indent_class}        event: Event,",
-                f"{indent_class}        action_def: ActionDefinition,  # noqa: D401 – lib callback",
-                f"{indent_class}) -> {ret}:",
-                f'{indent_class}    """Action: `{name}`."""',
-            ]
+            ret = "Awaitable[None]" if is_async else "None"
 
+            body += [
+                f"{indent_cls}{async_kw}def {fn}(",
+            ]
+            if style == "class":
+                body.append(f"{indent_cls}        self,")
+            body += [
+                f"{indent_cls}        interpreter: Union[Interpreter, SyncInterpreter],",
+                f"{indent_cls}        context: Dict[str, Any],",
+                f"{indent_cls}        event: Event,",
+                f"{indent_cls}        action_def: ActionDefinition,  # noqa: D401 – lib callback",
+                f"{indent_cls}) -> {ret}:",
+                f'{indent_cls}    """Action: `{original}`."""',
+            ]
             if log:
                 body.append(
-                    f'{indent_class}    logger.info("Executing action {name}")'
+                    f'{indent_cls}    logger.info("Executing action {original}")'
                 )
             if is_async:
                 body.append(
-                    f"{indent_class}    await asyncio.sleep(0.1)  # placeholder"
+                    f"{indent_cls}    await asyncio.sleep(0.1)  # placeholder"
                 )
-            body.append(f"{indent_class}    # TODO: implement\n")
+            body.append(f"{indent_cls}    # TODO: implement\n")
 
     # ------------------------------------------------------------------
     # 🛡️  GUARDS
     # ------------------------------------------------------------------
     if guards:
-        body.append(f"{indent_class}# 🛡️ Guards")
-        for name in sorted(guards):
-            fn = _snake(name)
+        body.append(f"{indent_cls}# 🛡️ Guards")
+        for original in sorted(guards):
+            fn = _snake(original)
             body += [
-                f"{indent_class}def {fn}(",
-                f"{indent_class}        {self_param}context: Dict[str, Any],",
-                f"{indent_class}        event: Event,",
-                f"{indent_class}) -> bool:",
-                f'{indent_class}    """Guard: `{name}`."""',
+                f"{indent_cls}def {fn}(",
+            ]
+            if style == "class":
+                body.append(f"{indent_cls}        self,")
+            body += [
+                f"{indent_cls}        context: Dict[str, Any],",
+                f"{indent_cls}        event: Event,",
+                f"{indent_cls}) -> bool:",
+                f'{indent_cls}    """Guard: `{original}`."""',
             ]
             if log:
                 body.append(
-                    f'{indent_class}    logger.info("Evaluating guard {name}")'
+                    f'{indent_cls}    logger.info("Evaluating guard {original}")'
                 )
             body.append(
-                f"{indent_class}    # TODO: implement guard logic\n"
-                f"{indent_class}    return True\n"
+                f"{indent_cls}    # TODO: implement guard logic\n"
+                f"{indent_cls}    return True\n"
             )
 
     # ------------------------------------------------------------------
     # 🔄  SERVICES
     # ------------------------------------------------------------------
     if services:
-        body.append(f"{indent_class}# 🔄 Services")
-        for name in sorted(services):
-            fn = _snake(name)
-            ret = "Awaitable[Dict[str, Any]]" if is_async else "Dict[str, Any]"
+        body.append(f"{indent_cls}# 🔄 Services")
+        for original in sorted(services):
+            fn = _snake(original)
             async_kw = "async " if is_async else ""
+            ret = "Awaitable[Dict[str, Any]]" if is_async else "Dict[str, Any]"
+
             body += [
-                f"{indent_class}{async_kw}def {fn}(",
-                f"{indent_class}        {self_param}"
-                "interpreter: Union[Interpreter, SyncInterpreter],",
-                f"{indent_class}        context: Dict[str, Any],",
-                f"{indent_class}        event: Event,",
-                f"{indent_class}) -> {ret}:",
-                f'{indent_class}    """Service: `{name}`."""',
+                f"{indent_cls}{async_kw}def {fn}(",
+            ]
+            if style == "class":
+                body.append(f"{indent_cls}        self,")
+            body += [
+                f"{indent_cls}        interpreter: Union[Interpreter, SyncInterpreter],",
+                f"{indent_cls}        context: Dict[str, Any],",
+                f"{indent_cls}        event: Event,",
+                f"{indent_cls}) -> {ret}:",
+                f'{indent_cls}    """Service: `{original}`."""',
             ]
             if log:
                 body.append(
-                    f'{indent_class}    logger.info("Running service {name}")'
+                    f'{indent_cls}    logger.info("Running service {original}")'
                 )
             if is_async:
-                body.append(f"{indent_class}    await asyncio.sleep(1)")
+                body.append(f"{indent_cls}    await asyncio.sleep(1)")
             else:
-                body.append(f"{indent_class}    time.sleep(1)")
+                body.append(f"{indent_cls}    time.sleep(1)")
             body.append(
-                f"{indent_class}    # TODO: implement service\n"
-                f"{indent_class}    return {{'result': 'done'}}\n"
+                f"{indent_cls}    # TODO: implement service\n"
+                f"{indent_cls}    return {{'result': 'done'}}\n"
             )
+            # keep the original (camel‑case) name available for the loader
+            if fn != original:
+                body.append(
+                    f"{indent_cls}{original} = {fn}  # alias for JSON name\n"
+                )
 
     # ------------------------------------------------------------------
-    # Module‑level return
+    # Done
     # ------------------------------------------------------------------
     return "\n".join(header + body)
 
