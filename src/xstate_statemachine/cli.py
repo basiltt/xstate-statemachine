@@ -532,9 +532,16 @@ def generate_runner_code(  # noqa: C901 – function is long but readable
     # ------------------------------------------------------------------
     # 📄  Preamble & imports
     # ------------------------------------------------------------------
-    base_name = (
-        "_".join(machine_names) if len(machine_names) > 1 else machine_names[0]
-    )
+
+    # 📛 Runner imports must match the file names chosen in `main()`
+    if hierarchy and len(machine_names) > 1:
+        base_name = machine_names[0]  # parent only
+    else:
+        base_name = (
+            "_".join(machine_names)
+            if len(machine_names) > 1
+            else machine_names[0]
+        )
     logic_file_name = f"{base_name}_logic"  # defined unconditionally
 
     class_name = (
@@ -1409,11 +1416,16 @@ def main():  # noqa: C901 – function is long but readable
             Path(args.output) if args.output else Path(json_paths[0]).parent
         )
         out_dir.mkdir(parents=True, exist_ok=True)
-        base_name = (
-            "_".join(machine_names)
-            if len(machine_names) > 1
-            else machine_names[0]
-        )
+        # 📛 File naming
+        if hierarchy_flag and len(machine_names) > 1:
+            # parent is first in machine_names after the earlier re‑ordering
+            base_name = machine_names[0]
+        else:
+            base_name = (
+                "_".join(machine_names)
+                if len(machine_names) > 1
+                else machine_names[0]
+            )
         logic_file = out_dir / f"{base_name}_logic.py"
         runner_file = out_dir / f"{base_name}_runner.py"
         single_file = out_dir / f"{base_name}.py"
