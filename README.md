@@ -9,29 +9,36 @@
 
 1.  **[Introduction](#introduction)**
 2.  **[Why State Machines?](#why-state-machines)**
-3.  **[What is XState-StateMachine?](#what-is-xstate-statemachine)**
-4.  **[Key Features](#key-features)**
-5.  **[Installation](#installation)**
-6.  **[Quick Start](#quick-start)**
-7.  **[The State Machine Philosophy](#the-state-machine-philosophy)**
-8.  **[Visual-First Development](#visual-first-development)**
-9.  **[Anatomy of an XState JSON Blueprint](#anatomy-of-an-xstate-json-blueprint)**
-10. **[States — Atomic, Compound, Parallel, Final](#states-—-atomic-compound-parallel-final)**
-11. **[Transitions & Events](#transitions--events)**
-12. **[Actions, Guards & Services](#actions-guards--services)**
-13. **[Context - The Machine’s Memory](#context--the-machines-memory)**
-14. **[Declarative Timers (after)](#declarative-timers-after)**
-15. **[The Actor Model](#the-actor-model)**
-16. **[Architectural Patterns](#architectural-patterns)**
-17. **[Synchronous vs Asynchronous Execution](#synchronous-vs-asynchronous-execution)**
-18. **[Debugging & Visualization](#debugging--visualization)**
-19. **[CLI: Boilerplate Generation](#cli-tool)**
-20. **[API Reference](#api-reference)**
-21. **[Advanced Concepts](#advanced-concepts)**
-22. **[Best Practices](#best-practices)**
-23. **[FAQ](#faq)**
-24. **[Contributing](#contributing)**
-25. **[License](#license)**
+3.  **[Event‑Driven Architecture 101](#event-driven-architecture-101)**
+4.  **[What is XState-StateMachine?](#what-is-xstate-statemachine)**
+5.  **[Key Features](#key-features)**
+6.  **[Installation](#installation)**
+7.  **[Quick Start](#quick-start)**
+8.  **[The State Machine Philosophy](#the-state-machine-philosophy)**
+9.  **[Visual-First Development](#visual-first-development)**
+10.  **[Anatomy of an XState JSON Blueprint](#anatomy-of-an-xstate-json-blueprint)**
+11.  **[States — Atomic, Compound, Parallel, Final](#states-atomic-compound-parallel-final)**
+12.  **[Transitions & Events](#transitions--events)**
+13.  **[Actions, Guards & Services](#actions-guards--services)**
+14.  **[Context - The Machine’s Memory](#context--the-machines-memory)**
+15. **[Declarative Timers (after)](#declarative-timers-after)**
+16.  **[The Actor Model](#the-actor-model)**
+17.  **[Architectural Patterns](#architectural-patterns)**
+18.  **[Synchronous vs Asynchronous Execution](#synchronous-vs-asynchronous-execution)**
+19.  **[Debugging & Visualization](#debugging--visualization)**
+20.  **[CLI: Boilerplate Generation](#cli-boilerplate-generation)**
+    - [Aliases & Short Flags](#cli-aliases)
+    - [Hierarchical Machine Generation](#cli-hierarchy)
+    - [One vs Two Files](#cli-file-count)
+    - [Sync vs Async Templates](#cli-async-sync)
+21.  **[Upgrade Notes: 0.4.0 → 0.4.1](#upgrade-notes-041)**
+22.  **[API Reference](#api-reference)**
+23.  **[Advanced Concepts](#advanced-concepts)**
+24.  **[Best Practices](#best-practices)**
+25.  **[FAQ](#faq)**
+26.  **[Roadmap](#roadmap-next-release)**
+27.  **[Contributing](#contributing)**
+28.  **[License](#license)**
 ---
 
 ## 🏁 Introduction<a name="introduction"></a>
@@ -61,6 +68,71 @@ Whether you’re a **junior dev** struggling with spaghetti `if/else` trees 🌱
 
 ---
 
+## ⚡ Event‑Driven Architecture 101<a name="event-driven-architecture-101"></a>
+
+> “Everything is an event.” — That’s the mindset shift.
+
+Most real systems are _reactive_: **something happens → you react**.
+Event‑Driven Architecture (EDA) makes that explicit and first‑class.
+
+### 🧠 Core Ideas
+
+- **Emit facts, don’t call functions.** Instead of “do X then Y”, you _announce_ that “X happened”, and anyone interested can react.
+- **Decoupling by default.** Producers don’t know who (or how many) consumers will handle an event.
+- **Time becomes visible.** Events arrive over time; your logic becomes a timeline, not a call stack.
+
+### 🧩 How XState-StateMachine fits EDA
+
+| EDA Need | Library Feature | Why it helps |
+|----------|-----------------|--------------|
+| “Everything is an event” | `on`, `after`, `done.invoke.*`, `error.platform.*`, synthetic `entry./exit.` | One uniform pipeline; nothing is “special-cased”. |
+| Deterministic reactions | Guards & Actions | Pure decisions (`guard`) vs. side effects (`action`). |
+| Temporal logic | Declarative `after` timers | Timeouts, retries, heartbeats—no manual `sleep()`s. |
+| Isolation & composition | Actor model (`spawn_*`) | Each actor is its own event-loop bubble. |
+| Observability | Plugins & snapshots | Tap and record every heartbeat for logs/tests. |
+
+### 🗺️ Tiny Example: “Upload finished” flow
+
+```mermaid
+sequenceDiagram
+    participant UI
+    participant SM as State Machine
+    participant API
+
+    UI->>SM: START_UPLOAD
+    SM->>API: invoke uploadFile()
+    API-->>SM: done.invoke.uploadFile (data)
+    SM->>UI: SHOW_SUCCESS
+```
+
+No direct `await upload()` in UI logic; the machine emits/receives events and drives the UI.
+
+### 📦 Example Payload Flow
+
+```text
+USER_CLICKED_SUBMIT
+           │
+           ▼
+   [guard: isValid]  ────✗→  (event dropped)
+           │
+           ▼
+   actions: saveDraft → invoke apiCall
+                          │
+                          ├── done.invoke.apiCall  → actions: cache, target: success
+                          └── error.platform.apiCall → actions: setError, target: failure
+```
+
+### ✅ Why developers love it
+
+- Clear “When X happens, go to Y” rules—no hidden callbacks.
+- Visual diagrams match exactly what runs.
+- Tests can fire events in order and assert outcomes—no flaky timing.
+
+> **Takeaway:** State machines are a great _way_ to **implement** EDA.
+> Events, timers, and actors are the primitives; this library wires them up so you don’t have to.
+
+---
+
 ## ✨ What is XState-StateMachine?<a name="what-is-xstate-statemachine"></a>
 
 * A **Pythonic** runtime for the world-famous **[XState](https://stately.ai)** architecture.
@@ -75,18 +147,23 @@ Whether you’re a **junior dev** struggling with spaghetti `if/else` trees 🌱
 
 ## 🚀 Key Features<a name="key-features"></a>
 
-| Feature | Why You Care | Best For |
-| :--- | :--- | :--- |
-| **100% XState Compatibility** | Design visually, export JSON, run in Python. | Teams that want to use visual tools like the Stately Editor for collaboration and design. |
-| **Async & Sync Interpreters** | Use the same machine logic for an `asyncio` server or a sync app. Both interpreters support `after` timers, and the `SyncInterpreter` includes a complete, threaded actor model. | Building flexible applications that need to run in different Python environments without sacrificing core features like timers or actors. |
-| **Hierarchical States** | Organize complex logic by nesting states (e.g., `editing.typing`). | Modeling UI components, wizards, or any process that has distinct sub-steps. |
-| **Parallel States** | Model independent, concurrent state regions. | Complex systems where multiple things happen at once, like a smart home (`lighting`, `climate`). |
-| **The Actor Model** | Spawn child machines for ultimate concurrency and isolation. | Orchestrating multiple, independent components like IoT devices, user sessions, or background jobs. |
-| **Declarative `invoke`** | Handle async tasks with declarative `onDone`/`onError` handlers. | Any interaction with a database, API, or external service that can succeed or fail. |
-| **Declarative `after`** | Create time-based transitions without manual `sleep()` calls. | Implementing timeouts, polling, debouncing, or slideshow-like delays. |
-| **Automatic Logic Binding**| Drastically reduce boilerplate by auto-linking your code to the JSON. | Rapid development and keeping your implementation code clean and decoupled. |
-| **Plugin System** | Hook into the interpreter lifecycle with fine-grained callbacks (e.g., on guard evaluation, service start/done/error). | Adding cross-cutting concerns like logging, analytics, or persistence without touching core logic. |
-| **Diagram Generators** | Keep your documentation perfectly in sync with your code. | Projects that require accurate, up-to-date architectural diagrams. |
+| Feature | Why You Care | New in 0.4.1? | Best For |
+| :--- | :--- | :--: | :--- |
+| **100% XState JSON Compatibility** | Design visually, export JSON, run in Python. |  | Teams that collaborate in the Stately Editor. |
+| **Async & Sync Interpreters** | One config, two runtimes (asyncio or blocking). | ⬆️ **SyncInterpreter now non‑blocking for actor spawn & multi‑timers** | Apps that need to run in CLI scripts *and* async servers. |
+| **Multiple `after` Timers per State (Sync too!)** | Fine-grained timing logic without hacks. | ✅ | Complex timeout/backoff flows in synchronous environments. |
+| **True Actor Model (spawn_* actions)** | Compose systems from smaller machines; isolate concurrency. | ⬆️ Sync spawn now uses background threads | IoT fleets, game entities, micro‑workflows. |
+| **Hierarchical & Parallel States** | Model nested flows or concurrent regions explicitly. |  | UIs, wizards, orchestration logic. |
+| **Declarative `invoke` Services** | Async tasks with automatic cancellation & `onDone`/`onError`. |  | API calls, DB work, long-running jobs. |
+| **Smart CLI Code Generator (`xsm`)** | Zero-boilerplate logic/runner stubs from JSON. | ✅ Aliases, hierarchy detection, safer prompts, smarter paths | Fast scaffolding, consistent team patterns. |
+| **Auto Logic Binding (LogicLoader)** | Drop in modules/classes; names are auto-wired. | ⬆️ No special-casing `spawn_*` | Big projects with many logic files. |
+| **Deep Plugin Hooks** | Observe guards, services, transitions in detail. |  | Telemetry, tracing, testing. |
+| **Snapshots & Restoration** | Time-travel debugging, crash recovery. |  | Long-lived workflows, CI golden tests. |
+| **Diagram Exporters** | Mermaid / PlantUML from code. |  | Up-to-date docs in CI/CD. |
+
+> 🔥 **Headline for 0.4.1**
+> *SyncInterpreter grows up:* non‑blocking actor spawning in threads, multiple concurrent `after` timers per state, and a cleaner shutdown sequence.
+> *CLI super-powers:* `xsm`, subcommand aliases, interactive parent detection, stricter arg parsing, and more robust generated runners.
 ---
 
 ## 🛠️ Installation<a name="installation"></a>
@@ -488,7 +565,7 @@ When you define a transition with a `target`, the library uses a powerful resolu
 
 ---
 
-## 🏛️ States — Atomic • Compound • Parallel • Final<a name="states-—-atomic-compound-parallel-final"></a>
+## 🏛️ States — Atomic • Compound • Parallel • Final <a name="states-atomic-compound-parallel-final"></a>
 
 ### 1️⃣ Atomic
 
@@ -609,6 +686,19 @@ Because they are regular events you can:
 await interp.send("after.5000.flightBooking.loading")   # force timeout in tests
 plugin.on_event_received = lambda _, e: print(e.type)
 ```
+#### Quick Example: `onDone` from a Parallel Parent
+
+```jsonc
+"checkout": {
+  "type": "parallel",
+  "states": {
+    "shipping": { "type": "final" },
+    "billing":  { "type": "final" }
+  },
+  "onDone": "receipt"  // fires when BOTH regions hit their finals
+}
+
+```
 
 ---
 
@@ -655,6 +745,10 @@ timer 2 s later            ─────▶  after.2000.someState
 service success            ─────▶  done.invoke.fetchData
 compound finished          ─────▶  done.state.parent.compound
 ```
+
+> **Clarification — arrows show the *event type*, not the payload**
+> In the cheat‑sheet diagram, `service.send("CLICK", x=1)  ─────▶  CLICK` means the runtime receives an event whose **type** is `"CLICK"`. Any payload you pass (e.g. `x=1`) still travels inside the event object (`Event.type == "CLICK"`, `Event.payload == {"x": 1}`); it’s just omitted for brevity.
+
 
 Now you can assert, spy and debug every heartbeat of your machine. 🎉
 
@@ -767,6 +861,10 @@ and restarting any `after` timers or `invoke`s).
 > flag (it isn’t part of the JSON grammar).
 > *No `target` → internal • Any `target` → external.*
 
+> **XState v5 `reenter` flag (not yet supported):**
+> The JS runtime allows `reenter: true/false` on a targeted transition to force or skip exit/entry on self‑targets. This Python runtime currently ignores that flag (treat it as absent). Full support is planned for the next release.
+
+
 | Use this when … | … you want |
 |-----------------|-----------|
 | **Internal** &nbsp;*(no target)* | Update context / fire side‑effects **without** interrupting timers or services. |
@@ -820,6 +918,30 @@ answer, synchronously. 🏁
 | **Guard**  | Before transition decision | `(ctx, event)` | `bool` |
 | **Service**| Inside `invoke` (async or sync) | `(interp, ctx, event)` | `value` or **raise** |
 
+
+### 🔥 Error Handling (Actions / Guards / Services)
+
+**TL;DR**
+
+| Component | If it raises… | What the interpreter does | How to observe / recover |
+|-----------|----------------|---------------------------|---------------------------|
+| **Guard** | Any `Exception` | Treated as **False** (transition candidate fails), error is logged; the interpreter keeps evaluating the rest of the transitions. If none pass, the event is dropped. | Use `LoggingInspector` or a custom plugin (`on_guard_evaluated`) to surface failures. |
+| **Action** | Any `Exception` | Logs the error, **skips the remaining actions** in that list, continues processing. In `SyncInterpreter` the exception is re‑raised to the caller of `.send()`. In `Interpreter` it’s captured inside the event-loop task (logged, does not crash the loop). | Wrap `.send()` in `try/except` for sync; add a plugin or await `send()` and inspect logs for async. |
+| **Service (`invoke`)** | Exception / rejection | Fires the configured `onError` transition with `event.data = error`; if no handler exists, the error bubbles to the parent (or is logged). | Handle `onError` branches explicitly; inspect `event.data` for details. |
+
+
+```python
+# Guard example: an exception becomes "False", not a crash
+def might_blow_up(ctx, event):
+    return 1 / ctx["divisor"] > 0   # ZeroDivisionError → guard == False
+
+# Action example: catching sync errors
+try:
+    sync_service.send("SAVE")
+except Exception as exc:
+    logger.error("SAVE failed: %s", exc)
+
+```
 
 > 🐍 **Snake → Camel Autowiring** 🐫
 > The loader automatically converts **`snake_case`** Python function names
@@ -875,6 +997,28 @@ Rule of thumb 🧘: **Pure guards** & **deterministic actions** → easier tests
 | `after: { "500": "blink" }` | Starts a 500 ms countdown *every* time the state is entered |
 | `after: { "1000": { "target": "retry", "actions": "backoff" } }` | Schedules an internal event, then cancels it automatically if the state exits early |
 | `after: { "…": { …, "guard": "stillRelevant" } }` | Evaluates guard *right before* firing—handy for stale timers |
+
+> **SyncInterpreter parity (0.4.1):**
+> Everything you see here—*including multiple `after` entries per state*—now works in the synchronous engine.
+> Each `after` gets a dedicated thread-backed timer and a unique ID for cancellation. No extra code from you.
+
+> **SyncInterpreter parity addendum – guard timing:**
+> In `SyncInterpreter`, exactly like in the async `Interpreter`, any `guard` on an `after` transition is evaluated **when the timer fires**, *not* when it’s scheduled on state entry.
+> If the guard returns `False` at fire time, that particular delayed transition is skipped (other `after` entries can still fire), and no state change occurs.
+
+```jsonc
+"retrying": {
+  "after": {
+    "1000": { "target": "fetching", "guard": "fewAttempts" },
+    "5000": { "target": "abandon" }
+  }
+}
+```
+```python
+def fewAttempts(ctx, event):
+    # evaluated only when the 1000ms timer actually fires
+    return ctx["attempts"] < 3
+```
 
 ### Anatomy of an `after` Event
 
@@ -964,8 +1108,8 @@ Leaving a state *always* cancels its timers.
 
 #### 🗂️ TaskManager – Zero‑Leak Guarantees<a name="taskmanager"></a>
 
-Every **`after` timer** ⏱️ and each **`invoke` service** 📞 is wrapped in an
-`asyncio.Task` and **registered per‑state**:
+Every **`after` timer** ⏱️ and each **`invoke` service** 📞 is tracked by the TaskManager: the async `Interpreter` wraps them in `asyncio.Task`, while the `SyncInterpreter` uses `threading.Timer`/`threading.Thread`; both are **registered per‑state** and cancelled on exit.
+
 
 ```text
 stateId ─┬─ after‑5000 timer        ─┐
@@ -1008,6 +1152,10 @@ resource‑safe—no leaks, no zombies, no surprises. 🧹🔒
 
 While `invoke` is perfect for calling a single function, the **Actor Model** is for when you need to manage an entire, long-living, stateful process as a child of your main machine. Actors are simply other state machine interpreters that are "spawned" and managed by a parent.
 
+> **0.4.1 Upgrade – SyncInterpreter Spawn:**
+> Synchronous parents can now spawn child actors **without blocking**.
+> Under the hood, each child `SyncInterpreter` runs in its own `threading.Thread`, while the parent keeps processing events.
+
 This pattern is the key to unlocking massive architectural freedom and managing complex concurrency with grace. It is fully supported in **both** the `Interpreter` (async) and `SyncInterpreter` (sync).
 
 ### 📐 Reference Diagram
@@ -1029,33 +1177,43 @@ The relationship is simple: a parent spawns a child, can send it messages (event
 
 ### 🚀 `spawn_` Actions — How Actors Are Born<a name="spawn-actions"></a>
 
-Spawning a child machine is as simple as defining an **action whose type starts with a `spawn_` prefix**. The library provides two conventions:
+Spawning a child machine is as simple as defining an **action whose type starts with `spawn_`** (or `spawn_blocking_`).
 
-| Action Prefix | `Interpreter` (Async) Behavior | `SyncInterpreter` (Sync) Behavior |
-| :--- | :--- | :--- |
-| **`spawn_<name>`** | Non-blocking (default) | **Non-blocking** (runs in a background thread) |
-| **`spawn_blocking_<name>`** | Non-blocking (same as above) | **Blocking** (runs inline, parent waits) |
+| Action Prefix            | Async `Interpreter`                    | Sync `SyncInterpreter`                            | Use When…                           |
+|--------------------------|----------------------------------------|---------------------------------------------------|-------------------------------------|
+| `spawn_<name>`           | Non‑blocking (child runs in a task)    | **Non‑blocking** (child runs in a background thread) | Parent must stay responsive         |
+| `spawn_blocking_<name>`  | Still non‑blocking (same as above)     | **Blocking** (runs inline, parent waits)            | You want strict in‑order execution  |
 
-Behind the scenes, the interpreter performs four deterministic steps:
+Behind the scenes the interpreter does four deterministic steps (code in `Interpreter._spawn_actor` / `SyncInterpreter._spawn_actor`):
 
-| Step | What happens |
-| :--- | :--- |
-| **1. Name Resolution** | The interpreter strips the prefix to get `<name>` and looks it up in `machine.logic.services["<name>"]`. |
-| **2. Source Validation**| If the value is a **`MachineNode`**, it's used directly. If it’s a **callable**, it's treated as a factory that must return a `MachineNode`. |
-| **3. ID Assignment**| The child's ID is uniquely generated as `{parentId}:{name}:{uuid4()}` (e.g., `cart:paymentActor:...`). |
-| **4. Start & Register** | A new interpreter is created for the child, started, and stored in the parent's `_actors` dictionary. |
+1. **Name resolution** – strip the prefix to get `<name>` and look it up in `machine.logic.services["<name>"]`.
+2. **Source validation**
+   * If it’s a **`MachineNode`** → use as‑is.
+   * If it’s a **callable** → treat as a factory; call it with `(interpreter, ctx, event)` and expect a `MachineNode` back.
+   * Otherwise → raise **`ActorSpawningError`**.
+3. **ID assignment** – build a unique child ID:
+   `"{parentId}:{name}:{uuid4()}"` (e.g. `cart:paymentActor:3e3b6b9c-…`).
+4. **Start & register** – create a new interpreter for the child, start it, stash it in `parent._actors[childId]`.
 
-If the source is invalid, the engine raises **`ActorSpawningError`** 🛑.
+```python
+# ✅ Happy path: provide MachineNodes or factories in services
+services = {
+    "paymentActor": create_machine(payment_cfg, logic=payment_logic),
 
-    # The service registry can contain MachineNode objects directly...
-    services = {
-        "paymentActor": create_machine(payment_cfg, logic=payment_logic)
-    }
+    # Factory variant – can use runtime data
+    "dynamicActor": lambda i, ctx, e: create_machine(build_cfg_from_context(ctx))
+}
 
-    # ...or factories for creating them at runtime (useful for passing context).
-    services = {
-        "dynamicActor": lambda i, ctx, e: create_machine(build_cfg_from_context(ctx))
-    }
+# ❌ Wrong: will raise ActorSpawningError
+services = {
+    "oops": "not a machine"
+}
+```
+
+> 📝 **Remember:** Spawned actors live until **you** stop them (or their parent stops).
+> They inherit the parent’s plugins automatically, so logging/metrics stay consistent.
+
+
 
 ### Messaging Patterns
 
@@ -1068,7 +1226,7 @@ The actor model enables powerful, interpreter-agnostic communication patterns.
 | **Broadcast** | The parent iterates over **all** `interpreter._actors.values()` and sends the same event to every child. | A `collaborativeEditor` machine tells all cursor actors to change color. |
 | **Escalation** | A child actor hits an error and bubbles it up by calling `i.parent.send("CHILD_FAILED", ...)`. | A low-level network actor fails, telling the app to show a global “Offline” banner. |
 
-### Event Flow of an Actor Interaction
+### ▶️ Event Flow of an Actor Interaction <a name="actor-event-flow"></a>
 
 Let's trace the `warehouseRobot` example to see how the parent and child communicate:
 
@@ -1085,165 +1243,87 @@ Let's trace the `warehouseRobot` example to see how the parent and child communi
 
 This clear, decoupled communication is what makes the Actor Model so powerful for complex systems.
 
-### Supervision Strategies 🛡️
+> Need a refresher later? Jump back here: see [Event Flow of an Actor Interaction](#actor-event-flow).
 
-A robust system must know how to handle actor failures. The recommended pattern is for the child to report its own failure to the parent.
+### Dynamic Pools & Supervision Strategies (Sync & Async)
 
-**The Pattern:**
+You can spin up and tear down *many* child interpreters at runtime (worker pools, per-user sessions, etc.) **and** supervise them with a single, consistent pattern.
 
-1. The child actor has an `onError` handler on its critical invoked service.
-2. The action triggered by `onError` (`report_failure_to_parent`) explicitly sends a custom `CHILD_FAILED` event to its parent.
-3. The parent machine has a global or state-specific handler for `CHILD_FAILED` and decides what to do (e.g., restart the actor).
+#### Spawning Workers Dynamically
 
-#### Child Actor's onError Action
+| Goal | Async `Interpreter` | Sync `SyncInterpreter` |
+|------|----------------------|------------------------|
+| Create a child machine on demand | Use an async-friendly action; child runs in its own asyncio task | Use a normal action; child runs in a background `threading.Thread` (parent `.send()` still blocks until the current loop settles) |
 
 ```python
-# Inside the child actor's logic (use await for async interpreter)
-def report_failure_to_parent(i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition):
-    # This action is triggered by the child's own onError transition
-    error_details = {"actorId": i.id, "error": str(e.data)}
+# Shared worker config/logic assumed
+worker_machine = create_machine(worker_cfg, logic=worker_logic)
 
-    # Use the .parent reference to communicate upwards
-    i.parent.send("CHILD_FAILED", **error_details)
+# -------- ASYNC parent --------
+async def spawn_worker(i: Interpreter, ctx, e, a):
+    wid = ctx.setdefault("next_id", 0) + 1
+    ctx["next_id"] = wid
+    child = Interpreter(worker_machine, parent=i).start()  # await .start()
+    i._actors[f"worker:{wid}"] = await child
+    # Optionally send initial event
+    await child.send("BOOTSTRAP", wid=wid)
+
+# -------- SYNC parent --------
+def spawn_worker(i: SyncInterpreter, ctx, e, a):
+    wid = ctx.setdefault("next_id", 0) + 1
+    ctx["next_id"] = wid
+    child = SyncInterpreter(worker_machine).start()  # runs in its own thread internally
+    i._actors[f"worker:{wid}"] = child
+    # Initial command:
+    child.send("BOOTSTRAP", wid=wid)
 ```
 
-#### Parent Machine's Handler
-```json
-// In the parent's state machine definition
+#### Supervision Strategies (Unified)
+
+If a child crashes or its invoked service fails, have **the child report up** and the parent decide what to do.
+
+| Step | Child does… | Parent handles… |
+|------|--------------|------------------|
+| 1 | Add an `onError` on the critical invoke (or catch exceptions in actions) | Provide a global/state `on: { "CHILD_FAILED": … }` handler |
+| 2 | In the error action, send a custom event to `i.parent` | Log, restart (`spawn_*` again), or escalate |
+
+**Child error action (async vs sync):**
+
+```python
+# Async child
+async def report_failure_to_parent(i: Interpreter, ctx, e, a):
+    await i.parent.send(
+        "CHILD_FAILED",
+        actorId=i.id,
+        error=str(e.data)
+    )
+
+# Sync child
+def report_failure_to_parent(i: SyncInterpreter, ctx, e, a):
+    i.parent.send(
+        "CHILD_FAILED",
+        actorId=i.id,
+        error=str(e.data)
+    )
+```
+
+**Parent handler (same JSON for both):**
+```jsonc
 "running_children": {
-  "entry": "spawn_child_actor",
+  "entry": "spawn_worker",
   "on": {
     "CHILD_FAILED": {
-      "actions": [
-        "log_child_error",
-        "spawn_child_actor"
-      ],
-      "target": ".running_children" // Re-enter the state to apply the restart strategy
-    }
-  }
-}
-```
-
-### Event Flow of an Actor Interaction
-
-Let's trace the `warehouseRobot` example to see how the parent and child communicate:
-
-1.  **Parent (`warehouseRobot`)** enters the `planning_route` state.
-2.  **Parent**'s `entry` action (`spawn_pathfinder_actor`) is executed.
-    - An `Interpreter` for the `pathfinder` machine is created and started. This is the **Child Actor**.
-3.  **Child (`pathfinder`)** immediately enters its `calculating` state.
-4.  **Child** `invoke`s its `calculate_path_service`.
-5.  *(...time passes...)*
-6.  **Child**'s service finishes successfully, triggering its `onDone` transition.
-7.  **Child**'s `onDone` action (`send_path_to_parent`) is executed.
-    - Inside this action, it calls `await i.parent.send("PATH_CALCULATED", ...)`
-8.  **Parent**'s event loop receives the `PATH_CALCULATED` event.
-9.  **Parent** follows its own transition for this event, running the `store_path` action and moving to the `moving` state.
-10. **Child** moves to its `finished` state and terminates.
-
-This clear, decoupled communication is what makes the Actor Model so powerful for complex systems.
-
-### Dynamic Pools
-
-### 🚀 `spawn_<name>` Actions — How Actors Are Born<a name="spawn-actions"></a>
-
-Spawning a child machine is as simple as defining an **action whose type
-starts with `spawn_`**.
-Behind the emoji‑curtain, the interpreter performs four deterministic steps:
-
-| Step | Code Location | What happens |
-|------|---------------|--------------|
-| **1. Name resolution** | `Interpreter._spawn_actor` | Strips the `spawn_` prefix to obtain `<name>` and looks it up in `machine.logic.services["<name>"]`. |
-| **2. Source validation** | same | &nbsp;&nbsp;→ If the value is already a **`MachineNode`** ☑️ use it as‑is.<br>&nbsp;&nbsp;→ If it’s a *callable*, it’s treated as a **factory** — the function is invoked with `(interpreter, ctx, event)` and **must** return a `MachineNode`. |
-| **3. ID assignment** | same | The child interpreter’s `.id` is built as:<br>`{parentId}:{name}:{uuid4()}`  &nbsp;🆔<br>Example: `shoppingCart:paymentActor:3e3b6b9c-…` |
-| **4. Start & register** | same | A new `Interpreter(child_machine)` is created, `.start()`ed, and stored in `parent._actors[childId]`. |
-
-If the provided MachineNode/factory is invalid, the engine raises
-**`ActorSpawningError`** 🛑 — inherit from `XStateMachineError` so you can
-`pytest.raises()` it.
-
-```python
-# The happy path 🎉
-services = {
-    "paymentActor": create_machine(payment_cfg, logic=payment_logic),
-
-    # OR factory variant (gets runtime data):
-    "dynamicActor": lambda i, ctx, e: create_machine(build_cfg(ctx["type"]))
-}
-```
-
-```python
-# The unhappy path 😬  – raises ActorSpawningError
-services = {
-    "oops": "not a machine"        # 🤦‍♀️ typo or wrong return
-}
-```
-
-> 📝 **Remember:** spawned actors live until **you** stop them (or their parent
-> stops). They inherit their parent’s plugins automatically for consistent
-> logging/metrics.
-
-You can dynamically create and destroy actors at runtime, which is perfect for managing pools of workers or user sessions.
-
-```python
-# An action in your parent machine's logic
-def spawn_worker(i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition):
-    # Use the context to track the next available ID
-    worker_id = ctx["next_id"] = ctx.get("next_id", 0) + 1
-
-    # The service must return a MachineNode
-    worker_machine = create_machine(worker_config, logic=worker_logic)
-
-    # The interpreter automatically starts the new actor
-    # and adds it to its internal `_actors` dictionary.
-    # The key here is for your own reference.
-    actor_instance_id = f"worker:{worker_id}"
-    i._actors[actor_instance_id] = Interpreter(worker_machine).start()
-
-    logging.info(f"✅ Spawned new worker: {actor_instance_id}")
-```
-
-### Supervision Strategies 🛡️
-
-A robust system must know how to handle actor failures. While the library does not emit a special `error.actor.*` event automatically, it provides the primitives to build any supervision strategy you need. The recommended pattern is for the child to report its own failure to the parent.
-
-**The Pattern:**
-
-1. The child actor has an `onError` handler on its critical invoked service.
-2. The action triggered by `onError` (`report_failure_to_parent`) explicitly sends a custom `CHILD_FAILED` event to its parent.
-3. The parent machine has a global or state-specific handler for `CHILD_FAILED` and decides what to do (e.g., restart the actor).
-
-#### Child Actor's onError Action
-
-```python
-# Inside the child actor's logic
-async def report_failure_to_parent(i: Interpreter, ctx: Dict, e: Event, a: ActionDefinition):
-    # This action is triggered by the child's own onError transition
-    error_details = {"actorId": i.id, "error": str(e.data)}
-
-    # Use the .parent reference to communicate upwards
-    await i.parent.send("CHILD_FAILED", **error_details)
-```
-
-#### Parent Machine's Handler
-
-```json
-// In the parent's state machine definition
-"running_children": {
-  "entry": "spawn_child_actor",
-  "on": {
-    "CHILD_FAILED": {
-      "actions": [
-        "log_child_error",
-        "spawn_child_actor"
-      ],
-      // The restart strategy
+      "actions": ["log_child_error", "spawn_worker"],
       "target": ".running_children"
-      // Re-enter the state to apply the strategy
     }
   }
 }
 ```
+
+> *Tip:* If you don’t want automatic restart, drop the `target` and just log/alert.
+
+---
+
 
 **Debugging Actors**
 
@@ -1457,8 +1537,22 @@ Your library supports two primary ways of organizing your logic: **functional** 
 | **`invoke` Services**| Non-blocking (`asyncio.create_task`) | Blocking (runs inline) |
 | **`spawn` Actors**| Non-blocking (`asyncio.create_task`) | Non-blocking (`threading.Thread`) or Blocking (inline) |
 
+
+#### 🚀 What’s New in 0.4.1 for the SyncInterpreter
+
+- **Non‑blocking actor spawning:** `spawn_*` actions now create child `SyncInterpreter`s in **background threads**, keeping the parent responsive.
+- **Multiple concurrent `after` timers per state:** You can declare several delays in the same state; each gets its own handle and unique ID.
+- **Safer shutdown:** `.stop()` now **stops all children first**, then cancels timers—no dangling threads, no stray events.
+
+> 💡 You still get deterministic, blocking `.send()` semantics—the non‑blocking bits are hidden behind thread coordination.
+
 **Rule of Thumb:**
+
 *Desktop / CLI* → **SyncInterpreter**
+
+> **SyncInterpreter is still “blocking” where it matters:**
+> `send()` (and `start()/stop()`) run the full transition loop synchronously and only return when all exit/entry actions, guards, transient (`""`) transitions and internal events have fully settled. The **only** things that run out‑of‑band are `after` timers and spawned child interpreters (each in its own thread). So when this README says “non‑blocking” for SyncInterpreter, it only refers to those background helpers—not to the main event-processing call.
+
 *Web / IoT / pipelines* → **Interpreter**
 
 #### ⚠️ Features *not* Supported by `SyncInterpreter`
@@ -1483,104 +1577,238 @@ While the synchronous engine is highly capable, it enforces one hard constraint 
 * Use `loop.call_soon_threadsafe()` for cross‑thread `.send()` to an `Interpreter`.
 * For cross‑process, bridge with a message queue and `.send()` from the process.
 
+### 📡 Cross‑thread `.send()` with `SyncInterpreter`
+
+`SyncInterpreter` isn’t inherently thread‑safe. If another thread must trigger events, use a tiny queue/dispatcher pattern:
+
+```python
+# owner thread ----------------------------
+svc = SyncInterpreter(machine).start()
+inbox: "queue.Queue[tuple[str, dict]]" = queue.Queue()
+
+def pump():
+    while running:
+        try:
+            etype, payload = inbox.get(timeout=0.05)
+            svc.send(etype, **payload)          # all sends happen on THIS thread
+        except queue.Empty:
+            pass
+
+dispatcher = threading.Thread(target=pump, daemon=True).start()
+
+# worker thread ---------------------------
+def do_work():
+    inbox.put(("UPDATE", {"value": 42}))
+```
+
+**Alternatives**
+
+- Wrap `svc.send(...)` with a `threading.Lock` if *very* occasional cross‑thread calls are fine and you can guarantee no re‑entrancy.
+- Expose a small `send_threadsafe()` helper that just enqueues into the owner’s inbox.
+
+> There is no built‑in `call_soon_threadsafe` equivalent for the sync engine—use a queue or redesign so only one thread owns the interpreter.
+
 ---
 
-## 🤖 CLI: Boilerplate Generation<a name="cli-tool"></a>
+## 🤖 CLI: Boilerplate Generation<a name="cli-boilerplate-generation"></a>
 
-To accelerate development, the library includes a powerful command-line tool for scaffolding project files directly from your state machine's JSON definition. It reads one or more JSON files, extracts all required actions, guards, and services, and generates clean, ready-to-use `logic` and `runner` Python files.
+### 🧰 What is `xsm` and why should you care?
 
-This saves you from writing boilerplate code and ensures your implementation skeleton perfectly matches your machine's contract.
+`xsm` is the **command‑line companion** to this library. It turns JSON charts into runnable Python code and keeps your event‑driven workflow consistent.
 
-### Core Usage
+#### 🎯 Goals
 
-The main command is `generate-template`. You can pass JSON files as positional arguments or using the `--json` flag.
+- **Zero boilerplate:** generate action/guard/service stubs and a runnable interpreter in seconds.
+- **Enforce conventions:** consistent file names, logger setup, async/sync signatures.
+- **Speed up iteration:** tweak JSON, regen, run—repeat.
+- **Promote EDA by default:** generated runners log *events*, not function calls; you see flows, not stacks.
 
-```bash
-# Basic usage with one file
-xstate-statemachine generate-template path/to/my_machine.json
+#### 🏃 Typical workflow
 
-# Generating from multiple files into a combined output
-xstate-statemachine generate-template machine1.json machine2.json --output ./combined
+```text
+1. Design machine visually → export JSON
+2. Run:  xsm gt path/to/machine.json
+3. Fill in generated stubs (actions/guards/services)
+4. python my_machine_runner.py   # see it run
 ```
 
-### Command-Line Arguments
+#### 🧪 Newbie-friendly example
 
-The generator is highly configurable via command-line options:
-
-| Argument | Shorthand | Description | Default |
-| :--- | :--- | :--- | :--- |
-| `json_files...` | (none) | One or more positional paths to your JSON machine definitions. | (required) |
-| `--json` | (none) | An alternative way to specify a JSON file. Can be used multiple times. | (none) |
-| `--output` | `-o` | The directory where generated files will be saved. **It will be created if it doesn't exist.** | Same directory as the first input JSON file. |
-| `--style` | (none) | The programming style for logic: `class` or `function`. | `class` |
-| `--loader` | (none) | Whether to use the automatic `LogicLoader` (`yes`) or generate explicit `MachineLogic` bindings (`no`). | `yes` |
-| `--file-count` | (none) | `2` for separate logic/runner files, `1` for a single combined file. | `2` |
-| `--async-mode`| (none) | Generate `async` code and use the `Interpreter` (`yes`) or synchronous code with `SyncInterpreter` (`no`). | `yes` |
-| `--log` | (none) | Automatically add `logger.info(...)` stubs inside each generated function. | `yes` |
-| `--sleep` | (none) | Add `time.sleep()` or `asyncio.sleep()` calls to the generated runner for simulation pauses. | `yes` |
-| `--sleep-time`| (none) | The duration (in seconds) for the sleep calls in the runner. | `2` |
-| `--force` | (none) | Force overwrite of existing files without prompting. | (disabled) |
-| `--version` | (none) | Displays the current version of the library. | (N/A) |
-
-> **Note on Boolean Arguments**: Options like `--loader`, `--async-mode`, `--log`, and `--sleep` accept case-insensitive boolean values: `yes`/`no`, `true`/`false`, `1`/`0`.
-
-### Examples in Action
-
-#### 1. Default Generation (Async, Class-based, Auto-discovered)
-
-This is the most common use case. It generates a class-based logic file and an async runner that uses `logic_providers` for clean, automatic binding.
-
-**Command:**
 ```bash
-xstate-statemachine generate-template examples/async/basic/traffic_light.json
+xsm gt light_switch.json
+# ➜ creates light_switch_logic.py + light_switch_runner.py
+python light_switch_runner.py
+# Logs every event/transition; edit stubs to add real behaviour
 ```
 
-**Result:**
-* `examples/async/basic/traffic_light_logic.py` (with a `TrafficLightLogic` class)
-* `examples/async/basic/traffic_light_runner.py` (with an `async def main()` function)
+#### 🖼️ How it fits in the big picture
 
-#### 2. Synchronous & Functional Code
-
-Generate a synchronous, function-based template suitable for a CLI tool or simple script.
-
-**Command:**
-```bash
-xstate-statemachine generate-template login_form.json --async-mode no --style function
+```mermaid
+flowchart LR
+    A[Stately Editor / JSON] -->|xsm gt| B[Generated Logic & Runner]
+    B --> C[Your Business Code]
+    C --> D[Interpreter / SyncInterpreter]
+    D --> E[Running App / Tests / CLI Demo]
 ```
 
-**Result:**
-* `login_form_logic.py` (with standalone functions like `update_field`, `verify_credentials`, etc.)
-* `login_form_runner.py` (with a synchronous `def main()` and using `SyncInterpreter`)
+Use `xsm` when you…
 
-#### 3. Single File with Explicit Bindings
+- start a new machine and don’t want to hand‑wire 20 function placeholders
+- onboard juniors—give them stubs with correct signatures instead of “read the docs and pray”
+- keep large teams consistent (same folder structure, same logger, same sample main())
 
-For small projects or quick tests, you might want everything in one file with explicit `MachineLogic` bindings, disabling the auto-loader.
+Skip `xsm` when you…
 
-**Command:**
+- prefer hand-crafted code (fine for tiny machines)
+- already built your own templates or scaffolding
+- need dynamic runtime generation (use `create_machine()` directly)
+
+> TL;DR — `xsm` is your **scaffolder + guard rail** for event‑driven, state-charted Python.
+
+The CLI went through a sizeable upgrade in **0.4.1**:
+
+- The main entry-point is now **`xsm`** (short & sweet).
+> **Note:** The legacy console entry point `xstate-statemachine` is **deprecated** and may be removed in a future release. New installs expose only `xsm`. If you still call the old name, pin to an older version or add a shell alias.
+
+- **Aliases everywhere**: quicker typing with `gt`, `-jp`, `-jc`, `-fc`, etc.
+- **Hierarchy helper**: pass a parent + children, or let the CLI *guess* and confirm interactively.
+- **Safer defaults**: `allow_abbrev=False`, clearer error messages, overwrite prompts, reserved‑keyword fixes, robust path resolution in runners.
+
+### Basic Usage
+
 ```bash
-xstate-statemachine generate-template stopwatch.json --file-count 1 --loader no
+# Single file, default options (async, class-based, 2 files)
+xsm generate-template path/to/machine.json
+
+# Short alias
+xsm gt path/to/machine.json
 ```
 
-**Result:**
-* `stopwatch.py`: A single file containing:
-    1.  The action functions (`record_time`, `reset_time`).
-    2.  An explicit `MachineLogic` instance mapping string names to those functions.
-    3.  The runner code to execute the simulation.
+---
 
-#### 4. Combining Multiple Machines
+### 🔤 Aliases & Short Flags<a name="cli-aliases"></a>
 
-If your system uses multiple statecharts that are orchestrated together, you can generate a unified boilerplate for all of them. The CLI will merge all unique action, guard, and service names from all input files.
+| Long | Short | Description |
+|------|:-----:|-------------|
+| `generate-template` | `gt` | Main code-gen subcommand |
+| `--json-parent` | `-jp` | Parent machine JSON path |
+| `--json-child`  | `-jc` | Child/actor JSON path (repeatable) |
+| `--file-count`  | `-fc` | 1 = single file, 2 = logic + runner |
+| `--async-mode`  | `-am` | yes / no |
+| `--loader`      | `-l`  | yes / no |
+| `--style`       | `-s`  | class / function |
+| `--output`      | `-o`  | Output directory |
+| `--force`       | `-f`  | Overwrite without prompt |
 
-**Command:**
+Boolean flags accept: `yes/no`, `true/false`, `1/0` (case-insensitive).
+
+---
+
+### 👑 Hierarchical Machine Generation<a name="cli-hierarchy"></a>
+
+You can feed multiple JSON files that represent a **parent + child actors**. Two ways:
+
+1. **Explicit**:
+
 ```bash
-# Combine a parent machine and its actor definition
-xstate-statemachine generate-template warehouse_robot.json pathfinder_actor.json --output ./generated/warehouse
+xsm gt -jp parent.json -jc child1.json -jc child2.json
 ```
 
-**Result:**
-* `./generated/warehouse/warehouse_robot_pathfinder_actor_logic.py`: Contains a single class with the combined logic stubs from both machines (e.g., `assign_order`, `store_path`, `send_path_to_parent`, etc.).
-* `./generated/warehouse/warehouse_robot_pathfinder_actor_runner.py`: Contains a runner with two separate simulation functions, `run_warehouse_robot()` and `run_pathfinder_actor()`, called from a main orchestrator function.
-*
+2. **Heuristic + Interactive** (just pass all files, let CLI guess):
+
+```bash
+xsm gt parent.json child1.json child2.json
+# CLI prints:
+#   1. ParentMachine (looks like parent, score: 3)
+#   2. ChildOne      (looks like child, score: 0)
+#   3. ChildTwo      (looks like child, score: 0)
+# Is this correct? [Y/n]
+```
+
+If you answer “n”, you’ll get a prompt to pick the parent by number.
+
+---
+
+### 🗂 One File vs Two Files<a name="cli-file-count"></a>
+
+- `-fc 2` (**default**):
+  Generates:
+  - `*_logic.py` with all stubbed actions/guards/services.
+  - `*_runner.py` with a ready-to-run interpreter and simulation loop.
+
+- `-fc 1`:
+  Everything in one file; imports de-duplicated, logger setup unified. Good for quick demos or tiny scripts.
+
+---
+
+### 🧵 Async vs Sync Templates<a name="cli-async-sync"></a>
+
+- `-am yes` (default): Async `Interpreter`, `asyncio.sleep`, `await interpreter.send(...)`.
+- `-am no`: Blocking `SyncInterpreter`, `time.sleep`, direct `.send(...)`.
+
+> The generator ensures signature correctness: actions/services async only when needed, guards always sync.
+
+---
+
+### ✨ Smarter Runner Code (What changed)
+
+- **Logic binding**: Always correct for your chosen style (class/function) and loader mode.
+- **Path resolution**: The runner looks for your JSON next to itself, then in the parent directory—handier after moving files.
+- **Keyword conflicts**: If your JSON names collide with Python keywords, they are auto-fixed (e.g., `def` → `def_`).
+
+---
+
+### 🛡️ Validation & Prompts
+
+- **No partial option matches**: `--sl` won’t silently match `--sleep`. Typos crash early.
+- **Multiple `--json-parent`?** Immediate error.
+- **Existing files?** You’ll be asked “Overwrite? [Y/n]” unless you pass `-f`.
+
+---
+
+### 📦 Quick Examples
+
+**1. Async + Class + Auto Loader (common case)**
+
+```bash
+xsm gt examples/traffic_light.json
+```
+
+Creates:
+
+```
+traffic_light_logic.py    # class TrafficLightLogic
+traffic_light_runner.py   # async main(), LoggingInspector, sleep loop
+```
+
+**2. Sync + Function Style + Explicit Binding**
+
+```bash
+xsm gt login_form.json -am no -s function -l no
+```
+
+You’ll get function stubs and a `MachineLogic` mapping generated for you.
+
+**3. Single-file, Hierarchical**
+
+```bash
+xsm gt -jp parent.json -jc child.json -fc 1 -o ./gen
+```
+
+Produces `./gen/parent_logic.py` (combined). Parent & child event simulations show up in one script.
+
+---
+
+### 🧪 Testing the Generator
+
+Because the generated code is deterministic, you can:
+
+- Assert file existence and contents (headers, logger lines, imports).
+- Run `pytest` on your generated package right away—nothing is “magic”.
+
+
+That’s the CLI in 0.4.1—faster, stricter, and hierarchy-aware. 🚀
+
 
 ---
 
@@ -1620,7 +1848,12 @@ from xstate_statemachine import create_machine, Interpreter
 from xstate_statemachine.logger import logger  # Convenience re‑export 🪵
 
 logger.info("✅ Logging initialised!")
+
 ```
+
+> Since v0.4.1, the generator emits stricter, standardized `logger.info(...)` messages (wording fixed, emojis intact); if you grep/assert on logs, update expectations — core logging behavior is unchanged.
+
+
 
 | What | Where | Why |
 |------|-------|-----|
@@ -1746,6 +1979,8 @@ await service.stop()
 # later / after restart
 restored  = await Interpreter.from_snapshot(snap, machine).start()
 ```
+> **Note (async only):** `from_snapshot(...)` exists on `Interpreter` right now.
+> `SyncInterpreter` doesn’t have a restore helper yet—use `create_machine(...)`, then manually set `context` and drive events to reach the desired states, or switch to the async interpreter for snapshot restore flows.
 
 ```python
 # 😬 Wrong – passing raw JSON
@@ -1789,6 +2024,25 @@ Path("docs/diagram.puml").write_text(plantuml)
 ```
 
 Integrate with **mkdocs-material**, GitHub Pages, Confluence—anything that renders Mermaid/PUML—your diagrams will **always** mirror the code running in prod.
+
+### 📤 Programmatic Exports: `machine.to_dict()` & `machine.to_json()`
+
+Besides Mermaid/PlantUML, you can export the *static* machine definition directly:
+
+```python
+cfg_dict  = machine.to_dict()   # → plain Python dict (JSON‑serialisable)
+cfg_json  = machine.to_json()   # → JSON string (pretty by default)
+Path("docs/machine.json").write_text(cfg_json)
+```
+
+**What’s included?**
+The full, normalised XState JSON graph (ids, states, on/after/invoke, etc.).
+
+**What’s NOT included?**
+Runtime data (context values, active states, timers). For that, use `interpreter.get_snapshot()` / `Interpreter.from_snapshot(...)`.
+
+> Tip: `to_dict()` is ideal for diffing machines in tests or piping into other tooling; `to_json()` is handy for bundling with front‑end visualisers.
+
 
 ### 5. REPL Live‑Tinkering 💻
 
@@ -1884,6 +2138,24 @@ In [13]: service = await Interpreter.from_snapshot(snap, machine).start()
 
 🚀 **You now have an always‑on laboratory for your state machines—no rebuilds, no deployment cycles, just pure interactive discovery. Happy tinkering!**
 
+## 🔼 Upgrade Notes: 0.4.0 → 0.4.1<a name="upgrade-notes-041"></a>
+
+**No breaking API removals**, but a few behaviour tweaks to be aware of:
+
+### SyncInterpreter
+- **Actor spawning no longer blocks** the parent. If you expected strict in-order execution, add explicit joins or guards.
+- **Multiple `after` timers per state** can now fire; ensure your guards/actions handle overlapping timers if you add many.
+
+### CLI
+- **Command renamed** to `xsm`. The legacy `xstate-statemachine` console entry point is deprecated and may disappear in a future release—migrate scripts to `xsm`.
+- **Interactive hierarchy guesser**: If you pass multiple JSONs without `--json-parent`, you’ll see a prompt. Use `-f` to skip overwrites, not prompts.
+- **Strict arg parsing**: Abbreviated flags no longer work; typo’d flags now error (good!).
+
+### Generated Code
+- **Keyword auto-fix**: If an action/guard/service name is a Python keyword, it’s renamed (e.g., `class` → `class_`). Search for `# alias for JSON name` comments.
+- **Runner path resolution**: Scripts now try two locations for the JSON. If you were relying on `Path.cwd()`, adjust accordingly.
+
+If you used any internal/private APIs, re-run your tests—internals around threading and timer bookkeeping have changed for robustness.
 
 ---
 
@@ -1971,6 +2243,9 @@ These are the engines that run your machine. They take a `MachineNode` (created 
 | `.use(plugin)` | `self` | Registers a plugin. Must be called before `.start()`. |
 | `.get_snapshot()` | `str` | Returns a JSON string of the current status, context, and active `state_ids`. |
 | `.from_snapshot(snap, machine)` | `Interpreter` | *(Class Method)* Restores an interpreter from a saved snapshot. |
+
+<sub>† `from_snapshot` is available on `Interpreter` only (async). The sync engine currently has no equivalent helper.</sub>
+
 
 ##### Usage Examples
 
@@ -2204,6 +2479,9 @@ By understanding this distinction, you can model your asynchronous logic with ev
 | **Snapshot critical flows in CI** | Trusting human QA memory | Catch regressions at graph-level |
 | **Document with Mermaid auto-build** | Manually exported PNGs | Zero-drift diagrams |
 
+
+* **Treat `spawn_*` like any other action name** — the loader no longer special-cases them. Keep the naming clear: `spawnPaymentActor`, `spawn_worker`, etc.
+
 ### Naming Conventions
 
 * **Events**: `SCREAMING_SNAKE_CASE`
@@ -2293,8 +2571,22 @@ def test_timer_transition(light_machine):
 | **Can I use Pydantic in context?** | Yep—store a model instance; just remember context is shallow-copied on interpreter start. |
 | **Where is the GUI inspector?** | On the roadmap. Use Stately web simulator + `LoggingInspector` meanwhile. |
 | **Is there a code-gen for Python from Stately?** | Not needed—export JSON → run. Zero translation. |
+| **Why did the CLI command change to `xsm`?** | To make everyday usage faster and cleaner. It’s still the same project—just a friendlier binary. |
+| **Can the SyncInterpreter now spawn actors without blocking?** | Yes! As of 0.4.1, children run in background threads. The parent keeps processing events synchronously. |
+| **How many `after` timers can I declare in one state (Sync)?** | As many as you need. Each gets its own handle; all are cancelled on state exit. |
+| **The generator renamed one of my functions to `if_` — why?** | Your JSON used a Python keyword. 0.4.1 auto-appends `_` to keep code valid. The original JSON name is kept as an alias. |
 
 ---
+
+## 🗺️ Roadmap (Next Release) <a name="roadmap-next-release"></a>
+
+- **`reenter` flag parity with XState v5** – allow self‑transitions to opt in/out of re‑entry explicitly (no workarounds needed).
+- **`SyncInterpreter.from_snapshot(...)` helper** – parity with async restore; single-call reconstruction from saved snapshots.
+- **Unified cancellation primitives** – expose a consistent API over `asyncio.Task`/`threading.Thread` so plugins can introspect both.
+- **Bulk event enqueue API** – send a list of events in one call for high‑volume telemetry pipelines.
+- **GUI Inspector prototype** – lightweight web panel to watch events, guards, and context diffs live.
+
+
 
 ## 🤝 Contributing<a name="contributing"></a>
 
