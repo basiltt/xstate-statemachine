@@ -29,4 +29,4 @@ classifiers = [
 # 💡 This is the key addition for the CLI tool, following PEP 621.
 #    Poetry will correctly interpret this and create the executable.
 [project.scripts]
-xstate-statemachine = "xstate_statemachine.cli.__main__:main"
+xsm = "xstate_statemachine.cli.__main__:main"
