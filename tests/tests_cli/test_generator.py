@@ -1,4 +1,4 @@
-# tests_cli/test_generator.py
+# tests/tests_cli/test_generator.py
 # -----------------------------------------------------------------------------
 # 🧪 Test Suite: Code Generation
 # -----------------------------------------------------------------------------
@@ -349,7 +349,7 @@ class TestLogicCodeGenerator(unittest.TestCase):
         """
         logger.info("🧪 Testing interpreter type hint in function parameters.")
         # 🎬 ACT: Generate code for both sync and async modes.
-        code_sync = generate_logic_code(
+        code_sync = generate_logic_code(  # noqa: ignore=E501
             actions={"act"},
             guards=set(),
             services=set(),
@@ -380,7 +380,7 @@ class TestLogicCodeGenerator(unittest.TestCase):
         """
         logger.info("🧪 Testing return type hints for actions.")
         # 🎬 ACT: Generate both sync and async actions.
-        code_sync = generate_logic_code(
+        code_sync = generate_logic_code(  # noqa: ignore=E501
             actions={"act"},
             guards=set(),
             services=set(),

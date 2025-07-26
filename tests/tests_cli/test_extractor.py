@@ -1,4 +1,4 @@
-# /tests_cli/test_extractor.py
+# tests/tests_cli/test_extractor.py
 # -----------------------------------------------------------------------------
 # 🧪 Test Suite: Logic, Event, and Hierarchy Extractor
 # -----------------------------------------------------------------------------
@@ -35,7 +35,7 @@ from typing import Dict, Any
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from xstate_statemachine.cli.extractor import (
-    _count_invokes,
+    _count_invokes,  # noqa : Protected method import for testing
     extract_events,
     extract_logic_names,
     guess_hierarchy,

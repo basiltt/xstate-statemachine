@@ -333,7 +333,7 @@ def _generate_runner_logger_setup(log: bool, file_count: int) -> str:
 def _generate_logic_binding_code(
     style: str,
     file_count: int,
-    loader: bool,
+    loader: bool,  # noqa: ignore unused argument
     class_name: str,
     logic_file_name: str,
     indent: str = "    ",

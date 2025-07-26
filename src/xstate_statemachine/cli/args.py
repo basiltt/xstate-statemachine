@@ -187,7 +187,11 @@ def get_parser() -> argparse.ArgumentParser:
 
     # 🔖 Version argument
     parser.add_argument(
-        "--version", action="version", version=f"%(prog)s {package_version}"
+        "-v",
+        "--version",
+        action="version",
+        version=f"%(prog)s {package_version}",
+        help="Show program's version number and exit.",
     )
 
     # 📋 Sub-command setup
@@ -196,6 +200,8 @@ def get_parser() -> argparse.ArgumentParser:
     )
     gen_parser = subparsers.add_parser(
         "generate-template",
+        aliases=["gt"],
+        # MODIFIED LINE: Remove " (alias: gt)" from help string for cleaner output.
         help="Generate boilerplate templates from JSON machine configurations.",
         description="Generates Python code from one or more XState JSON machine definitions.",
     )

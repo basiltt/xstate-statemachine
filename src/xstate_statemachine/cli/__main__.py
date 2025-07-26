@@ -143,7 +143,7 @@ def _write_output_files(
     paths: Dict[str, Path],
     logic_code: str,
     runner_code: str,
-    log_bool: bool,
+    log_bool: bool,  # noqa: F841
 ) -> None:
     """Writes the generated code strings to the appropriate files.
 
@@ -561,11 +561,12 @@ def main() -> None:
         parser
     )  # Note: Assuming this validates args based on the parser state.
 
-    if args.subcommand == "generate-template":
+    if args.subcommand in {"generate-template", "gt"}:
         run_generation_workflow(args, parser)
-    else:
-        # 🆘 Show help if no valid subcommand is given
-        parser.print_help()
+        return
+
+    # 🆘 Show help if no valid subcommand is given
+    parser.print_help()
 
 
 # -----------------------------------------------------------------------------

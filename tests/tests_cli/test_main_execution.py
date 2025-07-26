@@ -1,4 +1,4 @@
-# tests_cli/test_main_execution.py
+# tests/tests_cli/test_main_execution.py
 # -----------------------------------------------------------------------------
 # 🧪 Test Suite: End-to-End CLI Execution
 # -----------------------------------------------------------------------------
@@ -21,7 +21,6 @@
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import logging
-import unittest
 from io import StringIO
 from pathlib import Path
 from typing import List
