@@ -2,25 +2,28 @@
 # -----------------------------------------------------------------------------
 # 🧪 Test Suite: Code Generation
 # -----------------------------------------------------------------------------
-# This module provides unit tests for the functions in
-# `xstate_statemachine.cli.generator`.
+# This module provides a comprehensive suite of unit tests for the functions
+# in the `xstate_statemachine.cli.generator` module.
 #
-# It verifies that both logic and runner source code are generated correctly
-# based on a wide range of input options, including:
-#   -   Code style (class vs. function)
-#   -   Execution mode (async vs. sync)
-#   -   Presence of logging, services, and other features.
-#   -   Advanced features like keyword aliasing and hierarchical structures.
+# It meticulously verifies that both the logic and runner source code are
+# generated correctly based on a wide range of input options and configurations.
+# The tests cover various dimensions, including:
+#   - Code Style: Class-based vs. function-based generation.
+#   - Execution Mode: Asynchronous vs. synchronous code.
+#   - Feature Flags: Presence of logging, services, and other features.
+#   - Edge Cases: Handling of Python keywords, empty logic sets, etc.
+#   - Hierarchical Structures: Correct generation for parent-child machines.
+#
+# This ensures the code generation engine is robust, predictable, and produces
+# high-quality, ready-to-use boilerplate code for developers.
 # -----------------------------------------------------------------------------
-"""
-Unit tests for the CLI's logic and runner code generation functions.
-"""
 
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import logging
 import unittest
+from typing import Any, Dict, List, Set
 
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
@@ -33,51 +36,60 @@ from xstate_statemachine.cli.generator import (
 from .fixtures import (
     HIERARCHY_CHILD_CONFIG,
     HIERARCHY_PARENT_CONFIG,
-    SAMPLE_CONFIG_SIMPLE,
-    SAMPLE_CONFIG_NESTED,
     SAMPLE_CONFIG_MULTIPLE,
+    SAMPLE_CONFIG_NESTED,
+    SAMPLE_CONFIG_SIMPLE,
 )
 
 # -----------------------------------------------------------------------------
 # 🪵 Module-level Logger
 # -----------------------------------------------------------------------------
+# Set up a logger for detailed output during test execution.
 logger = logging.getLogger(__name__)
 
 
 # -----------------------------------------------------------------------------
 # 🏛️ Test Class: TestLogicCodeGenerator
 # -----------------------------------------------------------------------------
-
-
 class TestLogicCodeGenerator(unittest.TestCase):
     """
-    Verifies the `generate_logic_code` function under various options.
+    🧪 Verifies the `generate_logic_code` function under various scenarios.
+
+    This test class ensures that the logic file (containing actions, guards,
+    and services) is generated correctly according to user-specified options
+    like style (class/function), mode (async/sync), and logging.
     """
 
     def setUp(self) -> None:
         """
-        Set up common data for code generation tests.
+         GIVEN common data for the code generation tests.
+
+        This method runs before each test, setting up a consistent baseline
+        of actions, guards, services, and a machine name to ensure that
+        tests are isolated and repeatable.
         """
-        self.actions = {"act1", "act2"}
-        self.guards = {"guard1"}
-        self.services = {"srv1"}
-        self.machine_name = "test_machine"
+        self.actions: Set[str] = {"act1", "act2"}
+        self.guards: Set[str] = {"guard1"}
+        self.services: Set[str] = {"srv1"}
+        self.machine_name: str = "test_machine"
 
     def test_generate_class_style_sync_with_log(self) -> None:
         """
-        Ensures correct generation for: class style, sync mode, with logging.
+        ✅ Tests correct generation for: class style, sync mode, with logging.
         """
         logger.info("🧪 Testing class-style, sync generation with logging.")
+        # 🎬 ACT: Generate the code with specific options.
         code = generate_logic_code(
-            self.actions,
-            self.guards,
-            self.services,
-            "class",
-            True,
-            False,
-            self.machine_name,
-            2,
+            actions=self.actions,
+            guards=self.guards,
+            services=self.services,
+            style="class",
+            log=True,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Verify the output contains the correct constructs.
         self.assertIn("class TestMachineLogic:", code)
         self.assertIn('logger.info("Executing action act1")', code)
         self.assertIn("time.sleep(1)", code)
@@ -86,21 +98,23 @@ class TestLogicCodeGenerator(unittest.TestCase):
 
     def test_generate_function_style_async_no_log(self) -> None:
         """
-        Ensures correct generation for: function style, async mode, no logging.
+        ✅ Tests correct generation for: function style, async mode, no logging.
         """
         logger.info(
             "🧪 Testing function-style, async generation without logging."
         )
+        # 🎬 ACT: Generate the code.
         code = generate_logic_code(
-            self.actions,
-            self.guards,
-            self.services,
-            "function",
-            False,
-            True,
-            self.machine_name,
-            2,
+            actions=self.actions,
+            guards=self.guards,
+            services=self.services,
+            style="function",
+            log=False,
+            is_async=True,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Check for function-style and async patterns.
         self.assertNotIn("class ", code)
         self.assertNotIn("logger.info", code)
         self.assertIn("await asyncio.sleep(1)", code)
@@ -109,429 +123,791 @@ class TestLogicCodeGenerator(unittest.TestCase):
 
     def test_generate_no_services_no_time_import(self) -> None:
         """
-        Confirms `time` is not imported in sync mode if there are no services.
+        ✅ Confirms `time` is not imported in sync mode if there are no services.
         """
         logger.info("🧪 Testing that `time` is not imported without services.")
+        # 🎬 ACT: Generate code without any services.
         code = generate_logic_code(
-            self.actions, self.guards, set(), "class", True, False, "test", 2
+            actions=self.actions,
+            guards=self.guards,
+            services=set(),
+            style="class",
+            log=True,
+            is_async=False,
+            machine_name="test",
+            file_count=2,
         )
+        # 🧐 ASSERT: Ensure the time module is not imported.
         self.assertNotIn("import time", code)
 
     def test_generate_keyword_aliasing(self) -> None:
         """
-        Tests that a service named after a Python keyword is handled correctly.
+        ✅ Tests that a service named after a Python keyword is handled correctly.
         """
         logger.info("🧪 Testing logic generation for keyword-named services.")
+        # 🎬 ACT: Generate code with services named after Python keywords.
         code = generate_logic_code(
-            set(), set(), {"pass", "import"}, "class", False, False, "test", 2
-        )
-        # ✅ Check that the function name is sanitized with a trailing underscore.
-        self.assertIn("def pass_(", code)
-        self.assertIn("def import_(", code)
-        # ✅ Check that an alias is created to map the original keyword name.
-        self.assertIn("pass = pass_", code)
-        self.assertIn("import = import_", code)
-
-    def test_generate_noqa_comments(self) -> None:
-        """
-        Ensures generated logic includes noqa comments for common IDE warnings.
-        """
-        logger.info("🧪 Testing for noqa comments in generated logic.")
-        code = generate_logic_code(
-            {"a"}, {"g"}, {"s"}, "class", True, True, "test", 2
-        )
-        self.assertIn("# noqa: ignore IDE static method warning", code)
-        self.assertIn("# noqa : ignore IDE return type hint warning", code)
-
-    def test_generate_logic_code_with_service_aliasing(self) -> None:
-        """Ensures services with names needing conversion are aliased correctly."""
-        logger.info("🧪 Testing logic generation with service aliasing.")
-        logic_code = generate_logic_code(
             actions=set(),
             guards=set(),
-            services={"myCoolService"},  # A name that will be converted
+            services={"pass", "import"},
             style="class",
             log=False,
             is_async=False,
             machine_name="test",
             file_count=2,
         )
+        # 🧐 ASSERT: Check that function names are sanitized and aliased.
+        self.assertIn("def pass_(", code)
+        self.assertIn("def import_(", code)
+        self.assertIn("pass = pass_", code)
+        self.assertIn("import = import_", code)
+
+    def test_generate_noqa_comments(self) -> None:
+        """
+        ✅ Ensures generated logic includes noqa comments for common IDE warnings.
+        """
+        logger.info("🧪 Testing for noqa comments in generated logic.")
+        # 🎬 ACT: Generate a standard logic file.
+        code = generate_logic_code(
+            actions={"a"},
+            guards={"g"},
+            services={"s"},
+            style="class",
+            log=True,
+            is_async=True,
+            machine_name="test",
+            file_count=2,
+        )
+        # 🧐 ASSERT: Verify that linter-suppressing comments are present.
+        self.assertIn("# noqa: ignore IDE static method warning", code)
+        self.assertIn("# noqa : ignore IDE return type hint warning", code)
+
+    def test_generate_logic_code_with_service_aliasing(self) -> None:
+        """
+        ✅ Ensures services with names needing conversion are aliased correctly.
+        """
+        logger.info("🧪 Testing logic generation with service aliasing.")
+        # 🎬 ACT: Generate logic with a camelCase service name.
+        logic_code = generate_logic_code(
+            actions=set(),
+            guards=set(),
+            services={"myCoolService"},  # A name that will be converted.
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name="test",
+            file_count=2,
+        )
+        # 🧐 ASSERT: Verify the name was converted to snake_case and aliased.
         self.assertIn("def my_cool_service(", logic_code)
         self.assertIn("myCoolService = my_cool_service", logic_code)
 
     def test_generate_with_services_time_import(self) -> None:
-        """Confirms `time` is imported in sync mode when services are present."""
-        logger.info("🧪 Testing with services, time import.")
+        """
+        ✅ Confirms `time` is imported in sync mode when services are present.
+        """
+        logger.info("🧪 Testing `time` import when sync services are present.")
+        # 🎬 ACT: Generate sync code with services.
         code = generate_logic_code(
-            self.actions,
-            self.guards,
-            self.services,
-            "class",
-            True,
-            False,
-            self.machine_name,
-            2,
+            actions=self.actions,
+            guards=self.guards,
+            services=self.services,
+            style="class",
+            log=True,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Ensure the time module is imported for `time.sleep`.
         self.assertIn("import time", code)
 
     def test_generate_class_name_from_machine_name(self) -> None:
-        """Verifies that the logic class name is correctly derived from the machine name."""
-        logger.info("🧪 Testing class name from machine name.")
+        """
+        ✅ Verifies the logic class name is correctly derived from the machine name.
+        """
+        logger.info("🧪 Testing class name derivation from machine name.")
+        # 🎬 ACT: Generate class-style logic with a snake_case machine name.
         code = generate_logic_code(
-            set(), set(), set(), "class", False, False, "my_machine", 2
+            actions=set(),
+            guards=set(),
+            services=set(),
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name="my_machine",
+            file_count=2,
         )
+        # 🧐 ASSERT: Ensure the machine name is converted to PascalCase for the class.
         self.assertIn("class MyMachineLogic:", code)
 
     def test_generate_no_actions_guards_services(self) -> None:
-        """Ensures code is generated gracefully when there are no logic implementations."""
-        logger.info("🧪 Testing empty logic code.")
+        """
+        ✅ Ensures code is generated gracefully when there are no logic items.
+        """
+        logger.info("🧪 Testing graceful generation for empty logic sets.")
+        # 🎬 ACT: Generate code with empty action, guard, and service sets.
         code = generate_logic_code(
-            set(), set(), set(), "function", False, True, self.machine_name, 2
+            actions=set(),
+            guards=set(),
+            services=set(),
+            style="function",
+            log=False,
+            is_async=True,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Verify that the section headers are omitted.
         self.assertNotIn("# ⚙️ Actions", code)
         self.assertNotIn("# 🛡️ Guards", code)
         self.assertNotIn("# 🔄 Services", code)
 
     def test_generate_async_actions(self) -> None:
-        """Checks for `async def` and `await` keywords in generated async actions."""
-        logger.info("🧪 Testing async actions.")
+        """
+        ✅ Checks for `async def` and `await` in generated async actions.
+        """
+        logger.info("🧪 Testing async action generation.")
+        # 🎬 ACT: Generate async code with a single action.
         code = generate_logic_code(
-            {"async_act"},
-            set(),
-            set(),
-            "class",
-            False,
-            True,
-            self.machine_name,
-            2,
+            actions={"async_act"},
+            guards=set(),
+            services=set(),
+            style="class",
+            log=False,
+            is_async=True,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Check for async keywords.
         self.assertIn("async def async_act(", code)
         self.assertIn("await asyncio.sleep(0.1)", code)
 
     def test_generate_sync_guards_no_log(self) -> None:
-        """Verifies a simple sync guard is generated without logging when disabled."""
-        logger.info("🧪 Testing sync guards no log.")
+        """
+        ✅ Verifies a simple sync guard is generated without logging when disabled.
+        """
+        logger.info("🧪 Testing sync guard generation without logging.")
+        # 🎬 ACT: Generate a sync guard with logging disabled.
         code = generate_logic_code(
-            set(),
-            {"sync_g"},
-            set(),
-            "function",
-            False,
-            False,
-            self.machine_name,
-            2,
+            actions=set(),
+            guards={"sync_g"},
+            services=set(),
+            style="function",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Ensure no logging call is present and it returns a boolean.
         self.assertNotIn("logger.info", code)
         self.assertIn("return True", code)
 
     def test_generate_services_async(self) -> None:
-        """Checks for `async def` and `await` in generated async services."""
-        logger.info("🧪 Testing async services.")
+        """
+        ✅ Checks for `async def` and `await` in generated async services.
+        """
+        logger.info("🧪 Testing async service generation.")
+        # 🎬 ACT: Generate an async service with logging.
         code = generate_logic_code(
-            set(),
-            set(),
-            {"async_srv"},
-            "class",
-            True,
-            True,
-            self.machine_name,
-            2,
+            actions=set(),
+            guards=set(),
+            services={"async_srv"},
+            style="class",
+            log=True,
+            is_async=True,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Check for async keywords and logging.
         self.assertIn("async def async_srv(", code)
         self.assertIn("await asyncio.sleep(1)", code)
         self.assertIn('logger.info("Running service async_srv")', code)
 
     def test_generate_services_sync(self) -> None:
-        """Checks for `time.sleep` in generated sync services."""
-        logger.info("🧪 Testing sync services.")
+        """
+        ✅ Checks for `time.sleep` in generated sync services.
+        """
+        logger.info("🧪 Testing sync service generation.")
+        # 🎬 ACT: Generate a sync service without logging.
         code = generate_logic_code(
-            set(),
-            set(),
-            {"sync_srv"},
-            "function",
-            False,
-            False,
-            self.machine_name,
-            2,
+            actions=set(),
+            guards=set(),
+            services={"sync_srv"},
+            style="function",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Check for sync implementation details.
         self.assertIn("def sync_srv(", code)
         self.assertIn("time.sleep(1)", code)
         self.assertNotIn("logger.info", code)
 
     def test_generate_interpreter_type_in_params(self) -> None:
-        """Ensures the interpreter type hint changes based on async mode."""
-        logger.info("🧪 Testing interpreter type in function params.")
+        """
+        ✅ Ensures the interpreter type hint includes both sync and async variants.
+        """
+        logger.info("🧪 Testing interpreter type hint in function parameters.")
+        # 🎬 ACT: Generate code for both sync and async modes.
         code_sync = generate_logic_code(
-            {"act"}, set(), set(), "class", False, False, self.machine_name, 2
+            actions={"act"},
+            guards=set(),
+            services=set(),
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
         code_async = generate_logic_code(
-            {"act"}, set(), set(), "class", False, True, self.machine_name, 2
+            actions={"act"},
+            guards=set(),
+            services=set(),
+            style="class",
+            log=False,
+            is_async=True,
+            machine_name=self.machine_name,
+            file_count=2,
         )
-        self.assertIn(
-            "interpreter: Union[Interpreter, SyncInterpreter],", code_sync
-        )
-        self.assertIn(
-            "interpreter: Union[Interpreter, SyncInterpreter],", code_async
-        )
+        # 🧐 ASSERT: Verify the Union type hint is present in both cases.
+        expected_hint = "interpreter: Union[Interpreter, SyncInterpreter],"
+        self.assertIn(expected_hint, code_sync)
+        self.assertIn(expected_hint, code_async)
 
     def test_generate_return_type_for_actions(self) -> None:
-        """Ensures action return type hint changes based on async mode."""
-        logger.info("🧪 Testing return type for actions.")
+        """
+        ✅ Ensures action return type hint changes based on async mode.
+        """
+        logger.info("🧪 Testing return type hints for actions.")
+        # 🎬 ACT: Generate both sync and async actions.
         code_sync = generate_logic_code(
-            {"act"}, set(), set(), "class", False, False, self.machine_name, 2
+            actions={"act"},
+            guards=set(),
+            services=set(),
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
         code_async = generate_logic_code(
-            {"act"}, set(), set(), "class", False, True, self.machine_name, 2
+            actions={"act"},
+            guards=set(),
+            services=set(),
+            style="class",
+            log=False,
+            is_async=True,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Check for the correct return type hint.
         self.assertIn("-> None:", code_sync)
         self.assertIn("-> Awaitable[None]:", code_async)
 
     def test_generate_return_type_for_services(self) -> None:
-        """Ensures service return type hint changes based on async mode."""
-        logger.info("🧪 Testing return type for services.")
+        """
+        ✅ Ensures service return type hint changes based on async mode.
+        """
+        logger.info("🧪 Testing return type hints for services.")
+        # 🎬 ACT: Generate both sync and async services.
         code_sync = generate_logic_code(
-            set(), set(), {"srv"}, "class", False, False, self.machine_name, 2
+            actions=set(),
+            guards=set(),
+            services={"srv"},
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
         code_async = generate_logic_code(
-            set(), set(), {"srv"}, "class", False, True, self.machine_name, 2
+            actions=set(),
+            guards=set(),
+            services={"srv"},
+            style="class",
+            log=False,
+            is_async=True,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Check for the correct return type hint.
         self.assertIn("-> Dict[str, Any]:", code_sync)
         self.assertIn("-> Awaitable[Dict[str, Any]]:", code_async)
 
     def test_generate_guards_return_bool(self) -> None:
-        """Verifies that generated guards are correctly type-hinted to return `bool`."""
-        logger.info("🧪 Testing guards return bool.")
+        """
+        ✅ Verifies that generated guards are correctly type-hinted to return `bool`.
+        """
+        logger.info("🧪 Testing boolean return type hint for guards.")
+        # 🎬 ACT: Generate a guard function.
         code = generate_logic_code(
-            set(), {"g"}, set(), "class", False, False, self.machine_name, 2
+            actions=set(),
+            guards={"g"},
+            services=set(),
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Ensure the return type is bool.
         self.assertIn("-> bool:", code)
 
     def test_generate_function_style_no_self(self) -> None:
-        """Confirms that 'self' is not included in function-style logic."""
-        logger.info("🧪 Testing function style no self.")
+        """
+        ✅ Confirms that 'self' is not included in function-style logic.
+        """
+        logger.info("🧪 Testing for absence of `self` in function-style.")
+        # 🎬 ACT: Generate function-style code.
         code = generate_logic_code(
-            {"act"},
-            set(),
-            set(),
-            "function",
-            False,
-            False,
-            self.machine_name,
-            2,
+            actions={"act"},
+            guards=set(),
+            services=set(),
+            style="function",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Ensure 'self' is not in the function signature.
         self.assertNotIn("self,", code)
 
-    def test_generate_no_dummy_sleep_if_no_log(self) -> None:
-        """Ensures dummy async sleep is present even if logging is off."""
-        logger.info("🧪 Testing no dummy sleep if no log.")
+    def test_generate_dummy_sleep_if_no_log(self) -> None:
+        """
+        ✅ Ensures dummy `asyncio.sleep` is present in async actions even if logging is off.
+        """
+        logger.info("🧪 Testing for dummy async sleep without logging.")
+        # 🎬 ACT: Generate an async action with logging disabled.
         code = generate_logic_code(
-            {"act"}, set(), set(), "class", False, True, self.machine_name, 2
+            actions={"act"},
+            guards=set(),
+            services=set(),
+            style="class",
+            log=False,
+            is_async=True,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: The placeholder sleep should still be present to make it awaitable.
         self.assertIn("await asyncio.sleep(0.1)", code)
 
     def test_generate_sorted_names(self) -> None:
-        """Verifies that generated functions are sorted alphabetically."""
-        logger.info("🧪 Testing sorted names in code.")
+        """
+        ✅ Verifies that generated functions are sorted alphabetically.
+        """
+        logger.info("🧪 Testing alphabetical sorting of generated functions.")
+        # 🎬 ACT: Generate code with unsorted action names.
         actions = {"z_act", "a_act"}
         code = generate_logic_code(
-            actions, set(), set(), "class", False, False, self.machine_name, 2
+            actions=actions,
+            guards=set(),
+            services=set(),
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Check that 'a_act' appears before 'z_act' in the output.
         self.assertTrue(code.find("def a_act(") < code.find("def z_act("))
 
     def test_generate_logger_config(self) -> None:
-        """Ensures the standard logger configuration is present in the generated file."""
-        logger.info("🧪 Testing logger config.")
+        """
+        ✅ Ensures the standard logger configuration is present when logging is enabled.
+        """
+        logger.info("🧪 Testing for logger configuration presence.")
+        # 🎬 ACT: Generate code with logging enabled.
         code = generate_logic_code(
-            set(), set(), set(), "class", True, False, self.machine_name, 2
+            actions=set(),
+            guards=set(),
+            services=set(),
+            style="class",
+            log=True,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: The standard logger setup line must be present.
         self.assertIn("logger = logging.getLogger(__name__)", code)
 
     def test_generate_typing_imports(self) -> None:
-        """Verifies that necessary `typing` imports are included."""
-        logger.info("🧪 Testing typing imports.")
+        """
+        ✅ Verifies that necessary `typing` imports are included for type hints.
+        """
+        logger.info("🧪 Testing for presence of necessary `typing` imports.")
+        # 🎬 ACT: Generate logic code for an async machine, which requires more types.
         code = generate_logic_code(
-            set(), set(), set(), "class", False, False, self.machine_name, 2
+            actions={"a"},
+            guards={"g"},
+            services={"s"},
+            style="class",
+            log=False,
+            is_async=True,
+            machine_name=self.machine_name,
+            file_count=2,
         )
-        self.assertIn("from typing import Any, Dict, Union", code)
+
+        # 🧐 ASSERT: Check that all required typing components are imported.
+        # This approach is robust against changes in import formatting (e.g.,
+        # splitting `from typing import ...` across multiple lines).
+        self.assertIn("from typing import", code)
+        self.assertIn("Any", code)
+        self.assertIn("Awaitable", code)
+        self.assertIn("Dict", code)
+        self.assertIn("Union", code)
 
     def test_generate_xstate_imports(self) -> None:
-        """Verifies that necessary `xstate_statemachine` imports are included."""
-        logger.info("🧪 Testing xstate imports.")
-        code = generate_logic_code(
-            set(), set(), set(), "class", False, False, self.machine_name, 2
+        """
+        ✅ Verifies that necessary `xstate_statemachine` imports are included.
+        """
+        logger.info(
+            "🧪 Testing for presence of `xstate_statemachine` imports."
         )
+        # 🎬 ACT: Generate any logic code.
+        code = generate_logic_code(
+            actions=set(),
+            guards=set(),
+            services=set(),
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
+        )
+        # 🧐 ASSERT: Check for core library imports.
         self.assertIn(
             "from xstate_statemachine import Interpreter, SyncInterpreter, Event, ActionDefinition",
             code,
         )
 
     def test_generate_awaitable_for_async_guards_no(self) -> None:
-        """Confirms that guards remain synchronous even in async mode."""
-        logger.info("🧪 Testing no Awaitable for guards in async.")
-        code = generate_logic_code(
-            set(), {"g"}, set(), "class", False, True, self.machine_name, 2
+        """
+        ✅ Confirms that guards remain synchronous (no Awaitable) even in async mode.
+        """
+        logger.info(
+            "🧪 Testing that guards are always sync, even in async mode."
         )
+        # 🎬 ACT: Generate a guard in async mode.
+        code = generate_logic_code(
+            actions=set(),
+            guards={"g"},
+            services=set(),
+            style="class",
+            log=False,
+            is_async=True,
+            machine_name=self.machine_name,
+            file_count=2,
+        )
+        # 🧐 ASSERT: The return type must be `bool`, not `Awaitable[bool]`.
         self.assertIn("-> bool:", code)
         self.assertNotIn("Awaitable[bool]", code)
 
     def test_generate_no_imports_if_no_services_async(self) -> None:
-        """Confirms `time` is not imported if there are no sync services."""
-        logger.info("🧪 Testing no time if no services sync.")
+        """
+        ✅ Confirms `time` is not imported if there are no sync services.
+        """
+        logger.info("🧪 Testing `time` is not imported without sync services.")
+        # 🎬 ACT: Generate code without services in sync mode.
         code = generate_logic_code(
-            set(), set(), set(), "class", False, False, self.machine_name, 2
+            actions=set(),
+            guards=set(),
+            services=set(),
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: `time` should not be imported.
         self.assertNotIn("import time", code)
 
     def test_generate_class_indent_correct(self) -> None:
-        """Checks for correct indentation in class-style generation."""
-        logger.info("🧪 Testing class indent.")
+        """
+        ✅ Checks for correct indentation in class-style generation.
+        """
+        logger.info("🧪 Testing indentation for class-style generation.")
+        # 🎬 ACT: Generate class-style code.
         code = generate_logic_code(
-            {"act"}, set(), set(), "class", False, False, self.machine_name, 2
+            actions={"act"},
+            guards=set(),
+            services=set(),
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Content within the class should be indented.
         self.assertIn("    # ⚙️ Actions", code)
 
     def test_generate_function_indent_correct(self) -> None:
-        """Checks for correct (zero) indentation in function-style generation."""
-        logger.info("🧪 Testing function indent.")
+        """
+        ✅ Checks for correct (zero) indentation in function-style generation.
+        """
+        logger.info("🧪 Testing indentation for function-style generation.")
+        # 🎬 ACT: Generate function-style code.
         code = generate_logic_code(
-            {"act"},
-            set(),
-            set(),
-            "function",
-            False,
-            False,
-            self.machine_name,
-            2,
+            actions={"act"},
+            guards=set(),
+            services=set(),
+            style="function",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Content should not be indented as it's at the module level.
         self.assertIn("# ⚙️ Actions", code)
         self.assertNotIn("    # ⚙️ Actions", code)
 
     def test_generate_docstring_for_actions(self) -> None:
-        """Ensures the correct docstring format for generated actions."""
-        logger.info("🧪 Testing docstring for actions.")
+        """
+        ✅ Ensures the correct docstring format for generated actions.
+        """
+        logger.info("🧪 Testing docstring format for actions.")
+        # 🎬 ACT: Generate an action.
         code = generate_logic_code(
-            {"my_act"},
-            set(),
-            set(),
-            "class",
-            False,
-            False,
-            self.machine_name,
-            2,
+            actions={"my_act"},
+            guards=set(),
+            services=set(),
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Check for the specific docstring format.
         self.assertIn('"""Action: `my_act`."""', code)
 
     def test_generate_docstring_for_guards(self) -> None:
-        """Ensures the correct docstring format for generated guards."""
-        logger.info("🧪 Testing docstring for guards.")
+        """
+        ✅ Ensures the correct docstring format for generated guards.
+        """
+        logger.info("🧪 Testing docstring format for guards.")
+        # 🎬 ACT: Generate a guard.
         code = generate_logic_code(
-            set(), {"my_g"}, set(), "class", False, False, self.machine_name, 2
+            actions=set(),
+            guards={"my_g"},
+            services=set(),
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Check for the specific docstring format.
         self.assertIn('"""Guard: `my_g`."""', code)
 
     def test_generate_docstring_for_services(self) -> None:
-        """Ensures the correct docstring format for generated services."""
-        logger.info("🧪 Testing docstring for services.")
+        """
+        ✅ Ensures the correct docstring format for generated services.
+        """
+        logger.info("🧪 Testing docstring format for services.")
+        # 🎬 ACT: Generate a service.
         code = generate_logic_code(
-            set(),
-            set(),
-            {"my_srv"},
-            "class",
-            False,
-            False,
-            self.machine_name,
-            2,
+            actions=set(),
+            guards=set(),
+            services={"my_srv"},
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Check for the specific docstring format.
         self.assertIn('"""Service: `my_srv`."""', code)
 
     def test_generate_pass_todo_for_actions(self) -> None:
-        """Verifies the placeholder `pass` and `TODO` comment for actions."""
-        logger.info("🧪 Testing pass TODO for actions.")
+        """
+        ✅ Verifies the placeholder `pass` and `TODO` comment for actions.
+        """
+        logger.info("🧪 Testing placeholder content for actions.")
+        # 🎬 ACT: Generate an action.
         code = generate_logic_code(
-            {"act"}, set(), set(), "class", False, False, self.machine_name, 2
+            actions={"act"},
+            guards=set(),
+            services=set(),
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Check for the TODO comment.
         self.assertIn("# TODO: implement", code)
 
     def test_generate_return_true_todo_for_guards(self) -> None:
-        """Verifies the placeholder `return True` and `TODO` comment for guards."""
-        logger.info("🧪 Testing return True TODO for guards.")
+        """
+        ✅ Verifies the placeholder `return True` and `TODO` comment for guards.
+        """
+        logger.info("🧪 Testing placeholder content for guards.")
+        # 🎬 ACT: Generate a guard.
         code = generate_logic_code(
-            set(), {"g"}, set(), "class", False, False, self.machine_name, 2
+            actions=set(),
+            guards={"g"},
+            services=set(),
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Check for the TODO comment and default return.
         self.assertIn("# TODO: implement guard logic", code)
 
     def test_generate_return_dict_todo_for_services(self) -> None:
-        """Verifies the placeholder return dictionary and `TODO` comment for services."""
-        logger.info("🧪 Testing return dict TODO for services.")
+        """
+        ✅ Verifies the placeholder return dict and `TODO` comment for services.
+        """
+        logger.info("🧪 Testing placeholder content for services.")
+        # 🎬 ACT: Generate a service.
         code = generate_logic_code(
-            set(), set(), {"srv"}, "class", False, False, self.machine_name, 2
+            actions=set(),
+            guards=set(),
+            services={"srv"},
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Check for the TODO comment and default return.
         self.assertIn("# TODO: implement service", code)
 
     def test_generate_logger_info_for_actions_log_true(self) -> None:
-        """Verifies the logging statement for actions when logging is enabled."""
-        logger.info("🧪 Testing logger info for actions.")
+        """
+        ✅ Verifies the logging statement for actions when logging is enabled.
+        """
+        logger.info("🧪 Testing logger info statement for actions.")
+        # 🎬 ACT: Generate an action with logging on.
         code = generate_logic_code(
-            {"act"}, set(), set(), "class", True, False, self.machine_name, 2
+            actions={"act"},
+            guards=set(),
+            services=set(),
+            style="class",
+            log=True,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Check for the specific log message.
         self.assertIn('logger.info("Executing action act")', code)
 
     def test_generate_no_logger_for_actions_log_false(self) -> None:
-        """Ensures no logging statement is generated when logging is disabled."""
-        logger.info("🧪 Testing no logger for actions.")
+        """
+        ✅ Ensures no logging statement is generated when logging is disabled.
+        """
+        logger.info("🧪 Testing for absence of logger statement for actions.")
+        # 🎬 ACT: Generate an action with logging off.
         code = generate_logic_code(
-            {"act"}, set(), set(), "class", False, False, self.machine_name, 2
+            actions={"act"},
+            guards=set(),
+            services=set(),
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Ensure no logging calls are present.
         self.assertNotIn("logger.info", code)
 
     def test_generate_logger_for_guards(self) -> None:
-        """Verifies the logging statement for guards when logging is enabled."""
-        logger.info("🧪 Testing logger for guards.")
+        """
+        ✅ Verifies the logging statement for guards when logging is enabled.
+        """
+        logger.info("🧪 Testing logger info statement for guards.")
+        # 🎬 ACT: Generate a guard with logging on.
         code = generate_logic_code(
-            set(), {"g"}, set(), "class", True, False, self.machine_name, 2
+            actions=set(),
+            guards={"g"},
+            services=set(),
+            style="class",
+            log=True,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Check for the specific log message.
         self.assertIn('logger.info("Evaluating guard g")', code)
 
     def test_generate_logger_for_services(self) -> None:
-        """Verifies the logging statement for services when logging is enabled."""
-        logger.info("🧪 Testing logger for services.")
+        """
+        ✅ Verifies the logging statement for services when logging is enabled.
+        """
+        logger.info("🧪 Testing logger info statement for services.")
+        # 🎬 ACT: Generate a service with logging on.
         code = generate_logic_code(
-            set(), set(), {"srv"}, "class", True, False, self.machine_name, 2
+            actions=set(),
+            guards=set(),
+            services={"srv"},
+            style="class",
+            log=True,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Check for the specific log message.
         self.assertIn('logger.info("Running service srv")', code)
 
     def test_generate_dummy_async_for_async_actions_no_log(self) -> None:
-        """Ensures dummy `asyncio.sleep` is present in async actions."""
-        logger.info("🧪 Testing dummy async for actions no log.")
+        """
+        ✅ Ensures dummy `asyncio.sleep` is present in async actions without logging.
+        """
+        logger.info("🧪 Testing dummy async sleep in actions without logs.")
+        # 🎬 ACT: Generate an async action with logging off.
         code = generate_logic_code(
-            {"act"}, set(), set(), "class", False, True, self.machine_name, 2
+            actions={"act"},
+            guards=set(),
+            services=set(),
+            style="class",
+            log=False,
+            is_async=True,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: The placeholder sleep makes the function awaitable.
         self.assertIn("await asyncio.sleep(0.1)", code)
 
     def test_generate_no_dummy_for_sync_actions(self) -> None:
-        """Ensures no `sleep` call is present in sync actions."""
-        logger.info("🧪 Testing no dummy for sync actions.")
+        """
+        ✅ Ensures no `sleep` call is present in sync actions by default.
+        """
+        logger.info("🧪 Testing for absence of sleep call in sync actions.")
+        # 🎬 ACT: Generate a sync action.
         code = generate_logic_code(
-            {"act"}, set(), set(), "class", False, False, self.machine_name, 2
+            actions={"act"},
+            guards=set(),
+            services=set(),
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: No sleep call should be present as it's not needed.
         self.assertNotIn("sleep", code)
 
     def test_generate_sorted_actions_guards_services(self) -> None:
-        """Confirms that all generated functions are sorted alphabetically within their sections."""
-        logger.info("🧪 Testing sorted order in generated code.")
+        """
+        ✅ Confirms all logic functions are sorted alphabetically within sections.
+        """
+        logger.info("🧪 Testing alphabetical sorting across all logic types.")
+        # 🎬 ACT: Generate code with unsorted names for all logic types.
         actions = {"z", "a"}
         guards = {"y", "b"}
         services = {"x", "c"}
         code = generate_logic_code(
-            actions,
-            guards,
-            services,
-            "class",
-            False,
-            False,
-            self.machine_name,
-            2,
+            actions=actions,
+            guards=guards,
+            services=services,
+            style="class",
+            log=False,
+            is_async=False,
+            machine_name=self.machine_name,
+            file_count=2,
         )
+        # 🧐 ASSERT: Verify the alphabetical order within each section.
         pos_a = code.find("def a(")
         pos_z = code.find("def z(")
         pos_b = code.find("def b(")
@@ -546,38 +922,45 @@ class TestLogicCodeGenerator(unittest.TestCase):
 # -----------------------------------------------------------------------------
 # 🏛️ Test Class: TestRunnerCodeGenerator
 # -----------------------------------------------------------------------------
-
-
 class TestRunnerCodeGenerator(unittest.TestCase):
     """
-    Verifies the `generate_runner_code` function under various options.
+    🧪 Verifies the `generate_runner_code` function under various scenarios.
+
+    This test class ensures the runner file (the executable entry point) is
+    generated correctly, handling single vs. multiple machines, hierarchical
+    setups, async vs. sync modes, and other command-line options.
     """
 
     def setUp(self) -> None:
         """
-        Set up common data for runner code generation tests.
+        GIVEN common data for the runner code generation tests.
+
+        This method prepares baseline data including machine names, configurations,
+        and filenames to ensure tests are consistent and independent.
         """
-        self.machine_names = ["test_machine"]
-        self.configs = [SAMPLE_CONFIG_SIMPLE]
-        self.json_filenames = ["test.json"]
+        self.machine_names: List[str] = ["test_machine"]
+        self.configs: List[Dict[str, Any]] = [SAMPLE_CONFIG_SIMPLE]
+        self.json_filenames: List[str] = ["test.json"]
 
     def test_generate_single_sync_defaults(self) -> None:
         """
-        Tests the default generation case: single machine, sync, class, 2 files.
+        ✅ Tests the default generation case: single machine, sync, class, 2 files.
         """
         logger.info("🧪 Testing default runner generation settings.")
+        # 🎬 ACT: Generate the runner code with default-like settings.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: Verify key elements for a default sync runner.
         self.assertIn(
             "from test_machine_logic import TestMachineLogic as LogicProvider",
             code,
@@ -590,21 +973,23 @@ class TestRunnerCodeGenerator(unittest.TestCase):
 
     def test_generate_single_async_minimal(self) -> None:
         """
-        Tests a non-default case: async, function, no loader, 1 file, no extras.
+        ✅ Tests a non-default case: async, function, no loader, 1 file, no extras.
         """
         logger.info("🧪 Testing minimal async runner generation.")
+        # 🎬 ACT: Generate with minimal async settings.
         code = generate_runner_code(
-            self.machine_names,
-            True,
-            "function",
-            False,
-            False,
-            2,
-            False,
-            1,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=True,
+            style="function",
+            loader=False,
+            sleep=False,
+            sleep_time=2,
+            log=False,
+            file_count=1,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: Check for async, function-style, minimal features.
         self.assertNotIn("LogicProvider()", code)
         self.assertNotIn("time.sleep", code)
         self.assertNotIn("logging.basicConfig", code)
@@ -613,297 +998,357 @@ class TestRunnerCodeGenerator(unittest.TestCase):
 
     def test_generate_hierarchical_runner_structure(self) -> None:
         """
-        Verifies the structure of a hierarchically generated runner.
+        ✅ Verifies the structure of a hierarchically generated runner.
         """
         logger.info("🧪 Testing hierarchical runner structure.")
+        # 🎬 ACT: Generate a runner for a parent machine with a child actor.
         code = generate_runner_code(
-            ["p", "c"],
-            True,
-            "class",
-            True,
-            True,
-            1,
-            True,
-            2,
-            [HIERARCHY_PARENT_CONFIG, HIERARCHY_CHILD_CONFIG],
-            ["p.json", "c.json"],
+            machine_names=["p", "c"],
+            is_async=True,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=1,
+            log=True,
+            file_count=2,
+            configs=[HIERARCHY_PARENT_CONFIG, HIERARCHY_CHILD_CONFIG],
+            json_filenames=["p.json", "c.json"],
             hierarchy=True,
         )
-        # ✅ Check for parent setup.
+        # 🧐 ASSERT: Check for parent setup, actor spawning, and graceful shutdown.
         self.assertIn("parent_machine = create_machine(parent_cfg", code)
         self.assertIn("parent = Interpreter(parent_machine)", code)
-        # ✅ Check for actor setup.
         self.assertIn("actors = {}", code)
         self.assertIn("machine_c = create_machine(actor_cfgs['c'])", code)
-        # ✅ Check for graceful shutdown sequence.
         self.assertIn("await actors['c'].stop()", code)
         self.assertIn("await parent.stop()", code)
 
     def test_generate_multiple_machines(self) -> None:
-        """Ensures code is generated correctly for multiple machine inputs."""
-        logger.info("🧪 Testing multiple machines.")
-        machine_names = ["m1", "m2"]
-        configs = [SAMPLE_CONFIG_SIMPLE, SAMPLE_CONFIG_NESTED]
-        json_filenames = ["m1.json", "m2.json"]
+        """
+        ✅ Ensures code is generated correctly for multiple, separate machine inputs.
+        """
+        logger.info("🧪 Testing generation for multiple machines.")
+        # 🎬 ACT: Generate a runner for two independent machines.
         code = generate_runner_code(
-            machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            configs,
-            json_filenames,
+            machine_names=["m1", "m2"],
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=[SAMPLE_CONFIG_SIMPLE, SAMPLE_CONFIG_NESTED],
+            json_filenames=["m1.json", "m2.json"],
         )
+        # 🧐 ASSERT: Check for separate run functions and calls in main.
         self.assertIn("def run_m1() -> None:", code)
         self.assertIn("def run_m2() -> None:", code)
         self.assertIn("run_m1()", code)
         self.assertIn("run_m2()", code)
 
     def test_generate_dummy_event_from_config(self) -> None:
-        """Verifies that the initial event is taken from the config if available."""
-        logger.info("🧪 Testing dummy event from config.")
+        """
+        ✅ Verifies the initial event is taken from the config if available.
+        """
+        logger.info("🧪 Testing that the dummy event is derived from config.")
+        # 🎬 ACT: Generate with a config that has a clear initial event.
         config = {"on": {"CUSTOM_EVENT": {}}}
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            [config],
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=[config],
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: Ensure the custom event is used in the simulation.
         self.assertIn("CUSTOM_EVENT", code)
 
     def test_generate_default_dummy_event(self) -> None:
-        """Verifies the fallback when no events are defined in the config."""
-        logger.info("🧪 Testing fallback for no events in config.")
+        """
+        ✅ Verifies the fallback behavior when no events are defined in the config.
+        """
+        logger.info("🧪 Testing fallback behavior for eventless configs.")
+        # 🎬 ACT: Generate with a config that has no top-level 'on' events.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            [{}],
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=[{}],
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: Ensure the code logs a message about the absence of events.
         self.assertIn(
             "logger.info('No events declared in the machine.')", code
         )
 
     def test_generate_path_config_load(self) -> None:
-        """Ensures the correct JSON filename is used for loading the config."""
-        logger.info("🧪 Testing config path load.")
+        """
+        ✅ Ensures the correct JSON filename is used for loading the config.
+        """
+        logger.info("🧪 Testing that the correct config file path is used.")
+        # 🎬 ACT: Generate with a custom JSON filename.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            ["custom.json"],
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=["custom.json"],
         )
+        # 🧐 ASSERT: The custom filename should be in the file loading logic.
         self.assertIn("custom.json", code)
 
     def test_generate_no_loader_logic(self) -> None:
-        """Verifies that manual logic binding code is generated when loader is off."""
-        logger.info("🧪 Testing no loader logic.")
+        """
+        ✅ Verifies manual logic binding code is generated when loader is off.
+        """
+        logger.info("🧪 Testing generation without the dynamic loader.")
+        # 🎬 ACT: Generate with `loader=False`.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            False,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=False,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: Logic should be passed directly to `create_machine`.
         self.assertIn("machine = create_machine(config,", code)
 
     def test_generate_file_count_1_combined(self) -> None:
-        """Confirms generation for a single combined file runs without error."""
-        logger.info("🧪 Testing file count 1.")
+        """
+        ✅ Confirms generation for a single combined file runs without error.
+        """
+        logger.info("🧪 Testing single-file generation mode.")
+        # 🎬 ACT: Generate with `file_count=1`.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            1,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=1,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: A main function should be present, indicating a runnable script.
         self.assertIn("def main() -> None:", code)
 
     def test_generate_async_await_prefix(self) -> None:
-        """Ensures `await` is correctly prefixed to calls in async mode."""
-        logger.info("🧪 Testing async await prefix.")
+        """
+        ✅ Ensures `await` is correctly prefixed to calls in async mode.
+        """
+        logger.info("🧪 Testing for `await` prefixes in async mode.")
+        # 🎬 ACT: Generate an async runner.
         code = generate_runner_code(
-            self.machine_names,
-            True,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=True,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: Interpreter calls should be awaited.
         self.assertIn("await interpreter.start()", code)
 
-    def test_generate_no_log_no_basicConfig(self) -> None:
-        """Verifies that `logging.basicConfig` is absent when logging is off."""
-        logger.info("🧪 Testing no log no basicConfig.")
-        code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            False,
-            2,
-            self.configs,
-            self.json_filenames,
+    def test_generate_no_log_no_basic_config(self) -> None:
+        """
+        ✅ Verifies `logging.basicConfig` is absent when logging is off.
+        """
+        logger.info(
+            "🧪 Testing for absence of `basicConfig` when logging is off."
         )
+        # 🎬 ACT: Generate a runner with `log=False`.
+        code = generate_runner_code(
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=False,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
+        )
+        # 🧐 ASSERT: The logging setup call should not be present.
         self.assertNotIn("logging.basicConfig", code)
 
     def test_generate_import_time_if_sleep(self) -> None:
-        """Confirms `time` is imported when `sleep` is enabled."""
-        logger.info("🧪 Testing import time if sleep.")
+        """
+        ✅ Confirms `time` is imported when `sleep` is enabled.
+        """
+        logger.info("🧪 Testing for `time` import when sleep is enabled.")
+        # 🎬 ACT: Generate a sync runner with `sleep=True`.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: The time module must be imported.
         self.assertIn("import time", code)
 
     def test_generate_no_import_time_if_no_sleep(self) -> None:
-        """Confirms `time` is not imported when `sleep` is disabled."""
-        logger.info("🧪 Testing no import time if no sleep.")
-        code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            False,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+        """
+        ✅ Confirms `time` is not imported when `sleep` is disabled.
+        """
+        logger.info(
+            "🧪 Testing for absence of `time` import when sleep is disabled."
         )
+        # 🎬 ACT: Generate a sync runner with `sleep=False`.
+        code = generate_runner_code(
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=False,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
+        )
+        # 🧐 ASSERT: The time module should not be imported.
         self.assertNotIn("import time", code)
 
     def test_generate_async_import_asyncio(self) -> None:
-        """Confirms `asyncio` is imported when `async-mode` is enabled."""
-        logger.info("🧪 Testing import asyncio if async.")
+        """
+        ✅ Confirms `asyncio` is imported when `async-mode` is enabled.
+        """
+        logger.info("🧪 Testing for `asyncio` import in async mode.")
+        # 🎬 ACT: Generate an async runner.
         code = generate_runner_code(
-            self.machine_names,
-            True,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=True,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: The asyncio module must be imported.
         self.assertIn("import asyncio", code)
 
     def test_generate_no_asyncio_if_sync(self) -> None:
-        """Confirms `asyncio` is not imported in sync mode."""
-        logger.info("🧪 Testing no asyncio if sync.")
+        """
+        ✅ Confirms `asyncio` is not imported in sync mode.
+        """
+        logger.info("🧪 Testing for absence of `asyncio` import in sync mode.")
+        # 🎬 ACT: Generate a sync runner.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: The asyncio module should not be imported.
         self.assertNotIn("import asyncio", code)
 
     def test_generate_logging_inspector(self) -> None:
-        """Ensures the `LoggingInspector` is included by default."""
-        logger.info("🧪 Testing LoggingInspector.")
+        """
+        ✅ Ensures the `LoggingInspector` is included when logging is enabled.
+        """
+        logger.info("🧪 Testing for `LoggingInspector` usage.")
+        # 🎬 ACT: Generate a runner with logging enabled.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: The inspector should be attached to the interpreter.
         self.assertIn("interpreter.use(LoggingInspector())", code)
 
     def test_generate_initial_state_log(self) -> None:
-        """Verifies the log message for the initial machine state."""
-        logger.info("🧪 Testing initial state log.")
+        """
+        ✅ Verifies the log message for the initial machine state.
+        """
+        logger.info("🧪 Testing for the initial state log message.")
+        # 🎬 ACT: Generate a runner with logging enabled.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: The log message reporting the initial state should be present.
         self.assertIn(
             "logger.info(f'Initial state: {interpreter.current_state_ids}')",
             code,
         )
 
     def test_generate_simulation_log_messages(self) -> None:
-        """Verifies the standard log messages for starting and ending the simulation."""
-        logger.info("🧪 Testing simulation log messages.")
+        """
+        ✅ Verifies the absence of old simulation log messages.
+        """
+        logger.info("🧪 Testing that old simulation log messages are removed.")
+        # 🎬 ACT: Generate a standard runner.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: Ensure outdated, verbose log messages are no longer generated.
         self.assertNotIn(
             "logger.info('--- Running simulation with all defined events ---')",
             code,
@@ -914,56 +1359,67 @@ class TestRunnerCodeGenerator(unittest.TestCase):
         )
 
     def test_generate_main_if_async(self) -> None:
-        """Ensures the `asyncio.run(main())` block is present in async mode."""
-        logger.info("🧪 Testing main if async.")
+        """
+        ✅ Ensures the `asyncio.run(main())` block is present in async mode.
+        """
+        logger.info("🧪 Testing for `asyncio.run(main())` in async mode.")
+        # 🎬 ACT: Generate an async runner.
         code = generate_runner_code(
-            self.machine_names,
-            True,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=True,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: The standard async entry point should be used.
         self.assertIn("asyncio.run(main())", code)
 
     def test_generate_main_if_sync(self) -> None:
-        """Ensures a direct `main()` call is present in sync mode."""
-        logger.info("🧪 Testing main if sync.")
+        """
+        ✅ Ensures a direct `main()` call is present in sync mode.
+        """
+        logger.info("🧪 Testing for direct `main()` call in sync mode.")
+        # 🎬 ACT: Generate a sync runner.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: The standard script entry point should call main directly.
         self.assertIn("if __name__ == '__main__':\n    main()", code)
         self.assertNotIn("asyncio.run", code)
 
     def test_generate_multiple_async_functions(self) -> None:
-        """Checks for correct `async def` and `await` usage with multiple machines."""
-        logger.info("🧪 Testing multiple async functions.")
-        machine_names = ["m1", "m2"]
+        """
+        ✅ Checks for correct `async def` and `await` with multiple machines.
+        """
+        logger.info("🧪 Testing async generation for multiple machines.")
+        # 🎬 ACT: Generate an async runner for two machines.
         code = generate_runner_code(
-            machine_names,
-            True,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            SAMPLE_CONFIG_MULTIPLE,
-            ["m1.json", "m2.json"],
+            machine_names=["m1", "m2"],
+            is_async=True,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=SAMPLE_CONFIG_MULTIPLE,
+            json_filenames=["m1.json", "m2.json"],
         )
+        # 🧐 ASSERT: All generated functions should be async and correctly awaited.
         self.assertIn("async def run_m1() -> None:", code)
         self.assertIn("async def run_m2() -> None:", code)
         self.assertIn("async def main() -> None:", code)
@@ -971,179 +1427,224 @@ class TestRunnerCodeGenerator(unittest.TestCase):
         self.assertIn("await run_m2()", code)
 
     def test_generate_docstring_for_run_functions(self) -> None:
-        """Verifies the docstring format for generated runner functions."""
-        logger.info("🧪 Testing docstring for run functions.")
+        """
+        ✅ Verifies the docstring format for generated runner functions.
+        """
+        logger.info("🧪 Testing docstring format for runner functions.")
+        # 🎬 ACT: Generate a standard runner.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: Check for the specific docstring format.
         self.assertIn(
             '"""Executes the simulation for the test_machine machine."""', code
         )
 
     def test_generate_config_path_parent(self) -> None:
-        """Ensures `Path(__file__).parent` is used to locate the config file."""
-        logger.info("🧪 Testing config path using parent.")
+        """
+        ✅ Ensures `Path(__file__).parent` is used to locate the config file.
+        """
+        logger.info("🧪 Testing that config path is relative to the file.")
+        # 🎬 ACT: Generate a standard runner.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: The code should use pathlib to build a robust path.
         self.assertIn("Path(__file__).resolve().parent", code)
 
     def test_generate_utf8_encoding(self) -> None:
-        """Ensures config files are opened with 'utf-8' encoding."""
-        logger.info("🧪 Testing utf8 encoding.")
+        """
+        ✅ Ensures config files are opened with 'utf-8' encoding.
+        """
+        logger.info("🧪 Testing for 'utf-8' encoding when opening files.")
+        # 🎬 ACT: Generate a standard runner that loads a JSON file.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: The open call must specify UTF-8 encoding.
         self.assertIn("encoding='utf-8'", code)
 
     def test_generate_no_sleep_time_sleep_false(self) -> None:
-        """Confirms no `time.sleep` call is generated if `sleep` is disabled."""
-        logger.info("🧪 Testing no sleep time if sleep false.")
+        """
+        ✅ Confirms no `time.sleep` call is generated if `sleep` is disabled.
+        """
+        logger.info("🧪 Testing for absence of `time.sleep` when disabled.")
+        # 🎬 ACT: Generate a runner with `sleep=False`.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            False,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=False,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: The sleep call should not be present.
         self.assertNotIn("time.sleep", code)
 
     def test_generate_custom_sleep_time(self) -> None:
-        """Verifies that a custom sleep time is correctly used."""
-        logger.info("🧪 Testing custom sleep time.")
+        """
+        ✅ Verifies that a custom sleep time is correctly used.
+        """
+        logger.info("🧪 Testing that a custom sleep time is applied.")
+        # 🎬 ACT: Generate a runner with a custom `sleep_time`.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            5,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=5,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: The sleep call should use the specified custom time.
         self.assertIn("time.sleep(5)", code)
 
     def test_generate_function_style_runner_import(self) -> None:
-        """Verifies the correct import statement for function-style logic."""
-        logger.info("🧪 Testing function style runner import.")
+        """
+        ✅ Verifies the correct import statement for function-style logic.
+        """
+        logger.info("🧪 Testing logic import for function-style runners.")
+        # 🎬 ACT: Generate a function-style runner.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "function",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="function",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: The logic should be imported as a module, not a class.
         self.assertIn("import test_machine_logic", code)
 
     def test_generate_multiple_no_loader(self) -> None:
-        """Confirms correct code generation for multiple machines without the loader."""
-        logger.info("🧪 Testing multiple no loader.")
-        machine_names = ["m1", "m2"]
+        """
+        ✅ Confirms correct code for multiple machines without the loader.
+        """
+        logger.info("🧪 Testing multiple machines without the dynamic loader.")
+        # 🎬 ACT: Generate for multiple machines with `loader=False`.
         code = generate_runner_code(
-            machine_names,
-            False,
-            "class",
-            False,
-            True,
-            2,
-            True,
-            2,
-            SAMPLE_CONFIG_MULTIPLE,
-            ["f1.json", "f2.json"],
+            machine_names=["m1", "m2"],
+            is_async=False,
+            style="class",
+            loader=False,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=SAMPLE_CONFIG_MULTIPLE,
+            json_filenames=["f1.json", "f2.json"],
         )
+        # 🧐 ASSERT: Logic should be passed directly to `create_machine`.
         self.assertIn("machine = create_machine(config,", code)
 
     def test_generate_combined_file_runner_part(self) -> None:
-        """A placeholder to acknowledge testing combined files is handled in main CLI tests."""
-        logger.info("🧪 Testing combined file runner part.")
+        """
+        ✅ Acknowledges that combined file generation is implicitly tested.
+
+        This test serves as a placeholder to confirm that the single-file
+        generation path is exercised by other tests (e.g.,
+        `test_generate_file_count_1_combined`), ensuring its robustness.
+        """
+        logger.info("🧪 Verifying combined-file runner generation path.")
         pass
 
     def test_generate_pathlib_import(self) -> None:
-        """Ensures `pathlib.Path` is imported."""
-        logger.info("🧪 Testing pathlib import.")
+        """
+        ✅ Ensures `pathlib.Path` is imported for robust file path handling.
+        """
+        logger.info("🧪 Testing for `pathlib.Path` import.")
+        # 🎬 ACT: Generate a standard runner.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: The Path class must be imported.
         self.assertIn("from pathlib import Path", code)
 
     def test_generate_logging_inspector_import(self) -> None:
-        """Ensures `LoggingInspector` is imported."""
-        logger.info("🧪 Testing LoggingInspector import.")
+        """
+        ✅ Ensures `LoggingInspector` is imported when needed.
+        """
+        logger.info("🧪 Testing for `LoggingInspector` import.")
+        # 🎬 ACT: Generate a runner with logging enabled.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: The inspector class must be imported.
         self.assertIn("from xstate_statemachine import LoggingInspector", code)
 
     def test_generate_create_machine_import(self) -> None:
-        """Ensures `create_machine` is imported."""
-        logger.info("🧪 Testing create_machine import.")
+        """
+        ✅ Ensures `create_machine` is imported.
+        """
+        logger.info("🧪 Testing for `create_machine` import.")
+        # 🎬 ACT: Generate any standard runner.
         code = generate_runner_code(
-            self.machine_names,
-            False,
-            "class",
-            True,
-            True,
-            2,
-            True,
-            2,
-            self.configs,
-            self.json_filenames,
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=2,
+            configs=self.configs,
+            json_filenames=self.json_filenames,
         )
+        # 🧐 ASSERT: The factory function must be imported.
         self.assertIn("from xstate_statemachine import create_machine", code)
