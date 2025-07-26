@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Set
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
-from xstate_statemachine.cli.generator import (
+from src.xstate_statemachine.cli.generator import (
     generate_logic_code,
     generate_runner_code,
 )

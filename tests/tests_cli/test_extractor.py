@@ -34,7 +34,7 @@ from typing import Dict, Any
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
-from xstate_statemachine.cli.extractor import (
+from src.xstate_statemachine.cli.extractor import (
     _count_invokes,  # noqa : Protected method import for testing
     extract_events,
     extract_logic_names,
