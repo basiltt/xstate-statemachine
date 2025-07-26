@@ -1963,22 +1963,38 @@ class TestMainCLI(unittest.TestCase):
 
     @patch("sys.argv", new_callable=list)
     def test_main_no_force_no_overwrite(self, mock_argv: List[str]) -> None:
-        """Ensures a warning is printed and execution stops if files exist without `--force`."""
+        """Ensures execution stops if files exist and user denies overwrite prompt."""
         logger.info("🧪 Testing no force no overwrite.")
         json_path = create_temp_json(SAMPLE_CONFIG_SIMPLE)
         mock_argv[:] = ["cli.py", "generate-template", str(json_path)]
 
+        # Run once to create the file.
         main()
         self.assertTrue(Path.cwd().joinpath("simple_logic.py").exists())
+        # Specify UTF-8 encoding when reading the file
+        original_content = (Path.cwd() / "simple_logic.py").read_text(
+            encoding="utf-8"
+        )
 
-        with patch("builtins.print") as mock_print:
+        # On the second run, mock the `input` to return 'n' for 'no'.
+        with patch("builtins.input", return_value="n") as mock_input, patch(
+            "builtins.print"
+        ) as mock_print:
             main()
+
+        # Assert that the prompt was shown.
+        mock_input.assert_called_with(
+            "File(s) already exist. Overwrite? [Y/n] "
+        )
+
+        # Assert that the cancellation message was printed.
         calls = [call.args[0] for call in mock_print.call_args_list]
-        self.assertTrue(
-            any(
-                "Files exist, use --force to overwrite." in call
-                for call in calls
-            )
+        self.assertTrue(any("Operation cancelled." in call for call in calls))
+
+        # Assert that the file was NOT overwritten, also using UTF-8.
+        self.assertEqual(
+            original_content,
+            (Path.cwd() / "simple_logic.py").read_text(encoding="utf-8"),
         )
 
     @patch("sys.argv", new_callable=list)

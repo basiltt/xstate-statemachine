@@ -28,6 +28,7 @@ from .. import __version__ as package_version
 # -----------------------------------------------------------------------------
 logger = logging.getLogger(__name__)
 
+
 # -----------------------------------------------------------------------------
 # 🛠️ Parser Helper Functions
 # -----------------------------------------------------------------------------
@@ -45,23 +46,27 @@ def _add_file_input_args(parser: argparse.ArgumentParser) -> None:
         parser (argparse.ArgumentParser): 🏛️ The parser to which arguments will be added.
     """
     # 📂 File & Hierarchy Inputs
+    # This argument is now correctly defined as positional
     parser.add_argument(
         "json_files",
         nargs="*",
         help="One or more JSON config files to process as positional arguments.",
     )
     parser.add_argument(
+        "-j",
         "--json",
         action="append",
         default=[],
         help="Specify a JSON file via a flag (can be used multiple times).",
     )
     parser.add_argument(
+        "-jp",
         "--json-parent",
         metavar="PATH",
         help="Path to the JSON file that represents the *parent* machine in a hierarchy.",
     )
     parser.add_argument(
+        "-jc",
         "--json-child",
         metavar="PATH",
         action="append",
@@ -79,16 +84,19 @@ def _add_generation_option_args(parser: argparse.ArgumentParser) -> None:
     """
     # 🎨 Code Generation & Output Options
     parser.add_argument(
+        "-o",
         "--output",
         help="Output directory for generated files (defaults to the location of the first input JSON).",
     )
     parser.add_argument(
+        "-s",
         "--style",
         choices=["class", "function"],
         default="class",
         help="Code style for logic: 'class' or 'function'. Default: class.",
     )
     parser.add_argument(
+        "-fc",
         "--file-count",
         type=int,
         choices=[1, 2],
@@ -96,16 +104,19 @@ def _add_generation_option_args(parser: argparse.ArgumentParser) -> None:
         help="Number of output files: 1 (combined) or 2 (logic/runner). Default: 2.",
     )
     parser.add_argument(
+        "-am",
         "--async-mode",
         default="yes",
         help="Generate asynchronous code: 'yes' or 'no'. Default: yes.",
     )
     parser.add_argument(
+        "-l",
         "--loader",
         default="yes",
         help="Use the auto-discovery logic loader in the runner: 'yes' or 'no'. Default: yes.",
     )
     parser.add_argument(
+        "-f",
         "--force",
         action="store_true",
         help="Force overwrite of existing generated files without prompting.",
@@ -160,17 +171,18 @@ def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="CLI tool for xstate-statemachine boilerplate generation.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,  # Disable partial matching of long options
         epilog="""
-        Examples:
-          # Generate from a single file with default options (async, class-based, 2 files)
-          xstate-statemachine generate-template my_machine.json
+            Examples:
+              # Generate from a single file with default options (async, class-based, 2 files)
+              xsm generate-template my_machine.json
 
-          # Generate sync, function-style code into a specific directory
-          xstate-statemachine generate-template machine.json --async-mode no --style function --output ./generated
+              # Generate sync, function-style code into a specific directory
+              xsm generate-template machine.json --async-mode no --style function --output ./generated
 
-          # Generate a hierarchical machine and force overwrite of existing files
-          xstate-statemachine generate-template --json-parent=p.json --json-child=c.json --force
-        """,
+              # Generate a hierarchical machine and force overwrite of existing files
+              xsm generate-template --json-parent=p.json --json-child=c.json --force
+            """,
     )
 
     # 🔖 Version argument

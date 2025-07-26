@@ -506,9 +506,15 @@ def run_generation_workflow(
         else [paths["logic_file"], paths["runner_file"]]
     )
     if not args.force and any(f.exists() for f in files_to_check):
-        # FIX: Use the exact warning message the test suite expects.
-        print("Files exist, use --force to overwrite.")
-        return
+        # Prompt the user for confirmation to overwrite existing files.
+        answer = (
+            input("File(s) already exist. Overwrite? [Y/n] ").strip().lower()
+        )
+        # If the user enters 'n' or 'no', abort the operation.
+        # The default is 'yes', so pressing Enter will proceed.
+        if answer in ("n", "no"):
+            print("Operation cancelled.")
+            return
 
     # 6. 🔧 Parse boolean settings from args
     settings = _parse_boolean_flags(args, parser)
