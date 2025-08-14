@@ -26,19 +26,20 @@
 17.  **[Architectural Patterns](#architectural-patterns)**
 18.  **[Synchronous vs Asynchronous Execution](#synchronous-vs-asynchronous-execution)**
 19.  **[Debugging & Visualization](#debugging--visualization)**
-20.  **[CLI: Boilerplate Generation](#cli-boilerplate-generation)**
+20.  **[In-Depth Guide: The GUI Inspector](#gui-inspector)**
+21.  **[CLI: Boilerplate Generation](#cli-boilerplate-generation)**
     - [Aliases & Short Flags](#cli-aliases)
     - [Hierarchical Machine Generation](#cli-hierarchy)
     - [One vs Two Files](#cli-file-count)
     - [Sync vs Async Templates](#cli-async-sync)
-21.  **[Upgrade Notes: 0.4.0 → 0.4.1](#upgrade-notes-041)**
-22.  **[API Reference](#api-reference)**
-23.  **[Advanced Concepts](#advanced-concepts)**
-24.  **[Best Practices](#best-practices)**
-25.  **[FAQ](#faq)**
-26.  **[Roadmap](#roadmap-next-release)**
-27.  **[Contributing](#contributing)**
-28.  **[License](#license)**
+22.  **[Upgrade Notes: 0.4.0 → 0.4.1](#upgrade-notes-041)**
+23.  **[API Reference](#api-reference)**
+24.  **[Advanced Concepts](#advanced-concepts)**
+25.  **[Best Practices](#best-practices)**
+26.  **[FAQ](#faq)**
+27.  **[Roadmap](#roadmap-next-release)**
+28.  **[Contributing](#contributing)**
+29.  **[License](#license)**
 ---
 
 ## 🏁 Introduction<a name="introduction"></a>
@@ -2569,35 +2570,72 @@ def test_timer_transition(light_machine):
 
 ---
 
-## 🔬 GUI Inspector (Prototype)<a name="gui-inspector"></a>
+<br>
 
-New in version 0.5.0, this library includes a prototype of a **GUI Inspector**—a lightweight web panel that allows you to visualize and debug your state machines in real-time.
+## 🔬 In-Depth Guide: The GUI Inspector <a name="gui-inspector"></a>
 
-### Features
-- **Live View**: Watch state transitions, events, and context changes as they happen.
-- **Statechart Visualization**: See the structure of your machine and the currently active state.
-- **History Playback**: Record a machine's execution and play it back step-by-step to debug complex sequences.
-- **Modern UI**: A clean, modern interface with both light and dark modes.
+New in version 0.5.0, this library includes a powerful **GUI Inspector**—a lightweight web panel that allows you to visualize and debug your state machines in real-time. This tool is designed to give you complete visibility into the inner workings of your machines, helping you catch bugs faster and understand complex logic flows with ease.
 
-### Installation
+### ✨ Key Advantages
+- **Zero-Configuration Start**: Get up and running in two lines of code.
+- **Framework Agnostic**: The inspector runs as a separate process and does not interfere with your application's existing frameworks or libraries.
+- **Low Performance Overhead**: The inspector is designed to be lightweight. The plugin's hooks are highly efficient, and the web server runs in a separate thread, ensuring minimal impact on your main application's performance.
+- **Time-Travel Debugging**: The history playback feature is a powerful tool for understanding how your machine reached a certain state.
 
-The GUI Inspector is an **optional feature**. To use it, you must install the necessary dependencies:
+### 🏛️ Architecture
+The GUI Inspector consists of three main components that work together:
+
+1.  **The `InspectorPlugin`**: This is a plugin that you attach to your state machine interpreter. It hooks into the interpreter's lifecycle and captures all important events: state transitions, actions, guards, and context changes.
+2.  **The Backend Server**: A lightweight FastAPI server that runs in a background thread within your Python application. It serves the frontend UI, and more importantly, it hosts a WebSocket that the plugin uses to send live updates. It also provides a REST API for fetching historical data.
+3.  **The Frontend UI**: A modern, single-page web application built with vanilla JavaScript. It connects to the backend WebSocket to receive live data and provides a rich interface for visualizing and interacting with your state machines.
+
+Here is a diagram illustrating how these components interact:
+
+```mermaid
+graph TD
+    subgraph Your Application
+        A[State Machine Interpreter] -- Attaches --> B(InspectorPlugin)
+    end
+
+    subgraph Inspector Backend (Background Thread)
+        D[FastAPI Server]
+        E[WebSocket: /ws]
+        F[REST API: /api/*]
+        G[SQLite Database]
+    end
+
+    subgraph Browser
+        H[Frontend UI]
+    end
+
+    B -- Puts events into --> C{Message Queue}
+    C -- Read by --> D
+    D -- Broadcasts via --> E
+    E -- Real-time updates --> H
+    H -- Fetches history via --> F
+    F -- Queries --> G
+    B -- Writes history to --> G
+```
+
+### 🚀 Installation and Usage
+
+The GUI Inspector is an **optional feature**. To use it, you must first install the necessary dependencies:
 
 ```bash
 pip install "xstate-statemachine[inspector]"
 ```
 
-### Usage
+To enable the inspector, simply import the `InspectorPlugin` and add it to your interpreter instance using the `.use()` method before starting the interpreter.
 
-To enable the inspector, simply import the `InspectorPlugin` and add it to your interpreter instance using the `.use()` method.
-
+**Example:**
 ```python
 from xstate_statemachine import create_machine, Interpreter
 from xstate_statemachine.inspector import InspectorPlugin
 import asyncio
 
 # Your machine configuration and logic
-# ...
+# config = { ... }
+# logic = { ... }
 
 async def main():
     machine = create_machine(config, logic=logic)
@@ -2623,16 +2661,38 @@ if __name__ == "__main__":
 
 Once your script is running, open your web browser to `http://127.0.0.1:8008` to view the inspector panel.
 
-### Configuration
+### 📋 Features in Detail
 
-The inspector can be configured via a `.env` file in your project's root directory. For example, to change the database used for storing history:
+| Feature                  | Description                                                                                                                                                             |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Live Machine View**    | See all currently running state machines that have the `InspectorPlugin` attached. Select any machine to view its details in real-time.                                  |
+| **Statechart Diagram**   | A visual representation of your state machine's structure is rendered using Mermaid.js. The currently active state(s) are highlighted, updating with each transition.      |
+| **Event Log**            | A chronological log of every event that occurs in the machine, including state transitions, actions executed, guards evaluated, and services invoked.                       |
+| **Context Viewer**       | A live view of the machine's `context` data. On each transition, a "diff" is shown, highlighting exactly what was added, removed, or changed in the context.                |
+| **Session History**      | Every run of a machine is automatically saved as a "session" in a local SQLite database.                                                                                |
+| **History Playback**     | Select any past session and play it back. You can step forward and backward through the entire event history to understand exactly how the machine behaved.               |
 
-```
-# .env
-DATABASE_URL=sqlite:///my_app_inspector.db
-```
+### ⚙️ Configuration
 
-> **Note**: This feature is currently a prototype. The API and UI are subject to change in future releases.
+The inspector can be configured via a `.env` file in your project's root directory.
+
+-   **`DATABASE_URL`**: Customize the database connection string. This allows you to use a different database for storing session history, for example, a persistent file on disk or a different database system supported by SQLAlchemy.
+    ```
+    # .env
+    DATABASE_URL=sqlite:///my_app_inspector.db
+    ```
+
+### ✅ Best Practices
+- **Development Only**: The inspector is a powerful debugging tool, but it's recommended for use in development environments only. While it's designed to be lightweight, it does add some overhead.
+- **One Inspector per Process**: The inspector is designed to run as a singleton. You can attach the `InspectorPlugin` to multiple state machines within the same application, and they will all report to the same inspector UI.
+- **Use the Context Diff**: When debugging, pay close attention to the context diff. It's often the key to understanding why a machine behaved in a certain way.
+
+### ⚠️ Limitations (Prototype)
+As this is a prototype version, there are some limitations to be aware of:
+- **No Live Pause/Play**: The playback controls only work for historical sessions. You cannot pause a live, running state machine from the UI.
+- **Basic Visualization**: The statechart visualization is powered by Mermaid.js and may not render very large or complex nested/parallel statecharts perfectly.
+- **No Authentication**: The inspector server is unauthenticated and should not be exposed to the public internet.
+- **Performance**: For state machines that process hundreds of events per second, the overhead of the inspector might become noticeable.
 
 ---
 
