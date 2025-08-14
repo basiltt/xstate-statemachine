@@ -2662,15 +2662,91 @@ if __name__ == "__main__":
 Once your script is running, open your web browser to `http://127.0.0.1:8008` to view the inspector panel.
 
 #### Live Debugging with Pause & Resume
-You can start an interpreter in a paused state, and control its execution from the GUI Inspector. This is useful for step-by-step debugging of your machine's logic.
+The inspector provides powerful tools for step-by-step debugging by allowing you to pause and resume the execution of any running interpreter directly from the web UI.
 
-To start a machine in a paused state, pass `paused=True` to the `start()` method:
+##### Starting a Machine in a Paused State
+To begin a debugging session, you can start an interpreter in a paused state. This is done by passing the `paused=True` argument to the `.start()` method. The interpreter will be fully initialized but will not process any events until you resume it.
+
 ```python
 # Start the interpreter in a paused state
 interpreter = await Interpreter(machine).use(InspectorPlugin()).start(paused=True)
+
+# Now, when you open the GUI, the "light_switch" machine will be listed,
+# but it will be in a paused mode. You can then use the "Resume" button
+# in the UI to begin its execution.
 ```
 
-When you open the GUI Inspector, you will see "Pause" and "Resume" buttons next to your live machine. You can use these to control the execution of the machine.
+##### Programmatic Control
+In addition to the UI controls, you can also pause and resume the interpreter directly from your Python code. This is useful for building automated tests or for scenarios where you need to programmatically control the execution flow.
+
+- **`interpreter.pause()`**: This method will immediately pause the interpreter's event processing loop.
+- **`interpreter.resume()`**: This method will un-pause the interpreter, allowing it to continue processing events.
+
+**Example of programmatic control:**
+
+```python
+import asyncio
+
+# ... (machine setup) ...
+interpreter = await Interpreter(machine).use(InspectorPlugin()).start()
+
+print("Machine is running...")
+await interpreter.send("SOME_EVENT")
+await asyncio.sleep(1)
+
+# Pause the machine from your code
+print("Pausing machine...")
+interpreter.pause()
+
+# Any events sent now will be queued but not processed
+await interpreter.send("ANOTHER_EVENT")
+print("Event sent, but machine is paused.")
+
+await asyncio.sleep(2) # Wait for 2 seconds
+
+# Resume the machine
+print("Resuming machine...")
+interpreter.resume()
+
+# The queued "ANOTHER_EVENT" will now be processed.
+```
+
+When you open the GUI Inspector, you will see the machine's status change from "running" to "paused" and back again in real-time, and you can use the UI buttons to override the programmatic control if needed.
+
+### 🧩 Integrating with an Existing FastAPI App
+If you already have a FastAPI application, you don't need to run the inspector's server as a separate process. You can easily mount the inspector's functionality as a sub-application within your existing app.
+
+The `create_app` function from the inspector's server module is designed to be reusable.
+
+**Example:**
+```python
+# your_main_app.py
+from fastapi import FastAPI
+from src.xstate_statemachine.inspector.server import create_app as create_inspector_app
+
+# Your main FastAPI application
+app = FastAPI()
+
+@app.get("/my-app-route")
+def read_root():
+    return {"Hello": "From my main app"}
+
+# Create the inspector app instance.
+# mount_static_files=False is important if you want to host the frontend
+# yourself or if you are only interested in the API/WebSocket endpoints.
+# If you want the inspector UI to be served from your app, keep it True.
+inspector_app = create_inspector_app(mount_static_files=True)
+
+# Mount the inspector app under a specific path, for example /_inspector
+app.mount("/_inspector", inspector_app)
+
+# Now, when you run your main application:
+# uvicorn your_main_app:app --reload
+
+# Your main app will be at http://127.0.0.1:8000/
+# The inspector UI will be at http://127.0.0.1:8000/_inspector/
+```
+By mounting the inspector, you can have a single, unified server for both your application and the debugging tools, which is perfect for development environments.
 
 ### 📋 Features in Detail
 
