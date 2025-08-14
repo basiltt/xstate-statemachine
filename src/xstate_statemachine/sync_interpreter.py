@@ -227,76 +227,50 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         ],
         **payload: Any,
     ) -> None:
-        """Sends an event to the machine for immediate, synchronous processing.
-
-        Events are queued and processed sequentially. If an event is sent while
-        the interpreter is already processing another, it's added to the queue
-        and handled once the current processing cycle completes. This method
-        blocks until the sent event and any resulting transient transitions
-        are fully resolved.
-
-        Args:
-            event_or_type: The event to send. This can be:
-                - A `str`: The type of the event, with `payload` as kwargs.
-                - A `dict`: An event object, which must contain a 'type' key.
-                - An `Event`, `DoneEvent`, or `AfterEvent` instance.
-            **payload: Additional keyword arguments for the event's payload,
-                used only when `event_or_type` is a string.
-
-        Raises:
-            TypeError: If an unsupported event type is passed.
-        """
-        # 🚦 Halt if the interpreter is not in a 'running' state.
+        """Sends an event to the machine for immediate, synchronous processing."""
         if self.status != "running":
             logger.warning("🚫 Cannot send event. Interpreter is not running.")
             return
 
-        # 📦 Normalize the input into a standardized Event object.
-        event_obj: Union[Event, DoneEvent, AfterEvent]
-        if isinstance(event_or_type, str):
-            event_obj = Event(type=event_or_type, payload=payload)
-        elif isinstance(event_or_type, dict):
-            local_payload = event_or_type.copy()
-            event_type = local_payload.pop("type", "UnnamedEvent")
-            event_obj = Event(type=event_type, payload=local_payload)
-        elif isinstance(event_or_type, (Event, DoneEvent, AfterEvent)):
-            event_obj = event_or_type
-        else:
-            # ❌ Raise an error for unsupported event types.
-            raise TypeError(
-                f"Unsupported event type passed to send(): {type(event_or_type)}"
-            )
-
-        # 📥 Add the normalized event to the processing queue.
+        event_obj = self._prepare_event(event_or_type, **payload)
         self._event_queue.append(event_obj)
+        self._process_event_queue()
 
-        # 🔒 If already processing, the event is queued and will be handled
-        #    by the existing processing loop. This prevents re-entrant execution.
-        if self._is_processing:
-            logger.debug(
-                "🔄 Interpreter already processing. Event '%s' queued.",
-                event_obj.type,
-            )
+    def send_events(
+        self, events: List[Union[Dict[str, Any], Event, str]]
+    ) -> None:
+        """Sends a list of events to the machine for immediate, synchronous processing."""
+        if self.status != "running":
+            logger.warning("🚫 Cannot send events. Interpreter is not running.")
             return
 
-        # 🎬 Start the main event processing loop.
+        for event_or_type in events:
+            event_obj = self._prepare_event(event_or_type)
+            self._event_queue.append(event_obj)
+
+        self._process_event_queue()
+
+    def _process_event_queue(self) -> None:
+        """Processes all events in the queue until it is empty.
+
+        If event processing is already underway, this method returns immediately
+        to prevent re-entrant execution.
+        """
+        if self._is_processing:
+            return
+
         self._is_processing = True
         try:
-            # 🔁 Process events from the queue until it's empty.
             while self._event_queue:
                 current_event = self._event_queue.popleft()
                 logger.info("⚙️ Processing event: '%s'", current_event.type)
 
-                # 🔌 Notify plugins that an event is being processed.
                 for plugin in self._plugins:
                     plugin.on_event_received(self, current_event)
 
-                # 🎯 Find and execute the transition for the current event.
                 self._process_event(current_event)
-                # 🔄 Check for any resulting event-less ("always") transitions.
                 self._process_transient_transitions()
         finally:
-            # 🔓 Reset the processing flag, allowing new `send` calls to start the loop.
             self._is_processing = False
             logger.debug("🎉 Event processing cycle completed. Queue empty.")
 

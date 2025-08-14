@@ -440,6 +440,106 @@ class TestSyncInterpreter(unittest.TestCase):
         self.assertEqual(entry_action.call_count, 2)
         self.assertEqual(exit_action.call_count, 1)
 
+    def test_send_events_processes_multiple_events(self) -> None:
+        """Tests that send_events processes a list of events sequentially."""
+        logger.info("🧪 Testing sequential processing of multiple events via send_events.")
+        # 🤖 Arrange: A machine that counts and transitions.
+        def increment(ctx, _evt):
+            ctx["count"] += 1
+
+        machine = create_machine(
+            {
+                "id": "bulk_sender_sync",
+                "initial": "a",
+                "context": {"count": 0},
+                "states": {
+                    "a": {"on": {"NEXT": {"target": "b", "actions": "increment"}}},
+                    "b": {"on": {"NEXT": {"target": "c", "actions": "increment"}}},
+                    "c": {},
+                },
+            },
+            logic=MachineLogic(actions={"increment": lambda i, c, e, a: increment(c, e)}),
+        )
+        interpreter = SyncInterpreter(machine).start()
+        self.assertEqual(interpreter.current_state_ids, {"bulk_sender_sync.a"})
+        self.assertEqual(interpreter.context["count"], 0)
+
+        # ⚡ Act: Send two "NEXT" events in a single call.
+        interpreter.send_events(["NEXT", "NEXT"])
+
+        # ✨ Assert: The interpreter should be in the final state 'c'.
+        self.assertEqual(interpreter.current_state_ids, {"bulk_sender_sync.c"})
+        # ✨ Assert: The increment action should have been called twice.
+        self.assertEqual(interpreter.context["count"], 2)
+        interpreter.stop()
+
+    def test_send_events_with_empty_list_is_noop(self) -> None:
+        """Should do nothing when send_events is called with an empty list."""
+        logger.info("🧪 Testing send_events with an empty list on SyncInterpreter.")
+        machine = create_machine({"id": "m", "initial": "a", "states": {"a": {}}})
+        interpreter = SyncInterpreter(machine).start()
+        initial_state = interpreter.current_state_ids.copy()
+
+        interpreter.send_events([])
+
+        self.assertEqual(interpreter.current_state_ids, initial_state)
+        self.assertEqual(len(interpreter._event_queue), 0)
+        interpreter.stop()
+
+    def test_send_events_with_mixed_types(self) -> None:
+        """Should correctly process a list of events with mixed types."""
+        logger.info("🧪 Testing send_events with mixed event types on SyncInterpreter.")
+        machine = create_machine(
+            {
+                "id": "mixed_sync",
+                "initial": "a",
+                "states": {
+                    "a": {"on": {"E1": "b"}},
+                    "b": {"on": {"E2": "c"}},
+                    "c": {"on": {"E3": "d"}},
+                    "d": {},
+                },
+            }
+        )
+        interpreter = SyncInterpreter(machine).start()
+
+        events = [
+            "E1",
+            {"type": "E2"},
+            Event("E3")
+        ]
+
+        interpreter.send_events(events)
+
+        self.assertEqual(interpreter.current_state_ids, {"mixed_sync.d"})
+        interpreter.stop()
+
+    def test_send_events_to_unstarted_interpreter_is_ignored(self) -> None:
+        """Should ignore events sent to an unstarted interpreter."""
+        logger.info("🧪 Testing send_events on an unstarted SyncInterpreter.")
+        machine = create_machine({"id": "q_sync", "initial": "a", "states": {"a": {"on": {"NEXT": "b"}}, "b": {}}})
+        interpreter = SyncInterpreter(machine)
+
+        interpreter.send_events(["NEXT"])
+
+        self.assertEqual(interpreter.status, "uninitialized")
+        self.assertEqual(len(interpreter._event_queue), 0)
+
+    def test_send_events_to_stopped_interpreter_is_ignored(self) -> None:
+        """Should ignore events sent to a stopped interpreter."""
+        logger.info("🧪 Testing send_events on a stopped SyncInterpreter.")
+        machine = create_machine({"id": "s_sync", "initial": "a", "states": {"a": {}}})
+        interpreter = SyncInterpreter(machine).start()
+        interpreter.stop()
+
+        initial_state = interpreter.current_state_ids.copy()
+
+        interpreter.send_events(["NEXT"])
+
+        self.assertEqual(interpreter.current_state_ids, initial_state)
+        self.assertEqual(interpreter.status, "stopped")
+        self.assertEqual(len(interpreter._event_queue), 0)
+
     # -------------------------------------------------------------------------
     # 🛡️ Guard & Conditional Transition Tests
     # -------------------------------------------------------------------------
