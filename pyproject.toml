@@ -20,6 +20,9 @@ classifiers = [
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
+include = [
+    "src/xstate_statemachine/inspector/frontend/dist/**/*",
+]
 
 [tool.poetry.dependencies]
 python = ">=3.8"

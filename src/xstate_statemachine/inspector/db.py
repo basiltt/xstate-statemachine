@@ -19,8 +19,11 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///xstate_inspector.db")
 # will run in a background thread.
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {},
+    connect_args=(
+        {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+    ),
 )
+
 
 class EventLog(SQLModel, table=True):
     __tablename__ = "event_logs"
@@ -29,7 +32,8 @@ class EventLog(SQLModel, table=True):
     session_id: str = Field(index=True)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     event_type: str
-    data: str # Storing data as JSON string
+    data: str  # Storing data as JSON string
+
 
 from contextlib import contextmanager
 

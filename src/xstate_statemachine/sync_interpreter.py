@@ -251,7 +251,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     ) -> None:
         """Sends a list of events to the machine for immediate, synchronous processing."""
         if self.status != "running":
-            logger.warning("🚫 Cannot send events. Interpreter is not running.")
+            logger.warning(
+                "🚫 Cannot send events. Interpreter is not running."
+            )
             return
 
         for event_or_type in events:

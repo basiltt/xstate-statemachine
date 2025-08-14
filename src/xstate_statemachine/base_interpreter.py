@@ -141,7 +141,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             interpreter_class or self.__class__
         )
         self._paused = threading.Event()
-        self._paused.set() # Start in a "not paused" (i.e., running) state
+        self._paused.set()  # Start in a "not paused" (i.e., running) state
 
         logger.info(
             "✅ BaseInterpreter '%s' initialized. Status: '%s'.",
@@ -313,9 +313,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     # algorithm. Concrete subclasses MUST override them to provide
     # mode-specific (synchronous or asynchronous) behavior.
 
-    def start(
-        self, paused: bool = False
-    ) -> Union[
+    def start(self, paused: bool = False) -> Union[
         "BaseInterpreter[TContext, TEvent]",
         Awaitable["BaseInterpreter[TContext, TEvent]"],
     ]:

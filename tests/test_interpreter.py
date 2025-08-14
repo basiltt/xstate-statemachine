@@ -1768,7 +1768,10 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
 
     async def test_send_events_processes_multiple_events(self) -> None:
         """Should process a list of events sequentially using send_events."""
-        logger.info("🧪 Testing sequential processing of multiple events via send_events.")
+        logger.info(
+            "🧪 Testing sequential processing of multiple events via send_events."
+        )
+
         # 📋 Arrange: A machine that counts and transitions.
         def increment(ctx, _evt):
             ctx["count"] += 1
@@ -1779,12 +1782,18 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                 "initial": "a",
                 "context": {"count": 0},
                 "states": {
-                    "a": {"on": {"NEXT": {"target": "b", "actions": "increment"}}},
-                    "b": {"on": {"NEXT": {"target": "c", "actions": "increment"}}},
+                    "a": {
+                        "on": {"NEXT": {"target": "b", "actions": "increment"}}
+                    },
+                    "b": {
+                        "on": {"NEXT": {"target": "c", "actions": "increment"}}
+                    },
                     "c": {},
                 },
             },
-            logic=MachineLogic(actions={"increment": lambda i, c, e, a: increment(c, e)}),
+            logic=MachineLogic(
+                actions={"increment": lambda i, c, e, a: increment(c, e)}
+            ),
         )
         interpreter = await Interpreter(machine).start()
         self.assertEqual(interpreter.current_state_ids, {"bulk_sender.a"})
@@ -1803,7 +1812,9 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
     async def test_send_events_with_empty_list_is_noop(self) -> None:
         """Should do nothing when send_events is called with an empty list."""
         logger.info("🧪 Testing send_events with an empty list.")
-        machine = create_machine({"id": "m", "initial": "a", "states": {"a": {}}})
+        machine = create_machine(
+            {"id": "m", "initial": "a", "states": {"a": {}}}
+        )
         interpreter = await Interpreter(machine).start()
         initial_state = interpreter.current_state_ids.copy()
 
@@ -1831,11 +1842,7 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
         )
         interpreter = await Interpreter(machine).start()
 
-        events = [
-            "E1",
-            {"type": "E2"},
-            Event("E3")
-        ]
+        events = ["E1", {"type": "E2"}, Event("E3")]
 
         await interpreter.send_events(events)
         await self.wait_for_state(interpreter, {"mixed.d"})
@@ -1843,10 +1850,18 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(interpreter.current_state_ids, {"mixed.d"})
         await interpreter.stop()
 
-    async def test_send_events_to_unstarted_interpreter_is_queued(self) -> None:
+    async def test_send_events_to_unstarted_interpreter_is_queued(
+        self,
+    ) -> None:
         """Should queue events sent to an unstarted interpreter."""
         logger.info("🧪 Testing send_events on an unstarted interpreter.")
-        machine = create_machine({"id": "q", "initial": "a", "states": {"a": {"on": {"NEXT": "b"}}, "b": {}}})
+        machine = create_machine(
+            {
+                "id": "q",
+                "initial": "a",
+                "states": {"a": {"on": {"NEXT": "b"}}, "b": {}},
+            }
+        )
         interpreter = Interpreter(machine)
 
         await interpreter.send_events(["NEXT"])
@@ -1862,7 +1877,9 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
     async def test_send_events_to_stopped_interpreter_is_ignored(self) -> None:
         """Should ignore events sent to a stopped interpreter."""
         logger.info("🧪 Testing send_events on a stopped interpreter.")
-        machine = create_machine({"id": "s", "initial": "a", "states": {"a": {}}})
+        machine = create_machine(
+            {"id": "s", "initial": "a", "states": {"a": {}}}
+        )
         interpreter = await Interpreter(machine).start()
         await interpreter.stop()
 
@@ -2087,13 +2104,17 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
         """Should pause and resume the event loop."""
         logger.info("🧪 Testing pause and resume functionality.")
         machine = create_machine(
-            {"id": "pausable", "initial": "a", "states": {"a": {"on": {"NEXT": "b"}}, "b": {}}}
+            {
+                "id": "pausable",
+                "initial": "a",
+                "states": {"a": {"on": {"NEXT": "b"}}, "b": {}},
+            }
         )
         interpreter = await Interpreter(machine).start()
 
         interpreter.pause()
         await interpreter.send("NEXT")
-        await asyncio.sleep(0.1) # Give it time to NOT process the event
+        await asyncio.sleep(0.1)  # Give it time to NOT process the event
         self.assertEqual(interpreter.current_state_ids, {"pausable.a"})
 
         interpreter.resume()

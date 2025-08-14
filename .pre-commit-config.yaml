@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: mixed-line-ending
@@ -43,3 +43,16 @@ repos:
         args: [ "--max-complexity=35",
                 "--select=B,C,E,F,W,T4,B9",
                 "--ignore=E203,E266,E501,W503,F403,F401,E402" ]
+
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: 'v4.0.0-alpha.8'
+    hooks:
+      - id: prettier
+        name: prettier react
+        types: [ file ]
+        files: \.(ts|tsx|js|jsx)$
+        exclude: '\.html$'
+        args: [ "--print-width=100" ]
+        additional_dependencies:
+          - prettier@2.1.2
+          - '@prettier/plugin-xml@0.12.0'

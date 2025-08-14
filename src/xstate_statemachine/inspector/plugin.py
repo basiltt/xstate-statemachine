@@ -11,7 +11,12 @@ except ImportError:
 
 from ..plugins import PluginBase
 from ..events import Event
-from ..models import StateNode, TransitionDefinition, ActionDefinition, InvokeDefinition
+from ..models import (
+    StateNode,
+    TransitionDefinition,
+    ActionDefinition,
+    InvokeDefinition,
+)
 from ..base_interpreter import BaseInterpreter
 
 from .server import (
@@ -23,9 +28,10 @@ from .server import (
 from .db import get_session, EventLog
 
 
-def _get_state_ids(states: Set[StateNode]) -> Set[str]:
-    """Helper to get a set of state IDs from StateNode objects."""
-    return {s.id for s in states}
+def _get_leaf_state_ids(states: Set[StateNode]) -> Set[str]:
+    """Helper to get a set of atomic or final state IDs from StateNode objects."""
+    return {s.id for s in states if s.is_atomic or s.is_final}
+
 
 class InspectorPlugin(PluginBase[Any]):
     """
@@ -38,7 +44,10 @@ class InspectorPlugin(PluginBase[Any]):
         self.session_factory = session_factory or get_session
 
     def _handle_inspection_event(
-        self, event_type: str, interpreter: BaseInterpreter, payload: Dict[str, Any]
+        self,
+        event_type: str,
+        interpreter: BaseInterpreter,
+        payload: Dict[str, Any],
     ):
         """
         Central handler for all inspection events. It formats the message,
@@ -50,7 +59,8 @@ class InspectorPlugin(PluginBase[Any]):
             "timestamp": datetime.now(UTC).isoformat(),
             "payload": payload,
         }
-        json_message = json.dumps(message, default=str)
+        # Use a compact JSON representation for efficiency
+        json_message = json.dumps(message, default=str, separators=(",", ":"))
 
         # Queue for WebSocket broadcast
         message_queue.put(json_message)
@@ -69,13 +79,15 @@ class InspectorPlugin(PluginBase[Any]):
         with _active_interpreters_lock:
             active_interpreters[interpreter.id] = interpreter
         self._contexts[interpreter.id] = deepcopy(interpreter.context)
+
+        # Send a rich payload with the full definition for the frontend
         self._handle_inspection_event(
             "machine_registered",
             interpreter,
             {
                 "machine_id": interpreter.id,
-                "initial_state": list(
-                    _get_state_ids(interpreter._active_state_nodes)
+                "initial_state_ids": list(
+                    _get_leaf_state_ids(interpreter._active_state_nodes)
                 ),
                 "initial_context": interpreter.context,
                 "definition": interpreter.machine.to_dict(),
@@ -102,41 +114,18 @@ class InspectorPlugin(PluginBase[Any]):
         to_states: Set[StateNode],
         transition: TransitionDefinition,
     ):
-        old_context = self._contexts.get(interpreter.id, {})
-        new_context = interpreter.context
-
-        # Simple context diff
-        context_diff = {
-            "added": {
-                k: new_context[k]
-                for k in new_context
-                if k not in old_context
-            },
-            "removed": {
-                k: old_context[k]
-                for k in old_context
-                if k not in new_context
-            },
-            "changed": {
-                k: {"old": old_context[k], "new": new_context[k]}
-                for k in old_context
-                if k in new_context and old_context[k] != new_context[k]
-            },
-        }
-
+        # The frontend only needs the destination leaf states and new context
         self._handle_inspection_event(
             "transition",
             interpreter,
             {
-                "from_states": list(_get_state_ids(from_states)),
-                "to_states": list(_get_state_ids(to_states)),
+                "to_state_ids": list(_get_leaf_state_ids(to_states)),
                 "event": transition.event,
-                "context_diff": context_diff,
-                "full_context": new_context,
+                "full_context": interpreter.context,
             },
         )
         # Update the stored context
-        self._contexts[interpreter.id] = deepcopy(new_context)
+        self._contexts[interpreter.id] = deepcopy(interpreter.context)
 
     def on_action_execute(
         self, interpreter: BaseInterpreter, action: ActionDefinition
@@ -161,8 +150,14 @@ class InspectorPlugin(PluginBase[Any]):
     def on_service_start(
         self, interpreter: BaseInterpreter, invocation: InvokeDefinition
     ):
+        # Send an event for both the log and to add the service to the UI list
         self._handle_inspection_event(
-            "service_started",
+            "service_started",  # Generic event for the log
+            interpreter,
+            {"service": invocation.src, "id": invocation.id},
+        )
+        self._handle_inspection_event(
+            "service_invoked",  # Specific event for the UI state
             interpreter,
             {"service": invocation.src, "id": invocation.id},
         )
@@ -179,6 +174,7 @@ class InspectorPlugin(PluginBase[Any]):
         except (TypeError, OverflowError):
             serializable_result = str(result)
 
+        # Log the specific result
         self._handle_inspection_event(
             "service_done",
             interpreter,
@@ -188,6 +184,10 @@ class InspectorPlugin(PluginBase[Any]):
                 "result": serializable_result,
             },
         )
+        # Tell the UI to remove the service from the active list
+        self._handle_inspection_event(
+            "service_stopped", interpreter, {"id": invocation.id}
+        )
 
     def on_service_error(
         self,
@@ -195,6 +195,7 @@ class InspectorPlugin(PluginBase[Any]):
         invocation: InvokeDefinition,
         error: Exception,
     ):
+        # Log the specific error
         self._handle_inspection_event(
             "service_error",
             interpreter,
@@ -203,4 +204,8 @@ class InspectorPlugin(PluginBase[Any]):
                 "id": invocation.id,
                 "error": str(error),
             },
+        )
+        # Tell the UI to remove the service from the active list
+        self._handle_inspection_event(
+            "service_stopped", interpreter, {"id": invocation.id}
         )

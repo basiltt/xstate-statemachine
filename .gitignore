@@ -691,3 +691,7 @@ backend/alembic/versions/*
 /smart_home_runner.py
 /xstate-statemachine.zip
 /xstate_inspector.db
+
+*tar.gz
+
+*.whl

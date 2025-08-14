@@ -1,21 +1,30 @@
 try:
     import asyncio
+    import json
+    import logging
+    import os
     import queue
     import threading
-    import logging
     from contextlib import asynccontextmanager
     from datetime import datetime, UTC
+    from pathlib import Path
+    from typing import Dict, List
+
     import uvicorn
-    from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
+    from fastapi import (
+        APIRouter,
+        Depends,
+        FastAPI,
+        WebSocket,
+        WebSocketDisconnect,
+    )
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
-    from typing import List, Dict
-    from .db import get_session, EventLog, create_db_and_tables
     from sqlmodel import Session, select
+
     from ..base_interpreter import BaseInterpreter
-    from fastapi import Depends
-    import json
-    import os
+    from .db import EventLog, create_db_and_tables, get_session
+
 except ImportError:
     raise ImportError(
         "The 'inspector' feature requires additional dependencies. "
@@ -27,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 class ConnectionManager:
     """Manages active WebSocket connections."""
+
     def __init__(self):
         self.active_connections: List[WebSocket] = []
 
@@ -38,10 +48,14 @@ class ConnectionManager:
         self.active_connections.remove(websocket)
 
     async def broadcast(self, message: str):
-        for connection in self.active_connections:
-            await connection.send_text(message)
+        tasks = [
+            connection.send_text(message)
+            for connection in self.active_connections
+        ]
+        await asyncio.gather(*tasks, return_exceptions=True)
 
-# Create singleton instances for the connection manager and message queue
+
+# --- Singleton Instances ---
 manager = ConnectionManager()
 message_queue = queue.Queue()
 active_interpreters: Dict[str, "BaseInterpreter"] = {}
@@ -54,20 +68,31 @@ def get_db():
         yield session
 
 
-# --- Background Task ---
 async def broadcast_from_queue():
+    """Efficiently waits for messages from the thread-safe queue."""
+    loop = asyncio.get_running_loop()
     while True:
         try:
-            message = message_queue.get_nowait()
-            logger.info(f"INSPECTOR: Broadcasting message from queue: {message[:100]}...")
+            message = await loop.run_in_executor(None, message_queue.get)
+            if message is None:
+                break
+            logger.info(
+                f"INSPECTOR: Broadcasting message from queue: {message[:100]}..."
+            )
             await manager.broadcast(message)
-        except queue.Empty:
-            await asyncio.sleep(0.01)
+            message_queue.task_done()
+        except asyncio.CancelledError:
+            logger.info("INSPECTOR: Broadcast task cancelled.")
+            break
+        except Exception as e:
+            logger.error(
+                f"INSPECTOR: Error in broadcast queue: {e}", exc_info=True
+            )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manages the background task for broadcasting messages."""
+    """Manages the background broadcast task."""
     logger.info("INSPECTOR: Lifespan startup. Starting broadcast task.")
     task = asyncio.create_task(broadcast_from_queue())
     yield
@@ -76,41 +101,57 @@ async def lifespan(app: FastAPI):
         await task
     except asyncio.CancelledError:
         logger.info("INSPECTOR: Broadcast task cancelled on shutdown.")
-        pass
 
 
 def create_app(mount_static_files: bool = True) -> FastAPI:
     """Creates and configures the FastAPI application."""
     app = FastAPI(lifespan=lifespan)
 
-    # --- WebSocket Endpoint ---
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
         await manager.connect(websocket)
-        logger.info("INSPECTOR: WebSocket client connected.")
-        # When a new client connects, send them the current state of all active machines.
+        logger.info(
+            "INSPECTOR: WebSocket client connected. Sending initial state for all active machines."
+        )
+
         with _active_interpreters_lock:
-            logger.info(f"INSPECTOR: Checking active interpreters. Found: {list(active_interpreters.keys())}")
+            active_ids = list(active_interpreters.keys())
+            logger.info(
+                f"INSPECTOR: Acquired lock. Found active interpreters: {active_ids}"
+            )
+
             for machine_id, interpreter in active_interpreters.items():
                 try:
-                    logger.info(f"INSPECTOR: Sending registration for machine '{machine_id}' to new client.")
-                    # Reconstruct the registration message
+                    logger.info(
+                        f"INSPECTOR: Preparing registration message for machine '{machine_id}'..."
+                    )
                     message = {
                         "type": "machine_registered",
                         "machine_id": interpreter.id,
                         "timestamp": datetime.now(UTC).isoformat(),
                         "payload": {
                             "machine_id": interpreter.id,
-                            "initial_state": [s.id for s in interpreter._active_state_nodes],
+                            "initial_state_ids": list(
+                                {
+                                    s.id
+                                    for s in interpreter._active_state_nodes
+                                    if s.is_atomic or s.is_final
+                                }
+                            ),
                             "initial_context": interpreter.context,
                             "definition": interpreter.machine.to_dict(),
                         },
                     }
                     await websocket.send_text(json.dumps(message, default=str))
+                    logger.info(
+                        f"INSPECTOR: Successfully sent registration for '{machine_id}' to new client."
+                    )
                 except Exception as e:
-                    logger.error(f"INSPECTOR: Error sending registration for '{machine_id}': {e}")
-                    # If something goes wrong with one machine, don't kill the connection
-                    pass
+                    logger.error(
+                        f"INSPECTOR: Error sending initial state for '{machine_id}': {e}",
+                        exc_info=True,
+                    )
+
         try:
             while True:
                 data = await websocket.receive_text()
@@ -119,72 +160,106 @@ def create_app(mount_static_files: bool = True) -> FastAPI:
                     command = message.get("command")
                     machine_id = message.get("machine_id")
 
-                    if command and machine_id:
-                        with _active_interpreters_lock:
-                            interpreter = active_interpreters.get(machine_id)
-                        if interpreter:
-                            if command == "pause":
-                                interpreter.pause()
-                            elif command == "resume":
-                                interpreter.resume()
-                except json.JSONDecodeError:
-                    # Ignore non-json messages
-                    pass
+                    if not command or not machine_id:
+                        continue
+                    with _active_interpreters_lock:
+                        interpreter = active_interpreters.get(machine_id)
+
+                    if interpreter:
+                        logger.info(
+                            f"INSPECTOR: Received command '{command}' for machine '{machine_id}'"
+                        )
+                        if command == "pause":
+                            interpreter.pause()
+                        elif command == "resume":
+                            interpreter.resume()
+                        elif command == "send_event" and "event" in message:
+                            if asyncio.iscoroutinefunction(interpreter.send):
+                                asyncio.create_task(
+                                    interpreter.send(message["event"])
+                                )
+                            else:
+                                interpreter.send(message["event"])
+                except (json.JSONDecodeError, KeyError):
+                    logger.warning(
+                        f"INSPECTOR: Received invalid command message: {data}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"INSPECTOR: Error processing command: {e}",
+                        exc_info=True,
+                    )
         except WebSocketDisconnect:
+            logger.info("INSPECTOR: WebSocket client disconnected.")
+        finally:
             manager.disconnect(websocket)
 
-    # --- API Router ---
     api_router = APIRouter(prefix="/api")
 
     @api_router.get("/sessions")
     async def get_sessions(db: Session = Depends(get_db)):
-        statement = select(EventLog.session_id).distinct()
-        sessions = db.exec(statement).all()
-        return sessions
+        return db.exec(select(EventLog.session_id).distinct()).all()
 
     @api_router.get("/history/{session_id}")
     async def get_history(session_id: str, db: Session = Depends(get_db)):
-        statement = (
+        history = db.exec(
             select(EventLog)
             .where(EventLog.session_id == session_id)
             .order_by(EventLog.timestamp)
-        )
-        history = db.exec(statement).all()
+        ).all()
         return [json.loads(log.data) for log in history]
 
     app.include_router(api_router)
 
-    # --- Static Files (Optional) ---
     if mount_static_files:
-        frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
+        frontend_dist_dir = Path(__file__).parent / "frontend" / "dist"
+        if frontend_dist_dir.exists():
+            app.mount(
+                "/assets",
+                StaticFiles(directory=frontend_dist_dir / "assets"),
+                name="assets",
+            )
 
-        @app.get("/")
-        async def get_index():
-            return FileResponse(os.path.join(frontend_dir, "index.html"))
+            @app.get("/{full_path:path}")
+            async def serve_frontend_spa(full_path: str):
+                return FileResponse(frontend_dist_dir / "index.html")
 
-        app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
+        else:
+            logger.error(
+                f"Frontend dist directory not found at {frontend_dist_dir}"
+            )
 
     return app
 
-# The main app instance used by the running server
+
 app = create_app()
 
-# --- Server Singleton Management ---
 _server_thread = None
+
 
 def run_server():
     """The target function for the server thread."""
-    logger.info("INSPECTOR: run_server thread started.")
-    create_db_and_tables()
-    config = uvicorn.Config(app, host="127.0.0.1", port=8008, log_level="info")
-    server = uvicorn.Server(config)
-    server.run()
+    try:
+        logger.info("INSPECTOR: Uvicorn server thread started.")
+        config = uvicorn.Config(
+            app, host="127.0.0.1", port=8008, log_level="info"
+        )
+        server = uvicorn.Server(config)
+        server.run()
+    except Exception as e:
+        logger.critical(
+            f"INSPECTOR: Server thread crashed: {e}", exc_info=True
+        )
 
 
 def start_inspector_server():
-    """Starts the inspector server in a background thread if not already running."""
+    """Initializes DB and starts the inspector server in a background thread."""
     global _server_thread
-    if _server_thread is None:
-        logger.info("INSPECTOR: Starting server thread.")
+    if _server_thread is None or not _server_thread.is_alive():
+        # FIX: Create DB tables synchronously before starting any threads
+        logger.info("INSPECTOR: Initializing database...")
+        create_db_and_tables()
+        logger.info("INSPECTOR: Database initialized. Starting server thread.")
+
         _server_thread = threading.Thread(target=run_server, daemon=True)
         _server_thread.start()

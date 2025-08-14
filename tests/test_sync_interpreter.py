@@ -442,7 +442,10 @@ class TestSyncInterpreter(unittest.TestCase):
 
     def test_send_events_processes_multiple_events(self) -> None:
         """Tests that send_events processes a list of events sequentially."""
-        logger.info("🧪 Testing sequential processing of multiple events via send_events.")
+        logger.info(
+            "🧪 Testing sequential processing of multiple events via send_events."
+        )
+
         # 🤖 Arrange: A machine that counts and transitions.
         def increment(ctx, _evt):
             ctx["count"] += 1
@@ -453,12 +456,18 @@ class TestSyncInterpreter(unittest.TestCase):
                 "initial": "a",
                 "context": {"count": 0},
                 "states": {
-                    "a": {"on": {"NEXT": {"target": "b", "actions": "increment"}}},
-                    "b": {"on": {"NEXT": {"target": "c", "actions": "increment"}}},
+                    "a": {
+                        "on": {"NEXT": {"target": "b", "actions": "increment"}}
+                    },
+                    "b": {
+                        "on": {"NEXT": {"target": "c", "actions": "increment"}}
+                    },
                     "c": {},
                 },
             },
-            logic=MachineLogic(actions={"increment": lambda i, c, e, a: increment(c, e)}),
+            logic=MachineLogic(
+                actions={"increment": lambda i, c, e, a: increment(c, e)}
+            ),
         )
         interpreter = SyncInterpreter(machine).start()
         self.assertEqual(interpreter.current_state_ids, {"bulk_sender_sync.a"})
@@ -475,8 +484,12 @@ class TestSyncInterpreter(unittest.TestCase):
 
     def test_send_events_with_empty_list_is_noop(self) -> None:
         """Should do nothing when send_events is called with an empty list."""
-        logger.info("🧪 Testing send_events with an empty list on SyncInterpreter.")
-        machine = create_machine({"id": "m", "initial": "a", "states": {"a": {}}})
+        logger.info(
+            "🧪 Testing send_events with an empty list on SyncInterpreter."
+        )
+        machine = create_machine(
+            {"id": "m", "initial": "a", "states": {"a": {}}}
+        )
         interpreter = SyncInterpreter(machine).start()
         initial_state = interpreter.current_state_ids.copy()
 
@@ -488,7 +501,9 @@ class TestSyncInterpreter(unittest.TestCase):
 
     def test_send_events_with_mixed_types(self) -> None:
         """Should correctly process a list of events with mixed types."""
-        logger.info("🧪 Testing send_events with mixed event types on SyncInterpreter.")
+        logger.info(
+            "🧪 Testing send_events with mixed event types on SyncInterpreter."
+        )
         machine = create_machine(
             {
                 "id": "mixed_sync",
@@ -503,11 +518,7 @@ class TestSyncInterpreter(unittest.TestCase):
         )
         interpreter = SyncInterpreter(machine).start()
 
-        events = [
-            "E1",
-            {"type": "E2"},
-            Event("E3")
-        ]
+        events = ["E1", {"type": "E2"}, Event("E3")]
 
         interpreter.send_events(events)
 
@@ -517,7 +528,13 @@ class TestSyncInterpreter(unittest.TestCase):
     def test_send_events_to_unstarted_interpreter_is_ignored(self) -> None:
         """Should ignore events sent to an unstarted interpreter."""
         logger.info("🧪 Testing send_events on an unstarted SyncInterpreter.")
-        machine = create_machine({"id": "q_sync", "initial": "a", "states": {"a": {"on": {"NEXT": "b"}}, "b": {}}})
+        machine = create_machine(
+            {
+                "id": "q_sync",
+                "initial": "a",
+                "states": {"a": {"on": {"NEXT": "b"}}, "b": {}},
+            }
+        )
         interpreter = SyncInterpreter(machine)
 
         interpreter.send_events(["NEXT"])
@@ -528,7 +545,9 @@ class TestSyncInterpreter(unittest.TestCase):
     def test_send_events_to_stopped_interpreter_is_ignored(self) -> None:
         """Should ignore events sent to a stopped interpreter."""
         logger.info("🧪 Testing send_events on a stopped SyncInterpreter.")
-        machine = create_machine({"id": "s_sync", "initial": "a", "states": {"a": {}}})
+        machine = create_machine(
+            {"id": "s_sync", "initial": "a", "states": {"a": {}}}
+        )
         interpreter = SyncInterpreter(machine).start()
         interpreter.stop()
 
@@ -1953,7 +1972,11 @@ class TestSyncInterpreter(unittest.TestCase):
             },
         }
         logic = MachineLogic(
-            actions={"double_value": lambda i, c, e, a: c.update({"value": c["value"] * 2})}
+            actions={
+                "double_value": lambda i, c, e, a: c.update(
+                    {"value": c["value"] * 2}
+                )
+            }
         )
         machine = create_machine(machine_config, logic=logic)
         interpreter = SyncInterpreter(machine).start()
@@ -2000,8 +2023,11 @@ class TestSyncInterpreter(unittest.TestCase):
         # Arrange
         complex_context = {
             "user": {"name": "John", "roles": ["admin", "editor"]},
-            "settings": {"theme": "dark", "notifications": {"email": True, "sms": False}},
-            "history": [1, 2, 3]
+            "settings": {
+                "theme": "dark",
+                "notifications": {"email": True, "sms": False},
+            },
+            "history": [1, 2, 3],
         }
         machine_config = {
             "id": "complex",
@@ -2547,7 +2573,11 @@ class TestSyncInterpreter(unittest.TestCase):
     def test_pause_and_resume(self):
         """Should pause and resume event processing."""
         machine = create_machine(
-            {"id": "pausable_sync", "initial": "a", "states": {"a": {"on": {"NEXT": "b"}}, "b": {}}}
+            {
+                "id": "pausable_sync",
+                "initial": "a",
+                "states": {"a": {"on": {"NEXT": "b"}}, "b": {}},
+            }
         )
         interpreter = SyncInterpreter(machine).start()
 
@@ -2559,7 +2589,9 @@ class TestSyncInterpreter(unittest.TestCase):
         send_thread.start()
 
         send_thread.join(timeout=0.1)
-        self.assertTrue(send_thread.is_alive()) # The thread should be blocked on _paused.wait()
+        self.assertTrue(
+            send_thread.is_alive()
+        )  # The thread should be blocked on _paused.wait()
         self.assertEqual(interpreter.current_state_ids, {"pausable_sync.a"})
 
         interpreter.resume()

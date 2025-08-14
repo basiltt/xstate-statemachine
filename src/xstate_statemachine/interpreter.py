@@ -111,7 +111,9 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
     # ⏯️ Public Control API (Start, Stop, Send)
     # -------------------------------------------------------------------------
 
-    async def start(self, paused: bool = False) -> "Interpreter[TContext, TEvent]":
+    async def start(
+        self, paused: bool = False
+    ) -> "Interpreter[TContext, TEvent]":
         """Starts the interpreter and its main event-processing loop.
 
         Args:
