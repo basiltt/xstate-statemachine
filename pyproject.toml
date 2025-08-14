@@ -4,16 +4,16 @@
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
-[project]
+[tool.poetry]
 name = "xstate-statemachine"
-version = "0.4.2"
-authors = [
-  { name="Basil T T", email="tt.basil@gmail.com" },
-]
+version = "0.5.0"
 description = "A robust Python library for parsing and running XState JSON state machines."
+authors = ["Basil T T <tt.basil@gmail.com>"]
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.8"
-license = { text = "MIT" } # Modern PEP 621 license format
+homepage = "https://github.com/basiltt/xstate-statemachine"
+repository = "https://github.com/basiltt/xstate-statemachine"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -22,11 +22,22 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
-[project.urls]
-"Homepage" = "https://github.com/basiltt/xstate-statemachine"
-"Bug Tracker" = "https://github.com/basiltt/xstate-statemachine/issues"
+[tool.poetry.dependencies]
+python = ">=3.8"
+# Inspector dependencies (optional)
+fastapi = {version = "^0.103.2", optional = true}
+uvicorn = {version = "^0.23.2", extras = ["standard"], optional = true}
+websockets = {version = "^12.0", optional = true}
+SQLAlchemy = {version = "^2.0.21", optional = true}
+python-dotenv = {version = "^1.0.0", optional = true}
+# Dev dependencies (optional)
+pytest = {version = "^7.4.0", optional = true}
+pytest-asyncio = {version = "^0.21.0", optional = true}
+httpx = {version = "^0.25.0", optional = true}
 
-# 💡 This is the key addition for the CLI tool, following PEP 621.
-#    Poetry will correctly interpret this and create the executable.
-[project.scripts]
+[tool.poetry.extras]
+inspector = ["fastapi", "uvicorn", "websockets", "SQLAlchemy", "python-dotenv"]
+dev = ["pytest", "pytest-asyncio", "httpx", "fastapi", "uvicorn", "websockets", "SQLAlchemy", "python-dotenv"]
+
+[tool.poetry.scripts]
 xsm = "xstate_statemachine.cli.__main__:main"

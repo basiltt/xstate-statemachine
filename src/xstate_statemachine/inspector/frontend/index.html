@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XState Inspector</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <h1>XState Inspector</h1>
+        <div class="controls">
+            <button id="theme-toggle">Toggle Theme</button>
+        </div>
+    </header>
+    <main>
+        <aside id="machine-list">
+            <h2>Live Machines</h2>
+            <ul id="machines"></ul>
+            <hr>
+            <h2>Sessions</h2>
+            <ul id="sessions"></ul>
+        </aside>
+        <section id="inspector-panel">
+            <div id="no-machine-selected">
+                <p>Select a machine to inspect.</p>
+            </div>
+            <div id="machine-details" class="hidden">
+                <h2 id="machine-title"></h2>
+                <div id="playback-controls" style="display: none;">
+                    <button id="play-btn">Play</button>
+                    <button id="pause-btn">Pause</button>
+                    <button id="prev-btn">Prev</button>
+                    <button id="next-btn">Next</button>
+                    <span id="playback-status"></span>
+                </div>
+                <div class="machine-layout">
+                    <div id="diagram-container">
+                        <h3>Statechart</h3>
+                        <div id="diagram"></div>
+                    </div>
+                    <div id="context-container">
+                        <h3>Context</h3>
+                        <pre id="context"></pre>
+                    </div>
+                </div>
+                <div id="logs-container">
+                    <h3>Event Log</h3>
+                    <ul id="event-log"></ul>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+        mermaid.initialize({ startOnLoad: false });
+    </script>
+    <script src="/static/app.js"></script>
+</body>
+</html>

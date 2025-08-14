@@ -2569,12 +2569,79 @@ def test_timer_transition(light_machine):
 
 ---
 
+## 🔬 GUI Inspector (Prototype)<a name="gui-inspector"></a>
+
+New in version 0.5.0, this library includes a prototype of a **GUI Inspector**—a lightweight web panel that allows you to visualize and debug your state machines in real-time.
+
+### Features
+- **Live View**: Watch state transitions, events, and context changes as they happen.
+- **Statechart Visualization**: See the structure of your machine and the currently active state.
+- **History Playback**: Record a machine's execution and play it back step-by-step to debug complex sequences.
+- **Modern UI**: A clean, modern interface with both light and dark modes.
+
+### Installation
+
+The GUI Inspector is an **optional feature**. To use it, you must install the necessary dependencies:
+
+```bash
+pip install "xstate-statemachine[inspector]"
+```
+
+### Usage
+
+To enable the inspector, simply import the `InspectorPlugin` and add it to your interpreter instance using the `.use()` method.
+
+```python
+from xstate_statemachine import create_machine, Interpreter
+from xstate_statemachine.inspector import InspectorPlugin
+import asyncio
+
+# Your machine configuration and logic
+# ...
+
+async def main():
+    machine = create_machine(config, logic=logic)
+
+    # Create an interpreter and attach the inspector plugin
+    interpreter = Interpreter(machine).use(InspectorPlugin())
+
+    # Start the interpreter
+    await interpreter.start()
+
+    # The inspector will now be running at http://127.0.0.1:8008
+    print("Inspector is running at http://127.0.0.1:8008")
+
+    # Your application logic here...
+    # e.g., await interpreter.send("SOME_EVENT")
+
+    # Keep the script running to view the inspector
+    await asyncio.Event().wait()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+Once your script is running, open your web browser to `http://127.0.0.1:8008` to view the inspector panel.
+
+### Configuration
+
+The inspector can be configured via a `.env` file in your project's root directory. For example, to change the database used for storing history:
+
+```
+# .env
+DATABASE_URL=sqlite:///my_app_inspector.db
+```
+
+> **Note**: This feature is currently a prototype. The API and UI are subject to change in future releases.
+
+---
+
 ## 🗺️ Roadmap (Next Release) <a name="roadmap-next-release"></a>
 
+- **GUI Inspector** – The prototype is complete! Future work includes adding live pause/play, authentication, and more advanced visualization options.
 - **`SyncInterpreter.from_snapshot(...)` helper** – parity with async restore; single-call reconstruction from saved snapshots.
 - **Unified cancellation primitives** – expose a consistent API over `asyncio.Task`/`threading.Thread` so plugins can introspect both.
 - **Bulk event enqueue API** – send a list of events in one call for high‑volume telemetry pipelines.
-- **GUI Inspector prototype** – lightweight web panel to watch events, guards, and context diffs live.
 
 
 

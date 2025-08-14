@@ -608,9 +608,14 @@ class MachineNode(StateNode[TContext, TEvent]):
             )
         self.logic = logic
         self.initial_context = config.get("context", {})
+        self.config = config
 
         # 🚀 Call the parent constructor to build the entire state tree.
         super().__init__(self, config, config["id"])
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Returns the original configuration dictionary of the machine."""
+        return self.config
 
     def get_state_by_id(self, state_id: str) -> Optional[StateNode]:
         """Finds a state node by its fully qualified ID.
