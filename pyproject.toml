@@ -11,7 +11,6 @@ description = "A robust Python library for parsing and running XState JSON state
 authors = ["Basil T T <tt.basil@gmail.com>"]
 license = "MIT"
 readme = "README.md"
-requires-python = ">=3.8"
 homepage = "https://github.com/basiltt/xstate-statemachine"
 repository = "https://github.com/basiltt/xstate-statemachine"
 classifiers = [
