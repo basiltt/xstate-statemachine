@@ -1839,6 +1839,88 @@ class TestSyncInterpreter(unittest.TestCase):
         # ✨ Assert: The snapshot contains both active state IDs.
         self.assertEqual(set(snapshot_data["state_ids"]), {"p.a.a1", "p.b.b1"})
 
+    def test_from_snapshot_helper_restores_state(self) -> None:
+        """Tests the from_snapshot helper restores state and context."""
+        logger.info("🧪 Testing from_snapshot helper...")
+        # Arrange
+        machine_config = {
+            "id": "test",
+            "initial": "first",
+            "context": {"value": 42},
+            "states": {
+                "first": {"on": {"NEXT": "second"}},
+                "second": {"entry": ["double_value"]},
+            },
+        }
+        logic = MachineLogic(
+            actions={"double_value": lambda i, c, e, a: c.update({"value": c["value"] * 2})}
+        )
+        machine = create_machine(machine_config, logic=logic)
+        interpreter = SyncInterpreter(machine).start()
+        interpreter.send("NEXT")  # Move to 'second' state, value becomes 84
+        snapshot = interpreter.get_snapshot()
+        interpreter.stop()
+
+        # Act
+        restored = SyncInterpreter.from_snapshot(snapshot, machine)
+
+        # Assert
+        self.assertIsInstance(restored, SyncInterpreter)
+        self.assertEqual(restored.current_state_ids, {"test.second"})
+        self.assertEqual(restored.context["value"], 84)
+        self.assertEqual(restored.status, "running")
+
+    def test_restore_from_parallel_state_snapshot(self) -> None:
+        """Tests restoring an interpreter from a parallel state snapshot."""
+        logger.info("🧪 Testing restore from parallel state snapshot...")
+        # Arrange
+        machine_config: Dict[str, Any] = {
+            "id": "p",
+            "type": "parallel",
+            "states": {
+                "a": {"initial": "a1", "states": {"a1": {}}},
+                "b": {"initial": "b1", "states": {"b1": {}}},
+            },
+        }
+        machine = create_machine(machine_config)
+        interpreter = SyncInterpreter(machine).start()
+        snapshot = interpreter.get_snapshot()
+        interpreter.stop()
+
+        # Act
+        restored = SyncInterpreter.from_snapshot(snapshot, machine)
+
+        # Assert
+        self.assertEqual(set(restored.current_state_ids), {"p.a.a1", "p.b.b1"})
+        self.assertEqual(restored.status, "running")
+
+    def test_restore_with_complex_context(self) -> None:
+        """Tests restoring a snapshot with a complex context."""
+        logger.info("🧪 Testing restore with complex context...")
+        # Arrange
+        complex_context = {
+            "user": {"name": "John", "roles": ["admin", "editor"]},
+            "settings": {"theme": "dark", "notifications": {"email": True, "sms": False}},
+            "history": [1, 2, 3]
+        }
+        machine_config = {
+            "id": "complex",
+            "initial": "idle",
+            "context": complex_context,
+            "states": {"idle": {}},
+        }
+        machine = create_machine(machine_config)
+        interpreter = SyncInterpreter(machine).start()
+        snapshot = interpreter.get_snapshot()
+        interpreter.stop()
+
+        # Act
+        restored = SyncInterpreter.from_snapshot(snapshot, machine)
+
+        # Assert
+        self.assertEqual(restored.context, complex_context)
+        self.assertEqual(restored.status, "running")
+
     # -------------------------------------------------------------------------
     # 🔌 Plugin System Tests
     # -------------------------------------------------------------------------
