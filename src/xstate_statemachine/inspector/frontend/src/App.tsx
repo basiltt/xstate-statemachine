@@ -6,24 +6,48 @@ import {
   useInspectorStore,
 } from "./hooks/useInspectorSocket";
 import { StatechartDiagram } from "./components/StatechartDiagram";
-import { Moon, Sun } from "lucide-react";
-import { cn } from "./lib/utils";
+import { Bot, FileJson, History, Moon, Pause, Play, Send, SquareActivity, Sun } from "lucide-react";
 
-// --- START: Prop Type Definitions ---
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+
+// Magic UI components
+import { Dock, DockIcon } from "@/components/magicui/dock";
+import ShimmerButton from "@/components/magicui/shimmer-button";
+
+// --- Prop Type Definitions ---
+interface HeaderProps {
+  onToggleTheme: () => void;
+  isDark: boolean;
+}
+
 interface SidebarProps {
   machines: Record<string, MachineState>;
   selectedMachineId: string | null;
   onSelectMachine: (id: string) => void;
-  onToggleTheme: () => void;
-  isDark: boolean;
 }
 
 interface MachineViewProps {
   machine: MachineState;
 }
 
-// --- END: Prop Type Definitions ---
+interface SendEventDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  machineId: string;
+}
 
+// --- Main App Component ---
 export default function App() {
   useInspectorSocket();
   const machines = useInspectorStore((state) => state.machines);
@@ -32,24 +56,18 @@ export default function App() {
 
   useEffect(() => {
     const machineIds = Object.keys(machines);
-    if (!selectedMachineId && machineIds.length > 0) {
+    if ((!selectedMachineId || !machines[selectedMachineId]) && machineIds.length > 0) {
       setSelectedMachineId(machineIds[0]);
-    }
-    if (selectedMachineId && !machines[selectedMachineId]) {
-      setSelectedMachineId(machineIds.length > 0 ? machineIds[0] : null);
     }
   }, [machines, selectedMachineId]);
 
   useEffect(() => {
-    const isDarkMode =
-      localStorage.getItem("theme") === "dark" ||
-      (!("theme" in localStorage) && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    const isDarkMode = document.documentElement.classList.contains("dark");
     setIsDark(isDarkMode);
-    document.documentElement.classList.toggle("dark", isDarkMode);
   }, []);
 
   const toggleTheme = () => {
-    const newIsDark = !isDark;
+    const newIsDark = !document.documentElement.classList.contains("dark");
     setIsDark(newIsDark);
     localStorage.setItem("theme", newIsDark ? "dark" : "light");
     document.documentElement.classList.toggle("dark", newIsDark);
@@ -58,134 +76,211 @@ export default function App() {
   const selectedMachine = selectedMachineId ? machines[selectedMachineId] : null;
 
   return (
-    <div className="flex h-screen w-full flex-col bg-muted/40 font-sans">
-      <Sidebar
-        machines={machines}
-        selectedMachineId={selectedMachineId}
-        onSelectMachine={setSelectedMachineId}
-        onToggleTheme={toggleTheme}
-        isDark={isDark}
-      />
-      <main className="flex flex-col gap-4 p-4 sm:py-4 sm:pl-14 md:pl-[280px]">
-        {selectedMachine ? (
-          <MachineView machine={selectedMachine} />
-        ) : (
-          <div className="flex h-full items-center justify-center rounded-lg border border-dashed shadow-sm">
-            <div className="text-center">
-              <h3 className="text-2xl font-bold tracking-tight">No Live Machines</h3>
-              <p className="text-muted-foreground">
-                Run a Python script with the InspectorPlugin to begin.
-              </p>
-            </div>
-          </div>
-        )}
-      </main>
+    <div className="flex h-screen w-full flex-col bg-background font-sans text-foreground">
+      <Header onToggleTheme={toggleTheme} isDark={isDark} />
+      <div className="flex flex-1 overflow-hidden">
+        <Sidebar
+          machines={machines}
+          selectedMachineId={selectedMachineId}
+          onSelectMachine={setSelectedMachineId}
+        />
+        <main className="flex-1 flex flex-col overflow-hidden">
+          {selectedMachine ? (
+            <MachineView key={selectedMachine.id} machine={selectedMachine} />
+          ) : (
+            <WelcomePanel />
+          )}
+        </main>
+      </div>
     </div>
   );
 }
 
-// FIX: Added explicit props type 'SidebarProps'
-function Sidebar({
-  machines,
-  selectedMachineId,
-  onSelectMachine,
-  onToggleTheme,
-  isDark,
-}: SidebarProps) {
-  return (
-    <aside className="fixed inset-y-0 left-0 z-10 hidden w-14 flex-col border-r bg-background sm:flex md:w-[280px]">
-      <nav className="flex flex-col items-center gap-4 px-2 py-4 md:items-stretch">
-        <div className="hidden h-16 items-center justify-between border-b px-6 md:flex">
-          <h1 className="text-lg font-bold">XState Inspector</h1>
-        </div>
+// --- UI Components ---
+// @ts-ignore
+const Header = ({ onToggleTheme, isDark }: HeaderProps) => (
+  <header className="flex h-14 items-center justify-between border-b bg-card px-4 lg:px-6">
+    <div className="flex items-center gap-2 font-bold">
+      <Bot className="h-6 w-6 text-primary" />
+      <span>XState Inspector</span>
+    </div>
+    <Button variant="ghost" size="icon" onClick={onToggleTheme}>
+      <Sun className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+      <Moon className="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+      <span className="sr-only">Toggle theme</span>
+    </Button>
+  </header>
+);
 
-        {Object.values(machines).map((machine) => (
-          <button
-            key={machine.id}
+const Sidebar = ({ machines, selectedMachineId, onSelectMachine }: SidebarProps) => (
+  <aside className="hidden w-72 flex-col border-r bg-card p-4 sm:flex">
+    <h2 className="text-base font-semibold tracking-tight">Live Machines</h2>
+    <nav className="mt-4 flex flex-col gap-1">
+      {Object.values(machines).map((machine) => (
+        <div key={machine.id}>
+          <Button
+            variant={selectedMachineId === machine.id ? "secondary" : "ghost"}
+            className="w-full justify-start"
             onClick={() => onSelectMachine(machine.id)}
-            className={cn(
-              "flex items-center justify-center gap-3 rounded-lg px-3 py-2 text-muted-foreground transition-all hover:text-primary md:justify-start",
-              selectedMachineId === machine.id && "bg-accent text-primary"
-            )}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="h-5 w-5"
-            >
-              <path d="m12 14 4-4" />
-              <path d="m12 14-4-4" />
-              <path d="M12 20v-8" />
-              <path d="M12 4v2" />
-              <path d="M12 10h.01" />
-              <path d="M20 12h-2" />
-              <path d="M10 12h.01" />
-              <path d="m4.929 19.071 1.414-1.414" />
-              <path d="m17.657 6.343-1.414 1.414" />
-              <path d="m4.929 4.929 1.414 1.414" />
-              <path d="m17.657 17.657-1.414 1.414" />
-            </svg>
-            <span className="hidden md:inline">{machine.id}</span>
-          </button>
-        ))}
-      </nav>
-      <nav className="mt-auto flex flex-col items-center gap-4 px-2 py-4 md:items-stretch">
-        <button
-          onClick={onToggleTheme}
-          className="flex items-center justify-center gap-3 rounded-lg px-3 py-2 text-muted-foreground transition-all hover:text-primary md:justify-start"
-        >
-          {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-          <span className="hidden md:inline">Toggle Theme</span>
-        </button>
-      </nav>
-    </aside>
-  );
-}
+            {machine.id}
+          </Button>
+        </div>
+      ))}
+    </nav>
+  </aside>
+);
 
-// FIX: Added explicit props type 'MachineViewProps'
-function MachineView({ machine }: MachineViewProps) {
+const MachineView = ({ machine }: MachineViewProps) => (
+  <div className="grid h-full grid-cols-1 lg:grid-cols-3 gap-4 p-4">
+    <div className="lg:col-span-2 flex flex-col gap-4 relative">
+      <Card className="flex-1 flex flex-col">
+        <CardHeader>
+          <CardTitle>{machine.id}</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Current State:{" "}
+            <span className="font-mono text-primary">{machine.currentStateIds.join(", ")}</span>
+          </p>
+        </CardHeader>
+        <CardContent className="flex-1 relative">
+          <StatechartDiagram machine={machine} activeStateIds={machine.currentStateIds} />
+        </CardContent>
+      </Card>
+      <Controls machineId={machine.id} />
+    </div>
+    <div className="flex flex-col">
+      <DetailsPanel machine={machine} />
+    </div>
+  </div>
+);
+
+const DetailsPanel = ({ machine }: MachineViewProps) => (
+  <Tabs defaultValue="events" className="flex-1 flex flex-col overflow-hidden">
+    <TabsList className="grid w-full grid-cols-3">
+      <TabsTrigger value="events">
+        <History className="w-4 h-4 mr-2" />
+        Event Log
+      </TabsTrigger>
+      <TabsTrigger value="context">
+        <SquareActivity className="w-4 h-4 mr-2" />
+        Context
+      </TabsTrigger>
+      <TabsTrigger value="json">
+        <FileJson className="w-4 h-4 mr-2" />
+        Definition
+      </TabsTrigger>
+    </TabsList>
+    <TabsContent value="events" className="flex-1 overflow-y-auto mt-0">
+      <div className="font-mono text-xs space-y-2 p-4">
+        {machine.logs
+          .slice()
+          .reverse()
+          .map((log: LogEntry, i: number) => (
+            <div key={i} className="p-2 rounded bg-muted">
+              <p className="font-bold text-primary">{log.type}</p>
+              <pre className="text-muted-foreground whitespace-pre-wrap break-all text-[11px]">
+                {JSON.stringify(log.payload, null, 2)}
+              </pre>
+            </div>
+          ))}
+      </div>
+    </TabsContent>
+    <TabsContent value="context" className="flex-1 overflow-y-auto mt-0">
+      <pre className="font-mono text-xs p-4">{JSON.stringify(machine.context, null, 2)}</pre>
+    </TabsContent>
+    <TabsContent value="json" className="flex-1 overflow-y-auto mt-0">
+      <pre className="font-mono text-xs p-4">{JSON.stringify(machine.definition, null, 2)}</pre>
+    </TabsContent>
+  </Tabs>
+);
+
+const Controls = ({ machineId }: { machineId: string }) => {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const sendCommand = useInspectorStore((state) => state.sendCommand);
+
   return (
     <>
-      <header>
-        <h1 className="text-4xl font-bold tracking-tight">{machine.id}</h1>
-        <p className="text-muted-foreground">
-          Current State:{" "}
-          <span className="font-mono text-primary">{machine.currentStateIds.join(", ")}</span>
-        </p>
-      </header>
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-        <div className="rounded-xl border bg-card text-card-foreground shadow lg:col-span-4">
-          <div className="p-6">
-            <h3 className="font-semibold text-lg mb-4">Statechart</h3>
-            <StatechartDiagram machine={machine} activeStateIds={machine.currentStateIds} />
-          </div>
-        </div>
-        <div className="rounded-xl border bg-card text-card-foreground shadow lg:col-span-3">
-          <div className="p-6">
-            <h3 className="font-semibold text-lg mb-2">Context</h3>
-            <pre className="mt-2 h-[200px] w-full overflow-auto rounded-md bg-muted p-4 font-mono text-sm">
-              {JSON.stringify(machine.context, null, 2)}
-            </pre>
-            <h3 className="font-semibold text-lg mt-4 mb-2">Event Log</h3>
-            <div className="h-[250px] w-full overflow-auto rounded-md bg-muted p-2 font-mono text-xs">
-              {/* FIX: TypeScript can now infer 'log' and 'i' types correctly */}
-              {machine.logs.map((log: LogEntry, i: number) => (
-                <div key={i} className="p-2 border-b border-background">
-                  <p className="font-bold">{log.type}</p>
-                  <p className="text-muted-foreground">{JSON.stringify(log.payload)}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
+        <Dock>
+          <DockIcon onClick={() => sendCommand("resume", { machine_id: machineId })}>
+            <Play className="h-4 w-4" />
+          </DockIcon>
+          <DockIcon onClick={() => sendCommand("pause", { machine_id: machineId })}>
+            <Pause className="h-4 w-4" />
+          </DockIcon>
+          <DockIcon onClick={() => setDialogOpen(true)}>
+            <Send className="h-4 w-4" />
+          </DockIcon>
+        </Dock>
       </div>
+      <SendEventDialog open={dialogOpen} onOpenChange={setDialogOpen} machineId={machineId} />
     </>
   );
-}
+};
+
+const SendEventDialog = ({ open, onOpenChange, machineId }: SendEventDialogProps) => {
+  const [type, setType] = useState("");
+  const [payload, setPayload] = useState("");
+  const sendCommand = useInspectorStore((state) => state.sendCommand);
+
+  const handleSend = () => {
+    if (!type) return;
+    let parsedPayload = {};
+    try {
+      if (payload.trim()) {
+        parsedPayload = JSON.parse(payload);
+      }
+    } catch (e) {
+      alert("Invalid JSON in payload.");
+      return;
+    }
+    sendCommand("send_event", { machine_id: machineId, event: { type, payload: parsedPayload } });
+    onOpenChange(false);
+    setType("");
+    setPayload("");
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Send Event to {machineId}</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-4 py-4">
+          <Input
+            placeholder="Event Type (e.g., ENABLE)"
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+          />
+          <Textarea
+            placeholder='Payload (JSON), e.g., {"value": 42}'
+            value={payload}
+            onChange={(e) => setPayload(e.target.value)}
+          />
+        </div>
+        <DialogFooter>
+          <ShimmerButton className="w-full" onClick={handleSend}>
+            <span className="whitespace-pre-wrap text-center text-sm font-medium leading-none tracking-tight text-white dark:from-white dark:to-slate-900/10 lg:text-lg">
+              Send Event
+            </span>
+          </ShimmerButton>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+const WelcomePanel = () => (
+  <div className="flex h-full items-center justify-center m-4">
+    <Card className="w-full max-w-md">
+      <CardHeader>
+        <CardTitle className="text-2xl">No Live Machines Detected</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-muted-foreground">
+          Run a Python script with the InspectorPlugin to begin debugging.
+        </p>
+      </CardContent>
+    </Card>
+  </div>
+);

@@ -695,3 +695,6 @@ backend/alembic/versions/*
 *tar.gz
 
 *.whl
+
+
+/*.json
