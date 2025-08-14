@@ -1,0 +1,12 @@
+{
+  "name": "xstate-inspector-frontend",
+  "version": "1.0.0",
+  "description": "Frontend for the XState-StateMachine GUI Inspector",
+  "scripts": {
+    "build": "tailwindcss -i ./src/input.css -o ./dist/output.css",
+    "watch": "tailwindcss -i ./src/input.css -o ./dist/output.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.1"
+  }
+}
