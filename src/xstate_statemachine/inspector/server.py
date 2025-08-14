@@ -158,21 +158,12 @@ app = create_app()
 
 # --- Server Singleton Management ---
 _server_thread = None
-_server_started = threading.Event()
 
 def run_server():
     """The target function for the server thread."""
     create_db_and_tables()
     config = uvicorn.Config(app, host="127.0.0.1", port=8008, log_level="info")
     server = uvicorn.Server(config)
-
-    async def new_startup(*args, **kwargs):
-        # Correctly call the original startup without extra args
-        await server.startup()
-        _server_started.set()
-
-    # server.startup is an awaitable list of callables
-    server.startup_tasks = [new_startup]
     server.run()
 
 
@@ -182,6 +173,3 @@ def start_inspector_server():
     if _server_thread is None:
         _server_thread = threading.Thread(target=run_server, daemon=True)
         _server_thread.start()
-        started = _server_started.wait(timeout=20)
-        if not started:
-            print("ERROR: Inspector server failed to start in time.")
