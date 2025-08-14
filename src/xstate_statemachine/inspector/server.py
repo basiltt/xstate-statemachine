@@ -2,13 +2,15 @@ try:
     import asyncio
     import queue
     import threading
+    from contextlib import asynccontextmanager
     import uvicorn
     from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
-    from typing import List
-    from .db import SessionLocal, EventLog, create_db_and_tables
-    from sqlalchemy.orm import Session
+    from typing import List, Dict
+    from .db import get_session, EventLog, create_db_and_tables
+    from sqlmodel import Session, select
+    from ..base_interpreter import BaseInterpreter
     from fastapi import Depends
     import json
     import os
@@ -38,18 +40,40 @@ class ConnectionManager:
 # Create singleton instances for the connection manager and message queue
 manager = ConnectionManager()
 message_queue = queue.Queue()
+active_interpreters: Dict[str, "BaseInterpreter"] = {}
+
 
 def get_db():
     """FastAPI dependency to get a database session."""
-    db = SessionLocal()
+    with get_session() as session:
+        yield session
+
+
+# --- Background Task ---
+async def broadcast_from_queue():
+    while True:
+        try:
+            message = message_queue.get_nowait()
+            await manager.broadcast(message)
+        except queue.Empty:
+            await asyncio.sleep(0.01)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manages the background task for broadcasting messages."""
+    task = asyncio.create_task(broadcast_from_queue())
+    yield
+    task.cancel()
     try:
-        yield db
-    finally:
-        db.close()
+        await task
+    except asyncio.CancelledError:
+        pass
+
 
 def create_app(mount_static_files: bool = True) -> FastAPI:
     """Creates and configures the FastAPI application."""
-    app = FastAPI()
+    app = FastAPI(lifespan=lifespan)
 
     # --- WebSocket Endpoint ---
     @app.websocket("/ws")
@@ -57,39 +81,42 @@ def create_app(mount_static_files: bool = True) -> FastAPI:
         await manager.connect(websocket)
         try:
             while True:
-                await websocket.receive_text()
+                data = await websocket.receive_text()
+                try:
+                    message = json.loads(data)
+                    command = message.get("command")
+                    machine_id = message.get("machine_id")
+
+                    if command and machine_id:
+                        interpreter = active_interpreters.get(machine_id)
+                        if interpreter:
+                            if command == "pause":
+                                interpreter.pause()
+                            elif command == "resume":
+                                interpreter.resume()
+                except json.JSONDecodeError:
+                    # Ignore non-json messages
+                    pass
         except WebSocketDisconnect:
             manager.disconnect(websocket)
-
-    # --- Background Task ---
-    async def broadcast_from_queue():
-        while True:
-            try:
-                message = message_queue.get_nowait()
-                await manager.broadcast(message)
-            except queue.Empty:
-                await asyncio.sleep(0.01)
-
-    @app.on_event("startup")
-    async def startup_event():
-        asyncio.create_task(broadcast_from_queue())
 
     # --- API Router ---
     api_router = APIRouter(prefix="/api")
 
     @api_router.get("/sessions")
     async def get_sessions(db: Session = Depends(get_db)):
-        sessions = db.query(EventLog.session_id).distinct().all()
-        return [session[0] for session in sessions]
+        statement = select(EventLog.session_id).distinct()
+        sessions = db.exec(statement).all()
+        return sessions
 
     @api_router.get("/history/{session_id}")
     async def get_history(session_id: str, db: Session = Depends(get_db)):
-        history = (
-            db.query(EventLog)
-            .filter(EventLog.session_id == session_id)
+        statement = (
+            select(EventLog)
+            .where(EventLog.session_id == session_id)
             .order_by(EventLog.timestamp)
-            .all()
         )
+        history = db.exec(statement).all()
         return [json.loads(log.data) for log in history]
 
     app.include_router(api_router)

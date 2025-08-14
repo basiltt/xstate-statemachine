@@ -40,11 +40,25 @@ document.addEventListener('DOMContentLoaded', () => {
         setupPlaybackControls();
     }
 
+    let ws;
+
     function setupWebSocket() {
-        const ws = new WebSocket('ws://127.0.0.1:8008/ws');
+        ws = new WebSocket('ws://127.0.0.1:8008/ws');
         ws.onmessage = (event) => handleMessage(JSON.parse(event.data), 'live');
         ws.onclose = () => logMessage({ type: 'status', payload: 'WebSocket connection closed.' });
         ws.onerror = (error) => logMessage({ type: 'error', payload: `WebSocket error: ${error}` });
+    }
+
+    function sendWsCommand(command, machineId) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            const message = {
+                command: command,
+                machine_id: machineId,
+            };
+            ws.send(JSON.stringify(message));
+        } else {
+            console.error("WebSocket is not connected.");
+        }
     }
 
     // --- Message Handling ---
@@ -107,13 +121,35 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderMachineList() {
         machineList.innerHTML = '';
         Object.keys(state.machines).forEach(machineId => {
+            if (state.sessions[machineId]) return; // Don't show session machines in the live list
+
             const li = document.createElement('li');
-            li.textContent = machineId;
             li.dataset.machineId = machineId;
+
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = machineId;
+            nameSpan.addEventListener('click', () => selectLiveMachine(machineId));
+            li.appendChild(nameSpan);
+
+            const controls = document.createElement('div');
+            controls.className = 'live-controls';
+
+            const pauseBtn = document.createElement('button');
+            pauseBtn.textContent = 'Pause';
+            pauseBtn.addEventListener('click', () => sendWsCommand('pause', machineId));
+            controls.appendChild(pauseBtn);
+
+            const resumeBtn = document.createElement('button');
+            resumeBtn.textContent = 'Resume';
+            resumeBtn.addEventListener('click', () => sendWsCommand('resume', machineId));
+            controls.appendChild(resumeBtn);
+
+            li.appendChild(controls);
+
             if (machineId === state.selectedMachine && !state.selectedSession) {
                 li.classList.add('active');
             }
-            li.addEventListener('click', () => selectLiveMachine(machineId));
+
             machineList.appendChild(li);
         });
     }

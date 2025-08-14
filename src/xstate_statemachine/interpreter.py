@@ -111,8 +111,12 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
     # ⏯️ Public Control API (Start, Stop, Send)
     # -------------------------------------------------------------------------
 
-    async def start(self) -> "Interpreter[TContext, TEvent]":
+    async def start(self, paused: bool = False) -> "Interpreter[TContext, TEvent]":
         """Starts the interpreter and its main event-processing loop.
+
+        Args:
+            paused (bool): If `True`, the interpreter will start in a paused
+                state and will not process events until `resume()` is called.
 
         This method initializes the machine by transitioning it to its initial
         state and begins the main event loop to process events from the queue.
@@ -138,6 +142,9 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             return self
 
         logger.info("🏁 Starting interpreter '%s'...", self.id)
+        if paused:
+            self.pause()
+
         self.status = "running"
         # 🌀 Launch the main event loop as a background task.
         self._event_loop_task = asyncio.create_task(self._run_event_loop())
@@ -276,6 +283,9 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         logger.debug("🔄 Event loop started for interpreter '%s'.", self.id)
         try:
             while self.status == "running":
+                # ⏯️ If paused, this will block until resume() is called.
+                await asyncio.to_thread(self._paused.wait)
+
                 # 📬 Wait indefinitely for the next event from the queue.
                 event = await self._event_queue.get()
                 logger.debug(

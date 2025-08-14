@@ -2544,6 +2544,43 @@ class TestSyncInterpreter(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             SyncInterpreter(machine).start()
 
+    def test_pause_and_resume(self):
+        """Should pause and resume event processing."""
+        machine = create_machine(
+            {"id": "pausable_sync", "initial": "a", "states": {"a": {"on": {"NEXT": "b"}}, "b": {}}}
+        )
+        interpreter = SyncInterpreter(machine).start()
+
+        interpreter.pause()
+
+        # Since send() blocks until the event is processed, we need to run it in a thread
+        # to test that it is actually paused.
+        send_thread = threading.Thread(target=interpreter.send, args=("NEXT",))
+        send_thread.start()
+
+        send_thread.join(timeout=0.1)
+        self.assertTrue(send_thread.is_alive()) # The thread should be blocked on _paused.wait()
+        self.assertEqual(interpreter.current_state_ids, {"pausable_sync.a"})
+
+        interpreter.resume()
+        send_thread.join(timeout=0.1)
+        self.assertFalse(send_thread.is_alive())
+        self.assertEqual(interpreter.current_state_ids, {"pausable_sync.b"})
+
+        interpreter.stop()
+
+    def test_start_paused(self):
+        """Should start in a paused state."""
+        machine = create_machine(
+            {"id": "start_paused_sync", "initial": "a", "states": {"a": {}}}
+        )
+        interpreter = SyncInterpreter(machine).start(paused=True)
+
+        self.assertFalse(interpreter._paused.is_set())
+
+        interpreter.resume()
+        interpreter.stop()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -2661,6 +2661,17 @@ if __name__ == "__main__":
 
 Once your script is running, open your web browser to `http://127.0.0.1:8008` to view the inspector panel.
 
+#### Live Debugging with Pause & Resume
+You can start an interpreter in a paused state, and control its execution from the GUI Inspector. This is useful for step-by-step debugging of your machine's logic.
+
+To start a machine in a paused state, pass `paused=True` to the `start()` method:
+```python
+# Start the interpreter in a paused state
+interpreter = await Interpreter(machine).use(InspectorPlugin()).start(paused=True)
+```
+
+When you open the GUI Inspector, you will see "Pause" and "Resume" buttons next to your live machine. You can use these to control the execution of the machine.
+
 ### 📋 Features in Detail
 
 | Feature                  | Description                                                                                                                                                             |
@@ -2671,6 +2682,7 @@ Once your script is running, open your web browser to `http://127.0.0.1:8008` to
 | **Context Viewer**       | A live view of the machine's `context` data. On each transition, a "diff" is shown, highlighting exactly what was added, removed, or changed in the context.                |
 | **Session History**      | Every run of a machine is automatically saved as a "session" in a local SQLite database.                                                                                |
 | **History Playback**     | Select any past session and play it back. You can step forward and backward through the entire event history to understand exactly how the machine behaved.               |
+| **Live Pause & Resume**  | Pause a running state machine directly from the UI to inspect its state, then resume it when you're ready.                                                              |
 
 ### ⚙️ Configuration
 
@@ -2689,7 +2701,6 @@ The inspector can be configured via a `.env` file in your project's root directo
 
 ### ⚠️ Limitations (Prototype)
 As this is a prototype version, there are some limitations to be aware of:
-- **No Live Pause/Play**: The playback controls only work for historical sessions. You cannot pause a live, running state machine from the UI.
 - **Basic Visualization**: The statechart visualization is powered by Mermaid.js and may not render very large or complex nested/parallel statecharts perfectly.
 - **No Authentication**: The inspector server is unauthenticated and should not be exposed to the public internet.
 - **Performance**: For state machines that process hundreds of events per second, the overhead of the inspector might become noticeable.

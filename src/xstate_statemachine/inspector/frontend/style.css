@@ -74,6 +74,22 @@ ul#machines li:hover {
     background-color: var(--secondary-color);
 }
 
+ul#machines li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.live-controls button {
+    margin-left: 5px;
+    padding: 2px 5px;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
 ul#machines li.active {
     background-color: var(--accent-color);
     color: white;

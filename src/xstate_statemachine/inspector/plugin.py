@@ -14,8 +14,8 @@ from ..events import Event
 from ..models import StateNode, TransitionDefinition, ActionDefinition, InvokeDefinition
 from ..base_interpreter import BaseInterpreter
 
-from .server import start_inspector_server, message_queue
-from .db import SessionLocal, EventLog
+from .server import active_interpreters, start_inspector_server, message_queue
+from .db import get_session, EventLog
 
 
 def _get_state_ids(states: Set[StateNode]) -> Set[str]:
@@ -30,7 +30,7 @@ class InspectorPlugin(PluginBase[Any]):
     def __init__(self, session_factory=None):
         start_inspector_server()
         self._contexts: Dict[str, Any] = {}  # Store context per machine_id
-        self.session_factory = session_factory or SessionLocal
+        self.session_factory = session_factory or get_session
 
     def _handle_inspection_event(
         self, event_type: str, interpreter: BaseInterpreter, payload: Dict[str, Any]
@@ -51,19 +51,17 @@ class InspectorPlugin(PluginBase[Any]):
         message_queue.put(json_message)
 
         # Store in database
-        db = self.session_factory()
-        try:
+        with self.session_factory() as session:
             log_entry = EventLog(
                 session_id=interpreter.id,
                 event_type=event_type,
                 data=json_message,  # Store the raw JSON message for easy playback
             )
-            db.add(log_entry)
-            db.commit()
-        finally:
-            db.close()
+            session.add(log_entry)
+            session.commit()
 
     def on_interpreter_start(self, interpreter: BaseInterpreter):
+        active_interpreters[interpreter.id] = interpreter
         self._contexts[interpreter.id] = deepcopy(interpreter.context)
         self._handle_inspection_event(
             "machine_registered",
@@ -71,12 +69,15 @@ class InspectorPlugin(PluginBase[Any]):
             {
                 "machine_id": interpreter.id,
                 "initial_state": list(
-                    _get_state_ids(interpreter.current_states)
+                    _get_state_ids(interpreter._active_state_nodes)
                 ),
                 "initial_context": interpreter.context,
                 "definition": interpreter.machine.to_dict(),
             },
         )
+
+    def on_interpreter_stop(self, interpreter: BaseInterpreter):
+        active_interpreters.pop(interpreter.id, None)
 
     def on_event_received(self, interpreter: BaseInterpreter, event: Event):
         # Store the context before it's potentially modified by the transition
