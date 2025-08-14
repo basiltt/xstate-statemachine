@@ -315,7 +315,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         Args:
             event: The event object to process.
         """
-        # 1️⃣ Select the winning transition based on event, guards, and state depth.
+        # 1. Select the winning transition based on event, guards, and state depth.
         transition = self._find_optimal_transition(event)
         if not transition:
             logger.debug(
@@ -323,22 +323,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             )
             return
 
-        # ✅ Directly process the found transition
-        self._process_single_transition(transition, event)
-
-    def _process_single_transition(
-        self, transition: TransitionDefinition, event: Event
-    ) -> None:
-        """Processes a single, specific transition that has already been selected.
-
-        This helper executes the full state transition algorithm for a given
-        transition object, handling state exits, action execution, and state entries.
-
-        Args:
-            transition: The specific `TransitionDefinition` to execute.
-            event: The event (often a dummy one) that triggered this transition.
-        """
-        # 1️⃣ Handle internal transitions: only actions are executed, no state change.
+        # 2. A "targetless" transition only executes actions without changing state.
         if not transition.target_str:
             logger.info("🔄 Executing internal transition actions.")
             self._execute_actions(transition.actions, event)
@@ -351,12 +336,43 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 )
             return
 
-        # 2️⃣ For external transitions, prepare for state changes.
-        snapshot_before_transition = self._active_state_nodes.copy()
-        domain = self._find_transition_domain(transition)
+        # 3. Resolve the target state node.
         target_state = self._resolve_target_state_robustly(transition)
 
-        # 3️⃣ Determine the full path of states to exit and enter.
+        # 4. A self-transition without `reenter: True` is also internal.
+        if target_state == transition.source and not transition.reenter:
+            logger.info("🔄 Executing internal transition actions.")
+            self._execute_actions(transition.actions, event)
+            for plugin in self._plugins:
+                plugin.on_transition(
+                    self,
+                    self._active_state_nodes,
+                    self._active_state_nodes,
+                    transition,
+                )
+            return
+
+        # 5. All other transitions are external; process the state change.
+        self._process_single_transition(transition, event, target_state)
+
+    def _process_single_transition(
+        self,
+        transition: TransitionDefinition,
+        event: Event,
+        target_state: StateNode,
+    ) -> None:
+        """Processes a single, specific external transition.
+
+        Args:
+            transition: The external `TransitionDefinition` to execute.
+            event: The event that triggered this transition.
+            target_state: The pre-resolved target `StateNode`.
+        """
+        # For external transitions, prepare for state changes.
+        snapshot_before_transition = self._active_state_nodes.copy()
+        domain = self._find_transition_domain(transition, target_state)
+
+        # Determine the full path of states to exit and enter.
         path_to_enter = self._get_path_to_state(target_state, stop_at=domain)
         states_to_exit: Set[StateNode] = {
             s
@@ -364,7 +380,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             if self._is_descendant(s, domain) and s is not domain
         }
 
-        # 4️⃣ Execute the transition sequence (Exit -> Actions -> Enter)
+        # Execute the transition sequence (Exit -> Actions -> Enter)
         self._exit_states(
             sorted(
                 list(states_to_exit), key=lambda s: len(s.id), reverse=True
@@ -374,7 +390,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         self._execute_actions(transition.actions, event)
         self._enter_states(path_to_enter, event)
 
-        # 5️⃣ Finalize the state change and notify plugins.
+        # Finalize the state change and notify plugins.
         self._active_state_nodes.difference_update(states_to_exit)
         self._active_state_nodes.update(path_to_enter)
         for plugin in self._plugins:
@@ -410,7 +426,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     transition.target_str or "self (internal)",
                 )
                 # 🔄 Directly process the *found* transition, which is more efficient.
-                self._process_single_transition(transition, transient_event)
+                self._process_event(transient_event)
             else:
                 # ✅ No more transient transitions found. The state is stable.
                 logger.debug(

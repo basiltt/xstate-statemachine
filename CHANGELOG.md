@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2025-08-13
+
+### Added
+
+- **`reenter` Flag for Self-Transitions**: Introduced a `reenter` boolean flag for transitions to align with XState v5's handling of self-transitions.
+  - When `reenter: true`, a self-transition becomes "external," causing the state to be exited and re-entered, triggering all entry and exit actions.
+  - By default, or when `reenter: false`, a self-transition is "internal," meaning only the transition's actions are executed, and the state is not exited or re-entered. This is the new default behavior.
+  - This feature is fully supported in both the asynchronous (`Interpreter`) and synchronous (`SyncInterpreter`) engines.
+
+### Changed
+
+- **Refactored Transition Logic**: The core event processing logic in both `BaseInterpreter` and `SyncInterpreter` was refactored to cleanly distinguish between internal and external transitions, improving clarity and maintainability.
+- **Updated Self-Transition Tests**: Existing tests for self-transitions were updated to use `reenter: true` to preserve their original intent of testing external transitions. New tests were added to specifically validate the `reenter: false` internal transition behavior.
+
 ## [0.4.1] - 2025-07-27
 
 ### Added

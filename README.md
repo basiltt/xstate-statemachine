@@ -820,55 +820,46 @@ def store_payload(i, ctx, event, a):
 > network. Fast & deterministic! 🧪
 
 
-### Internal vs External Transitions<a name="internal-vs-external-transitions"></a>
+### Internal vs External Transitions & The `reenter` Flag<a name="internal-vs-external-transitions"></a>
 
-When an **event matches a transition _without_ a `target`**, the machine stays
-_in the current state_ and merely **executes the transition’s actions / guard**.
-This is called an **internal transition** – the state’s `exit`, `entry`, `after`
-timers and any `invoke`d service keep running untouched.
+When an event matches a transition, the library distinguishes between two types: **internal** and **external**.
+
+-   **Internal Transition**: An internal transition only executes its actions and does not exit or re-enter the current state. This is useful for updating context without resetting the state's timers or invoked services. This occurs when a transition has **no `target`**.
+
+-   **External Transition**: An external transition will exit the current state (running exit actions, cancelling timers/services) and re-enter a new state (or the same one), running all entry actions. This occurs whenever a transition **has a `target`**.
+
+#### The `reenter` Flag for Self-Transitions (New in 0.4.2)
+
+By default, a self-transition (where the `target` is the same as the source state) is **internal**. However, you can force it to be **external** by adding `"reenter": true`. This provides explicit control, aligning with XState v5.
+
+| Transition Config | Behavior | Use Case |
+| :--- | :--- | :--- |
+| `{"actions": "update_ctx"}` | **Internal** (no `target`) | Update context without resetting the state. |
+| `{"target": "myState"}` | **Internal** (self-target, `reenter` is `false` by default) | Same as above. The machine remains in `myState` without exit/entry actions. |
+| `{"target": "myState", "reenter": true}` | **External** (self-target, explicit `reenter`) | Force a full exit/re-entry of `myState` to reset its timers or re-run entry actions. |
+
+**Example:**
+
+Consider a state that needs to reset an inactivity timer whenever the user performs an action.
 
 ```jsonc
-"playing": {
-  "on": {
-    "UPDATE_METADATA": {
-      // 👇 no `target`  → internal
-      "actions": "updateTitle"
+"active": {
+  "initial": "idle",
+  "states": {
+    "idle": {
+      "after": {
+        "5000": { "target": "#myMachine.timedOut" }
+      },
+      "on": {
+        "USER_ACTIVITY": {
+          "target": "idle",
+          "reenter": true // This forces an exit/re-entry, resetting the 5s timer
+        }
+      }
     }
   }
 }
 ```
-
-Conversely, **the moment a `target` key is present, the transition is
-_external_ – even if that target is the very state you are already in.**
-The state is exited, its timers / services are cancelled, the transition’s
-actions run, and then the state is re‑entered (triggering `entry` actions
-and restarting any `after` timers or `invoke`s).
-
-```jsonc
-"logged_in": {
-  "after": { "3000": "timed_out" },
-  "on": {
-    "USER_ACTIVITY": {
-      "target": "logged_in"   // self‑target  → external
-      // Re‑entering resets the 3 s inactivity timer above
-    }
-  }
-}
-```
-
-> **Gotcha:**
-> XState‑StateMachine **does not recognise** an `"internal": true/false`
-> flag (it isn’t part of the JSON grammar).
-> *No `target` → internal • Any `target` → external.*
-
-> **XState v5 `reenter` flag (not yet supported):**
-> The JS runtime allows `reenter: true/false` on a targeted transition to force or skip exit/entry on self‑targets. This Python runtime currently ignores that flag (treat it as absent). Full support is planned for the next release.
-
-
-| Use this when … | … you want |
-|-----------------|-----------|
-| **Internal** &nbsp;*(no target)* | Update context / fire side‑effects **without** interrupting timers or services. |
-| **External** &nbsp;*(has target)* | Force a full exit/re‑entry cycle – e.g. reset a countdown, restart an `invoke`, or replay `entry` actions. |
 
 ---
 
@@ -2580,7 +2571,6 @@ def test_timer_transition(light_machine):
 
 ## 🗺️ Roadmap (Next Release) <a name="roadmap-next-release"></a>
 
-- **`reenter` flag parity with XState v5** – allow self‑transitions to opt in/out of re‑entry explicitly (no workarounds needed).
 - **`SyncInterpreter.from_snapshot(...)` helper** – parity with async restore; single-call reconstruction from saved snapshots.
 - **Unified cancellation primitives** – expose a consistent API over `asyncio.Task`/`threading.Thread` so plugins can introspect both.
 - **Bulk event enqueue API** – send a list of events in one call for high‑volume telemetry pipelines.

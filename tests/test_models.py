@@ -520,13 +520,13 @@ class TestModels(unittest.TestCase):
             {
                 "id": "tester",
                 "initial": "a",
-                "states": {"a": {"on": {"NEXT": "b"}}, "b": {}},
+                "states": {"a": {"on": {"NEXT": "b"}}},
             }
         )
         transition = machine.states["a"].on["NEXT"][0]
         # ✅ Assert
         self.assertEqual(
-            repr(transition), "Transition(event='NEXT', target='b')"
+            repr(transition), "Transition(event='NEXT', target='b', reenter=False)"
         )
 
     def test_plantuml_output_is_valid_string(self) -> None:
