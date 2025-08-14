@@ -42,6 +42,7 @@ class ConnectionManager:
 manager = ConnectionManager()
 message_queue = queue.Queue()
 active_interpreters: Dict[str, "BaseInterpreter"] = {}
+_active_interpreters_lock = threading.Lock()
 
 
 def get_db():
@@ -81,24 +82,25 @@ def create_app(mount_static_files: bool = True) -> FastAPI:
     async def websocket_endpoint(websocket: WebSocket):
         await manager.connect(websocket)
         # When a new client connects, send them the current state of all active machines.
-        for machine_id, interpreter in active_interpreters.items():
-            try:
-                # Reconstruct the registration message
-                message = {
-                    "type": "machine_registered",
-                    "machine_id": interpreter.id,
-                    "timestamp": datetime.now(UTC).isoformat(),
-                    "payload": {
+        with _active_interpreters_lock:
+            for machine_id, interpreter in active_interpreters.items():
+                try:
+                    # Reconstruct the registration message
+                    message = {
+                        "type": "machine_registered",
                         "machine_id": interpreter.id,
-                        "initial_state": [s.id for s in interpreter._active_state_nodes],
-                        "initial_context": interpreter.context,
-                        "definition": interpreter.machine.to_dict(),
-                    },
-                }
-                await websocket.send_text(json.dumps(message, default=str))
-            except Exception:
-                # If something goes wrong with one machine, don't kill the connection
-                pass
+                        "timestamp": datetime.now(UTC).isoformat(),
+                        "payload": {
+                            "machine_id": interpreter.id,
+                            "initial_state": [s.id for s in interpreter._active_state_nodes],
+                            "initial_context": interpreter.context,
+                            "definition": interpreter.machine.to_dict(),
+                        },
+                    }
+                    await websocket.send_text(json.dumps(message, default=str))
+                except Exception:
+                    # If something goes wrong with one machine, don't kill the connection
+                    pass
         try:
             while True:
                 data = await websocket.receive_text()
@@ -108,7 +110,8 @@ def create_app(mount_static_files: bool = True) -> FastAPI:
                     machine_id = message.get("machine_id")
 
                     if command and machine_id:
-                        interpreter = active_interpreters.get(machine_id)
+                        with _active_interpreters_lock:
+                            interpreter = active_interpreters.get(machine_id)
                         if interpreter:
                             if command == "pause":
                                 interpreter.pause()

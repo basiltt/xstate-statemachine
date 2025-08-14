@@ -14,7 +14,12 @@ from ..events import Event
 from ..models import StateNode, TransitionDefinition, ActionDefinition, InvokeDefinition
 from ..base_interpreter import BaseInterpreter
 
-from .server import active_interpreters, start_inspector_server, message_queue
+from .server import (
+    active_interpreters,
+    _active_interpreters_lock,
+    start_inspector_server,
+    message_queue,
+)
 from .db import get_session, EventLog
 
 
@@ -61,7 +66,8 @@ class InspectorPlugin(PluginBase[Any]):
             session.commit()
 
     def on_interpreter_start(self, interpreter: BaseInterpreter):
-        active_interpreters[interpreter.id] = interpreter
+        with _active_interpreters_lock:
+            active_interpreters[interpreter.id] = interpreter
         self._contexts[interpreter.id] = deepcopy(interpreter.context)
         self._handle_inspection_event(
             "machine_registered",
@@ -77,7 +83,8 @@ class InspectorPlugin(PluginBase[Any]):
         )
 
     def on_interpreter_stop(self, interpreter: BaseInterpreter):
-        active_interpreters.pop(interpreter.id, None)
+        with _active_interpreters_lock:
+            active_interpreters.pop(interpreter.id, None)
 
     def on_event_received(self, interpreter: BaseInterpreter, event: Event):
         # Store the context before it's potentially modified by the transition
