@@ -3,6 +3,7 @@ try:
     import queue
     import threading
     from contextlib import asynccontextmanager
+    from datetime import datetime, UTC
     import uvicorn
     from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
     from fastapi.responses import FileResponse
@@ -79,6 +80,25 @@ def create_app(mount_static_files: bool = True) -> FastAPI:
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
         await manager.connect(websocket)
+        # When a new client connects, send them the current state of all active machines.
+        for machine_id, interpreter in active_interpreters.items():
+            try:
+                # Reconstruct the registration message
+                message = {
+                    "type": "machine_registered",
+                    "machine_id": interpreter.id,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                    "payload": {
+                        "machine_id": interpreter.id,
+                        "initial_state": [s.id for s in interpreter._active_state_nodes],
+                        "initial_context": interpreter.context,
+                        "definition": interpreter.machine.to_dict(),
+                    },
+                }
+                await websocket.send_text(json.dumps(message, default=str))
+            except Exception:
+                # If something goes wrong with one machine, don't kill the connection
+                pass
         try:
             while True:
                 data = await websocket.receive_text()
@@ -162,6 +182,6 @@ def start_inspector_server():
     if _server_thread is None:
         _server_thread = threading.Thread(target=run_server, daemon=True)
         _server_thread.start()
-        started = _server_started.wait(timeout=10)
+        started = _server_started.wait(timeout=20)
         if not started:
             print("ERROR: Inspector server failed to start in time.")
