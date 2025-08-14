@@ -343,9 +343,8 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                 "initial": "active",
                 "states": {
                     "active": {
-                        # A relative target defines an external transition that
-                        # explicitly exits and re-enters the state.
-                        "on": {"LOOP": {"target": ".active"}},
+                        # An external transition is defined by `reenter: True`
+                        "on": {"LOOP": {"target": "active", "reenter": True}},
                         "entry": "onEnter",
                         "exit": "onExit",
                     }
@@ -367,6 +366,109 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
         # ✅ Assert: The exit action was called once, and the entry action twice.
         exit_action.assert_called_once()
         self.assertEqual(entry_action.call_count, 2)
+        await interpreter.stop()
+
+    async def test_reenter_true_self_transition_executes_entry_exit_actions(
+        self,
+    ) -> None:
+        """A self-transition with reenter: True should re-execute entry/exit actions."""
+        logger.info(
+            "🧪 Testing re-execution of actions on self-transitions with reenter: True."
+        )
+        # 📋 Arrange: Define a state that transitions to itself with reenter: True.
+        exit_action = MagicMock()
+        entry_action = MagicMock()
+        machine = create_machine(
+            {
+                "id": "self_trans_reenter_true",
+                "initial": "active",
+                "states": {
+                    "active": {
+                        "on": {"LOOP": {"target": "active", "reenter": True}},
+                        "entry": "onEnter",
+                        "exit": "onExit",
+                    }
+                },
+            },
+            logic=MachineLogic(
+                actions={"onExit": exit_action, "onEnter": entry_action}
+            ),
+        )
+
+        interpreter = await Interpreter(machine).start()
+        # Initial entry action is called once on start.
+        entry_action.assert_called_once()
+        exit_action.assert_not_called()
+
+        # 🚀 Act: Send the event to trigger the self-transition.
+        await interpreter.send("LOOP")
+        await asyncio.sleep(0.01)
+
+        # ✅ Assert: The exit action was called once, and the entry action twice.
+        exit_action.assert_called_once()
+        self.assertEqual(entry_action.call_count, 2)
+
+        # 🚀 Act again
+        await interpreter.send("LOOP")
+        await asyncio.sleep(0.01)
+
+        # ✅ Assert: The actions were called again.
+        self.assertEqual(exit_action.call_count, 2)
+        self.assertEqual(entry_action.call_count, 3)
+
+        await interpreter.stop()
+
+    async def test_reenter_false_self_transition_is_internal(self) -> None:
+        """A self-transition with reenter: False should not re-execute entry/exit actions."""
+        logger.info(
+            "🧪 Testing that reenter: False self-transition is internal."
+        )
+        # 📋 Arrange: Define a state that transitions to itself with reenter: False.
+        exit_action = MagicMock()
+        entry_action = MagicMock()
+        transition_action = MagicMock()
+        machine = create_machine(
+            {
+                "id": "self_trans_reenter_false",
+                "initial": "active",
+                "states": {
+                    "active": {
+                        "on": {
+                            "LOOP": {
+                                "target": "active",
+                                "reenter": False,
+                                "actions": "onLoop",
+                            }
+                        },
+                        "entry": "onEnter",
+                        "exit": "onExit",
+                    }
+                },
+            },
+            logic=MachineLogic(
+                actions={
+                    "onExit": exit_action,
+                    "onEnter": entry_action,
+                    "onLoop": transition_action,
+                }
+            ),
+        )
+
+        interpreter = await Interpreter(machine).start()
+        # Initial entry action is called once on start.
+        entry_action.assert_called_once()
+        exit_action.assert_not_called()
+        transition_action.assert_not_called()
+
+        # 🚀 Act: Send the event to trigger the self-transition.
+        await interpreter.send("LOOP")
+        await asyncio.sleep(0.01)
+
+        # ✅ Assert: Exit and entry actions were not called again. Transition action was.
+        exit_action.assert_not_called()
+        entry_action.assert_called_once()
+        transition_action.assert_called_once()
+
         await interpreter.stop()
 
     async def test_eventless_transition_is_processed_async(self) -> None:

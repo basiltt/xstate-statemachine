@@ -143,6 +143,8 @@ class TransitionDefinition:
         target_str: The string representation of the target state.
         actions: A list of `ActionDefinition` objects to execute.
         guard: The name of the guard condition to evaluate.
+        reenter: A flag indicating if a self-transition should exit and
+                 re-enter its source state. Defaults to `False`.
     """
 
     def __init__(
@@ -157,7 +159,7 @@ class TransitionDefinition:
         Args:
             event: The name of the event that triggers this transition.
             config: The dictionary defining the transition's properties
-                    (e.g., `target`, `guard`).
+                    (e.g., `target`, `guard`, `reenter`).
             source: The `StateNode` where this transition is defined.
             actions: A list of `ActionDefinition` objects to be executed.
         """
@@ -171,18 +173,23 @@ class TransitionDefinition:
         self.target_str: Optional[str] = config.get("target")
         self.actions: List[ActionDefinition] = actions or []
         self.guard: Optional[str] = config.get("guard")
+        self.reenter: bool = config.get("reenter", False)
 
         logger.debug(
-            "✅ Created TransitionDefinition: event='%s', target='%s', actions=%d, guard='%s'",
+            "✅ Created TransitionDefinition: event='%s', target='%s', actions=%d, guard='%s', reenter=%s",
             self.event,
             self.target_str,
             len(self.actions),
             self.guard or "None",
+            self.reenter,
         )
 
     def __repr__(self) -> str:
         """Provides a developer-friendly string representation."""
-        return f"Transition(event='{self.event}', target='{self.target_str}')"
+        return (
+            f"Transition(event='{self.event}', "
+            f"target='{self.target_str}', reenter={self.reenter})"
+        )
 
 
 class InvokeDefinition:

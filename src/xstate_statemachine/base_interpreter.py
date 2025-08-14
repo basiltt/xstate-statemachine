@@ -484,59 +484,16 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     # ⚙️ Core State Transition Logic (The Template Method)
     # -------------------------------------------------------------------------
 
-    async def _process_event(
-        self, event: Union[Event, DoneEvent, AfterEvent]
-    ) -> None:
-        """Executes a single, complete "step" of the SCXML algorithm.
-
-        This method is the heart of the interpreter. It takes a single event
-        and orchestrates the entire state transition process:
-        1.  Finds the optimal transition to take based on the current state and event.
-        2.  Calculates the set of states to exit and enter.
-        3.  Executes exit actions, transition actions, and entry actions in the
-            correct SCXML-specified order.
-        4.  Updates the set of active states.
-
-        Args:
-            event (Union[Event, DoneEvent, AfterEvent]): The event to process.
-        """
-        # 1️⃣ Select the winning transition based on event, current state, and guards.
-        transition = self._find_optimal_transition(event)
-        if transition is None:
-            logger.debug("🍃 No transition found for event '%s'.", event.type)
-            return  # ➡️ No transition matched, so the step is complete.
-
-        # 2️⃣ Handle "internal" transitions (no state change).
-        # These transitions only execute actions without exiting or entering any states.
-        if not transition.target_str:
-            logger.debug(
-                "🎬 Executing internal transition for event '%s'.", event.type
-            )
-            await self._execute_actions(transition.actions, event)
-            # Notify plugins about the self-transition.
-            for plug in self._plugins:
-                plug.on_transition(
-                    self,
-                    self._active_state_nodes,
-                    self._active_state_nodes,
-                    transition,
-                )
-            return
-
-        # 3️⃣ Set up for an "external" transition (state change).
-        snapshot_before = self._active_state_nodes.copy()
-        domain = self._find_transition_domain(transition)
-        states_to_exit = {
-            s
-            for s in self._active_state_nodes
-            if self._is_descendant(s, domain) and s is not domain
-        }
-
-        # 🚀 Begin multi-stage target state resolution.
+    def _resolve_target_state_node(
+        self, transition: TransitionDefinition
+    ) -> Optional[StateNode]:
+        """Resolves a transition's target string to a concrete StateNode."""
         root = self.machine
         parent = transition.source.parent
         target_str = transition.target_str
-        target_state: Optional[StateNode] = None
+
+        if not target_str:
+            return None
 
         logger.debug(
             "🔄 Resolving target state '%s' from source '%s'.",
@@ -544,23 +501,21 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             transition.source.id,
         )
 
-        # 4️⃣ Standard resolution attempts (most common paths).
+        target_state: Optional[StateNode] = None
+
+        # Standard resolution attempts
         resolution_attempts = [
-            (target_str, transition.source),  # Relative to source
-            (target_str, parent) if parent else None,  # Relative to parent
-            (target_str, root),  # Relative to root
-            (
-                f"{root.id}.{target_str}",
-                root,
-            ),  # Assuming relative from root ID
+            (target_str, transition.source),
+            (target_str, parent) if parent else None,
+            (target_str, root),
+            (f"{root.id}.{target_str}", root),
         ]
 
         for tgt, ref in filter(None, resolution_attempts):
             try:
                 target_state = resolve_target_state(tgt, ref)
-                transition.target_str = (
-                    tgt  # Update transition with fully resolved path
-                )
+                # This side effect is important for logging and debugging.
+                transition.target_str = tgt
                 logger.debug(
                     "✅ Resolved via standard method: '%s'", target_state.id
                 )
@@ -573,18 +528,20 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 )
                 continue
 
-        # 5️⃣ Fallback 1: Direct attribute lookup on the root machine.
-        if target_state is None and hasattr(root, target_str):
+        if target_state:
+            return target_state
+
+        # Fallback 1: Direct attribute lookup on root
+        if hasattr(root, target_str):
             candidate = getattr(root, target_str)
             if isinstance(candidate, StateNode):
-                target_state = candidate
                 logger.debug(
-                    "✅ Resolved via root attribute lookup: '%s'",
-                    target_state.id,
+                    "✅ Resolved via root attribute lookup: '%s'", candidate.id
                 )
+                return candidate
 
-        # 6️⃣ Fallback 2: Lookup in the root's `states` dictionary.
-        if target_state is None and hasattr(root, "states"):
+        # Fallback 2: Lookup in root's `states` dict
+        if hasattr(root, "states"):
             states_dict = getattr(root, "states", {})
             if target_str in states_dict:
                 target_state = states_dict[target_str]
@@ -592,59 +549,111 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                     "✅ Resolved via root states dict (exact match): '%s'",
                     target_state.id,
                 )
-            else:  # Check for local name match
-                for state in states_dict.values():
-                    if state.id.split(".")[-1] == target_str:
-                        target_state = state
-                        logger.debug(
-                            "✅ Resolved via root states dict (local name): '%s'",
-                            target_state.id,
-                        )
-                        break
-
-        # 7️⃣ Fallback 3: Exhaustive depth-first tree walk.
-        if target_state is None:
-
-            def _walk(node):
-                yield node
-                if hasattr(node, "states"):
-                    for child in node.states.values():
-                        yield from _walk(child)
-
-            for candidate in _walk(root):
-                if candidate.id.split(".")[-1] == target_str:
-                    target_state = candidate
+                return target_state
+            for state in states_dict.values():
+                if state.id.split(".")[-1] == target_str:
                     logger.debug(
-                        "✅ Resolved via full tree walk: '%s'", target_state.id
+                        "✅ Resolved via root states dict (local name): '%s'",
+                        state.id,
                     )
-                    break
+                    return state
 
-        # 8️⃣ Final failure if no resolution succeeded.
+        # Fallback 3: Exhaustive tree walk
+        def _walk(node):
+            yield node
+            if hasattr(node, "states"):
+                for child in node.states.values():
+                    yield from _walk(child)
+
+        for candidate in _walk(root):
+            if candidate.id.split(".")[-1] == target_str:
+                logger.debug(
+                    "✅ Resolved via full tree walk: '%s'", candidate.id
+                )
+                return candidate
+
+        available = list(getattr(root, "states", {}).keys())
+        logger.error(
+            "🚫 All resolution attempts failed for target: '%s'", target_str
+        )
+        logger.error(
+            "📂 Available top-level states in machine '%s': %s",
+            root.id,
+            available,
+        )
+        return None
+
+    async def _process_event(
+        self, event: Union[Event, DoneEvent, AfterEvent]
+    ) -> None:
+        """Executes a single, complete "step" of the SCXML algorithm."""
+        # 1. Find the optimal transition for the event.
+        transition = self._find_optimal_transition(event)
+        if not transition:
+            logger.debug("🍃 No transition found for event '%s'.", event.type)
+            return
+
+        # 2. A "targetless" transition only executes actions without changing state.
+        if not transition.target_str:
+            logger.debug(
+                "🎬 Executing targetless transition for event '%s'.",
+                event.type,
+            )
+            await self._execute_actions(transition.actions, event)
+            for plug in self._plugins:
+                plug.on_transition(
+                    self,
+                    self._active_state_nodes,
+                    self._active_state_nodes,
+                    transition,
+                )
+            return
+
+        # 3. Resolve the target state node using a multi-stage process.
+        target_state = self._resolve_target_state_node(transition)
         if target_state is None:
-            available = list(getattr(root, "states", {}).keys())
-            logger.error(
-                "🚫 All resolution attempts failed for target: '%s'",
-                target_str,
-            )
-            logger.error(
-                "📂 Available top-level states in machine '%s': %s",
-                root.id,
-                available,
-            )
-            raise StateNotFoundError(target_str, root.id)
+            raise StateNotFoundError(transition.target_str, self.machine.id)
 
-        # 9️⃣ Calculate path to enter and execute the transition sequence.
-        # This order is mandated by SCXML: exit -> transition -> enter.
+        # 4. A self-transition without `reenter: True` is an "internal" transition.
+        # It executes actions but does not exit or re-enter the source state.
+        if target_state == transition.source and not transition.reenter:
+            logger.debug(
+                "🎬 Executing internal self-transition for event '%s'.",
+                event.type,
+            )
+            await self._execute_actions(transition.actions, event)
+            for plug in self._plugins:
+                plug.on_transition(
+                    self,
+                    self._active_state_nodes,
+                    self._active_state_nodes,
+                    transition,
+                )
+            return
+
+        # 5. All other transitions are "external" and will cause a state change.
+        snapshot_before = self._active_state_nodes.copy()
+        domain = self._find_transition_domain(transition, target_state)
+
+        states_to_exit = {
+            s
+            for s in self._active_state_nodes
+            if self._is_descendant(s, domain) and s is not domain
+        }
+
         path_to_enter = self._get_path_to_state(target_state, stop_at=domain)
 
+        # 6. Execute the transition sequence in the correct SCXML order.
         await self._exit_states(
-            sorted(states_to_exit, key=lambda s: len(s.id), reverse=True),
+            sorted(
+                list(states_to_exit), key=lambda s: len(s.id), reverse=True
+            ),
             event,
         )
         await self._execute_actions(transition.actions, event)
         await self._enter_states(path_to_enter, event)
 
-        # 🔟 Finalize the new state configuration and notify plugins.
+        # 7. Finalize the new state configuration and notify plugins.
         self._active_state_nodes.difference_update(states_to_exit)
         self._active_state_nodes.update(path_to_enter)
         for plug in self._plugins:
@@ -907,55 +916,40 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         )  # noqa
 
     def _find_transition_domain(
-        self, transition: TransitionDefinition
+        self, transition: TransitionDefinition, target_state: StateNode
     ) -> Optional[StateNode]:
         """Calculates the transition domain (LCCA) for an external transition.
 
         The "domain" is the least common compound ancestor (LCCA) of the source
         and target states. It determines which states are exited and entered.
 
-        A key feature of this implementation is that if the target state cannot
-        be immediately resolved (e.g., using a shorthand like `"sibling_state"`),
-        it does not fail. Instead, it conservatively falls back to the source's
-        parent as the domain, deferring final resolution to `_process_event`.
+        For a self-transition (including re-entering ones), the domain is
+        always the parent state, which ensures the source state is correctly
+        exited and re-entered.
 
         Args:
             transition (TransitionDefinition): The external transition to analyze.
+            target_state (StateNode): The pre-resolved target state node.
 
         Returns:
             Optional[StateNode]: The state node that is the LCCA, or None if the
             root is the domain.
         """
-        # 🩹 Late imports to avoid circular dependency issues.
-        from .exceptions import StateNotFoundError
-        from .resolver import resolve_target_state
-
         parent = transition.source.parent or self.machine
 
-        # 1️⃣ Attempt a quick resolution of the target state.
-        try:
-            target_state = resolve_target_state(
-                transition.target_str, transition.source
-            )
-        except StateNotFoundError:
-            # If it fails, defer by using the parent as a safe domain.
-            logger.debug(
-                "⏳ Target '%s' not immediately resolvable. Deferring domain calculation.",
-                transition.target_str,
-            )
-            return parent
-
-        # 2️⃣ An external self-transition's domain is always the parent.
+        # For any self-transition, the domain is the parent. This forces an
+        # exit/re-entry cycle for the source state.
         if target_state == transition.source:
             return parent
 
-        # 3️⃣ Standard case: Compute the Least Common Compound Ancestor.
+        # Standard case: Compute the Least Common Compound Ancestor (LCCA).
         source_ancestors = self._get_ancestors(transition.source)
         target_ancestors = self._get_ancestors(target_state)
         common_ancestors = source_ancestors & target_ancestors
 
         if not common_ancestors:
-            return parent  # Fallback to parent (or root) if no commonality.
+            # Fallback to parent (or machine root) if no commonality is found.
+            return parent
 
         # The LCCA is the common ancestor with the longest (deepest) ID.
         return max(common_ancestors, key=lambda n: len(n.id))

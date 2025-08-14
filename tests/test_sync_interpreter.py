@@ -415,7 +415,7 @@ class TestSyncInterpreter(unittest.TestCase):
             "initial": "a",
             "states": {
                 "a": {
-                    "on": {"LOOP": ".a"},
+                    "on": {"LOOP": {"target": "a", "reenter": True}},
                     "entry": "onEnter",
                     "exit": "onExit",
                 }
