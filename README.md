@@ -2597,7 +2597,7 @@ graph TD
         A[State Machine Interpreter] -- Attaches --> B(InspectorPlugin)
     end
 
-    subgraph Inspector Backend (Background Thread)
+    subgraph "Inspector Backend (Background Thread)"
         D[FastAPI Server]
         E[WebSocket: /ws]
         F[REST API: /api/*]
