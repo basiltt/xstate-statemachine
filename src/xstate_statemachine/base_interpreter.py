@@ -27,6 +27,7 @@ synchronous, blocking operations.
 import copy
 import json
 import logging
+import threading
 from typing import (
     Any,
     Awaitable,
@@ -139,6 +140,8 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         self._interpreter_class: Type["BaseInterpreter[Any, Any]"] = (
             interpreter_class or self.__class__
         )
+        self._paused = threading.Event()
+        self._paused.set() # Start in a "not paused" (i.e., running) state
 
         logger.info(
             "✅ BaseInterpreter '%s' initialized. Status: '%s'.",
@@ -166,6 +169,16 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         return {
             s.id for s in self._active_state_nodes if s.is_atomic or s.is_final
         }
+
+    def pause(self) -> None:
+        """Pauses the interpreter's event processing loop."""
+        self._paused.clear()
+        logger.info("⏸️ Interpreter '%s' paused.", self.id)
+
+    def resume(self) -> None:
+        """Resumes the interpreter's event processing loop."""
+        self._paused.set()
+        logger.info("▶️ Interpreter '%s' resumed.", self.id)
 
     def use(
         self: TInterpreter, plugin: PluginBase["BaseInterpreter[Any, Any]"]
@@ -301,7 +314,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     # mode-specific (synchronous or asynchronous) behavior.
 
     def start(
-        self,
+        self, paused: bool = False
     ) -> Union[
         "BaseInterpreter[TContext, TEvent]",
         Awaitable["BaseInterpreter[TContext, TEvent]"],

@@ -119,8 +119,12 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     # 🌐 Public API
     # -------------------------------------------------------------------------
 
-    def start(self) -> "SyncInterpreter":
+    def start(self, paused: bool = False) -> "SyncInterpreter":
         """Starts the interpreter and transitions it to its initial state.
+
+        Args:
+            paused (bool): If `True`, the interpreter will start in a paused
+                state and will not process events until `resume()` is called.
 
         This method is idempotent; calling `start` on an already running or
         stopped interpreter has no effect. Unlike asynchronous interpreters,
@@ -145,6 +149,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             return self
 
         logger.info("🏁 Starting sync interpreter '%s'...", self.id)
+        if paused:
+            self.pause()
+
         self.status = "running"
 
         # ✅ Define a pseudo-transition for the initial state entry
@@ -228,6 +235,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         **payload: Any,
     ) -> None:
         """Sends an event to the machine for immediate, synchronous processing."""
+        # ⏯️ If paused, this will block until resume() is called.
+        self._paused.wait()
+
         if self.status != "running":
             logger.warning("🚫 Cannot send event. Interpreter is not running.")
             return

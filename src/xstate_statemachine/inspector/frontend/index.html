@@ -4,58 +4,86 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>XState Inspector</title>
-    <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-    <header>
-        <h1>XState Inspector</h1>
-        <div class="controls">
-            <button id="theme-toggle">Toggle Theme</button>
-        </div>
-    </header>
-    <main>
-        <aside id="machine-list">
-            <h2>Live Machines</h2>
-            <ul id="machines"></ul>
-            <hr>
-            <h2>Sessions</h2>
-            <ul id="sessions"></ul>
-        </aside>
-        <section id="inspector-panel">
-            <div id="no-machine-selected">
-                <p>Select a machine to inspect.</p>
-            </div>
-            <div id="machine-details" class="hidden">
-                <h2 id="machine-title"></h2>
-                <div id="playback-controls" style="display: none;">
-                    <button id="play-btn">Play</button>
-                    <button id="pause-btn">Pause</button>
-                    <button id="prev-btn">Prev</button>
-                    <button id="next-btn">Next</button>
-                    <span id="playback-status"></span>
-                </div>
-                <div class="machine-layout">
-                    <div id="diagram-container">
-                        <h3>Statechart</h3>
-                        <div id="diagram"></div>
-                    </div>
-                    <div id="context-container">
-                        <h3>Context</h3>
-                        <pre id="context"></pre>
-                    </div>
-                </div>
-                <div id="logs-container">
-                    <h3>Event Log</h3>
-                    <ul id="event-log"></ul>
-                </div>
-            </div>
-        </section>
-    </main>
-
+    <link href="/static/dist/output.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
-    <script>
-        mermaid.initialize({ startOnLoad: false });
-    </script>
-    <script src="/static/app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tanstack/query-core@5.51.1/build/umd/query-core.production.js"></script>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 font-sans">
+    <div id="app" class="flex flex-col h-screen">
+        <!-- Header -->
+        <header class="flex items-center justify-between p-4 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+            <h1 class="text-xl font-bold">XState Inspector</h1>
+            <button id="theme-toggle" class="p-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700">
+                <svg id="theme-icon-light" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m8.66-15.66l-.7.7M4.04 19.96l-.7.7M21 12h-1M4 12H3m15.66 8.66l-.7-.7M4.04 4.04l-.7-.7"></path></svg>
+                <svg id="theme-icon-dark" class="w-6 h-6 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
+            </button>
+        </header>
+
+        <!-- Main Content -->
+        <div class="flex flex-grow overflow-hidden">
+            <!-- Sidebar -->
+            <aside class="w-1/4 flex-shrink-0 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 overflow-y-auto p-4">
+                <div class="mb-6">
+                    <h2 class="text-lg font-semibold mb-2">Live Machines</h2>
+                    <ul id="machines" class="space-y-2">
+                        <!-- Live machines will be populated here -->
+                    </ul>
+                </div>
+                <div>
+                    <h2 class="text-lg font-semibold mb-2">Sessions</h2>
+                    <ul id="sessions" class="space-y-2">
+                        <!-- Sessions will be populated here -->
+                    </ul>
+                </div>
+            </aside>
+
+            <!-- Machine Details -->
+            <main class="flex-grow flex flex-col overflow-hidden">
+                <div id="no-machine-selected" class="flex items-center justify-center h-full text-gray-500">
+                    <p>Select a machine to inspect.</p>
+                </div>
+
+                <div id="machine-details" class="hidden flex-grow flex flex-col">
+                    <!-- Machine Header -->
+                    <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+                        <h2 id="machine-title" class="text-2xl font-bold"></h2>
+                    </div>
+
+                    <!-- Main Panels -->
+                    <div class="flex-grow flex overflow-hidden">
+                        <!-- Left Panel (Diagram & Context) -->
+                        <div class="w-1/2 flex flex-col p-4 overflow-y-auto">
+                            <div class="mb-4">
+                                <h3 class="text-lg font-semibold mb-2">Statechart</h3>
+                                <div id="diagram" class="p-4 bg-gray-50 dark:bg-gray-900 rounded-md"></div>
+                            </div>
+                            <div>
+                                <h3 class="text-lg font-semibold mb-2">Context</h3>
+                                <pre id="context" class="p-4 bg-gray-50 dark:bg-gray-900 rounded-md text-sm"></pre>
+                            </div>
+                        </div>
+                        <!-- Right Panel (Event Log) -->
+                        <div class="w-1/2 flex flex-col p-4 border-l border-gray-200 dark:border-gray-700">
+                            <h3 class="text-lg font-semibold mb-2">Event Log</h3>
+                            <ul id="event-log" class="flex-grow overflow-y-auto bg-gray-50 dark:bg-gray-900 p-2 rounded-md font-mono text-xs">
+                                <!-- Events will be logged here -->
+                            </ul>
+                            <div id="playback-controls" class="mt-4 hidden">
+                                <h3 class="text-lg font-semibold mb-2">Playback</h3>
+                                <div class="flex items-center space-x-2">
+                                    <button id="prev-btn" class="p-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700">Prev</button>
+                                    <button id="play-btn" class="p-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700">Play</button>
+                                    <button id="pause-btn" class="p-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700">Pause</button>
+                                    <button id="next-btn" class="p-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700">Next</button>
+                                    <span id="playback-status" class="text-sm"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+    <script src="/static/src/app.js"></script>
 </body>
 </html>

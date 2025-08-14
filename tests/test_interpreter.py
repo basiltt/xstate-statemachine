@@ -2083,6 +2083,46 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(interpreter.status, "stopped")
 
+    async def test_pause_and_resume(self) -> None:
+        """Should pause and resume the event loop."""
+        logger.info("🧪 Testing pause and resume functionality.")
+        machine = create_machine(
+            {"id": "pausable", "initial": "a", "states": {"a": {"on": {"NEXT": "b"}}, "b": {}}}
+        )
+        interpreter = await Interpreter(machine).start()
+
+        interpreter.pause()
+        await interpreter.send("NEXT")
+        await asyncio.sleep(0.1) # Give it time to NOT process the event
+        self.assertEqual(interpreter.current_state_ids, {"pausable.a"})
+
+        interpreter.resume()
+        await self.wait_for_state(interpreter, {"pausable.b"})
+        self.assertEqual(interpreter.current_state_ids, {"pausable.b"})
+
+        await interpreter.stop()
+
+    async def test_start_paused(self) -> None:
+        """Should start in a paused state if `paused=True`."""
+        logger.info("🧪 Testing starting in a paused state.")
+        machine = create_machine(
+            {"id": "start_paused", "initial": "a", "states": {"a": {}}}
+        )
+        interpreter = await Interpreter(machine).start(paused=True)
+
+        # The interpreter is paused, so it shouldn't process events.
+        # We can check the internal state for this test.
+        self.assertFalse(interpreter._paused.is_set())
+
+        # To verify, let's try to send an event. It should not be processed.
+        # This is hard to test without introspecting the queue, but we can
+        # at least ensure the interpreter doesn't crash.
+        await interpreter.send("NEXT")
+        await asyncio.sleep(0.1)
+
+        interpreter.resume()
+        await interpreter.stop()
+
 
 if __name__ == "__main__":
     unittest.main()
