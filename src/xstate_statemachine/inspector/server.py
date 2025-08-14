@@ -2,6 +2,7 @@ try:
     import asyncio
     import queue
     import threading
+    import logging
     from contextlib import asynccontextmanager
     from datetime import datetime, UTC
     import uvicorn
@@ -20,6 +21,8 @@ except ImportError:
         "The 'inspector' feature requires additional dependencies. "
         "Please install them with 'pip install xstate-statemachine[inspector]'"
     )
+
+logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
@@ -56,6 +59,7 @@ async def broadcast_from_queue():
     while True:
         try:
             message = message_queue.get_nowait()
+            logger.info(f"INSPECTOR: Broadcasting message from queue: {message[:100]}...")
             await manager.broadcast(message)
         except queue.Empty:
             await asyncio.sleep(0.01)
@@ -64,12 +68,14 @@ async def broadcast_from_queue():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manages the background task for broadcasting messages."""
+    logger.info("INSPECTOR: Lifespan startup. Starting broadcast task.")
     task = asyncio.create_task(broadcast_from_queue())
     yield
     task.cancel()
     try:
         await task
     except asyncio.CancelledError:
+        logger.info("INSPECTOR: Broadcast task cancelled on shutdown.")
         pass
 
 
@@ -81,10 +87,13 @@ def create_app(mount_static_files: bool = True) -> FastAPI:
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
         await manager.connect(websocket)
+        logger.info("INSPECTOR: WebSocket client connected.")
         # When a new client connects, send them the current state of all active machines.
         with _active_interpreters_lock:
+            logger.info(f"INSPECTOR: Checking active interpreters. Found: {list(active_interpreters.keys())}")
             for machine_id, interpreter in active_interpreters.items():
                 try:
+                    logger.info(f"INSPECTOR: Sending registration for machine '{machine_id}' to new client.")
                     # Reconstruct the registration message
                     message = {
                         "type": "machine_registered",
@@ -98,7 +107,8 @@ def create_app(mount_static_files: bool = True) -> FastAPI:
                         },
                     }
                     await websocket.send_text(json.dumps(message, default=str))
-                except Exception:
+                except Exception as e:
+                    logger.error(f"INSPECTOR: Error sending registration for '{machine_id}': {e}")
                     # If something goes wrong with one machine, don't kill the connection
                     pass
         try:
@@ -164,6 +174,7 @@ _server_thread = None
 
 def run_server():
     """The target function for the server thread."""
+    logger.info("INSPECTOR: run_server thread started.")
     create_db_and_tables()
     config = uvicorn.Config(app, host="127.0.0.1", port=8008, log_level="info")
     server = uvicorn.Server(config)
@@ -174,5 +185,6 @@ def start_inspector_server():
     """Starts the inspector server in a background thread if not already running."""
     global _server_thread
     if _server_thread is None:
+        logger.info("INSPECTOR: Starting server thread.")
         _server_thread = threading.Thread(target=run_server, daemon=True)
         _server_thread.start()
