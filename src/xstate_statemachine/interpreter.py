@@ -251,6 +251,22 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         # 📥 Place the standardized event object into the async queue.
         await self._event_queue.put(event_obj)
 
+    async def send_events(
+        self, events: List[Union[Dict[str, Any], Event, str]]
+    ) -> None:
+        """Sends a list of events to the machine's internal queue for processing.
+
+        This method places all events in the queue without waiting for them to be
+        processed, allowing for high-throughput, non-blocking event submission.
+
+        Args:
+            events: A list of events to send. Each event can be a string,
+                a dictionary, or an `Event` object.
+        """
+        for event in events:
+            event_obj = self._prepare_event(event)
+            await self._event_queue.put(event_obj)
+
     # -------------------------------------------------------------------------
     # ⚙️ Internal Event Loop & Execution Logic
     # -------------------------------------------------------------------------

@@ -352,6 +352,19 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             "Subclasses must implement the 'send' method."
         )
 
+    def send_events(
+        self, events: List[Union[Dict[str, Any], Event, str]]
+    ) -> Any:
+        """Sends a list of events to the running interpreter for processing.
+
+        Raises:
+            NotImplementedError: This method must be implemented by a concrete
+                subclass.
+        """
+        raise NotImplementedError(
+            "Subclasses must implement the 'send_events' method."
+        )
+
     def _execute_actions(
         self, actions: List[ActionDefinition], event: Event
     ) -> Union[None, Awaitable[None]]:
