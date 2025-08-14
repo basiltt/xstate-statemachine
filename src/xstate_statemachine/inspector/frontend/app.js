@@ -81,7 +81,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function registerMachine(message) {
+    function registerMachine(message, isLive = true) {
         const { machine_id, payload } = message;
         state.machines[machine_id] = {
             id: machine_id,
@@ -89,8 +89,11 @@ document.addEventListener('DOMContentLoaded', () => {
             currentState: payload.initial_state,
             context: payload.initial_context,
             logs: [],
+            isLive: isLive,
         };
-        renderMachineList();
+        if (isLive) {
+            renderMachineList();
+        }
     }
 
     function updateTransition(message) {
@@ -120,15 +123,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- UI Rendering ---
     function renderMachineList() {
         machineList.innerHTML = '';
-        Object.keys(state.machines).forEach(machineId => {
-            if (state.sessions[machineId]) return; // Don't show session machines in the live list
+        Object.values(state.machines).forEach(machine => {
+            if (!machine.isLive) return;
 
             const li = document.createElement('li');
-            li.dataset.machineId = machineId;
+            li.dataset.machineId = machine.id;
 
             const nameSpan = document.createElement('span');
-            nameSpan.textContent = machineId;
-            nameSpan.addEventListener('click', () => selectLiveMachine(machineId));
+            nameSpan.textContent = machine.id;
+            nameSpan.addEventListener('click', () => selectLiveMachine(machine.id));
             li.appendChild(nameSpan);
 
             const controls = document.createElement('div');
@@ -136,17 +139,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const pauseBtn = document.createElement('button');
             pauseBtn.textContent = 'Pause';
-            pauseBtn.addEventListener('click', () => sendWsCommand('pause', machineId));
+            pauseBtn.addEventListener('click', () => sendWsCommand('pause', machine.id));
             controls.appendChild(pauseBtn);
 
             const resumeBtn = document.createElement('button');
             resumeBtn.textContent = 'Resume';
-            resumeBtn.addEventListener('click', () => sendWsCommand('resume', machineId));
+            resumeBtn.addEventListener('click', () => sendWsCommand('resume', machine.id));
             controls.appendChild(resumeBtn);
 
             li.appendChild(controls);
 
-            if (machineId === state.selectedMachine && !state.selectedSession) {
+            if (machine.id === state.selectedMachine && !state.selectedSession) {
                 li.classList.add('active');
             }
 
@@ -239,8 +242,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const registrationMessage = state.playback.history.find(m => m.type === 'machine_registered');
             if (registrationMessage) {
-                if (!state.machines[sessionId]) {
-                    registerMachine(registrationMessage);
+                // When loading a session, register its definition but mark it as not live
+                if (!state.machines[sessionId] || state.machines[sessionId].isLive) {
+                    registerMachine(registrationMessage, false);
                 }
                 resetToInitialState(sessionId);
                 state.selectedMachine = sessionId; // Select the machine to view its data
