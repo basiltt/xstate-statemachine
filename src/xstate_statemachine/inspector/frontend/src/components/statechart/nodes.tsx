@@ -33,37 +33,27 @@ const Section = ({
   );
 };
 
-// Simple / Atomic state
-export const StateNode = ({ data, selected }: NodeProps) => {
+export const StateNode = ({ data }: NodeProps) => {
   const entryActions = asArray(data.definition?.entry);
   const invokeServices = asArray(data.definition?.invoke);
   const hasDetails = entryActions.length > 0 || invokeServices.length > 0;
   const isFinal = data.definition?.type === "final";
-
   const uiStatus = data.uiStatus as undefined | "active" | "next";
 
   return (
     <Card
       className={cn(
-        "w-[240px] rounded-lg border shadow-sm",
-        // Active: do NOT fill entire card; keep default bg, maybe a subtle border
-        uiStatus === "active" && "bg-card border-blue-500",
-        // Next: emphasize with outer ring and primary border
-        uiStatus === "next" && "bg-card border-blue-500 ring-2 ring-blue-500/80",
-        !uiStatus && "bg-card/90 border-border",
-        selected &&
-          uiStatus !== "next" &&
-          "ring-2 ring-primary/50 ring-offset-2 ring-offset-background",
+        "w-[240px] rounded-lg border-2 shadow-md",
+        uiStatus === "active" && "border-blue-500 bg-blue-500/10",
+        uiStatus === "next" && "border-blue-400/50",
+        isFinal && "border-dashed",
       )}
     >
-      {/* Accept incoming connections */}
-      <Handle type="target" position={Position.Top} className="!bg-transparent opacity-0" />
-
-      {/* Header area: only header changes color when active */}
+      <Handle type="target" position={Position.Top} className="!opacity-0" />
       <CardHeader
         className={cn(
-          "p-2.5 rounded-t-lg border-b",
-          uiStatus === "active" ? "bg-blue-500 dark:bg-blue-600 text-white" : "bg-muted",
+          "p-2.5 rounded-t-md",
+          uiStatus === "active" ? "bg-blue-500 text-white" : "bg-muted",
         )}
       >
         <CardTitle className="text-[13px] font-semibold tracking-wide">{data.label}</CardTitle>
@@ -71,7 +61,12 @@ export const StateNode = ({ data, selected }: NodeProps) => {
 
       {hasDetails && (
         <CardContent className="p-3">
-          <Section title="Entry" items={entryActions} icon={Zap} colorClass="text-yellow-500" />
+          <Section
+            title="Entry actions"
+            items={entryActions}
+            icon={Zap}
+            colorClass="text-yellow-500"
+          />
           <Section
             title="Invoke"
             items={invokeServices}
@@ -80,20 +75,21 @@ export const StateNode = ({ data, selected }: NodeProps) => {
           />
         </CardContent>
       )}
-
-      {/* Only show outgoing handles if not a final (end) state */}
-      {!isFinal && (
-        <>
-          <Handle type="source" position={Position.Bottom} className="!bg-transparent opacity-0" />
-          <Handle type="source" position={Position.Left} className="!bg-transparent opacity-0" />
-          <Handle type="source" position={Position.Right} className="!bg-transparent opacity-0" />
-        </>
-      )}
+      {!isFinal && <Handle type="source" position={Position.Bottom} className="!opacity-0" />}
     </Card>
   );
 };
 
-// Compound state container
+export const EventNode = ({ data }: NodeProps) => {
+  return (
+    <div className="bg-card text-card-foreground rounded-md text-sm font-medium border-2 px-4 py-2 shadow-sm">
+      {data.label}
+      <Handle type="target" position={Position.Top} className="!opacity-0" />
+      <Handle type="source" position={Position.Bottom} className="!opacity-0" />
+    </div>
+  );
+};
+
 export const CompoundStateNode = (props: NodeProps) => (
   <div
     className={cn(
@@ -104,12 +100,10 @@ export const CompoundStateNode = (props: NodeProps) => (
     <div className="p-2 text-[12px] font-bold text-muted-foreground cursor-move border-b bg-secondary/30 rounded-t-lg">
       {props.data.label}
     </div>
-    {/* children are rendered by layout; this component is the frame */}
   </div>
 );
 
-// Root state summary wrapper
-export const RootNode = ({ data, selected }: NodeProps) => {
+export const RootNode = ({ data }: NodeProps) => {
   const ctxEntries = Object.entries(data.context ?? {}).map(([k, v]) => ({
     key: k,
     type: typeof v,
@@ -118,19 +112,16 @@ export const RootNode = ({ data, selected }: NodeProps) => {
   return (
     <Card
       className={cn(
-        // Thick border; softer in light, stronger in dark
-        "w-full h-full flex flex-col rounded-xl bg-transparent pointer-events-none border-[8px] border-neutral-300/60 dark:border-neutral-600/80",
-        selected ? "ring-2 ring-primary/50" : "",
+        "w-full h-full flex flex-col rounded-xl bg-transparent pointer-events-none border-[6px] border-neutral-300/60 dark:border-neutral-700/80",
       )}
     >
-      {/* Header opaque, stronger background, with high-contrast title color */}
-      <CardHeader className="root-drag-handle p-3 border-b bg-muted rounded-t-xl cursor-move pointer-events-auto">
+      <CardHeader className="root-drag-handle p-3 border-b bg-muted/80 backdrop-blur-sm rounded-t-lg cursor-move pointer-events-auto">
         <CardTitle className="text-[15px] font-semibold tracking-wide text-foreground">
           {data.label}
         </CardTitle>
       </CardHeader>
       {ctxEntries.length > 0 && (
-        <CardContent className="px-3 py-1 border-b bg-muted pointer-events-none">
+        <CardContent className="px-3 py-1 border-b bg-muted/80 backdrop-blur-sm pointer-events-none">
           <h4 className="text-[10px] font-semibold text-muted-foreground mb-0.5 tracking-wide uppercase">
             Context
           </h4>
@@ -141,44 +132,8 @@ export const RootNode = ({ data, selected }: NodeProps) => {
           ))}
         </CardContent>
       )}
-      {/* children nodes are rendered by React Flow; this component is the frame */}
     </Card>
   );
 };
 
-// Replace initial triangular marker with nothing; we render dot+arrow on the edge itself
 export const InitialNode = () => <div className="w-0 h-0" />;
-
-export const ActionNode = ({ data, selected }: NodeProps) => {
-  return (
-    <Card
-      className={cn(
-        "w-[180px] rounded-md border shadow-sm",
-        selected && "ring-2 ring-primary/50 ring-offset-2 ring-offset-background",
-      )}
-    >
-      <CardHeader className="p-2 bg-yellow-500 text-white rounded-t-md">
-        <CardTitle className="text-xs font-semibold">{data.label}</CardTitle>
-      </CardHeader>
-      <Handle type="target" position={Position.Top} className="!bg-transparent opacity-0" />
-      <Handle type="source" position={Position.Bottom} className="!bg-transparent opacity-0" />
-    </Card>
-  );
-};
-
-export const InvokeNode = ({ data, selected }: NodeProps) => {
-  return (
-    <Card
-      className={cn(
-        "w-[180px] rounded-md border shadow-sm",
-        selected && "ring-2 ring-primary/50 ring-offset-2 ring-offset-background",
-      )}
-    >
-      <CardHeader className="p-2 bg-blue-500 text-white rounded-t-md">
-        <CardTitle className="text-xs font-semibold">{data.label}</CardTitle>
-      </CardHeader>
-      <Handle type="target" position={Position.Top} className="!bg-transparent opacity-0" />
-      <Handle type="source" position={Position.Bottom} className="!bg-transparent opacity-0" />
-    </Card>
-  );
-};
