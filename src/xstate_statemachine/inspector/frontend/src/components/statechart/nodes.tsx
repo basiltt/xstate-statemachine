@@ -44,33 +44,20 @@ export const StateNode = ({ data, selected }: NodeProps) => {
     <Card
       className={cn(
         "w-[240px] rounded-lg border shadow-sm bg-card/90",
-        selected
-          ? "ring-2 ring-primary ring-offset-2 ring-offset-background"
-          : "border-border",
+        selected ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : "border-border",
       )}
     >
       {/* Top anchor like XState */}
-      <Handle
-        type="target"
-        position={Position.Top}
-        className="!bg-transparent opacity-0"
-      />
+      <Handle type="target" position={Position.Top} className="!bg-transparent opacity-0" />
 
       {/* Only the header acts as drag handle — like XState */}
       <CardHeader className="p-2.5 drag-handle cursor-move bg-muted/60 rounded-t-lg border-b">
-        <CardTitle className="text-[13px] font-semibold tracking-wide">
-          {data.label}
-        </CardTitle>
+        <CardTitle className="text-[13px] font-semibold tracking-wide">{data.label}</CardTitle>
       </CardHeader>
 
       {hasDetails && (
         <CardContent className="p-3">
-          <Section
-            title="Entry"
-            items={entryActions}
-            icon={Zap}
-            colorClass="text-yellow-500"
-          />
+          <Section title="Entry" items={entryActions} icon={Zap} colorClass="text-yellow-500" />
           <Section
             title="Invoke"
             items={invokeServices}
@@ -81,21 +68,9 @@ export const StateNode = ({ data, selected }: NodeProps) => {
       )}
 
       {/* Multiple connection points like XState */}
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        className="!bg-transparent opacity-0"
-      />
-      <Handle
-        type="source"
-        position={Position.Left}
-        className="!bg-transparent opacity-0"
-      />
-      <Handle
-        type="source"
-        position={Position.Right}
-        className="!bg-transparent opacity-0"
-      />
+      <Handle type="source" position={Position.Bottom} className="!bg-transparent opacity-0" />
+      <Handle type="source" position={Position.Left} className="!bg-transparent opacity-0" />
+      <Handle type="source" position={Position.Right} className="!bg-transparent opacity-0" />
     </Card>
   );
 };

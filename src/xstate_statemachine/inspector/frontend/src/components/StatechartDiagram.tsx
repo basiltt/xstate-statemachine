@@ -117,7 +117,7 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
       fitView
       minZoom={0.2}
       maxZoom={1.5}
-      className="bg-muted/40"
+      className="bg-background"
     >
       <Controls />
       <MiniMap

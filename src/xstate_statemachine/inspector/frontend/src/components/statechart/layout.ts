@@ -27,19 +27,11 @@ export const getLayoutedElements = (
   const edges: Edge[] = [];
   const machineId = machineDef.id;
 
-  function traverse(
-    stateKey: string,
-    stateDef: XStateNodeConfig,
-    parentId?: string,
-  ) {
+  function traverse(stateKey: string, stateDef: XStateNodeConfig, parentId?: string) {
     const stateId = parentId ? `${parentId}.${stateKey}` : stateKey;
     const isCompound = !!stateDef.states;
 
-    const nodeType = parentId
-      ? isCompound
-        ? "compoundStateNode"
-        : "stateNode"
-      : "rootNode";
+    const nodeType = parentId ? (isCompound ? "compoundStateNode" : "stateNode") : "rootNode";
 
     nodes.push({
       id: stateId,
@@ -60,13 +52,9 @@ export const getLayoutedElements = (
     }
 
     if (stateDef.on) {
-      const transitions = Array.isArray(stateDef.on)
-        ? stateDef.on
-        : Object.entries(stateDef.on);
+      const transitions = Array.isArray(stateDef.on) ? stateDef.on : Object.entries(stateDef.on);
       for (const [event, transitionConfig] of transitions) {
-        const configs = Array.isArray(transitionConfig)
-          ? transitionConfig
-          : [transitionConfig];
+        const configs = Array.isArray(transitionConfig) ? transitionConfig : [transitionConfig];
         for (const config of configs) {
           const targetKey = typeof config === "string" ? config : config.target;
           if (targetKey) {
