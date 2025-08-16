@@ -14,7 +14,7 @@ export interface DockProps extends VariantProps<typeof dockVariants> {
 }
 
 const dockVariants = cva(
-  "flex h-full w-max items-end gap-2 rounded-lg p-2 transition-all duration-300 ease-out"
+  "flex h-full w-max items-end gap-2 rounded-lg p-2 transition-all duration-300 ease-out",
 );
 
 const Dock = React.forwardRef<HTMLDivElement, DockProps>(
@@ -32,11 +32,11 @@ const Dock = React.forwardRef<HTMLDivElement, DockProps>(
         {React.Children.map(children, (child) =>
           React.cloneElement(child as React.ReactElement<any>, {
             mouseX: mouseX,
-          })
+          }),
         )}
       </motion.div>
     );
-  }
+  },
 );
 
 Dock.displayName = "Dock";
@@ -69,7 +69,7 @@ const DockIcon = ({ mouseX, className, children, ...props }: DockIconProps) => {
       style={{ width }}
       className={cn(
         "flex aspect-square items-center justify-center rounded-full bg-neutral-100/50 dark:bg-neutral-800/50",
-        className
+        className,
       )}
       {...props}
     >

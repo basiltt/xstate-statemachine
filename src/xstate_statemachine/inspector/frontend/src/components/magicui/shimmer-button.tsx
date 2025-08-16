@@ -23,7 +23,7 @@ const ShimmerButton = React.forwardRef<HTMLButtonElement, ShimmerButtonProps>(
       children,
       ...props
     },
-    ref
+    ref,
   ) => {
     return (
       <button
@@ -39,7 +39,7 @@ const ShimmerButton = React.forwardRef<HTMLButtonElement, ShimmerButtonProps>(
         className={cn(
           "group relative z-0 flex cursor-pointer items-center justify-center overflow-hidden whitespace-nowrap border border-white/10 px-6 py-3 text-white [background:var(--background)] [border-radius:var(--border-radius)]",
           "transform-gpu transition-transform duration-300 ease-in-out hover:scale-105",
-          className
+          className,
         )}
         ref={ref}
         {...props}
@@ -49,7 +49,7 @@ const ShimmerButton = React.forwardRef<HTMLButtonElement, ShimmerButtonProps>(
           <div
             className={cn(
               "absolute inset-0 z-0 h-full w-full animate-[shimmer_var(--shimmer-duration)_infinite] bg-gradient-to-r from-transparent via-transparent to-[var(--shimmer-color)] opacity-0 transition-opacity duration-500 group-hover:opacity-100",
-              "[--shimmer-angle:-45deg]"
+              "[--shimmer-angle:-45deg]",
             )}
           />
         </div>
@@ -58,7 +58,7 @@ const ShimmerButton = React.forwardRef<HTMLButtonElement, ShimmerButtonProps>(
         <div className="relative z-10">{children}</div>
       </button>
     );
-  }
+  },
 );
 
 ShimmerButton.displayName = "ShimmerButton";

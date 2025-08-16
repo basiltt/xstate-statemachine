@@ -69,8 +69,6 @@
   }
 }
 
-
-
 @layer base {
   * {
     @apply border-border;
@@ -78,4 +76,21 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+.react-flow__edge-updater {
+  display: none;
+}
+
+#rf-host {
+  position: relative;
+  isolation: isolate;
+}
+
+.rf-initial-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background: hsl(var(--foreground));
+  box-shadow: 0 0 0 2px hsl(var(--background));
 }

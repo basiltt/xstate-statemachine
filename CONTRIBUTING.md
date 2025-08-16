@@ -19,11 +19,11 @@ We follow the standard "Fork & Pull Request" workflow.
 
 ## ✨ Making Your Changes
 
--   Make your code changes.
--   Add or update tests in the `tests/` directory to cover your changes.
--  Add an example in the `examples/` directory if applicable.
--   Update the `docs/CHANGELOG.md` file under the "Next Release" section.
--   Commit your changes with a descriptive message following the [Conventional Commits](httpshttps://www.conventionalcommits.org/) specification (e.g., `feat: Add support for XYZ`).
+- Make your code changes.
+- Add or update tests in the `tests/` directory to cover your changes.
+- Add an example in the `examples/` directory if applicable.
+- Update the `docs/CHANGELOG.md` file under the "Next Release" section.
+- Commit your changes with a descriptive message following the [Conventional Commits](httpshttps://www.conventionalcommits.org/) specification (e.g., `feat: Add support for XYZ`).
 
 ## 🧪 Running Tests
 

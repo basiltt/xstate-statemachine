@@ -1,4 +1,5 @@
 # 🚦 XState - StateMachine for Python
+
 **The Definitive ← _Seriously_ → Guide to Bullet-Proof State Machines**
 
 > _“A good state machine is like a map: once you have it, you’ll never get lost again.”_
@@ -16,30 +17,33 @@
 7.  **[Quick Start](#quick-start)**
 8.  **[The State Machine Philosophy](#the-state-machine-philosophy)**
 9.  **[Visual-First Development](#visual-first-development)**
-10.  **[Anatomy of an XState JSON Blueprint](#anatomy-of-an-xstate-json-blueprint)**
-11.  **[States — Atomic, Compound, Parallel, Final](#states-atomic-compound-parallel-final)**
-12.  **[Transitions & Events](#transitions--events)**
-13.  **[Actions, Guards & Services](#actions-guards--services)**
-14.  **[Context - The Machine’s Memory](#context--the-machines-memory)**
+10. **[Anatomy of an XState JSON Blueprint](#anatomy-of-an-xstate-json-blueprint)**
+11. **[States — Atomic, Compound, Parallel, Final](#states-atomic-compound-parallel-final)**
+12. **[Transitions & Events](#transitions--events)**
+13. **[Actions, Guards & Services](#actions-guards--services)**
+14. **[Context - The Machine’s Memory](#context--the-machines-memory)**
 15. **[Declarative Timers (after)](#declarative-timers-after)**
-16.  **[The Actor Model](#the-actor-model)**
-17.  **[Architectural Patterns](#architectural-patterns)**
-18.  **[Synchronous vs Asynchronous Execution](#synchronous-vs-asynchronous-execution)**
-19.  **[Debugging & Visualization](#debugging--visualization)**
-20.  **[In-Depth Guide: The GUI Inspector](#gui-inspector)**
-21.  **[CLI: Boilerplate Generation](#cli-boilerplate-generation)**
+16. **[The Actor Model](#the-actor-model)**
+17. **[Architectural Patterns](#architectural-patterns)**
+18. **[Synchronous vs Asynchronous Execution](#synchronous-vs-asynchronous-execution)**
+19. **[Debugging & Visualization](#debugging--visualization)**
+20. **[In-Depth Guide: The GUI Inspector](#gui-inspector)**
+21. **[CLI: Boilerplate Generation](#cli-boilerplate-generation)**
+
     - [Aliases & Short Flags](#cli-aliases)
     - [Hierarchical Machine Generation](#cli-hierarchy)
     - [One vs Two Files](#cli-file-count)
     - [Sync vs Async Templates](#cli-async-sync)
-22.  **[Upgrade Notes: 0.4.0 → 0.4.1](#upgrade-notes-041)**
-23.  **[API Reference](#api-reference)**
-24.  **[Advanced Concepts](#advanced-concepts)**
-25.  **[Best Practices](#best-practices)**
-26.  **[FAQ](#faq)**
-27.  **[Roadmap](#roadmap-next-release)**
-28.  **[Contributing](#contributing)**
-29.  **[License](#license)**
+
+22. **[Upgrade Notes: 0.4.0 → 0.4.1](#upgrade-notes-041)**
+23. **[API Reference](#api-reference)**
+24. **[Advanced Concepts](#advanced-concepts)**
+25. **[Best Practices](#best-practices)**
+26. **[FAQ](#faq)**
+27. **[Roadmap](#roadmap-next-release)**
+28. **[Contributing](#contributing)**
+29. **[License](#license)**
+
 ---
 
 ## 🏁 Introduction<a name="introduction"></a>
@@ -84,13 +88,13 @@ Event‑Driven Architecture (EDA) makes that explicit and first‑class.
 
 ### 🧩 How XState-StateMachine fits EDA
 
-| EDA Need | Library Feature | Why it helps |
-|----------|-----------------|--------------|
-| “Everything is an event” | `on`, `after`, `done.invoke.*`, `error.platform.*`, synthetic `entry./exit.` | One uniform pipeline; nothing is “special-cased”. |
-| Deterministic reactions | Guards & Actions | Pure decisions (`guard`) vs. side effects (`action`). |
-| Temporal logic | Declarative `after` timers | Timeouts, retries, heartbeats—no manual `sleep()`s. |
-| Isolation & composition | Actor model (`spawn_*`) | Each actor is its own event-loop bubble. |
-| Observability | Plugins & snapshots | Tap and record every heartbeat for logs/tests. |
+| EDA Need                 | Library Feature                                                              | Why it helps                                          |
+| ------------------------ | ---------------------------------------------------------------------------- | ----------------------------------------------------- |
+| “Everything is an event” | `on`, `after`, `done.invoke.*`, `error.platform.*`, synthetic `entry./exit.` | One uniform pipeline; nothing is “special-cased”.     |
+| Deterministic reactions  | Guards & Actions                                                             | Pure decisions (`guard`) vs. side effects (`action`). |
+| Temporal logic           | Declarative `after` timers                                                   | Timeouts, retries, heartbeats—no manual `sleep()`s.   |
+| Isolation & composition  | Actor model (`spawn_*`)                                                      | Each actor is its own event-loop bubble.              |
+| Observability            | Plugins & snapshots                                                          | Tap and record every heartbeat for logs/tests.        |
 
 ### 🗺️ Tiny Example: “Upload finished” flow
 
@@ -136,10 +140,10 @@ USER_CLICKED_SUBMIT
 
 ## ✨ What is XState-StateMachine?<a name="what-is-xstate-statemachine"></a>
 
-* A **Pythonic** runtime for the world-famous **[XState](https://stately.ai)** architecture.
-* **100 % JSON-spec-compatible**, so you can design your chart in the Stately editor and run it untouched.
-* **Async first** (`asyncio`), yet ships a **fully-featured, blocking** `SyncInterpreter` for CLI tools or tests, complete with support for `after` timers and a threaded **actor model**.
-* Packed with goodies: **hierarchy, parallelism, invoke**, **after**, timers, **actors**, auto-binding logic loaders, plugin hooks, diagram generators, and more.
+- A **Pythonic** runtime for the world-famous **[XState](https://stately.ai)** architecture.
+- **100 % JSON-spec-compatible**, so you can design your chart in the Stately editor and run it untouched.
+- **Async first** (`asyncio`), yet ships a **fully-featured, blocking** `SyncInterpreter` for CLI tools or tests, complete with support for `after` timers and a threaded **actor model**.
+- Packed with goodies: **hierarchy, parallelism, invoke**, **after**, timers, **actors**, auto-binding logic loaders, plugin hooks, diagram generators, and more.
 
 > **TL;DR** — If you know XState in JS, everything 👉 “just works” in Python.
 > If you don’t, keep reading—this guide is for you.
@@ -148,23 +152,23 @@ USER_CLICKED_SUBMIT
 
 ## 🚀 Key Features<a name="key-features"></a>
 
-| Feature | Why You Care | New in 0.4.1? | Best For |
-| :--- | :--- | :--: | :--- |
-| **100% XState JSON Compatibility** | Design visually, export JSON, run in Python. |  | Teams that collaborate in the Stately Editor. |
-| **Async & Sync Interpreters** | One config, two runtimes (asyncio or blocking). | ⬆️ **SyncInterpreter now non‑blocking for actor spawn & multi‑timers** | Apps that need to run in CLI scripts *and* async servers. |
-| **Multiple `after` Timers per State (Sync too!)** | Fine-grained timing logic without hacks. | ✅ | Complex timeout/backoff flows in synchronous environments. |
-| **True Actor Model (spawn_* actions)** | Compose systems from smaller machines; isolate concurrency. | ⬆️ Sync spawn now uses background threads | IoT fleets, game entities, micro‑workflows. |
-| **Hierarchical & Parallel States** | Model nested flows or concurrent regions explicitly. |  | UIs, wizards, orchestration logic. |
-| **Declarative `invoke` Services** | Async tasks with automatic cancellation & `onDone`/`onError`. |  | API calls, DB work, long-running jobs. |
-| **Smart CLI Code Generator (`xsm`)** | Zero-boilerplate logic/runner stubs from JSON. | ✅ Aliases, hierarchy detection, safer prompts, smarter paths | Fast scaffolding, consistent team patterns. |
-| **Auto Logic Binding (LogicLoader)** | Drop in modules/classes; names are auto-wired. | ⬆️ No special-casing `spawn_*` | Big projects with many logic files. |
-| **Deep Plugin Hooks** | Observe guards, services, transitions in detail. |  | Telemetry, tracing, testing. |
-| **Snapshots & Restoration** | Time-travel debugging, crash recovery. |  | Long-lived workflows, CI golden tests. |
-| **Diagram Exporters** | Mermaid / PlantUML from code. |  | Up-to-date docs in CI/CD. |
+| Feature                                           | Why You Care                                                  |                             New in 0.4.1?                              | Best For                                                   |
+| :------------------------------------------------ | :------------------------------------------------------------ | :--------------------------------------------------------------------: | :--------------------------------------------------------- |
+| **100% XState JSON Compatibility**                | Design visually, export JSON, run in Python.                  |                                                                        | Teams that collaborate in the Stately Editor.              |
+| **Async & Sync Interpreters**                     | One config, two runtimes (asyncio or blocking).               | ⬆️ **SyncInterpreter now non‑blocking for actor spawn & multi‑timers** | Apps that need to run in CLI scripts _and_ async servers.  |
+| **Multiple `after` Timers per State (Sync too!)** | Fine-grained timing logic without hacks.                      |                                   ✅                                   | Complex timeout/backoff flows in synchronous environments. |
+| **True Actor Model (spawn\_\* actions)**          | Compose systems from smaller machines; isolate concurrency.   |               ⬆️ Sync spawn now uses background threads                | IoT fleets, game entities, micro‑workflows.                |
+| **Hierarchical & Parallel States**                | Model nested flows or concurrent regions explicitly.          |                                                                        | UIs, wizards, orchestration logic.                         |
+| **Declarative `invoke` Services**                 | Async tasks with automatic cancellation & `onDone`/`onError`. |                                                                        | API calls, DB work, long-running jobs.                     |
+| **Smart CLI Code Generator (`xsm`)**              | Zero-boilerplate logic/runner stubs from JSON.                |     ✅ Aliases, hierarchy detection, safer prompts, smarter paths      | Fast scaffolding, consistent team patterns.                |
+| **Auto Logic Binding (LogicLoader)**              | Drop in modules/classes; names are auto-wired.                |                     ⬆️ No special-casing `spawn_*`                     | Big projects with many logic files.                        |
+| **Deep Plugin Hooks**                             | Observe guards, services, transitions in detail.              |                                                                        | Telemetry, tracing, testing.                               |
+| **Snapshots & Restoration**                       | Time-travel debugging, crash recovery.                        |                                                                        | Long-lived workflows, CI golden tests.                     |
+| **Diagram Exporters**                             | Mermaid / PlantUML from code.                                 |                                                                        | Up-to-date docs in CI/CD.                                  |
 
-> 🔥 **Headline for 0.4.1**
-> *SyncInterpreter grows up:* non‑blocking actor spawning in threads, multiple concurrent `after` timers per state, and a cleaner shutdown sequence.
-> *CLI super-powers:* `xsm`, subcommand aliases, interactive parent detection, stricter arg parsing, and more robust generated runners.
+> 🔥 **Headline for 0.4.1** > _SyncInterpreter grows up:_ non‑blocking actor spawning in threads, multiple concurrent `after` timers per state, and a cleaner shutdown sequence.
+> _CLI super-powers:_ `xsm`, subcommand aliases, interactive parent detection, stricter arg parsing, and more robust generated runners.
+
 ---
 
 ## 🛠️ Installation<a name="installation"></a>
@@ -193,26 +197,26 @@ A lightspeed tour: toggle a light 💡—the “Hello World” of state machines
   "id": "lightSwitch",
   "initial": "off",
   "context": {
-    "flips": 0
+    "flips": 0,
   },
   "states": {
     "off": {
       "on": {
         "TOGGLE": {
           "target": "on",
-          "actions": "increment_flips"
-        }
-      }
+          "actions": "increment_flips",
+        },
+      },
     },
     "on": {
       "on": {
         "TOGGLE": {
           "target": "off",
-          "actions": "increment_flips"
-        }
-      }
-    }
-  }
+          "actions": "increment_flips",
+        },
+      },
+    },
+  },
 }
 ```
 
@@ -282,9 +286,7 @@ This JSON defines the structure. It starts `off`, and the `TOGGLE` event switche
       "on": {
         "TOGGLE": {
           "target": "on",
-          "actions": [
-            "increment_toggles"
-          ]
+          "actions": ["increment_toggles"]
         }
       }
     },
@@ -292,9 +294,7 @@ This JSON defines the structure. It starts `off`, and the `TOGGLE` event switche
       "on": {
         "TOGGLE": {
           "target": "off",
-          "actions": [
-            "increment_toggles"
-          ]
+          "actions": ["increment_toggles"]
         }
       }
     }
@@ -393,24 +393,23 @@ When you run `main_sync.py`, you will see the following output, demonstrating th
 
 > **Definition ↔ Implementation** separation is the super-power.
 
-* **Definition** (`.json`) 😇 — declares _what can happen_.
-  * Finite states
-  * Events
-  * Valid transitions
-  * Timers, services, hierarchy
+- **Definition** (`.json`) 😇 — declares _what can happen_.
 
-* **Implementation** (`.py`) 🛠️ — implements _how it happens_.
-  * Fetch an API
-  * Write a file
-  * Update UI
+  - Finite states
+  - Events
+  - Valid transitions
+  - Timers, services, hierarchy
+
+- **Implementation** (`.py`) 🛠️ — implements _how it happens_.
+  - Fetch an API
+  - Write a file
+  - Update UI
 
 Because the **graph never mutates**, every team-mate sees the same reality. Changing business rules is as easy as editing JSON and re-running tests—**logic stays untouched**.
 
 ---
 
 ## 🎨 Visual-First Development<a name="visual-first-development"></a>
-
-
 
 1. **Design** in the **Stately Editor** → drag states, draw arrows.
 2. **Export** to JSON (one click).
@@ -419,39 +418,38 @@ Because the **graph never mutates**, every team-mate sees the same reality. Chan
 
 ### Why It Rocks:
 
-* **Stakeholder Friendly** — Product managers & QA can _read_ and _play_ with the diagram.
-* **Zero Drift** — Diagram **is** the code. Update one, you update both.
-* **Faster On-Boarding** — New hires grok the flow in minutes, not days.
+- **Stakeholder Friendly** — Product managers & QA can _read_ and _play_ with the diagram.
+- **Zero Drift** — Diagram **is** the code. Update one, you update both.
+- **Faster On-Boarding** — New hires grok the flow in minutes, not days.
 
 ---
 
-
 ### 🖼️ Designing with Stately Visual Editor<a name="stately-visual-editor"></a>
 
-> “If a picture is worth a thousand words, a *statechart* is worth a thousand **unit-tests**.”
+> “If a picture is worth a thousand words, a _statechart_ is worth a thousand **unit-tests**.”
 
-The **[Stately Visual Editor](https://stately.ai/editor) →** is the *single most productive tool* in the XState ecosystem.
-It lets you **draw** your machine, **simulate** it in real‑time, and **export** a perfectly–valid JSON blueprint that runs *unchanged* in `xstate‑statemachine` for Python.
+The **[Stately Visual Editor](https://stately.ai/editor) →** is the _single most productive tool_ in the XState ecosystem.
+It lets you **draw** your machine, **simulate** it in real‑time, and **export** a perfectly–valid JSON blueprint that runs _unchanged_ in `xstate‑statemachine` for Python.
 
 ### 🔑 Why the Editor Matters
 
-| Benefit | What it Means for You |
-|---------|-----------------------|
-| **WYSIWYG Modelling** | Drag‑and‑drop states, draw transitions, and tweak guards—no JSON eye‑strain. |
-| **Instant Simulation** | Play events, watch timers fire, and inspect context mutations live before writing Python code. |
-| **Team Collaboration** | Share a link; PMs and QA can *see* the flow and leave comments, killing a whole back‑and‑forth thread of screenshots. |
-| **Source of Truth** | The exported JSON *is* the code—zero drift between docs and implementation. |
-| **Version Control Friendly** | Download the JSON (or embed it in your repo) and diff it like any other text asset. |
+| Benefit                      | What it Means for You                                                                                                 |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **WYSIWYG Modelling**        | Drag‑and‑drop states, draw transitions, and tweak guards—no JSON eye‑strain.                                          |
+| **Instant Simulation**       | Play events, watch timers fire, and inspect context mutations live before writing Python code.                        |
+| **Team Collaboration**       | Share a link; PMs and QA can _see_ the flow and leave comments, killing a whole back‑and‑forth thread of screenshots. |
+| **Source of Truth**          | The exported JSON _is_ the code—zero drift between docs and implementation.                                           |
+| **Version Control Friendly** | Download the JSON (or embed it in your repo) and diff it like any other text asset.                                   |
 
 ### 🛠️ Typical Workflow
 
 1. **Sketch** the high‑level flow on a whiteboard (or directly in the editor).
 2. **Model** it in the Stately Editor:
-   * Add *states* (double‑click canvas)
-   * Create *transitions* (drag arrow from one state to another)
-   * Configure *events*, *guards*, *actions*, *after* timers, and *invoke* services in the side‑panel UI.
+   - Add _states_ (double‑click canvas)
+   - Create _transitions_ (drag arrow from one state to another)
+   - Configure _events_, _guards_, _actions_, _after_ timers, and _invoke_ services in the side‑panel UI.
 3. **Simulate**: hit ▶️, dispatch events, and watch the visual debugger update in real time.
-4. **Export** → **“Machine JSON”** (⚙️ menu → *Export → Machine JSON*).
+4. **Export** → **“Machine JSON”** (⚙️ menu → _Export → Machine JSON_).
    Save as `my_machine.json` in your project’s `statecharts/` folder.
 5. **Run** it with:
 
@@ -468,15 +466,14 @@ It lets you **draw** your machine, **simulate** it in real‑time, and **export*
 
 ### 🎨 Pro Tips for Power Users
 
-| Tip | Shortcut / Action |
-|-----|-------------------|
-| **Multi‑Select** | <kbd>Shift</kbd> + Click or drag marquee to move/align groups of states. |
-| **Quick Transition** | Hold <kbd>A</kbd>, click source state, then click target state. |
-| **Relative Targets** | Double‑click a self‑transition arrow to toggle between **internal** and **external** (re‑entry) semantics. |
-| **Context Visualisation** | In the *Simulate* tab, expand **Context** to live‑edit values while the machine is running—great for guard testing. |
-| **Export Diagram** | *Export → SVG / PNG* to embed in GitHub docs; keep diagrams and JSON in‑sync ✨. |
-| **Embed Gist** | Publish the machine as a sharable, *live* gist you can link in PR descriptions. |
-
+| Tip                       | Shortcut / Action                                                                                                   |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **Multi‑Select**          | <kbd>Shift</kbd> + Click or drag marquee to move/align groups of states.                                            |
+| **Quick Transition**      | Hold <kbd>A</kbd>, click source state, then click target state.                                                     |
+| **Relative Targets**      | Double‑click a self‑transition arrow to toggle between **internal** and **external** (re‑entry) semantics.          |
+| **Context Visualisation** | In the _Simulate_ tab, expand **Context** to live‑edit values while the machine is running—great for guard testing. |
+| **Export Diagram**        | _Export → SVG / PNG_ to embed in GitHub docs; keep diagrams and JSON in‑sync ✨.                                    |
+| **Embed Gist**            | Publish the machine as a sharable, _live_ gist you can link in PR descriptions.                                     |
 
 ---
 
@@ -484,17 +481,18 @@ It lets you **draw** your machine, **simulate** it in real‑time, and **export*
 
 Every machine is a tree of **StateNodes**. Let’s break down the top-level keys:
 
-| Key | Type | Description |
-|---|---|---|
-| `id` | **string** | Unique machine ID, root of every absolute state path. |
-| `initial` | **string** | State where the interpreter starts. |
-| `context` | **object** | Mutable “memory” available to every action/guard. |
-| `states` | **object** | Map of state → StateNode definition. |
-| `on` | **object** | _Global_ event handlers (catch-all). |
+| Key       | Type       | Description                                           |
+| --------- | ---------- | ----------------------------------------------------- |
+| `id`      | **string** | Unique machine ID, root of every absolute state path. |
+| `initial` | **string** | State where the interpreter starts.                   |
+| `context` | **object** | Mutable “memory” available to every action/guard.     |
+| `states`  | **object** | Map of state → StateNode definition.                  |
+| `on`      | **object** | _Global_ event handlers (catch-all).                  |
 
 Example from your files: The `flightBooking.json` machine has a root `id` of `"flightBooking"`.
 
 Example from your files: The `ciCdPipeline.json` defines an initial `context` to track the state of a deployment process:
+
 ```jsonc
 "context": {
   "build_artifact": null,
@@ -510,59 +508,58 @@ Example from your files: The `ciCdPipeline.json` defines an initial `context` to
 
 When you define a transition with a `target`, the library uses a powerful resolution mechanism to find the destination state. This allows for flexible and intuitive state navigation.
 
--   **Sibling State (Most Common):** If you provide a simple name, the interpreter looks for a state with that name within the *same parent*.
+- **Sibling State (Most Common):** If you provide a simple name, the interpreter looks for a state with that name within the _same parent_.
 
-    ```json
-    "green": {
-      "on": { "TIMER": "yellow" } // Looks for "yellow" alongside "green"
-    },
-    "yellow": {},
-    "red": {}
-    ```
+  ```json
+  "green": {
+    "on": { "TIMER": "yellow" } // Looks for "yellow" alongside "green"
+  },
+  "yellow": {},
+  "red": {}
+  ```
 
--   **Child State (Dot Notation):** To target a descendant state, use dot notation.
+- **Child State (Dot Notation):** To target a descendant state, use dot notation.
 
-    ```json
-    "on": {
-      "GO_TO_DEEP_STATE": "parent.child.grandchild"
+  ```json
+  "on": {
+    "GO_TO_DEEP_STATE": "parent.child.grandchild"
+  }
+  ```
+
+- **Relative Path (Leading Dot):** A leading dot (`.`) makes the path relative to the _parent_ of the current state. This is extremely useful for sibling-to-sibling transitions inside a compound state.
+
+  ```json
+  "parent": {
+    "initial": "child1",
+    "states": {
+      "child1": { "on": { "NEXT": ".child2" } }, // Correctly targets parent.child2
+      "child2": {}
     }
-    ```
+  }
+  ```
 
--   **Relative Path (Leading Dot):** A leading dot (`.`) makes the path relative to the *parent* of the current state. This is extremely useful for sibling-to-sibling transitions inside a compound state.
+- **Absolute Path (Leading Hash):** A leading hash (`#`) makes the path absolute from the root of the machine, using the machine's `id`. This is the safest way to target a state from a deeply nested location without ambiguity.
 
-    ```json
-    "parent": {
-      "initial": "child1",
-      "states": {
-        "child1": { "on": { "NEXT": ".child2" } }, // Correctly targets parent.child2
-        "child2": {}
-      }
-    }
-    ```
-
--   **Absolute Path (Leading Hash):** A leading hash (`#`) makes the path absolute from the root of the machine, using the machine's `id`. This is the safest way to target a state from a deeply nested location without ambiguity.
-
-    ```json
-    "deeply": {
-      "nested": {
-        "state": {
-          "on": {
-            "GO_HOME": "#myMachine.idle" // Always goes to the top-level idle state
-          }
+  ```json
+  "deeply": {
+    "nested": {
+      "state": {
+        "on": {
+          "GO_HOME": "#myMachine.idle" // Always goes to the top-level idle state
         }
       }
     }
-    ```
+  }
+  ```
 
 #### 🛣️ Edge‑Cases & Safety Nets
 
-| Target Syntax | Resolved To | When to Use |
-|---------------|------------|-------------|
-| `"."` | **Parent state** of the current state &nbsp;▸ if already at the root, it resolves to the **root itself**. | Jump back one level without hard‑coding the parent’s ID. Handy inside deeply nested compound states. |
-| `a..b` &nbsp;or&nbsp; `state.` | **❌ Invalid** — the library rejects any target that contains empty path segments (double dots `..` or a trailing dot `.`) and raises **`StateNotFoundError`**. | Typos happen! The explicit error prevents silent mis‑navigation and keeps your diagrams truthful. |
+| Target Syntax                  | Resolved To                                                                                                                                                     | When to Use                                                                                          |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `"."`                          | **Parent state** of the current state &nbsp;▸ if already at the root, it resolves to the **root itself**.                                                       | Jump back one level without hard‑coding the parent’s ID. Handy inside deeply nested compound states. |
+| `a..b` &nbsp;or&nbsp; `state.` | **❌ Invalid** — the library rejects any target that contains empty path segments (double dots `..` or a trailing dot `.`) and raises **`StateNotFoundError`**. | Typos happen! The explicit error prevents silent mis‑navigation and keeps your diagrams truthful.    |
 
-> 💡 **Tip:**  When debugging a mysterious *StateNotFoundError*, check for an accidental double‑dot or dangling dot in your `target` strings.
-
+> 💡 **Tip:** When debugging a mysterious _StateNotFoundError_, check for an accidental double‑dot or dangling dot in your `target` strings.
 
 ---
 
@@ -649,7 +646,7 @@ Example from your files: The smartHome.json machine uses a parallel state at its
 ### 🌊 Event Lifecycle & Synthetic Events<a name="event-lifecycle"></a>
 
 A state machine **lives and breathes events**.
-Besides the ones *you* dispatch, the runtime forges its own messages and even
+Besides the ones _you_ dispatch, the runtime forges its own messages and even
 loops internal “always” transitions until the graph stabilises.
 Understanding these moving parts lets you write bullet‑proof tests, guards and
 plugins. 🔍
@@ -658,11 +655,11 @@ plugins. 🔍
 
 #### 1️⃣ `.send()` – One API, Three Input Flavours
 
-| What you call | What the helper returns | Notes |
-|---------------|------------------------|-------|
-| `service.send("CLICK", x=1)` | `Event(type="CLICK", payload={"x": 1})` | Snack‑size syntax |
-| `service.send({"type": "CLICK", "x": 1})` | ditto | Handy when forwarding raw JSON |
-| `service.send(Event("CLICK", {"x": 1}))` | *unchanged* | Already a proper `Event` |
+| What you call                             | What the helper returns                 | Notes                          |
+| ----------------------------------------- | --------------------------------------- | ------------------------------ |
+| `service.send("CLICK", x=1)`              | `Event(type="CLICK", payload={"x": 1})` | Snack‑size syntax              |
+| `service.send({"type": "CLICK", "x": 1})` | ditto                                   | Handy when forwarding raw JSON |
+| `service.send(Event("CLICK", {"x": 1}))`  | _unchanged_                             | Already a proper `Event`       |
 
 `BaseInterpreter._prepare_event` does the coercion, so every path into the
 interpreter is **consistent & type‑safe**. ✔️
@@ -671,15 +668,15 @@ interpreter is **consistent & type‑safe**. ✔️
 
 #### 2️⃣ Runtime‑Generated (Synthetic) Events
 
-| Pattern | ✨ When it fires | Typical purpose |
-|---------|-----------------|-----------------|
-| `entry.<stateId>` | Right before a state’s **entry actions** run | Side‑effect hooks, analytics |
-| `exit.<stateId>` | After **exit actions** finish | Cleanup metrics, audit |
-| `___xstate_statemachine_init___` | Once, at machine start‑up | Kick‑start transient guards |
-| `after.<delay>.<stateId>` | `after { "<delay>": … }` timer expires | Declarative timeouts / polling |
-| `done.state.<stateId>` | A **compound / parallel** state reaches all its finals | Bubble completion upward |
-| `done.invoke.<src>` | An **invoked service** returns successfully | Happy‑path transitions |
-| `error.platform.<src>` | Invoked service raised / rejected | Failure branch |
+| Pattern                          | ✨ When it fires                                       | Typical purpose                |
+| -------------------------------- | ------------------------------------------------------ | ------------------------------ |
+| `entry.<stateId>`                | Right before a state’s **entry actions** run           | Side‑effect hooks, analytics   |
+| `exit.<stateId>`                 | After **exit actions** finish                          | Cleanup metrics, audit         |
+| `___xstate_statemachine_init___` | Once, at machine start‑up                              | Kick‑start transient guards    |
+| `after.<delay>.<stateId>`        | `after { "<delay>": … }` timer expires                 | Declarative timeouts / polling |
+| `done.state.<stateId>`           | A **compound / parallel** state reaches all its finals | Bubble completion upward       |
+| `done.invoke.<src>`              | An **invoked service** returns successfully            | Happy‑path transitions         |
+| `error.platform.<src>`           | Invoked service raised / rejected                      | Failure branch                 |
 
 Because they are regular events you can:
 
@@ -687,6 +684,7 @@ Because they are regular events you can:
 await interp.send("after.5000.flightBooking.loading")   # force timeout in tests
 plugin.on_event_received = lambda _, e: print(e.type)
 ```
+
 #### Quick Example: `onDone` from a Parallel Parent
 
 ```jsonc
@@ -705,7 +703,7 @@ plugin.on_event_received = lambda _, e: print(e.type)
 
 #### 3️⃣ Transient (“Always”) Transitions `""`
 
-An empty‑string event (`""`) models *automatic* logic that should run
+An empty‑string event (`""`) models _automatic_ logic that should run
 **immediately** after a state becomes active:
 
 ```jsonc
@@ -724,13 +722,13 @@ An empty‑string event (`""`) models *automatic* logic that should run
 }
 ```
 
-* Both interpreters keep looping
+- Both interpreters keep looping
   `while optimal_transition.event == "": …`
   (`Interpreter._run_event_loop`, `SyncInterpreter._process_transient_transitions`)
   until **no** guard passes.
-* Guards must be **pure & synchronous** — they run potentially many times per
+- Guards must be **pure & synchronous** — they run potentially many times per
   event cycle.
-* Great for conditional redirects, validation gates and hierarchical
+- Great for conditional redirects, validation gates and hierarchical
   “initial” logic.
 
 ---
@@ -747,15 +745,14 @@ service success            ─────▶  done.invoke.fetchData
 compound finished          ─────▶  done.state.parent.compound
 ```
 
-> **Clarification — arrows show the *event type*, not the payload**
+> **Clarification — arrows show the _event type_, not the payload**
 > In the cheat‑sheet diagram, `service.send("CLICK", x=1)  ─────▶  CLICK` means the runtime receives an event whose **type** is `"CLICK"`. Any payload you pass (e.g. `x=1`) still travels inside the event object (`Event.type == "CLICK"`, `Event.payload == {"x": 1}`); it’s just omitted for brevity.
-
 
 Now you can assert, spy and debug every heartbeat of your machine. 🎉
 
-* **Event-driven** — under `on`.
-* **Time-driven** — under `after`.
-* **Done/Error** — from invoke services → auto-events `done.invoke.<src>` & `error.platform.<src>`.
+- **Event-driven** — under `on`.
+- **Time-driven** — under `after`.
+- **Done/Error** — from invoke services → auto-events `done.invoke.<src>` & `error.platform.<src>`.
 
 ```jsonc
 "loading": {
@@ -781,8 +778,8 @@ Now you can assert, spy and debug every heartbeat of your machine. 🎉
 
 #### 📨 How service results travel back into the machine
 
-When an **invoked service** (sync *or* async) finishes **successfully**,
-its *return value* is baked into a **`DoneEvent`**:
+When an **invoked service** (sync _or_ async) finishes **successfully**,
+its _return value_ is baked into a **`DoneEvent`**:
 
 ```
 type =  "done.invoke.<serviceId>"
@@ -816,28 +813,27 @@ def store_payload(i, ctx, event, a):
 }
 ```
 
-> 🔎 **Tip:** In unit tests you can *stub* the service to return a canned
+> 🔎 **Tip:** In unit tests you can _stub_ the service to return a canned
 > object and assert that `ctx["payload"]` matches it, without hitting the
 > network. Fast & deterministic! 🧪
-
 
 ### Internal vs External Transitions & The `reenter` Flag<a name="internal-vs-external-transitions"></a>
 
 When an event matches a transition, the library distinguishes between two types: **internal** and **external**.
 
--   **Internal Transition**: An internal transition only executes its actions and does not exit or re-enter the current state. This is useful for updating context without resetting the state's timers or invoked services. This occurs when a transition has **no `target`**.
+- **Internal Transition**: An internal transition only executes its actions and does not exit or re-enter the current state. This is useful for updating context without resetting the state's timers or invoked services. This occurs when a transition has **no `target`**.
 
--   **External Transition**: An external transition will exit the current state (running exit actions, cancelling timers/services) and re-enter a new state (or the same one), running all entry actions. This occurs whenever a transition **has a `target`**.
+- **External Transition**: An external transition will exit the current state (running exit actions, cancelling timers/services) and re-enter a new state (or the same one), running all entry actions. This occurs whenever a transition **has a `target`**.
 
 #### The `reenter` Flag for Self-Transitions (New in 0.4.2)
 
 By default, a self-transition (where the `target` is the same as the source state) is **internal**. However, you can force it to be **external** by adding `"reenter": true`. This provides explicit control, aligning with XState v5.
 
-| Transition Config | Behavior | Use Case |
-| :--- | :--- | :--- |
-| `{"actions": "update_ctx"}` | **Internal** (no `target`) | Update context without resetting the state. |
-| `{"target": "myState"}` | **Internal** (self-target, `reenter` is `false` by default) | Same as above. The machine remains in `myState` without exit/entry actions. |
-| `{"target": "myState", "reenter": true}` | **External** (self-target, explicit `reenter`) | Force a full exit/re-entry of `myState` to reset its timers or re-run entry actions. |
+| Transition Config                        | Behavior                                                    | Use Case                                                                             |
+| :--------------------------------------- | :---------------------------------------------------------- | :----------------------------------------------------------------------------------- |
+| `{"actions": "update_ctx"}`              | **Internal** (no `target`)                                  | Update context without resetting the state.                                          |
+| `{"target": "myState"}`                  | **Internal** (self-target, `reenter` is `false` by default) | Same as above. The machine remains in `myState` without exit/entry actions.          |
+| `{"target": "myState", "reenter": true}` | **External** (self-target, explicit `reenter`)              | Force a full exit/re-entry of `myState` to reset its timers or re-run entry actions. |
 
 **Example:**
 
@@ -895,32 +891,30 @@ readability and future compatibility.
 
 ##### Tip 💡 – Keep Them 100 % Pure
 
-* **No logging** inside guards – use an action instead.
-* **No mutation** of `ctx`. Guards run many times (transients!), so mutating
+- **No logging** inside guards – use an action instead.
+- **No mutation** of `ctx`. Guards run many times (transients!), so mutating
   state here creates elusive bugs.
 
 ---
 
-Now your transitions obey the *Law of Least Surprise*: one question, one crisp
+Now your transitions obey the _Law of Least Surprise_: one question, one crisp
 answer, synchronously. 🏁
 
-| Kind | When Runs | Signature | Return |
-|------|-----------|-----------|--------|
-| **Action** | On entry/exit/transition | `(interp, ctx, event, action_def)` | `None` |
-| **Guard**  | Before transition decision | `(ctx, event)` | `bool` |
-| **Service**| Inside `invoke` (async or sync) | `(interp, ctx, event)` | `value` or **raise** |
-
+| Kind        | When Runs                       | Signature                          | Return               |
+| ----------- | ------------------------------- | ---------------------------------- | -------------------- |
+| **Action**  | On entry/exit/transition        | `(interp, ctx, event, action_def)` | `None`               |
+| **Guard**   | Before transition decision      | `(ctx, event)`                     | `bool`               |
+| **Service** | Inside `invoke` (async or sync) | `(interp, ctx, event)`             | `value` or **raise** |
 
 ### 🔥 Error Handling (Actions / Guards / Services)
 
 **TL;DR**
 
-| Component | If it raises… | What the interpreter does | How to observe / recover |
-|-----------|----------------|---------------------------|---------------------------|
-| **Guard** | Any `Exception` | Treated as **False** (transition candidate fails), error is logged; the interpreter keeps evaluating the rest of the transitions. If none pass, the event is dropped. | Use `LoggingInspector` or a custom plugin (`on_guard_evaluated`) to surface failures. |
-| **Action** | Any `Exception` | Logs the error, **skips the remaining actions** in that list, continues processing. In `SyncInterpreter` the exception is re‑raised to the caller of `.send()`. In `Interpreter` it’s captured inside the event-loop task (logged, does not crash the loop). | Wrap `.send()` in `try/except` for sync; add a plugin or await `send()` and inspect logs for async. |
-| **Service (`invoke`)** | Exception / rejection | Fires the configured `onError` transition with `event.data = error`; if no handler exists, the error bubbles to the parent (or is logged). | Handle `onError` branches explicitly; inspect `event.data` for details. |
-
+| Component              | If it raises…         | What the interpreter does                                                                                                                                                                                                                                    | How to observe / recover                                                                            |
+| ---------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| **Guard**              | Any `Exception`       | Treated as **False** (transition candidate fails), error is logged; the interpreter keeps evaluating the rest of the transitions. If none pass, the event is dropped.                                                                                        | Use `LoggingInspector` or a custom plugin (`on_guard_evaluated`) to surface failures.               |
+| **Action**             | Any `Exception`       | Logs the error, **skips the remaining actions** in that list, continues processing. In `SyncInterpreter` the exception is re‑raised to the caller of `.send()`. In `Interpreter` it’s captured inside the event-loop task (logged, does not crash the loop). | Wrap `.send()` in `try/except` for sync; add a plugin or await `send()` and inspect logs for async. |
+| **Service (`invoke`)** | Exception / rejection | Fires the configured `onError` transition with `event.data = error`; if no handler exists, the error bubbles to the parent (or is logged).                                                                                                                   | Handle `onError` branches explicitly; inspect `event.data` for details.                             |
 
 ```python
 # Guard example: an exception becomes "False", not a crash
@@ -953,7 +947,6 @@ except Exception as exc:
 > The helper `logic_loader._snake_to_camel()` does the heavy lifting, so you
 > stay idiomatic in Python **and** compliant with XState’s camel‑cased world. ✨
 
-
 > ℹ️ Automatic Logic Discovery binds JSON names to Python callables **by convention** (`snake_case ⇌ camelCase`). Anything unmatched raises `ImplementationMissingError`.
 
 ---
@@ -982,20 +975,20 @@ Rule of thumb 🧘: **Pure guards** & **deterministic actions** → easier tests
 ## ⏰ Declarative Timers (`after`)<a name="declarative-timers-after"></a>
 
 > **Key idea:** you declare **_intent_**, not implementation.
-> The interpreter owns the stopwatch so *you* don’t have to.
+> The interpreter owns the stopwatch so _you_ don’t have to.
 
-| What you write | What the engine does |
-|----------------|----------------------|
-| `after: { "500": "blink" }` | Starts a 500 ms countdown *every* time the state is entered |
+| What you write                                                   | What the engine does                                                                |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `after: { "500": "blink" }`                                      | Starts a 500 ms countdown _every_ time the state is entered                         |
 | `after: { "1000": { "target": "retry", "actions": "backoff" } }` | Schedules an internal event, then cancels it automatically if the state exits early |
-| `after: { "…": { …, "guard": "stillRelevant" } }` | Evaluates guard *right before* firing—handy for stale timers |
+| `after: { "…": { …, "guard": "stillRelevant" } }`                | Evaluates guard _right before_ firing—handy for stale timers                        |
 
 > **SyncInterpreter parity (0.4.1):**
-> Everything you see here—*including multiple `after` entries per state*—now works in the synchronous engine.
+> Everything you see here—_including multiple `after` entries per state_—now works in the synchronous engine.
 > Each `after` gets a dedicated thread-backed timer and a unique ID for cancellation. No extra code from you.
 
 > **SyncInterpreter parity addendum – guard timing:**
-> In `SyncInterpreter`, exactly like in the async `Interpreter`, any `guard` on an `after` transition is evaluated **when the timer fires**, *not* when it’s scheduled on state entry.
+> In `SyncInterpreter`, exactly like in the async `Interpreter`, any `guard` on an `after` transition is evaluated **when the timer fires**, _not_ when it’s scheduled on state entry.
 > If the guard returns `False` at fire time, that particular delayed transition is skipped (other `after` entries can still fire), and no state change occurs.
 
 ```jsonc
@@ -1006,6 +999,7 @@ Rule of thumb 🧘: **Pure guards** & **deterministic actions** → easier tests
   }
 }
 ```
+
 ```python
 def fewAttempts(ctx, event):
     # evaluated only when the 1000ms timer actually fires
@@ -1039,7 +1033,7 @@ assert "timeout" in interp.current_state_ids
 
 ### ⚡ Multiple Timers in One State
 
-Attach *several* `after` clauses—think **progressive back‑off**:
+Attach _several_ `after` clauses—think **progressive back‑off**:
 
 ```jsonc
 "retrying": {
@@ -1076,11 +1070,11 @@ Because the target is **relative** (`.flashing`), the state re‑enters itself, 
 
 ### Cancellation & Clean‑Up
 
-Leaving a state *always* cancels its timers.
+Leaving a state _always_ cancels its timers.
 
-* No memory leaks
-* No stray events after the user navigates away
-* Predictable “at‑most‑once” semantics
+- No memory leaks
+- No stray events after the user navigates away
+- Predictable “at‑most‑once” semantics
 
 ### Testing Timers 🧪
 
@@ -1090,18 +1084,17 @@ Leaving a state *always* cancels its timers.
 
 ### Common Pitfalls & Remedies
 
-| Pitfall | Symptom | Remedy |
-|---------|---------|--------|
-| Timer never fires | Guard returns `False`; or state changed before delay | Log guard or use `LoggingInspector` |
-| Fires twice | Re‑entering state via **different absolute ID** in hierarchy | Use absolute target (`"#machine.state"`) or guard |
-| Delay starts late | Long CPU loop in entry action | Make actions async & yield `await asyncio.sleep(0)` |
+| Pitfall           | Symptom                                                      | Remedy                                              |
+| ----------------- | ------------------------------------------------------------ | --------------------------------------------------- |
+| Timer never fires | Guard returns `False`; or state changed before delay         | Log guard or use `LoggingInspector`                 |
+| Fires twice       | Re‑entering state via **different absolute ID** in hierarchy | Use absolute target (`"#machine.state"`) or guard   |
+| Delay starts late | Long CPU loop in entry action                                | Make actions async & yield `await asyncio.sleep(0)` |
 
 #
 
 #### 🗂️ TaskManager – Zero‑Leak Guarantees<a name="taskmanager"></a>
 
 Every **`after` timer** ⏱️ and each **`invoke` service** 📞 is tracked by the TaskManager: the async `Interpreter` wraps them in `asyncio.Task`, while the `SyncInterpreter` uses `threading.Timer`/`threading.Thread`; both are **registered per‑state** and cancelled on exit.
-
 
 ```text
 stateId ─┬─ after‑5000 timer        ─┐
@@ -1111,20 +1104,20 @@ stateId ─┬─ after‑5000 timer        ─┐
 
 Why it matters:
 
-| ⭐ Benefit | How it works |
-|-----------|--------------|
+| ⭐ Benefit                 | How it works                                                                                                                                                                         |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **No orphaned coroutines** | When a state exits, the interpreter calls **`TaskManager.cancel_by_owner(state.id)`**, which iterates over every recorded task, `task.cancel()`s them, and awaits graceful shutdown. |
-| **Memory‑safe** | The internal map is cleaned after cancellation, so tasks don’t linger in RAM. |
-| **Race‑condition free** | Timers or services started in a state **cannot** out‑live that state; you’ll never receive a late “after” event for something that’s no longer on screen. |
+| **Memory‑safe**            | The internal map is cleaned after cancellation, so tasks don’t linger in RAM.                                                                                                        |
+| **Race‑condition free**    | Timers or services started in a state **cannot** out‑live that state; you’ll never receive a late “after” event for something that’s no longer on screen.                            |
 
-> 🔒 **Guarantee:** If your JSON says *“when I leave `loading`, kill the fetch”*,
-> the engine obeys—*you* write zero cancellation code.
+> 🔒 **Guarantee:** If your JSON says _“when I leave `loading`, kill the fetch”_,
+> the engine obeys—_you_ write zero cancellation code.
 
 ---
 
 ##### 🧪 White‑Box Testing Helper
 
-Need to assert that a timer or service *is* (or *isn’t*) running?
+Need to assert that a timer or service _is_ (or _isn’t_) running?
 
 ```python
 tasks = interpreter.task_manager.get_tasks_by_owner("search.loading")
@@ -1138,6 +1131,7 @@ can **inspect** without risking accidental mutation.
 
 ⌛ **Bottom line:** Declarative timers and invokes stay tidy, deterministic and
 resource‑safe—no leaks, no zombies, no surprises. 🧹🔒
+
 ---
 
 ## 🎭 The Actor Model (Deep Dive)<a name="the-actor-model"></a>
@@ -1171,18 +1165,18 @@ The relationship is simple: a parent spawns a child, can send it messages (event
 
 Spawning a child machine is as simple as defining an **action whose type starts with `spawn_`** (or `spawn_blocking_`).
 
-| Action Prefix            | Async `Interpreter`                    | Sync `SyncInterpreter`                            | Use When…                           |
-|--------------------------|----------------------------------------|---------------------------------------------------|-------------------------------------|
-| `spawn_<name>`           | Non‑blocking (child runs in a task)    | **Non‑blocking** (child runs in a background thread) | Parent must stay responsive         |
-| `spawn_blocking_<name>`  | Still non‑blocking (same as above)     | **Blocking** (runs inline, parent waits)            | You want strict in‑order execution  |
+| Action Prefix           | Async `Interpreter`                 | Sync `SyncInterpreter`                               | Use When…                          |
+| ----------------------- | ----------------------------------- | ---------------------------------------------------- | ---------------------------------- |
+| `spawn_<name>`          | Non‑blocking (child runs in a task) | **Non‑blocking** (child runs in a background thread) | Parent must stay responsive        |
+| `spawn_blocking_<name>` | Still non‑blocking (same as above)  | **Blocking** (runs inline, parent waits)             | You want strict in‑order execution |
 
 Behind the scenes the interpreter does four deterministic steps (code in `Interpreter._spawn_actor` / `SyncInterpreter._spawn_actor`):
 
 1. **Name resolution** – strip the prefix to get `<name>` and look it up in `machine.logic.services["<name>"]`.
 2. **Source validation**
-   * If it’s a **`MachineNode`** → use as‑is.
-   * If it’s a **callable** → treat as a factory; call it with `(interpreter, ctx, event)` and expect a `MachineNode` back.
-   * Otherwise → raise **`ActorSpawningError`**.
+   - If it’s a **`MachineNode`** → use as‑is.
+   - If it’s a **callable** → treat as a factory; call it with `(interpreter, ctx, event)` and expect a `MachineNode` back.
+   - Otherwise → raise **`ActorSpawningError`**.
 3. **ID assignment** – build a unique child ID:
    `"{parentId}:{name}:{uuid4()}"` (e.g. `cart:paymentActor:3e3b6b9c-…`).
 4. **Start & register** – create a new interpreter for the child, start it, stash it in `parent._actors[childId]`.
@@ -1205,18 +1199,16 @@ services = {
 > 📝 **Remember:** Spawned actors live until **you** stop them (or their parent stops).
 > They inherit the parent’s plugins automatically, so logging/metrics stay consistent.
 
-
-
 ### Messaging Patterns
 
 The actor model enables powerful, interpreter-agnostic communication patterns.
 
-| Pattern | How It Works | Use Case |
-| :--- | :--- | :--- |
-| **Request/Reply** | A child actor performs a task and sends a **`RESULT`** or **`FAILURE`** event back to its parent when it completes. | `warehouseRobot` spawns a `pathfinder` actor to calculate a route and report back. |
-| **Command** | The parent looks up a specific child in its `interpreter._actors` registry and sends it a command event like **`PAUSE`**. | A `mediaPlayer` machine tells its spawned `volumeControl` actor to mute. |
-| **Broadcast** | The parent iterates over **all** `interpreter._actors.values()` and sends the same event to every child. | A `collaborativeEditor` machine tells all cursor actors to change color. |
-| **Escalation** | A child actor hits an error and bubbles it up by calling `i.parent.send("CHILD_FAILED", ...)`. | A low-level network actor fails, telling the app to show a global “Offline” banner. |
+| Pattern           | How It Works                                                                                                              | Use Case                                                                            |
+| :---------------- | :------------------------------------------------------------------------------------------------------------------------ | :---------------------------------------------------------------------------------- |
+| **Request/Reply** | A child actor performs a task and sends a **`RESULT`** or **`FAILURE`** event back to its parent when it completes.       | `warehouseRobot` spawns a `pathfinder` actor to calculate a route and report back.  |
+| **Command**       | The parent looks up a specific child in its `interpreter._actors` registry and sends it a command event like **`PAUSE`**. | A `mediaPlayer` machine tells its spawned `volumeControl` actor to mute.            |
+| **Broadcast**     | The parent iterates over **all** `interpreter._actors.values()` and sends the same event to every child.                  | A `collaborativeEditor` machine tells all cursor actors to change color.            |
+| **Escalation**    | A child actor hits an error and bubbles it up by calling `i.parent.send("CHILD_FAILED", ...)`.                            | A low-level network actor fails, telling the app to show a global “Offline” banner. |
 
 ### ▶️ Event Flow of an Actor Interaction <a name="actor-event-flow"></a>
 
@@ -1226,7 +1218,7 @@ Let's trace the `warehouseRobot` example to see how the parent and child communi
 2.  **Parent**'s `entry` action (`spawn_pathfinder_actor`) is executed. An `Interpreter` for the `pathfinder` machine is created and started. This is the **Child Actor**.
 3.  **Child (`pathfinder`)** immediately enters its `calculating` state.
 4.  **Child** `invoke`s its `calculate_path_service`.
-5.  *(...time passes...)*
+5.  _(...time passes...)_
 6.  **Child**'s service finishes successfully, triggering its `onDone` transition.
 7.  **Child**'s `onDone` action (`send_path_to_parent`) is executed. Inside this action, it calls `i.parent.send("PATH_CALCULATED", ...)`.
 8.  **Parent**'s event loop receives the `PATH_CALCULATED` event.
@@ -1239,12 +1231,12 @@ This clear, decoupled communication is what makes the Actor Model so powerful fo
 
 ### Dynamic Pools & Supervision Strategies (Sync & Async)
 
-You can spin up and tear down *many* child interpreters at runtime (worker pools, per-user sessions, etc.) **and** supervise them with a single, consistent pattern.
+You can spin up and tear down _many_ child interpreters at runtime (worker pools, per-user sessions, etc.) **and** supervise them with a single, consistent pattern.
 
 #### Spawning Workers Dynamically
 
-| Goal | Async `Interpreter` | Sync `SyncInterpreter` |
-|------|----------------------|------------------------|
+| Goal                             | Async `Interpreter`                                              | Sync `SyncInterpreter`                                                                                                            |
+| -------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | Create a child machine on demand | Use an async-friendly action; child runs in its own asyncio task | Use a normal action; child runs in a background `threading.Thread` (parent `.send()` still blocks until the current loop settles) |
 
 ```python
@@ -1274,10 +1266,10 @@ def spawn_worker(i: SyncInterpreter, ctx, e, a):
 
 If a child crashes or its invoked service fails, have **the child report up** and the parent decide what to do.
 
-| Step | Child does… | Parent handles… |
-|------|--------------|------------------|
-| 1 | Add an `onError` on the critical invoke (or catch exceptions in actions) | Provide a global/state `on: { "CHILD_FAILED": … }` handler |
-| 2 | In the error action, send a custom event to `i.parent` | Log, restart (`spawn_*` again), or escalate |
+| Step | Child does…                                                              | Parent handles…                                            |
+| ---- | ------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| 1    | Add an `onError` on the critical invoke (or catch exceptions in actions) | Provide a global/state `on: { "CHILD_FAILED": … }` handler |
+| 2    | In the error action, send a custom event to `i.parent`                   | Log, restart (`spawn_*` again), or escalate                |
 
 **Child error action (async vs sync):**
 
@@ -1300,6 +1292,7 @@ def report_failure_to_parent(i: SyncInterpreter, ctx, e, a):
 ```
 
 **Parent handler (same JSON for both):**
+
 ```jsonc
 "running_children": {
   "entry": "spawn_worker",
@@ -1312,10 +1305,9 @@ def report_failure_to_parent(i: SyncInterpreter, ctx, e, a):
 }
 ```
 
-> *Tip:* If you don’t want automatic restart, drop the `target` and just log/alert.
+> _Tip:_ If you don’t want automatic restart, drop the `target` and just log/alert.
 
 ---
-
 
 **Debugging Actors**
 
@@ -1324,8 +1316,6 @@ The built-in `LoggingInspector` automatically prefixes logs with the unique `act
 `parent_interpreter.get_snapshot()` recursively includes the snapshots of all its child actors, giving you a complete picture of the entire system state.
 
 You can test a child actor in complete isolation by creating an interpreter for it directly in your test suite, simulating parent messages by calling `.send()`.
-
-
 
 ---
 
@@ -1513,22 +1503,21 @@ machine_two = create_machine(payment_config)
 
 Your library supports two primary ways of organizing your logic: **functional** (standalone functions in modules) and **class-based** (methods on a class instance). Both work with either explicit binding or auto-discovery. Here’s how to choose:
 
-| Logic Style | Best For | Pros | Cons |
-| :--- | :--- | :--- | :--- |
-| **Functional** | Simpler machines, stateless logic, or promoting a pure-function style. | - Easy to test individual functions. <br> - Encourages stateless, predictable logic. | - Can become disorganized if many unrelated functions are in one file. <br> - Sharing state requires passing it through the `context`. |
-| **Class-Based** | Complex machines with related logic, or when logic needs its own internal state. | - Excellent organization; groups related logic together (`FileUploaderLogic`). <br> - Can manage its own state via `self` in addition to the machine's `context`. | - Slightly more boilerplate (class definition, `__init__`). <br> - Can be overkill for very simple machines. |
+| Logic Style     | Best For                                                                         | Pros                                                                                                                                                              | Cons                                                                                                                                   |
+| :-------------- | :------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------- |
+| **Functional**  | Simpler machines, stateless logic, or promoting a pure-function style.           | - Easy to test individual functions. <br> - Encourages stateless, predictable logic.                                                                              | - Can become disorganized if many unrelated functions are in one file. <br> - Sharing state requires passing it through the `context`. |
+| **Class-Based** | Complex machines with related logic, or when logic needs its own internal state. | - Excellent organization; groups related logic together (`FileUploaderLogic`). <br> - Can manage its own state via `self` in addition to the machine's `context`. | - Slightly more boilerplate (class definition, `__init__`). <br> - Can be overkill for very simple machines.                           |
 
 ---
 
 ## 🔁 Sync vs Async — Under the Hood<a name="synchronous-vs-asynchronous-execution"></a>
 
-| Concern | `Interpreter` (asyncio) | `SyncInterpreter` (blocking) |
-| :--- | :--- | :--- |
-| **Event Loop** | Runs in a background `asyncio.Task` | A `while` loop inside the `.send()` method |
-| **`after` Timers**| Non-blocking (`asyncio.create_task`) | Non-blocking (`threading.Thread`) |
-| **`invoke` Services**| Non-blocking (`asyncio.create_task`) | Blocking (runs inline) |
-| **`spawn` Actors**| Non-blocking (`asyncio.create_task`) | Non-blocking (`threading.Thread`) or Blocking (inline) |
-
+| Concern               | `Interpreter` (asyncio)              | `SyncInterpreter` (blocking)                           |
+| :-------------------- | :----------------------------------- | :----------------------------------------------------- |
+| **Event Loop**        | Runs in a background `asyncio.Task`  | A `while` loop inside the `.send()` method             |
+| **`after` Timers**    | Non-blocking (`asyncio.create_task`) | Non-blocking (`threading.Thread`)                      |
+| **`invoke` Services** | Non-blocking (`asyncio.create_task`) | Blocking (runs inline)                                 |
+| **`spawn` Actors**    | Non-blocking (`asyncio.create_task`) | Non-blocking (`threading.Thread`) or Blocking (inline) |
 
 #### 🚀 What’s New in 0.4.1 for the SyncInterpreter
 
@@ -1540,19 +1529,18 @@ Your library supports two primary ways of organizing your logic: **functional** 
 
 **Rule of Thumb:**
 
-*Desktop / CLI* → **SyncInterpreter**
+_Desktop / CLI_ → **SyncInterpreter**
 
-> **SyncInterpreter is still “blocking” where it matters:**
-> `send()` (and `start()/stop()`) run the full transition loop synchronously and only return when all exit/entry actions, guards, transient (`""`) transitions and internal events have fully settled. The **only** things that run out‑of‑band are `after` timers and spawned child interpreters (each in its own thread). So when this README says “non‑blocking” for SyncInterpreter, it only refers to those background helpers—not to the main event-processing call.
+> **SyncInterpreter is still “blocking” where it matters:** > `send()` (and `start()/stop()`) run the full transition loop synchronously and only return when all exit/entry actions, guards, transient (`""`) transitions and internal events have fully settled. The **only** things that run out‑of‑band are `after` timers and spawned child interpreters (each in its own thread). So when this README says “non‑blocking” for SyncInterpreter, it only refers to those background helpers—not to the main event-processing call.
 
-*Web / IoT / pipelines* → **Interpreter**
+_Web / IoT / pipelines_ → **Interpreter**
 
-#### ⚠️ Features *not* Supported by `SyncInterpreter`
+#### ⚠️ Features _not_ Supported by `SyncInterpreter`
 
 While the synchronous engine is highly capable, it enforces one hard constraint to guarantee predictable, blocking behavior. Any violation raises `NotSupportedError` instantly:
 
-| Attempted Feature | Exception Raised | Guarding Method |
-| :--- | :--- | :--- |
+| Attempted Feature                                                         | Exception Raised    | Guarding Method                                                        |
+| :------------------------------------------------------------------------ | :------------------ | :--------------------------------------------------------------------- |
 | **Async callables** in actions **or** services (coroutines / `async def`) | `NotSupportedError` | `SyncInterpreter._execute_actions` & `SyncInterpreter._invoke_service` |
 
 > 🧘 **Why so strict?**
@@ -1566,8 +1554,8 @@ While the synchronous engine is highly capable, it enforces one hard constraint 
 
 ### Threads & Processes
 
-* Use `loop.call_soon_threadsafe()` for cross‑thread `.send()` to an `Interpreter`.
-* For cross‑process, bridge with a message queue and `.send()` from the process.
+- Use `loop.call_soon_threadsafe()` for cross‑thread `.send()` to an `Interpreter`.
+- For cross‑process, bridge with a message queue and `.send()` from the process.
 
 ### 📡 Cross‑thread `.send()` with `SyncInterpreter`
 
@@ -1595,7 +1583,7 @@ def do_work():
 
 **Alternatives**
 
-- Wrap `svc.send(...)` with a `threading.Lock` if *very* occasional cross‑thread calls are fine and you can guarantee no re‑entrancy.
+- Wrap `svc.send(...)` with a `threading.Lock` if _very_ occasional cross‑thread calls are fine and you can guarantee no re‑entrancy.
 - Expose a small `send_threadsafe()` helper that just enqueues into the owner’s inbox.
 
 > There is no built‑in `call_soon_threadsafe` equivalent for the sync engine—use a queue or redesign so only one thread owns the interpreter.
@@ -1613,7 +1601,7 @@ def do_work():
 - **Zero boilerplate:** generate action/guard/service stubs and a runnable interpreter in seconds.
 - **Enforce conventions:** consistent file names, logger setup, async/sync signatures.
 - **Speed up iteration:** tweak JSON, regen, run—repeat.
-- **Promote EDA by default:** generated runners log *events*, not function calls; you see flows, not stacks.
+- **Promote EDA by default:** generated runners log _events_, not function calls; you see flows, not stacks.
 
 #### 🏃 Typical workflow
 
@@ -1660,10 +1648,11 @@ Skip `xsm` when you…
 The CLI went through a sizeable upgrade in **0.4.1**:
 
 - The main entry-point is now **`xsm`** (short & sweet).
-> **Note:** The legacy console entry point `xstate-statemachine` is **deprecated** and may be removed in a future release. New installs expose only `xsm`. If you still call the old name, pin to an older version or add a shell alias.
+
+  > **Note:** The legacy console entry point `xstate-statemachine` is **deprecated** and may be removed in a future release. New installs expose only `xsm`. If you still call the old name, pin to an older version or add a shell alias.
 
 - **Aliases everywhere**: quicker typing with `gt`, `-jp`, `-jc`, `-fc`, etc.
-- **Hierarchy helper**: pass a parent + children, or let the CLI *guess* and confirm interactively.
+- **Hierarchy helper**: pass a parent + children, or let the CLI _guess_ and confirm interactively.
 - **Safer defaults**: `allow_abbrev=False`, clearer error messages, overwrite prompts, reserved‑keyword fixes, robust path resolution in runners.
 
 ### Basic Usage
@@ -1680,17 +1669,17 @@ xsm gt path/to/machine.json
 
 ### 🔤 Aliases & Short Flags<a name="cli-aliases"></a>
 
-| Long | Short | Description |
-|------|:-----:|-------------|
-| `generate-template` | `gt` | Main code-gen subcommand |
-| `--json-parent` | `-jp` | Parent machine JSON path |
-| `--json-child`  | `-jc` | Child/actor JSON path (repeatable) |
-| `--file-count`  | `-fc` | 1 = single file, 2 = logic + runner |
-| `--async-mode`  | `-am` | yes / no |
-| `--loader`      | `-l`  | yes / no |
-| `--style`       | `-s`  | class / function |
-| `--output`      | `-o`  | Output directory |
-| `--force`       | `-f`  | Overwrite without prompt |
+| Long                | Short | Description                         |
+| ------------------- | :---: | ----------------------------------- |
+| `generate-template` | `gt`  | Main code-gen subcommand            |
+| `--json-parent`     | `-jp` | Parent machine JSON path            |
+| `--json-child`      | `-jc` | Child/actor JSON path (repeatable)  |
+| `--file-count`      | `-fc` | 1 = single file, 2 = logic + runner |
+| `--async-mode`      | `-am` | yes / no                            |
+| `--loader`          | `-l`  | yes / no                            |
+| `--style`           | `-s`  | class / function                    |
+| `--output`          | `-o`  | Output directory                    |
+| `--force`           | `-f`  | Overwrite without prompt            |
 
 Boolean flags accept: `yes/no`, `true/false`, `1/0` (case-insensitive).
 
@@ -1725,6 +1714,7 @@ If you answer “n”, you’ll get a prompt to pick the parent by number.
 
 - `-fc 2` (**default**):
   Generates:
+
   - `*_logic.py` with all stubbed actions/guards/services.
   - `*_runner.py` with a ready-to-run interpreter and simulation loop.
 
@@ -1798,9 +1788,7 @@ Because the generated code is deterministic, you can:
 - Assert file existence and contents (headers, logger lines, imports).
 - Run `pytest` on your generated package right away—nothing is “magic”.
 
-
 That’s the CLI in 0.4.1—faster, stricter, and hierarchy-aware. 🚀
-
 
 ---
 
@@ -1845,15 +1833,13 @@ logger.info("✅ Logging initialised!")
 
 > Since v0.4.1, the generator emits stricter, standardized `logger.info(...)` messages (wording fixed, emojis intact); if you grep/assert on logs, update expectations — core logging behavior is unchanged.
 
+| What                            | Where                                           | Why                                                                               |
+| ------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------- |
+| **Package logger**              | `logging.getLogger("xstate_statemachine")`      | Hierarchical—sub‑modules inherit handlers & level.                                |
+| **`NullHandler` pre‑installed** | Added in the library to be polite               | Prevents accidental stderr noise in apps that forget `basicConfig()`.             |
+| **Helper `logger` constant**    | `from xstate_statemachine.logger import logger` | Quick access for _your_ actions / guards without calling `getLogger()` each time. |
 
-
-| What | Where | Why |
-|------|-------|-----|
-| **Package logger** | `logging.getLogger("xstate_statemachine")` | Hierarchical—sub‑modules inherit handlers & level. |
-| **`NullHandler` pre‑installed** | Added in the library to be polite | Prevents accidental stderr noise in apps that forget `basicConfig()`. |
-| **Helper `logger` constant** | `from xstate_statemachine.logger import logger` | Quick access for *your* actions / guards without calling `getLogger()` each time. |
-
-> 💡 **Tip:**  Add multiple handlers (file, JSON, OTEL, …) in your own
+> 💡 **Tip:** Add multiple handlers (file, JSON, OTEL, …) in your own
 > `basicConfig` or custom setup—the library will respect them automatically.
 
 ### 1. LoggingInspector Plugin 🕵️‍♀️
@@ -1880,6 +1866,7 @@ await service.start()
 2025-07-10 16:02:16 | 🕵️ STATE  loading  ➡  success  (on done.invoke.fetchData)
 2025-07-10 16:02:16 | ⚙️  Action: cacheData
 ```
+
 </details>
 
 #### 🔧 Customising the log stream
@@ -1901,21 +1888,21 @@ Attach multiple inspectors—analytics, tracing, etc.—each focusing on a singl
 ### 2. Writing Your Own Plugin 🔌
 
 All plugins inherit from **`PluginBase`** and can tap into the interpreter’s lifecycle.
-Below are the **stable hooks available today** (everything else is  considered experimental or on the roadmap).
+Below are the **stable hooks available today** (everything else is considered experimental or on the roadmap).
 
-##### 🧩 Plugin Hook Matrix — *copy‑paste ready* 📝
+##### 🧩 Plugin Hook Matrix — _copy‑paste ready_ 📝
 
-| 🔗 Hook | Python Signature | 📅 When it Fires | 💡 Typical Use |
-|---------|-----------------|------------------|----------------|
-| 🏁 **`on_interpreter_start`** | `on_interpreter_start(self, interpreter)` | Right after `interpreter.start()` begins | Initialise DB connections, timers, metrics |
-| 🛑 **`on_interpreter_stop`** | `on_interpreter_stop(self, interpreter)` | As soon as `interpreter.stop()` is invoked | Flush buffers, close sockets |
-| ✉️ **`on_event_received`** | `on_event_received(self, interpreter, event)` | Every time an event is dequeued for processing | Audit trails, event‑level analytics |
-| 🔀 **`on_transition`** | `on_transition(self, interpreter, from_states, to_states, transition)` | After states are exited → actions run → new states entered | Tracing, Prometheus counters, BI pipelines |
-| ⚙️ **`on_action_execute`** | `on_action_execute(self, interpreter, action)` | Immediately before an individual action implementation runs | Profiling, APM spans, debugging prints |
-| 🛡️ **`on_guard_evaluated`** | `on_guard_evaluated(self, interpreter, guard_name, event, result)` | After a guard function's condition is evaluated | Debugging guard logic, conditional analytics |
-| 📞 **`on_service_start`** | `on_service_start(self, interpreter, invocation)` | Just before an invoked service begins execution | Logging service calls, tracing external interactions |
-| ✅ **`on_service_done`** | `on_service_done(self, interpreter, invocation, result)` | When an invoked service returns successfully | Logging successful outcomes, result processing |
-| 💥 **`on_service_error`** | `on_service_error(self, interpreter, invocation, error)` | When an invoked service raises an exception | Error reporting, failure handling, alerting |
+| 🔗 Hook                       | Python Signature                                                       | 📅 When it Fires                                            | 💡 Typical Use                                       |
+| ----------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------- |
+| 🏁 **`on_interpreter_start`** | `on_interpreter_start(self, interpreter)`                              | Right after `interpreter.start()` begins                    | Initialise DB connections, timers, metrics           |
+| 🛑 **`on_interpreter_stop`**  | `on_interpreter_stop(self, interpreter)`                               | As soon as `interpreter.stop()` is invoked                  | Flush buffers, close sockets                         |
+| ✉️ **`on_event_received`**    | `on_event_received(self, interpreter, event)`                          | Every time an event is dequeued for processing              | Audit trails, event‑level analytics                  |
+| 🔀 **`on_transition`**        | `on_transition(self, interpreter, from_states, to_states, transition)` | After states are exited → actions run → new states entered  | Tracing, Prometheus counters, BI pipelines           |
+| ⚙️ **`on_action_execute`**    | `on_action_execute(self, interpreter, action)`                         | Immediately before an individual action implementation runs | Profiling, APM spans, debugging prints               |
+| 🛡️ **`on_guard_evaluated`**   | `on_guard_evaluated(self, interpreter, guard_name, event, result)`     | After a guard function's condition is evaluated             | Debugging guard logic, conditional analytics         |
+| 📞 **`on_service_start`**     | `on_service_start(self, interpreter, invocation)`                      | Just before an invoked service begins execution             | Logging service calls, tracing external interactions |
+| ✅ **`on_service_done`**      | `on_service_done(self, interpreter, invocation, result)`               | When an invoked service returns successfully                | Logging successful outcomes, result processing       |
+| 💥 **`on_service_error`**     | `on_service_error(self, interpreter, invocation, error)`               | When an invoked service raises an exception                 | Error reporting, failure handling, alerting          |
 
 > 🛠️ **Tip:** Implement only the hooks you need; methods left un‑overridden
 > incur **zero** overhead thanks to Python’s dynamic dispatch. 🚀
@@ -1948,15 +1935,15 @@ snap = interpreter.get_snapshot()    # JSON str
 restored = await Interpreter.from_snapshot(snap, machine).start()
 ```
 
-#### 🔄 Restoring from a Snapshot — Mind the *MachineNode* 📂
+#### 🔄 Restoring from a Snapshot — Mind the _MachineNode_ 📂
 
-A snapshot captures **only** *dynamic* runtime data:
+A snapshot captures **only** _dynamic_ runtime data:
 
 1. `status` (`running` / `stopped`)
 2. `context` dict
-3. *IDs* of active states
+3. _IDs_ of active states
 
-It does **not** store the *static* state‑chart structure itself.
+It does **not** store the _static_ state‑chart structure itself.
 Therefore **`Interpreter.from_snapshot()` needs the original `MachineNode`**—
 the same object returned by `create_machine(...)`—to rebuild the interpreter.
 
@@ -1971,6 +1958,7 @@ await service.stop()
 # later / after restart
 restored  = await Interpreter.from_snapshot(snap, machine).start()
 ```
+
 > **Note (async only):** `from_snapshot(...)` exists on `Interpreter` right now.
 > `SyncInterpreter` doesn’t have a restore helper yet—use `create_machine(...)`, then manually set `context` and drive events to reach the desired states, or switch to the async interpreter for snapshot restore flows.
 
@@ -1985,16 +1973,16 @@ machine2 = create_machine(cfg)   # ⚠️ distinct in memory
 await Interpreter.from_snapshot(snap, machine2)  # ❌ Raises StateNotFoundError
 ```
 
-> 🧩 **Tip:**  Keep the original `MachineNode` in a module‑level variable, or
+> 🧩 **Tip:** Keep the original `MachineNode` in a module‑level variable, or
 > persistently cache it, so restoration is trivial.
-> Creating a *byte‑for‑byte* identical `MachineNode` works too, but re‑running
+> Creating a _byte‑for‑byte_ identical `MachineNode` works too, but re‑running
 > `create_machine()` must use the **exact same JSON + logic** to avoid ID drift.
 
 Use-cases:
 
-* **Resilient workers**—crash-safe resume after process restarts
-* **Time-travel debugging**—save before risky ops, restore in REPL
-* **CI golden tests**—diff snapshots to detect un-intended behavioural drift
+- **Resilient workers**—crash-safe resume after process restarts
+- **Time-travel debugging**—save before risky ops, restore in REPL
+- **CI golden tests**—diff snapshots to detect un-intended behavioural drift
 
 ---
 
@@ -2002,11 +1990,11 @@ Use-cases:
 
 Keep docs evergreen by baking diagram generation into CI.
 
-```python
+````python
 mermaid = machine.to_mermaid()
 with open("docs/statechart.mmd", "w") as f:
     f.write("```mermaid\n" + mermaid + "\n```")
-```
+````
 
 Or, for architects living in PlantUML:
 
@@ -2019,7 +2007,7 @@ Integrate with **mkdocs-material**, GitHub Pages, Confluence—anything that ren
 
 ### 📤 Programmatic Exports: `machine.to_dict()` & `machine.to_json()`
 
-Besides Mermaid/PlantUML, you can export the *static* machine definition directly:
+Besides Mermaid/PlantUML, you can export the _static_ machine definition directly:
 
 ```python
 cfg_dict  = machine.to_dict()   # → plain Python dict (JSON‑serialisable)
@@ -2035,7 +2023,6 @@ Runtime data (context values, active states, timers). For that, use `interpreter
 
 > Tip: `to_dict()` is ideal for diffing machines in tests or piping into other tooling; `to_json()` is handy for bundling with front‑end visualisers.
 
-
 ### 5. REPL Live‑Tinkering 💻
 
 > **Why bother?**
@@ -2045,11 +2032,11 @@ Runtime data (context values, active states, timers). For that, use `interpreter
 
 #### 5.1  Pick a REPL with top‑level `await`
 
-| REPL | Setup | Remarks |
-|------|-------|---------|
-| **IPython ≥ 8.0** | `pip install ipython`<br>`ipython --autoawait asyncio` | Rich tracebacks & tab‑completion |
-| **ptpython** | `pip install ptpython` | Built‑in asyncio, syntax highlighting |
-| **Vanilla Python 3.12+** | `python -m asyncio` | Stock interpreter now supports top‑level `await` 🎉 |
+| REPL                     | Setup                                                  | Remarks                                             |
+| ------------------------ | ------------------------------------------------------ | --------------------------------------------------- |
+| **IPython ≥ 8.0**        | `pip install ipython`<br>`ipython --autoawait asyncio` | Rich tracebacks & tab‑completion                    |
+| **ptpython**             | `pip install ptpython`                                 | Built‑in asyncio, syntax highlighting               |
+| **Vanilla Python 3.12+** | `python -m asyncio`                                    | Stock interpreter now supports top‑level `await` 🎉 |
 
 #### 5.2  Bootstrap an interpreter session
 
@@ -2088,13 +2075,12 @@ In [4]: service.context
 Out[4]: {'flips': 1}
 ```
 
-*Tip — alias event sending to shorten typing:*
+_Tip — alias event sending to shorten typing:_
 
 ```pycon
 In [5]: %alias send await service.send
 In [6]: send TOGGLE
 ```
-
 
 #### 5.4  Hot‑reload without leaving the REPL
 
@@ -2121,11 +2107,11 @@ In [13]: service = await Interpreter.from_snapshot(snap, machine).start()
 
 #### 5.6  Deep‑dive tricks
 
-| Trick | Command |
-|-------|---------|
-| Inspect queued events | `service._event_queue.qsize()` |
-| Peek next transition | `machine.get_next_state("lightSwitch.on", {"type": "TOGGLE"})` |
-| Pause timers in tests | `await service.stop(); asyncio.get_running_loop().set_debug(False)` |
+| Trick                         | Command                                                               |
+| ----------------------------- | --------------------------------------------------------------------- |
+| Inspect queued events         | `service._event_queue.qsize()`                                        |
+| Peek next transition          | `machine.get_next_state("lightSwitch.on", {"type": "TOGGLE"})`        |
+| Pause timers in tests         | `await service.stop(); asyncio.get_running_loop().set_debug(False)`   |
 | Spawn a child REPL for actors | `child = next(iter(service._actors.values())); await child.send(...)` |
 
 🚀 **You now have an always‑on laboratory for your state machines—no rebuilds, no deployment cycles, just pure interactive discovery. Happy tinkering!**
@@ -2135,15 +2121,18 @@ In [13]: service = await Interpreter.from_snapshot(snap, machine).start()
 **No breaking API removals**, but a few behaviour tweaks to be aware of:
 
 ### SyncInterpreter
+
 - **Actor spawning no longer blocks** the parent. If you expected strict in-order execution, add explicit joins or guards.
 - **Multiple `after` timers per state** can now fire; ensure your guards/actions handle overlapping timers if you add many.
 
 ### CLI
+
 - **Command renamed** to `xsm`. The legacy `xstate-statemachine` console entry point is deprecated and may disappear in a future release—migrate scripts to `xsm`.
 - **Interactive hierarchy guesser**: If you pass multiple JSONs without `--json-parent`, you’ll see a prompt. Use `-f` to skip overwrites, not prompts.
 - **Strict arg parsing**: Abbreviated flags no longer work; typo’d flags now error (good!).
 
 ### Generated Code
+
 - **Keyword auto-fix**: If an action/guard/service name is a Python keyword, it’s renamed (e.g., `class` → `class_`). Search for `# alias for JSON name` comments.
 - **Runner path resolution**: Scripts now try two locations for the JSON. If you were relying on `Path.cwd()`, adjust accordingly.
 
@@ -2162,6 +2151,7 @@ Below is the complete, in-depth guide to the library's public API. This section 
 This is the primary, user-facing entry point for creating a state machine instance. Its job is to take your declarative JSON `config` and your Python business `logic` and weave them together into a single, executable `MachineNode` object.
 
 **Signature:**
+
 ```python
 create_machine(
     config: Dict[str, Any],
@@ -2173,8 +2163,10 @@ create_machine(
 ```
 
 **Parameters In-Depth**
+
 - **config: `Dict[str, Any]` | Required**
   The Python dictionary parsed from your state machine's JSON definition. Example:
+
   ```python
   import json
 
@@ -2183,8 +2175,10 @@ create_machine(
 
   machine = create_machine(machine_config, ...)
   ```
+
 - **logic: `Optional[MachineLogic]` | Explicit Binding**
   Explicitly map every action, guard, and service name to Python functions:
+
   ```python
   from my_logic_file import my_action_func, my_guard_func
 
@@ -2195,15 +2189,19 @@ create_machine(
 
   machine = create_machine(config, logic=explicit_logic)
   ```
+
 - **logic_modules: `Optional[List[Union[str, ModuleType]]]` | Functional Auto-Discovery**
   Auto-discover standalone functions in modules:
+
   ```python
   import my_app.logic.user_actions
 
   machine = create_machine(config, logic_modules=[my_app.logic.user_actions])
   ```
+
 - **logic_providers: `Optional[List[Any]]` | Class-Based Auto-Discovery**
   Auto-discover methods in class instances:
+
   ```python
   from my_logic_file import BusinessLogicHandler
 
@@ -2219,25 +2217,24 @@ These are the engines that run your machine. They take a `MachineNode` (created 
 
 #### Properties
 
-| Property             | Type       | Description                                                                                   |
-|----------------------|------------|-----------------------------------------------------------------------------------------------|
-| `.current_state_ids` | `Set[str]` | All currently active state IDs. Useful for parallel states.                                   |
-| `.context`           | `Dict`     | The live, mutable context (memory) of the running machine instance.                           |
-| `.status`            | `str`      | Lifecycle status: `"uninitialized"`, `"running"`, or `"stopped"`.                              |
+| Property             | Type       | Description                                                         |
+| -------------------- | ---------- | ------------------------------------------------------------------- |
+| `.current_state_ids` | `Set[str]` | All currently active state IDs. Useful for parallel states.         |
+| `.context`           | `Dict`     | The live, mutable context (memory) of the running machine instance. |
+| `.status`            | `str`      | Lifecycle status: `"uninitialized"`, `"running"`, or `"stopped"`.   |
 
 #### Methods
 
-| Method | Returns | Description |
-|---|---|---|
-| `.start()` | `self` | Starts the interpreter, enters the initial state, and runs entry actions. **Must be `await`ed for `Interpreter`**. |
-| `.stop()` | `None` | Stops the interpreter. For `Interpreter`, it cancels all running tasks. **Must be `await`ed for `Interpreter`**. |
-| `.send(event, **payload)` | `None` | Sends an event to the machine. For `Interpreter`, this is an `async` operation. |
-| `.use(plugin)` | `self` | Registers a plugin. Must be called before `.start()`. |
-| `.get_snapshot()` | `str` | Returns a JSON string of the current status, context, and active `state_ids`. |
-| `.from_snapshot(snap, machine)` | `Interpreter` | *(Class Method)* Restores an interpreter from a saved snapshot. |
+| Method                          | Returns       | Description                                                                                                        |
+| ------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `.start()`                      | `self`        | Starts the interpreter, enters the initial state, and runs entry actions. **Must be `await`ed for `Interpreter`**. |
+| `.stop()`                       | `None`        | Stops the interpreter. For `Interpreter`, it cancels all running tasks. **Must be `await`ed for `Interpreter`**.   |
+| `.send(event, **payload)`       | `None`        | Sends an event to the machine. For `Interpreter`, this is an `async` operation.                                    |
+| `.use(plugin)`                  | `self`        | Registers a plugin. Must be called before `.start()`.                                                              |
+| `.get_snapshot()`               | `str`         | Returns a JSON string of the current status, context, and active `state_ids`.                                      |
+| `.from_snapshot(snap, machine)` | `Interpreter` | _(Class Method)_ Restores an interpreter from a saved snapshot.                                                    |
 
 <sub>† `from_snapshot` is available on `Interpreter` only (async). The sync engine currently has no equivalent helper.</sub>
-
 
 ##### Usage Examples
 
@@ -2267,17 +2264,16 @@ restored_interp = Interpreter.from_snapshot(saved_state, machine)
 
 ### 3. Core Logic & Model Classes
 
-
 ### 🔍 Handy `MachineNode` Helper Methods
 
 When writing **white‑box tests**, REPL experiments, or CLI tools you often need
-to poke the state tree *without* spinning up a full interpreter.
+to poke the state tree _without_ spinning up a full interpreter.
 Two small but mighty helpers live right on the `MachineNode`:
 
-| Method | Returns | What it does                                                                                                                                | Typical Use‑Case |
-|--------|---------|---------------------------------------------------------------------------------------------------------------------------------------------|------------------|
-| `machine.get_state_by_id(state_id)` | `StateNode \| None` | Deep‑searches the tree for an exact, fully‑qualified state ID.                                                                              | Assert a specific node exists, fetch its metadata in tests |
-| `machine.get_next_state(from_state_id, event)` | `Set[str] \| None` | **Pure** function that calculates *where the machine would go* from a given leaf state if `event` were sent.  **Note: Guards are ignored**. | Fast unit tests for transition maps, generating coverage matrices |
+| Method                                         | Returns             | What it does                                                                                                                               | Typical Use‑Case                                                  |
+| ---------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| `machine.get_state_by_id(state_id)`            | `StateNode \| None` | Deep‑searches the tree for an exact, fully‑qualified state ID.                                                                             | Assert a specific node exists, fetch its metadata in tests        |
+| `machine.get_next_state(from_state_id, event)` | `Set[str] \| None`  | **Pure** function that calculates _where the machine would go_ from a given leaf state if `event` were sent. **Note: Guards are ignored**. | Fast unit tests for transition maps, generating coverage matrices |
 
 ```python
 from xstate_statemachine import create_machine, Event
@@ -2306,24 +2302,24 @@ print(f"From 'green', a 'TIMER' event would transition to: {next_states}")
 ```
 
 > 💡 **Tip:** Because `get_next_state` is side‑effect‑free, you can call it in
-> tight loops to generate *all* reachable paths for property‑based testing.
+> tight loops to generate _all_ reachable paths for property‑based testing.
 > Pair it with Hypothesis or `pytest‑cases` for powerful graph validation! 🧪✨
 
-| Class             | Description                                                                                                  |
-|-------------------|--------------------------------------------------------------------------------------------------------------|
-| `MachineNode`    | The parsed, in-memory representation of your entire state machine graph. Returned by `create_machine`, it's the central object passed to interpreters and used for static analysis                                               |
-| `MachineLogic`    | Container for explicit action, guard, and service bindings.                                                  |
-| `Event`           | `NamedTuple(type, payload)` for events sent to the machine.                                                  |
-| `ActionDefinition`| Represents a configured action from JSON, including `.params` for static data.                               |
+| Class              | Description                                                                                                                                                                        |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MachineNode`      | The parsed, in-memory representation of your entire state machine graph. Returned by `create_machine`, it's the central object passed to interpreters and used for static analysis |
+| `MachineLogic`     | Container for explicit action, guard, and service bindings.                                                                                                                        |
+| `Event`            | `NamedTuple(type, payload)` for events sent to the machine.                                                                                                                        |
+| `ActionDefinition` | Represents a configured action from JSON, including `.params` for static data.                                                                                                     |
 
 ---
 
 ### 4. Extensibility & Debugging
 
-| Class             | Description                                                                                                                |
-|-------------------|----------------------------------------------------------------------------------------------------------------------------|
-| `PluginBase`      | Abstract base for custom plugins (override `on_*` methods).                                                               |
-| `LoggingInspector`| Built-in plugin for detailed console output of state transitions, actions, and events.                                     |
+| Class              | Description                                                                            |
+| ------------------ | -------------------------------------------------------------------------------------- |
+| `PluginBase`       | Abstract base for custom plugins (override `on_*` methods).                            |
+| `LoggingInspector` | Built-in plugin for detailed console output of state transitions, actions, and events. |
 
 ---
 
@@ -2350,16 +2346,15 @@ Use them in `pytest.raises()` to assert mis-configurations early.
 
 ---
 
-
 ## 🧬 Advanced Concepts<a name="advanced-concepts"></a>
 
 ### 1. Supervision Trees 🌲 (Actor Failure Handling)
 
-* Children may _crash_ (uncaught exception in action/service).
-* Parent decides policy:
-  * **`onError` transition** → recover / restart actor.
-  * **Escalate** — re-raise and crash upstream (default).
-  * **Silent** — ignore by having no handler (_not recommended_).
+- Children may _crash_ (uncaught exception in action/service).
+- Parent decides policy:
+  - **`onError` transition** → recover / restart actor.
+  - **Escalate** — re-raise and crash upstream (default).
+  - **Silent** — ignore by having no handler (_not recommended_).
 
 ### 2. Dynamic Spawn (PoC Micro-services)
 
@@ -2375,20 +2370,20 @@ async def spawn_tenant_actor(i, ctx, e, a):
 
 ### 3. Hot Reload in Development ♻️
 
-* Detect file change via `watchdog`.
-* `.stop()` the old interpreter.
-* Re-`create_machine()` with new JSON.
-* `.start(snapshot)` to keep context.
+- Detect file change via `watchdog`.
+- `.stop()` the old interpreter.
+- Re-`create_machine()` with new JSON.
+- `.start(snapshot)` to keep context.
 
 Enjoy **live editing** of statecharts without losing session data.
 
 ### 4. Performance Tuning
 
-| Technique | When to use | Effect |
-| :--- | :--- | :--- |
-| **Disable event‑loop debug mode** `asyncio.get_running_loop().set_debug(False)` | After you’ve ironed out the bugs and want maximum throughput in production | Removes costly asyncio debug assertions (≈ 5‑10 % speed‑up in micro‑benchmarks) |
-| **Prefer `SyncInterpreter` for synchronous workflows** | CLI tools, deterministic unit tests, or CPU-bound pipelines where `asyncio` is not needed. | Zero coroutine overhead, significantly faster per event in tight loops. |
-| **Bulk‑fire events API** *(planned)* | High‑volume telemetry or log ingestion | Will let you enqueue a list of events in one syscall, minimising context‑switches |
+| Technique                                                                       | When to use                                                                                | Effect                                                                            |
+| :------------------------------------------------------------------------------ | :----------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------- |
+| **Disable event‑loop debug mode** `asyncio.get_running_loop().set_debug(False)` | After you’ve ironed out the bugs and want maximum throughput in production                 | Removes costly asyncio debug assertions (≈ 5‑10 % speed‑up in micro‑benchmarks)   |
+| **Prefer `SyncInterpreter` for synchronous workflows**                          | CLI tools, deterministic unit tests, or CPU-bound pipelines where `asyncio` is not needed. | Zero coroutine overhead, significantly faster per event in tight loops.           |
+| **Bulk‑fire events API** _(planned)_                                            | High‑volume telemetry or log ingestion                                                     | Will let you enqueue a list of events in one syscall, minimising context‑switches |
 
 ### 5. Architectural Pattern: `invoke` vs. `async` Actions
 
@@ -2396,13 +2391,14 @@ Your library offers two powerful ways to handle asynchronous operations, and cho
 
 #### Use `invoke` for True Asynchronous "States"
 
-`invoke` is best when the machine enters a state that is *defined* by the running of an async task. Think of a `loading` state—its entire purpose is to wait for a service to complete.
+`invoke` is best when the machine enters a state that is _defined_ by the running of an async task. Think of a `loading` state—its entire purpose is to wait for a service to complete.
 
 - **Declarative:** Success (`onDone`) and failure (`onError`) are part of the state's definition, making the flow extremely clear from the diagram.
 - **Automatic Cleanup:** If the machine transitions away from the "invoking" state, the library automatically cancels the running service task for you. This prevents orphaned tasks and race conditions.
 - **Use Case:** API calls, database queries, or any task where you have distinct `success` and `failure` outcomes that lead to different states.
 
 **The `api_fetcher` example is a perfect illustration of this pattern.**
+
 ```json
 "loading": {
   "invoke": {
@@ -2445,13 +2441,13 @@ async def fetch_data_action(
 
 #### When to Use...
 
-| Aspect | Use `invoke` | Use an `async` Action |
-| :--- | :--- | :--- |
-| **Clarity** | When the flow is a clear `success`/`failure` branch. | When you have multiple, custom outcomes. |
-| **Cancellation** | When the task **must** be cancelled on state exit. | When the task can run to completion regardless. |
-| **Simplicity** | For most common async needs (API calls, etc.). | For more complex, imperative orchestrations. |
-| **Data Flow**| Result is automatically passed to `onDone`/`onError` via `event.data`. | You must manually construct and `.send()` events with payloads. |
-| **Best Fit** | A `loading` state whose entire purpose is the async call. | A "fire-and-forget" side effect within a broader state. |
+| Aspect           | Use `invoke`                                                           | Use an `async` Action                                           |
+| :--------------- | :--------------------------------------------------------------------- | :-------------------------------------------------------------- |
+| **Clarity**      | When the flow is a clear `success`/`failure` branch.                   | When you have multiple, custom outcomes.                        |
+| **Cancellation** | When the task **must** be cancelled on state exit.                     | When the task can run to completion regardless.                 |
+| **Simplicity**   | For most common async needs (API calls, etc.).                         | For more complex, imperative orchestrations.                    |
+| **Data Flow**    | Result is automatically passed to `onDone`/`onError` via `event.data`. | You must manually construct and `.send()` events with payloads. |
+| **Best Fit**     | A `loading` state whose entire purpose is the async call.              | A "fire-and-forget" side effect within a broader state.         |
 
 By understanding this distinction, you can model your asynchronous logic with even greater precision and clarity.
 
@@ -2459,28 +2455,27 @@ By understanding this distinction, you can model your asynchronous logic with ev
 
 ## 🌟 Best Practices<a name="best-practices"></a>
 
-| ✅ Do | 🚫 Avoid | Why |
-|------|----------|-----|
-| **Keep state graphs small & composable** | Monolithic 500-node monsters | Easier mental model; actors > beasts |
-| **Store _quantitative_ data in `context`** | Encoding counts/arrays in state IDs | Context is for numbers & strings; IDs are for **qualitative** phases |
-| **Use guards for business rules** | Packing `if` logic inside actions | Guards are _deterministic_; actions are _side-effects_ |
-| **Prefer `after` timers** | `asyncio.create_task(sleep())` inside actions | Declarative ≠ spaghetti |
-| **Model failures explicitly** (`error`, `timeout`) | Relying on `try/except` deep inside services | Errors become testable & visible in diagrams |
-| **Name events imperatively** (`FETCH_USER`) | Vague names (`DO_IT`, `NEXT`) | Better logs, clearer arrows |
-| **Unit-test machines head-less** | UI-driven tests only | Faster CI; assert pure behaviour |
-| **Snapshot critical flows in CI** | Trusting human QA memory | Catch regressions at graph-level |
-| **Document with Mermaid auto-build** | Manually exported PNGs | Zero-drift diagrams |
+| ✅ Do                                              | 🚫 Avoid                                      | Why                                                                  |
+| -------------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------- |
+| **Keep state graphs small & composable**           | Monolithic 500-node monsters                  | Easier mental model; actors > beasts                                 |
+| **Store _quantitative_ data in `context`**         | Encoding counts/arrays in state IDs           | Context is for numbers & strings; IDs are for **qualitative** phases |
+| **Use guards for business rules**                  | Packing `if` logic inside actions             | Guards are _deterministic_; actions are _side-effects_               |
+| **Prefer `after` timers**                          | `asyncio.create_task(sleep())` inside actions | Declarative ≠ spaghetti                                              |
+| **Model failures explicitly** (`error`, `timeout`) | Relying on `try/except` deep inside services  | Errors become testable & visible in diagrams                         |
+| **Name events imperatively** (`FETCH_USER`)        | Vague names (`DO_IT`, `NEXT`)                 | Better logs, clearer arrows                                          |
+| **Unit-test machines head-less**                   | UI-driven tests only                          | Faster CI; assert pure behaviour                                     |
+| **Snapshot critical flows in CI**                  | Trusting human QA memory                      | Catch regressions at graph-level                                     |
+| **Document with Mermaid auto-build**               | Manually exported PNGs                        | Zero-drift diagrams                                                  |
 
-
-* **Treat `spawn_*` like any other action name** — the loader no longer special-cases them. Keep the naming clear: `spawnPaymentActor`, `spawn_worker`, etc.
+- **Treat `spawn_*` like any other action name** — the loader no longer special-cases them. Keep the naming clear: `spawnPaymentActor`, `spawn_worker`, etc.
 
 ### Naming Conventions
 
-* **Events**: `SCREAMING_SNAKE_CASE`
-* **States**: `camelCase` preferred (`loadingData`)
-* **Action / Guard / Service names**:
-  * Python `snake_case` ↔ JSON `camelCase` (auto-mapped)
-  * Prefix actors with a verb: `spawnPaymentActor`
+- **Events**: `SCREAMING_SNAKE_CASE`
+- **States**: `camelCase` preferred (`loadingData`)
+- **Action / Guard / Service names**:
+  - Python `snake_case` ↔ JSON `camelCase` (auto-mapped)
+  - Prefix actors with a verb: `spawnPaymentActor`
 
 ### File Layout (Suggestion)
 
@@ -2517,10 +2512,11 @@ def test_happy_path(signup_machine):
     assert "signup.success" in signup_machine.current_state_ids
 ```
 
-* Use **`SyncInterpreter`** even for async machines in unit tests – by stubbing async services as sync fakes.
-* Compare **snapshots** instead of deep context asserts if the shape is large.
+- Use **`SyncInterpreter`** even for async machines in unit tests – by stubbing async services as sync fakes.
+- Compare **snapshots** instead of deep context asserts if the shape is large.
 
 #### Unit-Testing Transitions with `get_next_state()`
+
 For more granular testing, the `MachineNode` object includes a powerful utility, `.get_next_state(from_state_id, event)`, for validating your machine's flow without running a full interpreter. It's a pure function that calculates the result of a transition without executing any actions or guards, making it perfect for fast unit tests.
 
 ```python
@@ -2548,25 +2544,26 @@ def test_timer_transition(light_machine):
    logger = logging.getLogger("machine.payments")
    logger.info("Charging card %s...", ctx["card_id"])
 ```
+
 6. Use **emoji** prefixes in logs for quick grep (consistent across repo).
 
 ---
 
 ## ❓ FAQ<a name="faq"></a>
 
-| Question | Answer |
-|----------|--------|
-| **Is this library production ready?** | Yes. It powers real-time IoT gateways handling 50k msgs/min and multiple SaaS dashboards. |
-| **Can I edit the JSON at runtime?** | Absolutely. Re-`create_machine()` + `.start(snapshot)` to hot-swap. |
-| **Does it support PyPy?** | ✅ PyPy 3.10 passes the full test-suite. |
-| **How is it different from `transitions`?** | XState-StateMachine implements full **statecharts** (hierarchy, parallelism, invoke, actors) and consumes **XState JSON**, not imperative decorators. |
-| **Can I use Pydantic in context?** | Yep—store a model instance; just remember context is shallow-copied on interpreter start. |
-| **Where is the GUI inspector?** | On the roadmap. Use Stately web simulator + `LoggingInspector` meanwhile. |
-| **Is there a code-gen for Python from Stately?** | Not needed—export JSON → run. Zero translation. |
-| **Why did the CLI command change to `xsm`?** | To make everyday usage faster and cleaner. It’s still the same project—just a friendlier binary. |
-| **Can the SyncInterpreter now spawn actors without blocking?** | Yes! As of 0.4.1, children run in background threads. The parent keeps processing events synchronously. |
-| **How many `after` timers can I declare in one state (Sync)?** | As many as you need. Each gets its own handle; all are cancelled on state exit. |
-| **The generator renamed one of my functions to `if_` — why?** | Your JSON used a Python keyword. 0.4.1 auto-appends `_` to keep code valid. The original JSON name is kept as an alias. |
+| Question                                                       | Answer                                                                                                                                                |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Is this library production ready?**                          | Yes. It powers real-time IoT gateways handling 50k msgs/min and multiple SaaS dashboards.                                                             |
+| **Can I edit the JSON at runtime?**                            | Absolutely. Re-`create_machine()` + `.start(snapshot)` to hot-swap.                                                                                   |
+| **Does it support PyPy?**                                      | ✅ PyPy 3.10 passes the full test-suite.                                                                                                              |
+| **How is it different from `transitions`?**                    | XState-StateMachine implements full **statecharts** (hierarchy, parallelism, invoke, actors) and consumes **XState JSON**, not imperative decorators. |
+| **Can I use Pydantic in context?**                             | Yep—store a model instance; just remember context is shallow-copied on interpreter start.                                                             |
+| **Where is the GUI inspector?**                                | On the roadmap. Use Stately web simulator + `LoggingInspector` meanwhile.                                                                             |
+| **Is there a code-gen for Python from Stately?**               | Not needed—export JSON → run. Zero translation.                                                                                                       |
+| **Why did the CLI command change to `xsm`?**                   | To make everyday usage faster and cleaner. It’s still the same project—just a friendlier binary.                                                      |
+| **Can the SyncInterpreter now spawn actors without blocking?** | Yes! As of 0.4.1, children run in background threads. The parent keeps processing events synchronously.                                               |
+| **How many `after` timers can I declare in one state (Sync)?** | As many as you need. Each gets its own handle; all are cancelled on state exit.                                                                       |
+| **The generator renamed one of my functions to `if_` — why?**  | Your JSON used a Python keyword. 0.4.1 auto-appends `_` to keep code valid. The original JSON name is kept as an alias.                               |
 
 ---
 
@@ -2577,12 +2574,14 @@ def test_timer_transition(light_machine):
 New in version 0.5.0, this library includes a powerful **GUI Inspector**—a lightweight web panel that allows you to visualize and debug your state machines in real-time. This tool is designed to give you complete visibility into the inner workings of your machines, helping you catch bugs faster and understand complex logic flows with ease.
 
 ### ✨ Key Advantages
+
 - **Zero-Configuration Start**: Get up and running in two lines of code.
 - **Framework Agnostic**: The inspector runs as a separate process and does not interfere with your application's existing frameworks or libraries.
 - **Low Performance Overhead**: The inspector is designed to be lightweight. The plugin's hooks are highly efficient, and the web server runs in a separate thread, ensuring minimal impact on your main application's performance.
 - **Time-Travel Debugging**: The history playback feature is a powerful tool for understanding how your machine reached a certain state.
 
 ### 🏛️ Architecture
+
 The GUI Inspector consists of three main components that work together:
 
 1.  **The `InspectorPlugin`**: This is a plugin that you attach to your state machine interpreter. It hooks into the interpreter's lifecycle and captures all important events: state transitions, actions, guards, and context changes.
@@ -2628,6 +2627,7 @@ pip install "xstate-statemachine[inspector]"
 To enable the inspector, simply import the `InspectorPlugin` and add it to your interpreter instance using the `.use()` method before starting the interpreter.
 
 **Example:**
+
 ```python
 from xstate_statemachine import create_machine, Interpreter
 from xstate_statemachine.inspector import InspectorPlugin
@@ -2662,9 +2662,11 @@ if __name__ == "__main__":
 Once your script is running, open your web browser to `http://127.0.0.1:8008` to view the inspector panel.
 
 #### Live Debugging with Pause & Resume
+
 The inspector provides powerful tools for step-by-step debugging by allowing you to pause and resume the execution of any running interpreter directly from the web UI.
 
 ##### Starting a Machine in a Paused State
+
 To begin a debugging session, you can start an interpreter in a paused state. This is done by passing the `paused=True` argument to the `.start()` method. The interpreter will be fully initialized but will not process any events until you resume it.
 
 ```python
@@ -2677,6 +2679,7 @@ interpreter = await Interpreter(machine).use(InspectorPlugin()).start(paused=Tru
 ```
 
 ##### Programmatic Control
+
 In addition to the UI controls, you can also pause and resume the interpreter directly from your Python code. This is useful for building automated tests or for scenarios where you need to programmatically control the execution flow.
 
 - **`interpreter.pause()`**: This method will immediately pause the interpreter's event processing loop.
@@ -2714,11 +2717,13 @@ interpreter.resume()
 When you open the GUI Inspector, you will see the machine's status change from "running" to "paused" and back again in real-time, and you can use the UI buttons to override the programmatic control if needed.
 
 ### 🧩 Integrating with an Existing FastAPI App
+
 If you already have a FastAPI application, you don't need to run the inspector's server as a separate process. You can easily mount the inspector's functionality as a sub-application within your existing app.
 
 The `create_app` function from the inspector's server module is designed to be reusable.
 
 **Example:**
+
 ```python
 # your_main_app.py
 from fastapi import FastAPI
@@ -2746,37 +2751,41 @@ app.mount("/_inspector", inspector_app)
 # Your main app will be at http://127.0.0.1:8000/
 # The inspector UI will be at http://127.0.0.1:8000/_inspector/
 ```
+
 By mounting the inspector, you can have a single, unified server for both your application and the debugging tools, which is perfect for development environments.
 
 ### 📋 Features in Detail
 
-| Feature                  | Description                                                                                                                                                             |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Live Machine View**    | See all currently running state machines that have the `InspectorPlugin` attached. Select any machine to view its details in real-time.                                  |
-| **Statechart Diagram**   | A visual representation of your state machine's structure is rendered using Mermaid.js. The currently active state(s) are highlighted, updating with each transition.      |
-| **Event Log**            | A chronological log of every event that occurs in the machine, including state transitions, actions executed, guards evaluated, and services invoked.                       |
-| **Context Viewer**       | A live view of the machine's `context` data. On each transition, a "diff" is shown, highlighting exactly what was added, removed, or changed in the context.                |
-| **Session History**      | Every run of a machine is automatically saved as a "session" in a local SQLite database.                                                                                |
-| **History Playback**     | Select any past session and play it back. You can step forward and backward through the entire event history to understand exactly how the machine behaved.               |
-| **Live Pause & Resume**  | Pause a running state machine directly from the UI to inspect its state, then resume it when you're ready.                                                              |
+| Feature                 | Description                                                                                                                                                           |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Live Machine View**   | See all currently running state machines that have the `InspectorPlugin` attached. Select any machine to view its details in real-time.                               |
+| **Statechart Diagram**  | A visual representation of your state machine's structure is rendered using Mermaid.js. The currently active state(s) are highlighted, updating with each transition. |
+| **Event Log**           | A chronological log of every event that occurs in the machine, including state transitions, actions executed, guards evaluated, and services invoked.                 |
+| **Context Viewer**      | A live view of the machine's `context` data. On each transition, a "diff" is shown, highlighting exactly what was added, removed, or changed in the context.          |
+| **Session History**     | Every run of a machine is automatically saved as a "session" in a local SQLite database.                                                                              |
+| **History Playback**    | Select any past session and play it back. You can step forward and backward through the entire event history to understand exactly how the machine behaved.           |
+| **Live Pause & Resume** | Pause a running state machine directly from the UI to inspect its state, then resume it when you're ready.                                                            |
 
 ### ⚙️ Configuration
 
 The inspector can be configured via a `.env` file in your project's root directory.
 
--   **`DATABASE_URL`**: Customize the database connection string. This allows you to use a different database for storing session history, for example, a persistent file on disk or a different database system supported by SQLAlchemy.
-    ```
-    # .env
-    DATABASE_URL=sqlite:///my_app_inspector.db
-    ```
+- **`DATABASE_URL`**: Customize the database connection string. This allows you to use a different database for storing session history, for example, a persistent file on disk or a different database system supported by SQLAlchemy.
+  ```
+  # .env
+  DATABASE_URL=sqlite:///my_app_inspector.db
+  ```
 
 ### ✅ Best Practices
+
 - **Development Only**: The inspector is a powerful debugging tool, but it's recommended for use in development environments only. While it's designed to be lightweight, it does add some overhead.
 - **One Inspector per Process**: The inspector is designed to run as a singleton. You can attach the `InspectorPlugin` to multiple state machines within the same application, and they will all report to the same inspector UI.
 - **Use the Context Diff**: When debugging, pay close attention to the context diff. It's often the key to understanding why a machine behaved in a certain way.
 
 ### ⚠️ Limitations (Prototype)
+
 As this is a prototype version, there are some limitations to be aware of:
+
 - **Basic Visualization**: The statechart visualization is powered by Mermaid.js and may not render very large or complex nested/parallel statecharts perfectly.
 - **No Authentication**: The inspector server is unauthenticated and should not be exposed to the public internet.
 - **Performance**: For state machines that process hundreds of events per second, the overhead of the inspector might become noticeable.
@@ -2790,8 +2799,6 @@ As this is a prototype version, there are some limitations to be aware of:
 - **Unified cancellation primitives** – expose a consistent API over `asyncio.Task`/`threading.Thread` so plugins can introspect both.
 - **Bulk event enqueue API** – send a list of events in one call for high‑volume telemetry pipelines.
 
-
-
 ## 🤝 Contributing<a name="contributing"></a>
 
 Contributions are welcome and greatly appreciated! This project thrives on community involvement, and we're excited to see what you'll bring.
@@ -2799,12 +2806,12 @@ Contributions are welcome and greatly appreciated! This project thrives on commu
 We follow a standard "Fork & Pull Request" workflow. Before submitting, please ensure your changes are well-tested, formatted correctly, and documented in the changelog.
 
 For a full, step-by-step guide on how to:
--   Set up your development environment
--   Run tests and linting checks
--   Submit your changes
 
-Please see our **[Contributing Guide](CONTRIBUTING.md)**.
----
+- Set up your development environment
+- Run tests and linting checks
+- Submit your changes
+
+## Please see our **[Contributing Guide](CONTRIBUTING.md)**.
 
 ## 📜 License<a name="license"></a>
 
