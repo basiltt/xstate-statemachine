@@ -18,7 +18,12 @@ import "reactflow/dist/style.css";
 
 import { MachineState } from "@/hooks/useInspectorSocket";
 import { getLayoutedElements } from "./statechart/layout";
-import { CompoundStateNode, InitialNode, RootNode, StateNode } from "./statechart/nodes";
+import {
+  CompoundStateNode,
+  InitialNode,
+  RootNode,
+  StateNode,
+} from "./statechart/nodes";
 import { TransitionEdge } from "./statechart/edges";
 
 const nodeTypes = {
@@ -36,9 +41,9 @@ interface DiagramProps {
 
 const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
   const initialLayout = useMemo(
-    () => getLayoutedElements(machine.definition),
-    // Re-layout only when the definition actually changes (e.g., different machine)
-    [machine.definition],
+    () => getLayoutedElements(machine.definition, machine.context),
+    // Re-layout when the definition or context structure changes
+    [machine.definition, machine.context],
   );
 
   // 👉 Controlled state
@@ -70,16 +75,20 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
 
   // Keep selection highlighting in sync
   useEffect(() => {
-    setNodes((prev) => prev.map((n) => ({ ...n, selected: activeStateIds.includes(n.id) })));
+    setNodes((prev) =>
+      prev.map((n) => ({ ...n, selected: activeStateIds.includes(n.id) })),
+    );
   }, [activeStateIds]);
 
   // Controlled handlers
   const onNodesChange = useCallback(
-    (changes: NodeChange[]) => setNodes((nds) => applyNodeChanges(changes, nds)),
+    (changes: NodeChange[]) =>
+      setNodes((nds) => applyNodeChanges(changes, nds)),
     [],
   );
   const onEdgesChange = useCallback(
-    (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
+    (changes: EdgeChange[]) =>
+      setEdges((eds) => applyEdgeChanges(changes, eds)),
     [],
   );
 
@@ -112,7 +121,9 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
     >
       <Controls />
       <MiniMap
-        nodeColor={(n) => (n.selected ? "hsl(var(--primary))" : "hsl(var(--border))")}
+        nodeColor={(n) =>
+          n.selected ? "hsl(var(--primary))" : "hsl(var(--border))"
+        }
         nodeStrokeWidth={3}
       />
       <Background />
