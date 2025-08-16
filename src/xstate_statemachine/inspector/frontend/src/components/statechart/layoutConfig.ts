@@ -124,3 +124,10 @@ export const generateElkOptions = (config: LayoutConfig): Record<string, any> =>
   "elk.portAlignment.east": "CENTER",
   "elk.portAlignment.west": "CENTER",
 });
+
+// constants.ts
+export const PADDING = 40; // inner padding from wrapper wall
+export const ROOT_HEADER = 44; // header height
+export const EDGE_CLEAR_TOP = 16; // extra air under the context block
+export const GRID_SIZE = 16; // drag grid
+export const GROW_PREEMPT = 40; // extra growth during drag-before-touch

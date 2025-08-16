@@ -1,71 +1,119 @@
+// nodes/StateNode.tsx
 import { Handle, NodeProps, Position } from "reactflow";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
-import { ArrowRight, RadioTower, Zap } from "lucide-react";
+import { Power, RadioTower, Zap } from "lucide-react";
+
+type XAction = string | { type?: string; src?: string; [k: string]: any };
+type XInvoke = string | { src?: string; id?: string; [k: string]: any };
+
+const arr = <T,>(x?: T | T[]) => (!x ? [] : Array.isArray(x) ? x : [x]);
 
 export const StateNode = ({ data, selected }: NodeProps) => {
-  const isCompound = data.definition.states;
+  const def = data?.definition ?? {};
+  const headerOnly = !!data?.headerOnly;
 
-  // FIX: Normalize 'entry' and 'invoke' to always be arrays
-  const entryActions = data.definition.entry
-    ? Array.isArray(data.definition.entry)
-      ? data.definition.entry
-      : [data.definition.entry]
-    : [];
+  const entry = arr<XAction>(def.entry);
+  const exit = arr<XAction>(def.exit);
+  const invoke = arr<XInvoke>(def.invoke);
+  const activities = arr<XAction>(def.activities);
 
-  const invokeServices = data.definition.invoke
-    ? Array.isArray(data.definition.invoke)
-      ? data.definition.invoke
-      : [data.definition.invoke]
-    : [];
-
-  const hasDetails = entryActions.length > 0 || invokeServices.length > 0;
+  const hasBody =
+    !headerOnly &&
+    (entry.length > 0 || exit.length > 0 || invoke.length > 0 || activities.length > 0);
 
   return (
     <Card
-      className={cn(
-        "bg-card text-card-foreground shadow-lg border-2 w-[220px]", // Enforce a fixed width
-        selected ? "border-primary" : "border-border",
-        isCompound ? "bg-secondary/30 dark:bg-secondary/20" : "bg-card",
-      )}
+      className={`rounded-xl border ${selected ? "ring-2 ring-primary/60" : ""}`}
+      // width fixed by layout; height is AUTO so content can grow
+      style={{ width: "100%" }}
     >
-      <Handle type="target" position={Position.Top} className="!bg-primary" />
-      <CardHeader className="p-3">
-        <CardTitle className="text-base flex items-center gap-2">
-          {data.definition.initial && <ArrowRight className="w-4 h-4 text-muted-foreground" />}
-          {data.label}
-        </CardTitle>
+      <CardHeader className="py-2 px-3 border-b">
+        <CardTitle className="text-sm">{data?.label}</CardTitle>
       </CardHeader>
 
-      {hasDetails && (
-        <CardContent className="p-3 border-t">
-          {entryActions.length > 0 && (
-            <div className="mb-2">
-              <h4 className="text-xs font-bold text-muted-foreground mb-1">Entry Actions</h4>
-              {/* FIX: Map over the normalized array */}
-              {entryActions.map((action: any, i: number) => (
-                <div key={i} className="flex items-center gap-2 text-sm">
-                  <Zap className="w-3 h-3 text-yellow-500" />
-                  <span>{action.type || action}</span>
-                </div>
-              ))}
-            </div>
+      {hasBody && (
+        <CardContent className="py-2 px-3 space-y-3">
+          {entry.length > 0 && (
+            <section>
+              <div className="text-[10px] font-semibold text-muted-foreground uppercase mb-1">
+                Entry Actions
+              </div>
+              <div className="space-y-1">
+                {entry.map((a, i) => (
+                  <div key={`en-${i}`} className="flex items-center gap-2 text-sm">
+                    <Zap className="w-3 h-3" />
+                    <span>{typeof a === "string" ? a : (a.type ?? a.src ?? "action")}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
           )}
-          {invokeServices.length > 0 && (
-            <div>
-              <h4 className="text-xs font-bold text-muted-foreground mb-1">Invoke</h4>
-              {/* FIX: Map over the normalized array */}
-              {invokeServices.map((service: any, i: number) => (
-                <div key={i} className="flex items-center gap-2 text-sm">
-                  <RadioTower className="w-3 h-3 text-blue-500" />
-                  <span>{service.src}</span>
-                </div>
-              ))}
-            </div>
+
+          {invoke.length > 0 && (
+            <section>
+              <div className="text-[10px] font-semibold text-muted-foreground uppercase mb-1">
+                Invoke
+              </div>
+              <div className="space-y-1">
+                {invoke.map((s, i) => {
+                  const src = typeof s === "string" ? s : (s.src ?? "service");
+                  const id = typeof s === "string" ? undefined : s.id;
+                  return (
+                    <div key={`inv-${i}`} className="flex items-center gap-2 text-sm">
+                      <RadioTower className="w-3 h-3" />
+                      <span>{src}</span>
+                      {id && <span className="text-xs text-muted-foreground">• {id}</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {exit.length > 0 && (
+            <section>
+              <div className="text-[10px] font-semibold text-muted-foreground uppercase mb-1">
+                Exit Actions
+              </div>
+              <div className="space-y-1">
+                {exit.map((a, i) => (
+                  <div key={`ex-${i}`} className="flex items-center gap-2 text-sm">
+                    <Power className="w-3 h-3" />
+                    <span>{typeof a === "string" ? a : (a.type ?? a.src ?? "action")}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {activities.length > 0 && (
+            <section>
+              <div className="text-[10px] font-semibold text-muted-foreground uppercase mb-1">
+                Activities
+              </div>
+              <div className="space-y-1">
+                {activities.map((a, i) => (
+                  <div key={`act-${i}`} className="flex items-center gap-2 text-sm">
+                    <Zap className="w-3 h-3" />
+                    <span>{typeof a === "string" ? a : (a.type ?? a.src ?? "activity")}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
           )}
         </CardContent>
       )}
-      <Handle type="source" position={Position.Bottom} className="!bg-primary" />
+
+      {/* 4 ports: we route per-edge to nearest side via sourceHandle/targetHandle */}
+      <Handle id="l" type="source" position={Position.Left} className="!bg-primary" />
+      <Handle id="r" type="source" position={Position.Right} className="!bg-primary" />
+      <Handle id="t" type="source" position={Position.Top} className="!bg-primary" />
+      <Handle id="b" type="source" position={Position.Bottom} className="!bg-primary" />
+
+      <Handle id="L" type="target" position={Position.Left} className="!bg-primary" />
+      <Handle id="R" type="target" position={Position.Right} className="!bg-primary" />
+      <Handle id="T" type="target" position={Position.Top} className="!bg-primary" />
+      <Handle id="B" type="target" position={Position.Bottom} className="!bg-primary" />
     </Card>
   );
 };

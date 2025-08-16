@@ -5,7 +5,7 @@ import {
   useInspectorSocket,
   useInspectorStore,
 } from "./hooks/useInspectorSocket";
-import { StatechartDiagram } from "./components/StatechartDiagram";
+import { StatechartDiagram } from "./components/statechart/StatechartDiagram.tsx";
 import {
   Bot,
   FileJson,
