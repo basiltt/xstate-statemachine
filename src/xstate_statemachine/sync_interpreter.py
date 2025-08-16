@@ -13,6 +13,8 @@
 # It adheres to the "Template Method" pattern by overriding the abstract async
 # methods from `BaseInterpreter` with concrete synchronous implementations,
 # while intentionally raising `NotSupportedError` for features that are
+# incompatible with a purely synchronous runtime (e.g., async services,
+# async actions, or timers requiring an event loop).
 
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
@@ -161,18 +163,26 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             source=self.machine,
         )
 
-        # 🔌 Notify plugins about the interpreter start and initial transition
+        # 🔌 Notify plugins about the interpreter start
         for plugin in self._plugins:
             plugin.on_interpreter_start(self)
-            # Pass an empty set as `from_states` for the initial transition
-            plugin.on_transition(
-                self, set(), self._active_state_nodes, initial_transition
-            )
+
+        # Capture the pre-transition state set (empty before initialization)
+        pre_states = set(self._active_state_nodes)
 
         # ➡️ Enter the machine's initial states.
         self._enter_states([self.machine])
         # 🔄 Process any immediate "always" transitions upon startup.
         self._process_transient_transitions()
+
+        # Capture the post-transition state set after initialization
+        post_states = set(self._active_state_nodes)
+
+        # 🔌 Notify plugins about the initial transition with accurate state info
+        for plugin in self._plugins:
+            plugin.on_transition(
+                self, pre_states, post_states, initial_transition
+            )
 
         logger.info(
             "✨ Sync interpreter '%s' started. Current states: %s",

@@ -4,7 +4,7 @@
 # -----------------------------------------------------------------------------
 # This module contains asynchronous unit tests for the 🚀 `TaskManager` helper
 # defined in `src.xstate_statemachine.task_manager`.  The `TaskManager`
-# centralises the creation, tracking, and cancellation of `asyncio.Task`
+# centralizes the creation, tracking, and cancellation of `asyncio.Task`
 # objects, grouping them by an **owner ID** so that callers can:
 #
 #   • 🔖 Add tasks under a specific owner.
@@ -15,7 +15,7 @@
 # These tests verify:
 #
 #   1. Correct tracking and clean-up of tasks.
-#   2. Robust behaviour when cancelling *all* tasks or tasks for a
+#   2. Robust behavior when canceling *all* tasks or tasks for a
 #      non-existent owner.
 #   3. Automatic removal of finished tasks via the internal
 #      `done_callback`.
@@ -100,6 +100,11 @@ class TestTaskManager(unittest.IsolatedAsyncioTestCase):
         # ✅ Post-conditions
         self.assertTrue(task1.cancelled())
         self.assertTrue(task2.cancelled())
+        # 🧹 Task registry should be empty for all owners
+        self.assertEqual(tm.get_tasks_by_owner("owner1"), set())
+        self.assertEqual(tm.get_tasks_by_owner("owner2"), set())
+        # 🕵️ Unknown owners should also report no tasks
+        self.assertEqual(tm.get_tasks_by_owner("unknown_owner"), set())
 
     async def test_cancel_by_owner(self) -> None:
         """Cancel only the tasks associated with a single owner.

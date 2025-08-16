@@ -3,30 +3,33 @@
 # ✉️ Event System Data Contracts
 # -----------------------------------------------------------------------------
 # This module defines the core event structures used throughout the state
-# machine interpreter. These immutable, typed data classes ensure consistent
+# machine interpreter. These immutable, typed data structures ensure consistent
 # and predictable communication for all event types:
 #
 #   1. `Event`: For external events triggered by users or systems.
 #   2. `DoneEvent`: For internal events signaling the completion of services.
 #   3. `AfterEvent`: For internal events triggered by timed delays.
 #
-# By standardizing these structures using `NamedTuple`, we create a clear,
-# lightweight, and maintainable contract for how different parts of the system
-# interact with the state machine. This adheres to SOLID principles by
-# defining distinct, single-responsibility data structures.
+# By standardizing these structures we create a clear, lightweight, and
+# maintainable contract for how different parts of the system interact with the
+# state machine. This adheres to SOLID principles by defining distinct,
+# single-responsibility data structures.
 # -----------------------------------------------------------------------------
 """
 Defines the core, immutable event types for the state machine.
 
 This module provides the data classes used for communication with the
-state machine interpreters (`Interpreter` and `SyncInterpreter`). Using
-`NamedTuple` ensures that these event objects are lightweight and immutable,
-preventing accidental modification and making state flow more predictable.
+state machine interpreters (`Interpreter` and `SyncInterpreter`). Historically
+these events were implemented with ``NamedTuple`` but the ``Event`` type now
+uses a ``dataclass`` so that a fresh payload dictionary is created for every
+instance. This prevents subtle bugs where mutating the payload of one event
+would affect all subsequently created events.
 """
 
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
+from dataclasses import dataclass, field
 from typing import Any, Dict, NamedTuple
 
 
@@ -39,7 +42,8 @@ from typing import Any, Dict, NamedTuple
 # -----------------------------------------------------------------------------
 
 
-class Event(NamedTuple):
+@dataclass(frozen=True)
+class Event:
     """Represents a standard event sent to the state machine.
 
     This is the most common type of event, typically triggered by external
@@ -68,8 +72,10 @@ class Event(NamedTuple):
     # 🏷️ The unique identifier for the event type (e.g., "SUBMIT", "CANCEL").
     type: str
 
-    # 📦 A dictionary for any additional, dynamic data. Defaults to an empty dict.
-    payload: Dict[str, Any] = {}
+    # 📦 A dictionary for any additional, dynamic data. ``default_factory`` is
+    # used instead of a plain ``{}`` to ensure that each ``Event`` receives its
+    # own payload dictionary rather than sharing one across instances.
+    payload: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def data(self) -> Dict[str, Any]:
