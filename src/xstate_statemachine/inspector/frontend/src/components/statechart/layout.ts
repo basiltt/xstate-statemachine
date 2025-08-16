@@ -21,21 +21,35 @@ const nodeHeight = 60;
 
 export const getLayoutedElements = (
   machineDef: XStateNodeConfig,
+  context: Record<string, any> = {},
 ): { nodes: Node[]; edges: Edge[] } => {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
   const machineId = machineDef.id;
 
-  function traverse(stateKey: string, stateDef: XStateNodeConfig, parentId?: string) {
+  function traverse(
+    stateKey: string,
+    stateDef: XStateNodeConfig,
+    parentId?: string,
+  ) {
     const stateId = parentId ? `${parentId}.${stateKey}` : stateKey;
     const isCompound = !!stateDef.states;
 
-    const nodeType = parentId ? (isCompound ? "compoundStateNode" : "stateNode") : "rootNode";
+    const nodeType = parentId
+      ? isCompound
+        ? "compoundStateNode"
+        : "stateNode"
+      : "rootNode";
 
     nodes.push({
       id: stateId,
       type: nodeType,
-      data: { label: stateKey, definition: stateDef, machineId },
+      data: {
+        label: stateKey,
+        definition: stateDef,
+        machineId,
+        ...(parentId ? {} : { context }),
+      },
       position: { x: 0, y: 0 },
       ...(parentId && { parentNode: parentId, extent: "parent" }),
     });
@@ -46,9 +60,13 @@ export const getLayoutedElements = (
     }
 
     if (stateDef.on) {
-      const transitions = Array.isArray(stateDef.on) ? stateDef.on : Object.entries(stateDef.on);
+      const transitions = Array.isArray(stateDef.on)
+        ? stateDef.on
+        : Object.entries(stateDef.on);
       for (const [event, transitionConfig] of transitions) {
-        const configs = Array.isArray(transitionConfig) ? transitionConfig : [transitionConfig];
+        const configs = Array.isArray(transitionConfig)
+          ? transitionConfig
+          : [transitionConfig];
         for (const config of configs) {
           const targetKey = typeof config === "string" ? config : config.target;
           if (targetKey) {
@@ -110,6 +128,39 @@ export const getLayoutedElements = (
       };
     }
   });
+
+  // Resize root node to wrap children with padding
+  const rootId = machineId;
+  const padding = 40;
+  const rootNode = nodes.find((n) => n.id === rootId);
+  const childNodes = nodes.filter((n) => n.parentNode === rootId);
+
+  if (rootNode && childNodes.length > 0) {
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
+    childNodes.forEach((n) => {
+      const dim = dagreGraph.node(n.id);
+      const width = dim?.width ?? nodeWidth;
+      const height = dim?.height ?? nodeHeight;
+      minX = Math.min(minX, n.position.x);
+      minY = Math.min(minY, n.position.y);
+      maxX = Math.max(maxX, n.position.x + width);
+      maxY = Math.max(maxY, n.position.y + height);
+    });
+
+    rootNode.position = { x: minX - padding / 2, y: minY - padding / 2 };
+    rootNode.style = {
+      width: maxX - minX + padding,
+      height: maxY - minY + padding,
+    } as any;
+
+    childNodes.forEach((n) => {
+      n.position.x -= rootNode.position.x;
+      n.position.y -= rootNode.position.y;
+    });
+  }
 
   return { nodes, edges };
 };
