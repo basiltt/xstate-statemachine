@@ -13,6 +13,8 @@
 # It adheres to the "Template Method" pattern by overriding the abstract async
 # methods from `BaseInterpreter` with concrete synchronous implementations,
 # while intentionally raising `NotSupportedError` for features that are
+# incompatible with a purely synchronous runtime (e.g., async services,
+# async actions, or timers requiring an event loop).
 
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
