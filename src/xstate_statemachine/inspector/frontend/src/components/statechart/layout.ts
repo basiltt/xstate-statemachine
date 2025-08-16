@@ -1,5 +1,5 @@
 import { Edge, MarkerType, Node } from "reactflow";
-import * as dagre from "dagre";
+import dagre from "dagre";
 
 // --- Type Definitions ---
 interface XStateNodeConfig {
@@ -34,6 +34,8 @@ export const getLayoutedElements = (
 
     const nodeType = parentId ? (isCompound ? "compoundStateNode" : "stateNode") : "rootNode";
 
+    const isRootChild = !!parentId && parentId === machineId;
+
     nodes.push({
       id: stateId,
       type: nodeType,
@@ -44,7 +46,11 @@ export const getLayoutedElements = (
         ...(parentId ? {} : { context }),
       },
       position: { x: 0, y: 0 },
-      ...(parentId && { parentNode: parentId, extent: "parent" }),
+      ...(parentId && {
+        parentNode: parentId,
+        // Constrain only for non-root parents; allow root children to drive wrapper growth
+        ...(isRootChild ? {} : { extent: "parent" }),
+      }),
     });
 
     dagreGraph.setNode(stateId, { width: nodeWidth, height: nodeHeight });

@@ -95,16 +95,21 @@ export const CompoundStateNode = (props: NodeProps) => (
   </div>
 );
 
-// Root state summary
-export const RootNode = ({ data }: NodeProps) => {
+// Root state summary wrapper
+export const RootNode = ({ data, selected }: NodeProps) => {
   const ctxEntries = Object.entries(data.context ?? {}).map(([k, v]) => ({
     key: k,
     type: typeof v,
   }));
 
   return (
-    <Card className="bg-card/80">
-      <CardHeader className="p-3 border-b">
+    <Card
+      className={cn(
+        "w-full h-full flex flex-col rounded-xl border-2 bg-card/70",
+        selected ? "border-primary/60" : "border-border",
+      )}
+    >
+      <CardHeader className="p-3 border-b bg-muted/40 rounded-t-xl cursor-move">
         <CardTitle className="text-sm">{data.label}</CardTitle>
       </CardHeader>
       {ctxEntries.length > 0 && (
@@ -119,6 +124,7 @@ export const RootNode = ({ data }: NodeProps) => {
           ))}
         </CardContent>
       )}
+      {/* children nodes are rendered on top by React Flow; this component is just the frame */}
     </Card>
   );
 };
