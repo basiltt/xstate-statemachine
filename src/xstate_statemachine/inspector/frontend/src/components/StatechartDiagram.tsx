@@ -1,11 +1,12 @@
 // StatechartDiagram.tsx
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactFlow, {
   applyEdgeChanges,
   applyNodeChanges,
   Background,
   ConnectionLineType,
   Controls,
+  type Edge,
   type EdgeChange,
   MarkerType,
   MiniMap,
@@ -19,6 +20,13 @@ import "reactflow/dist/style.css";
 
 import { MachineState } from "@/hooks/useInspectorSocket";
 import { getLayoutedElements } from "./statechart/layout";
+import {
+  PADDING,
+  ROOT_HEADER,
+  estimateReservedTop,
+  EDGE_CLEAR_TOP,
+  GROW_PREEMPT,
+} from "./statechart/constants";
 import { CompoundStateNode, InitialNode, RootNode, StateNode } from "./statechart/nodes";
 import { TransitionEdge } from "./statechart/edges";
 
@@ -35,7 +43,7 @@ interface DiagramProps {
   activeStateIds: string[];
 }
 
-const PADDING = 40; // wrapper padding around children
+const EDGE_MARGIN = 48;
 
 const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
   const initialLayout = useMemo(
@@ -43,66 +51,132 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
     [machine.definition, machine.context],
   );
 
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const reservedTop = useMemo(
+    () => estimateReservedTop(machine.context) + EDGE_CLEAR_TOP,
+    [machine.context],
+  );
+
   // 👉 Controlled state
   const [nodes, setNodes] = useState(() =>
     initialLayout.nodes.map((n: any) => ({
       ...n,
-      // whole node draggable
+      ...(n.type === "rootNode"
+        ? { dragHandle: ".root-drag-handle", style: { ...(n.style || {}), zIndex: 0 } }
+        : {}),
+      // make everything draggable, except the synthetic initial marker
+      draggable: n.type !== "initialNode",
       selected: activeStateIds.includes(n.id),
     })),
   );
-  const [edges, setEdges] = useState(initialLayout.edges);
+  const [edges, setEdges] = useState(
+    (initialLayout.edges as Edge[]).map((e) => ({
+      ...e,
+      data: { ...(e.data as any), reservedTop },
+    })),
+  );
+
+  // Context menu state for Auto Layout
+  const [menu, setMenu] = useState<{ open: boolean; x: number; y: number }>({
+    open: false,
+    x: 0,
+    y: 0,
+  });
 
   // @ts-ignore
-  const { fitView, getNodes, updateNodeInternals } = useReactFlow();
+  const { fitView, updateNodeInternals } = useReactFlow();
 
-  // Utility: compute tight wrapper bounds for the root node from current nodes
-  const computeRootBounds = useCallback((allNodes: Node[]) => {
-    const root = allNodes.find((n) => n.type === "rootNode");
-    if (!root) return null;
-    const children = allNodes.filter((n) => n.parentNode === root.id);
-    if (children.length === 0) return null;
-
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
-
-    for (const ch of children) {
-      const w = (ch as any).width ?? 250;
-      const h = (ch as any).height ?? 60;
-      minX = Math.min(minX, ch.position.x);
-      minY = Math.min(minY, ch.position.y);
-      maxX = Math.max(maxX, ch.position.x + w);
-      maxY = Math.max(maxY, ch.position.y + h);
+  // Decorate nodes with UI status for styling (active/current and next-candidate)
+  const decorateStatuses = useCallback((list: Node[], eds: Edge[], actives: string[]): Node[] => {
+    const activeSet = new Set(actives);
+    const nextSet = new Set<string>();
+    for (const e of eds) {
+      if ((e as any).type !== "transitionEdge") continue;
+      if (activeSet.has(e.source) && !String(e.source).includes(".__initial__")) {
+        nextSet.add(e.target);
+      }
     }
-
-    const width = Math.max(maxX - minX + PADDING, 200);
-    const height = Math.max(maxY - minY + PADDING, 140);
-
-    return { minX, minY, maxX, maxY, width, height };
+    return list.map((n) => {
+      const uiStatus = activeSet.has(n.id) ? "active" : nextSet.has(n.id) ? "next" : undefined;
+      return { ...n, data: { ...n.data, uiStatus } } as Node;
+    });
   }, []);
 
-  // Expand-only wrapper during drag if children approach edges
+  // Utility: compute wrapper bounds around children and edges
+  const computeRootBounds = useCallback(
+    (allNodes: Node[], eds: Edge[]) => {
+      const root = allNodes.find((n) => n.type === "rootNode");
+      if (!root) return null;
+      const children = allNodes.filter((n) => n.parentNode === root.id);
+      if (children.length === 0) return null;
+
+      let minX = Infinity,
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity;
+
+      for (const ch of children) {
+        const w = (ch as any).width ?? 250;
+        const h = (ch as any).height ?? 60;
+        minX = Math.min(minX, ch.position.x);
+        minY = Math.min(minY, ch.position.y);
+        maxX = Math.max(maxX, ch.position.x + w);
+        maxY = Math.max(maxY, ch.position.y + h);
+      }
+
+      const idToNode = new Map(allNodes.map((n) => [n.id, n] as const));
+      for (const e of eds) {
+        const s = idToNode.get(e.source);
+        const t = idToNode.get(e.target);
+        if (!s || !t) continue;
+        if (s.parentNode !== root.id || t.parentNode !== root.id) continue;
+        const sw = ((s as any).width ?? 250) / 2;
+        const sh = ((s as any).height ?? 60) / 2;
+        const tw = ((t as any).width ?? 250) / 2;
+        const th = ((t as any).height ?? 60) / 2;
+        const sx = s.position.x + sw;
+        const sy = s.position.y + sh;
+        const tx = t.position.x + tw;
+        const ty = t.position.y + th;
+        minX = Math.min(minX, Math.min(sx, tx) - EDGE_MARGIN);
+        maxX = Math.max(maxX, Math.max(sx, tx) + EDGE_MARGIN);
+        minY = Math.min(minY, Math.min(sy, ty) - EDGE_MARGIN);
+        maxY = Math.max(maxY, Math.max(sy, ty) + EDGE_MARGIN);
+      }
+
+      const width = Math.max(maxX - minX + PADDING, 200);
+      const height = Math.max(maxY - minY + PADDING + reservedTop - ROOT_HEADER, 140 + reservedTop);
+
+      return { minX, minY, maxX, maxY, width, height };
+    },
+    [reservedTop],
+  );
+
+  // Expand-only wrapper during drag if children approach edges or reserved top
   const maybeGrowRootDuringDrag = useCallback(
-    (currentNodes: Node[]) => {
+    (currentNodes: Node[], eds: Edge[]) => {
       const rootIndex = currentNodes.findIndex((n) => n.type === "rootNode");
       if (rootIndex < 0) return currentNodes;
       const root = currentNodes[rootIndex];
 
-      const tight = computeRootBounds(currentNodes);
+      const tight = computeRootBounds(currentNodes, eds);
       if (!tight) return currentNodes;
 
       const currWidth = (root.style as any)?.width ?? (root as any).width ?? tight.width;
       const currHeight = (root.style as any)?.height ?? (root as any).height ?? tight.height;
 
-      const needLeftPad = tight.minX < PADDING / 2;
-      const needTopPad = tight.minY < PADDING / 2;
-      const dx = needLeftPad ? tight.minX - PADDING / 2 : 0;
-      const dy = needTopPad ? tight.minY - PADDING / 2 : 0;
+      // preemptively move the wrapper before nodes/edges hit the inner gap
+      const leftThreshold = PADDING / 2 + GROW_PREEMPT;
+      const topThreshold = PADDING / 2 + reservedTop + GROW_PREEMPT;
+      const needLeftPad = tight.minX < leftThreshold;
+      const needTopPad = tight.minY < topThreshold;
+      const dx = needLeftPad ? tight.minX - leftThreshold : 0;
+      const dy = needTopPad ? tight.minY - topThreshold : 0;
 
-      const nextWidth = Math.max(currWidth, tight.width);
-      const nextHeight = Math.max(currHeight, tight.height);
+      // also preemptively increase right/bottom size so gap feels consistent
+      const nextWidth = Math.max(currWidth, tight.width + GROW_PREEMPT * 2);
+      const nextHeight = Math.max(currHeight, tight.height + GROW_PREEMPT * 2);
 
       if (!needLeftPad && !needTopPad && nextWidth === currWidth && nextHeight === currHeight) {
         return currentNodes; // no-op
@@ -113,7 +187,8 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
           return {
             ...n,
             position: { x: n.position.x + dx, y: n.position.y + dy },
-            style: { ...(n.style as any), width: nextWidth, height: nextHeight },
+            style: { ...(n.style as any), width: nextWidth, height: nextHeight, zIndex: 0 },
+            dragHandle: ".root-drag-handle",
           } as Node;
         }
         if (n.parentNode === root.id) {
@@ -128,28 +203,27 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
       }
       return updated;
     },
-    [computeRootBounds, updateNodeInternals],
+    [computeRootBounds, reservedTop, updateNodeInternals],
   );
 
   // Tight fit wrapper after drag stop or structural updates.
-  // Reposition root so there is PADDING/2 on the top/left of the closest child,
-  // and offset children so their world positions stay the same.
   const fitRootTightly = useCallback(
-    (currentNodes: Node[]) => {
+    (currentNodes: Node[], eds: Edge[]) => {
       const rootIndex = currentNodes.findIndex((n) => n.type === "rootNode");
       if (rootIndex < 0) return currentNodes;
       const root = currentNodes[rootIndex];
 
-      const tight = computeRootBounds(currentNodes);
+      const tight = computeRootBounds(currentNodes, eds);
       if (!tight) return currentNodes;
 
       const dx = tight.minX - PADDING / 2;
-      const dy = tight.minY - PADDING / 2;
+      const dy = tight.minY - (PADDING / 2 + reservedTop);
 
       const newRoot = {
         ...root,
         position: { x: root.position.x + dx, y: root.position.y + dy },
-        style: { ...(root.style as any), width: tight.width, height: tight.height },
+        style: { ...(root.style as any), width: tight.width, height: tight.height, zIndex: 0 },
+        dragHandle: ".root-drag-handle",
       } as Node;
 
       const updated = currentNodes.map((n) => {
@@ -165,92 +239,214 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
       }
       return updated;
     },
-    [computeRootBounds, updateNodeInternals],
+    [computeRootBounds, reservedTop, updateNodeInternals],
   );
+
+  // Re-run dagre auto layout and apply wrapper fit
+  const relayout = useCallback(() => {
+    const layout = getLayoutedElements(machine.definition, machine.context);
+    // Decorate and add reservedTop to edges
+    const laidNodes = decorateStatuses(
+      layout.nodes.map((n: any) => ({
+        ...n,
+        ...(n.type === "rootNode"
+          ? { dragHandle: ".root-drag-handle", style: { ...(n.style || {}), zIndex: 0 } }
+          : {}),
+        draggable: n.type !== "initialNode",
+      })),
+      layout.edges as Edge[],
+      activeStateIds,
+    );
+    const laidEdges = (layout.edges as Edge[]).map((e) => ({
+      ...e,
+      data: { ...(e.data as any), reservedTop },
+    }));
+
+    setNodes(() => fitRootTightly(laidNodes, laidEdges));
+    setEdges(laidEdges);
+    setTimeout(() => fitView({ duration: 300, padding: 0.12 }), 0);
+  }, [
+    machine.definition,
+    machine.context,
+    decorateStatuses,
+    activeStateIds,
+    fitRootTightly,
+    reservedTop,
+    fitView,
+  ]);
 
   // Reset positions & selections if the machine changes
   useEffect(() => {
     setNodes(
-      initialLayout.nodes.map((n: any) => ({
-        ...n,
-        selected: activeStateIds.includes(n.id),
+      decorateStatuses(
+        initialLayout.nodes.map((n: any) => ({
+          ...n,
+          ...(n.type === "rootNode"
+            ? { dragHandle: ".root-drag-handle", style: { ...(n.style || {}), zIndex: 0 } }
+            : {}),
+          draggable: n.type !== "initialNode",
+          selected: activeStateIds.includes(n.id),
+        })),
+        initialLayout.edges as Edge[],
+        activeStateIds,
+      ),
+    );
+    setEdges(
+      (initialLayout.edges as Edge[]).map((e) => ({
+        ...e,
+        data: { ...(e.data as any), reservedTop },
       })),
     );
-    setEdges(initialLayout.edges);
     const id = setTimeout(() => {
-      // After initial render, tightly fit wrapper once more (sizes may change after measure)
-      setNodes((prev) => fitRootTightly(prev));
+      setNodes((prev) => fitRootTightly(prev, initialLayout.edges as Edge[]));
       fitView({ duration: 400, padding: 0.1 });
     }, 50);
     return () => clearTimeout(id);
-  }, [initialLayout, activeStateIds, fitRootTightly, fitView]);
+  }, [initialLayout, activeStateIds, fitRootTightly, fitView, decorateStatuses, reservedTop]);
 
-  // Keep selection highlighting in sync
+  // Keep selection highlighting & statuses in sync
   useEffect(() => {
-    setNodes((prev) => prev.map((n) => ({ ...n, selected: activeStateIds.includes(n.id) })));
-  }, [activeStateIds]);
+    setNodes((prev) =>
+      decorateStatuses(
+        prev.map((n) => ({ ...n, selected: activeStateIds.includes(n.id) })),
+        edges,
+        activeStateIds,
+      ),
+    );
+  }, [activeStateIds, edges, decorateStatuses]);
 
   // Controlled handlers
   const onNodesChange = useCallback(
     (changes: NodeChange[]) =>
       setNodes((nds) => {
         const next = applyNodeChanges(changes, nds);
-        // whenever nodes change (positions, dimensions), keep wrapper tight
-        return fitRootTightly(next);
+        const root = next.find((n) => n.type === "rootNode");
+        if (!root) return next;
+        const changedIds = new Set(changes.map((c) => ("id" in c ? (c as any).id : undefined)));
+        const childChanged = next.some((n) => n.parentNode === root.id && changedIds.has(n.id));
+        const adjusted = childChanged ? fitRootTightly(next, edges) : next;
+        return decorateStatuses(adjusted, edges, activeStateIds);
       }),
-    [fitRootTightly],
+    [fitRootTightly, edges, activeStateIds, decorateStatuses],
   );
   const onEdgesChange = useCallback(
-    (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
-    [],
+    (changes: EdgeChange[]) =>
+      setEdges((eds) =>
+        applyEdgeChanges(changes, eds).map((e: any) => ({
+          ...e,
+          data: { ...(e.data || {}), reservedTop },
+        })),
+      ),
+    [reservedTop],
   );
 
-  const onNodeDrag = useCallback(() => {
-    // Grow-only during drag for smoother UX
-    setNodes((prev) => maybeGrowRootDuringDrag(prev));
-  }, [maybeGrowRootDuringDrag]);
+  const onNodeDrag = useCallback(
+    (_evt: any, dragging?: Node) => {
+      setNodes((prev) => {
+        // soft-protect the top context band while dragging
+        const next =
+          dragging && dragging.type !== "rootNode"
+            ? prev.map((n) => {
+                if (n.id === dragging.id) {
+                  const minY = reservedTop + 4;
+                  const y = Math.max(n.position.y, minY);
+                  return { ...n, position: { x: n.position.x, y } } as Node;
+                }
+                return n;
+              })
+            : prev;
+        return maybeGrowRootDuringDrag(next, edges);
+      });
+    },
+    [maybeGrowRootDuringDrag, edges, reservedTop],
+  );
 
-  const onNodeDragStop = useCallback(() => {
-    // Tight fit after drag ends
-    setNodes((prev) => fitRootTightly(prev));
-  }, [fitRootTightly]);
+  const onNodeDragStop = useCallback(
+    (_evt: any, node?: Node) => {
+      if (!node) return;
+      if (node.type !== "rootNode") {
+        setNodes((prev) => fitRootTightly(prev, edges));
+      }
+    },
+    [fitRootTightly, edges],
+  );
+
+  const onPaneContextMenu = useCallback((evt: any) => {
+    evt.preventDefault();
+    const rect = containerRef.current?.getBoundingClientRect();
+    const x = rect ? evt.clientX - rect.left : evt.clientX;
+    const y = rect ? evt.clientY - rect.top : evt.clientY;
+    setMenu({ open: true, x, y });
+  }, []);
+
+  const closeMenu = useCallback(() => setMenu((m) => ({ ...m, open: false })), []);
 
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      onNodesChange={onNodesChange}
-      onEdgesChange={onEdgesChange}
-      nodeTypes={nodeTypes}
-      edgeTypes={edgeTypes}
-      proOptions={{ hideAttribution: true }}
-      // Interaction: match XState editor feel
-      nodesDraggable
-      nodesConnectable={false}
-      elementsSelectable
-      selectionOnDrag
-      panOnDrag={false}
-      onNodeDrag={onNodeDrag}
-      onNodeDragStop={onNodeDragStop}
-      selectionMode={SelectionMode.Partial}
-      connectionLineType={ConnectionLineType.SmoothStep}
-      defaultEdgeOptions={{
-        type: "transitionEdge",
-        markerEnd: { type: MarkerType.ArrowClosed },
-      }}
-      // Zoom & background similar to XState
-      fitView
-      minZoom={0.2}
-      maxZoom={1.5}
-      className="bg-background"
-    >
-      <Controls />
-      <MiniMap
-        nodeColor={(n) => (n.selected ? "hsl(var(--primary))" : "hsl(var(--border))")}
-        nodeStrokeWidth={3}
-      />
-      <Background />
-    </ReactFlow>
+    <div ref={containerRef} className="relative h-full w-full">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        proOptions={{ hideAttribution: true }}
+        nodesDraggable
+        nodesConnectable={false}
+        elementsSelectable
+        selectionOnDrag
+        // enable panning with middle mouse on the pane
+        panOnDrag={[1]}
+        panOnScroll={false}
+        onNodeDrag={onNodeDrag}
+        onNodeDragStop={onNodeDragStop}
+        onPaneContextMenu={onPaneContextMenu}
+        selectionMode={SelectionMode.Partial}
+        connectionLineType={ConnectionLineType.SmoothStep}
+        defaultEdgeOptions={{
+          type: "transitionEdge",
+          markerEnd: { type: MarkerType.ArrowClosed },
+        }}
+        fitView
+        minZoom={0.2}
+        maxZoom={1.5}
+        className="bg-background"
+      >
+        <Controls />
+        <MiniMap
+          nodeColor={(n) => (n.selected ? "hsl(var(--primary))" : "hsl(var(--border))")}
+          nodeStrokeWidth={3}
+        />
+        <Background />
+      </ReactFlow>
+
+      {menu.open && (
+        <div
+          style={{ left: menu.x, top: menu.y }}
+          className="absolute z-50 rounded-md border bg-popover text-popover-foreground shadow-md"
+          onMouseLeave={closeMenu}
+        >
+          <button
+            className="w-full text-left px-3 py-2 hover:bg-muted"
+            onClick={() => {
+              closeMenu();
+              relayout();
+            }}
+          >
+            Auto layout
+          </button>
+          <button
+            className="w-full text-left px-3 py-2 hover:bg-muted"
+            onClick={() => {
+              closeMenu();
+              fitView({ duration: 300, padding: 0.12 });
+            }}
+          >
+            Fit view
+          </button>
+        </div>
+      )}
+    </div>
   );
 };
 

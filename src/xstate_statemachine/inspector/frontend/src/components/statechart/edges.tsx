@@ -22,9 +22,37 @@ export const TransitionEdge = ({
   });
 
   const actions = asArray(data?.actions);
+  const isInitial = Boolean((data as any)?.isInitial) || id.includes(".__initial__");
+
+  // small curved arrow segment from the source, plus a big dot at the start
+  const dx =
+    Math.max(16, Math.min(28, Math.abs(targetX - sourceX) * 0.2)) *
+    Math.sign(targetX - sourceX || 1);
+  const dy = (targetY - sourceY) * 0.15;
+  const shortPath = `M ${sourceX} ${sourceY} Q ${sourceX + dx * 0.5} ${sourceY + dy * 0.6}, ${sourceX + dx} ${sourceY + dy}`;
 
   return (
     <>
+      {isInitial && (
+        <g>
+          <circle
+            cx={sourceX - 8 * Math.sign(targetX - sourceX || 1)}
+            cy={sourceY}
+            r={6}
+            style={{
+              // solid foreground dot with a subtle outline for contrast in both themes
+              fill: "hsl(var(--foreground))",
+              stroke: "hsl(var(--background))",
+              strokeWidth: 2,
+            }}
+          />
+          <path
+            d={shortPath}
+            style={{ stroke: "hsl(var(--foreground))", strokeWidth: 1.75, fill: "none" }}
+          />
+        </g>
+      )}
+
       <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={{ strokeWidth: 1.5 }} />
       <EdgeLabelRenderer>
         <div

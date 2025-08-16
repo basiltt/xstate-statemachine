@@ -6,7 +6,19 @@ import {
   useInspectorStore,
 } from "./hooks/useInspectorSocket";
 import { StatechartDiagram } from "./components/StatechartDiagram";
-import { Bot, FileJson, History, Moon, Pause, Play, Send, SquareActivity, Sun } from "lucide-react";
+import {
+  Bot,
+  FileJson,
+  History,
+  Moon,
+  Pause,
+  Play,
+  Send,
+  SquareActivity,
+  Sun,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,6 +41,7 @@ import ShimmerButton from "@/components/magicui/shimmer-button";
 interface HeaderProps {
   onToggleTheme: () => void;
   isDark: boolean;
+  isConnected: boolean;
 }
 
 interface SidebarProps {
@@ -51,6 +64,7 @@ interface SendEventDialogProps {
 export default function App() {
   useInspectorSocket();
   const machines = useInspectorStore((state) => state.machines);
+  const isConnected = useInspectorStore((state) => state.isConnected);
   const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null);
   const [isDark, setIsDark] = useState(false);
 
@@ -62,8 +76,13 @@ export default function App() {
   }, [machines, selectedMachineId]);
 
   useEffect(() => {
-    const isDarkMode = document.documentElement.classList.contains("dark");
-    setIsDark(isDarkMode);
+    // Initialize theme from localStorage or system preference
+    const stored = localStorage.getItem("theme");
+    const preferDark =
+      window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const dark = stored ? stored === "dark" : preferDark;
+    document.documentElement.classList.toggle("dark", dark);
+    setIsDark(dark);
   }, []);
 
   const toggleTheme = () => {
@@ -77,7 +96,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-full flex-col bg-background font-sans text-foreground">
-      <Header onToggleTheme={toggleTheme} isDark={isDark} />
+      <Header onToggleTheme={toggleTheme} isDark={isDark} isConnected={isConnected} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
           machines={machines}
@@ -98,17 +117,32 @@ export default function App() {
 
 // --- UI Components ---
 // @ts-ignore
-const Header = ({ onToggleTheme, isDark }: HeaderProps) => (
+const Header = ({ onToggleTheme, isDark, isConnected }: HeaderProps) => (
   <header className="flex h-14 items-center justify-between border-b bg-card px-4 lg:px-6">
     <div className="flex items-center gap-2 font-bold">
       <Bot className="h-6 w-6 text-primary" />
       <span>XState Inspector</span>
     </div>
-    <Button variant="ghost" size="icon" onClick={onToggleTheme}>
-      <Sun className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-      <Moon className="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-      <span className="sr-only">Toggle theme</span>
-    </Button>
+    <div className="flex items-center gap-3">
+      {/* Connection Indicator */}
+      <div
+        className={
+          "flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium border " +
+          (isConnected
+            ? "border-green-600 text-green-700 dark:text-green-400"
+            : "border-amber-600 text-amber-700 dark:text-amber-400")
+        }
+        title={isConnected ? "Connected" : "Disconnected"}
+      >
+        {isConnected ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
+        <span>{isConnected ? "Online" : "Offline"}</span>
+      </div>
+      <Button variant="ghost" size="icon" onClick={onToggleTheme}>
+        <Sun className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+        <Moon className="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+        <span className="sr-only">Toggle theme</span>
+      </Button>
+    </div>
   </header>
 );
 

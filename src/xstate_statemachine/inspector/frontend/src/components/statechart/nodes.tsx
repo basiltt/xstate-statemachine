@@ -40,19 +40,32 @@ export const StateNode = ({ data, selected }: NodeProps) => {
   const hasDetails = entryActions.length > 0 || invokeServices.length > 0;
   const isFinal = data.definition?.type === "final";
 
+  const uiStatus = data.uiStatus as undefined | "active" | "next";
+
   return (
-    // Entire card is draggable by default (no dragHandle restriction)
     <Card
       className={cn(
-        "w-[240px] rounded-lg border shadow-sm bg-card/90",
-        selected ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : "border-border",
+        "w-[240px] rounded-lg border shadow-sm",
+        // Active: do NOT fill entire card; keep default bg, maybe a subtle border
+        uiStatus === "active" && "bg-card border-blue-500",
+        // Next: emphasize with outer ring and primary border
+        uiStatus === "next" && "bg-card border-blue-500 ring-2 ring-blue-500/80",
+        !uiStatus && "bg-card/90 border-border",
+        selected &&
+          uiStatus !== "next" &&
+          "ring-2 ring-primary/50 ring-offset-2 ring-offset-background",
       )}
     >
       {/* Accept incoming connections */}
       <Handle type="target" position={Position.Top} className="!bg-transparent opacity-0" />
 
-      {/* Header area */}
-      <CardHeader className="p-2.5 cursor-move bg-muted/60 rounded-t-lg border-b">
+      {/* Header area: only header changes color when active */}
+      <CardHeader
+        className={cn(
+          "p-2.5 rounded-t-lg border-b",
+          uiStatus === "active" ? "bg-blue-500 dark:bg-blue-600 text-white" : "bg-muted",
+        )}
+      >
         <CardTitle className="text-[13px] font-semibold tracking-wide">{data.label}</CardTitle>
       </CardHeader>
 
@@ -105,16 +118,20 @@ export const RootNode = ({ data, selected }: NodeProps) => {
   return (
     <Card
       className={cn(
-        "w-full h-full flex flex-col rounded-xl border-2 bg-card/70",
-        selected ? "border-primary/60" : "border-border",
+        // Thick border; softer in light, stronger in dark
+        "w-full h-full flex flex-col rounded-xl bg-transparent pointer-events-none border-[8px] border-neutral-300/60 dark:border-neutral-600/80",
+        selected ? "ring-2 ring-primary/50" : "",
       )}
     >
-      <CardHeader className="p-3 border-b bg-muted/40 rounded-t-xl cursor-move">
-        <CardTitle className="text-sm">{data.label}</CardTitle>
+      {/* Header opaque, stronger background, with high-contrast title color */}
+      <CardHeader className="root-drag-handle p-3 border-b bg-muted rounded-t-xl cursor-move pointer-events-auto">
+        <CardTitle className="text-[15px] font-semibold tracking-wide text-foreground">
+          {data.label}
+        </CardTitle>
       </CardHeader>
       {ctxEntries.length > 0 && (
-        <CardContent className="p-3">
-          <h4 className="text-[10px] font-semibold text-muted-foreground mb-1 tracking-wide uppercase">
+        <CardContent className="px-3 py-1 border-b bg-muted pointer-events-none">
+          <h4 className="text-[10px] font-semibold text-muted-foreground mb-0.5 tracking-wide uppercase">
             Context
           </h4>
           {ctxEntries.map(({ key, type }) => (
@@ -124,11 +141,10 @@ export const RootNode = ({ data, selected }: NodeProps) => {
           ))}
         </CardContent>
       )}
-      {/* children nodes are rendered on top by React Flow; this component is just the frame */}
+      {/* children nodes are rendered by React Flow; this component is the frame */}
     </Card>
   );
 };
 
-export const InitialNode = () => (
-  <div className="w-0 h-0 border-t-4 border-b-4 border-l-8 border-t-transparent border-b-transparent border-l-foreground" />
-);
+// Replace initial triangular marker with nothing; we render dot+arrow on the edge itself
+export const InitialNode = () => <div className="w-0 h-0" />;
