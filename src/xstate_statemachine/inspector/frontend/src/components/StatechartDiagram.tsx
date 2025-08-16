@@ -18,12 +18,7 @@ import "reactflow/dist/style.css";
 
 import { MachineState } from "@/hooks/useInspectorSocket";
 import { getLayoutedElements } from "./statechart/layout";
-import {
-  CompoundStateNode,
-  InitialNode,
-  RootNode,
-  StateNode,
-} from "./statechart/nodes";
+import { CompoundStateNode, InitialNode, RootNode, StateNode } from "./statechart/nodes";
 import { TransitionEdge } from "./statechart/edges";
 
 const nodeTypes = {
@@ -50,7 +45,7 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
   const [nodes, setNodes] = useState(() =>
     initialLayout.nodes.map((n: any) => ({
       ...n,
-      dragHandle: ".drag-handle",
+      // removed dragHandle so the whole node is draggable
       selected: activeStateIds.includes(n.id),
     })),
   );
@@ -63,7 +58,7 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
     setNodes(
       initialLayout.nodes.map((n: any) => ({
         ...n,
-        dragHandle: ".drag-handle",
+        // removed dragHandle so the whole node is draggable
         selected: activeStateIds.includes(n.id),
       })),
     );
@@ -75,20 +70,16 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
 
   // Keep selection highlighting in sync
   useEffect(() => {
-    setNodes((prev) =>
-      prev.map((n) => ({ ...n, selected: activeStateIds.includes(n.id) })),
-    );
+    setNodes((prev) => prev.map((n) => ({ ...n, selected: activeStateIds.includes(n.id) })));
   }, [activeStateIds]);
 
   // Controlled handlers
   const onNodesChange = useCallback(
-    (changes: NodeChange[]) =>
-      setNodes((nds) => applyNodeChanges(changes, nds)),
+    (changes: NodeChange[]) => setNodes((nds) => applyNodeChanges(changes, nds)),
     [],
   );
   const onEdgesChange = useCallback(
-    (changes: EdgeChange[]) =>
-      setEdges((eds) => applyEdgeChanges(changes, eds)),
+    (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
     [],
   );
 
@@ -121,9 +112,7 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
     >
       <Controls />
       <MiniMap
-        nodeColor={(n) =>
-          n.selected ? "hsl(var(--primary))" : "hsl(var(--border))"
-        }
+        nodeColor={(n) => (n.selected ? "hsl(var(--primary))" : "hsl(var(--border))")}
         nodeStrokeWidth={3}
       />
       <Background />

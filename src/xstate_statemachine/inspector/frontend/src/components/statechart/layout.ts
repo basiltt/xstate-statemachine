@@ -9,6 +9,7 @@ interface XStateNodeConfig {
   states?: Record<string, XStateNodeConfig>;
   entry?: any;
   invoke?: any;
+  type?: string; // allow checking for final state
 }
 
 // --- Dagre Layout Setup ---
@@ -51,15 +52,19 @@ export const getLayoutedElements = (
       dagreGraph.setParent(stateId, parentId);
     }
 
-    if (stateDef.on) {
-      const transitions = Array.isArray(stateDef.on) ? stateDef.on : Object.entries(stateDef.on);
-      for (const [event, transitionConfig] of transitions) {
+    // Do not create outgoing transitions from final states
+    if (stateDef.on && stateDef.type !== "final") {
+      const entries = Object.entries(stateDef.on);
+      for (const [event, transitionConfig] of entries) {
         const configs = Array.isArray(transitionConfig) ? transitionConfig : [transitionConfig];
-        for (const config of configs) {
-          const targetKey = typeof config === "string" ? config : config.target;
+        for (const cfg of configs as any[]) {
+          const targetKey: string | undefined =
+            typeof cfg === "string" ? (cfg as string) : (cfg?.target as string | undefined);
           if (targetKey) {
             const targetId = targetKey.startsWith(".")
-              ? parentId + targetKey
+              ? parentId
+                ? parentId + targetKey
+                : targetKey.replace(/^\./, `${stateId}.`)
               : `${machineId}${targetKey.startsWith("#") ? "" : "."}${targetKey.replace("#", "")}`;
 
             edges.push({
@@ -67,7 +72,7 @@ export const getLayoutedElements = (
               source: stateId,
               target: targetId,
               type: "transitionEdge",
-              data: { label: event, actions: config.actions },
+              data: { label: event, actions: (cfg as any).actions },
               markerEnd: { type: MarkerType.ArrowClosed, color: "#a1a1aa" },
             });
             dagreGraph.setEdge(stateId, targetId);

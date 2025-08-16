@@ -38,20 +38,21 @@ export const StateNode = ({ data, selected }: NodeProps) => {
   const entryActions = asArray(data.definition?.entry);
   const invokeServices = asArray(data.definition?.invoke);
   const hasDetails = entryActions.length > 0 || invokeServices.length > 0;
+  const isFinal = data.definition?.type === "final";
 
   return (
-    // ⚠️ Do NOT put `nodrag` on the root; it would disable dragging.
+    // Entire card is draggable by default (no dragHandle restriction)
     <Card
       className={cn(
         "w-[240px] rounded-lg border shadow-sm bg-card/90",
         selected ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : "border-border",
       )}
     >
-      {/* Top anchor like XState */}
+      {/* Accept incoming connections */}
       <Handle type="target" position={Position.Top} className="!bg-transparent opacity-0" />
 
-      {/* Only the header acts as drag handle — like XState */}
-      <CardHeader className="p-2.5 drag-handle cursor-move bg-muted/60 rounded-t-lg border-b">
+      {/* Header area */}
+      <CardHeader className="p-2.5 cursor-move bg-muted/60 rounded-t-lg border-b">
         <CardTitle className="text-[13px] font-semibold tracking-wide">{data.label}</CardTitle>
       </CardHeader>
 
@@ -67,10 +68,14 @@ export const StateNode = ({ data, selected }: NodeProps) => {
         </CardContent>
       )}
 
-      {/* Multiple connection points like XState */}
-      <Handle type="source" position={Position.Bottom} className="!bg-transparent opacity-0" />
-      <Handle type="source" position={Position.Left} className="!bg-transparent opacity-0" />
-      <Handle type="source" position={Position.Right} className="!bg-transparent opacity-0" />
+      {/* Only show outgoing handles if not a final (end) state */}
+      {!isFinal && (
+        <>
+          <Handle type="source" position={Position.Bottom} className="!bg-transparent opacity-0" />
+          <Handle type="source" position={Position.Left} className="!bg-transparent opacity-0" />
+          <Handle type="source" position={Position.Right} className="!bg-transparent opacity-0" />
+        </>
+      )}
     </Card>
   );
 };
@@ -83,7 +88,7 @@ export const CompoundStateNode = (props: NodeProps) => (
       props.selected ? "border-primary/60" : "border-border",
     )}
   >
-    <div className="p-2 text-[12px] font-bold text-muted-foreground drag-handle cursor-move border-b bg-secondary/30 rounded-t-lg">
+    <div className="p-2 text-[12px] font-bold text-muted-foreground cursor-move border-b bg-secondary/30 rounded-t-lg">
       {props.data.label}
     </div>
     {/* children are rendered by layout; this component is the frame */}
