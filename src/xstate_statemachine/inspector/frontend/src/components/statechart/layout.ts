@@ -17,38 +17,74 @@ dagreGraph.setDefaultEdgeLabel(() => ({}));
 dagreGraph.setGraph({ rankdir: "TB", nodesep: 40, ranksep: 60 });
 
 const nodeWidth = 250;
-const nodeHeight = 60;
+
+const estimateNodeHeight = (def: XStateNodeConfig): number => {
+  const base = 40; // header
+  const entryCount = Array.isArray(def.entry)
+    ? def.entry.length
+    : def.entry
+    ? 1
+    : 0;
+  const invokeCount = Array.isArray(def.invoke)
+    ? def.invoke.length
+    : def.invoke
+    ? 1
+    : 0;
+  const sections = (entryCount ? 1 : 0) + (invokeCount ? 1 : 0);
+  const rows = entryCount + invokeCount;
+
+  if (rows === 0) return base + 20; // padding
+  return base + sections * 16 + rows * 20 + 20; // headings + rows + padding
+};
 
 export const getLayoutedElements = (
   machineDef: XStateNodeConfig,
+  context: Record<string, any> = {},
 ): { nodes: Node[]; edges: Edge[] } => {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
   const machineId = machineDef.id;
 
-  function traverse(stateKey: string, stateDef: XStateNodeConfig, parentId?: string) {
+  function traverse(
+    stateKey: string,
+    stateDef: XStateNodeConfig,
+    parentId?: string,
+  ) {
     const stateId = parentId ? `${parentId}.${stateKey}` : stateKey;
     const isCompound = !!stateDef.states;
 
-    const nodeType = parentId ? (isCompound ? "compoundStateNode" : "stateNode") : "rootNode";
+    const nodeType = parentId
+      ? isCompound
+        ? "compoundStateNode"
+        : "stateNode"
+      : "rootNode";
 
     nodes.push({
       id: stateId,
       type: nodeType,
-      data: { label: stateKey, definition: stateDef, machineId },
+      data: {
+        label: stateKey,
+        definition: stateDef,
+        machineId,
+        ...(parentId ? {} : { context }),
+      },
       position: { x: 0, y: 0 },
       ...(parentId && { parentNode: parentId, extent: "parent" }),
     });
 
-    dagreGraph.setNode(stateId, { width: nodeWidth, height: nodeHeight });
+    dagreGraph.setNode(stateId, { width: nodeWidth, height: estimateNodeHeight(stateDef) });
     if (parentId) {
       dagreGraph.setParent(stateId, parentId);
     }
 
     if (stateDef.on) {
-      const transitions = Array.isArray(stateDef.on) ? stateDef.on : Object.entries(stateDef.on);
+      const transitions = Array.isArray(stateDef.on)
+        ? stateDef.on
+        : Object.entries(stateDef.on);
       for (const [event, transitionConfig] of transitions) {
-        const configs = Array.isArray(transitionConfig) ? transitionConfig : [transitionConfig];
+        const configs = Array.isArray(transitionConfig)
+          ? transitionConfig
+          : [transitionConfig];
         for (const config of configs) {
           const targetKey = typeof config === "string" ? config : config.target;
           if (targetKey) {
@@ -110,6 +146,48 @@ export const getLayoutedElements = (
       };
     }
   });
+
+  // Resize root node to wrap children with padding
+  const rootId = machineId;
+  const padding = 40;
+  const rootNode = nodes.find((n) => n.id === rootId);
+  const childNodes = nodes.filter((n) => n.parentNode === rootId);
+
+  if (rootNode && childNodes.length > 0) {
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
+    childNodes.forEach((n) => {
+      const dim = dagreGraph.node(n.id);
+      const width = dim?.width ?? nodeWidth;
+      const height = dim?.height ?? estimateNodeHeight(n.data.definition as XStateNodeConfig);
+      minX = Math.min(minX, n.position.x);
+      minY = Math.min(minY, n.position.y);
+      maxX = Math.max(maxX, n.position.x + width);
+      maxY = Math.max(maxY, n.position.y + height);
+    });
+
+    const ctxKeys = Object.keys(context ?? {});
+    const headerBase = 48; // header height
+    const ctxHeight =
+      ctxKeys.length > 0 ? 24 + ctxKeys.length * 20 : 0; // Context heading + rows
+    const headerOffset = headerBase + ctxHeight;
+
+    rootNode.position = {
+      x: minX - padding / 2,
+      y: minY - padding / 2 - headerOffset,
+    };
+    rootNode.style = {
+      width: maxX - minX + padding,
+      height: maxY - minY + padding + headerOffset,
+    } as any;
+
+    childNodes.forEach((n) => {
+      n.position.x -= rootNode.position.x;
+      n.position.y -= rootNode.position.y;
+    });
+  }
 
   return { nodes, edges };
 };

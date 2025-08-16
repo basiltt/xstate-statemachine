@@ -26,7 +26,9 @@ const Section = ({
       {items.map((item, i) => (
         <div key={i} className="flex items-center gap-2 text-[12px] leading-5">
           <Icon className={cn("w-3.5 h-3.5 shrink-0", colorClass)} />
-          <span className="truncate">{item.type ?? item.src ?? item}</span>
+          <span className="truncate text-foreground">
+            {item.type ?? item.src ?? item}
+          </span>
         </div>
       ))}
     </div>
@@ -44,20 +46,33 @@ export const StateNode = ({ data, selected }: NodeProps) => {
     <Card
       className={cn(
         "w-[240px] rounded-lg border shadow-sm bg-card/90",
-        selected ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : "border-border",
+        selected
+          ? "ring-2 ring-primary ring-offset-2 ring-offset-background"
+          : "border-border",
       )}
     >
       {/* Top anchor like XState */}
-      <Handle type="target" position={Position.Top} className="!bg-primary" />
+      <Handle
+        type="target"
+        position={Position.Top}
+        className="!bg-transparent opacity-0"
+      />
 
       {/* Only the header acts as drag handle — like XState */}
       <CardHeader className="p-2.5 drag-handle cursor-move bg-muted/60 rounded-t-lg border-b">
-        <CardTitle className="text-[13px] font-semibold tracking-wide">{data.label}</CardTitle>
+        <CardTitle className="text-[13px] font-semibold tracking-wide text-foreground">
+          {data.label}
+        </CardTitle>
       </CardHeader>
 
       {hasDetails && (
         <CardContent className="p-3">
-          <Section title="Entry" items={entryActions} icon={Zap} colorClass="text-yellow-500" />
+          <Section
+            title="Entry"
+            items={entryActions}
+            icon={Zap}
+            colorClass="text-yellow-500"
+          />
           <Section
             title="Invoke"
             items={invokeServices}
@@ -68,9 +83,21 @@ export const StateNode = ({ data, selected }: NodeProps) => {
       )}
 
       {/* Multiple connection points like XState */}
-      <Handle type="source" position={Position.Bottom} className="!bg-primary" />
-      <Handle type="source" position={Position.Left} className="!bg-primary" />
-      <Handle type="source" position={Position.Right} className="!bg-primary" />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        className="!bg-transparent opacity-0"
+      />
+      <Handle
+        type="source"
+        position={Position.Left}
+        className="!bg-transparent opacity-0"
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="!bg-transparent opacity-0"
+      />
     </Card>
   );
 };
@@ -83,7 +110,7 @@ export const CompoundStateNode = (props: NodeProps) => (
       props.selected ? "border-primary/60" : "border-border",
     )}
   >
-    <div className="p-2 text-[12px] font-bold text-muted-foreground drag-handle cursor-move border-b bg-secondary/30 rounded-t-lg">
+    <div className="p-2 text-[12px] font-bold text-foreground drag-handle cursor-move border-b bg-secondary/30 rounded-t-lg">
       {props.data.label}
     </div>
     {/* children are rendered by layout; this component is the frame */}
@@ -91,13 +118,37 @@ export const CompoundStateNode = (props: NodeProps) => (
 );
 
 // Root state summary
-export const RootNode = (props: NodeProps) => (
-  <Card className="bg-card/80">
-    <CardHeader className="p-3">
-      <CardTitle className="text-sm">{props.data.label}</CardTitle>
-      {/* Add any context preview if desired */}
-    </CardHeader>
-  </Card>
-);
+export const RootNode = ({ data }: NodeProps) => {
+  const ctxEntries = Object.entries(data.context ?? {}).map(([k, v]) => ({
+    key: k,
+    type: typeof v,
+  }));
 
-export const InitialNode = () => <div className="w-6 h-6 rounded-full bg-foreground" />;
+  return (
+    <div className="pointer-events-none">
+      <Card className="bg-card/80 pointer-events-none">
+        <CardHeader className="p-3 border-b drag-handle cursor-move pointer-events-auto">
+          <CardTitle className="text-sm text-[#4E4F5F] dark:text-[#4E4F5F]">
+            {data.label}
+          </CardTitle>
+        </CardHeader>
+        {ctxEntries.length > 0 && (
+          <CardContent className="p-3 pointer-events-auto">
+            <h4 className="text-[10px] font-semibold text-muted-foreground mb-1 tracking-wide uppercase">
+              Context
+            </h4>
+            {ctxEntries.map(({ key, type }) => (
+              <div key={key} className="text-[12px] leading-5">
+                <span className="font-mono font-medium">{key}</span>: {type}
+              </div>
+            ))}
+          </CardContent>
+        )}
+      </Card>
+    </div>
+  );
+};
+
+export const InitialNode = () => (
+  <div className="w-0 h-0 border-t-4 border-b-4 border-l-8 border-t-transparent border-b-transparent border-l-foreground" />
+);
