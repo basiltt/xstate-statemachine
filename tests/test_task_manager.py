@@ -100,6 +100,11 @@ class TestTaskManager(unittest.IsolatedAsyncioTestCase):
         # ✅ Post-conditions
         self.assertTrue(task1.cancelled())
         self.assertTrue(task2.cancelled())
+        # 🧹 Task registry should be empty for all owners
+        self.assertEqual(tm.get_tasks_by_owner("owner1"), set())
+        self.assertEqual(tm.get_tasks_by_owner("owner2"), set())
+        # 🕵️ Unknown owners should also report no tasks
+        self.assertEqual(tm.get_tasks_by_owner("unknown_owner"), set())
 
     async def test_cancel_by_owner(self) -> None:
         """Cancel only the tasks associated with a single owner.
