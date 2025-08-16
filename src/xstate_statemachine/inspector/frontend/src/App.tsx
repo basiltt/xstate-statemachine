@@ -5,7 +5,7 @@ import {
   useInspectorSocket,
   useInspectorStore,
 } from "./hooks/useInspectorSocket";
-import { StatechartDiagram } from "./components/statechart/StatechartDiagram.tsx";
+
 import {
   Bot,
   FileJson,
@@ -36,6 +36,7 @@ import { Textarea } from "@/components/ui/textarea";
 // Magic UI components
 import { Dock, DockIcon } from "@/components/magicui/dock";
 import ShimmerButton from "@/components/magicui/shimmer-button";
+import { StatechartDiagram } from "@/components/statechart/diagram/StatechartDiagram.tsx";
 
 // --- Prop Type Definitions ---
 interface HeaderProps {

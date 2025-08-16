@@ -1,3 +1,5 @@
+// src/components/statechart/constants.ts
+
 // Shared layout and styling constants for the statechart wrapper
 export const PADDING = 40; // inner padding inside wrapper
 export const ROOT_HEADER = 44; // header height (px)
@@ -6,6 +8,8 @@ export const EDGE_CLEAR_TOP = 16; // extra top clearance under context to keep e
 export const GRID_SIZE = 16; // snap-to-grid size for nodes and layout
 // Grow the wrapper earlier so padding stays consistent while dragging
 export const GROW_PREEMPT = 40;
+// Margin to give edges some breathing room when calculating bounds
+export const EDGE_MARGIN = 48;
 
 // Estimate the reserved top (header + context block height) so children and edges
 // don’t overlap it. Keep this heuristic conservative but not overly large.
@@ -16,4 +20,9 @@ export function estimateReservedTop(context: Record<string, any> | undefined | n
   const line = 12; // per-line height
   const gap = 2; // spacing below subtitle
   return ROOT_HEADER + title + gap + keys.length * line;
+}
+
+// Calculate the minimum top position for nodes to avoid the header
+export function headerGuardTop(reservedTop: number): number {
+  return reservedTop + PADDING / 2;
 }

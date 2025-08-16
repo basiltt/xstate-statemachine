@@ -1,67 +1,38 @@
-// StatechartDiagram.tsx
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactFlow, {
+// src/hooks/useDiagram.ts
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
   applyEdgeChanges,
   applyNodeChanges,
-  Background,
-  ConnectionLineType,
-  Controls,
   type Edge,
   type EdgeChange,
-  MarkerType,
-  MiniMap,
   type Node,
   type NodeChange,
-  ReactFlowProvider,
   useReactFlow,
   useUpdateNodeInternals,
 } from "reactflow";
-import "reactflow/dist/style.css";
 
-import { getLayoutedElements } from "./layout";
+import { getLayoutedElements } from "@/components/statechart/layout";
+import { MachineState } from "@/hooks/useInspectorSocket.ts";
 import {
   EDGE_CLEAR_TOP,
+  EDGE_MARGIN,
   estimateReservedTop,
-  GRID_SIZE,
   GROW_PREEMPT,
+  headerGuardTop as calculateHeaderGuardTop,
   PADDING,
   ROOT_HEADER,
-} from "./constants";
+} from "@/components/statechart/constants";
 
-import { CompoundStateNode, EventNode, InitialNode, RootNode, StateNode } from "./nodes";
-import { TransitionEdge } from "@/components/statechart/edges.tsx";
-import { MachineState } from "@/hooks/useInspectorSocket.ts";
-
-const nodeTypes = {
-  rootNode: RootNode,
-  stateNode: StateNode,
-  compoundStateNode: CompoundStateNode,
-  eventNode: EventNode,
-  initialNode: InitialNode,
-};
-const edgeTypes = { transitionEdge: TransitionEdge };
-
-const EDGE_MARGIN = 48;
-
-type DiagramProps = {
+type UseDiagramProps = {
   machine: MachineState;
   activeStateIds: string[];
 };
 
 const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
 
-const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  // @ts-ignore
-  const didInitialFit = useRef(false);
-
+export const useDiagram = ({ machine, activeStateIds }: UseDiagramProps) => {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
-  const [menu, setMenu] = useState<{ open: boolean; x: number; y: number }>({
-    open: false,
-    x: 0,
-    y: 0,
-  });
 
   const { fitView, getNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
@@ -71,9 +42,10 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
       Math.max(estimateReservedTop(machine.context) + EDGE_CLEAR_TOP, ROOT_HEADER + EDGE_CLEAR_TOP),
     [machine.context],
   );
-  const headerGuardTop = useMemo(() => reservedTop + PADDING / 2, [reservedTop]);
+  const headerGuardTop = useMemo(() => calculateHeaderGuardTop(reservedTop), [reservedTop]);
 
-  /* ---------------------- UI status highlighting ---------------------- */
+  /* ---------------------- Logic moved from component ---------------------- */
+
   const decorateStatuses = useCallback(
     (list: Node[], eds: Edge[]): Node[] => {
       const activeSet = new Set(activeStateIds);
@@ -98,9 +70,9 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
     );
   }, []);
 
-  /* ---------------------- Bounds & wrapper helpers ---------------------- */
   const computeRootBounds = useCallback(
     (allNodes: Node[], eds: Edge[]) => {
+      // ... (exact same implementation as in the original file)
       const root = allNodes.find((n) => n.type === "rootNode");
       if (!root) return null;
       const children = allNodes.filter((n) => n.parentId === root.id);
@@ -120,7 +92,6 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
         maxY = Math.max(maxY, ch.position.y + h);
       }
 
-      // edge span
       const map = new Map(allNodes.map((n) => [n.id, n] as const));
       for (const e of eds) {
         const s = map.get(e.source);
@@ -136,9 +107,7 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
         maxY = Math.max(maxY, Math.max(sy, ty) + EDGE_MARGIN);
       }
 
-      // never start above header band
       minY = Math.max(minY, headerGuardTop);
-
       const width = Math.max(maxX - minX + PADDING + 72, 320);
       const height = Math.max(
         maxY - minY + PADDING + 80 + reservedTop - ROOT_HEADER,
@@ -152,13 +121,11 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
 
   const guardHeaderAndMaybeGrow = useCallback(
     (currentNodes: Node[], eds: Edge[]) => {
+      // ... (exact same implementation)
       const root = currentNodes.find((n) => n.type === "rootNode");
       const tight = computeRootBounds(currentNodes, eds);
       if (!root || !tight) return currentNodes;
-
       let next = currentNodes;
-
-      // push graph down if it's intruding into header band
       const overlap = headerGuardTop - tight.minY;
       if (overlap > 0) {
         next = next.map((n) => {
@@ -169,21 +136,16 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
           return n;
         });
       }
-
       const t2 = computeRootBounds(next, eds) ?? tight;
-
-      // grow wrapper if needed
       const cw = (root.style as any)?.width ?? root.width ?? t2.width;
       const ch = (root.style as any)?.height ?? root.height ?? t2.height;
       const nw = Math.max(cw, t2.width + (GROW_PREEMPT ?? 40));
       const nh = Math.max(ch, t2.height + (GROW_PREEMPT ?? 40));
-
       if (nw !== cw || nh !== ch) {
         next = next.map((n) =>
           n.id === root.id ? { ...n, style: { ...n.style, width: nw, height: nh } } : n,
         );
       }
-
       updateNodeInternals(root.id);
       return next;
     },
@@ -192,13 +154,12 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
 
   const fitRootTightly = useCallback(
     (currentNodes: Node[], eds: Edge[]) => {
+      // ... (exact same implementation)
       const root = currentNodes.find((n) => n.type === "rootNode");
       const tight = computeRootBounds(currentNodes, eds);
       if (!root || !tight) return currentNodes;
-
       const dx = tight.minX - PADDING / 2;
       const dy = tight.minY - headerGuardTop;
-
       const updated = currentNodes.map((n) => {
         if (n.id === root.id) {
           return {
@@ -212,52 +173,38 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
         }
         return n;
       });
-
       updateNodeInternals(root.id);
       return updated;
     },
     [computeRootBounds, headerGuardTop, updateNodeInternals],
   );
 
-  /* ---------------------- Measure → tighten → center ---------------------- */
   const tightenAndFitWhenReady = useCallback(
     async (eds: Edge[]) => {
-      // allow React & RF to mount nodes
+      // ... (exact same implementation)
       await nextFrame();
       await nextFrame();
-
-      // force a measurement pass for auto-height nodes
       const ids = getNodes()
         .filter((n) => n.type !== "rootNode")
         .map((n) => n.id);
       ids.forEach((id) => updateNodeInternals(id));
-
-      // wait once more for sizes to settle
       await nextFrame();
-
       setNodes((prev) => fitRootTightly(prev, eds));
-
-      // finally center & fit
       await nextFrame();
       fitView({ duration: 500, padding: 0.18, includeHiddenNodes: true });
     },
     [getNodes, updateNodeInternals, fitRootTightly, fitView],
   );
 
-  /* ---------------------- Layout pipeline ---------------------- */
   const relayout = useCallback(async () => {
     const { nodes: laidOutNodes, edges: laidOutEdges } = await getLayoutedElements(
       machine.definition,
       machine.context,
     );
-
     const parented = ensureUnderRoot(laidOutNodes);
     const withStatus = decorateStatuses(parented, laidOutEdges);
-
     setEdges(laidOutEdges);
     setNodes(withStatus);
-
-    // initial fit (and subsequent "Auto layout")
     tightenAndFitWhenReady(laidOutEdges).catch(console.error);
   }, [
     machine.definition,
@@ -271,12 +218,10 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
     relayout().catch(console.error);
   }, [relayout]);
 
-  // Keep highlights in sync
   useEffect(() => {
     setNodes((prev) => decorateStatuses(prev, edges));
   }, [activeStateIds, edges, decorateStatuses]);
 
-  /* ---------------------- RF event handlers ---------------------- */
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
       setNodes((curr) => {
@@ -304,78 +249,14 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
     tightenAndFitWhenReady(edges).catch(console.error);
   }, [fitRootTightly, edges, updateNodeInternals, tightenAndFitWhenReady]);
 
-  const onPaneContextMenu = useCallback((evt: React.MouseEvent) => {
-    evt.preventDefault();
-    const rect = containerRef.current?.getBoundingClientRect();
-    setMenu({ open: true, x: evt.clientX - (rect?.left ?? 0), y: evt.clientY - (rect?.top ?? 0) });
-  }, []);
-  const closeMenu = useCallback(() => setMenu((m) => ({ ...m, open: false })), []);
-
-  /* ---------------------- Render ---------------------- */
-  return (
-    <div ref={containerRef} className="relative h-full w-full">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onNodeDragStop={onNodeDragStop}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        proOptions={{ hideAttribution: true }}
-        nodesDraggable
-        nodesConnectable={false}
-        elementsSelectable
-        connectionLineType={ConnectionLineType.Step}
-        defaultEdgeOptions={{
-          type: "transitionEdge",
-          markerEnd: { type: MarkerType.ArrowClosed, color: "hsl(var(--foreground))" },
-        }}
-        fitView
-        minZoom={0.2}
-        maxZoom={1.5}
-        snapToGrid
-        snapGrid={[GRID_SIZE ?? 8, GRID_SIZE ?? 8]}
-        className="bg-background"
-        onPaneContextMenu={onPaneContextMenu}
-      >
-        <Controls />
-        <MiniMap />
-        <Background />
-      </ReactFlow>
-
-      {menu.open && (
-        <div
-          style={{ left: menu.x, top: menu.y }}
-          className="absolute z-50 rounded-md border bg-popover text-popover-foreground shadow-md"
-          onMouseLeave={closeMenu}
-        >
-          <button
-            className="w-full text-left px-3 py-2 hover:bg-muted"
-            onClick={() => {
-              closeMenu();
-              relayout().catch(console.error);
-            }}
-          >
-            Auto layout
-          </button>
-          <button
-            className="w-full text-left px-3 py-2 hover:bg-muted"
-            onClick={() => {
-              closeMenu();
-              tightenAndFitWhenReady(edges).catch(console.error);
-            }}
-          >
-            Fit view
-          </button>
-        </div>
-      )}
-    </div>
-  );
+  // Return values to be used by the view component
+  return {
+    nodes,
+    edges,
+    onNodesChange,
+    onEdgesChange,
+    onNodeDragStop,
+    relayout,
+    tightenAndFitWhenReady,
+  };
 };
-
-export const StatechartDiagram = (props: DiagramProps) => (
-  <ReactFlowProvider>
-    <DiagramCanvas {...props} />
-  </ReactFlowProvider>
-);
