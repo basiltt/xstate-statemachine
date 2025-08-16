@@ -29,6 +29,7 @@ import {
 } from "./statechart/constants";
 import { CompoundStateNode, InitialNode, RootNode, StateNode } from "./statechart/nodes";
 import { TransitionEdge } from "./statechart/edges";
+import { getInteractiveLayout } from './statechart/layout';
 
 const nodeTypes = {
   rootNode: RootNode,
@@ -46,10 +47,8 @@ interface DiagramProps {
 const EDGE_MARGIN = 48;
 
 const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
-  const initialLayout = useMemo(
-    () => getLayoutedElements(machine.definition, machine.context),
-    [machine.definition, machine.context],
-  );
+  // Removed synchronous memoized layout; we'll compute it asynchronously
+  // const [initialLayoutLoaded, setInitialLayoutLoaded] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -59,23 +58,8 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
   );
 
   // 👉 Controlled state
-  const [nodes, setNodes] = useState(() =>
-    initialLayout.nodes.map((n: any) => ({
-      ...n,
-      ...(n.type === "rootNode"
-        ? { dragHandle: ".root-drag-handle", style: { ...(n.style || {}), zIndex: 0 } }
-        : {}),
-      // make everything draggable, except the synthetic initial marker
-      draggable: n.type !== "initialNode",
-      selected: activeStateIds.includes(n.id),
-    })),
-  );
-  const [edges, setEdges] = useState(
-    (initialLayout.edges as Edge[]).map((e) => ({
-      ...e,
-      data: { ...(e.data as any), reservedTop },
-    })),
-  );
+  const [nodes, setNodes] = useState<Node[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
 
   // Context menu state for Auto Layout
   const [menu, setMenu] = useState<{ open: boolean; x: number; y: number }>({
@@ -153,7 +137,7 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
     [reservedTop],
   );
 
-  // Expand-only wrapper during drag if children approach edges or reserved top
+  // Enhanced wrapper growth during drag with better boundary enforcement
   const maybeGrowRootDuringDrag = useCallback(
     (currentNodes: Node[], eds: Edge[]) => {
       const rootIndex = currentNodes.findIndex((n) => n.type === "rootNode");
@@ -166,19 +150,36 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
       const currWidth = (root.style as any)?.width ?? (root as any).width ?? tight.width;
       const currHeight = (root.style as any)?.height ?? (root as any).height ?? tight.height;
 
-      // preemptively move the wrapper before nodes/edges hit the inner gap
-      const leftThreshold = PADDING / 2 + GROW_PREEMPT;
-      const topThreshold = PADDING / 2 + reservedTop + GROW_PREEMPT;
+      // Enhanced thresholds with better gap management
+      const MIN_GAP = PADDING / 2;
+      const GROW_THRESHOLD = MIN_GAP + GROW_PREEMPT;
+      const leftThreshold = GROW_THRESHOLD;
+      const topThreshold = GROW_THRESHOLD + reservedTop;
+      const rightThreshold = currWidth - GROW_THRESHOLD;
+      const bottomThreshold = currHeight - GROW_THRESHOLD;
+
+      // Check if nodes are approaching any boundary
       const needLeftPad = tight.minX < leftThreshold;
       const needTopPad = tight.minY < topThreshold;
+      const needRightGrow = tight.maxX > rightThreshold;
+      const needBottomGrow = tight.maxY > bottomThreshold;
+
+      // Calculate adjustments
       const dx = needLeftPad ? tight.minX - leftThreshold : 0;
       const dy = needTopPad ? tight.minY - topThreshold : 0;
 
-      // also preemptively increase right/bottom size so gap feels consistent
-      const nextWidth = Math.max(currWidth, tight.width + GROW_PREEMPT * 2);
-      const nextHeight = Math.max(currHeight, tight.height + GROW_PREEMPT * 2);
+      // Calculate new dimensions with proper gap maintenance
+      const nextWidth = Math.max(
+        currWidth,
+        tight.width + PADDING + (needRightGrow ? GROW_PREEMPT * 2 : 0)
+      );
+      const nextHeight = Math.max(
+        currHeight,
+        tight.height + PADDING + reservedTop + (needBottomGrow ? GROW_PREEMPT * 2 : 0)
+      );
 
-      if (!needLeftPad && !needTopPad && nextWidth === currWidth && nextHeight === currHeight) {
+      if (!needLeftPad && !needTopPad && !needRightGrow && !needBottomGrow && 
+          nextWidth === currWidth && nextHeight === currHeight) {
         return currentNodes; // no-op
       }
 
@@ -243,8 +244,8 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
   );
 
   // Re-run dagre auto layout and apply wrapper fit
-  const relayout = useCallback(() => {
-    const layout = getLayoutedElements(machine.definition, machine.context);
+  const relayout = useCallback(async () => {
+    const layout = await getLayoutedElements(machine.definition, machine.context);
     // Decorate and add reservedTop to edges
     const laidNodes = decorateStatuses(
       layout.nodes.map((n: any) => ({
@@ -275,11 +276,15 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
     fitView,
   ]);
 
-  // Reset positions & selections if the machine changes
+  // Reset positions & selections if the machine changes (async with ELK)
   useEffect(() => {
-    setNodes(
-      decorateStatuses(
-        initialLayout.nodes.map((n: any) => ({
+    let cancelled = false;
+    (async () => {
+      const layout = await getLayoutedElements(machine.definition, machine.context);
+      if (cancelled) return;
+
+      const nextNodes = decorateStatuses(
+        layout.nodes.map((n: any) => ({
           ...n,
           ...(n.type === "rootNode"
             ? { dragHandle: ".root-drag-handle", style: { ...(n.style || {}), zIndex: 0 } }
@@ -287,22 +292,26 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
           draggable: n.type !== "initialNode",
           selected: activeStateIds.includes(n.id),
         })),
-        initialLayout.edges as Edge[],
+        layout.edges as Edge[],
         activeStateIds,
-      ),
-    );
-    setEdges(
-      (initialLayout.edges as Edge[]).map((e) => ({
+      );
+
+      const nextEdges = (layout.edges as Edge[]).map((e) => ({
         ...e,
         data: { ...(e.data as any), reservedTop },
-      })),
-    );
-    const id = setTimeout(() => {
-      setNodes((prev) => fitRootTightly(prev, initialLayout.edges as Edge[]));
-      fitView({ duration: 400, padding: 0.1 });
-    }, 50);
-    return () => clearTimeout(id);
-  }, [initialLayout, activeStateIds, fitRootTightly, fitView, decorateStatuses, reservedTop]);
+      }));
+
+      setNodes(() => fitRootTightly(nextNodes, nextEdges));
+      setEdges(nextEdges);
+
+      setTimeout(() => {
+        fitView({ duration: 400, padding: 0.1 });
+      }, 50);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [machine.definition, machine.context, activeStateIds, fitRootTightly, fitView, decorateStatuses, reservedTop]);
 
   // Keep selection highlighting & statuses in sync
   useEffect(() => {
@@ -343,18 +352,38 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
   const onNodeDrag = useCallback(
     (_evt: any, dragging?: Node) => {
       setNodes((prev) => {
-        // soft-protect the top context band while dragging
-        const next =
-          dragging && dragging.type !== "rootNode"
-            ? prev.map((n) => {
-                if (n.id === dragging.id) {
-                  const minY = reservedTop + 4;
-                  const y = Math.max(n.position.y, minY);
-                  return { ...n, position: { x: n.position.x, y } } as Node;
-                }
-                return n;
-              })
-            : prev;
+        if (!dragging || dragging.type === "rootNode") {
+          return maybeGrowRootDuringDrag(prev, edges);
+        }
+
+        const root = prev.find((n) => n.type === "rootNode");
+        if (!root) return prev;
+
+        const rootWidth = (root.style as any)?.width ?? 0;
+        const rootHeight = (root.style as any)?.height ?? 0;
+        const MIN_GAP = PADDING / 2;
+
+        // Enhanced boundary enforcement with proper gap maintenance
+        const next = prev.map((n) => {
+          if (n.id === dragging.id) {
+            // Calculate boundaries with proper gaps
+            const minX = MIN_GAP;
+            const minY = reservedTop + MIN_GAP;
+            const maxX = rootWidth - MIN_GAP - 220; // Account for node width
+            const maxY = rootHeight - MIN_GAP - 80;  // Account for node height
+
+            // Constrain position within boundaries
+            const constrainedX = Math.max(minX, Math.min(n.position.x, maxX));
+            const constrainedY = Math.max(minY, Math.min(n.position.y, maxY));
+
+            return { 
+              ...n, 
+              position: { x: constrainedX, y: constrainedY } 
+            } as Node;
+          }
+          return n;
+        });
+
         return maybeGrowRootDuringDrag(next, edges);
       });
     },
@@ -362,13 +391,19 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
   );
 
   const onNodeDragStop = useCallback(
-    (_evt: any, node?: Node) => {
+    async (_evt: any, node?: Node) => {
       if (!node) return;
       if (node.type !== "rootNode") {
-        setNodes((prev) => fitRootTightly(prev, edges));
+        // Call interactive layout here
+        setNodes((currentNodes) => {
+          getInteractiveLayout(currentNodes, edges, node.id).then(({ nodes: newNodes }) => {
+            setNodes(decorateStatuses(newNodes, edges, activeStateIds));
+          });
+          return currentNodes;
+        });
       }
     },
-    [fitRootTightly, edges],
+    [edges, activeStateIds, decorateStatuses],
   );
 
   const onPaneContextMenu = useCallback((evt: any) => {

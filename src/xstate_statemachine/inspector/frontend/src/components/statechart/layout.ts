@@ -1,6 +1,7 @@
 import { Edge, MarkerType, Node } from "reactflow";
-import dagre from "dagre";
-import { estimateReservedTop, PADDING, ROOT_HEADER, EDGE_CLEAR_TOP, GRID_SIZE } from "./constants";
+import ELK, { ElkNode, ElkExtendedEdge } from "elkjs/lib/elk.bundled.js";
+import { estimateReservedTop, ROOT_HEADER, EDGE_CLEAR_TOP } from "./constants";
+import { defaultLayoutConfig, generateElkOptions, LayoutConfig } from "./layoutConfig";
 
 // --- Type Definitions ---
 interface XStateNodeConfig {
@@ -13,22 +14,27 @@ interface XStateNodeConfig {
   type?: string; // allow checking for final state
 }
 
-const NODE_WIDTH = 260;
-const NODE_HEIGHT = 80;
-
-export const getLayoutedElements = (
+// Removed unused NODE_WIDTH/NODE_HEIGHT constants; we rely on config values
+export const getLayoutedElements = async (
   machineDef: XStateNodeConfig,
   context: Record<string, any> = {},
-): { nodes: Node[]; edges: Edge[] } => {
-  // Fresh graph each time to avoid accumulating old nodes/edges
-  const dagreGraph = new dagre.graphlib.Graph({ compound: true });
-  dagreGraph.setDefaultEdgeLabel(() => ({}));
-  dagreGraph.setGraph({ rankdir: "TB", nodesep: 120, ranksep: 120, marginx: 40, marginy: 40 });
+  config: Partial<LayoutConfig> = {}
+): Promise<{ nodes: Node[]; edges: Edge[] }> => {
+  const cfg: LayoutConfig = { ...defaultLayoutConfig, ...config };
+  const elk = new ELK();
 
   const nodes: Node[] = [];
   const edges: Edge[] = [];
   const machineId = machineDef.id;
   const reservedTop = estimateReservedTop(context) + EDGE_CLEAR_TOP;
+
+  // Build ELK graph hierarchy
+  const elkRootNode: ElkNode = {
+    id: "root",
+    layoutOptions: generateElkOptions(cfg),
+    children: [],
+    edges: []
+  };
 
   function traverse(stateKey: string, stateDef: XStateNodeConfig, parentId?: string) {
     const stateId = parentId ? `${parentId}.${stateKey}` : stateKey;
@@ -36,20 +42,163 @@ export const getLayoutedElements = (
     const nodeType = parentId ? (isCompound ? "compoundStateNode" : "stateNode") : "rootNode";
     const isRootChild = !!parentId && parentId === machineId;
 
+    // Add node as before
     nodes.push({
       id: stateId,
       type: nodeType,
       data: { label: stateKey, definition: stateDef, machineId, ...(parentId ? {} : { context }) },
       position: { x: 0, y: 0 },
       style: nodeType === "rootNode" ? { zIndex: 0 } : isRootChild ? { zIndex: 1 } : undefined,
-      // keep grouping under parent, but DO NOT constrain dragging to parent extent
       ...(parentId && { parentNode: parentId }),
     });
 
-    dagreGraph.setNode(stateId, { width: NODE_WIDTH, height: NODE_HEIGHT });
-    if (parentId) dagreGraph.setParent(stateId, parentId);
+    // Build ELK node
+    const elkNode: ElkNode = {
+      id: stateId,
+      width: cfg.nodeWidth,
+      height: cfg.nodeHeight,
+      children: [],
+      layoutOptions: {
+        ...generateElkOptions(cfg),
+        'elk.padding': `[top=${cfg.padding},left=${cfg.padding},bottom=${cfg.padding},right=${cfg.padding}]`,
+        'elk.spacing.nodeNode': cfg.nodeSpacing.toString(),
+        'elk.layered.spacing.nodeNodeBetweenLayers': cfg.layerSpacing.toString(),
+      }
+    };
 
-    // Transitions (skip for final states)
+    // Add to appropriate parent
+    if (parentId) {
+      const findAndAddToParent = (node: ElkNode, targetParentId: string): boolean => {
+        if (node.id === targetParentId) {
+          node.children = node.children || [];
+          node.children.push(elkNode);
+          return true;
+        }
+        if (node.children) {
+          for (const child of node.children) {
+            if (findAndAddToParent(child, targetParentId)) return true;
+          }
+        }
+        return false;
+      };
+      findAndAddToParent(elkRootNode, parentId);
+    } else {
+      elkRootNode.children!.push(elkNode);
+    }
+
+    // Helper function to check if ELK node exists
+    const elkNodeExists = (node: ElkNode, targetId: string): boolean => {
+      if (node.id === targetId) return true;
+      if (node.children) {
+        return node.children.some(child => elkNodeExists(child, targetId));
+      }
+      return false;
+    };
+
+    // Process entry actions as separate nodes
+    if (stateDef.entry) {
+      const entryActions = asArray(stateDef.entry);
+      entryActions.forEach((action: any, index: number) => {
+        const actionId = `${stateId}.entry_action_${index}`;
+        // Check if node already exists to prevent duplicates
+        if (!nodes.find(n => n.id === actionId)) {
+          nodes.push({
+            id: actionId,
+            type: 'ActionNode',
+            data: { label: action.type || action },
+            position: { x: 0, y: 0 },
+            parentNode: stateId,
+            draggable: true,
+          });
+        }
+
+        const actionElkNode: ElkNode = {
+          id: actionId,
+          width: 180,
+          height: 60,
+        };
+        
+        if (!elkNodeExists(elkRootNode, actionId)) {
+          const findParent = (node: ElkNode) => {
+            if (node.id === stateId) {
+              node.children = node.children || [];
+              node.children.push(actionElkNode);
+            } else if (node.children) {
+              node.children.forEach(findParent);
+            }
+          };
+          findParent(elkRootNode);
+
+          edges.push({
+            id: `e-${stateId}-${actionId}`,
+            source: stateId,
+            target: actionId,
+            type: 'transitionEdge',
+            data: { label: 'entry' },
+          });
+          elkRootNode.edges!.push({
+            id: `elk-${stateId}-${actionId}`,
+            sources: [stateId],
+            targets: [actionId],
+          });
+        }
+      });
+    }
+
+    // Process invokes as separate nodes
+    if (stateDef.invoke) {
+      const invokes = asArray(stateDef.invoke);
+      invokes.forEach((invoke: any, index: number) => {
+        const invokeId = `${stateId}.invoke_${index}`;
+        // Check if node already exists to prevent duplicates
+        if (!nodes.find(n => n.id === invokeId)) {
+          nodes.push({
+            id: invokeId,
+            type: 'InvokeNode',
+            data: { label: invoke.src || 'Invoke' },
+            position: { x: 0, y: 0 },
+            parentNode: stateId,
+            draggable: true,
+          });
+        }
+
+        const invokeElkNode: ElkNode = {
+          id: invokeId,
+          width: 180,
+          height: 60,
+        };
+        
+        // Only add ELK node if it doesn't already exist
+        if (!elkNodeExists(elkRootNode, invokeId)) {
+        const findParent = (node: ElkNode) => {
+          if (node.id === stateId) {
+            node.children = node.children || [];
+            node.children.push(invokeElkNode);
+          } else if (node.children) {
+            node.children.forEach(findParent);
+          }
+        };
+        findParent(elkRootNode);
+
+        edges.push({
+          id: `e-${stateId}-${invokeId}`,
+          source: stateId,
+          target: invokeId,
+          type: 'transitionEdge',
+          data: { label: 'invoke' },
+        });
+        elkRootNode.edges!.push({
+          id: `elk-${stateId}-${invokeId}`,
+          sources: [stateId],
+          targets: [invokeId],
+        });
+        }
+      });
+    }
+
+    // Note: ELK node already added above in the initial processing
+
+    // Process transitions (skip for final states)
     if (stateDef.on && stateDef.type !== "final") {
       for (const [event, transitionConfig] of Object.entries(stateDef.on)) {
         const configs = Array.isArray(transitionConfig) ? transitionConfig : [transitionConfig];
@@ -57,11 +206,14 @@ export const getLayoutedElements = (
           const targetKey: string | undefined =
             typeof cfg === "string" ? (cfg as string) : (cfg?.target as string | undefined);
           if (!targetKey) continue;
+          
           const targetId = targetKey.startsWith(".")
             ? parentId
               ? parentId + targetKey
               : targetKey.replace(/^\./, `${stateId}.`)
             : `${machineId}${targetKey.startsWith("#") ? "" : "."}${targetKey.replace("#", "")}`;
+
+          // Add React Flow edge
           edges.push({
             id: `e-${stateId}-${targetId}-${event}`,
             source: stateId,
@@ -70,23 +222,32 @@ export const getLayoutedElements = (
             data: { label: event, actions: (cfg as any)?.actions },
             markerEnd: { type: MarkerType.ArrowClosed, color: "#a1a1aa" },
           });
-          dagreGraph.setEdge(stateId, targetId);
+
+          // Add ELK edge
+          const elkEdge: ElkExtendedEdge = {
+            id: `elk-${stateId}-${targetId}-${event}`,
+            sources: [stateId],
+            targets: [targetId]
+          };
+          elkRootNode.edges!.push(elkEdge);
         }
       }
     }
 
-    // Initial indicator (for both root and nested compound states)
+    // Initial state indicator
     if (stateDef.initial) {
       const initialNodeId = `${stateId}.__initial__`;
       const targetId = `${stateId}.${stateDef.initial}`;
+      
       nodes.push({
         id: initialNodeId,
         type: "initialNode",
         position: { x: 0, y: 0 },
-        parentNode: stateId, // keep inside wrapper grouping only
+        parentNode: stateId,
         data: { label: "" },
         style: isRootChild || !parentId ? { zIndex: 1 } : undefined,
       });
+      
       edges.push({
         id: `e-${initialNodeId}-${targetId}`,
         source: initialNodeId,
@@ -94,30 +255,75 @@ export const getLayoutedElements = (
         type: "transitionEdge",
         data: { label: "" },
       });
-      dagreGraph.setNode(initialNodeId, { width: 16, height: 16 });
-      dagreGraph.setEdge(initialNodeId, targetId);
+
+      // Add initial node to ELK
+      const initialElkNode: ElkNode = {
+        id: initialNodeId,
+        width: 16,
+        height: 16
+      };
+      
+      // Find parent and add initial node
+      const findParentForInitial = (node: ElkNode, targetParentId: string): boolean => {
+        if (node.id === targetParentId) {
+          node.children = node.children || [];
+          node.children.push(initialElkNode);
+          return true;
+        }
+        if (node.children) {
+          for (const child of node.children) {
+            if (findParentForInitial(child, targetParentId)) return true;
+          }
+        }
+        return false;
+      };
+      findParentForInitial(elkRootNode, stateId);
+
+      // Add edge for initial transition
+      elkRootNode.edges!.push({
+        id: `elk-${initialNodeId}-${targetId}`,
+        sources: [initialNodeId],
+        targets: [targetId]
+      });
     }
 
+    // Recursively handle children
     if (stateDef.states) {
-      for (const childKey in stateDef.states)
+      for (const childKey in stateDef.states) {
         traverse(childKey, stateDef.states[childKey], stateId);
+      }
     }
   }
 
+  // Build the hierarchy
   traverse(machineDef.id, machineDef);
-  dagre.layout(dagreGraph);
 
-  nodes.forEach((node) => {
-    const d = dagreGraph.node(node.id);
-    if (d) {
-      // snap dagre to grid
-      const sx = Math.round((d.x - d.width / 2) / GRID_SIZE) * GRID_SIZE;
-      const sy = Math.round((d.y - d.height / 2) / GRID_SIZE) * GRID_SIZE;
-      node.position = { x: sx, y: sy };
+  // Perform ELK layout
+  const layoutedGraph = await elk.layout(elkRootNode);
+
+  // Apply ELK positions to React Flow nodes
+  const applyElkPositions = (elkNode: ElkNode) => {
+    const reactFlowNode = nodes.find(n => n.id === elkNode.id);
+    if (reactFlowNode && elkNode.x !== undefined && elkNode.y !== undefined) {
+      // Snap to grid with proper spacing
+      const snapX = Math.round(elkNode.x / cfg.gridSize) * cfg.gridSize;
+      const snapY = Math.round(elkNode.y / cfg.gridSize) * cfg.gridSize;
+      
+      reactFlowNode.position = {
+        x: cfg.snapToGrid ? snapX : elkNode.x,
+        y: cfg.snapToGrid ? snapY : elkNode.y
+      };
     }
-  });
+    
+    // Recursively apply to children
+    if (elkNode.children) {
+      elkNode.children.forEach(applyElkPositions);
+    }
+  };
 
-  // Wrap children inside the root with padding + reserved top area
+  applyElkPositions(layoutedGraph);
+
+  // Handle root node wrapper sizing similar to original implementation
   const rootId = machineId;
   const rootNode = nodes.find((n) => n.id === rootId);
   const childNodes = nodes.filter((n) => n.parentNode === rootId);
@@ -127,44 +333,48 @@ export const getLayoutedElements = (
       minY = Infinity,
       maxX = -Infinity,
       maxY = -Infinity;
-    const idToNode = new Map(nodes.map((n) => [n.id, n] as const));
 
     childNodes.forEach((n) => {
-      const d = dagreGraph.node(n.id);
-      const w = d?.width ?? NODE_WIDTH;
-      const h = d?.height ?? NODE_HEIGHT;
+      const w = cfg.nodeWidth;
+      const h = cfg.nodeHeight;
       minX = Math.min(minX, n.position.x);
       minY = Math.min(minY, n.position.y);
       maxX = Math.max(maxX, n.position.x + w);
       maxY = Math.max(maxY, n.position.y + h);
     });
 
-    // include internal edge extents
-    const EDGE_MARGIN = 32;
+    // Include edge extents with proper margins
+    const EDGE_MARGIN = cfg.edgeNodeSpacing * 2;
     edges.forEach((e) => {
-      const s = idToNode.get(e.source);
-      const t = idToNode.get(e.target);
+      const s = nodes.find(n => n.id === e.source);
+      const t = nodes.find(n => n.id === e.target);
       if (!s || !t) return;
       if (s.parentNode !== rootId || t.parentNode !== rootId) return;
-      const ds = dagreGraph.node(s.id);
-      const dt = dagreGraph.node(t.id);
-      const sw = (ds?.width ?? NODE_WIDTH) / 2;
-      const sh = (ds?.height ?? NODE_HEIGHT) / 2;
-      const tw = (dt?.width ?? NODE_WIDTH) / 2;
-      const th = (dt?.height ?? NODE_HEIGHT) / 2;
+      
+      const sw = cfg.nodeWidth / 2;
+      const sh = cfg.nodeHeight / 2;
+      const tw = cfg.nodeWidth / 2;
+      const th = cfg.nodeHeight / 2;
       const sx = s.position.x + sw;
       const sy = s.position.y + sh;
       const tx = t.position.x + tw;
       const ty = t.position.y + th;
+      
       minX = Math.min(minX, Math.min(sx, tx) - EDGE_MARGIN);
       maxX = Math.max(maxX, Math.max(sx, tx) + EDGE_MARGIN);
       minY = Math.min(minY, Math.min(sy, ty) - EDGE_MARGIN);
       maxY = Math.max(maxY, Math.max(sy, ty) + EDGE_MARGIN);
     });
 
-    rootNode.position = { x: minX - PADDING / 2, y: minY - PADDING / 2 };
-    const rootWidth = maxX - minX + PADDING;
-    const rootHeight = maxY - minY + PADDING + reservedTop - ROOT_HEADER;
+    // Position root node and calculate dimensions
+    rootNode.position = { 
+      x: minX - cfg.marginX, 
+      y: minY - cfg.marginY 
+    };
+    
+    const rootWidth = maxX - minX + cfg.marginX * 2;
+    const rootHeight = maxY - minY + cfg.marginY * 2 + reservedTop - ROOT_HEADER;
+    
     rootNode.style = {
       ...(rootNode.style as any),
       width: rootWidth,
@@ -172,51 +382,91 @@ export const getLayoutedElements = (
       zIndex: 0,
     } as any;
 
-    // shift children relative to root and push down under header/context
+    // Adjust children positions relative to root
     childNodes.forEach((n) => {
-      n.position.x = Math.round((n.position.x - rootNode.position.x) / GRID_SIZE) * GRID_SIZE;
-      n.position.y =
-        Math.round((n.position.y - rootNode.position.y + reservedTop) / GRID_SIZE) * GRID_SIZE;
+      n.position.x = Math.round((n.position.x - rootNode.position.x) / cfg.gridSize) * cfg.gridSize;
+      n.position.y = Math.round((n.position.y - rootNode.position.y + reservedTop) / cfg.gridSize) * cfg.gridSize;
     });
-
-    // Clamp to keep inside, and resolve simple overlaps by nudging on the grid
-    const leftBound = Math.ceil(PADDING / 2 / GRID_SIZE) * GRID_SIZE;
-    const topBound = Math.ceil(reservedTop / GRID_SIZE) * GRID_SIZE;
-    const rightBound = Math.floor((rootWidth - PADDING / 2) / GRID_SIZE) * GRID_SIZE;
-    const bottomBound = Math.floor((rootHeight - PADDING / 2) / GRID_SIZE) * GRID_SIZE;
-
-    const rects: Array<{ id: string; x: number; y: number; w: number; h: number }> = [];
-
-    for (const n of childNodes) {
-      const d = dagreGraph.node(n.id);
-      const w = Math.ceil((d?.width ?? NODE_WIDTH) / GRID_SIZE) * GRID_SIZE;
-      const h = Math.ceil((d?.height ?? NODE_HEIGHT) / GRID_SIZE) * GRID_SIZE;
-      let x = Math.min(Math.max(n.position.x, leftBound), rightBound - w);
-      let y = Math.min(Math.max(n.position.y, topBound), bottomBound - h);
-
-      // nudge to avoid overlaps
-      const collides = (ax: number, ay: number) =>
-        rects.some(
-          ({ x: bx, y: by, w: bw, h: bh }) =>
-            ax < bx + bw && ax + w > bx && ay < by + bh && ay + h > by,
-        );
-
-      let attempts = 0;
-      while (collides(x, y) && attempts < 500) {
-        x += GRID_SIZE;
-        if (x + w > rightBound) {
-          x = leftBound;
-          y += GRID_SIZE;
-          if (y + h > bottomBound) break;
-        }
-        attempts++;
-      }
-
-      n.position.x = x;
-      n.position.y = y;
-      rects.push({ id: n.id, x, y, w, h });
-    }
   }
 
   return { nodes, edges };
+};
+
+// For backwards compatibility - sync version that returns a promise
+export const getLayoutedElementsSync = (
+  machineDef: XStateNodeConfig,
+  context: Record<string, any> = {},
+  config: Partial<LayoutConfig> = {}
+): { nodes: Node[]; edges: Edge[] } => {
+  // This is a temporary sync wrapper - in practice, you should use the async version
+  let result: { nodes: Node[]; edges: Edge[] } = { nodes: [], edges: [] };
+  
+  getLayoutedElements(machineDef, context, config).then(layout => {
+    result = layout;
+  }).catch(err => {
+    console.error('ELK layout failed:', err);
+    // Fallback to basic positioning
+    result = { nodes: [], edges: [] };
+  });
+  
+  return result;
+};
+
+// Helper function for array conversion
+const asArray = (v: any) => (v ? (Array.isArray(v) ? v : [v]) : []);
+
+export const getInteractiveLayout = async (rfNodes: Node[], rfEdges: Edge[], draggedNodeId: string, config: Partial<LayoutConfig> = {}) => {
+  const cfg: LayoutConfig = { ...defaultLayoutConfig, ...config, algorithm: 'force' };
+  const elk = new ELK();
+
+  const elkNodesMap = new Map<string, ElkNode>();
+  rfNodes.forEach(node => {
+    const elkNode: ElkNode = {
+      id: node.id,
+      x: node.position.x,
+      y: node.position.y,
+      width: node.width || cfg.nodeWidth,
+      height: node.height || cfg.nodeHeight,
+      children: [],
+      layoutOptions: node.id === draggedNodeId ? { 'org.eclipse.elk.force.priority': '100' } : { 'org.eclipse.elk.force.priority': '1' },
+    };
+    elkNodesMap.set(node.id, elkNode);
+  });
+
+  rfNodes.forEach(node => {
+    if (node.parentNode) {
+      const parent = elkNodesMap.get(node.parentNode);
+      if (parent) {
+        parent.children!.push(elkNodesMap.get(node.id)!);
+      }
+    }
+  });
+
+  const rootElk = Array.from(elkNodesMap.values()).find(n => !rfNodes.find(rn => rn.id === n.id)?.parentNode);
+  if (!rootElk) throw new Error('No root');
+
+  rootElk.layoutOptions = generateElkOptions(cfg);
+  rootElk.edges = rfEdges.map(edge => ({
+    id: edge.id,
+    sources: [edge.source],
+    targets: [edge.target],
+  }));
+
+  const newLayout = await elk.layout(rootElk);
+
+  const newPositions = new Map<string, {x: number, y: number}>();
+  function extractPositions(elkN: ElkNode) {
+    newPositions.set(elkN.id, {x: elkN.x || 0, y: elkN.y || 0});
+    if (elkN.children) {
+      elkN.children.forEach(extractPositions);
+    }
+  }
+  extractPositions(newLayout);
+
+  const updatedNodes = rfNodes.map(node => ({
+    ...node,
+    position: newPositions.get(node.id) || node.position,
+  }));
+
+  return { nodes: updatedNodes, edges: rfEdges };
 };

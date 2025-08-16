@@ -148,3 +148,37 @@ export const RootNode = ({ data, selected }: NodeProps) => {
 
 // Replace initial triangular marker with nothing; we render dot+arrow on the edge itself
 export const InitialNode = () => <div className="w-0 h-0" />;
+
+export const ActionNode = ({ data, selected }: NodeProps) => {
+  return (
+    <Card
+      className={cn(
+        "w-[180px] rounded-md border shadow-sm",
+        selected && "ring-2 ring-primary/50 ring-offset-2 ring-offset-background",
+      )}
+    >
+      <CardHeader className="p-2 bg-yellow-500 text-white rounded-t-md">
+        <CardTitle className="text-xs font-semibold">{data.label}</CardTitle>
+      </CardHeader>
+      <Handle type="target" position={Position.Top} className="!bg-transparent opacity-0" />
+      <Handle type="source" position={Position.Bottom} className="!bg-transparent opacity-0" />
+    </Card>
+  );
+};
+
+export const InvokeNode = ({ data, selected }: NodeProps) => {
+  return (
+    <Card
+      className={cn(
+        "w-[180px] rounded-md border shadow-sm",
+        selected && "ring-2 ring-primary/50 ring-offset-2 ring-offset-background",
+      )}
+    >
+      <CardHeader className="p-2 bg-blue-500 text-white rounded-t-md">
+        <CardTitle className="text-xs font-semibold">{data.label}</CardTitle>
+      </CardHeader>
+      <Handle type="target" position={Position.Top} className="!bg-transparent opacity-0" />
+      <Handle type="source" position={Position.Bottom} className="!bg-transparent opacity-0" />
+    </Card>
+  );
+};

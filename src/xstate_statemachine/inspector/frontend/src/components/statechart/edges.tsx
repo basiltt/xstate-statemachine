@@ -18,8 +18,31 @@ export const TransitionEdge = ({
     sourceY,
     targetX,
     targetY,
-    borderRadius: 16,
+    borderRadius: 12,
+    offset: 20,
   });
+
+  // Calculate offset position to avoid node overlaps
+  const deltaX = targetX - sourceX;
+  const deltaY = targetY - sourceY;
+  const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+  
+  // Position label closer to source node with offset to avoid overlaps
+  const offsetRatio = 0.3; // Position at 30% along the edge
+  const offsetDistance = 25; // Minimum distance from edge path
+  
+  let adjustedLabelX = labelX;
+  let adjustedLabelY = labelY;
+  
+  if (distance > 0) {
+    // Calculate perpendicular offset to move label away from potential node overlaps
+    const perpX = -deltaY / distance;
+    const perpY = deltaX / distance;
+    
+    // Move label along the edge (closer to source) and offset perpendicular
+    adjustedLabelX = sourceX + deltaX * offsetRatio + perpX * offsetDistance;
+    adjustedLabelY = sourceY + deltaY * offsetRatio + perpY * offsetDistance;
+  }
 
   const actions = asArray(data?.actions);
   const isInitial = Boolean((data as any)?.isInitial) || id.includes(".__initial__");
@@ -53,11 +76,26 @@ export const TransitionEdge = ({
         </g>
       )}
 
-      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} style={{ strokeWidth: 1.5 }} />
+      <BaseEdge 
+        id={id} 
+        path={edgePath} 
+        markerEnd={markerEnd} 
+        style={{ 
+          strokeWidth: 2, 
+          stroke: "hsl(var(--foreground))",
+          strokeDasharray: data?.guard ? "5,5" : "none"
+        }} 
+      />
       <EdgeLabelRenderer>
         <div
-          style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
-          className="nodrag nopan absolute rounded-full border bg-background/95 px-2.5 py-0.5 text-xs font-medium shadow"
+          style={{ 
+            transform: `translate(-50%, -50%) translate(${adjustedLabelX}px, ${adjustedLabelY}px)`,
+            pointerEvents: 'all'
+          }}
+          className="absolute rounded-full border bg-background/95 px-2.5 py-0.5 text-xs font-medium shadow cursor-move hover:bg-background hover:shadow-md transition-all"
+          onMouseDown={(e) => {
+            e.stopPropagation();
+          }}
         >
           <div className="text-center">{data?.label}</div>
           {actions.length > 0 && <hr className="my-1" />}

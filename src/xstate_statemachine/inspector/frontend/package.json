@@ -6,7 +6,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.0.0",
-    "dagre": "^0.8.5",
+    "elkjs": "^0.9.3",
     "framer-motion": "^11.2.10",
     "lucide-react": "^0.379.0",
     "react": "^18.2.0",
@@ -17,7 +17,6 @@
     "zustand": "^4.5.2"
   },
   "devDependencies": {
-    "@types/dagre": "^0.7.52",
     "@types/node": "^20.12.12",
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",
