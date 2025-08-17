@@ -7,7 +7,7 @@ import "reactflow/dist/style.css";
 import { MachineState } from "@/hooks/useInspectorSocket.ts";
 import { useDiagram } from "@/components/statechart/diagram/useDiagram.ts";
 import { DiagramContextMenu } from "@/components/statechart/diagram/DiagramContextMenu.tsx";
-import * as diagramConfig from "@/components/statechart/diagram/diagramConfig.ts";
+import reactFlowConfig from "@/components/statechart/diagram/diagramConfig";
 
 type DiagramProps = {
   machine: MachineState;
@@ -54,7 +54,7 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
         onNodeDragStop={onNodeDragStop}
         onPaneContextMenu={onPaneContextMenu}
         // Spread in all the static config
-        {...diagramConfig}
+        {...reactFlowConfig}
         // Specific props
         nodesDraggable
         nodesConnectable={false}

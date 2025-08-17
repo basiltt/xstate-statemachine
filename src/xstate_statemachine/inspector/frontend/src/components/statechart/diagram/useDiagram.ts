@@ -45,8 +45,9 @@ export const useDiagram = ({ machine, activeStateIds }: UseDiagramProps) => {
   );
   const headerGuardTop = useMemo(() => calculateHeaderGuardTop(reservedTop), [reservedTop]);
 
-  /* ---------------------- Logic moved from component ---------------------- */
+  /* ---------------------- Status decoration helpers ---------------------- */
 
+  /** Tag nodes with `data.uiStatus` = 'active' | 'next' (or undefined). */
   const decorateStatuses = useCallback(
     (list: Node[], eds: Edge[]): Node[] => {
       const activeSet = new Set(activeStateIds);
@@ -63,6 +64,27 @@ export const useDiagram = ({ machine, activeStateIds }: UseDiagramProps) => {
     [activeStateIds],
   );
 
+  /** Tag edges as `data.uiActive` when leaving an active node (and optionally from next nodes). */
+  const decorateEdgeStatuses = useCallback(
+    (eds: Edge[]): Edge[] => {
+      const activeSet = new Set(activeStateIds);
+      const nextSet = new Set<string>();
+      for (const e of eds) if (activeSet.has(e.source)) nextSet.add(e.target);
+
+      return eds.map((e) => ({
+        ...e,
+        data: {
+          ...(e.data ?? {}),
+          // highlight edges leaving an active node, and edges leaving nodes that are "next"
+          uiActive: activeSet.has(e.source) || nextSet.has(e.source),
+        },
+      }));
+    },
+    [activeStateIds],
+  );
+
+  /* --------------------------- Layout utilities -------------------------- */
+
   const ensureUnderRoot = useCallback((nds: Node[]): Node[] => {
     const root = nds.find((n) => n.type === "rootNode");
     if (!root) return nds;
@@ -73,7 +95,6 @@ export const useDiagram = ({ machine, activeStateIds }: UseDiagramProps) => {
 
   const computeRootBounds = useCallback(
     (allNodes: Node[], eds: Edge[]) => {
-      // ... (exact same implementation as in the original file)
       const root = allNodes.find((n) => n.type === "rootNode");
       if (!root) return null;
       const children = allNodes.filter((n) => n.parentId === root.id);
@@ -122,11 +143,13 @@ export const useDiagram = ({ machine, activeStateIds }: UseDiagramProps) => {
 
   const guardHeaderAndMaybeGrow = useCallback(
     (currentNodes: Node[], eds: Edge[]) => {
-      // ... (exact same implementation)
       const root = currentNodes.find((n) => n.type === "rootNode");
       const tight = computeRootBounds(currentNodes, eds);
       if (!root || !tight) return currentNodes;
+
       let next = currentNodes;
+
+      // 1) Keep header area clear
       const overlap = headerGuardTop - tight.minY;
       if (overlap > 0) {
         next = next.map((n) => {
@@ -137,6 +160,8 @@ export const useDiagram = ({ machine, activeStateIds }: UseDiagramProps) => {
           return n;
         });
       }
+
+      // 2) Grow the root slightly so contents have breathing room
       const t2 = computeRootBounds(next, eds) ?? tight;
       const cw = (root.style as any)?.width ?? root.width ?? t2.width;
       const ch = (root.style as any)?.height ?? root.height ?? t2.height;
@@ -147,6 +172,7 @@ export const useDiagram = ({ machine, activeStateIds }: UseDiagramProps) => {
           n.id === root.id ? { ...n, style: { ...n.style, width: nw, height: nh } } : n,
         );
       }
+
       updateNodeInternals(root.id);
       return next;
     },
@@ -155,12 +181,13 @@ export const useDiagram = ({ machine, activeStateIds }: UseDiagramProps) => {
 
   const fitRootTightly = useCallback(
     (currentNodes: Node[], eds: Edge[]) => {
-      // ... (exact same implementation)
       const root = currentNodes.find((n) => n.type === "rootNode");
       const tight = computeRootBounds(currentNodes, eds);
       if (!root || !tight) return currentNodes;
+
       const dx = tight.minX - PADDING / 2;
       const dy = tight.minY - headerGuardTop;
+
       const updated = currentNodes.map((n) => {
         if (n.id === root.id) {
           return {
@@ -174,6 +201,7 @@ export const useDiagram = ({ machine, activeStateIds }: UseDiagramProps) => {
         }
         return n;
       });
+
       updateNodeInternals(root.id);
       return updated;
     },
@@ -182,36 +210,48 @@ export const useDiagram = ({ machine, activeStateIds }: UseDiagramProps) => {
 
   const tightenAndFitWhenReady = useCallback(
     async (eds: Edge[]) => {
-      // ... (exact same implementation)
       await nextFrame();
       await nextFrame();
+
       const ids = getNodes()
         .filter((n) => n.type !== "rootNode")
         .map((n) => n.id);
       ids.forEach((id) => updateNodeInternals(id));
+
       await nextFrame();
       setNodes((prev) => fitRootTightly(prev, eds));
       await nextFrame();
+
       fitView({ duration: 500, padding: 0.18, includeHiddenNodes: true });
     },
     [getNodes, updateNodeInternals, fitRootTightly, fitView],
   );
+
+  /* ------------------------------- Relayout ------------------------------- */
 
   const relayout = useCallback(async () => {
     const { nodes: laidOutNodes, edges: laidOutEdges } = await getLayoutedElements(
       machine.definition,
       machine.context,
     );
+
+    // Tag edges first (so node "next" status can be derived from them)
+    const edgesWithStatus = decorateEdgeStatuses(laidOutEdges);
+
+    // Parent all under root, then set node statuses (active/next)
     const parented = ensureUnderRoot(laidOutNodes);
-    const withStatus = decorateStatuses(parented, laidOutEdges);
-    setEdges(laidOutEdges);
+    const withStatus = decorateStatuses(parented, edgesWithStatus);
+
+    setEdges(edgesWithStatus);
     setNodes(withStatus);
-    tightenAndFitWhenReady(laidOutEdges).catch(console.error);
+
+    tightenAndFitWhenReady(edgesWithStatus).catch(console.error);
   }, [
     machine.definition,
     machine.context,
     ensureUnderRoot,
     decorateStatuses,
+    decorateEdgeStatuses,
     tightenAndFitWhenReady,
   ]);
 
@@ -219,9 +259,14 @@ export const useDiagram = ({ machine, activeStateIds }: UseDiagramProps) => {
     relayout().catch(console.error);
   }, [relayout]);
 
+  // When active states shift, re-decorate nodes and edges without recomputing layout
   useEffect(() => {
+    setEdges((prev) => decorateEdgeStatuses(prev));
     setNodes((prev) => decorateStatuses(prev, edges));
-  }, [activeStateIds, edges, decorateStatuses]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeStateIds, decorateStatuses, decorateEdgeStatuses]);
+
+  /* --------------------------- RF change handlers ------------------------- */
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
@@ -236,8 +281,9 @@ export const useDiagram = ({ machine, activeStateIds }: UseDiagramProps) => {
   );
 
   const onEdgesChange = useCallback(
-    (changes: EdgeChange[]) => setEdges((eds) => applyEdgeChanges(changes, eds)),
-    [],
+    (changes: EdgeChange[]) =>
+      setEdges((eds) => decorateEdgeStatuses(applyEdgeChanges(changes, eds))),
+    [decorateEdgeStatuses],
   );
 
   const onNodeDragStop = useCallback(() => {

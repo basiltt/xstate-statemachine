@@ -1,4 +1,3 @@
-// src/xstate_statemachine/inspector/frontend/src/components/statechart/diagram/diagramConfig.ts
 import { ConnectionLineType, MarkerType } from "reactflow";
 
 import {
@@ -31,3 +30,14 @@ export const proOptions = { hideAttribution: true };
 export const snapGrid: [number, number] = [GRID_SIZE ?? 8, GRID_SIZE ?? 8];
 
 export const connectionLineType = ConnectionLineType.Step;
+
+/** ✅ Plain object you can safely spread into <ReactFlow {...reactFlowConfig} /> */
+const reactFlowConfig = {
+  nodeTypes,
+  edgeTypes,
+  defaultEdgeOptions,
+  proOptions,
+  snapGrid,
+  connectionLineType,
+};
+export default reactFlowConfig;

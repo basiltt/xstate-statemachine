@@ -1,28 +1,13 @@
 // //  src/xstate_statemachine/inspector/frontend/src/components/nodes/EventNode.tsx
 
-import { Handle, NodeProps, Position } from "reactflow";
+// import { Handle, NodeProps, Position } from "reactflow";
 
-export const EventNode = ({ data, selected }: NodeProps) => {
+import { NodeProps } from "reactflow";
+
+export const EventNode = ({ data }: NodeProps) => {
   return (
-    <div
-      className={[
-        "rounded-full border bg-background text-foreground shadow-sm",
-        "px-4 py-1 text-sm font-medium",
-        selected ? "ring-2 ring-primary/60" : "",
-      ].join(" ")}
-      style={{ width: "100%" }}
-    >
-      {data.label}
-
-      <Handle id="l" type="source" position={Position.Left} className="!bg-primary" />
-      <Handle id="r" type="source" position={Position.Right} className="!bg-primary" />
-      <Handle id="t" type="source" position={Position.Top} className="!bg-primary" />
-      <Handle id="b" type="source" position={Position.Bottom} className="!bg-primary" />
-
-      <Handle id="L" type="target" position={Position.Left} className="!bg-primary" />
-      <Handle id="R" type="target" position={Position.Right} className="!bg-primary" />
-      <Handle id="T" type="target" position={Position.Top} className="!bg-primary" />
-      <Handle id="B" type="target" position={Position.Bottom} className="!bg-primary" />
+    <div className="px-3 py-1.5 rounded-full border text-[12px] leading-5 bg-background/70 backdrop-blur-sm shadow-sm">
+      <span className="font-mono">{data.label}</span>
     </div>
   );
 };
