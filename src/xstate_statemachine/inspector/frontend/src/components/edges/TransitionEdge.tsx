@@ -1,59 +1,44 @@
 // src/xstate_statemachine/inspector/frontend/src/components/edges/TransitionEdge.tsx
-import { EdgeLabelRenderer, EdgeProps, getStraightPath, Position } from "reactflow";
-
-// Build a simple orthogonal path that stays within provided bounds
-function manhattanPath(options: {
+import { EdgeLabelRenderer, EdgeProps, getSmoothStepPath, Position } from "reactflow";
+// Smooth step connector with clamped control center and optional lane offsets
+function smoothPath(options: {
   sx: number;
   sy: number;
   tx: number;
   ty: number;
   sp: Position;
   tp: Position;
+  centerBias?: { x?: number; y?: number };
   bounds?: { left?: number; right?: number; top?: number; bottom?: number };
 }) {
-  const { sx, sy, tx, ty, sp, tp, bounds } = options;
+  const { sx, sy, tx, ty, sp, tp, centerBias, bounds } = options;
   const left = bounds?.left ?? -Infinity;
   const right = bounds?.right ?? Infinity;
   const top = bounds?.top ?? -Infinity;
   const bottom = bounds?.bottom ?? Infinity;
 
-  // Clamp endpoints into bounds so edges never cross header/wrapper
-  const Sx = Math.min(Math.max(sx, left), right);
-  const Sy = Math.min(Math.max(sy, top), bottom);
-  const Tx = Math.min(Math.max(tx, left), right);
-  const Ty = Math.min(Math.max(ty, top), bottom);
+  const sSide = sp;
+  const horizontalFirst = sSide === Position.Left || sSide === Position.Right;
 
-  const isHoriz =
-    Math.abs(Sy - Ty) < 0.5 &&
-    (sp === Position.Left || sp === Position.Right) &&
-    (tp === Position.Left || tp === Position.Right);
+  const rawCenterX = (sx + tx) / 2 + (centerBias?.x ?? 0);
+  const rawCenterY = (sy + ty) / 2 + (centerBias?.y ?? 0);
+  const centerX = Math.max(left, Math.min(rawCenterX, right));
+  const centerY = Math.max(top, Math.min(rawCenterY, bottom));
 
-  const isVert =
-    Math.abs(Sx - Tx) < 0.5 &&
-    (sp === Position.Top || sp === Position.Bottom) &&
-    (tp === Position.Top || tp === Position.Bottom);
-
-  if (isHoriz || isVert) {
-    const [d, lx, ly] = getStraightPath({ sourceX: Sx, sourceY: Sy, targetX: Tx, targetY: Ty });
-    return { d, lx, ly };
-  }
-
-  // Choose routing order based on handle orientation
-  const horizontalFirst = sp === Position.Left || sp === Position.Right;
-
-  if (horizontalFirst) {
-    const midX = Math.min(Math.max((Sx + Tx) / 2, left), right);
-    const p = `M ${Sx},${Sy} L ${midX},${Sy} L ${midX},${Ty} L ${Tx},${Ty}`;
-    const lx = midX;
-    const ly = (Sy + Ty) / 2;
-    return { d: p, lx, ly };
-  } else {
-    const midY = Math.min(Math.max((Sy + Ty) / 2, top), bottom);
-    const p = `M ${Sx},${Sy} L ${Sx},${midY} L ${Tx},${midY} L ${Tx},${Ty}`;
-    const lx = (Sx + Tx) / 2;
-    const ly = midY;
-    return { d: p, lx, ly };
-  }
+  const offset = horizontalFirst ? 22 : 18; // gentle curvature like xstate viz
+  const [d, lx, ly] = getSmoothStepPath({
+    sourceX: sx,
+    sourceY: sy,
+    targetX: tx,
+    targetY: ty,
+    sourcePosition: sp,
+    targetPosition: tp,
+    borderRadius: 10,
+    centerX,
+    centerY,
+    offset,
+  });
+  return { d, lx, ly };
 }
 
 /**
@@ -77,30 +62,46 @@ export const TransitionEdge = ({
   const clampLeftX: number | undefined = data?.clampLeftX;
   const clampRightX: number | undefined = data?.clampRightX;
   const clampBottomY: number | undefined = data?.clampBottomY;
-
+  const laneAxis: "x" | "y" | undefined = (data as any)?.laneAxis;
+  const laneOffset: number = (data as any)?.laneOffset ?? 0;
+  const isInitial = !!data?.isInitial;
+  const isActive = !!data?.uiActive;
+  const label = data?.label as string | undefined;
+  const bias = laneAxis === "x" ? { x: laneOffset } : laneAxis === "y" ? { y: laneOffset } : {};
   const {
     d: edgePath,
     lx,
     ly,
-  } = manhattanPath({
+  } = smoothPath({
     sx: sourceX,
     sy: sourceY,
     tx: targetX,
     ty: targetY,
     sp: sourcePosition,
     tp: targetPosition,
-    bounds: {
-      left: clampLeftX,
-      right: clampRightX,
-      top: clampTopY,
-      bottom: clampBottomY,
-    },
+    centerBias: bias,
+    bounds: { left: clampLeftX, right: clampRightX, top: clampTopY, bottom: clampBottomY },
   });
+  // Apply lane offset to label too (respecting bounds)
 
-  const isInitial = !!data?.isInitial;
-  const label = data?.label as string | undefined;
-  const labelYClamped = clampTopY ? Math.max(ly, clampTopY + 8) : ly;
-  const labelXClamped = Math.min(Math.max(lx, clampLeftX ?? -Infinity), clampRightX ?? Infinity);
+  const stroke = isInitial
+    ? "hsl(var(--foreground) / 0.45)"
+    : isActive
+      ? "hsl(var(--foreground) / 0.9)"
+      : "hsl(var(--foreground) / 0.55)";
+  const strokeWidth = isActive ? 2.2 : 2;
+  const style: React.CSSProperties = {
+    stroke,
+    strokeWidth,
+    fill: "none",
+  };
+  const lxShift = laneAxis === "x" ? laneOffset : 0;
+  const lyShift = laneAxis === "y" ? laneOffset : 0;
+  const labelYClamped = clampTopY ? Math.max(ly + lyShift, clampTopY + 8) : ly + lyShift;
+  const labelXClamped = Math.min(
+    Math.max(lx + lxShift, clampLeftX ?? -Infinity),
+    clampRightX ?? Infinity,
+  );
 
   return (
     <>
@@ -122,9 +123,7 @@ export const TransitionEdge = ({
       <path
         id={id}
         d={edgePath}
-        fill="none"
-        stroke="hsl(var(--foreground))"
-        strokeWidth={2}
+        style={style}
         markerEnd={markerEnd}
         shapeRendering="geometricPrecision"
       />

@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import type { Edge, Node } from "reactflow";
 
 export type Dir = "L" | "R" | "T" | "B";
+const PORTS_PER_SIDE = 24;
 
 export function useLiveEdgeRouting() {
   const pickHandlesRuntime = useCallback(
@@ -82,6 +83,54 @@ export function useLiveEdgeRouting() {
     return map;
   }, []);
 
+  // Assign indices per side for multiple edges, stable by projection of the counterpart
+  function distribute(
+    edges: Edge[],
+    boxes: Map<string, { x: number; y: number; w: number; h: number }>,
+  ) {
+    type Ref = { ei: number; side: string; isSource: boolean; key: number };
+    const groups = new Map<string, Ref[]>();
+    const add = (nodeId: string, side: string, isSource: boolean, ref: Ref) => {
+      const k = `${nodeId}|${side}|${isSource ? "S" : "T"}`;
+      (groups.get(k) || groups.set(k, []).get(k)!).push(ref);
+    };
+    for (let i = 0; i < edges.length; i++) {
+      const e = edges[i];
+      const sb = boxes.get(e.source);
+      const tb = boxes.get(e.target);
+      if (!sb || !tb) continue;
+      const scx = sb.x + sb.w / 2;
+      const scy = sb.y + sb.h / 2;
+      const tcx = tb.x + tb.w / 2;
+      const tcy = tb.y + tb.h / 2;
+      const sSide = (e.sourceHandle ?? "").charAt(0);
+      const tSide = (e.targetHandle ?? "").charAt(0);
+      if (sSide)
+        add(e.source, sSide, true, {
+          ei: i,
+          side: sSide,
+          isSource: true,
+          key: sSide === "l" || sSide === "r" ? tcy : tcx,
+        });
+      if (tSide)
+        add(e.target, tSide, false, {
+          ei: i,
+          side: tSide,
+          isSource: false,
+          key: tSide === "L" || tSide === "R" ? scy : scx,
+        });
+    }
+    for (const [, list] of groups) {
+      list.sort((a, b) => a.key - b.key);
+      for (let idx = 0; idx < list.length; idx++) {
+        const ref = list[idx];
+        const id = `${ref.side}${Math.min(PORTS_PER_SIDE - 1, idx)}`;
+        if (ref.isSource) edges[ref.ei].sourceHandle = id;
+        else edges[ref.ei].targetHandle = id;
+      }
+    }
+  }
+
   const recomputeEdgeHandles = useCallback(
     (eds: Edge[], nds: Node[], onlyIds?: Set<string>): Edge[] => {
       const boxes = getNodeBoxes(nds);
@@ -93,7 +142,9 @@ export function useLiveEdgeRouting() {
         const dst = boxes.get(e.target)!;
         const prevDir = (e.data as any)?.dir as Dir | undefined;
         const { sh, th, dir } = pickHandlesRuntime(src, dst, prevDir);
-        if (e.sourceHandle === sh && e.targetHandle === th && prevDir === dir) return e;
+        const same =
+          e.sourceHandle?.startsWith(sh) && e.targetHandle?.startsWith(th) && prevDir === dir;
+        if (same) return e;
         changed = true;
         return {
           ...e,
@@ -102,6 +153,9 @@ export function useLiveEdgeRouting() {
           data: { ...(e.data ?? {}), dir },
         } as Edge;
       });
+
+      // distribute multiple edges per side with numbered ports
+      distribute(next, boxes);
       return changed ? next : eds;
     },
     [getNodeBoxes, pickHandlesRuntime],

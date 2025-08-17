@@ -34,6 +34,52 @@ const Section = ({
   );
 };
 
+// Provide a fixed pool of invisible handles around all 4 sides so routing can
+// connect anywhere and distribute multiple edges without overlaps. Indexed ids
+// are used (e.g. l0..lN, r0..rN for sources; L0..LN, R0..RN for targets).
+const PORTS_PER_SIDE = 24; // ample capacity; routing code will only use needed ones
+
+function SideHandles({
+  side,
+  type,
+  upper,
+}: {
+  side: "top" | "bottom" | "left" | "right";
+  type: "source" | "target";
+  upper: string; // single-letter id prefix (t/b/l/r or T/B/L/R)
+}) {
+  const isHorizontal = side === "top" || side === "bottom";
+  const position =
+    side === "top"
+      ? Position.Top
+      : side === "bottom"
+        ? Position.Bottom
+        : side === "left"
+          ? Position.Left
+          : Position.Right;
+
+  return (
+    <>
+      {Array.from({ length: PORTS_PER_SIDE }).map((_, i) => {
+        const pct = ((i + 1) / (PORTS_PER_SIDE + 1)) * 100;
+        const style = isHorizontal
+          ? ({ left: `${pct}%` } as React.CSSProperties)
+          : ({ top: `${pct}%` } as React.CSSProperties);
+        return (
+          <Handle
+            key={`${upper}${i}`}
+            id={`${upper}${i}`}
+            type={type}
+            position={position}
+            className="!opacity-0"
+            style={style}
+          />
+        );
+      })}
+    </>
+  );
+}
+
 export const StateNode = ({ data }: NodeProps) => {
   const entryActions = asArray(data.definition?.entry);
   const invokeServices = asArray(data.definition?.invoke);
@@ -50,7 +96,11 @@ export const StateNode = ({ data }: NodeProps) => {
         isFinal && "border-dashed",
       )}
     >
-      <Handle type="target" position={Position.Top} className="!opacity-0" />
+      {/* Targets on all sides (uppercase ids) */}
+      <SideHandles side="top" type="target" upper="T" />
+      <SideHandles side="bottom" type="target" upper="B" />
+      <SideHandles side="left" type="target" upper="L" />
+      <SideHandles side="right" type="target" upper="R" />
       <CardHeader
         className={cn(
           "p-2.5 rounded-t-md",
@@ -76,7 +126,15 @@ export const StateNode = ({ data }: NodeProps) => {
           />
         </CardContent>
       )}
-      {!isFinal && <Handle type="source" position={Position.Bottom} className="!opacity-0" />}
+      {/* Sources on all sides (lowercase ids). Final states emit no outgoing transitions. */}
+      {!isFinal && (
+        <>
+          <SideHandles side="top" type="source" upper="t" />
+          <SideHandles side="bottom" type="source" upper="b" />
+          <SideHandles side="left" type="source" upper="l" />
+          <SideHandles side="right" type="source" upper="r" />
+        </>
+      )}
     </Card>
   );
 };
@@ -85,8 +143,15 @@ export const EventNode = ({ data }: NodeProps) => {
   return (
     <div className="bg-card text-card-foreground rounded-md text-sm font-medium border-2 px-4 py-2 shadow-sm">
       {data.label}
-      <Handle type="target" position={Position.Top} className="!opacity-0" />
-      <Handle type="source" position={Position.Bottom} className="!opacity-0" />
+      {/* Targets and sources on all sides for events too */}
+      <SideHandles side="top" type="target" upper="T" />
+      <SideHandles side="bottom" type="target" upper="B" />
+      <SideHandles side="left" type="target" upper="L" />
+      <SideHandles side="right" type="target" upper="R" />
+      <SideHandles side="top" type="source" upper="t" />
+      <SideHandles side="bottom" type="source" upper="b" />
+      <SideHandles side="left" type="source" upper="l" />
+      <SideHandles side="right" type="source" upper="r" />
     </div>
   );
 };

@@ -22,6 +22,9 @@ const INNER_PAD_Y = (PADDING ?? 40) + 56;
 const GRID = 8;
 const snap = (v: number) => Math.round(v / GRID) * GRID;
 
+// Must match handles created in nodes.tsx
+const PORTS_PER_SIDE = 24;
+
 /* ──────────────────────────────────────────────────────────────────────────
    Types & helpers
    ────────────────────────────────────────────────────────────────────────── */
@@ -189,95 +192,34 @@ function sanitizeEventId(label: string) {
   return label.replace(/[^a-zA-Z0-9_]+/g, "_");
 }
 
-/** pack event pills into banded rows between source/target columns, avoiding one long global rail */
-function positionEvents(
-  labels: string[],
+/** Per-transition event pill placement: each transition gets its own event node, near the midpoint of its route. */
+function positionEventsPerTransition(
   transitions: TEdge[],
   statePos: Record<string, XY>,
   reservedTop: number,
-  widthHint: number,
-  layerOf: Map<string, number>,
-  xOfLayer: (idx: number) => number,
+  heightHint: number,
 ): Record<string, XY> {
   const pos: Record<string, XY> = {};
-  if (!labels.length) return pos;
+  const minY = reservedTop + 12;
+  const maxY = heightHint - INNER_PAD_Y;
 
-  // Group transitions by label
-  const byLabel = new Map<string, TEdge[]>();
-  for (const t of transitions)
-    (byLabel.get(t.label) || byLabel.set(t.label, []).get(t.label)!).push(t);
+  for (const t of transitions) {
+    const sid = t.source;
+    const tid = t.target;
+    const sp = statePos[sid];
+    const tp = statePos[tid];
+    if (!sp || !tp) continue;
 
-  // For each label, compute the span and preferred band (column) to place the event
-  type BandKey = number; // integer layer index around which the event sits
-  const bands: Map<BandKey, { rows: { y: number; occupied: Array<[number, number]> }[] }> =
-    new Map();
+    // Mid-point between states
+    const mx = (sp.x + STATE_W / 2 + (tp.x + STATE_W / 2)) / 2 - EVENT_W / 2;
+    let my = (sp.y + tp.y) / 2 + (sp.y < tp.y ? -EVENT_H_HINT : EVENT_H_HINT);
+    my = Math.max(minY, Math.min(maxY, my));
 
-  function getBand(layerIdx: number) {
-    if (!bands.has(layerIdx)) bands.set(layerIdx, { rows: [] });
-    return bands.get(layerIdx)!;
+    const id = `__event__${sanitizeEventId(t.label)}__${sanitizeEventId(sid)}__${sanitizeEventId(
+      tid,
+    )}`;
+    pos[id] = { x: snap(mx), y: snap(my) };
   }
-
-  const minX = INNER_PAD_X;
-  const maxX = Math.max(minX, widthHint - INNER_PAD_X - EVENT_W);
-  const spacing = 16; // horizontal gap between events in same row
-  const rowH = EVENT_H_HINT + 10;
-  const baseY = reservedTop + Math.max(14, Math.floor(INNER_PAD_Y / 2));
-
-  function placeInBand(layerIdx: number, desiredX: number) {
-    const band = getBand(layerIdx);
-    // find first row that can fit without overlap
-    for (const r of band.rows) {
-      // find a spot after the last occupied segment
-      let x = desiredX;
-      // ensure it doesn't collide with existing segments
-      let collides = true;
-      let guard = 0;
-      while (collides && guard++ < 100) {
-        collides = r.occupied.some(
-          ([l, rgt]) => !(x + EVENT_W + spacing <= l || x >= rgt + spacing),
-        );
-        if (collides) x += spacing; // nudge right until free
-        if (x > maxX) break;
-      }
-      if (!collides && x <= maxX) {
-        r.occupied.push([x, x + EVENT_W]);
-        return { x: snap(Math.max(minX, Math.min(maxX, x))), y: snap(r.y) };
-      }
-    }
-    // need a new row
-    const y = baseY + band.rows.length * rowH;
-    const x = snap(Math.max(minX, Math.min(maxX, desiredX)));
-    band.rows.push({ y, occupied: [[x, x + EVENT_W]] });
-    return { x, y: snap(y) };
-  }
-
-  for (const label of labels) {
-    const group = byLabel.get(label)!;
-    // Handle self-loop: place directly above the state (first occurrence)
-    const self = group.find((t) => t.source === t.target);
-    if (self) {
-      const s = statePos[self.source] ?? { x: INNER_PAD_X, y: baseY };
-      const cx = snap(s.x + STATE_W / 2 - EVENT_W / 2);
-      pos[`__event__${sanitizeEventId(label)}`] = {
-        x: Math.max(minX, Math.min(maxX, cx)),
-        y: baseY,
-      };
-      continue;
-    }
-
-    const cols = group.flatMap((t) => [layerOf.get(t.source) ?? 0, layerOf.get(t.target) ?? 0]);
-    const minCol = Math.min(...cols);
-    const maxCol = Math.max(...cols);
-    const midCol = Math.round((minCol + maxCol) / 2);
-
-    const xLeft = xOfLayer(minCol) + STATE_W / 2;
-    const xRight = xOfLayer(maxCol) + STATE_W / 2;
-    const cx = (xLeft + xRight) / 2 - EVENT_W / 2; // center between columns
-
-    const placed = placeInBand(midCol, snap(cx));
-    pos[`__event__${sanitizeEventId(label)}`] = placed;
-  }
-
   return pos;
 }
 
@@ -345,6 +287,132 @@ function pickHandles(
   return { sh: best.sh, th: best.th };
 }
 
+// Distribute multiple edges around a node side using indexed ports to minimize
+// overlaps and crossings. Each group (node, side, endType) is sorted by the
+// counterpart projected coordinate so lines fan out.
+function distributePorts(
+  edges: Edge[],
+  boxes: Map<string, { x: number; y: number; w: number; h: number }>,
+) {
+  type EndKey = string; // `${nodeId}|${side}|S|T`
+  type Ref = { ei: number; side: string; isSource: boolean; key: number };
+  const groups = new Map<EndKey, Ref[]>();
+
+  const add = (nodeId: string, side: string, isSource: boolean, ref: Ref) => {
+    const k: EndKey = `${nodeId}|${side}|${isSource ? "S" : "T"}`;
+    (groups.get(k) || groups.set(k, []).get(k)!).push(ref);
+  };
+
+  const center = (b: { x: number; y: number; w: number; h: number }) => ({
+    cx: b.x + b.w / 2,
+    cy: b.y + b.h / 2,
+  });
+
+  for (let i = 0; i < edges.length; i++) {
+    const e = edges[i];
+    if (!boxes.has(e.source) || !boxes.has(e.target)) continue;
+    const sb = boxes.get(e.source)!;
+    const tb = boxes.get(e.target)!;
+    const sc = center(sb);
+    const tc = center(tb);
+
+    const sSide = (e.sourceHandle ?? "").charAt(0);
+    const tSide = (e.targetHandle ?? "").charAt(0);
+    if (sSide) {
+      const key = sSide === "l" || sSide === "r" ? tc.cy : tc.cx;
+      add(e.source, sSide, true, { ei: i, side: sSide, isSource: true, key });
+    }
+    if (tSide) {
+      const key = tSide === "L" || tSide === "R" ? sc.cy : sc.cx;
+      add(e.target, tSide, false, { ei: i, side: tSide, isSource: false, key });
+    }
+  }
+
+  for (const [, list] of groups) {
+    list.sort((a, b) => a.key - b.key);
+    const n = list.length;
+    for (let rank = 0; rank < n; rank++) {
+      const ref = list[rank];
+      const idx = Math.min(PORTS_PER_SIDE - 1, rank);
+      const id = `${ref.side}${idx}`;
+      if (ref.isSource) edges[ref.ei].sourceHandle = id;
+      else edges[ref.ei].targetHandle = id;
+    }
+  }
+}
+
+// Compute small lane offsets so parallel edges that would share the same
+// Manhattan trunk get separated into distinct channels.
+function assignLanes(
+  edges: Edge[],
+  boxes: Map<string, { x: number; y: number; w: number; h: number }>,
+) {
+  type LaneKey = string;
+  const groups = new Map<LaneKey, number[]>(); // edge indices
+
+  const anchor = (b: { x: number; y: number; w: number; h: number }, hId: string | undefined) => {
+    const side = (hId ?? "").charAt(0);
+    const idx = Math.max(0, parseInt((hId ?? "").slice(1)) || 0);
+    const frac = (idx + 1) / (PORTS_PER_SIDE + 1);
+    switch (side) {
+      case "l":
+        return { x: b.x, y: b.y + b.h * frac };
+      case "r":
+        return { x: b.x + b.w, y: b.y + b.h * frac };
+      case "t":
+        return { x: b.x + b.w * frac, y: b.y };
+      case "b":
+        return { x: b.x + b.w * frac, y: b.y + b.h };
+      case "L":
+        return { x: b.x, y: b.y + b.h * frac };
+      case "R":
+        return { x: b.x + b.w, y: b.y + b.h * frac };
+      case "T":
+        return { x: b.x + b.w * frac, y: b.y };
+      case "B":
+        return { x: b.x + b.w * frac, y: b.y + b.h };
+      default:
+        return { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+    }
+  };
+
+  // 1) Build grouping keys
+  for (let i = 0; i < edges.length; i++) {
+    const e = edges[i];
+    const sb = boxes.get(e.source);
+    const tb = boxes.get(e.target);
+    if (!sb || !tb) continue;
+    const s = anchor(sb, e.sourceHandle as string);
+    const t = anchor(tb, e.targetHandle as string);
+    const sSide = (e.sourceHandle as string)?.charAt(0);
+    const horizontalFirst = sSide === "l" || sSide === "r";
+    const mid = horizontalFirst ? (s.x + t.x) / 2 : (s.y + t.y) / 2;
+    const spanMin = horizontalFirst ? Math.min(s.y, t.y) : Math.min(s.x, t.x);
+    const spanMax = horizontalFirst ? Math.max(s.y, t.y) : Math.max(s.x, t.x);
+    const trunk = Math.round(mid / GRID) * GRID;
+    const a = Math.round(spanMin / (GRID * 2));
+    const b = Math.round(spanMax / (GRID * 2));
+    const key: LaneKey = `${horizontalFirst ? "H" : "V"}|${trunk}|${a}-${b}`;
+    (groups.get(key) || groups.set(key, []).get(key)!).push(i);
+  }
+
+  // 2) Assign symmetric offsets within each group
+  const SEP = 10; // px separation between channels
+  for (const ids of groups.values()) {
+    if (ids.length <= 1) continue;
+    ids.sort((a, b) => a - b); // stable
+    const n = ids.length;
+    for (let rank = 0; rank < n; rank++) {
+      const lane = rank - (n - 1) / 2; // symmetric around 0
+      const idx = ids[rank];
+      const e = edges[idx];
+      const sSide = (e.sourceHandle as string)?.charAt(0);
+      const horizontalFirst = sSide === "l" || sSide === "r";
+      e.data = { ...(e.data ?? {}), laneAxis: horizontalFirst ? "x" : "y", laneOffset: lane * SEP };
+    }
+  }
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
    Public API
    ────────────────────────────────────────────────────────────────────────── */
@@ -374,11 +442,6 @@ export async function getLayoutedElements(
 
   // positions
   const sPos = positionStates(layers, reservedTop);
-
-  // Precompute layer index and x position per column for event banding
-  const layerOf = new Map<string, number>();
-  layers.forEach((col, i) => col.forEach((id) => layerOf.set(id, i)));
-  const xOfLayer = (idx: number) => INNER_PAD_X + idx * (STATE_W + COL_GAP);
 
   // wrapper size hints
   const widthHint = Math.max(
@@ -422,15 +485,16 @@ export async function getLayoutedElements(
   }
 
   // event nodes using banded placement
-  const labels = Array.from(new Set(transitions.map((t) => t.label))).sort();
-  const ePos = positionEvents(labels, transitions, sPos, reservedTop, widthHint, layerOf, xOfLayer);
-  for (const label of labels) {
-    const id = `__event__${sanitizeEventId(label)}`;
+  const ePos = positionEventsPerTransition(transitions, sPos, reservedTop, heightHint);
+  for (const t of transitions) {
+    const id = `__event__${sanitizeEventId(t.label)}__${sanitizeEventId(t.source)}__${sanitizeEventId(
+      t.target,
+    )}`;
     const p = ePos[id] ?? { x: INNER_PAD_X, y: reservedTop + 12 };
     nodes.push({
       id,
       type: "eventNode",
-      data: { label },
+      data: { label: t.label },
       position: p,
       style: { width: EVENT_W },
       parentId: rootId,
@@ -441,59 +505,63 @@ export async function getLayoutedElements(
 
   // edges: state -> event -> state, with nearest-side handles
   const edges: Edge[] = [];
-  const evId = (lbl: string) => `__event__${sanitizeEventId(lbl)}`;
-  const seenSE = new Set<string>();
-  const seenET = new Set<string>();
-
+  function eventNodeId(t: TEdge) {
+    return `__event__${sanitizeEventId(t.label)}__${sanitizeEventId(t.source)}__${sanitizeEventId(
+      t.target,
+    )}`;
+  }
   for (const t of transitions) {
-    const e = evId(t.label);
-
+    const e = eventNodeId(t);
     // state -> event
-    const k1 = `${t.source}->${e}`;
-    if (!seenSE.has(k1)) {
-      seenSE.add(k1);
-      const sh = pickHandles(
-        sPos[t.source],
-        ePos[e] ?? sPos[t.source],
-        STATE_W,
-        STATE_H_HINT,
-        EVENT_W,
-        EVENT_H_HINT,
-      );
-      edges.push({
-        id: `e_se_${t.source}_${e}`,
-        source: t.source,
-        target: e,
-        sourceHandle: sh.sh,
-        targetHandle: sh.th,
-        type: "transitionEdge",
-        data: { label: "" }, // event label lives on the event node
-      });
-    }
+    const sh = pickHandles(
+      sPos[t.source],
+      ePos[e] ?? sPos[t.source],
+      STATE_W,
+      STATE_H_HINT,
+      EVENT_W,
+      EVENT_H_HINT,
+    );
+    edges.push({
+      id: `e_se_${t.source}_${e}`,
+      source: t.source,
+      target: e,
+      sourceHandle: sh.sh,
+      targetHandle: sh.th,
+      type: "transitionEdge",
+      data: { label: "" },
+    });
 
     // event -> state
-    const k2 = `${e}->${t.target}`;
-    if (!seenET.has(k2)) {
-      seenET.add(k2);
-      const sh2 = pickHandles(
-        ePos[e] ?? sPos[t.target],
-        sPos[t.target],
-        EVENT_W,
-        EVENT_H_HINT,
-        STATE_W,
-        STATE_H_HINT,
-      );
-      edges.push({
-        id: `e_et_${e}_${t.target}`,
-        source: e,
-        target: t.target,
-        sourceHandle: sh2.sh,
-        targetHandle: sh2.th,
-        type: "transitionEdge",
-        data: { label: "" },
-      });
-    }
+    const sh2 = pickHandles(
+      ePos[e] ?? sPos[t.target],
+      sPos[t.target],
+      EVENT_W,
+      EVENT_H_HINT,
+      STATE_W,
+      STATE_H_HINT,
+    );
+    edges.push({
+      id: `e_et_${e}_${t.target}`,
+      source: e,
+      target: t.target,
+      sourceHandle: sh2.sh,
+      targetHandle: sh2.th,
+      type: "transitionEdge",
+      data: { label: "" },
+    });
   }
+
+  // Build boxes map for distribution
+  const boxes = new Map<string, { x: number; y: number; w: number; h: number }>();
+  for (const s of states)
+    boxes.set(s.id, { x: sPos[s.id].x, y: sPos[s.id].y, w: STATE_W, h: STATE_H_HINT });
+  for (const t of transitions) {
+    const id = eventNodeId(t);
+    const p = ePos[id];
+    if (p) boxes.set(id, { x: p.x, y: p.y, w: EVENT_W, h: EVENT_H_HINT });
+  }
+  distributePorts(edges, boxes);
+  assignLanes(edges, boxes);
 
   // initial marker (top → down)
   if (definition.initial && stateIds.includes(definition.initial)) {
@@ -509,12 +577,13 @@ export async function getLayoutedElements(
       draggable: false,
       selectable: false,
     });
+    const midIdx = Math.floor(PORTS_PER_SIDE / 2);
     edges.push({
       id: `e_${initId}_${definition.initial}`,
       source: initId,
       target: definition.initial,
       sourceHandle: "b",
-      targetHandle: "T",
+      targetHandle: `T${midIdx}`,
       type: "transitionEdge",
       data: { isInitial: true, label: "" },
     });

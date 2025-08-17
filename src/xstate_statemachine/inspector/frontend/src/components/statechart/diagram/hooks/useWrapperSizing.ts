@@ -185,7 +185,7 @@ export function useWrapperSizing(params: {
         }
       }
 
-      const inset = 28;
+      const inset = 22; // tighter to nodes so no visible large gap, still inside wrapper
       const topInner = (root.position?.y ?? 0) + params.reservedTop + 24;
       const leftInner = (root.position?.x ?? 0) + PADDING / 2 + inset;
       const rightInner =

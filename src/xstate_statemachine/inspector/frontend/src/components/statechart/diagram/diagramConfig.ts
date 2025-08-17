@@ -7,7 +7,8 @@ import {
   RootNode,
   StateNode,
 } from "@/components/statechart/nodes";
-import { TransitionEdge } from "@/components/statechart/edges";
+// Use the orthogonal edge that respects numbered side handles
+import { TransitionEdge } from "@/components/edges/TransitionEdge";
 import { GRID_SIZE } from "@/components/statechart/constants";
 
 export const nodeTypes = {
