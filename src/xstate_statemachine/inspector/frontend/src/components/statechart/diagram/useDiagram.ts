@@ -374,11 +374,23 @@ export const useDiagram = ({
       const all = currentNodes ?? latestNodesRef.current;
       const root = all.find((n) => n.type === "rootNode");
       if (!root) return eds;
-      const width = (root.style && (root.style as any).width) as number | undefined;
-      const height = (root.style && (root.style as any).height) as number | undefined;
-      const inset = 6; // keep connectors a few pixels away from wrapper borders
+
+      // Prefer measured width/height; otherwise derive from computeRootBounds
+      let width: number | undefined = (root as any).width ?? (root.style as any)?.width;
+      let height: number | undefined = (root as any).height ?? (root.style as any)?.height;
+      if (width == null || height == null) {
+        const tight = computeRootBounds(all, eds);
+        if (tight) {
+          width ??= tight.width;
+          height ??= tight.height;
+        }
+      }
+
+      // Keep connectors comfortably away from borders and header
+      const inset = 28; // stronger border gap
+      // Top clamp: below header + context + some breathing room
+      const topInner = (root.position?.y ?? 0) + reservedTop + 24;
       const leftInner = (root.position?.x ?? 0) + PADDING / 2 + inset;
-      const topInner = (root.position?.y ?? 0) + headerGuardTop + 2 + inset;
       const rightInner =
         width != null
           ? (root.position?.x ?? 0) + width - PADDING / 2 - inset
@@ -399,61 +411,80 @@ export const useDiagram = ({
         },
       }));
     },
-    [headerGuardTop],
+    [reservedTop, computeRootBounds],
   );
 
-  const relayout = useCallback(async () => {
-    const { nodes: laidOutNodes, edges: laidOutEdges } = await getLayoutedElements(
+  const relayout = useCallback(
+    async (opts?: { resetSavedPositions?: boolean }) => {
+      if (opts?.resetSavedPositions) {
+        try {
+          localStorage.removeItem(storageKey);
+        } catch {}
+        setHasSavedPositions(false);
+      }
+
+      const { nodes: laidOutNodes, edges: laidOutEdges } = await getLayoutedElements(
+        machine.definition,
+        machine.context,
+      );
+
+      // Tag edges first (so node "next" status can be derived from them)
+      const edgesWithStatus = decorateEdgeStatuses(laidOutEdges);
+
+      // Parent all under root, then set node statuses (active/next)
+      const parented = ensureUnderRoot(laidOutNodes);
+      const withStatus = decorateStatuses(parented, edgesWithStatus);
+
+      // Check if we have any saved positions for this machine
+      const hasSaved = opts?.resetSavedPositions ? false : loadSavedPositions().size > 0;
+      setHasSavedPositions(hasSaved);
+
+      // Apply saved positions if present
+      const positioned = hasSaved ? applySavedPositions(withStatus) : withStatus;
+
+      // Only guard/grow when we don't already have user-defined positions
+      const nextNodes = hasSaved
+        ? positioned
+        : guardHeaderAndMaybeGrow(positioned, edgesWithStatus);
+
+      // Inject clamps for edges so they never route under the subheader or touch borders
+      const nextEdges = withHeaderClamp(edgesWithStatus, nextNodes);
+
+      setEdges(nextEdges);
+      setNodes(nextNodes);
+
+      // Persist the freshly computed layout positions if we reset
+      if (opts?.resetSavedPositions) {
+        savePositionsSnapshot(nextNodes);
+      }
+
+      // Restore viewport if previously saved; otherwise, run a one-time fit
+      const savedVp = loadSavedViewport();
+      if (initialViewport) {
+        setViewportState(initialViewport);
+      } else if (savedVp) {
+        setViewportState(savedVp);
+      } else {
+        tightenAndFitWhenReady(nextEdges, { adjustPositions: !hasSaved }).catch(console.error);
+      }
+    },
+    [
       machine.definition,
       machine.context,
-    );
-
-    // Tag edges first (so node "next" status can be derived from them)
-    const edgesWithStatus = decorateEdgeStatuses(laidOutEdges);
-
-    // Parent all under root, then set node statuses (active/next)
-    const parented = ensureUnderRoot(laidOutNodes);
-    const withStatus = decorateStatuses(parented, edgesWithStatus);
-
-    // Check if we have any saved positions for this machine
-    const hasSaved = loadSavedPositions().size > 0;
-    setHasSavedPositions(hasSaved);
-
-    // Apply saved positions if present
-    const positioned = applySavedPositions(withStatus);
-
-    // Only guard/grow when we don't already have user-defined positions
-    const nextNodes = hasSaved ? positioned : guardHeaderAndMaybeGrow(positioned, edgesWithStatus);
-
-    // Inject clampTopY for edges so they never route under the subheader
-    const nextEdges = withHeaderClamp(edgesWithStatus, nextNodes);
-
-    setEdges(nextEdges);
-    setNodes(nextNodes);
-
-    // Restore viewport if previously saved; otherwise, run a one-time fit
-    const savedVp = loadSavedViewport();
-    if (initialViewport) {
-      setViewportState(initialViewport);
-    } else if (savedVp) {
-      setViewportState(savedVp);
-    } else {
-      tightenAndFitWhenReady(nextEdges, { adjustPositions: !hasSaved }).catch(console.error);
-    }
-  }, [
-    machine.definition,
-    machine.context,
-    ensureUnderRoot,
-    decorateStatuses,
-    decorateEdgeStatuses,
-    applySavedPositions,
-    guardHeaderAndMaybeGrow,
-    tightenAndFitWhenReady,
-    loadSavedPositions,
-    loadSavedViewport,
-    initialViewport,
-    withHeaderClamp,
-  ]);
+      ensureUnderRoot,
+      decorateStatuses,
+      decorateEdgeStatuses,
+      applySavedPositions,
+      guardHeaderAndMaybeGrow,
+      tightenAndFitWhenReady,
+      loadSavedPositions,
+      loadSavedViewport,
+      initialViewport,
+      withHeaderClamp,
+      savePositionsSnapshot,
+      storageKey,
+    ],
+  );
 
   useEffect(() => {
     relayout().catch(console.error);
@@ -510,8 +541,8 @@ export const useDiagram = ({
 
   const onEdgesChange = useCallback(
     (changes: EdgeChange[]) =>
-      setEdges((eds) => decorateEdgeStatuses(applyEdgeChanges(changes, eds))),
-    [decorateEdgeStatuses],
+      setEdges((eds) => withHeaderClamp(decorateEdgeStatuses(applyEdgeChanges(changes, eds)))),
+    [decorateEdgeStatuses, withHeaderClamp],
   );
 
   const onNodeDragStop = useCallback(() => {

@@ -51,7 +51,7 @@ const DiagramCanvas = ({
 
   const closeMenu = useCallback(() => setMenu((m) => ({ ...m, open: false })), []);
 
-  const handleAutoLayout = () => relayout().catch(console.error);
+  const handleAutoLayout = () => relayout({ resetSavedPositions: true }).catch(console.error);
   const handleFitView = () => tightenAndFitWhenReady(edges).catch(console.error);
 
   return (
