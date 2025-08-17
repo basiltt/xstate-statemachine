@@ -21,6 +21,8 @@ export interface MachineState {
   logs: LogEntry[];
   services: Record<string, { src: string; status: string }>;
   lastTransition: { sourceId: string; targetId: string; event: string } | null;
+  // New: time (epoch ms) when this machine was registered in the inspector
+  registeredAt: number;
 }
 
 interface InspectorState {
@@ -126,6 +128,8 @@ export const useInspectorStore = create<InspectorState>((set, get) => ({
           logs: [{ type: "machine_registered", payload: data }],
           services: {},
           lastTransition: null,
+          // Prefer timestamp coming from backend, else use local time
+          registeredAt: typeof data.timestamp === "number" ? data.timestamp : Date.now(),
         },
       },
     })),

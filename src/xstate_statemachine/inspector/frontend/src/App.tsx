@@ -22,6 +22,7 @@ import {
   WifiOff,
   Settings,
   MoveDiagonal2,
+  Clock,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -54,7 +55,7 @@ interface HeaderProps {
 interface SidebarProps {
   machines: Record<string, MachineState>;
   selectedMachineId: string | null;
-  onSelectMachine: (id: string) => void;
+  onSelect: (id: string) => void;
 }
 
 interface MachineViewProps {
@@ -68,6 +69,13 @@ interface SendEventDialogProps {
   onOpenChange: (open: boolean) => void;
   machineId: string;
 }
+
+// --- Helpers ---
+const formatTime = (ts?: number) => {
+  if (!ts) return "";
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour12: false });
+};
 
 // --- Main App Component ---
 export default function App() {
@@ -90,9 +98,9 @@ export default function App() {
   });
 
   useEffect(() => {
-    const machineIds = Object.keys(machines);
-    if ((!selectedMachineId || !machines[selectedMachineId]) && machineIds.length > 0) {
-      setSelectedMachineId(machineIds[0]);
+    const ids = Object.keys(machines);
+    if ((!selectedMachineId || !machines[selectedMachineId]) && ids.length > 0) {
+      setSelectedMachineId(ids[0]);
     }
   }, [machines, selectedMachineId]);
 
@@ -137,7 +145,7 @@ export default function App() {
         <Sidebar
           machines={machines}
           selectedMachineId={selectedMachineId}
-          onSelectMachine={setSelectedMachineId}
+          onSelect={setSelectedMachineId}
         />
         <main className="flex-1 flex flex-col overflow-hidden">
           {selectedMachine ? (
@@ -200,21 +208,39 @@ const Header = ({ onToggleTheme, isDark, isConnected, onOpenSettings }: HeaderPr
   </header>
 );
 
-const Sidebar = ({ machines, selectedMachineId, onSelectMachine }: SidebarProps) => (
-  <aside className="hidden w-72 flex-col border-r bg-card p-4 sm:flex">
+const Sidebar = ({ machines, selectedMachineId, onSelect }: SidebarProps) => (
+  <aside className="hidden w-80 flex-col border-r bg-card p-4 sm:flex">
     <h2 className="text-base font-semibold tracking-tight">Live Machines</h2>
-    <nav className="mt-4 flex flex-col gap-1">
-      {Object.values(machines).map((machine) => (
-        <div key={machine.id}>
-          <Button
-            variant={selectedMachineId === machine.id ? "secondary" : "ghost"}
-            className="w-full justify-start"
-            onClick={() => onSelectMachine(machine.id)}
-          >
-            {machine.id}
-          </Button>
-        </div>
-      ))}
+    <nav className="mt-4 flex flex-col gap-2">
+      {Object.values(machines)
+        .sort((a, b) => b.registeredAt - a.registeredAt)
+        .map((machine) => {
+          const isActive = selectedMachineId === machine.id;
+          return (
+            <button
+              key={machine.id}
+              className={
+                "group relative rounded-md border p-2 text-left transition-colors " +
+                (isActive ? "border-primary/70 bg-primary/5" : "border-border hover:bg-muted/40")
+              }
+              onClick={() => onSelect(machine.id)}
+              title={isActive ? "Currently shown on canvas" : "Show on canvas"}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-medium truncate">{machine.id}</span>
+                {isActive && (
+                  <span className="ml-2 rounded-full bg-primary/20 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                    Active
+                  </span>
+                )}
+              </div>
+              <div className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground/70">
+                <Clock className="h-3 w-3" />
+                <span>Reg: {formatTime(machine.registeredAt)}</span>
+              </div>
+            </button>
+          );
+        })}
     </nav>
   </aside>
 );
@@ -318,7 +344,7 @@ const SendEventDialog = ({ open, onOpenChange, machineId }: SendEventDialogProps
 
   const handleSend = () => {
     if (!type) return;
-    let parsedPayload = {};
+    let parsedPayload = {} as any;
     try {
       if (payload.trim()) {
         parsedPayload = JSON.parse(payload);
