@@ -5,7 +5,7 @@ import ReactFlow, { Background, Controls, MiniMap, ReactFlowProvider } from "rea
 import "reactflow/dist/style.css";
 
 import { MachineState } from "@/hooks/useInspectorSocket.ts";
-import { useDiagram } from "@/components/statechart/diagram/useDiagram.ts";
+import { useDiagram } from "@/components/statechart/diagram/hooks/useDiagram.ts";
 import { DiagramContextMenu } from "@/components/statechart/diagram/DiagramContextMenu.tsx";
 import reactFlowConfig from "@/components/statechart/diagram/diagramConfig";
 

@@ -13,20 +13,20 @@ import {
   type Viewport,
 } from "reactflow";
 
-import { getLayoutedElements } from "@/components/statechart/layout";
+import { getLayoutedElements } from "@/components/statechart/layout.ts";
 import { MachineState } from "@/hooks/useInspectorSocket.ts";
 import {
   EDGE_CLEAR_TOP,
   estimateReservedTop,
   headerGuardTop as calculateHeaderGuardTop,
   ROOT_HEADER,
-} from "@/components/statechart/constants";
+} from "@/components/statechart/constants.ts";
 
-import { usePositionsPersistence } from "./hooks/usePositionsPersistence";
-import { useViewportPersistence } from "./hooks/useViewportPersistence";
-import { useStatusDecorators } from "./hooks/useStatusDecorators";
-import { useLiveEdgeRouting } from "./hooks/useLiveEdgeRouting";
-import { useWrapperSizing } from "./hooks/useWrapperSizing";
+import { usePositionsPersistence } from "./usePositionsPersistence.ts";
+import { useViewportPersistence } from "./useViewportPersistence.ts";
+import { useStatusDecorators } from "./useStatusDecorators.ts";
+import { useLiveEdgeRouting } from "./useLiveEdgeRouting.ts";
+import { useWrapperSizing } from "./useWrapperSizing.ts";
 
 type UseDiagramProps = {
   machine: MachineState;
