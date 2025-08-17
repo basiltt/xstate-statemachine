@@ -1,6 +1,6 @@
 // src/xstate_statemachine/inspector/frontend/src/components/statechart/diagram/useDiagram.ts
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import {
   applyEdgeChanges,
   applyNodeChanges,
@@ -10,6 +10,7 @@ import {
   type NodeChange,
   useReactFlow,
   useUpdateNodeInternals,
+  type Viewport,
 } from "reactflow";
 
 import { getLayoutedElements } from "@/components/statechart/layout";
@@ -39,9 +40,33 @@ export const useDiagram = ({
 }: UseDiagramProps) => {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
+  const [hasSavedPositions, setHasSavedPositions] = useState(false);
 
-  const { fitView, getNodes } = useReactFlow();
+  const latestNodesRef = useRef<Node[]>([]);
+  useEffect(() => {
+    latestNodesRef.current = nodes;
+  }, [nodes]);
+
+  const { fitView, getNodes, getViewport } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
+
+  const storageKey = useMemo(() => `xsi.positions.${machine.id}`, [machine.id]);
+  const viewportKey = useMemo(() => `xsi.viewport.${machine.id}`, [machine.id]);
+
+  // Read the last saved viewport synchronously for initial mount so ReactFlow can use it via defaultViewport
+  const initialViewport = useMemo<Viewport | null>(() => {
+    try {
+      const raw = localStorage.getItem(viewportKey);
+      if (!raw) return null;
+      const vp = JSON.parse(raw);
+      if (vp && typeof vp.x === "number" && typeof vp.y === "number" && typeof vp.zoom === "number")
+        return vp as Viewport;
+    } catch {}
+    return null;
+  }, [viewportKey]);
+
+  // Keep a controlled viewport state to ensure ReactFlow always honors the saved position
+  const [viewport, setViewportState] = useState<Viewport | undefined>(initialViewport ?? undefined);
 
   const reservedTop = useMemo(
     () =>
@@ -49,6 +74,92 @@ export const useDiagram = ({
     [machine.context],
   );
   const headerGuardTop = useMemo(() => calculateHeaderGuardTop(reservedTop), [reservedTop]);
+
+  /* ---------------------- Position persistence helpers ---------------------- */
+  const loadSavedPositions = useCallback((): Map<string, { x: number; y: number }> => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return new Map();
+      const obj = JSON.parse(raw) as Record<string, { x: number; y: number }>;
+      return new Map(Object.entries(obj));
+    } catch {
+      return new Map();
+    }
+  }, [storageKey]);
+
+  const applySavedPositions = useCallback(
+    (list: Node[]): Node[] => {
+      const saved = loadSavedPositions();
+      if (saved.size === 0) return list;
+      return list.map((n) => {
+        const s = saved.get(n.id);
+        if (!s) return n;
+        return { ...n, position: { x: s.x, y: s.y } };
+      });
+    },
+    [loadSavedPositions],
+  );
+
+  const savePositionsFromGraph = useCallback(() => {
+    try {
+      const map: Record<string, { x: number; y: number }> = {};
+      for (const n of getNodes()) {
+        map[n.id] = { x: n.position.x, y: n.position.y };
+      }
+      localStorage.setItem(storageKey, JSON.stringify(map));
+    } catch {
+      // ignore
+    }
+  }, [getNodes, storageKey]);
+
+  // Immediate saver that uses a provided snapshot of nodes (preferred for end-of-drag)
+  const savePositionsSnapshot = useCallback(
+    (list: Node[]) => {
+      try {
+        const map: Record<string, { x: number; y: number }> = {};
+        for (const n of list) {
+          map[n.id] = { x: n.position.x, y: n.position.y };
+        }
+        localStorage.setItem(storageKey, JSON.stringify(map));
+      } catch {
+        // ignore
+      }
+    },
+    [storageKey],
+  );
+
+  /* ---------------------- Viewport persistence helpers ---------------------- */
+  const loadSavedViewport = useCallback((): Viewport | null => {
+    try {
+      const raw = localStorage.getItem(viewportKey);
+      if (!raw) return null;
+      const vp = JSON.parse(raw) as Viewport;
+      if (
+        typeof vp === "object" &&
+        vp !== null &&
+        typeof vp.x === "number" &&
+        typeof vp.y === "number" &&
+        typeof vp.zoom === "number"
+      )
+        return vp;
+      return null;
+    } catch {
+      return null;
+    }
+  }, [viewportKey]);
+
+  const saveViewport = useCallback(
+    (vp?: Viewport) => {
+      try {
+        const toSave = vp ?? getViewport?.();
+        if (!toSave) return;
+        localStorage.setItem(viewportKey, JSON.stringify(toSave));
+      } catch {
+        // ignore
+      }
+    },
+    [viewportKey, getViewport],
+  );
 
   /* ---------------------- Status decoration helpers ---------------------- */
 
@@ -214,7 +325,7 @@ export const useDiagram = ({
   );
 
   const tightenAndFitWhenReady = useCallback(
-    async (eds: Edge[]) => {
+    async (eds: Edge[], opts?: { adjustPositions?: boolean }) => {
       await nextFrame();
       await nextFrame();
 
@@ -224,12 +335,18 @@ export const useDiagram = ({
       ids.forEach((id) => updateNodeInternals(id));
 
       await nextFrame();
-      setNodes((prev) => fitRootTightly(prev, eds));
-      await nextFrame();
+      // Only adjust node positions if explicitly requested (default: when no saved positions)
+      const shouldAdjust = opts?.adjustPositions ?? !hasSavedPositions;
+      if (shouldAdjust) {
+        setNodes((prev) => fitRootTightly(prev, eds));
+        await nextFrame();
+      }
 
       fitView({ duration: 500, padding: 0.18, includeHiddenNodes: true });
+      // Persist viewport after programmatic fit
+      setTimeout(() => saveViewport(), 0);
     },
-    [getNodes, updateNodeInternals, fitRootTightly, fitView],
+    [getNodes, updateNodeInternals, fitRootTightly, fitView, saveViewport, hasSavedPositions],
   );
 
   /* ------------------------------- Relayout ------------------------------- */
@@ -247,17 +364,41 @@ export const useDiagram = ({
     const parented = ensureUnderRoot(laidOutNodes);
     const withStatus = decorateStatuses(parented, edgesWithStatus);
 
-    setEdges(edgesWithStatus);
-    setNodes(withStatus);
+    // Check if we have any saved positions for this machine
+    const hasSaved = loadSavedPositions().size > 0;
+    setHasSavedPositions(hasSaved);
 
-    tightenAndFitWhenReady(edgesWithStatus).catch(console.error);
+    // Apply saved positions if present
+    const positioned = applySavedPositions(withStatus);
+
+    // Only guard/grow when we don't already have user-defined positions
+    const nextNodes = hasSaved ? positioned : guardHeaderAndMaybeGrow(positioned, edgesWithStatus);
+
+    setEdges(edgesWithStatus);
+    setNodes(nextNodes);
+
+    // Restore viewport if previously saved; otherwise, run a one-time fit
+    const savedVp = loadSavedViewport();
+    if (initialViewport) {
+      // Using controlled viewport; nothing to do here
+      setViewportState(initialViewport);
+    } else if (savedVp) {
+      setViewportState(savedVp);
+    } else {
+      tightenAndFitWhenReady(edgesWithStatus, { adjustPositions: !hasSaved }).catch(console.error);
+    }
   }, [
     machine.definition,
     machine.context,
     ensureUnderRoot,
     decorateStatuses,
     decorateEdgeStatuses,
+    applySavedPositions,
+    guardHeaderAndMaybeGrow,
     tightenAndFitWhenReady,
+    loadSavedPositions,
+    loadSavedViewport,
+    initialViewport,
   ]);
 
   useEffect(() => {
@@ -275,14 +416,27 @@ export const useDiagram = ({
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
+      let isDrop = false;
+      for (const c of changes)
+        if (c.type === "position" && !c.dragging) {
+          isDrop = true;
+          break;
+        }
+
       setNodes((curr) => {
         const next = applyNodeChanges(changes, curr);
         const guarded = guardHeaderAndMaybeGrow(next, edges);
+        if (isDrop) {
+          // Save immediately on drop using the computed positions
+          savePositionsSnapshot(guarded);
+          // Also save current viewport so reload opens where the user left it
+          saveViewport();
+        }
         const dragging = changes.some((c) => c.type === "position" && c.dragging);
         return dragging ? guarded : decorateStatuses(guarded, edges);
       });
     },
-    [edges, decorateStatuses, guardHeaderAndMaybeGrow],
+    [edges, decorateStatuses, guardHeaderAndMaybeGrow, savePositionsSnapshot, saveViewport],
   );
 
   const onEdgesChange = useCallback(
@@ -292,16 +446,48 @@ export const useDiagram = ({
   );
 
   const onNodeDragStop = useCallback(() => {
+    // Do not re-tighten/rebase node positions on drag stop; respect user placement.
     setNodes((nds) => {
-      const tight = fitRootTightly(nds, edges);
-      const ids = tight.filter((n) => n.type !== "rootNode").map((n) => n.id);
+      const ids = nds.filter((n) => n.type !== "rootNode").map((n) => n.id);
       setTimeout(() => ids.forEach((id) => updateNodeInternals(id)), 0);
-      return tight;
+      return nds;
     });
-    if (autoFitAfterDrag) {
-      tightenAndFitWhenReady(edges).catch(console.error);
+
+    // Save immediately using the latest snapshot of nodes and the viewport
+    if (latestNodesRef.current.length) {
+      savePositionsSnapshot(latestNodesRef.current);
+    } else {
+      savePositionsFromGraph();
     }
-  }, [fitRootTightly, edges, updateNodeInternals, tightenAndFitWhenReady, autoFitAfterDrag]);
+    saveViewport();
+
+    if (autoFitAfterDrag) {
+      // Fit the viewport only; do not change node positions
+      tightenAndFitWhenReady(edges, { adjustPositions: false }).catch(console.error);
+    }
+  }, [
+    edges,
+    updateNodeInternals,
+    tightenAndFitWhenReady,
+    autoFitAfterDrag,
+    savePositionsFromGraph,
+    savePositionsSnapshot,
+    saveViewport,
+  ]);
+
+  // Persist viewport when panning/zooming stops
+  const onMoveEnd = useCallback(
+    (_: any, vp: Viewport) => {
+      if (vp) setViewportState(vp);
+      saveViewport(vp);
+    },
+    [saveViewport],
+  );
+
+  // ReactFlow controlled viewport change handler (fires for user and programmatic changes)
+  const onViewportChange = useCallback((vp: Viewport) => {
+    setViewportState(vp);
+  }, []);
 
   // Return values to be used by the view component
   return {
@@ -312,5 +498,10 @@ export const useDiagram = ({
     onNodeDragStop,
     relayout,
     tightenAndFitWhenReady,
+    hasSavedPositions,
+    onMoveEnd,
+    initialViewport,
+    viewport,
+    onViewportChange,
   };
 };

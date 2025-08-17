@@ -32,6 +32,9 @@ const DiagramCanvas = ({ machine, activeStateIds, autoFitAfterDrag = true }: Dia
     onNodeDragStop,
     relayout,
     tightenAndFitWhenReady,
+    hasSavedPositions,
+    onMoveEnd,
+    initialViewport,
   } = useDiagram({ machine, activeStateIds, autoFitAfterDrag });
 
   const onPaneContextMenu = useCallback((evt: React.MouseEvent) => {
@@ -54,13 +57,15 @@ const DiagramCanvas = ({ machine, activeStateIds, autoFitAfterDrag = true }: Dia
         onEdgesChange={onEdgesChange}
         onNodeDragStop={onNodeDragStop}
         onPaneContextMenu={onPaneContextMenu}
+        onMoveEnd={onMoveEnd}
         // Spread in all the static config
         {...reactFlowConfig}
         // Specific props
         nodesDraggable
         nodesConnectable={false}
         elementsSelectable
-        fitView
+        defaultViewport={initialViewport ?? undefined}
+        fitView={!hasSavedPositions && !initialViewport}
         minZoom={0.2}
         maxZoom={1.5}
         snapToGrid
