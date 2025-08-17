@@ -189,58 +189,93 @@ function sanitizeEventId(label: string) {
   return label.replace(/[^a-zA-Z0-9_]+/g, "_");
 }
 
-/** pack event pills into collision-free rows; x is centered between source/target columns */
+/** pack event pills into banded rows between source/target columns, avoiding one long global rail */
 function positionEvents(
   labels: string[],
   transitions: TEdge[],
   statePos: Record<string, XY>,
   reservedTop: number,
   widthHint: number,
+  layerOf: Map<string, number>,
+  xOfLayer: (idx: number) => number,
 ): Record<string, XY> {
   const pos: Record<string, XY> = {};
   if (!labels.length) return pos;
 
+  // Group transitions by label
   const byLabel = new Map<string, TEdge[]>();
   for (const t of transitions)
     (byLabel.get(t.label) || byLabel.set(t.label, []).get(t.label)!).push(t);
 
-  const base: { id: string; x: number }[] = labels.map((label) => {
-    const g = byLabel.get(label) ?? [];
-    const sx = g.map((t) => (statePos[t.source]?.x ?? INNER_PAD_X) + STATE_W / 2);
-    const tx = g.map((t) => (statePos[t.target]?.x ?? INNER_PAD_X) + STATE_W / 2);
-    const mean = (xs: number[]) =>
-      xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : INNER_PAD_X + STATE_W / 2;
-    const cx = (mean(sx) + mean(tx)) / 2;
-    return { id: `__event__${sanitizeEventId(label)}`, x: snap(cx - EVENT_W / 2) };
-  });
+  // For each label, compute the span and preferred band (column) to place the event
+  type BandKey = number; // integer layer index around which the event sits
+  const bands: Map<BandKey, { rows: { y: number; occupied: Array<[number, number]> }[] }> =
+    new Map();
+
+  function getBand(layerIdx: number) {
+    if (!bands.has(layerIdx)) bands.set(layerIdx, { rows: [] });
+    return bands.get(layerIdx)!;
+  }
 
   const minX = INNER_PAD_X;
   const maxX = Math.max(minX, widthHint - INNER_PAD_X - EVENT_W);
-  const spacing = 28;
+  const spacing = 16; // horizontal gap between events in same row
   const rowH = EVENT_H_HINT + 10;
-  const startY = reservedTop + Math.max(14, Math.floor(INNER_PAD_Y / 2));
+  const baseY = reservedTop + Math.max(14, Math.floor(INNER_PAD_Y / 2));
 
-  base.sort((a, b) => a.x - b.x);
-
-  const rows: { y: number; right: number }[] = [];
-  for (const it of base) {
-    const desired = Math.max(minX, Math.min(maxX, it.x));
-    let placed = false;
-    for (const r of rows) {
-      const x = Math.max(minX, r.right + spacing);
-      if (x <= maxX) {
-        pos[it.id] = { x: snap(x), y: snap(r.y) };
-        r.right = x + EVENT_W;
-        placed = true;
-        break;
+  function placeInBand(layerIdx: number, desiredX: number) {
+    const band = getBand(layerIdx);
+    // find first row that can fit without overlap
+    for (const r of band.rows) {
+      // find a spot after the last occupied segment
+      let x = desiredX;
+      // ensure it doesn't collide with existing segments
+      let collides = true;
+      let guard = 0;
+      while (collides && guard++ < 100) {
+        collides = r.occupied.some(
+          ([l, rgt]) => !(x + EVENT_W + spacing <= l || x >= rgt + spacing),
+        );
+        if (collides) x += spacing; // nudge right until free
+        if (x > maxX) break;
+      }
+      if (!collides && x <= maxX) {
+        r.occupied.push([x, x + EVENT_W]);
+        return { x: snap(Math.max(minX, Math.min(maxX, x))), y: snap(r.y) };
       }
     }
-    if (!placed) {
-      const y = startY + rows.length * rowH;
-      const x = desired;
-      rows.push({ y, right: x + EVENT_W });
-      pos[it.id] = { x: snap(x), y: snap(y) };
+    // need a new row
+    const y = baseY + band.rows.length * rowH;
+    const x = snap(Math.max(minX, Math.min(maxX, desiredX)));
+    band.rows.push({ y, occupied: [[x, x + EVENT_W]] });
+    return { x, y: snap(y) };
+  }
+
+  for (const label of labels) {
+    const group = byLabel.get(label)!;
+    // Handle self-loop: place directly above the state (first occurrence)
+    const self = group.find((t) => t.source === t.target);
+    if (self) {
+      const s = statePos[self.source] ?? { x: INNER_PAD_X, y: baseY };
+      const cx = snap(s.x + STATE_W / 2 - EVENT_W / 2);
+      pos[`__event__${sanitizeEventId(label)}`] = {
+        x: Math.max(minX, Math.min(maxX, cx)),
+        y: baseY,
+      };
+      continue;
     }
+
+    const cols = group.flatMap((t) => [layerOf.get(t.source) ?? 0, layerOf.get(t.target) ?? 0]);
+    const minCol = Math.min(...cols);
+    const maxCol = Math.max(...cols);
+    const midCol = Math.round((minCol + maxCol) / 2);
+
+    const xLeft = xOfLayer(minCol) + STATE_W / 2;
+    const xRight = xOfLayer(maxCol) + STATE_W / 2;
+    const cx = (xLeft + xRight) / 2 - EVENT_W / 2; // center between columns
+
+    const placed = placeInBand(midCol, snap(cx));
+    pos[`__event__${sanitizeEventId(label)}`] = placed;
   }
 
   return pos;
@@ -265,11 +300,28 @@ function pickHandles(
   const dxAbs = Math.abs(dx - sx);
   const dyAbs = Math.abs(dy - sy);
 
-  // Favor L/R for main LR flow; if same column (dxAbs < dyAbs), use vertical
-  if (dx > sx && dxAbs >= dyAbs) return { sh: "r", th: "L" };
-  if (dx < sx && dxAbs >= dyAbs) return { sh: "l", th: "R" };
-  if (dy < sy) return { sh: "t", th: "B" };
-  return { sh: "b", th: "T" };
+  // Use dominance thresholds so slight misalignments don't flip sides
+  const hGap = Math.max(24, Math.floor(STATE_W * 0.08));
+  const vGap = Math.max(24, Math.floor(STATE_H_HINT * 0.15));
+
+  // Quadrant-based preference:
+  // - If clearly above/below, use vertical ports (top/bottom) to avoid crowding top only.
+  if (sy + vGap < dy) {
+    // source above target
+    return { sh: "b", th: "T" };
+  }
+  if (sy - vGap > dy) {
+    // source below target
+    return { sh: "t", th: "B" };
+  }
+
+  // - Otherwise, pick horizontal ports based on left/right relation
+  if (sx + hGap < dx) return { sh: "r", th: "L" };
+  if (sx - hGap > dx) return { sh: "l", th: "R" };
+
+  // Fallback by axis dominance (maintains LR feel when ambiguous)
+  if (dxAbs >= dyAbs) return dx >= sx ? { sh: "r", th: "L" } : { sh: "l", th: "R" };
+  return sy <= dy ? { sh: "b", th: "T" } : { sh: "t", th: "B" };
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -301,6 +353,11 @@ export async function getLayoutedElements(
 
   // positions
   const sPos = positionStates(layers, reservedTop);
+
+  // Precompute layer index and x position per column for event banding
+  const layerOf = new Map<string, number>();
+  layers.forEach((col, i) => col.forEach((id) => layerOf.set(id, i)));
+  const xOfLayer = (idx: number) => INNER_PAD_X + idx * (STATE_W + COL_GAP);
 
   // wrapper size hints
   const widthHint = Math.max(
@@ -343,9 +400,9 @@ export async function getLayoutedElements(
     });
   }
 
-  // event nodes (collision-free rows)
+  // event nodes using banded placement
   const labels = Array.from(new Set(transitions.map((t) => t.label))).sort();
-  const ePos = positionEvents(labels, transitions, sPos, reservedTop, widthHint);
+  const ePos = positionEvents(labels, transitions, sPos, reservedTop, widthHint, layerOf, xOfLayer);
   for (const label of labels) {
     const id = `__event__${sanitizeEventId(label)}`;
     const p = ePos[id] ?? { x: INNER_PAD_X, y: reservedTop + 12 };
@@ -354,7 +411,7 @@ export async function getLayoutedElements(
       type: "eventNode",
       data: { label },
       position: p,
-      style: { width: EVENT_W }, // height auto in component
+      style: { width: EVENT_W },
       parentId: rootId,
       extent: "parent",
       draggable: true,
