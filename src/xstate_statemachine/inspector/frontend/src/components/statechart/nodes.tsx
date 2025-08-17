@@ -1,4 +1,5 @@
-// statechart/nodes.tsx
+// src/xstate_statemachine/inspector/frontend/src/components/statechart/nodes.tsx
+
 import { Handle, NodeProps, Position } from "reactflow";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";

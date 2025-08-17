@@ -1,3 +1,5 @@
+// src/xstate_statemachine/inspector/frontend/src/App.tsx
+
 import { useEffect, useState } from "react";
 import {
   LogEntry,

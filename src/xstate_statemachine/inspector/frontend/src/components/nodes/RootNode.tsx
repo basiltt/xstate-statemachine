@@ -1,3 +1,5 @@
+//  src/xstate_statemachine/inspector/frontend/src/components/nodes/RootNode.tsx
+
 import { NodeProps } from "reactflow";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 

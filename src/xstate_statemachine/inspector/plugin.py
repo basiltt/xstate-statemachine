@@ -1,3 +1,4 @@
+# src/xstate_statemachine/inspector/plugin.py
 try:
     import json
     from datetime import datetime, UTC

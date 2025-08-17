@@ -1,3 +1,5 @@
+//  src/xstate_statemachine/inspector/frontend/src/components/magicui/dock.tsx
+
 "use client";
 
 import { cn } from "@/lib/utils";

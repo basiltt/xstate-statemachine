@@ -1,4 +1,4 @@
-// layoutConfig.ts
+// src/xstate_statemachine/inspector/frontend/src/components/statechart/layoutConfig.ts
 
 // Layout configuration similar to XState visualizer
 export interface LayoutConfig {

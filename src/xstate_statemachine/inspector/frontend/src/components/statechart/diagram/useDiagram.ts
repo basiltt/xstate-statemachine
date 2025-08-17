@@ -1,4 +1,5 @@
-// src/hooks/useDiagram.ts
+// src/xstate_statemachine/inspector/frontend/src/components/statechart/diagram/useDiagram.ts
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   applyEdgeChanges,

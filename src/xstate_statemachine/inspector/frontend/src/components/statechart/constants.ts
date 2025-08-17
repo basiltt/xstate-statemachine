@@ -1,4 +1,4 @@
-// src/components/statechart/constants.ts
+// src/xstate_statemachine/inspector/frontend/src/components/statechart/constants.ts
 
 // Shared layout and styling constants for the statechart wrapper
 export const PADDING = 40; // inner padding inside wrapper

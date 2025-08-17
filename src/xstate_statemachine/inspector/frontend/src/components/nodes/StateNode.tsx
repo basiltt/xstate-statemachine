@@ -1,4 +1,5 @@
-// nodes/StateNode.tsx
+//  src/xstate_statemachine/inspector/frontend/src/components/nodes/StateNode.tsx
+
 import { Handle, NodeProps, Position } from "reactflow";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Power, RadioTower, Zap } from "lucide-react";

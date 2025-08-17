@@ -1,4 +1,4 @@
-// src/components/edges/TransitionEdge.tsx
+// src/xstate_statemachine/inspector/frontend/src/components/edges/TransitionEdge.tsx
 import {
   EdgeLabelRenderer,
   EdgeProps,

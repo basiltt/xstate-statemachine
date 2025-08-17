@@ -1,4 +1,5 @@
-// StatechartDiagram.tsx
+// src/xstate_statemachine/inspector/frontend/src/components/statechart/diagram/StatechartDiagram.tsx
+
 import { useCallback, useRef, useState } from "react";
 import ReactFlow, { Background, Controls, MiniMap, ReactFlowProvider } from "reactflow";
 import "reactflow/dist/style.css";

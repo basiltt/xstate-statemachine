@@ -1,4 +1,5 @@
-// layout.ts
+// src/xstate_statemachine/inspector/frontend/src/components/statechart/layout.ts
+
 import type { Edge, Node } from "reactflow";
 import { EDGE_CLEAR_TOP, estimateReservedTop, GRID_SIZE, PADDING, ROOT_HEADER } from "./constants";
 

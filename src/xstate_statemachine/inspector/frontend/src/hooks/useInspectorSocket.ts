@@ -1,3 +1,5 @@
+// src/xstate_statemachine/inspector/frontend/src/hooks/useInspectorSocket.ts
+
 import { create } from "zustand";
 import { useEffect } from "react";
 

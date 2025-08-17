@@ -1,4 +1,5 @@
-// src/components/DiagramContextMenu.tsx
+// src/xstate_statemachine/inspector/frontend/src/components/statechart/diagram/DiagramContextMenu.tsx
+
 type ContextMenuProps = {
   x: number;
   y: number;

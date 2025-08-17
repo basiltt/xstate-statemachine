@@ -1,4 +1,5 @@
-// statechart/edges.tsx
+// src/xstate_statemachine/inspector/frontend/src/components/statechart/edges.tsx
+
 import { BaseEdge, EdgeProps, getSmoothStepPath } from "reactflow";
 
 export const TransitionEdge = ({

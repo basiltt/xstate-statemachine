@@ -1,4 +1,4 @@
-// src/config/diagramConfig.ts
+// src/xstate_statemachine/inspector/frontend/src/components/statechart/diagram/diagramConfig.ts
 import { ConnectionLineType, MarkerType } from "reactflow";
 
 import {

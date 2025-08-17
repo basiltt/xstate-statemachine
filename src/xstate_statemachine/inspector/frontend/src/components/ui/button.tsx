@@ -1,3 +1,5 @@
+// src/xstate_statemachine/inspector/frontend/src/components/ui/button.tsx
+
 import * as React from "react";
 import { Slot } from "@radix-ui/react-slot";
 // FIX: Split the import into two lines for wider compatibility

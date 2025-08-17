@@ -1,3 +1,5 @@
+// src/xstate_statemachine/inspector/frontend/vite.config.ts
+
 import * as path from "path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";

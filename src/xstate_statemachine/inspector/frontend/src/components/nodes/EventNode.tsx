@@ -1,4 +1,5 @@
-// nodes/EventNode.tsx
+// //  src/xstate_statemachine/inspector/frontend/src/components/nodes/EventNode.tsx
+
 import { Handle, NodeProps, Position } from "reactflow";
 
 export const EventNode = ({ data, selected }: NodeProps) => {

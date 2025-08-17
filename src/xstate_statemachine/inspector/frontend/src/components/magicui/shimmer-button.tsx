@@ -1,3 +1,5 @@
+//  src/xstate_statemachine/inspector/frontend/src/components/magicui/shimmer-button.tsx
+
 import { cn } from "@/lib/utils";
 import React, { CSSProperties } from "react";
 
