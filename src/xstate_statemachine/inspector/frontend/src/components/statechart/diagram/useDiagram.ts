@@ -19,7 +19,6 @@ import {
   EDGE_CLEAR_TOP,
   EDGE_MARGIN,
   estimateReservedTop,
-  GROW_PREEMPT,
   headerGuardTop as calculateHeaderGuardTop,
   PADDING,
   ROOT_HEADER,
@@ -46,6 +45,10 @@ export const useDiagram = ({
   useEffect(() => {
     latestNodesRef.current = nodes;
   }, [nodes]);
+
+  // New: suppress the very next non-dragging position change (drop) that React Flow emits
+  // after onNodeDragStop, which otherwise would undo our tighten operation and cause flicker.
+  const suppressNextDropRef = useRef(false);
 
   const { fitView, getNodes, getViewport } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
@@ -205,7 +208,16 @@ export const useDiagram = ({
     const root = nds.find((n) => n.type === "rootNode");
     if (!root) return nds;
     return nds.map((n) =>
-      n.id === root.id ? n : { ...n, parentId: root.id, extent: "parent", draggable: true },
+      n.id === root.id
+        ? n
+        : {
+            ...n,
+            parentId: root.id,
+            extent: "parent",
+            draggable: true,
+            // Let the wrapper auto-grow in the direction of the drag when a child hits the edge
+            expandParent: true,
+          },
     );
   }, []);
 
@@ -245,12 +257,13 @@ export const useDiagram = ({
         maxY = Math.max(maxY, Math.max(sy, ty) + EDGE_MARGIN);
       }
 
-      minY = Math.max(minY, headerGuardTop);
-      const width = Math.max(maxX - minX + PADDING + 72, 320);
-      const height = Math.max(
-        maxY - minY + PADDING + 80 + reservedTop - ROOT_HEADER,
-        200 + reservedTop,
-      );
+      // Use raw minY for positioning (so we still grow upward when needed),
+      // but clamp the top used for height so edge geometry above the header
+      // does not create a big empty gap under the header.
+      const minYForHeight = Math.max(minY, headerGuardTop);
+
+      const width = Math.max(maxX - minX + PADDING, 320);
+      const height = Math.max(maxY - minYForHeight + PADDING + reservedTop, reservedTop + 200);
 
       return { minX, minY, width, height };
     },
@@ -258,41 +271,43 @@ export const useDiagram = ({
   );
 
   const guardHeaderAndMaybeGrow = useCallback(
-    (currentNodes: Node[], eds: Edge[]) => {
+    (currentNodes: Node[], eds: Edge[], _draggingIds?: Set<string>) => {
+      // Tight-fit logic inline (avoid forward ref). Keep desired padding on all sides.
       const root = currentNodes.find((n) => n.type === "rootNode");
       const tight = computeRootBounds(currentNodes, eds);
       if (!root || !tight) return currentNodes;
 
-      let next = currentNodes;
+      const desiredLeft = PADDING / 2;
+      const desiredTop = headerGuardTop;
 
-      // 1) Keep header area clear
-      const overlap = headerGuardTop - tight.minY;
-      if (overlap > 0) {
-        next = next.map((n) => {
-          if (n.id === root.id)
-            return { ...n, position: { x: n.position.x, y: n.position.y - overlap } };
-          if (n.parentId === root.id)
-            return { ...n, position: { x: n.position.x, y: n.position.y + overlap } };
-          return n;
-        });
-      }
+      // Align wrapper so content min aligns with desired padding.
+      let dx = tight.minX - desiredLeft;
+      let dy = tight.minY - desiredTop;
 
-      // 2) Grow the root slightly so contents have breathing room
-      const t2 = computeRootBounds(next, eds) ?? tight;
-      const cw = (root.style as any)?.width ?? root.width ?? t2.width;
-      const ch = (root.style as any)?.height ?? root.height ?? t2.height;
-      const nw = Math.max(cw, t2.width + (GROW_PREEMPT ?? 40));
-      const nh = Math.max(ch, t2.height + (GROW_PREEMPT ?? 40));
-      if (nw !== cw || nh !== ch) {
-        next = next.map((n) =>
-          n.id === root.id ? { ...n, style: { ...n.style, width: nw, height: nh } } : n,
-        );
-      }
+      // Avoid micro jitter
+      if (Math.abs(dx) < 0.5) dx = 0;
+      if (Math.abs(dy) < 0.5) dy = 0;
+
+      const updated = currentNodes.map((n) => {
+        if (n.id === root.id) {
+          return {
+            ...n,
+            position: { x: root.position.x + dx, y: root.position.y + dy },
+            style: { ...n.style, width: tight.width, height: tight.height },
+          };
+        }
+        if (n.parentId === root.id) {
+          // Compensate ALL children so their screen positions stay stable while
+          // we shift the wrapper to enforce the desired padding.
+          return { ...n, position: { x: n.position.x - dx, y: n.position.y - dy } };
+        }
+        return n;
+      });
 
       updateNodeInternals(root.id);
-      return next;
+      return updated;
     },
-    [computeRootBounds, headerGuardTop, updateNodeInternals],
+    [computeRootBounds, headerGuardTop, updateNodeInternals, PADDING],
   );
 
   const fitRootTightly = useCallback(
@@ -301,8 +316,11 @@ export const useDiagram = ({
       const tight = computeRootBounds(currentNodes, eds);
       if (!root || !tight) return currentNodes;
 
-      const dx = tight.minX - PADDING / 2;
-      const dy = tight.minY - headerGuardTop;
+      // Keep consistent padding on all sides relative to content bounds
+      const desiredLeft = PADDING / 2;
+      const desiredTop = headerGuardTop;
+      const dx = tight.minX - desiredLeft;
+      const dy = tight.minY - desiredTop;
 
       const updated = currentNodes.map((n) => {
         if (n.id === root.id) {
@@ -351,6 +369,39 @@ export const useDiagram = ({
 
   /* ------------------------------- Relayout ------------------------------- */
 
+  const withHeaderClamp = useCallback(
+    (eds: Edge[], currentNodes?: Node[]) => {
+      const all = currentNodes ?? latestNodesRef.current;
+      const root = all.find((n) => n.type === "rootNode");
+      if (!root) return eds;
+      const width = (root.style && (root.style as any).width) as number | undefined;
+      const height = (root.style && (root.style as any).height) as number | undefined;
+      const inset = 6; // keep connectors a few pixels away from wrapper borders
+      const leftInner = (root.position?.x ?? 0) + PADDING / 2 + inset;
+      const topInner = (root.position?.y ?? 0) + headerGuardTop + 2 + inset;
+      const rightInner =
+        width != null
+          ? (root.position?.x ?? 0) + width - PADDING / 2 - inset
+          : Number.POSITIVE_INFINITY;
+      const bottomInner =
+        height != null
+          ? (root.position?.y ?? 0) + height - PADDING / 2 - inset
+          : Number.POSITIVE_INFINITY;
+
+      return eds.map((e) => ({
+        ...e,
+        data: {
+          ...(e.data ?? {}),
+          clampTopY: topInner,
+          clampLeftX: leftInner,
+          clampRightX: rightInner,
+          clampBottomY: bottomInner,
+        },
+      }));
+    },
+    [headerGuardTop],
+  );
+
   const relayout = useCallback(async () => {
     const { nodes: laidOutNodes, edges: laidOutEdges } = await getLayoutedElements(
       machine.definition,
@@ -374,18 +425,20 @@ export const useDiagram = ({
     // Only guard/grow when we don't already have user-defined positions
     const nextNodes = hasSaved ? positioned : guardHeaderAndMaybeGrow(positioned, edgesWithStatus);
 
-    setEdges(edgesWithStatus);
+    // Inject clampTopY for edges so they never route under the subheader
+    const nextEdges = withHeaderClamp(edgesWithStatus, nextNodes);
+
+    setEdges(nextEdges);
     setNodes(nextNodes);
 
     // Restore viewport if previously saved; otherwise, run a one-time fit
     const savedVp = loadSavedViewport();
     if (initialViewport) {
-      // Using controlled viewport; nothing to do here
       setViewportState(initialViewport);
     } else if (savedVp) {
       setViewportState(savedVp);
     } else {
-      tightenAndFitWhenReady(edgesWithStatus, { adjustPositions: !hasSaved }).catch(console.error);
+      tightenAndFitWhenReady(nextEdges, { adjustPositions: !hasSaved }).catch(console.error);
     }
   }, [
     machine.definition,
@@ -399,6 +452,7 @@ export const useDiagram = ({
     loadSavedPositions,
     loadSavedViewport,
     initialViewport,
+    withHeaderClamp,
   ]);
 
   useEffect(() => {
@@ -417,26 +471,41 @@ export const useDiagram = ({
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
       let isDrop = false;
-      for (const c of changes)
-        if (c.type === "position" && !c.dragging) {
-          isDrop = true;
-          break;
+      const draggingIds = new Set<string>();
+      for (const c of changes) {
+        if (c.type === "position") {
+          if (c.dragging) draggingIds.add(c.id);
+          else isDrop = true;
         }
+      }
 
       setNodes((curr) => {
         const next = applyNodeChanges(changes, curr);
-        const guarded = guardHeaderAndMaybeGrow(next, edges);
-        if (isDrop) {
-          // Save immediately on drop using the computed positions
-          savePositionsSnapshot(guarded);
-          // Also save current viewport so reload opens where the user left it
-          saveViewport();
-        }
         const dragging = changes.some((c) => c.type === "position" && c.dragging);
-        return dragging ? guarded : decorateStatuses(guarded, edges);
+
+        if (dragging) {
+          const guarded = guardHeaderAndMaybeGrow(next, edges, draggingIds);
+          // refresh edge clamp with updated wrapper position
+          setEdges((prev) => withHeaderClamp(prev, guarded));
+          return decorateStatuses(guarded, edges);
+        }
+
+        if (isDrop) {
+          if (suppressNextDropRef.current) {
+            suppressNextDropRef.current = false;
+            return curr;
+          }
+          // Re-clamp after drop as well
+          setEdges((prev) => withHeaderClamp(prev, next));
+          return decorateStatuses(next, edges);
+        }
+
+        const guarded = guardHeaderAndMaybeGrow(next, edges);
+        setEdges((prev) => withHeaderClamp(prev, guarded));
+        return decorateStatuses(guarded, edges);
       });
     },
-    [edges, decorateStatuses, guardHeaderAndMaybeGrow, savePositionsSnapshot, saveViewport],
+    [edges, decorateStatuses, guardHeaderAndMaybeGrow, withHeaderClamp],
   );
 
   const onEdgesChange = useCallback(
@@ -446,33 +515,43 @@ export const useDiagram = ({
   );
 
   const onNodeDragStop = useCallback(() => {
-    // Do not re-tighten/rebase node positions on drag stop; respect user placement.
+    suppressNextDropRef.current = true;
+    setTimeout(() => (suppressNextDropRef.current = false), 0);
+
+    let snapshot: Node[] | null = null;
     setNodes((nds) => {
-      const ids = nds.filter((n) => n.type !== "rootNode").map((n) => n.id);
+      const tightened = fitRootTightly(nds, edges);
+      snapshot = tightened;
+      const ids = tightened.filter((n) => n.type !== "rootNode").map((n) => n.id);
       setTimeout(() => ids.forEach((id) => updateNodeInternals(id)), 0);
-      return nds;
+      // Update edge clamp after final positions
+      setEdges((prev) => withHeaderClamp(prev, tightened));
+      return tightened;
     });
 
-    // Save immediately using the latest snapshot of nodes and the viewport
-    if (latestNodesRef.current.length) {
-      savePositionsSnapshot(latestNodesRef.current);
+    const snap = snapshot as Node[] | null;
+    if (snap && snap.length > 0) {
+      savePositionsSnapshot(snap);
     } else {
       savePositionsFromGraph();
     }
     saveViewport();
 
     if (autoFitAfterDrag) {
-      // Fit the viewport only; do not change node positions
-      tightenAndFitWhenReady(edges, { adjustPositions: false }).catch(console.error);
+      tightenAndFitWhenReady(withHeaderClamp(edges), { adjustPositions: false }).catch(
+        console.error,
+      );
     }
   }, [
     edges,
+    fitRootTightly,
     updateNodeInternals,
     tightenAndFitWhenReady,
     autoFitAfterDrag,
     savePositionsFromGraph,
     savePositionsSnapshot,
     saveViewport,
+    withHeaderClamp,
   ]);
 
   // Persist viewport when panning/zooming stops

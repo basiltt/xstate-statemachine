@@ -9,7 +9,10 @@ export const GRID_SIZE = 16; // snap-to-grid size for nodes and layout
 // Grow the wrapper earlier so padding stays consistent while dragging
 export const GROW_PREEMPT = 40;
 // Margin to give edges some breathing room when calculating bounds
-export const EDGE_MARGIN = 48;
+export const EDGE_MARGIN = 96; // was 48; larger to keep step edges fully inside wrapper
+
+// React Flow: when a child node uses `expandParent: true`, the parent grows only while dragging
+// We keep wrapper measurements reactive via guardHeaderAndMaybeGrow / fitRootTightly.
 
 // Estimate the reserved top (header + context block height) so children and edges
 // don’t overlap it. Keep this heuristic conservative but not overly large.
