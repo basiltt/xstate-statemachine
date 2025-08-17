@@ -292,36 +292,57 @@ function pickHandles(
   dstW: number,
   dstH: number,
 ): { sh: string; th: string } {
-  const sx = snap(src.x + srcW / 2);
-  const dx = snap(dst.x + dstW / 2);
-  const sy = snap(src.y + srcH / 2);
-  const dy = snap(dst.y + dstH / 2);
+  const sL = src.x,
+    sT = src.y,
+    sR = src.x + srcW,
+    sB = src.y + srcH;
+  const dL = dst.x,
+    dT = dst.y,
+    dR = dst.x + dstW,
+    dB = dst.y + dstH;
+  const scx = sL + srcW / 2,
+    scy = sT + srcH / 2;
+  const dcx = dL + dstW / 2,
+    dcy = dT + dstH / 2;
 
-  const dxAbs = Math.abs(dx - sx);
-  const dyAbs = Math.abs(dy - sy);
+  // Bands to prefer LR or TB when roughly aligned
+  const vBandTop = dT + Math.min(24, dstH * 0.35);
+  const vBandBot = dB - Math.min(24, dstH * 0.35);
+  const inVerticalBand = scy >= vBandTop && scy <= vBandBot;
 
-  // Use dominance thresholds so slight misalignments don't flip sides
-  const hGap = Math.max(24, Math.floor(STATE_W * 0.08));
-  const vGap = Math.max(24, Math.floor(STATE_H_HINT * 0.15));
+  const hBandLeft = dL + Math.min(36, dstW * 0.35);
+  const hBandRight = dR - Math.min(36, dstW * 0.35);
+  const inHorizontalBand = scx >= hBandLeft && scx <= hBandRight;
 
-  // Quadrant-based preference:
-  // - If clearly above/below, use vertical ports (top/bottom) to avoid crowding top only.
-  if (sy + vGap < dy) {
-    // source above target
-    return { sh: "b", th: "T" };
+  if (inVerticalBand) {
+    const dir = scx < dL ? "L" : scx > dR ? "R" : dcx >= scx ? "L" : "R";
+    return dir === "L" ? { sh: "r", th: "L" } : { sh: "l", th: "R" };
   }
-  if (sy - vGap > dy) {
-    // source below target
-    return { sh: "t", th: "B" };
+  if (inHorizontalBand) {
+    const dir = scy < dT ? "T" : scy > dB ? "B" : dcy >= scy ? "T" : "B";
+    return dir === "T" ? { sh: "b", th: "T" } : { sh: "t", th: "B" };
   }
 
-  // - Otherwise, pick horizontal ports based on left/right relation
-  if (sx + hGap < dx) return { sh: "r", th: "L" };
-  if (sx - hGap > dx) return { sh: "l", th: "R" };
+  // Fallback: rectangle-to-rectangle cost with lateral penalties
+  const dxC = dcx - scx;
+  const dyC = dcy - scy;
+  const lateralX = Math.abs(dyC) * 0.6;
+  const lateralY = Math.abs(dxC) * 0.6;
 
-  // Fallback by axis dominance (maintains LR feel when ambiguous)
-  if (dxAbs >= dyAbs) return dx >= sx ? { sh: "r", th: "L" } : { sh: "l", th: "R" };
-  return sy <= dy ? { sh: "b", th: "T" } : { sh: "t", th: "B" };
+  const costToLeft = Math.max(0, dL - sR) + lateralX;
+  const costToRight = Math.max(0, sL - dR) + lateralX;
+  const costToTop = Math.max(0, dT - sB) + lateralY;
+  const costToBottom = Math.max(0, sT - dB) + lateralY;
+
+  const candidates: Array<{ dir: "L" | "R" | "T" | "B"; sh: string; th: string; cost: number }> = [
+    { dir: "L", sh: "r", th: "L", cost: costToLeft },
+    { dir: "R", sh: "l", th: "R", cost: costToRight },
+    { dir: "T", sh: "b", th: "T", cost: costToTop },
+    { dir: "B", sh: "t", th: "B", cost: costToBottom },
+  ];
+  let best = candidates[0];
+  for (const c of candidates) if (c.cost < best.cost) best = c;
+  return { sh: best.sh, th: best.th };
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
