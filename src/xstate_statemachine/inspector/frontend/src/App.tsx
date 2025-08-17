@@ -1,6 +1,6 @@
 // src/xstate_statemachine/inspector/frontend/src/App.tsx
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   LogEntry,
   MachineState,
@@ -23,6 +23,10 @@ import {
   Settings,
   MoveDiagonal2,
   Clock,
+  Search,
+  ListFilter,
+  Check,
+  X as XIcon,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -44,6 +48,12 @@ import { Dock, DockIcon } from "@/components/magicui/dock";
 import ShimmerButton from "@/components/magicui/shimmer-button";
 import { StatechartDiagram } from "@/components/statechart/diagram/StatechartDiagram.tsx";
 
+// --- Local storage keys ---
+const LAST_SELECTED_KEY = "inspector:lastSelectedMachineId";
+const SORT_ORDER_KEY = "inspector:sortOrder";
+
+type SortOrder = "name-asc" | "name-desc" | "updated-desc" | "updated-asc";
+
 // --- Prop Type Definitions ---
 interface HeaderProps {
   onToggleTheme: () => void;
@@ -56,6 +66,8 @@ interface SidebarProps {
   machines: Record<string, MachineState>;
   selectedMachineId: string | null;
   onSelect: (id: string) => void;
+  sortOrder: SortOrder;
+  onChangeSort: (order: SortOrder) => void;
 }
 
 interface MachineViewProps {
@@ -77,12 +89,31 @@ const formatTime = (ts?: number) => {
   return d.toLocaleTimeString([], { hour12: false });
 };
 
+const sortMachines = (list: MachineState[], order: SortOrder) => {
+  const arr = [...list];
+  switch (order) {
+    case "name-asc":
+      return arr.sort((a, b) => a.id.localeCompare(b.id));
+    case "name-desc":
+      return arr.sort((a, b) => b.id.localeCompare(a.id));
+    case "updated-asc":
+      return arr.sort((a, b) => a.updatedAt - b.updatedAt);
+    case "updated-desc":
+    default:
+      return arr.sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+};
+
 // --- Main App Component ---
 export default function App() {
   useInspectorSocket();
   const machines = useInspectorStore((state) => state.machines);
   const isConnected = useInspectorStore((state) => state.isConnected);
   const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null);
+  const [sortOrder, setSortOrder] = useState<SortOrder>(() => {
+    const stored = localStorage.getItem(SORT_ORDER_KEY) as SortOrder | null;
+    return stored ?? "updated-desc";
+  });
   const [isDark, setIsDark] = useState(false);
 
   // Settings state: Auto-fit view after drag (persisted)
@@ -97,12 +128,37 @@ export default function App() {
     return stored ? stored === "true" : true; // default enabled
   });
 
+  // Determine initial selection and keep it valid when machines change
   useEffect(() => {
     const ids = Object.keys(machines);
-    if ((!selectedMachineId || !machines[selectedMachineId]) && ids.length > 0) {
-      setSelectedMachineId(ids[0]);
+    if (ids.length === 0) {
+      setSelectedMachineId(null);
+      return;
     }
-  }, [machines, selectedMachineId]);
+
+    // Try last selected from storage
+    const stored = localStorage.getItem(LAST_SELECTED_KEY);
+    if (stored && machines[stored]) {
+      setSelectedMachineId(stored);
+      return;
+    }
+
+    // Fallback: first machine by registeredAt (newest first)
+    const firstByRegistered = [...Object.values(machines)].sort(
+      (a, b) => b.registeredAt - a.registeredAt,
+    )[0]?.id;
+    if (firstByRegistered) setSelectedMachineId(firstByRegistered);
+  }, [machines]);
+
+  // Persist selection
+  useEffect(() => {
+    if (selectedMachineId) localStorage.setItem(LAST_SELECTED_KEY, selectedMachineId);
+  }, [selectedMachineId]);
+
+  // Persist sort
+  useEffect(() => {
+    localStorage.setItem(SORT_ORDER_KEY, sortOrder);
+  }, [sortOrder]);
 
   useEffect(() => {
     // Initialize theme from localStorage or system preference
@@ -146,6 +202,8 @@ export default function App() {
           machines={machines}
           selectedMachineId={selectedMachineId}
           onSelect={setSelectedMachineId}
+          sortOrder={sortOrder}
+          onChangeSort={setSortOrder}
         />
         <main className="flex-1 flex flex-col overflow-hidden">
           {selectedMachine ? (
@@ -208,13 +266,141 @@ const Header = ({ onToggleTheme, isDark, isConnected, onOpenSettings }: HeaderPr
   </header>
 );
 
-const Sidebar = ({ machines, selectedMachineId, onSelect }: SidebarProps) => (
-  <aside className="hidden w-80 flex-col border-r bg-card p-4 sm:flex">
-    <h2 className="text-base font-semibold tracking-tight">Live Machines</h2>
-    <nav className="mt-4 flex flex-col gap-2">
-      {Object.values(machines)
-        .sort((a, b) => b.registeredAt - a.registeredAt)
-        .map((machine) => {
+const Sidebar = ({
+  machines,
+  selectedMachineId,
+  onSelect,
+  sortOrder,
+  onChangeSort,
+}: SidebarProps) => {
+  const [query, setQuery] = useState("");
+  const [sortOpen, setSortOpen] = useState(false);
+  const [searchMode, setSearchMode] = useState(false);
+  const sortRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!sortOpen) return;
+    const handleMouseDown = (e: MouseEvent) => {
+      if (sortRef.current && !sortRef.current.contains(e.target as Node)) {
+        setSortOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSortOpen(false);
+    };
+    document.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [sortOpen]);
+
+  const list = useMemo(() => {
+    const arr = Object.values(machines);
+    const filtered = query
+      ? arr.filter((m) => m.id.toLowerCase().includes(query.toLowerCase()))
+      : arr;
+    return sortMachines(filtered, sortOrder);
+  }, [machines, query, sortOrder]);
+
+  const collapseSearch = () => {
+    setQuery("");
+    setSearchMode(false);
+  };
+
+  return (
+    <aside className="hidden w-80 flex-col border-r bg-card p-4 sm:flex">
+      {/* Header row: collapsed shows search button + sort icon; expanded shows full search */}
+      {!searchMode ? (
+        <div className="flex items-center justify-between pb-2 border-b border-border/60">
+          <button
+            className="flex items-center gap-2 rounded-md px-2 py-1 text-sm text-foreground/90 hover:bg-muted/60"
+            onClick={() => {
+              setSearchMode(true);
+              setSortOpen(false);
+              setTimeout(() => {
+                const el = document.getElementById("inspector-search-input");
+                (el as HTMLInputElement | null)?.focus();
+              }, 0);
+            }}
+            aria-label="Open search"
+          >
+            <Search className="h-4 w-4" />
+            <span className="font-semibold">Machines</span>
+          </button>
+
+          <div className="relative" ref={sortRef}>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setSortOpen((v) => !v)}
+              aria-label="Sort"
+            >
+              <ListFilter className="h-4 w-4" />
+            </Button>
+            {sortOpen && (
+              <div className="absolute right-0 z-10 mt-2 w-40 rounded-md border bg-popover p-1 shadow-md">
+                {(
+                  [
+                    { id: "name-asc", label: "Name A—Z" },
+                    { id: "name-desc", label: "Name Z—A" },
+                    { id: "updated-desc", label: "Last updated" },
+                    { id: "updated-asc", label: "First updated" },
+                  ] as { id: SortOrder; label: string }[]
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    className={
+                      "flex w-full items-center rounded px-2 py-1 text-sm hover:bg-muted/60"
+                    }
+                    onClick={() => {
+                      onChangeSort(opt.id);
+                      setSortOpen(false);
+                    }}
+                  >
+                    {/* Reserve space for the check icon so labels are perfectly aligned */}
+                    <Check
+                      className={
+                        "mr-2 h-3.5 w-3.5 " +
+                        (sortOrder === opt.id ? "opacity-100 text-primary" : "opacity-0")
+                      }
+                      aria-hidden="true"
+                    />
+                    <span className={sortOrder === opt.id ? "text-primary" : undefined}>
+                      {opt.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="relative pb-2 border-b border-border/60">
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            id="inspector-search-input"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") collapseSearch();
+            }}
+            placeholder="Filter registered Machines"
+            className="pl-8 pr-8"
+          />
+          <button
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            onClick={collapseSearch}
+            aria-label="Clear"
+          >
+            <XIcon className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      <nav className="mt-3 flex flex-col gap-2 overflow-y-auto">
+        {list.map((machine) => {
           const isActive = selectedMachineId === machine.id;
           return (
             <button
@@ -234,16 +420,18 @@ const Sidebar = ({ machines, selectedMachineId, onSelect }: SidebarProps) => (
                   </span>
                 )}
               </div>
-              <div className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground/70">
-                <Clock className="h-3 w-3" />
-                <span>Reg: {formatTime(machine.registeredAt)}</span>
+              <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Clock className="h-3.5 w-3.5" />
+                <span className="opacity-80">Reg:</span>
+                <span className="font-medium">{formatTime(machine.registeredAt)}</span>
               </div>
             </button>
           );
         })}
-    </nav>
-  </aside>
-);
+      </nav>
+    </aside>
+  );
+};
 
 const MachineView = ({ machine, autoFitAfterDrag, showMinimap }: MachineViewProps) => (
   <div className="grid h-full grid-cols-1 lg:grid-cols-3 gap-4 p-4">

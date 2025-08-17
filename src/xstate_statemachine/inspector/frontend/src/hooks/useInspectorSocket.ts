@@ -23,6 +23,8 @@ export interface MachineState {
   lastTransition: { sourceId: string; targetId: string; event: string } | null;
   // New: time (epoch ms) when this machine was registered in the inspector
   registeredAt: number;
+  // New: last time this machine produced any update (transition, service change, log)
+  updatedAt: number;
 }
 
 interface InspectorState {
@@ -117,22 +119,25 @@ export const useInspectorStore = create<InspectorState>((set, get) => ({
   // --- State Mutators (used by the onmessage handler) ---
 
   addMachine: (data) =>
-    set((state) => ({
-      machines: {
-        ...state.machines,
-        [data.machine_id]: {
-          id: data.machine_id,
-          definition: data.definition,
-          currentStateIds: data.initial_state_ids,
-          context: data.initial_context,
-          logs: [{ type: "machine_registered", payload: data }],
-          services: {},
-          lastTransition: null,
-          // Prefer timestamp coming from backend, else use local time
-          registeredAt: typeof data.timestamp === "number" ? data.timestamp : Date.now(),
+    set((state) => {
+      const ts = typeof data.timestamp === "number" ? data.timestamp : Date.now();
+      return {
+        machines: {
+          ...state.machines,
+          [data.machine_id]: {
+            id: data.machine_id,
+            definition: data.definition,
+            currentStateIds: data.initial_state_ids,
+            context: data.initial_context,
+            logs: [{ type: "machine_registered", payload: data }],
+            services: {},
+            lastTransition: null,
+            registeredAt: ts,
+            updatedAt: ts,
+          },
         },
-      },
-    })),
+      };
+    }),
 
   updateMachineTransition: (data) =>
     set((state) => {
@@ -143,6 +148,8 @@ export const useInspectorStore = create<InspectorState>((set, get) => ({
       const sourceId = machine.currentStateIds.length > 0 ? machine.currentStateIds[0] : "";
       const targetId = data.to_state_ids.length > 0 ? data.to_state_ids[0] : "";
 
+      const ts = typeof data.timestamp === "number" ? data.timestamp : Date.now();
+
       return {
         machines: {
           ...state.machines,
@@ -152,6 +159,7 @@ export const useInspectorStore = create<InspectorState>((set, get) => ({
             context: data.full_context,
             lastTransition: { sourceId, targetId, event: data.event },
             logs: [...machine.logs, { type: "transition", payload: data }],
+            updatedAt: ts,
           },
         },
       };
@@ -179,6 +187,7 @@ export const useInspectorStore = create<InspectorState>((set, get) => ({
             ...machine,
             services: { ...machine.services, [data.id]: { src: data.service, status: "running" } },
             logs: [...machine.logs, { type: "service_invoked", payload: data }],
+            updatedAt: Date.now(),
           },
         },
       };
@@ -191,7 +200,10 @@ export const useInspectorStore = create<InspectorState>((set, get) => ({
       const newServices = { ...machine.services };
       delete newServices[data.id];
       return {
-        machines: { ...state.machines, [data.machine_id]: { ...machine, services: newServices } },
+        machines: {
+          ...state.machines,
+          [data.machine_id]: { ...machine, services: newServices, updatedAt: Date.now() },
+        },
       };
     }),
 
@@ -200,7 +212,14 @@ export const useInspectorStore = create<InspectorState>((set, get) => ({
       const machine = state.machines[machineId];
       if (!machine) return state;
       return {
-        machines: { ...state.machines, [machineId]: { ...machine, logs: [...machine.logs, log] } },
+        machines: {
+          ...state.machines,
+          [machineId]: {
+            ...machine,
+            logs: [...machine.logs, log],
+            updatedAt: Date.now(),
+          },
+        },
       };
     }),
 }));
