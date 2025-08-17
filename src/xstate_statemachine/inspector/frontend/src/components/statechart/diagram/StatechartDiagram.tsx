@@ -13,9 +13,15 @@ type DiagramProps = {
   machine: MachineState;
   activeStateIds: string[];
   autoFitAfterDrag?: boolean;
+  showMinimap?: boolean;
 };
 
-const DiagramCanvas = ({ machine, activeStateIds, autoFitAfterDrag = true }: DiagramProps) => {
+const DiagramCanvas = ({
+  machine,
+  activeStateIds,
+  autoFitAfterDrag = true,
+  showMinimap = true,
+}: DiagramProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ open: boolean; x: number; y: number }>({
     open: false,
@@ -72,13 +78,15 @@ const DiagramCanvas = ({ machine, activeStateIds, autoFitAfterDrag = true }: Dia
         className="bg-background"
       >
         <Controls />
-        <MiniMap
-          className="rounded-md border shadow-sm"
-          style={{ backgroundColor: "hsl(var(--card))" }}
-          maskColor={"hsl(var(--background) / 0.6)"}
-          nodeColor={() => "hsl(var(--muted))"}
-          nodeStrokeColor={() => "hsl(var(--border))"}
-        />
+        {showMinimap && (
+          <MiniMap
+            className="rounded-md border shadow-sm"
+            style={{ backgroundColor: "hsl(var(--card))" }}
+            maskColor={"hsl(var(--background) / 0.6)"}
+            nodeColor={() => "hsl(var(--muted))"}
+            nodeStrokeColor={() => "hsl(var(--border))"}
+          />
+        )}
         <Background />
       </ReactFlow>
 

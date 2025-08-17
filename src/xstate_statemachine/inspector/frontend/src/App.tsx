@@ -60,6 +60,7 @@ interface SidebarProps {
 interface MachineViewProps {
   machine: MachineState;
   autoFitAfterDrag: boolean;
+  showMinimap: boolean;
 }
 
 interface SendEventDialogProps {
@@ -80,6 +81,11 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [autoFitAfterDrag, setAutoFitAfterDrag] = useState<boolean>(() => {
     const stored = localStorage.getItem("autoFitAfterDrag");
+    return stored ? stored === "true" : true; // default enabled
+  });
+  // Settings state: Show Minimap (persisted)
+  const [showMinimap, setShowMinimap] = useState<boolean>(() => {
+    const stored = localStorage.getItem("showMinimap");
     return stored ? stored === "true" : true; // default enabled
   });
 
@@ -112,6 +118,11 @@ export default function App() {
     localStorage.setItem("autoFitAfterDrag", value ? "true" : "false");
   };
 
+  const handleToggleShowMinimap = (value: boolean) => {
+    setShowMinimap(value);
+    localStorage.setItem("showMinimap", value ? "true" : "false");
+  };
+
   const selectedMachine = selectedMachineId ? machines[selectedMachineId] : null;
 
   return (
@@ -134,6 +145,7 @@ export default function App() {
               key={selectedMachine.id}
               machine={selectedMachine}
               autoFitAfterDrag={autoFitAfterDrag}
+              showMinimap={showMinimap}
             />
           ) : (
             <WelcomePanel />
@@ -147,6 +159,8 @@ export default function App() {
         onOpenChange={setSettingsOpen}
         autoFitAfterDrag={autoFitAfterDrag}
         onChangeAutoFit={handleToggleAutoFit}
+        showMinimap={showMinimap}
+        onChangeShowMinimap={handleToggleShowMinimap}
       />
     </div>
   );
@@ -205,7 +219,7 @@ const Sidebar = ({ machines, selectedMachineId, onSelectMachine }: SidebarProps)
   </aside>
 );
 
-const MachineView = ({ machine, autoFitAfterDrag }: MachineViewProps) => (
+const MachineView = ({ machine, autoFitAfterDrag, showMinimap }: MachineViewProps) => (
   <div className="grid h-full grid-cols-1 lg:grid-cols-3 gap-4 p-4">
     <div className="lg:col-span-2 flex flex-col gap-4 relative">
       <Card className="flex-1 flex flex-col">
@@ -221,6 +235,7 @@ const MachineView = ({ machine, autoFitAfterDrag }: MachineViewProps) => (
             machine={machine}
             activeStateIds={machine.currentStateIds}
             autoFitAfterDrag={autoFitAfterDrag}
+            showMinimap={showMinimap}
           />
         </CardContent>
       </Card>
@@ -353,11 +368,15 @@ const SettingsDialog = ({
   onOpenChange,
   autoFitAfterDrag,
   onChangeAutoFit,
+  showMinimap,
+  onChangeShowMinimap,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   autoFitAfterDrag: boolean;
   onChangeAutoFit: (v: boolean) => void;
+  showMinimap: boolean;
+  onChangeShowMinimap: (v: boolean) => void;
 }) => (
   <Sheet open={open} onOpenChange={onOpenChange}>
     <SheetContent>
@@ -371,7 +390,7 @@ const SettingsDialog = ({
           <MoveDiagonal2 className="h-4 w-4 text-primary" />
           <span>Layout & Canvas</span>
         </div>
-        <div className="rounded-md border p-3 bg-card/50">
+        <div className="rounded-md border p-3 bg-card/50 space-y-3">
           <label className="flex items-center gap-3 text-sm">
             <input
               type="checkbox"
@@ -383,6 +402,20 @@ const SettingsDialog = ({
               <span className="font-medium">Auto-fit view after drag</span>
               <span className="text-xs text-muted-foreground">
                 After moving nodes, automatically fit the diagram to the current content.
+              </span>
+            </div>
+          </label>
+          <label className="flex items-center gap-3 text-sm">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={showMinimap}
+              onChange={(e) => onChangeShowMinimap(e.target.checked)}
+            />
+            <div className="flex flex-col">
+              <span className="font-medium">Show Minimap</span>
+              <span className="text-xs text-muted-foreground">
+                Toggle the React Flow minimap on the canvas.
               </span>
             </div>
           </label>
