@@ -20,6 +20,8 @@ import {
   Sun,
   Wifi,
   WifiOff,
+  Settings,
+  MoveDiagonal2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -34,6 +36,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 
 // Magic UI components
 import { Dock, DockIcon } from "@/components/magicui/dock";
@@ -45,6 +48,7 @@ interface HeaderProps {
   onToggleTheme: () => void;
   isDark: boolean;
   isConnected: boolean;
+  onOpenSettings: () => void;
 }
 
 interface SidebarProps {
@@ -55,6 +59,7 @@ interface SidebarProps {
 
 interface MachineViewProps {
   machine: MachineState;
+  autoFitAfterDrag: boolean;
 }
 
 interface SendEventDialogProps {
@@ -70,6 +75,13 @@ export default function App() {
   const isConnected = useInspectorStore((state) => state.isConnected);
   const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null);
   const [isDark, setIsDark] = useState(false);
+
+  // Settings state: Auto-fit view after drag (persisted)
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [autoFitAfterDrag, setAutoFitAfterDrag] = useState<boolean>(() => {
+    const stored = localStorage.getItem("autoFitAfterDrag");
+    return stored ? stored === "true" : true; // default enabled
+  });
 
   useEffect(() => {
     const machineIds = Object.keys(machines);
@@ -95,11 +107,21 @@ export default function App() {
     document.documentElement.classList.toggle("dark", newIsDark);
   };
 
+  const handleToggleAutoFit = (value: boolean) => {
+    setAutoFitAfterDrag(value);
+    localStorage.setItem("autoFitAfterDrag", value ? "true" : "false");
+  };
+
   const selectedMachine = selectedMachineId ? machines[selectedMachineId] : null;
 
   return (
     <div className="flex h-screen w-full flex-col bg-background font-sans text-foreground">
-      <Header onToggleTheme={toggleTheme} isDark={isDark} isConnected={isConnected} />
+      <Header
+        onToggleTheme={toggleTheme}
+        isDark={isDark}
+        isConnected={isConnected}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
           machines={machines}
@@ -108,19 +130,31 @@ export default function App() {
         />
         <main className="flex-1 flex flex-col overflow-hidden">
           {selectedMachine ? (
-            <MachineView key={selectedMachine.id} machine={selectedMachine} />
+            <MachineView
+              key={selectedMachine.id}
+              machine={selectedMachine}
+              autoFitAfterDrag={autoFitAfterDrag}
+            />
           ) : (
             <WelcomePanel />
           )}
         </main>
       </div>
+
+      {/* Settings Dialog */}
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        autoFitAfterDrag={autoFitAfterDrag}
+        onChangeAutoFit={handleToggleAutoFit}
+      />
     </div>
   );
 }
 
 // --- UI Components ---
 // @ts-ignore
-const Header = ({ onToggleTheme, isDark, isConnected }: HeaderProps) => (
+const Header = ({ onToggleTheme, isDark, isConnected, onOpenSettings }: HeaderProps) => (
   <header className="flex h-14 items-center justify-between border-b bg-card px-4 lg:px-6">
     <div className="flex items-center gap-2 font-bold">
       <Bot className="h-6 w-6 text-primary" />
@@ -140,7 +174,10 @@ const Header = ({ onToggleTheme, isDark, isConnected }: HeaderProps) => (
         {isConnected ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
         <span>{isConnected ? "Online" : "Offline"}</span>
       </div>
-      <Button variant="ghost" size="icon" onClick={onToggleTheme}>
+      <Button variant="ghost" size="icon" onClick={onOpenSettings} aria-label="Settings">
+        <Settings className="h-5 w-5" />
+      </Button>
+      <Button variant="ghost" size="icon" onClick={onToggleTheme} aria-label="Toggle theme">
         <Sun className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
         <Moon className="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
         <span className="sr-only">Toggle theme</span>
@@ -168,7 +205,7 @@ const Sidebar = ({ machines, selectedMachineId, onSelectMachine }: SidebarProps)
   </aside>
 );
 
-const MachineView = ({ machine }: MachineViewProps) => (
+const MachineView = ({ machine, autoFitAfterDrag }: MachineViewProps) => (
   <div className="grid h-full grid-cols-1 lg:grid-cols-3 gap-4 p-4">
     <div className="lg:col-span-2 flex flex-col gap-4 relative">
       <Card className="flex-1 flex flex-col">
@@ -180,18 +217,22 @@ const MachineView = ({ machine }: MachineViewProps) => (
           </p>
         </CardHeader>
         <CardContent className="flex-1 relative">
-          <StatechartDiagram machine={machine} activeStateIds={machine.currentStateIds} />
+          <StatechartDiagram
+            machine={machine}
+            activeStateIds={machine.currentStateIds}
+            autoFitAfterDrag={autoFitAfterDrag}
+          />
         </CardContent>
       </Card>
       <Controls machineId={machine.id} />
     </div>
     <div className="flex flex-col">
-      <DetailsPanel machine={machine} />
+      <DetailsPanel machine={machine} autoFitAfterDrag={autoFitAfterDrag} />
     </div>
   </div>
 );
 
-const DetailsPanel = ({ machine }: MachineViewProps) => (
+const DetailsPanel = ({ machine }: { machine: MachineState; autoFitAfterDrag: boolean }) => (
   <Tabs defaultValue="events" className="flex-1 flex flex-col overflow-hidden">
     <TabsList className="grid w-full grid-cols-3">
       <TabsTrigger value="events">
@@ -306,6 +347,52 @@ const SendEventDialog = ({ open, onOpenChange, machineId }: SendEventDialogProps
     </Dialog>
   );
 };
+
+const SettingsDialog = ({
+  open,
+  onOpenChange,
+  autoFitAfterDrag,
+  onChangeAutoFit,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  autoFitAfterDrag: boolean;
+  onChangeAutoFit: (v: boolean) => void;
+}) => (
+  <Sheet open={open} onOpenChange={onOpenChange}>
+    <SheetContent>
+      <SheetHeader>
+        <SheetTitle>Settings</SheetTitle>
+      </SheetHeader>
+
+      {/* Layout & Canvas Section */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <MoveDiagonal2 className="h-4 w-4 text-primary" />
+          <span>Layout & Canvas</span>
+        </div>
+        <div className="rounded-md border p-3 bg-card/50">
+          <label className="flex items-center gap-3 text-sm">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={autoFitAfterDrag}
+              onChange={(e) => onChangeAutoFit(e.target.checked)}
+            />
+            <div className="flex flex-col">
+              <span className="font-medium">Auto-fit view after drag</span>
+              <span className="text-xs text-muted-foreground">
+                After moving nodes, automatically fit the diagram to the current content.
+              </span>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      {/* ...you can add more sections here later... */}
+    </SheetContent>
+  </Sheet>
+);
 
 const WelcomePanel = () => (
   <div className="flex h-full items-center justify-center m-4">

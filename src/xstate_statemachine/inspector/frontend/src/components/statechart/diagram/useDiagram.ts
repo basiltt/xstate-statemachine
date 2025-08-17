@@ -27,11 +27,16 @@ import {
 type UseDiagramProps = {
   machine: MachineState;
   activeStateIds: string[];
+  autoFitAfterDrag?: boolean;
 };
 
 const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
 
-export const useDiagram = ({ machine, activeStateIds }: UseDiagramProps) => {
+export const useDiagram = ({
+  machine,
+  activeStateIds,
+  autoFitAfterDrag = true,
+}: UseDiagramProps) => {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
 
@@ -293,8 +298,10 @@ export const useDiagram = ({ machine, activeStateIds }: UseDiagramProps) => {
       setTimeout(() => ids.forEach((id) => updateNodeInternals(id)), 0);
       return tight;
     });
-    tightenAndFitWhenReady(edges).catch(console.error);
-  }, [fitRootTightly, edges, updateNodeInternals, tightenAndFitWhenReady]);
+    if (autoFitAfterDrag) {
+      tightenAndFitWhenReady(edges).catch(console.error);
+    }
+  }, [fitRootTightly, edges, updateNodeInternals, tightenAndFitWhenReady, autoFitAfterDrag]);
 
   // Return values to be used by the view component
   return {

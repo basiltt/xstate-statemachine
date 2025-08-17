@@ -12,9 +12,10 @@ import reactFlowConfig from "@/components/statechart/diagram/diagramConfig";
 type DiagramProps = {
   machine: MachineState;
   activeStateIds: string[];
+  autoFitAfterDrag?: boolean;
 };
 
-const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
+const DiagramCanvas = ({ machine, activeStateIds, autoFitAfterDrag = true }: DiagramProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ open: boolean; x: number; y: number }>({
     open: false,
@@ -31,7 +32,7 @@ const DiagramCanvas = ({ machine, activeStateIds }: DiagramProps) => {
     onNodeDragStop,
     relayout,
     tightenAndFitWhenReady,
-  } = useDiagram({ machine, activeStateIds });
+  } = useDiagram({ machine, activeStateIds, autoFitAfterDrag });
 
   const onPaneContextMenu = useCallback((evt: React.MouseEvent) => {
     evt.preventDefault();
