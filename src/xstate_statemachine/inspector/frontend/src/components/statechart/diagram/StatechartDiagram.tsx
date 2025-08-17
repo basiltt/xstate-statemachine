@@ -67,7 +67,13 @@ const DiagramCanvas = ({ machine, activeStateIds, autoFitAfterDrag = true }: Dia
         className="bg-background"
       >
         <Controls />
-        <MiniMap />
+        <MiniMap
+          className="rounded-md border shadow-sm"
+          style={{ backgroundColor: "hsl(var(--card))" }}
+          maskColor={"hsl(var(--background) / 0.6)"}
+          nodeColor={() => "hsl(var(--muted))"}
+          nodeStrokeColor={() => "hsl(var(--border))"}
+        />
         <Background />
       </ReactFlow>
 
