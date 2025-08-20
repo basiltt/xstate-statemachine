@@ -58,6 +58,7 @@ export const TransitionEdge = ({
   markerEnd,
   data,
 }: EdgeProps) => {
+  const waypoints = (data as any)?.waypoints as { x: number; y: number }[] | undefined;
   const clampTopY: number | undefined = data?.clampTopY;
   const clampLeftX: number | undefined = data?.clampLeftX;
   const clampRightX: number | undefined = data?.clampRightX;
@@ -68,20 +69,37 @@ export const TransitionEdge = ({
   const isActive = !!data?.uiActive;
   const label = data?.label as string | undefined;
   const bias = laneAxis === "x" ? { x: laneOffset } : laneAxis === "y" ? { y: laneOffset } : {};
-  const {
-    d: edgePath,
-    lx,
-    ly,
-  } = smoothPath({
-    sx: sourceX,
-    sy: sourceY,
-    tx: targetX,
-    ty: targetY,
-    sp: sourcePosition,
-    tp: targetPosition,
-    centerBias: bias,
-    bounds: { left: clampLeftX, right: clampRightX, top: clampTopY, bottom: clampBottomY },
-  });
+  let edgePath = "";
+  let lx = 0,
+    ly = 0;
+  if (waypoints && waypoints.length >= 2) {
+    // Build an orthogonal path from waypoints; clamp a middle label point
+    const pts = waypoints;
+    const midIdx = Math.floor(pts.length / 2);
+    const mid = pts[midIdx];
+    lx = Math.min(Math.max(mid.x, clampLeftX ?? -Infinity), clampRightX ?? Infinity);
+    ly = clampTopY ? Math.max(mid.y, clampTopY + 8) : mid.y;
+    edgePath =
+      `M ${pts[0].x},${pts[0].y} ` +
+      pts
+        .slice(1)
+        .map((p) => `L ${p.x},${p.y}`)
+        .join(" ");
+  } else {
+    const r = smoothPath({
+      sx: sourceX,
+      sy: sourceY,
+      tx: targetX,
+      ty: targetY,
+      sp: sourcePosition,
+      tp: targetPosition,
+      centerBias: bias,
+      bounds: { left: clampLeftX, right: clampRightX, top: clampTopY, bottom: clampBottomY },
+    });
+    edgePath = r.d;
+    lx = r.lx;
+    ly = r.ly;
+  }
   // Apply lane offset to label too (respecting bounds)
 
   const stroke = isInitial

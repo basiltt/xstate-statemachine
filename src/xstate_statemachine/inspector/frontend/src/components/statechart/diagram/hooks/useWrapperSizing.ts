@@ -60,19 +60,30 @@ export function useWrapperSizing(params: {
         maxY = Math.max(maxY, ch.position.y + h);
       }
 
+      // Include edge polylines if present (waypoints), else fall back to node centers
       const map = new Map(allNodes.map((n) => [n.id, n] as const));
       for (const e of eds) {
         const s = map.get(e.source);
         const t = map.get(e.target);
         if (!s || !t || s.parentId !== root.id || t.parentId !== root.id) continue;
-        const sx = s.position.x + (s.width ?? 0) / 2;
-        const sy = s.position.y + (s.height ?? 0) / 2;
-        const tx = t.position.x + (t.width ?? 0) / 2;
-        const ty = t.position.y + (t.height ?? 0) / 2;
-        minX = Math.min(minX, Math.min(sx, tx) - EDGE_MARGIN);
-        maxX = Math.max(maxX, Math.max(sx, tx) + EDGE_MARGIN);
-        minY = Math.min(minY, Math.min(sy, ty) - EDGE_MARGIN);
-        maxY = Math.max(maxY, Math.max(sy, ty) + EDGE_MARGIN);
+        const wps = (e.data as any)?.waypoints as { x: number; y: number }[] | undefined;
+        if (Array.isArray(wps) && wps.length) {
+          for (const p of wps) {
+            minX = Math.min(minX, p.x - EDGE_MARGIN);
+            maxX = Math.max(maxX, p.x + EDGE_MARGIN);
+            minY = Math.min(minY, p.y - EDGE_MARGIN);
+            maxY = Math.max(maxY, p.y + EDGE_MARGIN);
+          }
+        } else {
+          const sx = s.position.x + (s.width ?? 0) / 2;
+          const sy = s.position.y + (s.height ?? 0) / 2;
+          const tx = t.position.x + (t.width ?? 0) / 2;
+          const ty = t.position.y + (t.height ?? 0) / 2;
+          minX = Math.min(minX, Math.min(sx, tx) - EDGE_MARGIN);
+          maxX = Math.max(maxX, Math.max(sx, tx) + EDGE_MARGIN);
+          minY = Math.min(minY, Math.min(sy, ty) - EDGE_MARGIN);
+          maxY = Math.max(maxY, Math.max(sy, ty) + EDGE_MARGIN);
+        }
       }
 
       const minYForHeight = Math.max(minY, headerGuardTop);

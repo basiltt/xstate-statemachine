@@ -26,6 +26,7 @@ import { usePositionsPersistence } from "./hooks/usePositionsPersistence";
 import { useViewportPersistence } from "./hooks/useViewportPersistence";
 import { useStatusDecorators } from "./hooks/useStatusDecorators";
 import { useLiveEdgeRouting } from "./hooks/useLiveEdgeRouting";
+import { defaultRouterConfig, routeEdges } from "./hooks/router";
 import { useWrapperSizing } from "./hooks/useWrapperSizing";
 
 type UseDiagramProps = {
@@ -101,7 +102,9 @@ export const useDiagram = ({
         machine.context,
       );
 
-      const edgesWithStatus = decorateEdgeStatuses(laidOutEdges);
+      // Route deterministic orthogonal edges with waypoints
+      const { edges: routed } = routeEdges(laidOutNodes, laidOutEdges, defaultRouterConfig);
+      const edgesWithStatus = decorateEdgeStatuses(routed as Edge[]);
       const parented = ensureUnderRoot(laidOutNodes);
       const withStatus = decorateStatuses(parented, edgesWithStatus);
 

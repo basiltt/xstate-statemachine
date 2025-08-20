@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import type { Edge, Node } from "reactflow";
+import { defaultRouterConfig, routeEdges } from "./router";
 
 export type Dir = "L" | "R" | "T" | "B";
 const PORTS_PER_SIDE = 24;
@@ -156,7 +157,9 @@ export function useLiveEdgeRouting() {
 
       // distribute multiple edges per side with numbered ports
       distribute(next, boxes);
-      return changed ? next : eds;
+      // Route orthogonal waypoints using the deterministic router
+      const { edges: routed } = routeEdges(nds, next, defaultRouterConfig, onlyIds);
+      return changed ? (routed as Edge[]) : (routed as Edge[]);
     },
     [getNodeBoxes, pickHandlesRuntime],
   );
