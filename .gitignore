@@ -687,14 +687,9 @@ backend/alembic/versions/*
 *.session-journal
 *.env
 /src/xstate_statemachine/inspector/frontend/package-lock.json
-/smart_home_logic.py
-/smart_home_runner.py
 /xstate-statemachine.zip
 /xstate_inspector.db
 
 *tar.gz
 
 *.whl
-
-
-/*.json

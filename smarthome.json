@@ -1,0 +1,37 @@
+{
+  "context": {
+    "power": "off"
+  },
+  "id": "SmartHome",
+  "initial": "idle",
+  "states": {
+    "active": {
+      "entry": {
+        "type": "logPowerOn"
+      },
+      "invoke": [
+        {
+          "id": "bulbActor",
+          "src": "LightBulb"
+        },
+        {
+          "id": "thermoActor",
+          "src": "Thermostat"
+        }
+      ],
+      "on": {
+        "POWER_DOWN": {
+          "actions": "logPowerOff",
+          "target": "idle"
+        }
+      }
+    },
+    "idle": {
+      "on": {
+        "ENABLE": {
+          "target": "active"
+        }
+      }
+    }
+  }
+}
