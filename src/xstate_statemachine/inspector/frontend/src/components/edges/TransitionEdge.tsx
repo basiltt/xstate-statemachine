@@ -1,43 +1,70 @@
 // src/xstate_statemachine/inspector/frontend/src/components/edges/TransitionEdge.tsx
-import { EdgeLabelRenderer, EdgeProps, getSmoothStepPath, Position } from "reactflow";
-// Smooth step connector with clamped control center and optional lane offsets
-function smoothPath(options: {
+import { EdgeLabelRenderer, EdgeProps, Position } from "reactflow";
+
+// Manhattan-style connector with optional lane offsets and bounding clamp
+function orthogonalPath(options: {
   sx: number;
   sy: number;
   tx: number;
   ty: number;
   sp: Position;
-  tp: Position;
-  centerBias?: { x?: number; y?: number };
   bounds?: { left?: number; right?: number; top?: number; bottom?: number };
+  laneAxis?: "x" | "y";
+  laneOffset?: number;
 }) {
-  const { sx, sy, tx, ty, sp, tp, centerBias, bounds } = options;
+  const { sx, sy, tx, ty, sp, bounds, laneAxis, laneOffset = 0 } = options;
   const left = bounds?.left ?? -Infinity;
   const right = bounds?.right ?? Infinity;
   const top = bounds?.top ?? -Infinity;
   const bottom = bounds?.bottom ?? Infinity;
 
-  const sSide = sp;
-  const horizontalFirst = sSide === Position.Left || sSide === Position.Right;
+  const pts: { x: number; y: number }[] = [{ x: sx, y: sy }];
+  const sameX = Math.abs(sx - tx) < 0.5;
+  const sameY = Math.abs(sy - ty) < 0.5;
 
-  const rawCenterX = (sx + tx) / 2 + (centerBias?.x ?? 0);
-  const rawCenterY = (sy + ty) / 2 + (centerBias?.y ?? 0);
-  const centerX = Math.max(left, Math.min(rawCenterX, right));
-  const centerY = Math.max(top, Math.min(rawCenterY, bottom));
+  if (sameX || sameY) {
+    // direct segment
+    pts.push({ x: tx, y: ty });
+  } else {
+    // L path - choose orientation based on source side
+    if (sp === Position.Left || sp === Position.Right) {
+      const ix = Math.max(left, Math.min(tx, right));
+      const iy = Math.max(top, Math.min(sy, bottom));
+      pts.push({ x: ix, y: iy });
+    } else {
+      const ix = Math.max(left, Math.min(sx, right));
+      const iy = Math.max(top, Math.min(ty, bottom));
+      pts.push({ x: ix, y: iy });
+    }
+    pts.push({ x: tx, y: ty });
+  }
 
-  const offset = horizontalFirst ? 22 : 18; // gentle curvature like xstate viz
-  const [d, lx, ly] = getSmoothStepPath({
-    sourceX: sx,
-    sourceY: sy,
-    targetX: tx,
-    targetY: ty,
-    sourcePosition: sp,
-    targetPosition: tp,
-    borderRadius: 10,
-    centerX,
-    centerY,
-    offset,
-  });
+  // Apply lane offset to intermediate points
+  if (laneAxis === "x") {
+    pts.forEach((p, i) => {
+      if (i > 0 && i < pts.length - 1) p.x = Math.max(left, Math.min(p.x + laneOffset, right));
+    });
+  } else if (laneAxis === "y") {
+    pts.forEach((p, i) => {
+      if (i > 0 && i < pts.length - 1) p.y = Math.max(top, Math.min(p.y + laneOffset, bottom));
+    });
+  }
+
+  const d = `M ${pts.map((p) => `${p.x} ${p.y}`).join(" L ")}`;
+
+  // label position - middle of last segment
+  let lx: number;
+  let ly: number;
+  if (pts.length === 2) {
+    lx = (sx + tx) / 2;
+    ly = (sy + ty) / 2;
+  } else {
+    const a = pts[pts.length - 2];
+    const b = pts[pts.length - 1];
+    lx = (a.x + b.x) / 2;
+    ly = (a.y + b.y) / 2;
+  }
+
   return { d, lx, ly };
 }
 
@@ -54,7 +81,6 @@ export const TransitionEdge = ({
   targetX,
   targetY,
   sourcePosition,
-  targetPosition,
   markerEnd,
   data,
 }: EdgeProps) => {
@@ -67,21 +93,17 @@ export const TransitionEdge = ({
   const isInitial = !!data?.isInitial;
   const isActive = !!data?.uiActive;
   const label = data?.label as string | undefined;
-  const bias = laneAxis === "x" ? { x: laneOffset } : laneAxis === "y" ? { y: laneOffset } : {};
-  const {
-    d: edgePath,
-    lx,
-    ly,
-  } = smoothPath({
+  const { d: edgePath, lx, ly } = orthogonalPath({
     sx: sourceX,
     sy: sourceY,
     tx: targetX,
     ty: targetY,
     sp: sourcePosition,
-    tp: targetPosition,
-    centerBias: bias,
     bounds: { left: clampLeftX, right: clampRightX, top: clampTopY, bottom: clampBottomY },
+    laneAxis,
+    laneOffset,
   });
+
   // Apply lane offset to label too (respecting bounds)
 
   const stroke = isInitial

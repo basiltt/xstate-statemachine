@@ -31,7 +31,15 @@ export const StateNode = ({ data }: NodeProps) => {
         uiStatus === "next" && "border-blue-400/70 ring-1 ring-blue-400/20",
       )}
     >
-      <Handle type="target" position={Position.Top} className="!opacity-0" />
+      {/* allow connections on all sides */}
+      <Handle type="source" id="s-top" position={Position.Top} className="!opacity-0" />
+      <Handle type="source" id="s-right" position={Position.Right} className="!opacity-0" />
+      <Handle type="source" id="s-bottom" position={Position.Bottom} className="!opacity-0" />
+      <Handle type="source" id="s-left" position={Position.Left} className="!opacity-0" />
+      <Handle type="target" id="t-top" position={Position.Top} className="!opacity-0" />
+      <Handle type="target" id="t-right" position={Position.Right} className="!opacity-0" />
+      <Handle type="target" id="t-bottom" position={Position.Bottom} className="!opacity-0" />
+      <Handle type="target" id="t-left" position={Position.Left} className="!opacity-0" />
 
       <CardHeader
         className={cn(
@@ -46,38 +54,37 @@ export const StateNode = ({ data }: NodeProps) => {
         </CardTitle>
       </CardHeader>
 
-      {hasDetails && (
-        <CardContent className="p-3">
-          {entryActions.length > 0 && (
-            <div className="mb-2">
-              <h4 className="text-[10px] font-semibold text-muted-foreground mb-1 uppercase tracking-wide">
-                Entry actions
-              </h4>
-              {entryActions.map((a: any, i: number) => (
-                <div key={i} className="flex items-center gap-2 text-[12px] leading-5">
-                  <Zap className="w-3.5 h-3.5 text-yellow-500" />
-                  <span className="truncate">{a?.type ?? a}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          {invokeServices.length > 0 && (
-            <div>
-              <h4 className="text-[10px] font-semibold text-muted-foreground mb-1 uppercase tracking-wide">
-                Invoke
-              </h4>
-              {invokeServices.map((svc: any, i: number) => (
-                <div key={i} className="flex items-center gap-2 text-[12px] leading-5">
-                  <RadioTower className="w-3.5 h-3.5 text-blue-500" />
-                  <span className="truncate">{svc?.src ?? svc}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      )}
+        {hasDetails && (
+          <CardContent className="p-3">
+            {entryActions.length > 0 && (
+              <div className="mb-2">
+                <h4 className="text-[10px] font-semibold text-muted-foreground mb-1 uppercase tracking-wide">
+                  Entry actions
+                </h4>
+                {entryActions.map((a: any, i: number) => (
+                  <div key={i} className="flex items-center gap-2 text-[12px] leading-5">
+                    <Zap className="w-3.5 h-3.5 text-yellow-500" />
+                    <span className="truncate">{a?.type ?? a}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {invokeServices.length > 0 && (
+              <div>
+                <h4 className="text-[10px] font-semibold text-muted-foreground mb-1 uppercase tracking-wide">
+                  Invoke
+                </h4>
+                {invokeServices.map((svc: any, i: number) => (
+                  <div key={i} className="flex items-center gap-2 text-[12px] leading-5">
+                    <RadioTower className="w-3.5 h-3.5 text-blue-500" />
+                    <span className="truncate">{svc?.src ?? svc}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        )}
 
-      <Handle type="source" position={Position.Bottom} className="!opacity-0" />
-    </Card>
-  );
-};
+      </Card>
+    );
+  };
