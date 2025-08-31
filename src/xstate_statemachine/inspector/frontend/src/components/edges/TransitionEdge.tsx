@@ -47,6 +47,8 @@ function smoothPath(options: {
  * - never goes under the header/sub-header (clamped by top bound)
  * - draws straight lines when aligned; otherwise a 90°-elbow Manhattan path
  */
+import React, { useMemo } from "react";
+
 export const TransitionEdge = ({
   id,
   sourceX,
@@ -69,23 +71,21 @@ export const TransitionEdge = ({
   const isActive = !!data?.uiActive;
   const label = data?.label as string | undefined;
   const bias = laneAxis === "x" ? { x: laneOffset } : laneAxis === "y" ? { y: laneOffset } : {};
-  let edgePath = "";
-  let lx = 0,
-    ly = 0;
-  if (waypoints && waypoints.length >= 2) {
-    // Build an orthogonal path from waypoints; clamp a middle label point
-    const pts = waypoints;
-    const midIdx = Math.floor(pts.length / 2);
-    const mid = pts[midIdx];
-    lx = Math.min(Math.max(mid.x, clampLeftX ?? -Infinity), clampRightX ?? Infinity);
-    ly = clampTopY ? Math.max(mid.y, clampTopY + 8) : mid.y;
-    edgePath =
-      `M ${pts[0].x},${pts[0].y} ` +
-      pts
-        .slice(1)
-        .map((p) => `L ${p.x},${p.y}`)
-        .join(" ");
-  } else {
+  const { edgePath, lx, ly } = useMemo(() => {
+    if (waypoints && waypoints.length >= 2) {
+      const pts = waypoints;
+      const midIdx = Math.floor(pts.length / 2);
+      const mid = pts[midIdx];
+      const lx0 = Math.min(Math.max(mid.x, clampLeftX ?? -Infinity), clampRightX ?? Infinity);
+      const ly0 = clampTopY ? Math.max(mid.y, clampTopY + 8) : mid.y;
+      const path =
+        `M ${pts[0].x},${pts[0].y} ` +
+        pts
+          .slice(1)
+          .map((p) => `L ${p.x},${p.y}`)
+          .join(" ");
+      return { edgePath: path, lx: lx0, ly: ly0 };
+    }
     const r = smoothPath({
       sx: sourceX,
       sy: sourceY,
@@ -96,10 +96,22 @@ export const TransitionEdge = ({
       centerBias: bias,
       bounds: { left: clampLeftX, right: clampRightX, top: clampTopY, bottom: clampBottomY },
     });
-    edgePath = r.d;
-    lx = r.lx;
-    ly = r.ly;
-  }
+    return { edgePath: r.d, lx: r.lx, ly: r.ly };
+  }, [
+    waypoints,
+    clampLeftX,
+    clampRightX,
+    clampTopY,
+    clampBottomY,
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+    bias?.x,
+    bias?.y,
+  ]);
   // Apply lane offset to label too (respecting bounds)
 
   const stroke = isInitial

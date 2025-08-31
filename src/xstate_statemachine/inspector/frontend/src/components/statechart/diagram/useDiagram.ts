@@ -174,11 +174,16 @@ export const useDiagram = ({
         const dragging = changes.some((c) => c.type === "position" && c.dragging);
 
         if (dragging) {
-          const guarded = guardHeaderAndMaybeGrow(next, edges);
-          setEdges((prev) =>
-            withHeaderClamp(recomputeEdgeHandles(prev, guarded, draggingIds), guarded),
-          );
-          return decorateStatuses(guarded, edges);
+          // During drag, avoid horizontal wrapper shifts from transient edge changes.
+          let guardedNodes: Node[] = [];
+          setEdges((eds) => {
+            guardedNodes = guardHeaderAndMaybeGrow(next, eds);
+            return withHeaderClamp(
+              recomputeEdgeHandles(eds, guardedNodes, draggingIds),
+              guardedNodes,
+            );
+          });
+          return decorateStatuses(guardedNodes, edges);
         }
 
         if (isDrop) {
@@ -190,9 +195,12 @@ export const useDiagram = ({
           return decorateStatuses(next, edges);
         }
 
-        const guarded = guardHeaderAndMaybeGrow(next, edges);
-        setEdges((prev) => withHeaderClamp(recomputeEdgeHandles(prev, guarded), guarded));
-        return decorateStatuses(guarded, edges);
+        let guardedNodes: Node[] = [];
+        setEdges((eds) => {
+          guardedNodes = guardHeaderAndMaybeGrow(next, eds);
+          return withHeaderClamp(recomputeEdgeHandles(eds, guardedNodes), guardedNodes);
+        });
+        return decorateStatuses(guardedNodes, edges);
       });
     },
     [edges, decorateStatuses, guardHeaderAndMaybeGrow, withHeaderClamp, recomputeEdgeHandles],

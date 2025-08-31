@@ -1,3 +1,4 @@
+//  src/xstate_statemachine/inspector/frontend/src/components/statechart/diagram/hooks/useWrapperSizing.ts
 import { useCallback } from "react";
 import type { Edge, Node, Viewport } from "reactflow";
 import { EDGE_MARGIN, PADDING } from "@/components/statechart/constants";
@@ -109,6 +110,13 @@ export function useWrapperSizing(params: {
       if (Math.abs(dx) < 0.5) dx = 0;
       if (Math.abs(dy) < 0.5) dy = 0;
 
+      // Avoid churn: if nothing changes, return the same array to prevent RF change events
+      const currW: number | undefined = (root as any).width ?? (root.style as any)?.width;
+      const currH: number | undefined = (root as any).height ?? (root.style as any)?.height;
+      if (dx === 0 && dy === 0 && currW === tight.width && currH === tight.height) {
+        return currentNodes;
+      }
+
       const updated = currentNodes.map((n) => {
         if (n.id === root.id) {
           return {
@@ -122,8 +130,8 @@ export function useWrapperSizing(params: {
         }
         return n;
       });
-
-      updateNodeInternals(root.id);
+      // Defer internals update to next tick to avoid nested change loops during drag
+      setTimeout(() => updateNodeInternals(root.id), 0);
       return updated;
     },
     [computeRootBounds, headerGuardTop, updateNodeInternals],
@@ -140,6 +148,13 @@ export function useWrapperSizing(params: {
       const dx = tight.minX - desiredLeft;
       const dy = tight.minY - desiredTop;
 
+      // Avoid churn if no effective change
+      const currW: number | undefined = (root as any).width ?? (root.style as any)?.width;
+      const currH: number | undefined = (root as any).height ?? (root.style as any)?.height;
+      if (dx === 0 && dy === 0 && currW === tight.width && currH === tight.height) {
+        return currentNodes;
+      }
+
       const updated = currentNodes.map((n) => {
         if (n.id === root.id) {
           return {
@@ -152,8 +167,7 @@ export function useWrapperSizing(params: {
           return { ...n, position: { x: n.position.x - dx, y: n.position.y - dy } } as Node;
         return n;
       });
-
-      updateNodeInternals(root.id);
+      setTimeout(() => updateNodeInternals(root.id), 0);
       return updated;
     },
     [computeRootBounds, headerGuardTop, updateNodeInternals],
@@ -208,16 +222,27 @@ export function useWrapperSizing(params: {
           ? (root.position?.y ?? 0) + height - PADDING / 2 - inset
           : Number.POSITIVE_INFINITY;
 
-      return eds.map((e) => ({
-        ...e,
-        data: {
-          ...(e.data ?? {}),
-          clampTopY: topInner,
-          clampLeftX: leftInner,
-          clampRightX: rightInner,
-          clampBottomY: bottomInner,
-        },
-      }));
+      // Preserve edge object identity when bounds don't change to avoid unnecessary re-renders
+      const eps = 0.5;
+      return eds.map((e) => {
+        const d = (e.data ?? {}) as any;
+        const same =
+          Math.abs((d.clampTopY ?? NaN) - topInner) < eps &&
+          Math.abs((d.clampLeftX ?? NaN) - leftInner) < eps &&
+          Math.abs((d.clampRightX ?? NaN) - rightInner) < eps &&
+          Math.abs((d.clampBottomY ?? NaN) - bottomInner) < eps;
+        if (same) return e;
+        return {
+          ...e,
+          data: {
+            ...(e.data ?? {}),
+            clampTopY: topInner,
+            clampLeftX: leftInner,
+            clampRightX: rightInner,
+            clampBottomY: bottomInner,
+          },
+        };
+      });
     },
     [computeRootBounds, params.reservedTop],
   );

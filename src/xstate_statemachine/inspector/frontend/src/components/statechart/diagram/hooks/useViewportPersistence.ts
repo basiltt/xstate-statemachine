@@ -1,3 +1,4 @@
+//  src/xstate_statemachine/inspector/frontend/src/components/statechart/diagram/hooks/useViewportPersistence.ts
 import { useCallback, useMemo, useState } from "react";
 import type { Viewport } from "reactflow";
 

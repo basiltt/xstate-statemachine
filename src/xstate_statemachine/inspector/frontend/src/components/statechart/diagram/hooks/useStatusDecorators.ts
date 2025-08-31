@@ -1,3 +1,4 @@
+//  src/xstate_statemachine/inspector/frontend/src/components/statechart/diagram/hooks/useStatusDecorators.ts
 import { useCallback } from "react";
 import type { Edge, Node } from "reactflow";
 

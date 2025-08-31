@@ -1,4 +1,4 @@
-// src/components/statechart/edges.tsx
+// src/xstate_statemachine/inspector/frontend/src/components/statechart/edges.tsx
 import React from "react";
 import { EdgeLabelRenderer, EdgeProps, getSmoothStepPath } from "reactflow";
 

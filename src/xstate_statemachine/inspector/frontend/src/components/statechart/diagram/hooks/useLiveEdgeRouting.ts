@@ -1,3 +1,4 @@
+// src/xstate_statemachine/inspector/frontend/src/components/statechart/diagram/hooks/useLiveEdgeRouting.ts
 import { useCallback } from "react";
 import type { Edge, Node } from "reactflow";
 import { defaultRouterConfig, routeEdges } from "./router";
@@ -89,7 +90,7 @@ export function useLiveEdgeRouting() {
     edges: Edge[],
     boxes: Map<string, { x: number; y: number; w: number; h: number }>,
   ) {
-    type Ref = { ei: number; side: string; isSource: boolean; key: number };
+    type Ref = { ei: number; side: string; isSource: boolean; key: number; existingIdx?: number };
     const groups = new Map<string, Ref[]>();
     const add = (nodeId: string, side: string, isSource: boolean, ref: Ref) => {
       const k = `${nodeId}|${side}|${isSource ? "S" : "T"}`;
@@ -104,14 +105,19 @@ export function useLiveEdgeRouting() {
       const scy = sb.y + sb.h / 2;
       const tcx = tb.x + tb.w / 2;
       const tcy = tb.y + tb.h / 2;
-      const sSide = (e.sourceHandle ?? "").charAt(0);
-      const tSide = (e.targetHandle ?? "").charAt(0);
+      const sHandle = e.sourceHandle ?? "";
+      const tHandle = e.targetHandle ?? "";
+      const sSide = sHandle.charAt(0);
+      const tSide = tHandle.charAt(0);
+      const sIdx = Number.isFinite(Number(sHandle.slice(1))) ? Number(sHandle.slice(1)) : undefined;
+      const tIdx = Number.isFinite(Number(tHandle.slice(1))) ? Number(tHandle.slice(1)) : undefined;
       if (sSide)
         add(e.source, sSide, true, {
           ei: i,
           side: sSide,
           isSource: true,
           key: sSide === "l" || sSide === "r" ? tcy : tcx,
+          existingIdx: sIdx,
         });
       if (tSide)
         add(e.target, tSide, false, {
@@ -119,23 +125,33 @@ export function useLiveEdgeRouting() {
           side: tSide,
           isSource: false,
           key: tSide === "L" || tSide === "R" ? scy : scx,
+          existingIdx: tIdx,
         });
     }
     for (const [, list] of groups) {
-      list.sort((a, b) => a.key - b.key);
-      for (let idx = 0; idx < list.length; idx++) {
-        const ref = list[idx];
-        const id = `${ref.side}${Math.min(PORTS_PER_SIDE - 1, idx)}`;
-        if (ref.isSource) edges[ref.ei].sourceHandle = id;
-        else edges[ref.ei].targetHandle = id;
+      // Keep already-numbered slots; only assign indices to the missing ones.
+      const used = new Set<number>();
+      for (const r of list) if (r.existingIdx != null) used.add(r.existingIdx);
+      const missing = list.filter((r) => r.existingIdx == null);
+      missing.sort((a, b) => a.key - b.key);
+      // assign smallest available indices deterministically
+      let nextIdx = 0;
+      for (const r of missing) {
+        while (used.has(nextIdx)) nextIdx++;
+        const idx = Math.min(PORTS_PER_SIDE - 1, nextIdx);
+        used.add(idx);
+        const id = `${r.side}${idx}`;
+        if (r.isSource) edges[r.ei].sourceHandle = id;
+        else edges[r.ei].targetHandle = id;
+        nextIdx++;
       }
+      // do not overwrite already-numbered handles
     }
   }
 
   const recomputeEdgeHandles = useCallback(
     (eds: Edge[], nds: Node[], onlyIds?: Set<string>): Edge[] => {
       const boxes = getNodeBoxes(nds);
-      let changed = false;
       const next = eds.map((e) => {
         if (!boxes.has(e.source) || !boxes.has(e.target)) return e;
         if (onlyIds && !onlyIds.has(e.source) && !onlyIds.has(e.target)) return e;
@@ -146,7 +162,6 @@ export function useLiveEdgeRouting() {
         const same =
           e.sourceHandle?.startsWith(sh) && e.targetHandle?.startsWith(th) && prevDir === dir;
         if (same) return e;
-        changed = true;
         return {
           ...e,
           sourceHandle: sh,
@@ -158,8 +173,33 @@ export function useLiveEdgeRouting() {
       // distribute multiple edges per side with numbered ports
       distribute(next, boxes);
       // Route orthogonal waypoints using the deterministic router
+      const before = eds;
       const { edges: routed } = routeEdges(nds, next, defaultRouterConfig, onlyIds);
-      return changed ? (routed as Edge[]) : (routed as Edge[]);
+      // Preserve object identity if same
+      const out: Edge[] = new Array(routed.length);
+      const eps = 0.01;
+      for (let i = 0; i < routed.length; i++) {
+        const r = routed[i] as Edge;
+        const b = before[i];
+        const rwp = (r.data as any)?.waypoints as { x: number; y: number }[] | undefined;
+        const bwp = (b?.data as any)?.waypoints as { x: number; y: number }[] | undefined;
+        const sameWP =
+          Array.isArray(rwp) &&
+          Array.isArray(bwp) &&
+          rwp.length === bwp.length &&
+          rwp.every((p, j) => Math.abs(p.x - bwp[j].x) < eps && Math.abs(p.y - bwp[j].y) < eps);
+        if (
+          b &&
+          r.source === b.source &&
+          r.target === b.target &&
+          r.sourceHandle === b.sourceHandle &&
+          r.targetHandle === b.targetHandle &&
+          sameWP
+        )
+          out[i] = b;
+        else out[i] = r;
+      }
+      return out;
     },
     [getNodeBoxes, pickHandlesRuntime],
   );

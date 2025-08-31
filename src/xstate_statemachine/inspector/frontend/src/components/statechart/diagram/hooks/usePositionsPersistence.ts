@@ -1,3 +1,4 @@
+//  src/xstate_statemachine/inspector/frontend/src/components/statechart/diagram/hooks/usePositionsPersistence.ts
 import { useCallback } from "react";
 import type { Node } from "reactflow";
 
