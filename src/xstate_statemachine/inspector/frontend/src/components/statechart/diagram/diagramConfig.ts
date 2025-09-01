@@ -1,4 +1,3 @@
-//  src/xstate_statemachine/inspector/frontend/src/components/statechart/diagram/diagramConfig.ts
 import { ConnectionLineType, MarkerType } from "reactflow";
 
 import {
@@ -8,8 +7,9 @@ import {
   RootNode,
   StateNode,
 } from "@/components/statechart/nodes";
-// Use the orthogonal edge that respects numbered side handles
-import { TransitionEdge } from "@/components/edges/TransitionEdge";
+
+// ✅ Correct path: we export TransitionEdge from statechart/edges.tsx
+import { TransitionEdge } from "@/components/statechart/edges";
 import { GRID_SIZE } from "@/components/statechart/constants";
 
 export const nodeTypes = {
@@ -33,7 +33,6 @@ export const snapGrid: [number, number] = [GRID_SIZE ?? 8, GRID_SIZE ?? 8];
 
 export const connectionLineType = ConnectionLineType.Step;
 
-/** ✅ Plain object you can safely spread into <ReactFlow {...reactFlowConfig} /> */
 const reactFlowConfig = {
   nodeTypes,
   edgeTypes,

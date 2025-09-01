@@ -1,11 +1,14 @@
-// src/xstate_statemachine/inspector/frontend/src/components/statechart/diagram/hooks/useLiveEdgeRouting.ts
 import { useCallback } from "react";
 import type { Edge, Node } from "reactflow";
-import { defaultRouterConfig, routeEdges } from "./router";
+import { defaultRouterConfig, getNodeBoxes, routeEdges } from "./router";
 
-export type Dir = "L" | "R" | "T" | "B";
-const PORTS_PER_SIDE = 24;
+type Dir = "L" | "R" | "T" | "B";
+const PORTS_PER_SIDE = defaultRouterConfig.portsPerSide;
 
+/**
+ * Live handle picking with small hysteresis (Rule 7),
+ * then defers to router for actual waypoints.
+ */
 export function useLiveEdgeRouting() {
   const pickHandlesRuntime = useCallback(
     (
@@ -45,47 +48,33 @@ export function useLiveEdgeRouting() {
         return { sh, th: dir, dir };
       }
 
+      // cost fallback with hysteresis bias
       const dxC = dcx - scx;
       const dyC = dcy - scy;
       const lateralX = Math.abs(dyC) * 0.6;
       const lateralY = Math.abs(dxC) * 0.6;
-      const costToLeft = Math.max(0, dL - sR) + lateralX;
-      const costToRight = Math.max(0, sL - dR) + lateralX;
-      const costToTop = Math.max(0, dT - sB) + lateralY;
-      const costToBottom = Math.max(0, sT - dB) + lateralY;
+      const cost = {
+        L: Math.max(0, dL - sR) + lateralX,
+        R: Math.max(0, sL - dR) + lateralX,
+        T: Math.max(0, dT - sB) + lateralY,
+        B: Math.max(0, sT - dB) + lateralY,
+      } as Record<Dir, number>;
 
-      const candidates: Array<{ dir: Dir; sh: string; th: string; cost: number }> = [
-        { dir: "L", sh: "r", th: "L", cost: costToLeft },
-        { dir: "R", sh: "l", th: "R", cost: costToRight },
-        { dir: "T", sh: "b", th: "T", cost: costToTop },
-        { dir: "B", sh: "t", th: "B", cost: costToBottom },
-      ];
-      let best = candidates[0];
-      for (const c of candidates) if (c.cost < best.cost) best = c;
+      let best: Dir = "L";
+      (["L", "R", "T", "B"] as Dir[]).forEach((d) => {
+        if (cost[d] < cost[best]) best = d;
+      });
 
-      if (prevDir) {
-        const prev = candidates.find((c) => c.dir === prevDir)!;
-        const eps = 18;
-        if (prev && prev.cost <= best.cost + eps) best = prev;
-      }
-      return { sh: best.sh, th: best.th, dir: best.dir };
+      if (prevDir && cost[prevDir] <= cost[best] + 18) best = prevDir; // hysteresis
+
+      const sh = best === "L" ? "r" : best === "R" ? "l" : best === "T" ? "b" : "t";
+      return { sh, th: best, dir: best };
     },
     [],
   );
 
-  const getNodeBoxes = useCallback((all: Node[]) => {
-    const map = new Map<string, { x: number; y: number; w: number; h: number }>();
-    for (const n of all) {
-      const w = (n.width ?? (n.style as any)?.width ?? 160) as number;
-      const h = (n.height ??
-        (n.style as any)?.height ??
-        (n.type === "eventNode" ? 36 : 120)) as number;
-      map.set(n.id, { x: n.position.x, y: n.position.y, w, h });
-    }
-    return map;
-  }, []);
+  const getBoxes = useCallback(getNodeBoxes, []);
 
-  // Assign indices per side for multiple edges, stable by projection of the counterpart
   function distribute(
     edges: Edge[],
     boxes: Map<string, { x: number; y: number; w: number; h: number }>,
@@ -101,16 +90,18 @@ export function useLiveEdgeRouting() {
       const sb = boxes.get(e.source);
       const tb = boxes.get(e.target);
       if (!sb || !tb) continue;
-      const scx = sb.x + sb.w / 2;
-      const scy = sb.y + sb.h / 2;
-      const tcx = tb.x + tb.w / 2;
-      const tcy = tb.y + tb.h / 2;
-      const sHandle = e.sourceHandle ?? "";
-      const tHandle = e.targetHandle ?? "";
-      const sSide = sHandle.charAt(0);
-      const tSide = tHandle.charAt(0);
-      const sIdx = Number.isFinite(Number(sHandle.slice(1))) ? Number(sHandle.slice(1)) : undefined;
-      const tIdx = Number.isFinite(Number(tHandle.slice(1))) ? Number(tHandle.slice(1)) : undefined;
+      const scx = sb.x + sb.w / 2,
+        scy = sb.y + sb.h / 2;
+      const tcx = tb.x + tb.w / 2,
+        tcy = tb.y + tb.h / 2;
+      const sSide = (e.sourceHandle ?? "").charAt(0);
+      const tSide = (e.targetHandle ?? "").charAt(0);
+      const sIdx = Number.isFinite(Number((e.sourceHandle ?? "").slice(1)))
+        ? Number((e.sourceHandle as string).slice(1))
+        : undefined;
+      const tIdx = Number.isFinite(Number((e.targetHandle ?? "").slice(1)))
+        ? Number((e.targetHandle as string).slice(1))
+        : undefined;
       if (sSide)
         add(e.source, sSide, true, {
           ei: i,
@@ -129,29 +120,27 @@ export function useLiveEdgeRouting() {
         });
     }
     for (const [, list] of groups) {
-      // Keep already-numbered slots; only assign indices to the missing ones.
       const used = new Set<number>();
       for (const r of list) if (r.existingIdx != null) used.add(r.existingIdx);
       const missing = list.filter((r) => r.existingIdx == null);
       missing.sort((a, b) => a.key - b.key);
-      // assign smallest available indices deterministically
-      let nextIdx = 0;
+      let next = 0;
       for (const r of missing) {
-        while (used.has(nextIdx)) nextIdx++;
-        const idx = Math.min(PORTS_PER_SIDE - 1, nextIdx);
+        while (used.has(next)) next++;
+        const idx = Math.min(PORTS_PER_SIDE - 1, next);
         used.add(idx);
         const id = `${r.side}${idx}`;
         if (r.isSource) edges[r.ei].sourceHandle = id;
         else edges[r.ei].targetHandle = id;
-        nextIdx++;
+        next++;
       }
-      // do not overwrite already-numbered handles
     }
   }
 
   const recomputeEdgeHandles = useCallback(
     (eds: Edge[], nds: Node[], onlyIds?: Set<string>): Edge[] => {
-      const boxes = getNodeBoxes(nds);
+      const boxes = getBoxes(nds);
+      // Step 1: choose sides (handles) with hysteresis
       const next = eds.map((e) => {
         if (!boxes.has(e.source) || !boxes.has(e.target)) return e;
         if (onlyIds && !onlyIds.has(e.source) && !onlyIds.has(e.target)) return e;
@@ -159,28 +148,39 @@ export function useLiveEdgeRouting() {
         const dst = boxes.get(e.target)!;
         const prevDir = (e.data as any)?.dir as Dir | undefined;
         const { sh, th, dir } = pickHandlesRuntime(src, dst, prevDir);
+
+        // Keep if unchanged
         const same =
-          e.sourceHandle?.startsWith(sh) && e.targetHandle?.startsWith(th) && prevDir === dir;
+          (e.sourceHandle?.startsWith(sh) ?? false) &&
+          (e.targetHandle?.startsWith(th) ?? false) &&
+          prevDir === dir;
+
         if (same) return e;
+
         return {
           ...e,
-          sourceHandle: sh,
-          targetHandle: th,
-          data: { ...(e.data ?? {}), dir },
+          sourceHandle: e.sourceHandle?.length ? e.sourceHandle : sh,
+          targetHandle: e.targetHandle?.length ? e.targetHandle : th,
+          data: {
+            ...(e.data ?? {}),
+            dir,
+            _lastSides: { s: e.sourceHandle || sh, t: e.targetHandle || th },
+          },
         } as Edge;
       });
 
-      // distribute multiple edges per side with numbered ports
+      // Step 2: spread slots along sides deterministically
       distribute(next, boxes);
-      // Route orthogonal waypoints using the deterministic router
-      const before = eds;
+
+      // Step 3: route waypoints (deterministic; Rule 2–6)
       const { edges: routed } = routeEdges(nds, next, defaultRouterConfig, onlyIds);
-      // Preserve object identity if same
+
+      // Preserve object identity when identical
       const out: Edge[] = new Array(routed.length);
       const eps = 0.01;
       for (let i = 0; i < routed.length; i++) {
         const r = routed[i] as Edge;
-        const b = before[i];
+        const b = eds[i];
         const rwp = (r.data as any)?.waypoints as { x: number; y: number }[] | undefined;
         const bwp = (b?.data as any)?.waypoints as { x: number; y: number }[] | undefined;
         const sameWP =
@@ -201,8 +201,8 @@ export function useLiveEdgeRouting() {
       }
       return out;
     },
-    [getNodeBoxes, pickHandlesRuntime],
+    [getBoxes, pickHandlesRuntime],
   );
 
-  return { pickHandlesRuntime, getNodeBoxes, recomputeEdgeHandles };
+  return { pickHandlesRuntime, getNodeBoxes: getBoxes, recomputeEdgeHandles };
 }

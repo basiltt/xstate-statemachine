@@ -9,6 +9,7 @@
     "elkjs": "^0.9.3",
     "framer-motion": "^11.2.10",
     "lucide-react": "^0.379.0",
+    "rbush": "^4.0.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "reactflow": "^11.11.3",
@@ -18,6 +19,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.12.12",
+    "@types/rbush": "^4.0.0",
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",
     "@vitejs/plugin-react": "^4.2.1",

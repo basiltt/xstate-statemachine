@@ -1,6 +1,4 @@
-// src/xstate_statemachine/inspector/frontend/src/components/statechart/diagram/useDiagram.ts
-
-import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyEdgeChanges,
   applyNodeChanges,
@@ -13,20 +11,20 @@ import {
   type Viewport,
 } from "reactflow";
 
-import { getLayoutedElements } from "@/components/statechart/layout.ts";
-import { MachineState } from "@/hooks/useInspectorSocket.ts";
+import { getLayoutedElements } from "@/components/statechart/layout";
+import { MachineState } from "@/hooks/useInspectorSocket";
 import {
   EDGE_CLEAR_TOP,
   estimateReservedTop,
   headerGuardTop as calculateHeaderGuardTop,
   ROOT_HEADER,
-} from "@/components/statechart/constants.ts";
-
-import { usePositionsPersistence } from "./usePositionsPersistence.ts";
-import { useViewportPersistence } from "./useViewportPersistence.ts";
-import { useStatusDecorators } from "./useStatusDecorators.ts";
-import { useLiveEdgeRouting } from "./useLiveEdgeRouting.ts";
-import { useWrapperSizing } from "./useWrapperSizing.ts";
+} from "@/components/statechart/constants";
+import { useViewportPersistence } from "@/components/statechart/diagram/hooks/useViewportPersistence.ts";
+import { usePositionsPersistence } from "@/components/statechart/diagram/hooks/usePositionsPersistence.ts";
+import { useStatusDecorators } from "@/components/statechart/diagram/hooks/useStatusDecorators.ts";
+import { useLiveEdgeRouting } from "@/components/statechart/diagram/hooks/useLiveEdgeRouting.ts";
+import { useWrapperSizing } from "@/components/statechart/diagram/hooks/useWrapperSizing.ts";
+import { defaultRouterConfig, routeEdges } from "@/components/statechart/diagram/hooks/router.ts";
 
 type UseDiagramProps = {
   machine: MachineState;
@@ -89,40 +87,60 @@ export const useDiagram = ({
   // ------------------------------- Relayout -------------------------------
   const relayout = useCallback(
     async (opts?: { resetSavedPositions?: boolean }) => {
-      if (opts?.resetSavedPositions) {
-        try {
-          localStorage.removeItem(storageKey);
-        } catch {}
-        setHasSavedPositions(false);
+      try {
+        if (opts?.resetSavedPositions) {
+          try {
+            localStorage.removeItem(storageKey);
+          } catch {}
+          setHasSavedPositions(false);
+        }
+
+        // 1) Build nodes/edges from definition
+        const base = await getLayoutedElements(machine.definition, machine.context);
+        // 2) Deterministic rectilinear routing (ports & waypoints)
+        const routed = routeEdges(base.nodes, base.edges, defaultRouterConfig);
+        const edgesWithStatus = decorateEdgeStatuses(routed.edges as Edge[]);
+        const parented = ensureUnderRoot(base.nodes);
+        const withStatus = decorateStatuses(parented, edgesWithStatus);
+
+        // 3) Positions: respect saved positions if present
+        const hasSaved = opts?.resetSavedPositions ? false : loadSavedPositions().size > 0;
+        setHasSavedPositions(hasSaved);
+
+        const positioned = hasSaved ? applySavedPositions(withStatus) : withStatus;
+        const nextNodes = hasSaved
+          ? positioned
+          : guardHeaderAndMaybeGrow(positioned, edgesWithStatus);
+        const nextEdges = withHeaderClamp(edgesWithStatus, nextNodes);
+
+        setEdges(nextEdges);
+        setNodes(nextNodes);
+
+        if (opts?.resetSavedPositions) savePositionsSnapshot(nextNodes);
+
+        const savedVp = loadSavedViewport();
+        if (initialViewport) setViewportState(initialViewport);
+        else if (savedVp) setViewportState(savedVp);
+        else tightenAndFitWhenReady(nextEdges, { adjustPositions: !hasSaved }).catch(console.error);
+      } catch (err) {
+        console.error("[relayout] failed, falling back:", err);
+        // Fallback: show root wrapper so the canvas is never empty
+        const machineId = machine.definition?.id ?? "StateMachine";
+        const rootId = `${machineId}__root`;
+        const fallbackNodes: Node[] = [
+          {
+            id: rootId,
+            type: "rootNode",
+            data: { label: machineId, context: machine.context ?? {} },
+            position: { x: 16, y: 16 },
+            style: { width: 980, height: 560 },
+            draggable: true,
+            selectable: false,
+          },
+        ];
+        setNodes(fallbackNodes);
+        setEdges([]);
       }
-
-      const { nodes: laidOutNodes, edges: laidOutEdges } = await getLayoutedElements(
-        machine.definition,
-        machine.context,
-      );
-
-      const edgesWithStatus = decorateEdgeStatuses(laidOutEdges);
-      const parented = ensureUnderRoot(laidOutNodes);
-      const withStatus = decorateStatuses(parented, edgesWithStatus);
-
-      const hasSaved = opts?.resetSavedPositions ? false : loadSavedPositions().size > 0;
-      setHasSavedPositions(hasSaved);
-
-      const positioned = hasSaved ? applySavedPositions(withStatus) : withStatus;
-      const nextNodes = hasSaved
-        ? positioned
-        : guardHeaderAndMaybeGrow(positioned, edgesWithStatus);
-      const nextEdges = withHeaderClamp(edgesWithStatus, nextNodes);
-
-      setEdges(nextEdges);
-      setNodes(nextNodes);
-
-      if (opts?.resetSavedPositions) savePositionsSnapshot(nextNodes);
-
-      const savedVp = loadSavedViewport();
-      if (initialViewport) setViewportState(initialViewport);
-      else if (savedVp) setViewportState(savedVp);
-      else tightenAndFitWhenReady(nextEdges, { adjustPositions: !hasSaved }).catch(console.error);
     },
     [
       machine.definition,
@@ -146,7 +164,7 @@ export const useDiagram = ({
     relayout().catch(console.error);
   }, [relayout]);
 
-  // When active states shift, re-decorate nodes and edges without recomputing layout
+  // Re-decorate active/next highlights without recomputing layout
   useEffect(() => {
     setEdges((prev) => decorateEdgeStatuses(prev));
     setNodes((prev) => decorateStatuses(prev, edges));
@@ -171,10 +189,11 @@ export const useDiagram = ({
         const dragging = changes.some((c) => c.type === "position" && c.dragging);
 
         if (dragging) {
-          const guarded = guardHeaderAndMaybeGrow(next, edges);
-          setEdges((prev) =>
-            withHeaderClamp(recomputeEdgeHandles(prev, guarded, draggingIds), guarded),
-          );
+          let guarded: Node[] = [];
+          setEdges((eds) => {
+            guarded = guardHeaderAndMaybeGrow(next, eds);
+            return withHeaderClamp(recomputeEdgeHandles(eds, guarded, draggingIds), guarded);
+          });
           return decorateStatuses(guarded, edges);
         }
 
@@ -187,8 +206,11 @@ export const useDiagram = ({
           return decorateStatuses(next, edges);
         }
 
-        const guarded = guardHeaderAndMaybeGrow(next, edges);
-        setEdges((prev) => withHeaderClamp(recomputeEdgeHandles(prev, guarded), guarded));
+        let guarded: Node[] = [];
+        setEdges((eds) => {
+          guarded = guardHeaderAndMaybeGrow(next, eds);
+          return withHeaderClamp(recomputeEdgeHandles(eds, guarded), guarded);
+        });
         return decorateStatuses(guarded, edges);
       });
     },

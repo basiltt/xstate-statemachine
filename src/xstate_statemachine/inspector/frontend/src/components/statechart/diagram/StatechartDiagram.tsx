@@ -1,12 +1,10 @@
-// src/xstate_statemachine/inspector/frontend/src/components/statechart/diagram/StatechartDiagram.tsx
-
 import { useCallback, useRef, useState } from "react";
 import ReactFlow, { Background, Controls, MiniMap, ReactFlowProvider } from "reactflow";
 import "reactflow/dist/style.css";
 
-import { MachineState } from "@/hooks/useInspectorSocket.ts";
-import { useDiagram } from "@/components/statechart/diagram/hooks/useDiagram.ts";
-import { DiagramContextMenu } from "@/components/statechart/diagram/DiagramContextMenu.tsx";
+import { MachineState } from "@/hooks/useInspectorSocket";
+import { useDiagram } from "@/components/statechart/diagram/useDiagram";
+import { DiagramContextMenu } from "@/components/statechart/diagram/DiagramContextMenu";
 import reactFlowConfig from "@/components/statechart/diagram/diagramConfig";
 
 type DiagramProps = {
@@ -29,7 +27,6 @@ const DiagramCanvas = ({
     y: 0,
   });
 
-  // All complex logic is now neatly contained in this hook
   const {
     nodes,
     edges,
@@ -64,9 +61,7 @@ const DiagramCanvas = ({
         onNodeDragStop={onNodeDragStop}
         onPaneContextMenu={onPaneContextMenu}
         onMoveEnd={onMoveEnd}
-        // Spread in all the static config
         {...reactFlowConfig}
-        // Specific props
         nodesDraggable
         nodesConnectable={false}
         elementsSelectable
@@ -103,7 +98,6 @@ const DiagramCanvas = ({
   );
 };
 
-// The provider wrapper remains the same
 export const StatechartDiagram = (props: DiagramProps) => (
   <ReactFlowProvider>
     <DiagramCanvas {...props} />

@@ -1,10 +1,13 @@
-//  src/xstate_statemachine/inspector/frontend/src/components/statechart/diagram/hooks/useWrapperSizing.ts
 import { useCallback } from "react";
 import type { Edge, Node, Viewport } from "reactflow";
 import { EDGE_MARGIN, PADDING } from "@/components/statechart/constants";
 
 const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
 
+/**
+ * Wrapper auto-size & header guard.
+ * Includes edges (with waypoints) and grows when wires hit borders (Rule 8).
+ */
 export function useWrapperSizing(params: {
   reservedTop: number;
   headerGuardTop: number;
@@ -61,29 +64,15 @@ export function useWrapperSizing(params: {
         maxY = Math.max(maxY, ch.position.y + h);
       }
 
-      // Include edge polylines if present (waypoints), else fall back to node centers
-      const map = new Map(allNodes.map((n) => [n.id, n] as const));
       for (const e of eds) {
-        const s = map.get(e.source);
-        const t = map.get(e.target);
-        if (!s || !t || s.parentId !== root.id || t.parentId !== root.id) continue;
         const wps = (e.data as any)?.waypoints as { x: number; y: number }[] | undefined;
-        if (Array.isArray(wps) && wps.length) {
+        if (Array.isArray(wps) && wps.length > 0) {
           for (const p of wps) {
             minX = Math.min(minX, p.x - EDGE_MARGIN);
             maxX = Math.max(maxX, p.x + EDGE_MARGIN);
             minY = Math.min(minY, p.y - EDGE_MARGIN);
             maxY = Math.max(maxY, p.y + EDGE_MARGIN);
           }
-        } else {
-          const sx = s.position.x + (s.width ?? 0) / 2;
-          const sy = s.position.y + (s.height ?? 0) / 2;
-          const tx = t.position.x + (t.width ?? 0) / 2;
-          const ty = t.position.y + (t.height ?? 0) / 2;
-          minX = Math.min(minX, Math.min(sx, tx) - EDGE_MARGIN);
-          maxX = Math.max(maxX, Math.max(sx, tx) + EDGE_MARGIN);
-          minY = Math.min(minY, Math.min(sy, ty) - EDGE_MARGIN);
-          maxY = Math.max(maxY, Math.max(sy, ty) + EDGE_MARGIN);
         }
       }
 
@@ -110,10 +99,37 @@ export function useWrapperSizing(params: {
       if (Math.abs(dx) < 0.5) dx = 0;
       if (Math.abs(dy) < 0.5) dy = 0;
 
-      // Avoid churn: if nothing changes, return the same array to prevent RF change events
       const currW: number | undefined = (root as any).width ?? (root.style as any)?.width;
       const currH: number | undefined = (root as any).height ?? (root.style as any)?.height;
-      if (dx === 0 && dy === 0 && currW === tight.width && currH === tight.height) {
+
+      // Expand when any waypoint touches the inner edge (Rule 8)
+      let growLeft = 0,
+        growRight = 0,
+        growTop = 0,
+        growBottom = 0;
+      const clampInset = 22;
+      const innerLeft = (root.position?.x ?? 0) + PADDING / 2 + clampInset;
+      const innerTop = (root.position?.y ?? 0) + params.reservedTop + 24;
+      const innerRight =
+        currW != null ? (root.position?.x ?? 0) + currW - PADDING / 2 - clampInset : Infinity;
+      const innerBottom =
+        currH != null ? (root.position?.y ?? 0) + currH - PADDING / 2 - clampInset : Infinity;
+
+      for (const e of eds) {
+        const wps = (e.data as any)?.waypoints as { x: number; y: number }[] | undefined;
+        if (!wps) continue;
+        for (const p of wps) {
+          if (p.x <= innerLeft) growLeft = Math.max(growLeft, 32);
+          if (p.x >= innerRight) growRight = Math.max(growRight, 32);
+          if (p.y <= innerTop) growTop = Math.max(growTop, 32);
+          if (p.y >= innerBottom) growBottom = Math.max(growBottom, 32);
+        }
+      }
+
+      const newWidth = Math.max(tight.width + growLeft + growRight, currW ?? 0);
+      const newHeight = Math.max(tight.height + growTop + growBottom, currH ?? 0);
+
+      if (dx === 0 && dy === 0 && currW === newWidth && currH === newHeight) {
         return currentNodes;
       }
 
@@ -122,7 +138,7 @@ export function useWrapperSizing(params: {
           return {
             ...n,
             position: { x: (n.position?.x ?? 0) + dx, y: (n.position?.y ?? 0) + dy },
-            style: { ...n.style, width: tight.width, height: tight.height },
+            style: { ...n.style, width: newWidth, height: newHeight },
           } as Node;
         }
         if (n.parentId === root.id) {
@@ -130,7 +146,6 @@ export function useWrapperSizing(params: {
         }
         return n;
       });
-      // Defer internals update to next tick to avoid nested change loops during drag
       setTimeout(() => updateNodeInternals(root.id), 0);
       return updated;
     },
@@ -148,7 +163,6 @@ export function useWrapperSizing(params: {
       const dx = tight.minX - desiredLeft;
       const dy = tight.minY - desiredTop;
 
-      // Avoid churn if no effective change
       const currW: number | undefined = (root as any).width ?? (root.style as any)?.width;
       const currH: number | undefined = (root as any).height ?? (root.style as any)?.height;
       if (dx === 0 && dy === 0 && currW === tight.width && currH === tight.height) {
@@ -186,7 +200,7 @@ export function useWrapperSizing(params: {
       await nextFrame();
       const shouldAdjust = opts?.adjustPositions ?? !hasSavedPositions;
       if (shouldAdjust) {
-        // Note: The caller must wrap a setNodes call around this function
+        // caller adjusts positions before fitting
       }
 
       fitView({ duration: 500, padding: 0.18, includeHiddenNodes: true });
@@ -202,15 +216,8 @@ export function useWrapperSizing(params: {
 
       let width: number | undefined = (root as any).width ?? (root.style as any)?.width;
       let height: number | undefined = (root as any).height ?? (root.style as any)?.height;
-      if (width == null || height == null) {
-        const tight = computeRootBounds(all, eds);
-        if (tight) {
-          width ??= tight.width;
-          height ??= tight.height;
-        }
-      }
 
-      const inset = 22; // tighter to nodes so no visible large gap, still inside wrapper
+      const inset = 22; // consistent with edges renderer
       const topInner = (root.position?.y ?? 0) + params.reservedTop + 24;
       const leftInner = (root.position?.x ?? 0) + PADDING / 2 + inset;
       const rightInner =
@@ -222,7 +229,6 @@ export function useWrapperSizing(params: {
           ? (root.position?.y ?? 0) + height - PADDING / 2 - inset
           : Number.POSITIVE_INFINITY;
 
-      // Preserve edge object identity when bounds don't change to avoid unnecessary re-renders
       const eps = 0.5;
       return eds.map((e) => {
         const d = (e.data ?? {}) as any;
@@ -244,7 +250,7 @@ export function useWrapperSizing(params: {
         };
       });
     },
-    [computeRootBounds, params.reservedTop],
+    [params.reservedTop],
   );
 
   return {

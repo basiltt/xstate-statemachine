@@ -5,7 +5,7 @@ export const PADDING = 40; // inner padding inside wrapper
 export const ROOT_HEADER = 44; // header height (px)
 // Increase extra clearance under context to keep edges away a bit more
 export const EDGE_CLEAR_TOP = 16; // extra top clearance under context to keep edges away
-export const GRID_SIZE = 16; // snap-to-grid size for nodes and layout
+export const GRID_SIZE = 12; // snap-to-grid size for nodes and layout
 // Grow the wrapper earlier so padding stays consistent while dragging
 export const GROW_PREEMPT = 40;
 // Margin to give edges some breathing room when calculating bounds
