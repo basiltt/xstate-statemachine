@@ -3,7 +3,7 @@ import ReactFlow, { Background, Controls, MiniMap, ReactFlowProvider } from "rea
 import "reactflow/dist/style.css";
 
 import type { MachineState } from "@/store/slices/machineSlice";
-import { useDiagram } from "@/components/statechart/diagram/useDiagram";
+import { useDiagram } from "@/components/statechart/diagram/hooks/useDiagram";
 import { DiagramContextMenu } from "@/components/statechart/diagram/DiagramContextMenu";
 import reactFlowConfig from "@/components/statechart/diagram/diagramConfig";
 
