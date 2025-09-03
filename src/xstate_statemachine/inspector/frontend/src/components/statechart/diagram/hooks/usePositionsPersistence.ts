@@ -59,6 +59,7 @@ export function usePositionsPersistence(storageKey: string, getNodes: () => Node
         return list;
       }
 
+      const MAX_COORD = 10000;
       const result = list.map((n) => {
         const s = saved.get(n.id);
         if (!s) {
@@ -66,14 +67,20 @@ export function usePositionsPersistence(storageKey: string, getNodes: () => Node
           return n;
         }
 
-        // Validate position values
+        // Validate position values and reasonable bounds
         if (
           typeof s.x !== "number" ||
           typeof s.y !== "number" ||
           !isFinite(s.x) ||
-          !isFinite(s.y)
+          !isFinite(s.y) ||
+          Math.abs(s.x) > MAX_COORD ||
+          Math.abs(s.y) > MAX_COORD
         ) {
-          console.log("[usePositionsPersistence] invalid saved position for node:", n.id, s);
+          console.log(
+            "[usePositionsPersistence] invalid saved position for node:",
+            n.id,
+            s,
+          );
           return n;
         }
 
