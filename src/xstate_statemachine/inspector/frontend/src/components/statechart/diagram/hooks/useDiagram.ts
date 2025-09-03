@@ -476,19 +476,28 @@ export const useDiagram = ({
       }, 0);
 
       let snapshot: Node[] | null = null;
+      let finalEdges: Edge[] | null = null;
       setNodes((nds) => {
         console.debug("[useDiagram.onNodeDragStop] before tighten", {
           nodeCount: nds.length,
           nodeIds: nds.map((n) => n.id),
           timestamp: Date.now(),
         });
-        const tightened = fitRootTightly(nds, edges);
+
+        // First recompute edges for the node's new drag position so bounds are accurate
+        const preEdges = withHeaderClamp(recomputeEdgeHandles(edges, nds), nds);
+
+        // Tighten wrapper using up-to-date edge geometry
+        const tightened = fitRootTightly(nds, preEdges);
         console.debug("[useDiagram.onNodeDragStop] after tighten", {
           nodeCount: tightened.length,
           nodeIds: tightened.map((n) => n.id),
           timestamp: Date.now(),
         });
         snapshot = tightened;
+
+        // Final edge positions after wrapper translation
+        finalEdges = withHeaderClamp(recomputeEdgeHandles(preEdges, tightened), tightened);
 
         // Update node internals and edges in separate effects to avoid nested state updates
         const ids = tightened.filter((n) => n.type !== "rootNode").map((n) => n.id);
@@ -498,15 +507,13 @@ export const useDiagram = ({
             timestamp: Date.now(),
           });
           ids.forEach((id) => updateNodeInternals(id));
-          setEdges((prev) => {
-            const recomputed = recomputeEdgeHandles(prev, tightened);
-            const clamped = withHeaderClamp(recomputed, tightened);
+          if (finalEdges) {
+            setEdges(finalEdges);
             console.debug("[useDiagram.onNodeDragStop] edges updated in setTimeout", {
-              edgeCount: clamped.length,
+              edgeCount: finalEdges.length,
               timestamp: Date.now(),
             });
-            return clamped;
-          });
+          }
         }, 0);
 
         console.debug("[useDiagram.onNodeDragStop] returning tightened nodes", {
@@ -551,17 +558,15 @@ export const useDiagram = ({
               nodeIds: currentNodes.map((n) => n.id),
               timestamp: Date.now(),
             });
-            setEdges((prev) => {
-              const clamped = withHeaderClamp(prev, currentNodes);
-              console.debug("[useDiagram.onNodeDragStop] autoFitAfterDrag - edges clamped", {
-                edgeCount: clamped.length,
-                timestamp: Date.now(),
-              });
-              return clamped;
+            const clamped = finalEdges
+              ? withHeaderClamp(finalEdges, currentNodes)
+              : withHeaderClamp(edges, currentNodes);
+            setEdges(clamped);
+            console.debug("[useDiagram.onNodeDragStop] autoFitAfterDrag - edges clamped", {
+              edgeCount: clamped.length,
+              timestamp: Date.now(),
             });
-            tightenAndFitWhenReady(withHeaderClamp(edges, currentNodes), {
-              adjustPositions: false,
-            }).catch(console.error);
+            tightenAndFitWhenReady(clamped, { adjustPositions: false }).catch(console.error);
           } else {
             console.debug("[useDiagram.onNodeDragStop] autoFitAfterDrag - no current nodes", {
               timestamp: Date.now(),
