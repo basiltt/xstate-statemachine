@@ -211,16 +211,11 @@ export const useDiagram = ({
         const dragging = changes.some((c) => c.type === "position" && c.dragging);
 
         if (dragging) {
-          // During drag, avoid horizontal wrapper shifts from transient edge changes.
-          let guardedNodes: Node[] = [];
-          setEdges((eds) => {
-            guardedNodes = guardHeaderAndMaybeGrow(next, eds, draggingIds);
-            return withHeaderClamp(
-              recomputeEdgeHandles(eds, guardedNodes, draggingIds),
-              guardedNodes,
-            );
-          });
-          return decorateStatuses(guardedNodes, edges);
+          // While dragging, keep the wrapper stable to avoid flickering
+          // and temporary disappearance of nodes. Only recompute edge
+          // handles; defer wrapper adjustments until drag end.
+          setEdges((eds) => withHeaderClamp(recomputeEdgeHandles(eds, next, draggingIds), next));
+          return decorateStatuses(next, edges);
         }
 
         if (isDrop) {
