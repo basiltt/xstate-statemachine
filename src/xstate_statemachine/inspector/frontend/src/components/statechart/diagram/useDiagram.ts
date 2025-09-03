@@ -14,7 +14,7 @@ import {
 } from "reactflow";
 
 import { getLayoutedElements } from "@/components/statechart/layout";
-import { MachineState } from "@/hooks/useInspectorSocket.ts";
+import type { MachineState } from "@/store/slices/machineSlice";
 import {
   EDGE_CLEAR_TOP,
   estimateReservedTop,
@@ -193,6 +193,15 @@ export const useDiagram = ({
   /* --------------------------- RF change handlers ------------------------- */
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
+      console.log("[useDiagram] onNodesChange called:", {
+        changeCount: changes.length,
+        changes: changes.map((c) => ({
+          type: c.type,
+          id: "id" in c ? c.id : "N/A",
+          dragging: c.type === "position" ? c.dragging : undefined,
+        })),
+      });
+
       let isDrop = false;
       const draggingIds = new Set<string>();
       const changedIds = new Set<string>();
@@ -206,33 +215,87 @@ export const useDiagram = ({
         }
       }
 
+      console.log("[useDiagram] onNodesChange analysis:", {
+        isDrop,
+        draggingIds: Array.from(draggingIds),
+        changedIds: Array.from(changedIds),
+      });
+
       setNodes((curr) => {
+        console.log("[useDiagram] setNodes callback - before applyNodeChanges:", {
+          currentNodeCount: curr.length,
+          currentNodeIds: curr.map((n) => n.id),
+        });
+
         const next = applyNodeChanges(changes, curr);
+        console.log("[useDiagram] setNodes callback - after applyNodeChanges:", {
+          nextNodeCount: next.length,
+          nextNodeIds: next.map((n) => n.id),
+          removedNodes: curr.filter((c) => !next.find((n) => n.id === c.id)).map((n) => n.id),
+          addedNodes: next.filter((n) => !curr.find((c) => c.id === n.id)).map((n) => n.id),
+        });
+
         const dragging = changes.some((c) => c.type === "position" && c.dragging);
+        console.log("[useDiagram] dragging state:", { dragging });
 
         if (dragging) {
+          console.log("[useDiagram] handling dragging case");
           // While dragging, keep the wrapper stable to avoid flickering
           // and temporary disappearance of nodes. Only recompute edge
           // handles; defer wrapper adjustments until drag end.
-          setEdges((eds) => withHeaderClamp(recomputeEdgeHandles(eds, next, draggingIds), next));
-          return decorateStatuses(next, edges);
+          let updatedEdges: Edge[] = [];
+          setEdges((eds) => {
+            updatedEdges = withHeaderClamp(recomputeEdgeHandles(eds, next, draggingIds), next);
+            return updatedEdges;
+          });
+          const result = decorateStatuses(next, updatedEdges);
+          console.log("[useDiagram] dragging result:", {
+            resultNodeCount: result.length,
+            resultNodeIds: result.map((n) => n.id),
+          });
+          return result;
         }
 
         if (isDrop) {
+          console.log("[useDiagram] handling drop case:", {
+            suppressNextDrop: suppressNextDropRef.current,
+          });
           if (suppressNextDropRef.current) {
             suppressNextDropRef.current = false;
+            console.log("[useDiagram] drop suppressed, returning current nodes");
             return curr;
           }
-          setEdges((prev) => withHeaderClamp(recomputeEdgeHandles(prev, next, changedIds), next));
-          return decorateStatuses(next, edges);
+          let updatedEdges: Edge[] = [];
+          setEdges((prev) => {
+            updatedEdges = withHeaderClamp(recomputeEdgeHandles(prev, next, changedIds), next);
+            return updatedEdges;
+          });
+          const result = decorateStatuses(next, updatedEdges);
+          console.log("[useDiagram] drop result:", {
+            resultNodeCount: result.length,
+            resultNodeIds: result.map((n) => n.id),
+          });
+          return result;
         }
 
+        console.log("[useDiagram] handling general case");
         let guardedNodes: Node[] = [];
+        let updatedEdges: Edge[] = [];
         setEdges((eds) => {
           guardedNodes = guardHeaderAndMaybeGrow(next, eds);
-          return withHeaderClamp(recomputeEdgeHandles(eds, guardedNodes), guardedNodes);
+          console.log("[useDiagram] after guardHeaderAndMaybeGrow:", {
+            guardedNodeCount: guardedNodes.length,
+            guardedNodeIds: guardedNodes.map((n) => n.id),
+          });
+          updatedEdges = withHeaderClamp(recomputeEdgeHandles(eds, guardedNodes), guardedNodes);
+          return updatedEdges;
         });
-        return decorateStatuses(guardedNodes, edges);
+        const result = decorateStatuses(guardedNodes, updatedEdges);
+        console.log("[useDiagram] general case result:", {
+          resultNodeCount: result.length,
+          resultNodeIds: result.map((n) => n.id),
+        });
+        return result;
       });
     },
     [edges, decorateStatuses, guardHeaderAndMaybeGrow, withHeaderClamp, recomputeEdgeHandles],
@@ -251,12 +314,22 @@ export const useDiagram = ({
 
   const onNodeDragStop = useCallback(
     (_event: React.MouseEvent) => {
+      console.log("[useDiagram] onNodeDragStop called");
       suppressNextDropRef.current = true;
       setTimeout(() => (suppressNextDropRef.current = false), 0);
 
       let snapshot: Node[] | null = null;
       setNodes((nds) => {
+        console.log("[useDiagram] onNodeDragStop - before fitRootTightly:", {
+          nodeCount: nds.length,
+          nodeIds: nds.map((n) => n.id),
+        });
         const tightened = fitRootTightly(nds, edges);
+        console.log("[useDiagram] onNodeDragStop - after fitRootTightly:", {
+          nodeCount: tightened.length,
+          nodeIds: tightened.map((n) => n.id),
+          removedNodes: nds.filter((n) => !tightened.find((t) => t.id === n.id)).map((n) => n.id),
+        });
         snapshot = tightened;
         const ids = tightened.filter((n) => n.type !== "rootNode").map((n) => n.id);
         setTimeout(() => ids.forEach((id) => updateNodeInternals(id)), 0);
@@ -268,6 +341,10 @@ export const useDiagram = ({
       lastDraggingIdRef.current = null;
 
       const snap = snapshot as Node[] | null;
+      console.log("[useDiagram] onNodeDragStop - saving positions:", {
+        hasSnapshot: !!snap,
+        snapshotLength: snap?.length || 0,
+      });
       if (snap && snap.length > 0) savePositionsSnapshot(snap);
       else savePositionsFromGraph();
       saveViewport();

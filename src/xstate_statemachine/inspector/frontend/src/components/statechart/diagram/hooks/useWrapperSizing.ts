@@ -119,9 +119,26 @@ export function useWrapperSizing(params: {
 
   const guardHeaderAndMaybeGrow = useCallback(
     (currentNodes: Node[], eds: Edge[], draggingIds: Set<string> = new Set()) => {
+      console.log("[useWrapperSizing] guardHeaderAndMaybeGrow called:", {
+        inputNodeCount: currentNodes.length,
+        inputNodeIds: currentNodes.map((n) => n.id),
+        edgeCount: eds.length,
+      });
+
       const root = currentNodes.find((n) => n.type === "rootNode");
       const tight = computeRootBounds(currentNodes, eds, draggingIds);
-      if (!root || !tight) return currentNodes;
+
+      console.log("[useWrapperSizing] guardHeaderAndMaybeGrow - computed:", {
+        hasRoot: !!root,
+        rootId: root?.id,
+        hasTight: !!tight,
+        tight,
+      });
+
+      if (!root || !tight) {
+        console.log("[useWrapperSizing] guardHeaderAndMaybeGrow - early return (no root or tight)");
+        return currentNodes;
+      }
 
       const desiredLeft = PADDING / 2;
       const desiredTop = headerGuardTop;
@@ -186,7 +203,7 @@ export function useWrapperSizing(params: {
       const updated = currentNodes.map((n) => {
         if (n.id === root.id) {
           const newPos = { x: (n.position?.x ?? 0) + dx, y: (n.position?.y ?? 0) + dy };
-          console.debug("[guardHeaderAndMaybeGrow] root move", {
+          console.log("[useWrapperSizing] guardHeaderAndMaybeGrow - root move", {
             from: n.position,
             to: newPos,
             dx,
@@ -202,7 +219,7 @@ export function useWrapperSizing(params: {
         }
         if (n.parentId === root.id) {
           const newPos = { x: n.position.x - dx, y: n.position.y - dy };
-          console.debug("[guardHeaderAndMaybeGrow] child move", {
+          console.log("[useWrapperSizing] guardHeaderAndMaybeGrow - child move", {
             id: n.id,
             from: n.position,
             to: newPos,
@@ -213,6 +230,11 @@ export function useWrapperSizing(params: {
         }
         return n;
       });
+      console.log("[useWrapperSizing] guardHeaderAndMaybeGrow - final result:", {
+        updatedNodeCount: updated.length,
+        updatedNodeIds: updated.map((n) => n.id),
+      });
+
       setTimeout(() => updateNodeInternals(root.id), 0);
       return updated;
     },
@@ -221,9 +243,28 @@ export function useWrapperSizing(params: {
 
   const fitRootTightly = useCallback(
     (currentNodes: Node[], eds: Edge[]) => {
+      console.log("[useWrapperSizing] fitRootTightly called:", {
+        inputNodeCount: currentNodes.length,
+        inputNodeIds: currentNodes.map((n) => n.id),
+        edgeCount: eds.length,
+      });
+
       const root = currentNodes.find((n) => n.type === "rootNode");
+      console.log("[useWrapperSizing] fitRootTightly - root found:", {
+        hasRoot: !!root,
+        rootId: root?.id,
+      });
+
       const tight = computeRootBounds(currentNodes, eds, new Set());
-      if (!root || !tight) return currentNodes;
+      console.log("[useWrapperSizing] fitRootTightly - computed bounds:", {
+        hasTight: !!tight,
+        tight,
+      });
+
+      if (!root || !tight) {
+        console.log("[useWrapperSizing] fitRootTightly - early return (no root or tight)");
+        return currentNodes;
+      }
 
       const desiredLeft = PADDING / 2;
       const desiredTop = headerGuardTop;
@@ -260,7 +301,7 @@ export function useWrapperSizing(params: {
       const updated = currentNodes.map((n) => {
         if (n.id === root.id) {
           const newPos = { x: (n.position?.x ?? 0) + dx, y: (n.position?.y ?? 0) + dy };
-          console.debug("[fitRootTightly] root move", {
+          console.log("[useWrapperSizing] fitRootTightly - root move", {
             from: n.position,
             to: newPos,
             dx,
@@ -276,7 +317,7 @@ export function useWrapperSizing(params: {
         }
         if (n.parentId === root.id) {
           const newPos = { x: n.position.x - dx, y: n.position.y - dy };
-          console.debug("[fitRootTightly] child move", {
+          console.log("[useWrapperSizing] fitRootTightly - child move", {
             id: n.id,
             from: n.position,
             to: newPos,
@@ -288,6 +329,11 @@ export function useWrapperSizing(params: {
         return n;
       });
 
+      console.log("[useWrapperSizing] fitRootTightly - after mapping:", {
+        updatedNodeCount: updated.length,
+        updatedNodeIds: updated.map((n) => n.id),
+      });
+
       const sanitized = updated.map((n) => {
         const px = n.position?.x;
         const py = n.position?.y;
@@ -296,7 +342,7 @@ export function useWrapperSizing(params: {
             x: Number.isFinite(px) ? (px as number) : 0,
             y: Number.isFinite(py) ? (py as number) : 0,
           };
-          console.warn("[fitRootTightly] sanitized non-finite position", {
+          console.warn("[useWrapperSizing] fitRootTightly - sanitized non-finite position", {
             id: n.id,
             from: n.position,
             to: fixed,
@@ -304,6 +350,11 @@ export function useWrapperSizing(params: {
           return { ...n, position: fixed } as Node;
         }
         return n;
+      });
+
+      console.log("[useWrapperSizing] fitRootTightly - final result:", {
+        sanitizedNodeCount: sanitized.length,
+        sanitizedNodeIds: sanitized.map((n) => n.id),
       });
 
       setTimeout(() => updateNodeInternals(root.id), 0);

@@ -1,12 +1,9 @@
 // src/xstate_statemachine/inspector/frontend/src/App.tsx
 
 import { useEffect, useMemo, useState, useRef } from "react";
-import {
-  LogEntry,
-  MachineState,
-  useInspectorSocket,
-  useInspectorStore,
-} from "./hooks/useInspectorSocket";
+import { useAppSelector } from "./store/hooks";
+import { websocketService } from "./services/websocketService";
+import type { LogEntry, MachineState } from "./store/slices/machineSlice";
 
 import {
   Bot,
@@ -106,9 +103,7 @@ const sortMachines = (list: MachineState[], order: SortOrder) => {
 
 // --- Main App Component ---
 export default function App() {
-  useInspectorSocket();
-  const machines = useInspectorStore((state) => state.machines);
-  const isConnected = useInspectorStore((state) => state.isConnected);
+  const { machines, isConnected } = useAppSelector((state) => state.machine);
   const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<SortOrder>(() => {
     const stored = localStorage.getItem(SORT_ORDER_KEY) as SortOrder | null;
@@ -159,6 +154,14 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(SORT_ORDER_KEY, sortOrder);
   }, [sortOrder]);
+
+  // Initialize WebSocket connection
+  useEffect(() => {
+    websocketService.connect();
+    return () => {
+      websocketService.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     // Initialize theme from localStorage or system preference
@@ -527,16 +530,19 @@ const DetailsPanel = ({ machine }: { machine: MachineState; autoFitAfterDrag: bo
 
 const Controls = ({ machineId }: { machineId: string }) => {
   const [dialogOpen, setDialogOpen] = useState(false);
-  const sendCommand = useInspectorStore((state) => state.sendCommand);
+
+  const handleSendCommand = (command: string, payload: any) => {
+    websocketService.sendCommand(command, payload);
+  };
 
   return (
     <>
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
         <Dock>
-          <DockIcon onClick={() => sendCommand("resume", { machine_id: machineId })}>
+          <DockIcon onClick={() => handleSendCommand("resume", { machine_id: machineId })}>
             <Play className="h-4 w-4" />
           </DockIcon>
-          <DockIcon onClick={() => sendCommand("pause", { machine_id: machineId })}>
+          <DockIcon onClick={() => handleSendCommand("pause", { machine_id: machineId })}>
             <Pause className="h-4 w-4" />
           </DockIcon>
           <DockIcon onClick={() => setDialogOpen(true)}>
@@ -552,7 +558,6 @@ const Controls = ({ machineId }: { machineId: string }) => {
 const SendEventDialog = ({ open, onOpenChange, machineId }: SendEventDialogProps) => {
   const [type, setType] = useState("");
   const [payload, setPayload] = useState("");
-  const sendCommand = useInspectorStore((state) => state.sendCommand);
 
   const handleSend = () => {
     if (!type) return;
@@ -565,7 +570,10 @@ const SendEventDialog = ({ open, onOpenChange, machineId }: SendEventDialogProps
       alert("Invalid JSON in payload.");
       return;
     }
-    sendCommand("send_event", { machine_id: machineId, event: { type, payload: parsedPayload } });
+    websocketService.sendCommand("send_event", {
+      machine_id: machineId,
+      event: { type, payload: parsedPayload },
+    });
     onOpenChange(false);
     setType("");
     setPayload("");

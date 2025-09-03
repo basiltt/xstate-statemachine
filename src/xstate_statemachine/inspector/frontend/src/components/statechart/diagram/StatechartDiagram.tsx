@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import ReactFlow, { Background, Controls, MiniMap, ReactFlowProvider } from "reactflow";
 import "reactflow/dist/style.css";
 
-import { MachineState } from "@/hooks/useInspectorSocket";
+import type { MachineState } from "@/store/slices/machineSlice";
 import { useDiagram } from "@/components/statechart/diagram/useDiagram";
 import { DiagramContextMenu } from "@/components/statechart/diagram/DiagramContextMenu";
 import reactFlowConfig from "@/components/statechart/diagram/diagramConfig";
