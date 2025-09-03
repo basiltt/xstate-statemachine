@@ -216,6 +216,30 @@ export default function App() {
           ) : (
             <WelcomePanel />
           )}
+          {/* Debug info */}
+          <div
+            style={{
+              position: "fixed",
+              top: 10,
+              right: 10,
+              background: "rgba(0,0,0,0.8)",
+              color: "white",
+              padding: "10px",
+              fontSize: "12px",
+              zIndex: 1000,
+            }}
+          >
+            <div>Machines: {Object.keys(machines).length}</div>
+            <div>Selected: {selectedMachine?.id || "none"}</div>
+            <div>Has Definition: {selectedMachine?.definition ? "yes" : "no"}</div>
+            <div>
+              Has States:{" "}
+              {selectedMachine?.definition?.states
+                ? Object.keys(selectedMachine.definition.states).length
+                : 0}
+            </div>
+            <div>Active States: {selectedMachine?.currentStateIds?.length || 0}</div>
+          </div>
         </main>
       </div>
 

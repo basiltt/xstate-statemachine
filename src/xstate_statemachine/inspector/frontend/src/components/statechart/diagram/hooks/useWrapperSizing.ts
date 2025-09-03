@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import type { Edge, Node, Viewport } from "reactflow";
 import { EDGE_MARGIN, PADDING } from "@/components/statechart/constants";
 
@@ -44,10 +44,10 @@ export function useWrapperSizing(params: {
   }, []);
 
   const computeRootBounds = useCallback(
-    (allNodes: Node[], eds: Edge[]) => {
+    (allNodes: Node[], eds: Edge[], draggingNodeIds: Set<string> = new Set()) => {
       const root = allNodes.find((n) => n.type === "rootNode");
       if (!root) return null;
-      const children = allNodes.filter((n) => n.parentId === root.id);
+      const children = allNodes.filter((n) => n.parentId === root.id && !draggingNodeIds.has(n.id));
       if (!children.length) return null;
 
       let minX = Infinity,
@@ -55,25 +55,58 @@ export function useWrapperSizing(params: {
         maxX = -Infinity,
         maxY = -Infinity;
 
+      let fallbackCount = 0;
       for (const ch of children) {
-        const w = ch.width ?? 0;
-        const h = ch.height ?? 0;
+        let w = ch.width ?? 0;
+        let h = ch.height ?? 0;
+        if (!Number.isFinite(w) || w <= 0) {
+          w = 120;
+          fallbackCount++;
+        }
+        if (!Number.isFinite(h) || h <= 0) {
+          h = 48;
+          fallbackCount++;
+        }
         minX = Math.min(minX, ch.position.x);
         minY = Math.min(minY, ch.position.y);
         maxX = Math.max(maxX, ch.position.x + w);
         maxY = Math.max(maxY, ch.position.y + h);
+      }
+      if (fallbackCount > 0) {
+        console.warn("[useWrapperSizing.computeRootBounds] used fallback sizes for children", {
+          fallbackCount,
+        });
       }
 
       for (const e of eds) {
         const wps = (e.data as any)?.waypoints as { x: number; y: number }[] | undefined;
         if (Array.isArray(wps) && wps.length > 0) {
           for (const p of wps) {
+            if (!Number.isFinite(p?.x) || !Number.isFinite(p?.y)) {
+              console.warn("[useWrapperSizing.computeRootBounds] skipping non-finite waypoint", p);
+              continue;
+            }
             minX = Math.min(minX, p.x - EDGE_MARGIN);
             maxX = Math.max(maxX, p.x + EDGE_MARGIN);
             minY = Math.min(minY, p.y - EDGE_MARGIN);
             maxY = Math.max(maxY, p.y + EDGE_MARGIN);
           }
         }
+      }
+
+      if (
+        !Number.isFinite(minX) ||
+        !Number.isFinite(minY) ||
+        !Number.isFinite(maxX) ||
+        !Number.isFinite(maxY)
+      ) {
+        console.error("[useWrapperSizing.computeRootBounds] computed non-finite bounds, aborting", {
+          minX,
+          minY,
+          maxX,
+          maxY,
+        });
+        return null;
       }
 
       const minYForHeight = Math.max(minY, headerGuardTop);
@@ -85,9 +118,9 @@ export function useWrapperSizing(params: {
   );
 
   const guardHeaderAndMaybeGrow = useCallback(
-    (currentNodes: Node[], eds: Edge[]) => {
+    (currentNodes: Node[], eds: Edge[], draggingIds: Set<string> = new Set()) => {
       const root = currentNodes.find((n) => n.type === "rootNode");
-      const tight = computeRootBounds(currentNodes, eds);
+      const tight = computeRootBounds(currentNodes, eds, draggingIds);
       if (!root || !tight) return currentNodes;
 
       const desiredLeft = PADDING / 2;
@@ -96,8 +129,25 @@ export function useWrapperSizing(params: {
       let dx = tight.minX - desiredLeft;
       let dy = tight.minY - desiredTop;
 
+      // Only move to enforce guards (no positive dx/dy which would create extra margin)
+      dx = Math.min(dx, 0);
+      dy = Math.min(dy, 0);
+
       if (Math.abs(dx) < 0.5) dx = 0;
       if (Math.abs(dy) < 0.5) dy = 0;
+
+      if (
+        !Number.isFinite(dx) ||
+        !Number.isFinite(dy) ||
+        Math.abs(dx) > 5000 ||
+        Math.abs(dy) > 5000
+      ) {
+        console.warn(
+          "[useWrapperSizing.guardHeaderAndMaybeGrow] suspicious translation; skipping",
+          { dx, dy, tight, rootPos: root.position },
+        );
+        return currentNodes;
+      }
 
       const currW: number | undefined = (root as any).width ?? (root.style as any)?.width;
       const currH: number | undefined = (root as any).height ?? (root.style as any)?.height;
@@ -135,14 +185,31 @@ export function useWrapperSizing(params: {
 
       const updated = currentNodes.map((n) => {
         if (n.id === root.id) {
+          const newPos = { x: (n.position?.x ?? 0) + dx, y: (n.position?.y ?? 0) + dy };
+          console.debug("[guardHeaderAndMaybeGrow] root move", {
+            from: n.position,
+            to: newPos,
+            dx,
+            dy,
+            newWidth,
+            newHeight,
+          });
           return {
             ...n,
-            position: { x: (n.position?.x ?? 0) + dx, y: (n.position?.y ?? 0) + dy },
+            position: newPos,
             style: { ...n.style, width: newWidth, height: newHeight },
           } as Node;
         }
         if (n.parentId === root.id) {
-          return { ...n, position: { x: n.position.x - dx, y: n.position.y - dy } } as Node;
+          const newPos = { x: n.position.x - dx, y: n.position.y - dy };
+          console.debug("[guardHeaderAndMaybeGrow] child move", {
+            id: n.id,
+            from: n.position,
+            to: newPos,
+            dx,
+            dy,
+          });
+          return { ...n, position: newPos } as Node;
         }
         return n;
       });
@@ -155,13 +222,34 @@ export function useWrapperSizing(params: {
   const fitRootTightly = useCallback(
     (currentNodes: Node[], eds: Edge[]) => {
       const root = currentNodes.find((n) => n.type === "rootNode");
-      const tight = computeRootBounds(currentNodes, eds);
+      const tight = computeRootBounds(currentNodes, eds, new Set());
       if (!root || !tight) return currentNodes;
 
       const desiredLeft = PADDING / 2;
       const desiredTop = headerGuardTop;
-      const dx = tight.minX - desiredLeft;
-      const dy = tight.minY - desiredTop;
+      let dx = tight.minX - desiredLeft;
+      let dy = tight.minY - desiredTop;
+
+      dx = Math.min(dx, 0);
+      dy = Math.min(dy, 0);
+
+      if (Math.abs(dx) < 0.5) dx = 0;
+      if (Math.abs(dy) < 0.5) dy = 0;
+
+      if (
+        !Number.isFinite(dx) ||
+        !Number.isFinite(dy) ||
+        Math.abs(dx) > 5000 ||
+        Math.abs(dy) > 5000
+      ) {
+        console.warn("[useWrapperSizing.fitRootTightly] suspicious translation; skipping", {
+          dx,
+          dy,
+          tight,
+          rootPos: root.position,
+        });
+        return currentNodes;
+      }
 
       const currW: number | undefined = (root as any).width ?? (root.style as any)?.width;
       const currH: number | undefined = (root as any).height ?? (root.style as any)?.height;
@@ -171,18 +259,55 @@ export function useWrapperSizing(params: {
 
       const updated = currentNodes.map((n) => {
         if (n.id === root.id) {
+          const newPos = { x: (n.position?.x ?? 0) + dx, y: (n.position?.y ?? 0) + dy };
+          console.debug("[fitRootTightly] root move", {
+            from: n.position,
+            to: newPos,
+            dx,
+            dy,
+            width: tight.width,
+            height: tight.height,
+          });
           return {
             ...n,
-            position: { x: (n.position?.x ?? 0) + dx, y: (n.position?.y ?? 0) + dy },
+            position: newPos,
             style: { ...n.style, width: tight.width, height: tight.height },
           } as Node;
         }
-        if (n.parentId === root.id)
-          return { ...n, position: { x: n.position.x - dx, y: n.position.y - dy } } as Node;
+        if (n.parentId === root.id) {
+          const newPos = { x: n.position.x - dx, y: n.position.y - dy };
+          console.debug("[fitRootTightly] child move", {
+            id: n.id,
+            from: n.position,
+            to: newPos,
+            dx,
+            dy,
+          });
+          return { ...n, position: newPos } as Node;
+        }
         return n;
       });
+
+      const sanitized = updated.map((n) => {
+        const px = n.position?.x;
+        const py = n.position?.y;
+        if (!Number.isFinite(px) || !Number.isFinite(py)) {
+          const fixed = {
+            x: Number.isFinite(px) ? (px as number) : 0,
+            y: Number.isFinite(py) ? (py as number) : 0,
+          };
+          console.warn("[fitRootTightly] sanitized non-finite position", {
+            id: n.id,
+            from: n.position,
+            to: fixed,
+          });
+          return { ...n, position: fixed } as Node;
+        }
+        return n;
+      });
+
       setTimeout(() => updateNodeInternals(root.id), 0);
-      return updated;
+      return sanitized;
     },
     [computeRootBounds, headerGuardTop, updateNodeInternals],
   );
@@ -209,6 +334,14 @@ export function useWrapperSizing(params: {
     [getNodes, updateNodeInternals, fitView, saveViewport, hasSavedPositions],
   );
 
+  // Memoize clamp bounds to prevent frequent recalculations
+  const clampBounds = useMemo(() => {
+    return {
+      reservedTop: params.reservedTop,
+      inset: 22,
+    };
+  }, [params.reservedTop]);
+
   const withHeaderClamp = useCallback(
     (eds: Edge[], all: Node[]) => {
       const root = all.find((n) => n.type === "rootNode");
@@ -217,19 +350,19 @@ export function useWrapperSizing(params: {
       let width: number | undefined = (root as any).width ?? (root.style as any)?.width;
       let height: number | undefined = (root as any).height ?? (root.style as any)?.height;
 
-      const inset = 22; // consistent with edges renderer
-      const topInner = (root.position?.y ?? 0) + params.reservedTop + 24;
-      const leftInner = (root.position?.x ?? 0) + PADDING / 2 + inset;
+      const topInner = (root.position?.y ?? 0) + clampBounds.reservedTop + 24;
+      const leftInner = (root.position?.x ?? 0) + PADDING / 2 + clampBounds.inset;
       const rightInner =
         width != null
-          ? (root.position?.x ?? 0) + width - PADDING / 2 - inset
+          ? (root.position?.x ?? 0) + width - PADDING / 2 - clampBounds.inset
           : Number.POSITIVE_INFINITY;
       const bottomInner =
         height != null
-          ? (root.position?.y ?? 0) + height - PADDING / 2 - inset
+          ? (root.position?.y ?? 0) + height - PADDING / 2 - clampBounds.inset
           : Number.POSITIVE_INFINITY;
 
-      const eps = 0.5;
+      // Use larger epsilon to prevent micro-oscillations
+      const eps = 2.0;
       return eds.map((e) => {
         const d = (e.data ?? {}) as any;
         const same =
@@ -238,19 +371,21 @@ export function useWrapperSizing(params: {
           Math.abs((d.clampRightX ?? NaN) - rightInner) < eps &&
           Math.abs((d.clampBottomY ?? NaN) - bottomInner) < eps;
         if (same) return e;
+
+        // Round values to prevent floating point precision issues
         return {
           ...e,
           data: {
             ...(e.data ?? {}),
-            clampTopY: topInner,
-            clampLeftX: leftInner,
-            clampRightX: rightInner,
-            clampBottomY: bottomInner,
+            clampTopY: Math.round(topInner * 10) / 10,
+            clampLeftX: Math.round(leftInner * 10) / 10,
+            clampRightX: Math.round(rightInner * 10) / 10,
+            clampBottomY: Math.round(bottomInner * 10) / 10,
           },
         };
       });
     },
-    [params.reservedTop],
+    [clampBounds],
   );
 
   return {

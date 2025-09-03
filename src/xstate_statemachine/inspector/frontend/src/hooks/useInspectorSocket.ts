@@ -56,9 +56,11 @@ export const useInspectorStore = create<InspectorState>((set, get) => ({
     if (get().ws) return; // Prevent multiple connections
 
     const ws = new WebSocket("ws://127.0.0.1:8008/ws");
+    console.log("[WebSocket] Attempting to connect to:", "ws://127.0.0.1:8008/ws");
 
     ws.onopen = () => {
       console.log("Inspector WebSocket connected");
+      console.log("[WebSocket] Connected successfully");
       set({ isConnected: true, ws });
     };
 
@@ -75,23 +77,29 @@ export const useInspectorStore = create<InspectorState>((set, get) => ({
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
+        console.log("[WebSocket] Received message:", msg);
         const { addMachine, updateMachineTransition, addService, removeService, addLog } = get();
 
         // Dispatch incoming messages to the correct state mutator
         switch (msg.type) {
           case "machine_registered":
+            console.log("[WebSocket] Adding machine:", msg.payload);
             addMachine(msg.payload);
             break;
           case "transition":
+            console.log("[WebSocket] Machine transition:", msg.payload);
             updateMachineTransition(msg.payload);
             break;
           case "service_invoked":
+            console.log("[WebSocket] Service invoked:", msg.payload);
             addService(msg.payload);
             break;
           case "service_stopped":
+            console.log("[WebSocket] Service stopped:", msg.payload);
             removeService(msg.payload);
             break;
           default:
+            console.log("[WebSocket] Generic event:", msg.type, msg);
             // Handle all other events as generic logs if the machine exists
             if (get().machines[msg.machine_id]) {
               addLog(msg.machine_id, { type: msg.type, payload: msg.payload, ...msg });
@@ -99,7 +107,7 @@ export const useInspectorStore = create<InspectorState>((set, get) => ({
             break;
         }
       } catch (e) {
-        console.error("Failed to parse WebSocket message:", event.data, e);
+        console.error("[WebSocket] Failed to parse message:", e, "Raw data:", event.data);
       }
     };
 

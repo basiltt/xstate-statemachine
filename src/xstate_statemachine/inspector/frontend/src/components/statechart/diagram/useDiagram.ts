@@ -38,7 +38,7 @@ type UseDiagramProps = {
 export const useDiagram = ({
   machine,
   activeStateIds,
-  autoFitAfterDrag = true,
+  autoFitAfterDrag = false,
 }: UseDiagramProps) => {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -49,7 +49,14 @@ export const useDiagram = ({
     latestNodesRef.current = nodes;
   }, [nodes]);
 
+  // Track latest edges to avoid stale closures in effects
+  const latestEdgesRef = useRef<Edge[]>([]);
+  useEffect(() => {
+    latestEdgesRef.current = edges;
+  }, [edges]);
+
   const suppressNextDropRef = useRef(false);
+  const lastDraggingIdRef = useRef<string | null>(null);
 
   const { fitView, getNodes, getViewport } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
@@ -57,12 +64,30 @@ export const useDiagram = ({
   const storageKey = useMemo(() => `xsi.positions.${machine.id}`, [machine.id]);
   const viewportKey = useMemo(() => `xsi.viewport.${machine.id}`, [machine.id]);
 
-  const reservedTop = useMemo(
-    () =>
-      Math.max(estimateReservedTop(machine.context) + EDGE_CLEAR_TOP, ROOT_HEADER + EDGE_CLEAR_TOP),
-    [machine.context],
+  // Debounce reservedTop calculation to prevent flickering from frequent context changes
+  const [debouncedReservedTop, setDebouncedReservedTop] = useState(() =>
+    Math.max(estimateReservedTop(machine.context) + EDGE_CLEAR_TOP, ROOT_HEADER + EDGE_CLEAR_TOP),
   );
-  const headerGuardTop = useMemo(() => calculateHeaderGuardTop(reservedTop), [reservedTop]);
+
+  useEffect(() => {
+    const newReservedTop = Math.max(
+      estimateReservedTop(machine.context) + EDGE_CLEAR_TOP,
+      ROOT_HEADER + EDGE_CLEAR_TOP,
+    );
+
+    // Only update if the change is significant (> 2px) to prevent micro-oscillations
+    if (Math.abs(newReservedTop - debouncedReservedTop) > 2) {
+      const timeoutId = setTimeout(() => {
+        setDebouncedReservedTop(newReservedTop);
+      }, 100); // 100ms debounce
+      return () => clearTimeout(timeoutId);
+    }
+  }, [machine.context, debouncedReservedTop]);
+
+  const headerGuardTop = useMemo(
+    () => calculateHeaderGuardTop(debouncedReservedTop),
+    [debouncedReservedTop],
+  );
 
   // --- Hooks
   const { initialViewport, viewport, setViewportState, loadSavedViewport, saveViewport } =
@@ -78,7 +103,7 @@ export const useDiagram = ({
     tightenAndFitWhenReady,
     withHeaderClamp,
   } = useWrapperSizing({
-    reservedTop,
+    reservedTop: debouncedReservedTop,
     headerGuardTop,
     fitView,
     getNodes,
@@ -101,6 +126,7 @@ export const useDiagram = ({
         machine.definition,
         machine.context,
       );
+      console.log("Laid out elements:", { laidOutNodes, laidOutEdges });
 
       // Route deterministic orthogonal edges with waypoints
       const { edges: routed } = routeEdges(laidOutNodes, laidOutEdges, defaultRouterConfig);
@@ -129,7 +155,7 @@ export const useDiagram = ({
     },
     [
       machine.definition,
-      machine.context,
+      // NOTE: Deliberately exclude machine.context to avoid full relayout on frequent context updates
       ensureUnderRoot,
       decorateStatuses,
       decorateEdgeStatuses,
@@ -152,8 +178,17 @@ export const useDiagram = ({
   // When active states shift, re-decorate nodes and edges without recomputing layout
   useEffect(() => {
     setEdges((prev) => decorateEdgeStatuses(prev));
-    setNodes((prev) => decorateStatuses(prev, edges));
+    setNodes((prev) => decorateStatuses(prev, latestEdgesRef.current));
   }, [activeStateIds, decorateStatuses, decorateEdgeStatuses]);
+
+  // When debouncedReservedTop changes, adjust wrapper/clamps only
+  useEffect(() => {
+    setNodes((curr) => {
+      const adjusted = guardHeaderAndMaybeGrow(curr, latestEdgesRef.current);
+      setEdges((eds) => withHeaderClamp(eds, adjusted));
+      return adjusted;
+    });
+  }, [debouncedReservedTop, guardHeaderAndMaybeGrow, withHeaderClamp]);
 
   /* --------------------------- RF change handlers ------------------------- */
   const onNodesChange = useCallback(
@@ -164,8 +199,10 @@ export const useDiagram = ({
       for (const c of changes) {
         if (c.type === "position") {
           changedIds.add(c.id);
-          if (c.dragging) draggingIds.add(c.id);
-          else isDrop = true;
+          if (c.dragging) {
+            draggingIds.add(c.id);
+            lastDraggingIdRef.current = c.id;
+          } else isDrop = true;
         }
       }
 
@@ -177,7 +214,7 @@ export const useDiagram = ({
           // During drag, avoid horizontal wrapper shifts from transient edge changes.
           let guardedNodes: Node[] = [];
           setEdges((eds) => {
-            guardedNodes = guardHeaderAndMaybeGrow(next, eds);
+            guardedNodes = guardHeaderAndMaybeGrow(next, eds, draggingIds);
             return withHeaderClamp(
               recomputeEdgeHandles(eds, guardedNodes, draggingIds),
               guardedNodes,
@@ -217,45 +254,51 @@ export const useDiagram = ({
     [decorateEdgeStatuses, withHeaderClamp],
   );
 
-  const onNodeDragStop = useCallback(() => {
-    suppressNextDropRef.current = true;
-    setTimeout(() => (suppressNextDropRef.current = false), 0);
+  const onNodeDragStop = useCallback(
+    (_event: React.MouseEvent) => {
+      suppressNextDropRef.current = true;
+      setTimeout(() => (suppressNextDropRef.current = false), 0);
 
-    let snapshot: Node[] | null = null;
-    setNodes((nds) => {
-      const tightened = fitRootTightly(nds, edges);
-      snapshot = tightened;
-      const ids = tightened.filter((n) => n.type !== "rootNode").map((n) => n.id);
-      setTimeout(() => ids.forEach((id) => updateNodeInternals(id)), 0);
-      setEdges((prev) => withHeaderClamp(recomputeEdgeHandles(prev, tightened), tightened));
-      return tightened;
-    });
+      let snapshot: Node[] | null = null;
+      setNodes((nds) => {
+        const tightened = fitRootTightly(nds, edges);
+        snapshot = tightened;
+        const ids = tightened.filter((n) => n.type !== "rootNode").map((n) => n.id);
+        setTimeout(() => ids.forEach((id) => updateNodeInternals(id)), 0);
+        setEdges((prev) => withHeaderClamp(recomputeEdgeHandles(prev, tightened), tightened));
+        return tightened;
+      });
 
-    const snap = snapshot as Node[] | null;
-    if (snap && snap.length > 0) savePositionsSnapshot(snap);
-    else savePositionsFromGraph();
-    saveViewport();
+      // Clear last dragging id after adjustments
+      lastDraggingIdRef.current = null;
 
-    if (autoFitAfterDrag) {
-      setTimeout(() => {
-        setEdges((prev) => withHeaderClamp(prev, latestNodesRef.current));
-        tightenAndFitWhenReady(withHeaderClamp(edges, latestNodesRef.current), {
-          adjustPositions: false,
-        }).catch(console.error);
-      }, 0);
-    }
-  }, [
-    edges,
-    fitRootTightly,
-    updateNodeInternals,
-    tightenAndFitWhenReady,
-    autoFitAfterDrag,
-    savePositionsFromGraph,
-    savePositionsSnapshot,
-    saveViewport,
-    withHeaderClamp,
-    recomputeEdgeHandles,
-  ]);
+      const snap = snapshot as Node[] | null;
+      if (snap && snap.length > 0) savePositionsSnapshot(snap);
+      else savePositionsFromGraph();
+      saveViewport();
+
+      if (autoFitAfterDrag) {
+        setTimeout(() => {
+          setEdges((prev) => withHeaderClamp(prev, latestNodesRef.current));
+          tightenAndFitWhenReady(withHeaderClamp(edges, latestNodesRef.current), {
+            adjustPositions: false,
+          }).catch(console.error);
+        }, 0);
+      }
+    },
+    [
+      edges,
+      fitRootTightly,
+      updateNodeInternals,
+      tightenAndFitWhenReady,
+      autoFitAfterDrag,
+      savePositionsFromGraph,
+      savePositionsSnapshot,
+      saveViewport,
+      withHeaderClamp,
+      recomputeEdgeHandles,
+    ],
+  );
 
   // Persist viewport when panning/zooming stops
   const onMoveEnd = useCallback(

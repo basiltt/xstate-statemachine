@@ -88,6 +88,14 @@ export const useDiagram = ({
   const relayout = useCallback(
     async (opts?: { resetSavedPositions?: boolean }) => {
       try {
+        console.log("[useDiagram] Relayout called with machine:", {
+          id: machine.id,
+          definition: machine.definition,
+          context: machine.context,
+          hasDefinition: !!machine.definition,
+          hasStates: !!machine.definition?.states,
+        });
+
         if (opts?.resetSavedPositions) {
           try {
             localStorage.removeItem(storageKey);
@@ -97,6 +105,12 @@ export const useDiagram = ({
 
         // 1) Build nodes/edges from definition
         const base = await getLayoutedElements(machine.definition, machine.context);
+        console.log("[useDiagram] Layout elements generated:", {
+          nodeCount: base.nodes.length,
+          edgeCount: base.edges.length,
+          nodes: base.nodes.map((n) => ({ id: n.id, type: n.type })),
+          edges: base.edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+        });
         // 2) Deterministic rectilinear routing (ports & waypoints)
         const routed = routeEdges(base.nodes, base.edges, defaultRouterConfig);
         const edgesWithStatus = decorateEdgeStatuses(routed.edges as Edge[]);
@@ -113,8 +127,13 @@ export const useDiagram = ({
           : guardHeaderAndMaybeGrow(positioned, edgesWithStatus);
         const nextEdges = withHeaderClamp(edgesWithStatus, nextNodes);
 
+        console.debug("[useDiagram.relayout] before set state", {
+          nextNodeCount: nextNodes.length,
+          nextEdgeCount: nextEdges.length,
+        });
         setEdges(nextEdges);
         setNodes(nextNodes);
+        console.debug("[useDiagram.relayout] after set state");
 
         if (opts?.resetSavedPositions) savePositionsSnapshot(nextNodes);
 
@@ -191,7 +210,12 @@ export const useDiagram = ({
         if (dragging) {
           let guarded: Node[] = [];
           setEdges((eds) => {
-            guarded = guardHeaderAndMaybeGrow(next, eds);
+            guarded = guardHeaderAndMaybeGrow(next, eds, draggingIds);
+            console.debug("[useDiagram.onNodesChange] dragging update", {
+              draggingIds: Array.from(draggingIds),
+              nextCount: next.length,
+              guardedCount: guarded.length,
+            });
             return withHeaderClamp(recomputeEdgeHandles(eds, guarded, draggingIds), guarded);
           });
           return decorateStatuses(guarded, edges);
@@ -228,45 +252,52 @@ export const useDiagram = ({
     [decorateEdgeStatuses, withHeaderClamp],
   );
 
-  const onNodeDragStop = useCallback(() => {
-    suppressNextDropRef.current = true;
-    setTimeout(() => (suppressNextDropRef.current = false), 0);
+  const onNodeDragStop = useCallback(
+    (_: any, node: Node) => {
+      console.debug("[useDiagram.onNodeDragStop] start", { nodeId: node?.id });
+      suppressNextDropRef.current = true;
+      setTimeout(() => (suppressNextDropRef.current = false), 0);
 
-    let snapshot: Node[] | null = null;
-    setNodes((nds) => {
-      const tightened = fitRootTightly(nds, edges);
-      snapshot = tightened;
-      const ids = tightened.filter((n) => n.type !== "rootNode").map((n) => n.id);
-      setTimeout(() => ids.forEach((id) => updateNodeInternals(id)), 0);
-      setEdges((prev) => withHeaderClamp(recomputeEdgeHandles(prev, tightened), tightened));
-      return tightened;
-    });
+      let snapshot: Node[] | null = null;
+      setNodes((nds) => {
+        console.debug("[useDiagram.onNodeDragStop] before tighten", { nodeCount: nds.length });
+        const tightened = fitRootTightly(nds, edges);
+        console.debug("[useDiagram.onNodeDragStop] after tighten", { nodeCount: tightened.length });
+        snapshot = tightened;
+        const ids = tightened.filter((n) => n.type !== "rootNode").map((n) => n.id);
+        setTimeout(() => ids.forEach((id) => updateNodeInternals(id)), 0);
+        setEdges((prev) => withHeaderClamp(recomputeEdgeHandles(prev, tightened), tightened));
+        return tightened;
+      });
 
-    const snap = snapshot as Node[] | null;
-    if (snap && snap.length > 0) savePositionsSnapshot(snap);
-    else savePositionsFromGraph();
-    saveViewport();
+      const snap = snapshot as Node[] | null;
+      if (snap && snap.length > 0) savePositionsSnapshot(snap);
+      else savePositionsFromGraph();
+      saveViewport();
 
-    if (autoFitAfterDrag) {
-      setTimeout(() => {
-        setEdges((prev) => withHeaderClamp(prev, latestNodesRef.current));
-        tightenAndFitWhenReady(withHeaderClamp(edges, latestNodesRef.current), {
-          adjustPositions: false,
-        }).catch(console.error);
-      }, 0);
-    }
-  }, [
-    edges,
-    fitRootTightly,
-    updateNodeInternals,
-    tightenAndFitWhenReady,
-    autoFitAfterDrag,
-    savePositionsFromGraph,
-    savePositionsSnapshot,
-    saveViewport,
-    withHeaderClamp,
-    recomputeEdgeHandles,
-  ]);
+      if (autoFitAfterDrag) {
+        setTimeout(() => {
+          console.debug("[useDiagram.onNodeDragStop] autoFitAfterDrag");
+          setEdges((prev) => withHeaderClamp(prev, latestNodesRef.current));
+          tightenAndFitWhenReady(withHeaderClamp(edges, latestNodesRef.current), {
+            adjustPositions: false,
+          }).catch(console.error);
+        }, 0);
+      }
+    },
+    [
+      edges,
+      fitRootTightly,
+      updateNodeInternals,
+      tightenAndFitWhenReady,
+      autoFitAfterDrag,
+      savePositionsFromGraph,
+      savePositionsSnapshot,
+      saveViewport,
+      withHeaderClamp,
+      recomputeEdgeHandles,
+    ],
+  );
 
   // Persist viewport when panning/zooming stops
   const onMoveEnd = useCallback(
