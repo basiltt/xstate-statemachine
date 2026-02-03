@@ -177,7 +177,7 @@ source venv/bin/activate           # Windows → venv\Scripts\activate
 pip install xstate-statemachine
 ```
 
-> **Requirements**: Python 3.8 +
+> **Requirements**: Python 3.9 +
 
 ---
 

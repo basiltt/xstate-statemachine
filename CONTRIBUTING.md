@@ -13,9 +13,9 @@ We follow the standard "Fork & Pull Request" workflow.
     `git checkout -b <branch-type>/<short-description>`
     (e.g., `feat/add-new-feature`, `fix/correct-a-bug`)
 4.  **Set up the development environment**:
-    `poetry install`
+    `uv pip install -e . --group dev --group lint --group test`
 5.  **Install pre-commit hooks** to ensure code style consistency:
-    `pre-commit install`
+    `uv run pre-commit install`
 
 ## ✨ Making Your Changes
 
@@ -32,7 +32,7 @@ Before submitting your pull request, please run the full test suite to ensure th
 Run the following command from the root of the project:
 
 ```bash
-poetry run pytest
+uv run pytest
 ```
 
 This will automatically find and execute all tests in the tests/ directory. All tests must pass before a pull request can be merged.

@@ -17,64 +17,64 @@ A Python library for parsing and running XState-compatible JSON state machines. 
 ### Setup
 ```bash
 # Install dependencies and set up development environment
-poetry install
+uv pip install -e . --group dev --group lint --group test
 
 # Install pre-commit hooks (required before first commit)
-pre-commit install
+uv run pre-commit install
 ```
 
 ### Testing
 ```bash
 # Run all tests
-poetry run pytest
+uv run pytest
 
 # Run a single test file
-poetry run pytest tests/test_interpreter.py
+uv run pytest tests/test_interpreter.py
 
 # Run a specific test
-poetry run pytest tests/test_interpreter.py::TestInterpreter::test_basic_transition
+uv run pytest tests/test_interpreter.py::TestInterpreter::test_basic_transition
 
 # Run tests in a directory
-poetry run pytest tests/tests_cli/
+uv run pytest tests/tests_cli/
 
 # Run with verbose output
-poetry run pytest -v
+uv run pytest -v
 
 # Run with coverage
-poetry run pytest --cov=src/xstate_statemachine
+uv run pytest --cov=src/xstate_statemachine
 ```
 
 ### Linting and Formatting
 ```bash
 # Run all pre-commit hooks on all files
-pre-commit run --all-files
+uv run pre-commit run --all-files
 
 # Run Black formatter only
-poetry run black src/ tests/ --line-length=79
+uv run black src/ tests/ --line-length=79
 
 # Run Flake8 only
-poetry run flake8 src/ tests/
+uv run flake8 src/ tests/
 
 # Check specific file
-poetry run flake8 src/xstate_statemachine/interpreter.py
+uv run flake8 src/xstate_statemachine/interpreter.py
 ```
 
 ### CLI Tool
 ```bash
 # Generate boilerplate from JSON
-poetry run xsm generate-template path/to/machine.json
+uv run xsm generate-template path/to/machine.json
 
 # Using aliases
-poetry run xsm gt path/to/machine.json
+uv run xsm gt path/to/machine.json
 
 # Hierarchical machines (parent + children)
-poetry run xsm gt -jp parent.json -jc child1.json -jc child2.json
+uv run xsm gt -jp parent.json -jc child1.json -jc child2.json
 
 # Sync mode with function style
-poetry run xsm gt machine.json -am no -s function
+uv run xsm gt machine.json -am no -s function
 
 # Single file output
-poetry run xsm gt machine.json -fc 1
+uv run xsm gt machine.json -fc 1
 ```
 
 ## Code Style Guidelines
@@ -716,8 +716,8 @@ interpreter = Interpreter(machine).use(MetricsPlugin(client))
 
 ### Before Submitting Changes
 
-1. **Run full test suite**: `poetry run pytest`
-2. **Run pre-commit**: `pre-commit run --all-files`
+1. **Run full test suite**: `uv run pytest`
+2. **Run pre-commit**: `uv run pre-commit run --all-files`
 3. **Update CHANGELOG.md** under "## [Unreleased]" (not for tiny changes)
 4. **Add examples** in `examples/` if applicable
 5. **Follow Conventional Commits** for messages (e.g., `feat:`, `fix:`, `docs:`)
