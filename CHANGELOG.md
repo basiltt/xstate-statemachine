@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2025-02-03
+
+### Added
+
+- **Python 3.14 Support**: Added full support for Python 3.14 with comprehensive testing across all supported Python versions (3.9-3.14).
+  - Verified compatibility with 2,754 tests across Python 3.9, 3.10, 3.11, 3.12, 3.13, and 3.14.
+  - Updated project classifiers to include Python 3.14.
+
+### Changed
+
+- **Build System Migration**: Migrated from Poetry to `uv` for faster, more reliable package management.
+  - Switched build backend from `poetry-core` to `hatchling`.
+  - Updated `pyproject.toml` to use PEP 621 metadata format.
+  - Replaced Poetry dependency groups with `uv` dependency groups (`dev`, `lint`, `test`).
+  - Updated all documentation with new `uv` commands:
+    - `uv pip install -e . --group dev --group lint --group test`
+    - `uv run pytest`
+    - `uv run pre-commit run --all-files`
+- **Python Version Support**: Updated minimum Python requirement from 3.8 to 3.9.
+  - Python 3.8 reached end-of-life and is no longer supported.
+  - All dependencies updated to require Python 3.9+.
+- **CI/CD Updates**: Updated pre-commit configuration to use Python 3.14 and Black 26.1.0.
+
+### Fixed
+
+- **Deprecation Warning**: Replaced deprecated `asyncio.iscoroutinefunction()` with `inspect.iscoroutinefunction()` to resolve deprecation warnings and ensure compatibility with Python 3.16+.
+- **Python 3.9 Compatibility**: Fixed union syntax usage in test files (`| None` → `Optional[...]`) to ensure compatibility with Python 3.9, which does not support PEP 604 union syntax.
+
 ## [0.4.2] - 2025-08-13
 
 ### Added
