@@ -24,6 +24,7 @@ recommended choice for most modern applications.
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import asyncio
+import inspect
 import logging
 import uuid
 from typing import (
@@ -94,15 +95,13 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         # 🏛️ Initialize the base class, passing our own class type so that
         # `from_snapshot` can create the correct `Interpreter` instance.
         super().__init__(machine, interpreter_class=Interpreter)
-        logger.info(
-            "🚀 Initializing Asynchronous Interpreter for '%s'...", self.id
-        )
+        logger.info("🚀 Initializing Asynchronous Interpreter for '%s'...", self.id)
 
         # 🗃️ Concurrency & Task Management
         self.task_manager: TaskManager = TaskManager()
-        self._event_queue: asyncio.Queue[
-            Union[Event, AfterEvent, DoneEvent]
-        ] = asyncio.Queue()
+        self._event_queue: asyncio.Queue[Union[Event, AfterEvent, DoneEvent]] = (
+            asyncio.Queue()
+        )
         self._event_loop_task: Optional[asyncio.Task[None]] = None
 
         logger.info("✅ Asynchronous Interpreter '%s' initialized.", self.id)
@@ -160,9 +159,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             )
         except Exception:
             # 💥 If startup fails, perform a graceful shutdown.
-            logger.error(
-                "💥 Interpreter '%s' failed to start.", self.id, exc_info=True
-            )
+            logger.error("💥 Interpreter '%s' failed to start.", self.id, exc_info=True)
             self.status = "stopped"
             # Ensure the event loop task is cancelled if it was created.
             if self._event_loop_task and not self._event_loop_task.done():
@@ -180,9 +177,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         """
         # 🛡️ Idempotency check: Don't stop if not currently running.
         if self.status != "running":
-            logger.warning(
-                "⚠️ Interpreter '%s' is not running. Skipping stop.", self.id
-            )
+            logger.warning("⚠️ Interpreter '%s' is not running. Skipping stop.", self.id)
             return
 
         logger.info("🛑 Gracefully stopping interpreter '%s'...", self.id)
@@ -225,9 +220,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
     async def send(
         self,
-        event_or_type: Union[
-            str, Dict[str, Any], Event, DoneEvent, AfterEvent
-        ],
+        event_or_type: Union[str, Dict[str, Any], Event, DoneEvent, AfterEvent],
         **payload: Any,
     ) -> None:
         """Sends an event to the machine's internal queue for processing.
@@ -383,7 +376,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 )
 
             # 🏃‍♂️ Execute the action, awaiting if it's an async function.
-            if asyncio.iscoroutinefunction(action_callable):
+            if inspect.iscoroutinefunction(action_callable):
                 await action_callable(self, self.context, event, action_def)
             else:
                 action_callable(self, self.context, event, action_def)
@@ -392,9 +385,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
     # 🤖 Asynchronous Task Implementations (Actors, Timers, Services)
     # -------------------------------------------------------------------------
 
-    async def _spawn_actor(
-        self, action_def: ActionDefinition, event: Event
-    ) -> None:
+    async def _spawn_actor(self, action_def: ActionDefinition, event: Event) -> None:
         """Handles the logic for spawning a child state machine actor.
 
         This method resolves the actor's `MachineNode` from the machine's
@@ -460,9 +451,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         # Encapsulation: Delegate cancellation to the dedicated TaskManager.
         await self.task_manager.cancel_by_owner(state.id)
 
-    async def _after_timer_task(
-        self, delay_sec: float, event: AfterEvent
-    ) -> None:
+    async def _after_timer_task(self, delay_sec: float, event: AfterEvent) -> None:
         """Coroutine that waits for a delay and then sends an `AfterEvent`.
 
         This is the actual task body for a timed transition (`after`).
@@ -488,9 +477,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             )
             raise  # Re-raise to ensure the task is properly cleaned up.
 
-    def _after_timer(
-        self, delay_sec: float, event: AfterEvent, owner_id: str
-    ) -> None:
+    def _after_timer(self, delay_sec: float, event: AfterEvent, owner_id: str) -> None:
         """Creates and registers a background task for a delayed `AfterEvent`.
 
         Args:
