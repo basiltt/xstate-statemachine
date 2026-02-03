@@ -22,7 +22,7 @@
 # -----------------------------------------------------------------------------
 import logging
 import unittest
-from typing import Any, List, Set
+from typing import Any, List, Optional, Set
 from unittest.mock import MagicMock
 
 # -----------------------------------------------------------------------------
@@ -71,22 +71,16 @@ class TestPlugins(unittest.TestCase):
         try:
             plugin.on_interpreter_start(interpreter=mock_interpreter)
             plugin.on_interpreter_stop(interpreter=mock_interpreter)
-            plugin.on_event_received(
-                interpreter=mock_interpreter, event=Event("TEST")
-            )
+            plugin.on_event_received(interpreter=mock_interpreter, event=Event("TEST"))
             plugin.on_transition(
                 interpreter=mock_interpreter,
                 from_states=set(),
                 to_states=set(),
                 transition=mock_transition,
             )
-            plugin.on_action_execute(
-                interpreter=mock_interpreter, action=mock_action
-            )
+            plugin.on_action_execute(interpreter=mock_interpreter, action=mock_action)
         except Exception as ex:
-            self.fail(
-                f"❌ PluginBase methods raised an unexpected exception: {ex}"
-            )
+            self.fail(f"❌ PluginBase methods raised an unexpected exception: {ex}")
 
     def test_plugin_base_with_no_overrides(self) -> None:
         """A subclass with no overrides should function like the base class."""
@@ -109,15 +103,11 @@ class TestPlugins(unittest.TestCase):
 
     def test_plugin_method_raising_exception(self) -> None:
         """An exception in a plugin should not halt the test suite."""
-        logger.info(
-            "🧪 Testing that exceptions from plugins are propagated correctly."
-        )
+        logger.info("🧪 Testing that exceptions from plugins are propagated correctly.")
 
         # 📋 Arrange: A plugin designed to fail.
         class FailingPlugin(PluginBase):
-            def on_interpreter_start(
-                self, _interpreter: Interpreter | None
-            ) -> None:
+            def on_interpreter_start(self, _interpreter: Optional[Interpreter]) -> None:
                 raise ValueError("Plugin failed")
 
         plugin = FailingPlugin()
@@ -171,10 +161,12 @@ class TestPlugins(unittest.TestCase):
         try:
             # ✅ FIX: Ignore type errors for passing subclasses.
             inspector.on_event_received(
-                mock_interp, AfterEvent(type="after.1000.state")  # type: ignore
+                mock_interp,
+                AfterEvent(type="after.1000.state"),  # type: ignore
             )
             inspector.on_event_received(
-                mock_interp, DoneEvent(type="done.invoke.svc", data=None, src="svc")  # type: ignore
+                mock_interp,
+                DoneEvent(type="done.invoke.svc", data=None, src="svc"),  # type: ignore
             )
         except Exception as e:
             self.fail(f"❌ Inspector failed on special event types: {e}")
@@ -194,9 +186,7 @@ class TestPlugins(unittest.TestCase):
         transition.event = "TEST_EVENT"
 
         # 🚀 Act & Assert: The call should complete without raising any exceptions.
-        inspector.on_transition(
-            mock_interp, {from_state}, {to_state}, transition
-        )
+        inspector.on_transition(mock_interp, {from_state}, {to_state}, transition)
 
     def test_logging_inspector_handles_internal_transition(self) -> None:
         """LoggingInspector should log context changes on internal transitions."""
@@ -212,9 +202,7 @@ class TestPlugins(unittest.TestCase):
         transition.actions = ["someAction"]
 
         # 🚀 Act & Assert: The call should complete without raising any exceptions.
-        inspector.on_transition(
-            mock_interp, {state_node}, {state_node}, transition
-        )
+        inspector.on_transition(mock_interp, {state_node}, {state_node}, transition)
 
     def test_logging_inspector_on_action_execute(self) -> None:
         """Ensures LoggingInspector's on_action_execute method runs without error."""
@@ -238,10 +226,12 @@ class TestPlugins(unittest.TestCase):
         # ✅ FIX: Ignore type errors. The test is intentionally passing non-dict payloads
         # to ensure the inspector handles them without crashing.
         inspector.on_event_received(
-            mock_interp, Event("EVENT_WITH_STRING", payload="a string value")  # type: ignore
+            mock_interp,
+            Event("EVENT_WITH_STRING", payload="a string value"),  # type: ignore
         )
         inspector.on_event_received(
-            mock_interp, Event("EVENT_WITH_INT", payload=123)  # type: ignore
+            mock_interp,
+            Event("EVENT_WITH_INT", payload=123),  # type: ignore
         )
 
     def test_logging_inspector_with_complex_payload(self) -> None:
@@ -250,9 +240,7 @@ class TestPlugins(unittest.TestCase):
         # 📋 Arrange
         inspector = LoggingInspector()
         mock_interp = MagicMock(spec=Interpreter)
-        complex_payload = {
-            "user": {"name": "test", "roles": ["admin", "editor"]}
-        }
+        complex_payload = {"user": {"name": "test", "roles": ["admin", "editor"]}}
         # 🚀 Act & Assert: The call should complete without raising any exceptions.
         try:
             inspector.on_event_received(
@@ -271,16 +259,15 @@ class TestPlugins(unittest.TestCase):
         try:
             # ✅ FIX: Ignore type error. This test validates correct handling of a None payload.
             inspector.on_event_received(
-                mock_interp, Event("TEST", payload=None)  # type: ignore
+                mock_interp,
+                Event("TEST", payload=None),  # type: ignore
             )
         except Exception as e:
             self.fail(f"❌ Inspector failed on None payload: {e}")
 
     def test_logging_inspector_with_empty_context(self) -> None:
         """Logging Inspector on_transition should handle an empty context."""
-        logger.info(
-            "🧪 Testing LoggingInspector's on_transition with empty context."
-        )
+        logger.info("🧪 Testing LoggingInspector's on_transition with empty context.")
         # 📋 Arrange
         inspector = LoggingInspector()
         mock_interp = MagicMock(spec=Interpreter)
@@ -294,9 +281,7 @@ class TestPlugins(unittest.TestCase):
 
         # 🚀 Act & Assert: The call should complete without raising any exceptions.
         try:
-            inspector.on_transition(
-                mock_interp, {from_state}, {to_state}, transition
-            )
+            inspector.on_transition(mock_interp, {from_state}, {to_state}, transition)
         except Exception as e:
             self.fail(f"❌ Inspector failed on empty context: {e}")
 
@@ -306,38 +291,34 @@ class TestPlugins(unittest.TestCase):
 
     def test_custom_plugin_hooks_are_callable(self) -> None:
         """A custom plugin's overridden methods should be callable in order."""
-        logger.info(
-            "🧪 Testing that custom plugin hooks are called correctly."
-        )
+        logger.info("🧪 Testing that custom plugin hooks are called correctly.")
         # 📋 Arrange: A list to track the order of method calls.
         call_order: List[str] = []
 
         class CustomPlugin(PluginBase):
             """A test plugin that records the order of hook invocations."""
 
-            def on_interpreter_start(self, _i: Interpreter | None) -> None:
+            def on_interpreter_start(self, _i: Optional[Interpreter]) -> None:
                 call_order.append("start")
 
-            def on_event_received(
-                self, _i: Interpreter | None, _e: Event
-            ) -> None:
+            def on_event_received(self, _i: Optional[Interpreter], _e: Event) -> None:
                 call_order.append("event")
 
             def on_action_execute(
-                self, _i: Interpreter | None, _a: ActionDefinition | None
+                self, _i: Optional[Interpreter], _a: Optional[ActionDefinition]
             ) -> None:
                 call_order.append("action")
 
             def on_transition(
                 self,
-                _i: Interpreter | None,
+                _i: Optional[Interpreter],
                 _fs: Set[StateNode],
                 _ts: Set[StateNode],
                 _t: Any,
             ) -> None:
                 call_order.append("transition")
 
-            def on_interpreter_stop(self, _i: Interpreter | None) -> None:
+            def on_interpreter_stop(self, _i: Optional[Interpreter]) -> None:
                 call_order.append("stop")
 
         plugin = CustomPlugin()
@@ -353,9 +334,7 @@ class TestPlugins(unittest.TestCase):
         plugin.on_interpreter_stop(mock_interpreter)
 
         # ✅ Assert: The hooks were called in the expected sequence.
-        self.assertEqual(
-            call_order, ["start", "event", "action", "transition", "stop"]
-        )
+        self.assertEqual(call_order, ["start", "event", "action", "transition", "stop"])
 
     def test_multiple_plugins_are_called_in_order(self) -> None:
         """Multiple plugins should be called in the order they are added."""
@@ -364,15 +343,11 @@ class TestPlugins(unittest.TestCase):
         call_order: List[str] = []
 
         class PluginA(PluginBase):
-            def on_interpreter_start(
-                self, _interpreter: Interpreter | None
-            ) -> None:
+            def on_interpreter_start(self, _interpreter: Optional[Interpreter]) -> None:
                 call_order.append("A")
 
         class PluginB(PluginBase):
-            def on_interpreter_start(
-                self, _interpreter: Interpreter | None
-            ) -> None:
+            def on_interpreter_start(self, _interpreter: Optional[Interpreter]) -> None:
                 call_order.append("B")
 
         mock_interpreter = MagicMock(spec=Interpreter)
@@ -420,14 +395,12 @@ class TestPlugins(unittest.TestCase):
 
     def test_plugin_receives_correct_interpreter_instance(self) -> None:
         """The interpreter instance passed to a plugin hook should be correct."""
-        logger.info(
-            "🧪 Testing that plugins receive the correct interpreter instance."
-        )
+        logger.info("🧪 Testing that plugins receive the correct interpreter instance.")
 
         # 📋 Arrange: A plugin that captures the ID of the interpreter it receives.
         class MyPlugin(PluginBase):
             def __init__(self) -> None:
-                self.captured_id: str | None = None
+                self.captured_id: Optional[str] = None
 
             def on_interpreter_start(self, interpreter: Interpreter) -> None:
                 self.captured_id = interpreter.id
