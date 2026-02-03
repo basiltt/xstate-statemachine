@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "xstate-statemachine"
-version = "0.4.2"
+version = "0.4.3"
 authors = [
   { name="Basil T T", email="tt.basil@gmail.com" },
 ]
