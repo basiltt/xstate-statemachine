@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Python 3.14 Support**: Added full support for Python 3.14 with comprehensive testing across all supported Python versions (3.9-3.14).
   - Verified compatibility with 2,754 tests across Python 3.9, 3.10, 3.11, 3.12, 3.13, and 3.14.
   - Updated project classifiers to include Python 3.14.
+- **Enhanced Test Coverage for `logic_providers`**: Added comprehensive tests for `logic_providers` camelCase to snake_case auto-discovery feature (Issue #17).
+  - Tests verify that camelCase action names in JSON (e.g., `storeJobParams`) are correctly mapped to snake_case Python methods (e.g., `store_job_params`).
+  - Added end-to-end async execution tests to ensure actions are properly invoked through the interpreter.
 
 ### Changed
 
