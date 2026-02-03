@@ -31,8 +31,7 @@
     - [Hierarchical Machine Generation](#cli-hierarchy)
     - [One vs Two Files](#cli-file-count)
     - [Sync vs Async Templates](#cli-async-sync)
-21.  **[Upgrade Notes: 0.4.0 → 0.4.1](#upgrade-notes-041)**
-22.  **[API Reference](#api-reference)**
+21.  **[API Reference](#api-reference)**
 23.  **[Advanced Concepts](#advanced-concepts)**
 24.  **[Best Practices](#best-practices)**
 25.  **[FAQ](#faq)**
@@ -147,22 +146,22 @@ USER_CLICKED_SUBMIT
 
 ## 🚀 Key Features<a name="key-features"></a>
 
-| Feature | Why You Care | New in 0.4.1? | Best For |
-| :--- | :--- | :--: | :--- |
-| **100% XState JSON Compatibility** | Design visually, export JSON, run in Python. |  | Teams that collaborate in the Stately Editor. |
-| **Async & Sync Interpreters** | One config, two runtimes (asyncio or blocking). | ⬆️ **SyncInterpreter now non‑blocking for actor spawn & multi‑timers** | Apps that need to run in CLI scripts *and* async servers. |
-| **Multiple `after` Timers per State (Sync too!)** | Fine-grained timing logic without hacks. | ✅ | Complex timeout/backoff flows in synchronous environments. |
-| **True Actor Model (spawn_* actions)** | Compose systems from smaller machines; isolate concurrency. | ⬆️ Sync spawn now uses background threads | IoT fleets, game entities, micro‑workflows. |
-| **Hierarchical & Parallel States** | Model nested flows or concurrent regions explicitly. |  | UIs, wizards, orchestration logic. |
-| **Declarative `invoke` Services** | Async tasks with automatic cancellation & `onDone`/`onError`. |  | API calls, DB work, long-running jobs. |
-| **Smart CLI Code Generator (`xsm`)** | Zero-boilerplate logic/runner stubs from JSON. | ✅ Aliases, hierarchy detection, safer prompts, smarter paths | Fast scaffolding, consistent team patterns. |
-| **Auto Logic Binding (LogicLoader)** | Drop in modules/classes; names are auto-wired. | ⬆️ No special-casing `spawn_*` | Big projects with many logic files. |
-| **Deep Plugin Hooks** | Observe guards, services, transitions in detail. |  | Telemetry, tracing, testing. |
-| **Snapshots & Restoration** | Time-travel debugging, crash recovery. |  | Long-lived workflows, CI golden tests. |
-| **Diagram Exporters** | Mermaid / PlantUML from code. |  | Up-to-date docs in CI/CD. |
+| Feature | Why You Care | Best For |
+| :--- | :--- | :--- |
+| **100% XState JSON Compatibility** | Design visually, export JSON, run in Python. | Teams that collaborate in the Stately Editor. |
+| **Async & Sync Interpreters** | One config, two runtimes (asyncio or blocking). | Apps that need to run in CLI scripts *and* async servers. |
+| **Multiple `after` Timers per State** | Fine-grained timing logic without hacks. | Complex timeout/backoff flows in synchronous environments. |
+| **True Actor Model (spawn_* actions)** | Compose systems from smaller machines; isolate concurrency. | IoT fleets, game entities, micro‑workflows. |
+| **Hierarchical & Parallel States** | Model nested flows or concurrent regions explicitly. | UIs, wizards, orchestration logic. |
+| **Declarative `invoke` Services** | Async tasks with automatic cancellation & `onDone`/`onError`. | API calls, DB work, long-running jobs. |
+| **Smart CLI Code Generator (`xsm`)** | Zero-boilerplate logic/runner stubs from JSON. | Fast scaffolding, consistent team patterns. |
+| **Auto Logic Binding (LogicLoader)** | Drop in modules/classes; names are auto-wired. | Big projects with many logic files. |
+| **Deep Plugin Hooks** | Observe guards, services, transitions in detail. | Telemetry, tracing, testing. |
+| **Snapshots & Restoration** | Time-travel debugging, crash recovery. | Long-lived workflows, CI golden tests. |
+| **Diagram Exporters** | Mermaid / PlantUML from code. | Up-to-date docs in CI/CD. |
 
-> 🔥 **Headline for 0.4.1**
-> *SyncInterpreter grows up:* non‑blocking actor spawning in threads, multiple concurrent `after` timers per state, and a cleaner shutdown sequence.
+> 🔥 **Powerful Features**
+> *SyncInterpreter:* Non‑blocking actor spawning in threads, multiple concurrent `after` timers per state, and a cleaner shutdown sequence.
 > *CLI super-powers:* `xsm`, subcommand aliases, interactive parent detection, stricter arg parsing, and more robust generated runners.
 ---
 
@@ -828,7 +827,7 @@ When an event matches a transition, the library distinguishes between two types:
 
 -   **External Transition**: An external transition will exit the current state (running exit actions, cancelling timers/services) and re-enter a new state (or the same one), running all entry actions. This occurs whenever a transition **has a `target`**.
 
-#### The `reenter` Flag for Self-Transitions (New in 0.4.2)
+#### The `reenter` Flag for Self-Transitions
 
 By default, a self-transition (where the `target` is the same as the source state) is **internal**. However, you can force it to be **external** by adding `"reenter": true`. This provides explicit control, aligning with XState v5.
 
@@ -989,8 +988,8 @@ Rule of thumb 🧘: **Pure guards** & **deterministic actions** → easier tests
 | `after: { "1000": { "target": "retry", "actions": "backoff" } }` | Schedules an internal event, then cancels it automatically if the state exits early |
 | `after: { "…": { …, "guard": "stillRelevant" } }` | Evaluates guard *right before* firing—handy for stale timers |
 
-> **SyncInterpreter parity (0.4.1):**
-> Everything you see here—*including multiple `after` entries per state*—now works in the synchronous engine.
+> **SyncInterpreter parity:**
+> Everything you see here—including multiple `after` entries per state—works in the synchronous engine.
 > Each `after` gets a dedicated thread-backed timer and a unique ID for cancellation. No extra code from you.
 
 > **SyncInterpreter parity addendum – guard timing:**
@@ -1143,8 +1142,8 @@ resource‑safe—no leaks, no zombies, no surprises. 🧹🔒
 
 While `invoke` is perfect for calling a single function, the **Actor Model** is for when you need to manage an entire, long-living, stateful process as a child of your main machine. Actors are simply other state machine interpreters that are "spawned" and managed by a parent.
 
-> **0.4.1 Upgrade – SyncInterpreter Spawn:**
-> Synchronous parents can now spawn child actors **without blocking**.
+> **SyncInterpreter Spawn:**
+> Synchronous parents can spawn child actors **without blocking**.
 > Under the hood, each child `SyncInterpreter` runs in its own `threading.Thread`, while the parent keeps processing events.
 
 This pattern is the key to unlocking massive architectural freedom and managing complex concurrency with grace. It is fully supported in **both** the `Interpreter` (async) and `SyncInterpreter` (sync).
@@ -1529,7 +1528,7 @@ Your library supports two primary ways of organizing your logic: **functional** 
 | **`spawn` Actors**| Non-blocking (`asyncio.create_task`) | Non-blocking (`threading.Thread`) or Blocking (inline) |
 
 
-#### 🚀 What’s New in 0.4.1 for the SyncInterpreter
+#### 🚀 What’s SyncInterpreter Features
 
 - **Non‑blocking actor spawning:** `spawn_*` actions now create child `SyncInterpreter`s in **background threads**, keeping the parent responsive.
 - **Multiple concurrent `after` timers per state:** You can declare several delays in the same state; each gets its own handle and unique ID.
@@ -1656,7 +1655,7 @@ Skip `xsm` when you…
 
 > TL;DR — `xsm` is your **scaffolder + guard rail** for event‑driven, state-charted Python.
 
-The CLI went through a sizeable upgrade in **0.4.1**:
+The CLI provides these capabilities:
 
 - The main entry-point is now **`xsm`** (short & sweet).
 > **Note:** The legacy console entry point `xstate-statemachine` is **deprecated** and may be removed in a future release. New installs expose only `xsm`. If you still call the old name, pin to an older version or add a shell alias.
@@ -1798,7 +1797,7 @@ Because the generated code is deterministic, you can:
 - Run `pytest` on your generated package right away—nothing is “magic”.
 
 
-That’s the CLI in 0.4.1—faster, stricter, and hierarchy-aware. 🚀
+That’s the CLI—faster, stricter, and hierarchy-aware.
 
 
 ---
@@ -1842,7 +1841,7 @@ logger.info("✅ Logging initialised!")
 
 ```
 
-> Since v0.4.1, the generator emits stricter, standardized `logger.info(...)` messages (wording fixed, emojis intact); if you grep/assert on logs, update expectations — core logging behavior is unchanged.
+>  the generator emits stricter, standardized `logger.info(...)` messages (wording fixed, emojis intact); if you grep/assert on logs, update expectations — core logging behavior is unchanged.
 
 
 
@@ -2129,26 +2128,7 @@ In [13]: service = await Interpreter.from_snapshot(snap, machine).start()
 
 🚀 **You now have an always‑on laboratory for your state machines—no rebuilds, no deployment cycles, just pure interactive discovery. Happy tinkering!**
 
-## 🔼 Upgrade Notes: 0.4.0 → 0.4.1<a name="upgrade-notes-041"></a>
 
-**No breaking API removals**, but a few behaviour tweaks to be aware of:
-
-### SyncInterpreter
-- **Actor spawning no longer blocks** the parent. If you expected strict in-order execution, add explicit joins or guards.
-- **Multiple `after` timers per state** can now fire; ensure your guards/actions handle overlapping timers if you add many.
-
-### CLI
-- **Command renamed** to `xsm`. The legacy `xstate-statemachine` console entry point is deprecated and may disappear in a future release—migrate scripts to `xsm`.
-- **Interactive hierarchy guesser**: If you pass multiple JSONs without `--json-parent`, you’ll see a prompt. Use `-f` to skip overwrites, not prompts.
-- **Strict arg parsing**: Abbreviated flags no longer work; typo’d flags now error (good!).
-
-### Generated Code
-- **Keyword auto-fix**: If an action/guard/service name is a Python keyword, it’s renamed (e.g., `class` → `class_`). Search for `# alias for JSON name` comments.
-- **Runner path resolution**: Scripts now try two locations for the JSON. If you were relying on `Path.cwd()`, adjust accordingly.
-
-If you used any internal/private APIs, re-run your tests—internals around threading and timer bookkeeping have changed for robustness.
-
----
 
 ## 📑 API Reference<a name="api-reference"></a>
 
@@ -2563,9 +2543,9 @@ def test_timer_transition(light_machine):
 | **Where is the GUI inspector?** | On the roadmap. Use Stately web simulator + `LoggingInspector` meanwhile. |
 | **Is there a code-gen for Python from Stately?** | Not needed—export JSON → run. Zero translation. |
 | **Why did the CLI command change to `xsm`?** | To make everyday usage faster and cleaner. It’s still the same project—just a friendlier binary. |
-| **Can the SyncInterpreter now spawn actors without blocking?** | Yes! As of 0.4.1, children run in background threads. The parent keeps processing events synchronously. |
+| **Can the SyncInterpreter now spawn actors without blocking?** | Yes! Children run in background threads. The parent keeps processing events synchronously. |
 | **How many `after` timers can I declare in one state (Sync)?** | As many as you need. Each gets its own handle; all are cancelled on state exit. |
-| **The generator renamed one of my functions to `if_` — why?** | Your JSON used a Python keyword. 0.4.1 auto-appends `_` to keep code valid. The original JSON name is kept as an alias. |
+| **The generator renamed one of my functions to `if_` — why?** | Your JSON used a Python keyword. The generator auto-appends `_` to keep code valid. The original JSON name is kept as an alias. |
 
 ---
 

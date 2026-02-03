@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Enhanced Test Coverage for `logic_providers`**: Added comprehensive tests for `logic_providers` camelCase to snake_case auto-discovery feature (Issue #17).
   - Tests verify that camelCase action names in JSON (e.g., `storeJobParams`) are correctly mapped to snake_case Python methods (e.g., `store_job_params`).
   - Added end-to-end async execution tests to ensure actions are properly invoked through the interpreter.
+- **Documentation Improvements**: Cleaned up README.md by removing outdated version-specific references ("New in 0.4.1", "Headline for 0.4.1", "Upgrade Notes: 0.4.0 → 0.4.1") to make documentation more maintainable and version-agnostic.
 
 ### Changed
 
