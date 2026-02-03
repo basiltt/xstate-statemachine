@@ -1,8 +1,6 @@
-# pyproject.toml
-
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "xstate-statemachine"
@@ -12,21 +10,87 @@ authors = [
 ]
 description = "A robust Python library for parsing and running XState JSON state machines."
 readme = "README.md"
-requires-python = ">=3.8"
-license = { text = "MIT" } # Modern PEP 621 license format
+requires-python = ">=3.9"
+license = { text = "MIT" }
 classifiers = [
-    "Programming Language :: Python :: 3",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
-    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/basiltt/xstate-statemachine"
+Homepage = "https://github.com/basiltt/xstate-statemachine"
 "Bug Tracker" = "https://github.com/basiltt/xstate-statemachine/issues"
 
-# 💡 This is the key addition for the CLI tool, following PEP 621.
-#    Poetry will correctly interpret this and create the executable.
 [project.scripts]
 xsm = "xstate_statemachine.cli.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-cov>=6.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pre-commit>=4.0.0",
+]
+lint = [
+    "black>=25.1.0",
+    "flake8>=7.1.0",
+    "flake8-isort>=6.1.0",
+]
+test = [
+    "pytest>=8.3.0",
+    "pytest-cov>=6.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/xstate_statemachine"]
+
+[tool.black]
+line-length = 79
+target-version = ['py39', 'py310', 'py311', 'py312', 'py313', 'py314']
+include = '\.pyi?$'
+exclude = '''
+/(\n    \.git\n  | \.venv\n  | venv\n  | __pycache__\n  | build\n  | dist\n  | \.pytest_cache\n  | \.env\n)/
+'''
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["src/xstate_statemachine"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
