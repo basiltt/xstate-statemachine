@@ -708,3 +708,89 @@ def _compile_config(
         result["context"] = context
 
     return result
+
+
+# -----------------------------------------------------------------
+# ⚙️ Logic Compiler
+# -----------------------------------------------------------------
+
+
+def _compile_logic_from_functions(
+    actions: List[Callable],
+    guards: List[Callable],
+    services: List[Callable],
+) -> MachineLogic:
+    """Compile decorated/raw callables into a MachineLogic.
+
+    For each callable, uses the ``_xsm_name`` attribute if
+    present (set by ``@action``/``@guard``/``@service``),
+    otherwise falls back to ``_snake_to_camel(fn.__name__)``.
+
+    Args:
+        actions: List of action callables.
+        guards: List of guard callables.
+        services: List of service callables.
+
+    Returns:
+        A ``MachineLogic`` instance with populated dicts.
+    """
+    action_dict: Dict[str, Callable] = {}
+    guard_dict: Dict[str, Callable] = {}
+    service_dict: Dict[str, Callable] = {}
+
+    for fn in actions:
+        name = getattr(fn, "_xsm_name", _snake_to_camel(fn.__name__))
+        action_dict[name] = fn
+    for fn in guards:
+        name = getattr(fn, "_xsm_name", _snake_to_camel(fn.__name__))
+        guard_dict[name] = fn
+    for fn in services:
+        name = getattr(fn, "_xsm_name", _snake_to_camel(fn.__name__))
+        service_dict[name] = fn
+
+    return MachineLogic(
+        actions=action_dict,
+        guards=guard_dict,
+        services=service_dict,
+    )
+
+
+def _compile_logic_from_instance(
+    instance: object,
+    decorated: List[Callable],
+) -> MachineLogic:
+    """Compile class instance methods into a MachineLogic.
+
+    Uses ``functools.partial(method, instance)`` to bind
+    ``self`` so the resulting callables match the expected
+    signatures (without an explicit ``self`` parameter).
+
+    Args:
+        instance: The object instance whose methods are
+            being compiled.
+        decorated: List of unbound decorated methods
+            (with ``_xsm_type`` and ``_xsm_name``).
+
+    Returns:
+        A ``MachineLogic`` instance with bound callables.
+    """
+    action_dict: Dict[str, Callable] = {}
+    guard_dict: Dict[str, Callable] = {}
+    service_dict: Dict[str, Callable] = {}
+
+    for fn in decorated:
+        name = fn._xsm_name
+        xsm_type = fn._xsm_type
+        bound = functools.partial(fn, instance)
+        if xsm_type == "action":
+            action_dict[name] = bound
+        elif xsm_type == "guard":
+            guard_dict[name] = bound
+        elif xsm_type == "service":
+            service_dict[name] = bound
+
+    return MachineLogic(
+        actions=action_dict,
+        guards=guard_dict,
+        services=service_dict,
+    )

@@ -12,6 +12,8 @@ import unittest
 from xstate_statemachine.pythonic import (
     _snake_to_camel,
     _compile_config,
+    _compile_logic_from_functions,
+    _compile_logic_from_instance,
     State,
     Transition,
     TransitionGroup,
@@ -24,6 +26,7 @@ from xstate_statemachine.exceptions import (
     InvalidConfigError,
     NotSupportedError,
 )
+from xstate_statemachine import MachineLogic
 
 
 class TestSnakeToCamel(unittest.TestCase):
@@ -555,3 +558,78 @@ class TestCompileConfig(unittest.TestCase):
         )
         on_go = config["states"]["parent"]["states"]["c1"]["on"]["GO"]
         self.assertEqual(on_go["target"], "other")
+
+
+class TestCompileLogic(unittest.TestCase):
+    """Tests for logic compilation functions."""
+
+    def test_compile_from_decorated_functions(self):
+        @action
+        def my_action(i, ctx, e, a):
+            pass
+
+        @guard
+        def my_guard(ctx, e):
+            return True
+
+        @service
+        def my_service(i, ctx, e):
+            pass
+
+        logic = _compile_logic_from_functions(
+            actions=[my_action],
+            guards=[my_guard],
+            services=[my_service],
+        )
+        self.assertIsInstance(logic, MachineLogic)
+        self.assertIn("myAction", logic.actions)
+        self.assertIn("myGuard", logic.guards)
+        self.assertIn("myService", logic.services)
+
+    def test_compile_from_undecorated_functions(self):
+        def increment_counter(i, ctx, e, a):
+            pass
+
+        logic = _compile_logic_from_functions(
+            actions=[increment_counter],
+            guards=[],
+            services=[],
+        )
+        self.assertIn("incrementCounter", logic.actions)
+
+    def test_compile_from_instance_binds_self(self):
+        class MyLogic:
+            def __init__(self):
+                self.called = False
+
+            @action
+            def do_thing(self, i, ctx, e, a):
+                self.called = True
+
+        instance = MyLogic()
+        decorated = [
+            v for v in vars(MyLogic).values() if hasattr(v, "_xsm_type")
+        ]
+        logic = _compile_logic_from_instance(
+            instance=instance, decorated=decorated
+        )
+        # The bound function should work without `self`
+        bound_fn = logic.actions["doThing"]
+        bound_fn(None, {}, None, None)
+        self.assertTrue(instance.called)
+
+    def test_compile_guard_from_instance(self):
+        class MyLogic:
+            @guard
+            def is_ready(self, ctx, e):
+                return True
+
+        instance = MyLogic()
+        decorated = [
+            v for v in vars(MyLogic).values() if hasattr(v, "_xsm_type")
+        ]
+        logic = _compile_logic_from_instance(
+            instance=instance, decorated=decorated
+        )
+        bound_fn = logic.guards["isReady"]
+        self.assertTrue(bound_fn({}, None))
