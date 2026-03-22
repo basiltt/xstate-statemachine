@@ -87,6 +87,7 @@ def generate_error_handling(
     component_type: str,
     body_lines: List[str],
     indent: str,
+    log: bool = True,
 ) -> str:
     """Wrap body lines in try/except with logger.exception.
 
@@ -95,23 +96,33 @@ def generate_error_handling(
         component_type: One of 'action', 'guard', 'service'.
         body_lines: The lines of code to wrap.
         indent: The indentation string (e.g. '    ').
+        log: Whether logging is enabled (controls logger.exception usage).
 
     Returns:
         The wrapped code as a string.
     """
     lines = [f"{indent}try:"]
+    # Track whether the try body contains any executable statements
+    has_statement = False
     for line in body_lines:
         stripped = line.lstrip()
         if stripped:
             lines.append(f"{indent}    {stripped}")
+            # Comments are not executable statements
+            if not stripped.startswith("#"):
+                has_statement = True
         else:
             lines.append("")
+    # Ensure the try block has at least one executable statement
+    if not has_statement:
+        lines.append(f"{indent}    pass")
     lines.append(f"{indent}except Exception:")
-    lines.append(
-        f"{indent}    logger.exception("
-        f'"{component_type.capitalize()} '
-        f"'{original_name}' failed\")"
-    )
+    if log:
+        lines.append(
+            f"{indent}    logger.exception("
+            f'"{component_type.capitalize()} '
+            f"'{original_name}' failed\")"
+        )
     lines.append(f"{indent}    raise")
     return "\n".join(lines)
 

@@ -144,6 +144,19 @@ def _determine_output_paths(
     return paths
 
 
+def _safe_print(msg: str) -> None:
+    """Print a message safely, handling encoding errors on Windows.
+
+    On Windows with non-UTF-8 console encodings (e.g. cp1252), emoji
+    characters cause UnicodeEncodeError.  This helper falls back to
+    ASCII-safe output when that happens.
+    """
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        print(msg.encode("ascii", errors="replace").decode("ascii"))
+
+
 def _write_output_files(
     file_count: int,
     paths: Dict[str, Path],
@@ -165,7 +178,7 @@ def _write_output_files(
         target_path = paths["single_file"]
         logger.info(f"💾 Writing combined code to: {target_path}")
         target_path.write_text(combined_code, encoding="utf-8")
-        print(f"✅ Generated combined file: {target_path}")
+        _safe_print(f"Generated combined file: {target_path}")
     else:
         # ✌️ Write to separate logic and runner files
         logic_path, runner_path = paths["logic_file"], paths["runner_file"]
@@ -173,8 +186,8 @@ def _write_output_files(
         logic_path.write_text(logic_code, encoding="utf-8")
         logger.info(f"💾 Writing runner code to: {runner_path}")
         runner_path.write_text(runner_code, encoding="utf-8")
-        print(f"✅ Generated logic file: {logic_path}")
-        print(f"✅ Generated runner file: {runner_path}")
+        _safe_print(f"Generated logic file: {logic_path}")
+        _safe_print(f"Generated runner file: {runner_path}")
 
 
 # -----------------------------------------------------------------------------
@@ -386,7 +399,8 @@ def _merge_code_for_single_file(logic_code: str, runner_code: str) -> str:
     """Intelligently merges logic and runner code into a single file string.
 
     It de-duplicates imports and logger configurations to create a clean,
-    runnable single-file script.
+    runnable single-file script.  Handles both single-line and multi-line
+    (parenthesized) import statements.
 
     Args:
         logic_code (str): The generated logic code.
@@ -395,44 +409,69 @@ def _merge_code_for_single_file(logic_code: str, runner_code: str) -> str:
     Returns:
         str: The combined and cleaned code as a single string.
     """
+
+    def _split_imports_and_body(
+        lines: List[str],
+    ) -> Tuple[List[str], List[str]]:
+        """Split source lines into import lines and body lines.
+
+        Multi-line imports like ``from x import (\\n  a,\\n  b,\\n)`` are
+        collected as a *single* joined string so they can be de-duplicated
+        as a unit.
+        """
+        import_strs: List[str] = []
+        body: List[str] = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if line.startswith("import ") or line.startswith("from "):
+                # Check for multi-line import (opening paren without close)
+                if "(" in line and ")" not in line:
+                    # Gather continuation lines until closing paren
+                    multi = [line]
+                    i += 1
+                    while i < len(lines):
+                        multi.append(lines[i])
+                        if ")" in lines[i]:
+                            i += 1
+                            break
+                        i += 1
+                    import_strs.append("\n".join(multi))
+                else:
+                    import_strs.append(line)
+                    i += 1
+            else:
+                body.append(line)
+                i += 1
+        return import_strs, body
+
     logic_lines = logic_code.splitlines()
     runner_lines = runner_code.splitlines()
 
-    # 🕵️‍♂️ Find all unique top-level import statements from both parts.
-    # Only match lines at column 0 to avoid stripping in-function imports.
-    imports = sorted(
-        list(
-            set(
-                line
-                for line in logic_lines + runner_lines
-                if (line.startswith("import ") or line.startswith("from "))
-            )
-        )
-    )
+    # 🕵️‍♂️ Collect all unique top-level import blocks from both parts.
+    logic_imports, logic_body = _split_imports_and_body(logic_lines)
+    runner_imports, runner_body = _split_imports_and_body(runner_lines)
 
-    # 🧠 Extract the logic part, skipping its top-level imports.
-    # The logic part should contain the logger definition.
-    logic_body = [
-        line
-        for line in logic_lines
-        if not (line.startswith("import ") or line.startswith("from "))
-    ]
+    # De-duplicate imports while preserving order
+    seen: Set[str] = set()
+    unique_imports: List[str] = []
+    for imp in logic_imports + runner_imports:
+        if imp not in seen:
+            seen.add(imp)
+            unique_imports.append(imp)
+    imports = sorted(unique_imports)
 
-    # 🏃 Extract the runner part, skipping top-level imports and logger setup.
+    # 🏃 Strip logger setup from runner body to avoid duplicates.
     runner_body = [
         line
-        for line in runner_lines
-        if not (
-            line.startswith("import ")
-            or line.startswith("from ")
-            or line.startswith("logging.basicConfig")
-        )
+        for line in runner_body
+        if not (line.startswith("logging.basicConfig"))
         and "logger = logging.getLogger" not in line
     ]
 
     # 🧩 Assemble the final merged code
     # Find header from the logic file
-    header_lines = []
+    header_lines: List[str] = []
     for line in logic_lines:
         if line.strip().startswith("#") or not line.strip():
             header_lines.append(line)

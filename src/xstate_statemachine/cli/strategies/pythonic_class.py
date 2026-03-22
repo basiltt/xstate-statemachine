@@ -702,6 +702,7 @@ class PythonicClassStrategy(BaseStrategy):
                         component_type,
                         body_lines,
                         indent + "    ",
+                        log=log,
                     )
                 )
 

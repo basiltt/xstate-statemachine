@@ -524,7 +524,11 @@ class PythonicBuilderStrategy(BaseStrategy):
 
                 code_lines.append(
                     generate_error_handling(
-                        original, component_type, body_lines, "    "
+                        original,
+                        component_type,
+                        body_lines,
+                        "    ",
+                        log=log,
                     )
                 )
 

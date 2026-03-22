@@ -95,6 +95,10 @@ class ClassJsonStrategy(BaseStrategy):
                 )
             )
 
+        # -- empty class guard ----------------------------------------
+        if not ctx.actions and not ctx.guards and not ctx.services:
+            parts.append(f"{indent}pass")
+
         return "\n".join(parts)
 
     # -----------------------------------------------------------------
@@ -571,7 +575,11 @@ class ClassJsonStrategy(BaseStrategy):
 
                 code_lines.append(
                     generate_error_handling(
-                        original, component_type, body_lines, indent + "    "
+                        original,
+                        component_type,
+                        body_lines,
+                        indent + "    ",
+                        log=log,
                     )
                 )
 
