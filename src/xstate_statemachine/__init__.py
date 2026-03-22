@@ -106,7 +106,7 @@ from .exceptions import (
 # -----------------------------------------------------------------------------
 
 # 📦 The official version number for the library.
-__version__ = "0.4.2"
+__version__ = "0.4.3"
 
 # -----------------------------------------------------------------------------
 # 🌐 Public API Definition

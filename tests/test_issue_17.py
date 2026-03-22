@@ -47,7 +47,12 @@ class TestLogicProvidersCamelCase(unittest.IsolatedAsyncioTestCase):
                 },
                 "running": {
                     "entry": ["validateParams"],
-                    "on": {"COMPLETE": {"target": "completed", "guard": "canRetry"}},
+                    "on": {
+                        "COMPLETE": {
+                            "target": "completed",
+                            "guard": "canRetry",
+                        }
+                    },
                 },
                 "completed": {"type": "final"},
             },

@@ -161,26 +161,26 @@ def fetch_data(i, ctx: Dict, e: Event) -> Dict:
 ```python
 def process_event(self, event: Event) -> None:
     """Process an event through the state machine.
-    
+
     Args:
         event: The event to process, containing type and payload.
-        
+
     Returns:
         None
-        
+
     Raises:
         StateNotFoundError: If transition target doesn't exist.
     """
     # 🚀 Start processing the event
     logger.debug("Processing event: %s", event.type)
-    
+
     # 💡 Check if we're in a valid state to process events
     if self.status != "running":
         # ⚠️ Machine not running, drop event
         return
-    
+
     # ... processing logic
-    
+
     # ✅ Event processing complete
 ```
 
@@ -314,12 +314,12 @@ machine = create_machine(config, logic_modules=[logic_module])
 class MyMachineLogic:
     def __init__(self):
         self.api_client = APIClient()
-    
+
     def fetch_data(self, i, ctx, e, a):
         # Access instance state
         result = self.api_client.get()
         ctx["data"] = result
-    
+
     def is_valid(self, ctx, e) -> bool:
         return ctx.get("data") is not None
 
@@ -405,7 +405,7 @@ def spawn_worker(i, ctx, e, a):
     child_config = {...}
     child_logic = MachineLogic(...)
     child_machine = create_machine(child_config, logic=child_logic)
-    
+
     # Spawn - creates new interpreter
     i._spawn_actor("worker", child_machine)
 
@@ -438,17 +438,17 @@ class TestMyMachine(unittest.TestCase):
             }
         }
         self.machine = create_machine(self.config)
-    
+
     def test_transition(self):
         """Test basic state transition."""
         interpreter = SyncInterpreter(self.machine).start()
-        
+
         self.assertIn("testMachine.idle", interpreter.current_state_ids)
-        
+
         interpreter.send("START")
-        
+
         self.assertIn("testMachine.running", interpreter.current_state_ids)
-        
+
         interpreter.stop()
 ```
 
@@ -463,18 +463,18 @@ class TestAsyncMachine(unittest.IsolatedAsyncioTestCase):
         """Set up async test fixtures."""
         self.machine = create_machine(self.config)
         self.interpreter = await Interpreter(self.machine).start()
-    
+
     async def asyncTearDown(self):
         """Clean up async resources."""
         await self.interpreter.stop()
-    
+
     async def test_async_service(self):
         """Test async service invocation."""
         await self.interpreter.send("FETCH")
-        
+
         # Wait for service to complete
         await asyncio.sleep(0.1)
-        
+
         self.assertIn("success", self.interpreter.current_state_ids)
 ```
 
@@ -486,15 +486,15 @@ from unittest.mock import AsyncMock, patch
 async def test_with_mocked_service(self):
     """Test with mocked external service."""
     mock_service = AsyncMock(return_value={"status": "ok"})
-    
+
     logic = MachineLogic(
         services={"fetchData": mock_service}
     )
     machine = create_machine(self.config, logic=logic)
-    
+
     interpreter = await Interpreter(machine).start()
     await interpreter.send("FETCH")
-    
+
     mock_service.assert_called_once()
     self.assertIn("success", interpreter.current_state_ids)
 ```
@@ -519,23 +519,23 @@ def test_guard_blocks_transition(self):
             "next": {}
         }
     }
-    
+
     def is_allowed(ctx, e) -> bool:
         return ctx.get("allowed", False)
-    
+
     logic = MachineLogic(guards={"isAllowed": is_allowed})
     machine = create_machine(config, logic=logic)
-    
+
     interpreter = SyncInterpreter(machine).start()
     interpreter.send("GO")
-    
+
     # Should still be in idle (guard blocked)
     self.assertIn("idle", interpreter.current_state_ids)
-    
+
     # Update context and try again
     interpreter.context["allowed"] = True
     interpreter.send("GO")
-    
+
     self.assertIn("next", interpreter.current_state_ids)
 ```
 
@@ -547,15 +547,15 @@ def test_snapshot_restore(self):
     interpreter = SyncInterpreter(self.machine).start()
     interpreter.send("PROGRESS")
     interpreter.send("PROGRESS")
-    
+
     # Capture snapshot
     snapshot = interpreter.get_snapshot()
-    
+
     # Verify snapshot contains expected data
     import json
     data = json.loads(snapshot)
     self.assertEqual(data["context"]["progress"], 2)
-    
+
     # Stop and restore (async only)
     # restored = await Interpreter.from_snapshot(snapshot, self.machine).start()
 ```
@@ -670,15 +670,15 @@ from xstate_statemachine import PluginBase
 
 class MetricsPlugin(PluginBase):
     """Collect metrics on state transitions."""
-    
+
     def __init__(self, metrics_client):
         self.client = metrics_client
         self.transition_count = 0
-    
+
     def on_interpreter_start(self, interpreter):
         """Called when interpreter starts."""
         self.client.increment("interpreter.start")
-    
+
     def on_transition(self, interpreter, from_states, to_states, transition):
         """Called on every state transition."""
         self.transition_count += 1
@@ -686,21 +686,21 @@ class MetricsPlugin(PluginBase):
             "transition.duration",
             transition.duration_ms
         )
-    
+
     def on_guard_evaluated(self, interpreter, guard_name, event, result):
         """Called after guard evaluation."""
         self.client.increment(
             f"guard.{guard_name}",
             tags={"result": str(result)}
         )
-    
+
     def on_service_done(self, interpreter, invocation, result):
         """Called when service completes."""
         self.client.timing(
             f"service.{invocation.src}",
             invocation.duration_ms
         )
-    
+
     def on_interpreter_stop(self, interpreter):
         """Called when interpreter stops."""
         self.client.gauge(

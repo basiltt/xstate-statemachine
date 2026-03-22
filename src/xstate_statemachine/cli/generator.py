@@ -140,7 +140,11 @@ def _generate_logic_component(
             "title": "Actions",
             "verb": "Executing action",
         },
-        "guard": {"emoji": "🛡️", "title": "Guards", "verb": "Evaluating guard"},
+        "guard": {
+            "emoji": "🛡️",
+            "title": "Guards",
+            "verb": "Evaluating guard",
+        },
         "service": {
             "emoji": "🔄",
             "title": "Services",

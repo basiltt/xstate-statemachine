@@ -32,7 +32,6 @@ would affect all subsequently created events.
 from dataclasses import dataclass, field
 from typing import Any, Dict, NamedTuple
 
-
 # -----------------------------------------------------------------------------
 # 📨 Event Definitions
 # -----------------------------------------------------------------------------

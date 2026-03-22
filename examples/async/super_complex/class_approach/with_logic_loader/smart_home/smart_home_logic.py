@@ -11,6 +11,7 @@ Illustrates:
   • Inter-actor communication (security triggering lights).
   • Invocation of services and timed transitions.
 """
+
 import asyncio
 import json
 import logging
@@ -24,7 +25,6 @@ from src.xstate_statemachine import (
     MachineLogic,
 )
 from src.xstate_statemachine.models import MachineNode
-
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration

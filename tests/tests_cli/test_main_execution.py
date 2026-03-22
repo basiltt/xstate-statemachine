@@ -74,9 +74,10 @@ class TestMainExecution(CLITestCaseBase):
         # 🔧 Setup: Simulate calling the CLI with no file paths.
         mock_argv[:] = ["cli.py", "generate-template"]
         # ▶️ Run & ✅ Assert: Expect a SystemExit due to the validation error.
-        with patch(
-            "sys.stderr", new=StringIO()
-        ) as mock_err, self.assertRaises(SystemExit):
+        with (
+            patch("sys.stderr", new=StringIO()) as mock_err,
+            self.assertRaises(SystemExit),
+        ):
             __main__.main()
         self.assertIn(
             "At least one JSON file is required.", mock_err.getvalue()
@@ -94,9 +95,10 @@ class TestMainExecution(CLITestCaseBase):
         # 🔧 Setup: Provide a path to a file that does not exist.
         mock_argv[:] = ["cli.py", "generate-template", "nonexistent.json"]
         # ▶️ Run & ✅ Assert: Expect a SystemExit and a "not found" error message.
-        with patch(
-            "sys.stderr", new=StringIO()
-        ) as mock_err, self.assertRaises(SystemExit):
+        with (
+            patch("sys.stderr", new=StringIO()) as mock_err,
+            self.assertRaises(SystemExit),
+        ):
             __main__.main()
         self.assertIn("JSON file not found", mock_err.getvalue())
 
@@ -171,9 +173,10 @@ class TestMainExecution(CLITestCaseBase):
         )
 
         # ▶️ Run a second time, simulating user input 'n' to cancel.
-        with patch("builtins.input", return_value="n") as mock_input, patch(
-            "builtins.print"
-        ) as mock_print:
+        with (
+            patch("builtins.input", return_value="n") as mock_input,
+            patch("builtins.print") as mock_print,
+        ):
             __main__.main()
 
         # ✅ Assert: Check that the prompt was shown.
@@ -235,9 +238,10 @@ class TestMainExecution(CLITestCaseBase):
         json2 = create_temp_json(SAMPLE_CONFIG_NESTED)
         mock_argv[:] = ["cli.py", "generate-template", str(json1), str(json2)]
         # ▶️ Run: Execute, simulating user declining hierarchy.
-        with patch("builtins.input", side_effect=["n", "0"]), patch(
-            "builtins.print"
-        ) as mock_print:
+        with (
+            patch("builtins.input", side_effect=["n", "0"]),
+            patch("builtins.print") as mock_print,
+        ):
             main()
         # ✅ Assert: Verify combined filenames in the output.
         calls = [call.args[0] for call in mock_print.call_args_list]
@@ -311,9 +315,10 @@ class TestMainExecution(CLITestCaseBase):
         from src.xstate_statemachine import __version__ as package_version
 
         # ▶️ Run & ✅ Assert: Check for version string in output and SystemExit.
-        with patch(
-            "sys.stdout", new=StringIO()
-        ) as mock_out, self.assertRaises(SystemExit):
+        with (
+            patch("sys.stdout", new=StringIO()) as mock_out,
+            self.assertRaises(SystemExit),
+        ):
             main()
         self.assertIn(package_version, mock_out.getvalue())
 
@@ -329,9 +334,10 @@ class TestMainExecution(CLITestCaseBase):
         # 🔧 Setup: Simulate calling for help on a subcommand.
         mock_argv[:] = ["cli.py", "generate-template", "-h"]
         # ▶️ Run & ✅ Assert: Check for 'usage:' text and a SystemExit.
-        with patch(
-            "sys.stdout", new=StringIO()
-        ) as mock_out, self.assertRaises(SystemExit):
+        with (
+            patch("sys.stdout", new=StringIO()) as mock_out,
+            self.assertRaises(SystemExit),
+        ):
             main()
         self.assertIn("usage:", mock_out.getvalue())
 
@@ -356,9 +362,10 @@ class TestMainExecution(CLITestCaseBase):
             str(json2),
         ]
         # ▶️ Run: Execute, simulating user declining hierarchy.
-        with patch("builtins.input", side_effect=["n", "0"]), patch(
-            "builtins.print"
-        ) as mock_print:
+        with (
+            patch("builtins.input", side_effect=["n", "0"]),
+            patch("builtins.print") as mock_print,
+        ):
             main()
         # ✅ Assert: Verify combined filenames in the output.
         calls = [call.args[0] for call in mock_print.call_args_list]
@@ -444,9 +451,10 @@ class TestMainExecution(CLITestCaseBase):
         # 🔧 Setup: Call the CLI with no arguments.
         mock_argv[:] = ["cli.py"]
         # ▶️ Run & ✅ Assert: Expect a SystemExit and a specific error message.
-        with patch(
-            "sys.stderr", new=StringIO()
-        ) as mock_err, self.assertRaises(SystemExit):
+        with (
+            patch("sys.stderr", new=StringIO()) as mock_err,
+            self.assertRaises(SystemExit),
+        ):
             main()
         self.assertIn(
             "the following arguments are required: subcommand",
@@ -576,9 +584,10 @@ class TestMainExecution(CLITestCaseBase):
             str(json2),
         ]
         # ▶️ Run & ✅ Assert: Expect a SystemExit and a specific error message.
-        with patch(
-            "sys.stderr", new=StringIO()
-        ) as mock_err, self.assertRaises(SystemExit):
+        with (
+            patch("sys.stderr", new=StringIO()) as mock_err,
+            self.assertRaises(SystemExit),
+        ):
             main()
         self.assertIn(
             "Only one --json-parent may be supplied.", mock_err.getvalue()
@@ -856,7 +865,9 @@ class TestHierarchyExecution(CLITestCaseBase):
         Args:
             mock_argv (List[str]): A mocked `sys.argv` to simulate CLI args.
         """
-        logger.info("👨‍👧‍👦 Testing explicit parent with positional children.")
+        logger.info(
+            "👨‍👧‍👦 Testing explicit parent with positional children."
+        )
         # 🔧 Setup: Create a second child config.
         child2_config = {
             "id": "childMachine2",
@@ -905,7 +916,9 @@ class TestHierarchyExecution(CLITestCaseBase):
         Args:
             mock_argv (List[str]): A mocked `sys.argv` to simulate CLI args.
         """
-        logger.info("👨‍👧 Testing positional parent with explicit child flag.")
+        logger.info(
+            "👨‍👧 Testing positional parent with explicit child flag."
+        )
         # 🔧 Setup: Pass parent positionally and child via flag.
         mock_argv[:] = [
             "cli.py",
@@ -1029,8 +1042,9 @@ class TestHierarchyExecution(CLITestCaseBase):
             str(self.child_path),
         ]
 
-        with patch("builtins.input", side_effect=["n", "1"]), patch(
-            "builtins.print"
+        with (
+            patch("builtins.input", side_effect=["n", "1"]),
+            patch("builtins.print"),
         ):
             main()
 
@@ -1065,8 +1079,9 @@ class TestHierarchyExecution(CLITestCaseBase):
         ]
 
         # ▶️ Run: User rejects heuristic ('n'), then enters invalid text "abc".
-        with patch("builtins.input", side_effect=["n", "abc"]), patch(
-            "builtins.print"
+        with (
+            patch("builtins.input", side_effect=["n", "abc"]),
+            patch("builtins.print"),
         ):
             main()
 
@@ -1114,9 +1129,10 @@ class TestHierarchyExecution(CLITestCaseBase):
         ]
 
         # ▶️ Run: Expect it to suggest "parentOne", which we accept ('y').
-        with patch("builtins.input", side_effect=["y"]), patch(
-            "builtins.print"
-        ) as mock_print:
+        with (
+            patch("builtins.input", side_effect=["y"]),
+            patch("builtins.print") as mock_print,
+        ):
             main()
 
         # ✅ Assert: Verify the prompt identified the first machine as parent.
@@ -1160,8 +1176,9 @@ class TestHierarchyExecution(CLITestCaseBase):
 
         # ▶️ Run: Heuristic will wrongly suggest "decoyParent" (index 2).
         # User says "n", then manually selects "realParent" (index 1).
-        with patch("builtins.input", side_effect=["n", "1"]), patch(
-            "builtins.print"
+        with (
+            patch("builtins.input", side_effect=["n", "1"]),
+            patch("builtins.print"),
         ):
             main()
 

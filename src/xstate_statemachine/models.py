@@ -364,7 +364,8 @@ class StateNode(Generic[TContext, TEvent]):
         initial = config.get("initial")
         if self.type == "compound" and not initial:
             logger.warning(
-                "⚠️ Compound state '%s' is missing an 'initial' state.", self.id
+                "⚠️ Compound state '%s' is missing an 'initial' state.",
+                self.id,
             )
         return initial
 

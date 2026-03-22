@@ -116,7 +116,9 @@ class FileUploaderLogic:
         """
         selected = context.get("selectedFile") is not None
         if not selected:
-            logger.warning("🛡️ Guard failed: No file selected. Action blocked.")
+            logger.warning(
+                "🛡️ Guard failed: No file selected. Action blocked."
+            )
         return selected
 
     def upload_file_sync(  # noqa

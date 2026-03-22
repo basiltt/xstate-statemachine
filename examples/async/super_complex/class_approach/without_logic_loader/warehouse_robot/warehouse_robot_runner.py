@@ -10,6 +10,7 @@ Illustrates:
   • Parallel regions and service invocations.
   • Explicit MachineLogic binding for a complex class.
 """
+
 import asyncio
 import json
 import logging

@@ -35,7 +35,6 @@ from .logger import logger
 from .machine_logic import MachineLogic
 from .models import MachineNode
 
-
 # -----------------------------------------------------------------------------
 # 🏭 Factory Function
 # -----------------------------------------------------------------------------
