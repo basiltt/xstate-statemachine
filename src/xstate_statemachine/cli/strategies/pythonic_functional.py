@@ -18,6 +18,7 @@ from ._shared import (
     generate_imports,
     generate_logger_setup,
     generate_section_header,
+    safe_identifier,
     snake_case_name,
 )
 
@@ -335,9 +336,15 @@ class PythonicFunctionalStrategy(BaseStrategy):
                     lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                 lines.append("")
         else:
-            lines.append(
-                "    logger.info(" "'No events declared in parent machine.')"
-            )
+            if ctx.log:
+                lines.append(
+                    "    logger.info("
+                    "'No events declared in parent machine.')"
+                )
+            else:
+                lines.append(
+                    "    pass  # No events declared in parent machine"
+                )
             lines.append("")
 
         # -- actor event simulation -----------------------------------
@@ -366,10 +373,16 @@ class PythonicFunctionalStrategy(BaseStrategy):
                         lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                     lines.append("")
             else:
-                lines.append(
-                    f"    logger.info("
-                    f"'No events declared in actor \"{a_name}\".')"
-                )
+                if ctx.log:
+                    lines.append(
+                        f"    logger.info("
+                        f"'No events declared in actor \"{a_name}\".')"
+                    )
+                else:
+                    lines.append(
+                        f"    pass  # No events declared"
+                        f' in actor "{a_name}"'
+                    )
                 lines.append("")
 
         # -- shutdown -------------------------------------------------
@@ -551,11 +564,15 @@ class PythonicFunctionalStrategy(BaseStrategy):
 
         # -- State object creation ------------------------------------
         state_names: List[str] = []
+        # Map original state names → safe Python identifiers
+        safe_state_vars: Dict[str, str] = {}
         for state_name, state_def in states_config.items():
             if not isinstance(state_def, dict):
                 state_def = {}
 
-            state_names.append(state_name)
+            var_name = safe_identifier(state_name)
+            safe_state_vars[state_name] = var_name
+            state_names.append(var_name)
             kwargs: List[str] = []
 
             # initial
@@ -579,10 +596,10 @@ class PythonicFunctionalStrategy(BaseStrategy):
             if kwargs:
                 args_str = ", ".join(kwargs)
                 lines.append(
-                    f"    {state_name} = State(" f'"{state_name}", {args_str})'
+                    f"    {var_name} = State(" f'"{state_name}", {args_str})'
                 )
             else:
-                lines.append(f'    {state_name} = State("{state_name}")')
+                lines.append(f'    {var_name} = State("{state_name}")')
 
         lines.append("")
 
@@ -594,6 +611,8 @@ class PythonicFunctionalStrategy(BaseStrategy):
             if not isinstance(on_block, dict):
                 continue
 
+            src_var = safe_state_vars.get(state_name, state_name)
+
             for event_name, transition_data in on_block.items():
                 transitions = (
                     transition_data
@@ -603,12 +622,14 @@ class PythonicFunctionalStrategy(BaseStrategy):
                 for trans in transitions:
                     if isinstance(trans, str):
                         # Simple target string
+                        tgt_var = safe_state_vars.get(trans, trans)
                         lines.append(
-                            f"    {state_name}.to("
-                            f'{trans}, event="{event_name}")'
+                            f"    {src_var}.to("
+                            f'{tgt_var}, event="{event_name}")'
                         )
                     elif isinstance(trans, dict):
                         target = trans.get("target", "")
+                        tgt_var = safe_state_vars.get(target, target)
                         t_kwargs: List[str] = [
                             f'event="{event_name}"',
                         ]
@@ -631,7 +652,7 @@ class PythonicFunctionalStrategy(BaseStrategy):
 
                         extra = ", ".join(t_kwargs)
                         lines.append(
-                            f"    {state_name}.to(" f"{target}, {extra})"
+                            f"    {src_var}.to(" f"{tgt_var}, {extra})"
                         )
 
         lines.append("")

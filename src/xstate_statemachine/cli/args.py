@@ -256,7 +256,8 @@ def validate_args(parser: argparse.ArgumentParser) -> None:
     """
     # 🧪 Validate that --json-parent is only supplied once.
     # We check the raw `sys.argv` because `argparse` will have already processed it.
-    if sys.argv.count("--json-parent") > 1:
+    jp_count = sys.argv.count("--json-parent") + sys.argv.count("-jp")
+    if jp_count > 1:
         logger.error(
             "❌ Validation Error: The --json-parent flag can only be specified once."
         )
@@ -295,7 +296,11 @@ def resolve_template(
             "class": "class-json",
             "function": "function-json",
         }
-        resolved = mapping[style]
+        resolved = mapping.get(style)
+        if resolved is None:
+            raise ValueError(
+                f"Unknown --style value: {style}. " f"Use --template instead."
+            )
         warnings.warn(
             f"--style is deprecated, use --template "
             f"{resolved} instead. "

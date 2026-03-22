@@ -3,7 +3,7 @@
 
 import logging
 import unittest
-from typing import Any, Dict, List, Set
+from typing import Any
 
 from src.xstate_statemachine.cli.strategies import (
     get_strategy,
@@ -11,8 +11,6 @@ from src.xstate_statemachine.cli.strategies import (
 from src.xstate_statemachine.cli.strategies.base import (
     GenerationContext,
 )
-
-from .fixtures import SAMPLE_CONFIG_SIMPLE
 
 logger = logging.getLogger(__name__)
 

@@ -1591,15 +1591,22 @@ class TestRunnerCodeGenerator(unittest.TestCase):
         self.assertIn("machine = create_machine(config,", code)
 
     def test_generate_combined_file_runner_part(self) -> None:
-        """
-        ✅ Acknowledges that combined file generation is implicitly tested.
-
-        This test serves as a placeholder to confirm that the single-file
-        generation path is exercised by other tests (e.g.,
-        `test_generate_file_count_1_combined`), ensuring its robustness.
-        """
+        """Runner part of combined file includes main guard and interpreter."""
         logger.info("🧪 Verifying combined-file runner generation path.")
-        pass
+        code = generate_runner_code(
+            machine_names=self.machine_names,
+            is_async=False,
+            style="class",
+            loader=True,
+            sleep=True,
+            sleep_time=2,
+            log=True,
+            file_count=1,
+            configs=self.configs,
+            json_filenames=["test.json"],
+        )
+        self.assertIn("if __name__ == '__main__':", code)
+        self.assertIn("SyncInterpreter", code)
 
     def test_generate_pathlib_import(self) -> None:
         """

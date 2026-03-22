@@ -11,7 +11,6 @@ from ._shared import (
     generate_error_handling,
     generate_imports,
     generate_logger_setup,
-    generate_module_header,
     generate_section_header,
     pascal_case_name,
     snake_case_name,
@@ -379,9 +378,15 @@ class ClassJsonStrategy(BaseStrategy):
                     lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                 lines.append("")
         else:
-            lines.append(
-                "    logger.info(" "'No events declared in parent machine.')"
-            )
+            if ctx.log:
+                lines.append(
+                    "    logger.info("
+                    "'No events declared in parent machine.')"
+                )
+            else:
+                lines.append(
+                    "    pass  # No events declared in parent machine"
+                )
             lines.append("")
 
         # -- actor event simulation -----------------------------------
@@ -411,10 +416,16 @@ class ClassJsonStrategy(BaseStrategy):
                         lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                     lines.append("")
             else:
-                lines.append(
-                    f"    logger.info("
-                    f"'No events declared in actor \"{a_name}\".')"
-                )
+                if ctx.log:
+                    lines.append(
+                        f"    logger.info("
+                        f"'No events declared in actor \"{a_name}\".')"
+                    )
+                else:
+                    lines.append(
+                        f"    pass  # No events declared"
+                        f' in actor "{a_name}"'
+                    )
                 lines.append("")
 
         # -- shutdown -------------------------------------------------
@@ -498,9 +509,7 @@ class ClassJsonStrategy(BaseStrategy):
             if component_type == "guard":
                 ret_type = "bool"
             elif component_type == "service":
-                ret_type = (
-                    "Dict[str, Any]" if not is_async else "Dict[str, Any]"
-                )
+                ret_type = "Dict[str, Any]"
             else:
                 # action: always None, even for async
                 ret_type = "None"

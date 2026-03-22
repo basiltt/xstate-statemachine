@@ -46,13 +46,13 @@ class TestProductionQuality(unittest.TestCase):
         "pythonic-functional",
     ]
 
-    def _make_ctx(self, template: str) -> GenerationContext:
+    def _make_ctx(self, template: str, **overrides: Any) -> GenerationContext:
         style = None
         if template == "class-json":
             style = "class"
         elif template == "function-json":
             style = "function"
-        return GenerationContext(
+        defaults = dict(
             actions={"doSomething"},
             guards={"isAllowed"},
             services={"loadData"},
@@ -71,6 +71,8 @@ class TestProductionQuality(unittest.TestCase):
             loader=False,
             style=style,
         )
+        defaults.update(overrides)
+        return GenerationContext(**defaults)
 
     def test_all_templates_have_type_hints(self) -> None:
         """All templates generate type-annotated action functions."""
@@ -112,3 +114,20 @@ class TestProductionQuality(unittest.TestCase):
                 code = s.generate_logic(self._make_ctx(t))
                 self.assertIn("try:", code)
                 self.assertIn("except Exception:", code)
+
+    def test_log_false_omits_logger_calls(self) -> None:
+        """With log=False, generated logic should not reference logger."""
+        for t in self.TEMPLATES:
+            with self.subTest(template=t):
+                s = get_strategy(t)
+                code = s.generate_logic(self._make_ctx(t, log=False))
+                self.assertNotIn("logger.info(", code)
+                self.assertNotIn("import logging", code)
+
+    def test_all_templates_service_return_type(self) -> None:
+        """All templates generate services with Dict return type."""
+        for t in self.TEMPLATES:
+            with self.subTest(template=t):
+                s = get_strategy(t)
+                code = s.generate_logic(self._make_ctx(t))
+                self.assertIn("Dict[str, Any]", code)

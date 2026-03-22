@@ -17,9 +17,9 @@ from ._shared import (
     generate_error_handling,
     generate_imports,
     generate_logger_setup,
-    generate_module_header,
     generate_section_header,
     pascal_case_name,
+    safe_identifier,
     snake_case_name,
 )
 
@@ -376,9 +376,15 @@ class PythonicClassStrategy(BaseStrategy):
                     lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                 lines.append("")
         else:
-            lines.append(
-                "    logger.info(" "'No events declared in parent machine.')"
-            )
+            if ctx.log:
+                lines.append(
+                    "    logger.info("
+                    "'No events declared in parent machine.')"
+                )
+            else:
+                lines.append(
+                    "    pass  # No events declared in parent machine"
+                )
             lines.append("")
 
         # -- actor event simulation -----------------------------------
@@ -407,10 +413,16 @@ class PythonicClassStrategy(BaseStrategy):
                         lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                     lines.append("")
             else:
-                lines.append(
-                    f"    logger.info("
-                    f"'No events declared in actor \"{a_name}\".')"
-                )
+                if ctx.log:
+                    lines.append(
+                        f"    logger.info("
+                        f"'No events declared in actor \"{a_name}\".')"
+                    )
+                else:
+                    lines.append(
+                        f"    pass  # No events declared"
+                        f' in actor "{a_name}"'
+                    )
                 lines.append("")
 
         # -- shutdown -------------------------------------------------
@@ -459,6 +471,7 @@ class PythonicClassStrategy(BaseStrategy):
             if not isinstance(state_def, dict):
                 state_def = {}
 
+            attr_name = safe_identifier(state_name)
             kwargs: List[str] = []
 
             # initial
@@ -482,9 +495,9 @@ class PythonicClassStrategy(BaseStrategy):
             # Build the State(...) call
             if kwargs:
                 args_str = ", ".join(kwargs)
-                lines.append(f"{indent}{state_name} = State({args_str})")
+                lines.append(f"{indent}{attr_name} = State({args_str})")
             else:
-                lines.append(f"{indent}{state_name} = State()")
+                lines.append(f"{indent}{attr_name} = State()")
 
         return "\n".join(lines)
 
@@ -535,9 +548,12 @@ class PythonicClassStrategy(BaseStrategy):
 
         lines: List[str] = []
         for event_name, trans_list in event_transitions.items():
+            safe_event = safe_identifier(event_name)
             to_calls: List[str] = []
             for source, target, actions_val, guard_val in trans_list:
-                parts: List[str] = [target]
+                safe_src = safe_identifier(source)
+                safe_tgt = safe_identifier(target)
+                parts: List[str] = [safe_tgt]
                 parts.append(f'event="{event_name}"')
                 if actions_val is not None:
                     if isinstance(actions_val, str):
@@ -549,15 +565,15 @@ class PythonicClassStrategy(BaseStrategy):
                     parts.append(f'guard="{guard_val}"')
 
                 args_str = ", ".join(parts)
-                to_calls.append(f"{source}.to({args_str})")
+                to_calls.append(f"{safe_src}.to({args_str})")
 
             if len(to_calls) == 1:
-                lines.append(f"{indent}{event_name} = {to_calls[0]}")
+                lines.append(f"{indent}{safe_event} = {to_calls[0]}")
             else:
                 # Multi-source: chain with |
                 chain = f"\n{indent}    | ".join(to_calls)
                 lines.append(
-                    f"{indent}{event_name} = (\n"
+                    f"{indent}{safe_event} = (\n"
                     f"{indent}    {chain}\n"
                     f"{indent})"
                 )

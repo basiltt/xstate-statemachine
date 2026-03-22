@@ -34,7 +34,10 @@ def get_strategy(template: str) -> BaseStrategy:
     """
     cls = STRATEGY_REGISTRY.get(template)
     if cls is None:
-        raise InvalidConfigError(f"Unknown template: {template}")
+        valid = ", ".join(sorted(STRATEGY_REGISTRY))
+        raise InvalidConfigError(
+            f"Unknown template: {template}. " f"Valid templates: {valid}"
+        )
     return cls()
 
 

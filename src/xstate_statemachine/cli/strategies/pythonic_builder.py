@@ -17,6 +17,7 @@ from ._shared import (
     generate_imports,
     generate_logger_setup,
     generate_section_header,
+    safe_identifier,
     snake_case_name,
 )
 
@@ -334,9 +335,15 @@ class PythonicBuilderStrategy(BaseStrategy):
                     lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                 lines.append("")
         else:
-            lines.append(
-                "    logger.info(" "'No events declared in parent machine.')"
-            )
+            if ctx.log:
+                lines.append(
+                    "    logger.info("
+                    "'No events declared in parent machine.')"
+                )
+            else:
+                lines.append(
+                    "    pass  # No events declared in parent machine"
+                )
             lines.append("")
 
         # -- actor event simulation -----------------------------------
@@ -365,10 +372,16 @@ class PythonicBuilderStrategy(BaseStrategy):
                         lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                     lines.append("")
             else:
-                lines.append(
-                    f"    logger.info("
-                    f"'No events declared in actor \"{a_name}\".')"
-                )
+                if ctx.log:
+                    lines.append(
+                        f"    logger.info("
+                        f"'No events declared in actor \"{a_name}\".')"
+                    )
+                else:
+                    lines.append(
+                        f"    pass  # No events declared"
+                        f' in actor "{a_name}"'
+                    )
                 lines.append("")
 
         # -- shutdown -------------------------------------------------

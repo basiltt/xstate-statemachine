@@ -149,7 +149,6 @@ def _write_output_files(
     paths: Dict[str, Path],
     logic_code: str,
     runner_code: str,
-    log_bool: bool,  # noqa: F841
 ) -> None:
     """Writes the generated code strings to the appropriate files.
 
@@ -158,7 +157,6 @@ def _write_output_files(
         paths (Dict[str, Path]): A dictionary of output file paths.
         logic_code (str): The generated logic code.
         runner_code (str): The generated runner code.
-        log_bool (bool): Flag indicating if logging is enabled, for merging.
     """
     logger.info("✍️ Writing generated code to disk...")
     if file_count == 1:
@@ -400,31 +398,34 @@ def _merge_code_for_single_file(logic_code: str, runner_code: str) -> str:
     logic_lines = logic_code.splitlines()
     runner_lines = runner_code.splitlines()
 
-    # 🕵️‍♂️ Find all unique import statements from both parts
+    # 🕵️‍♂️ Find all unique top-level import statements from both parts.
+    # Only match lines at column 0 to avoid stripping in-function imports.
     imports = sorted(
         list(
             set(
                 line
                 for line in logic_lines + runner_lines
-                if line.strip().startswith(("import ", "from "))
+                if (line.startswith("import ") or line.startswith("from "))
             )
         )
     )
 
-    # 🧠 Extract the logic part, skipping its imports.
+    # 🧠 Extract the logic part, skipping its top-level imports.
     # The logic part should contain the logger definition.
     logic_body = [
         line
         for line in logic_lines
-        if not line.strip().startswith(("import ", "from "))
+        if not (line.startswith("import ") or line.startswith("from "))
     ]
 
-    # 🏃 Extract the runner part, skipping imports and its own logger setup.
+    # 🏃 Extract the runner part, skipping top-level imports and logger setup.
     runner_body = [
         line
         for line in runner_lines
-        if not line.strip().startswith(
-            ("import ", "from ", "logging.basicConfig")
+        if not (
+            line.startswith("import ")
+            or line.startswith("from ")
+            or line.startswith("logging.basicConfig")
         )
         and "logger = logging.getLogger" not in line
     ]
@@ -572,9 +573,7 @@ def run_generation_workflow(
     logger.info("✅ Code generation complete.")
 
     # 8. 💾 Write generated code to files
-    _write_output_files(
-        args.file_count, paths, logic_code, runner_code, settings["log"]
-    )
+    _write_output_files(args.file_count, paths, logic_code, runner_code)
 
 
 def main() -> None:
