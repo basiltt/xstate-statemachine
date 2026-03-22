@@ -29,7 +29,12 @@ from xstate_statemachine.exceptions import (
     InvalidConfigError,
     NotSupportedError,
 )
-from xstate_statemachine import MachineLogic, SyncInterpreter
+from xstate_statemachine import (
+    MachineLogic,
+    SyncInterpreter,
+    create_machine,
+    PluginBase,
+)
 
 
 class TestSnakeToCamel(unittest.TestCase):
@@ -937,3 +942,53 @@ class TestStateMachineClassBased(unittest.TestCase):
         interp = SyncInterpreter(machine).start()
         self.assertIn("M.my_state", interp.current_state_ids)
         interp.stop()
+
+
+class TestBackwardCompatibility(unittest.TestCase):
+    """Verify existing JSON API still works unchanged."""
+
+    def test_json_api_still_works(self):
+        config = {
+            "id": "test",
+            "initial": "idle",
+            "states": {
+                "idle": {"on": {"GO": "running"}},
+                "running": {"type": "final"},
+            },
+        }
+        machine = create_machine(config)
+        interp = SyncInterpreter(machine).start()
+        self.assertIn("test.idle", interp.current_state_ids)
+        interp.send("GO")
+        self.assertIn("test.running", interp.current_state_ids)
+        interp.stop()
+
+    def test_pythonic_works_with_plugins(self):
+        events_seen = []
+
+        class TestPlugin(PluginBase):
+            def on_transition(self, interp, frm, to, t):
+                events_seen.append("transition")
+
+        idle = State("idle", initial=True)
+        active = State("active")
+        t = idle.to(active, event="GO")
+        machine = build_machine(
+            id="test",
+            states=[idle, active],
+            transitions=[t],
+        )
+        interp = SyncInterpreter(machine)
+        interp.use(TestPlugin())
+        interp.start()
+        interp.send("GO")
+        interp.stop()
+        self.assertIn("transition", events_seen)
+
+    def test_all_existing_tests_still_pass(self):
+        """Meta-test: existing test suite must not be broken.
+
+        This is verified by running the full test suite, not by
+        this individual test. This test just documents the intent.
+        """
+        pass
