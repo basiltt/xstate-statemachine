@@ -1260,3 +1260,116 @@ class TestHierarchyExecution(CLITestCaseBase):
         self.assertIn("actor_cfgs = {", content)
         self.assertIn("'child_machine': json.loads", content)
         self.assertIn("parent = Interpreter(parent_machine)", content)
+
+
+# -----------------------------------------------------------------------------
+# 🐍 Test Class: TestPythonicTemplateExecution
+# -----------------------------------------------------------------------------
+class TestPythonicTemplateExecution(CLITestCaseBase):
+    """End-to-end tests for Pythonic template CLI execution."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.json_path = create_temp_json(SAMPLE_CONFIG_SIMPLE)
+
+    def test_pythonic_class_generates_files(self) -> None:
+        """--template pythonic-class generates output files."""
+        with patch(
+            "sys.argv",
+            [
+                "cli.py",
+                "generate-template",
+                str(self.json_path),
+                "--template",
+                "pythonic-class",
+                "--force",
+            ],
+        ):
+            main()
+        logic = Path("simple_logic.py")
+        runner = Path("simple_runner.py")
+        self.assertTrue(logic.exists())
+        self.assertTrue(runner.exists())
+        content = logic.read_text()
+        self.assertIn("StateMachine", content)
+        self.assertIn("State(", content)
+
+    def test_pythonic_builder_generates_files(self) -> None:
+        """--template pythonic-builder generates output files."""
+        with patch(
+            "sys.argv",
+            [
+                "cli.py",
+                "generate-template",
+                str(self.json_path),
+                "--template",
+                "pythonic-builder",
+                "--force",
+            ],
+        ):
+            main()
+        logic = Path("simple_logic.py")
+        self.assertTrue(logic.exists())
+        content = logic.read_text()
+        self.assertIn("MachineBuilder", content)
+
+    def test_pythonic_functional_generates_files(self) -> None:
+        """--template pythonic-functional generates output."""
+        with patch(
+            "sys.argv",
+            [
+                "cli.py",
+                "generate-template",
+                str(self.json_path),
+                "--template",
+                "pythonic-functional",
+                "--force",
+            ],
+        ):
+            main()
+        logic = Path("simple_logic.py")
+        self.assertTrue(logic.exists())
+        content = logic.read_text()
+        self.assertIn("build_machine(", content)
+
+    def test_style_class_shows_deprecation(self) -> None:
+        """--style class triggers DeprecationWarning."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            with patch(
+                "sys.argv",
+                [
+                    "cli.py",
+                    "generate-template",
+                    str(self.json_path),
+                    "--style",
+                    "class",
+                    "--force",
+                ],
+            ):
+                main()
+            self.assertIsNotNone(w)
+            assert w is not None  # type narrowing for pyright
+            deprecation_warnings = [
+                x for x in w if issubclass(x.category, DeprecationWarning)
+            ]
+            self.assertGreater(len(deprecation_warnings), 0)
+
+    def test_style_and_template_conflict(self) -> None:
+        """Using both --style and --template errors."""
+        with patch(
+            "sys.argv",
+            [
+                "cli.py",
+                "generate-template",
+                str(self.json_path),
+                "--style",
+                "class",
+                "--template",
+                "pythonic-class",
+            ],
+        ):
+            with self.assertRaises(SystemExit):
+                main()
