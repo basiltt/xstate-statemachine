@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Pythonic API** for defining state machines in pure Python without JSON dicts:
+  - `StateMachine` base class with metaclass for class-based declarations
+  - `MachineBuilder` fluent builder for programmatic/dynamic construction
+  - `build_machine()` function for functional-style machine definition
+  - `State` class for defining states with all features (hierarchy, parallel, final, after, invoke, always, onDone)
+  - `Transition` and `TransitionGroup` for fluent transition definitions with `|` combinator
+  - `@action`, `@guard`, `@service` decorators with auto snake_case-to-camelCase naming
+  - `transition()` standalone function for functional API
+  - Full backward compatibility — all existing JSON-based APIs work unchanged
+
 ## [0.4.3] - 2025-02-03
 
 ### Added
