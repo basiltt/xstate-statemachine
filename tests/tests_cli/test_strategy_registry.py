@@ -240,3 +240,64 @@ class TestSharedHelpers(unittest.TestCase):
         self.assertIn("Event", result)
         self.assertIn("import logging", result)
         self.assertNotIn("Awaitable", result)
+
+
+class TestStrategyRegistry(unittest.TestCase):
+    """Tests for the strategy registry and get_strategy()."""
+
+    def test_get_strategy_class_json(self) -> None:
+        """class-json returns a ClassJsonStrategy."""
+        from src.xstate_statemachine.cli.strategies import (
+            get_strategy,
+        )
+
+        s = get_strategy("class-json")
+        self.assertEqual(s.name, "class-json")
+
+    def test_get_strategy_function_json(self) -> None:
+        """function-json returns a FunctionJsonStrategy."""
+        from src.xstate_statemachine.cli.strategies import (
+            get_strategy,
+        )
+
+        s = get_strategy("function-json")
+        self.assertEqual(s.name, "function-json")
+
+    def test_get_strategy_pythonic_class(self) -> None:
+        """pythonic-class returns a PythonicClassStrategy."""
+        from src.xstate_statemachine.cli.strategies import (
+            get_strategy,
+        )
+
+        s = get_strategy("pythonic-class")
+        self.assertEqual(s.name, "pythonic-class")
+
+    def test_get_strategy_pythonic_builder(self) -> None:
+        """pythonic-builder returns correct strategy."""
+        from src.xstate_statemachine.cli.strategies import (
+            get_strategy,
+        )
+
+        s = get_strategy("pythonic-builder")
+        self.assertEqual(s.name, "pythonic-builder")
+
+    def test_get_strategy_pythonic_functional(self) -> None:
+        """pythonic-functional returns correct strategy."""
+        from src.xstate_statemachine.cli.strategies import (
+            get_strategy,
+        )
+
+        s = get_strategy("pythonic-functional")
+        self.assertEqual(s.name, "pythonic-functional")
+
+    def test_get_strategy_unknown_raises(self) -> None:
+        """Unknown template raises InvalidConfigError."""
+        from src.xstate_statemachine.cli.strategies import (
+            get_strategy,
+        )
+        from src.xstate_statemachine.exceptions import (
+            InvalidConfigError,
+        )
+
+        with self.assertRaises(InvalidConfigError):
+            get_strategy("nonexistent")
