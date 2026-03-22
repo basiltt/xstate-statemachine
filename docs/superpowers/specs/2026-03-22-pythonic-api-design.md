@@ -70,6 +70,9 @@ src/xstate_statemachine/
 "service",          # Decorator for service functions (all styles)
 ```
 
+Note: `TransitionGroup` is an internal class (not exported). Users create it
+implicitly via the `|` operator on `Transition` objects.
+
 ---
 
 ## 3. `State` Class
@@ -89,22 +92,25 @@ State(
     entry: list = None,      # Entry action names: ["logEntry"]
     exit: list = None,       # Exit action names: ["cleanup"]
     after: dict = None,      # Delayed transitions: {1000: "timeout"}
-    invoke: dict = None,     # Service invocation config
+    invoke: dict|list = None,# Service invocation (single dict or list of dicts)
     on_done: str|dict = None,# Completion transition
-    always: str|dict|list = None,  # Eventless transition
-    context: dict = None,    # Only valid on root/machine-level State
+    always: str|dict|list = None,  # Eventless transition (see compilation note)
+    context: dict = None,    # Only meaningful at root level; silently ignored
+                             # on non-root states
     states: list = None,     # Child State objects for hierarchy
 )
 ```
 
+**Mutual exclusion:** `final=True` and `parallel=True` cannot both be set.
+Raises `InvalidConfigError` at compile time if both are True.
+
 ### Transition API (fluent)
 
 ```python
-# Single transition
-idle.to(running)                              # event name set later
+# Single transition (event is REQUIRED -- see note below)
 idle.to(running, event="START")               # explicit event name
-idle.to(running, guard="isReady")             # with guard
-idle.to(running, actions=["log"])             # with actions
+idle.to(running, event="START", guard="isReady")  # with guard
+idle.to(running, event="GO", actions=["log"]) # with actions
 idle.to(running, event="GO", guard="canGo", actions=["prepare"])
 
 # Combine transitions with |
@@ -117,6 +123,10 @@ idle.internal("HEARTBEAT", actions=["logHeartbeat"])
 loading.to(loading, event="RETRY", reenter=True, actions=["incrementCount"])
 ```
 
+**`event` is required on `State.to()`.** Eventless ("always") transitions are
+defined via the `always` parameter on the `State` constructor, not via `.to()`
+with no event. Calling `.to()` without `event` raises `InvalidConfigError`.
+
 ### Hierarchy (nested states)
 
 ```python
@@ -127,14 +137,17 @@ traffic = State("traffic", initial=True, states=[
     State("green"),
 ])
 
-# Via nested class in StateMachine (see Section 5)
+# Via nested class in StateMachine (see Section 6)
 ```
 
 ### State-specific decorators
 
-`State` provides `.enter` and `.exit` decorator shortcuts for class-based usage:
+`State` provides `.enter` and `.exit` decorator shortcuts. **These are only
+valid inside a `StateMachine` class** (class-based API). Using them at module
+level raises `InvalidConfigError` at compile time.
 
 ```python
+# Inside a StateMachine class:
 @red.enter
 def on_red(self, i, ctx, e, a):
     print("Stop!")
@@ -144,37 +157,90 @@ def leaving_red(self, i, ctx, e, a):
     print("Go!")
 ```
 
-Under the hood, `@state.enter` marks the function as `_xsm_type = "action"` with an auto-generated name, and appends that name to the State's `entry` list.
+Under the hood, `@state.enter` marks the function as `_xsm_type = "action"`
+with an auto-generated name, and appends that name to the State's `entry` list.
 
-### Compilation output
+### Compilation output examples
 
 ```python
 State("idle", initial=True, on={"START": "running"})
 # compiles to:
 # {"idle": {"on": {"START": "running"}}}
 # with initial="idle" set on the parent
+
+State("parent", on_done="next")
+# compiles to:
+# {"parent": {"onDone": {"target": "next"}}}
+
+State("loading", invoke={"src": "fetchData", "onDone": "success"})
+# compiles to:
+# {"loading": {"invoke": {"src": "fetchData", "onDone": "success"}}}
+
+State("loading", invoke=[
+    {"src": "svc1", "onDone": "a"},
+    {"src": "svc2", "onDone": "b"},
+])
+# compiles to:
+# {"loading": {"invoke": [{"src": "svc1", "onDone": "a"}, {"src": "svc2", "onDone": "b"}]}}
+```
+
+### `always` compilation
+
+The `always` parameter compiles to `"on": {"": ...}` (empty-string event key),
+which the existing library already supports as eventless/transient transitions.
+No core changes required.
+
+```python
+State("checking", always={"target": "done", "guard": "isValid"})
+# compiles to:
+# {"checking": {"on": {"": {"target": "done", "guard": "isValid"}}}}
+
+State("routing", always=[
+    {"target": "admin", "guard": "isAdmin"},
+    {"target": "user"},
+])
+# compiles to:
+# {"routing": {"on": {"": [{"target": "admin", "guard": "isAdmin"}, {"target": "user"}]}}}
 ```
 
 ---
 
-## 4. `Transition` Class & Helpers
+## 4. `Transition` Class & `TransitionGroup`
 
-### Transition object (returned by `State.to()`)
+### `Transition` object (returned by `State.to()`)
 
 ```python
 class Transition:
     source: State       # Where the transition starts
-    target: State       # Where it goes
-    event: str          # Event name (e.g., "CLICK")
-    guard: str          # Guard name (optional)
-    actions: list       # Action names (optional)
-    reenter: bool       # Force exit/re-entry on self-transition
-    internal: bool      # Internal transition (no state change)
+    target: State       # Where it goes (None for internal transitions)
+    event: str          # Event name (e.g., "CLICK") -- REQUIRED
+    guard: str          # Guard name (optional, default None)
+    actions: list       # Action names (optional, default [])
+    reenter: bool       # Force exit/re-entry on self-transition (default False)
+    internal: bool      # Internal transition, no state change (default False)
+```
+
+### `TransitionGroup` (internal, not exported)
+
+```python
+class TransitionGroup:
+    """A collection of Transition objects, created by the | operator."""
+    transitions: List[Transition]
+
+    def __or__(self, other: "Transition | TransitionGroup") -> "TransitionGroup":
+        """Combine with another transition or group."""
+```
+
+Users never instantiate `TransitionGroup` directly. It is created implicitly:
+
+```python
+# | creates a TransitionGroup
+group = idle.to(a, event="GO") | idle.to(b, event="GO", guard="check")
+# type(group) == TransitionGroup
+# group.transitions == [Transition(..., target=a), Transition(..., target=b)]
 ```
 
 ### Combining transitions with `|`
-
-The `|` operator creates a `TransitionGroup` -- a list of transitions that gets merged during compilation:
 
 ```python
 # Independent transitions (different events or sources)
@@ -211,16 +277,27 @@ def transition(
 ) -> Transition:
 ```
 
+`event` is a required positional argument (not optional).
 Equivalent to `source.to(target, event=event, ...)`.
 
-### Always (eventless) transitions
+### Compilation rules for special transition types
+
+**Internal transitions** (`internal=True` or `State.internal()`):
+The compiled config **omits the `target` key**. The `target` attribute on the
+Transition object is ignored.
 
 ```python
-# On State via always parameter:
-checking = State("checking", always={"target": "done", "guard": "isValid"})
+idle.internal("HEARTBEAT", actions=["logHeartbeat"])
+# compiles to: "HEARTBEAT": {"actions": ["logHeartbeat"]}
+# (no "target" key)
+```
 
-# Or via Transition with no event:
-checking.to(done, guard="isValid")  # event="" becomes always transition
+**Reenter transitions** (`reenter=True`):
+The compiled config includes `"reenter": true`.
+
+```python
+loading.to(loading, event="RETRY", reenter=True, actions=["inc"])
+# compiles to: "RETRY": {"target": "loading", "reenter": true, "actions": ["inc"]}
 ```
 
 ---
@@ -269,9 +346,13 @@ async def fetch_data(i, ctx, e):
 
 ### Usage across all three styles
 
-**Class-based:** Decorators on methods (with `self`).
+**Class-based:** Decorators on methods (with `self`). The `self` parameter is
+bound during compilation (see Section 9).
+
 **Functional:** Decorators on module-level functions (no `self`).
-**Builder:** Explicit `.action(name, fn)` registration, also accepts decorated functions.
+
+**Builder:** Explicit `.action(name, fn)` registration, also accepts decorated
+functions.
 
 ### Collection during compilation
 
@@ -328,12 +409,62 @@ interp.send("TIMER")
 
 Runs at class-definition time. Does exactly four things:
 
-1. **Collect `State` attributes** -- scans namespace for `State` instances, sets `.name` from attribute name if not set
-2. **Collect `Transition`/`TransitionGroup` attributes** -- scans for transition objects
-3. **Collect decorated methods** -- finds all methods with `_xsm_type` marker
-4. **Attach `create_machine` classmethod** -- adds the factory method
+1. **Collect `State` instances** -- scans namespace for `State` instances, sets
+   `.name` from attribute name if not set.
+2. **Collect nested `State` subclasses** -- scans for inner classes that
+   inherit from `State`. These are treated as compound/parallel parent states.
+   Their class-level `State` attributes become child states (collected
+   recursively using the same logic). The inner class itself is replaced with a
+   `State` instance whose `states` list contains the collected children.
+3. **Collect `Transition`/`TransitionGroup` attributes** -- scans for
+   transition objects.
+4. **Collect decorated methods** -- finds all methods with `_xsm_type` marker,
+   stores them in `cls._xsm_decorated`.
 
-Does NOT: instantiate anything, modify parent classes, touch existing library code, or register globally.
+Does NOT: instantiate anything, modify parent classes, touch existing library
+code, or register globally.
+
+### How nested `State` subclasses work
+
+When the metaclass encounters an inner class like:
+
+```python
+class moving(State):
+    up = State(initial=True)
+    down = State()
+```
+
+It processes it as follows:
+
+1. Detects `moving` is a class (not a `State` instance) that inherits from
+   `State`.
+2. Scans `moving`'s namespace for `State` instances (`up`, `down`) and
+   collects them as children.
+3. Replaces the `moving` class attribute with a `State` instance:
+   `State("moving", states=[up_state, down_state])` where child initial/type
+   flags are preserved.
+4. This means `moving.up` in transition expressions like
+   `idle.to(moving.up, event="CALL_UP")` works because `moving` is the class
+   at class-definition time (when the transition expression is evaluated),
+   and `up` is a class attribute on it.
+
+### `State.__init_subclass__` for keyword arguments
+
+To support `class monitoring(State, parallel=True):`, `State` implements
+`__init_subclass__`:
+
+```python
+class State:
+    def __init_subclass__(cls, *, initial=False, final=False,
+                          parallel=False, **kwargs):
+        super().__init_subclass__(**kwargs)
+        cls._xsm_initial = initial
+        cls._xsm_final = final
+        cls._xsm_parallel = parallel
+```
+
+The metaclass reads these class-level flags when converting the nested class
+into a `State` instance.
 
 ### `create_machine()` classmethod flow
 
@@ -451,25 +582,54 @@ class MachineBuilder:
     # Structure
     def context(self, ctx: dict) -> "MachineBuilder": ...
     def state(self, name, *, initial=False, final=False, parallel=False,
-              on=None, entry=None, exit=None, after=None, invoke=None,
+              on=None, entry=None, exit=None, after=None,
+              invoke=None,       # dict or list of dicts
               on_done=None, always=None) -> "MachineBuilder": ...
     def transition(self, source, event, target, *, guard=None, actions=None,
                    reenter=False, internal=False) -> "MachineBuilder": ...
 
     # Hierarchy
-    def child_states(self, parent, *, initial=None, states=None,
-                     parallel=False) -> "MachineBuilder": ...
+    def child_states(
+        self,
+        parent: str,             # Name of a previously added state
+        *,
+        initial: str = None,     # Name of the initial child state
+        states: dict = None,     # {"childName": {**state_kwargs}} or list of State objects
+        parallel: bool = False,  # Whether the parent is parallel
+    ) -> "MachineBuilder": ...
 
     # Logic registration
-    def action(self, name, fn) -> "MachineBuilder": ...
-    def guard(self, name, fn) -> "MachineBuilder": ...
-    def service(self, name, fn) -> "MachineBuilder": ...
+    def action(self, name: str, fn: Callable) -> "MachineBuilder": ...
+    def guard(self, name: str, fn: Callable) -> "MachineBuilder": ...
+    def service(self, name: str, fn: Callable) -> "MachineBuilder": ...
 
     # Build
-    def build(self, context=None) -> MachineNode: ...
+    def build(self, context: dict = None) -> MachineNode: ...
 ```
 
 Every method except `build()` returns `self` for chaining.
+
+### `child_states()` usage example
+
+```python
+machine = (
+    MachineBuilder("elevator")
+    .context({"floor": 1})
+    .state("idle", initial=True)
+    .state("moving")
+    .child_states("moving", initial="up", states={
+        "up": {},
+        "down": {},
+    })
+    .state("stopped", final=True)
+    .transition("idle", "CALL_UP", "moving.up")
+    .transition("moving", "ARRIVED", "stopped")
+    .build()
+)
+```
+
+`parent` must reference a state name already added via `.state()`. If `parent`
+is not found, `InvalidConfigError` is raised at `.child_states()` call time.
 
 ### `build()` internals
 
@@ -602,7 +762,14 @@ def _compile_logic_from_instance(
     instance: object,
     decorated: List[Callable],
 ) -> MachineLogic:
-    """Convert class instance methods into a MachineLogic (binds self)."""
+    """Convert class instance methods into a MachineLogic instance.
+
+    Uses functools.partial(method, instance) to bind `self`, so the resulting
+    callable matches the existing signatures expected by the interpreter:
+      - Actions:  (interpreter, ctx, event, action_def) -> None
+      - Guards:   (ctx, event) -> bool
+      - Services: (interpreter, ctx, event) -> Any
+    """
 
 def _snake_to_camel(name: str) -> str:
     """Convert snake_case to camelCase. Matches existing LogicLoader behavior."""
@@ -611,9 +778,37 @@ def _snake_to_camel(name: str) -> str:
 ### `_compile_config` flow
 
 1. Find initial state (the one with `initial=True`)
-2. For each State, build its config dict (type, entry, exit, on, after, invoke, onDone, always, nested states)
+2. For each State, build its config dict:
+   - `"type"` -> `"final"` | `"parallel"` | omitted (auto-detected by models.py)
+   - `"entry"` -> from state.entry
+   - `"exit"` -> from state.exit
+   - `"on"` -> from state.on dict (if any), then merge Transition objects (see merge rule below)
+   - `"after"` -> from state.after (keys coerced to int-castable strings)
+   - `"invoke"` -> from state.invoke (dict or list, passed through as-is)
+   - `"onDone"` -> from state.on_done, compiled as `{"target": value}` if string
+   - `"always"` -> compiled into `"on": {"": ...}` (empty-string event key)
+   - `"states"` -> recurse for child states (if any)
 3. Merge transitions into source state's `"on"` dict, grouping by `(source, event)`
 4. Assemble top-level config: `{"id": ..., "initial": ..., "context": ..., "states": {...}}`
+
+### Merge rule: `State.on` dict vs `Transition` objects
+
+When both `State.on` and `Transition` objects define transitions for the same
+`(source, event)`:
+
+**Transition objects take precedence and override `State.on` entries for the
+same event.** This is because `.to()` is the more specific/intentional API.
+
+```python
+idle = State("idle", initial=True, on={"START": "running"})
+go = idle.to(active, event="START", guard="isReady")
+
+# Result: "START" uses the Transition object (with guard), NOT the on= dict entry.
+# compiles to: "START": {"target": "active", "guard": "isReady"}
+```
+
+If no Transition object exists for an event, the `State.on` dict entry is used
+as-is (it's already in the correct JSON config format).
 
 ### Name resolution
 
@@ -636,6 +831,16 @@ def increment_counter(i, ctx, e, a): ...
 # MachineLogic uses: {"incrementCounter": increment_counter}
 ```
 
+### Transition target validation
+
+The compiler validates that every `Transition.source` references a `State`
+object present in the `states` list. If not, `InvalidConfigError` is raised.
+
+**Target validation** (whether the target state exists) is **deferred** to the
+existing `create_machine()` -> resolver chain. This is intentional: targets may
+reference states in parent/sibling machines (actor model), and the Pythonic
+layer does not have visibility into the full machine tree.
+
 ---
 
 ## 10. Error Handling
@@ -644,14 +849,21 @@ Errors are raised at compile time (`create_machine()` / `build()` / `build_machi
 
 | Error condition | Exception | Message |
 |---|---|---|
-| No `initial=True` state among siblings | `InvalidConfigError` | `"No initial state defined. Exactly one state must have initial=True"` |
+| No `initial=True` state among non-parallel siblings | `InvalidConfigError` | `"No initial state defined. Exactly one state must have initial=True"` |
 | Multiple `initial=True` at same level | `InvalidConfigError` | `"Multiple initial states: {names}. Exactly one allowed"` |
-| Transition references unknown state | `InvalidConfigError` | `"Transition source '{name}' is not a defined state"` |
+| `initial=True` on a child of a parallel parent | `InvalidConfigError` | `"State '{name}' is a child of parallel state '{parent}' and should not have initial=True. All parallel regions are active simultaneously."` |
+| `final=True` and `parallel=True` both set | `InvalidConfigError` | `"State '{name}' cannot be both final and parallel"` |
+| `final=True` state has `on` transitions or child states | `InvalidConfigError` | `"Final state '{name}' cannot have outgoing transitions or child states"` |
+| Transition source not in states list | `InvalidConfigError` | `"Transition source '{name}' is not a defined state"` |
 | Duplicate state name at same level | `InvalidConfigError` | `"Duplicate state name '{name}' at the same level"` |
-| Decorated function has invalid signature | `InvalidConfigError` | `"Action '{name}' has invalid signature..."` |
-| `@guard` on async function | `NotSupportedError` | `"Guard '{name}' must be synchronous"` |
+| `@guard` on async function | `NotSupportedError` | `"Guard '{name}' must be synchronous (guards cannot be async)"` |
+| `State.to()` called without `event` | `InvalidConfigError` | `"State.to() requires an 'event' argument. For eventless transitions, use the 'always' parameter on State()"` |
+| `@state.enter` / `@state.exit` used outside StateMachine class | `InvalidConfigError` | `"@{state}.enter decorator is only valid inside a StateMachine class"` |
+| `child_states()` references unknown parent | `InvalidConfigError` | `"Parent state '{name}' not found. Add it with .state() first"` |
 
-All other validation (missing logic, bad targets) handled by existing `create_machine()` chain.
+All other validation (missing logic implementations, bad target resolution,
+etc.) is handled by the existing `create_machine()` -> `MachineNode` ->
+`LogicLoader` chain unchanged.
 
 ---
 
@@ -669,61 +881,93 @@ TestState
     test_state_parallel_type
     test_state_name_auto_from_attribute
     test_state_nested_children
+    test_state_final_and_parallel_raises
+    test_state_on_done_compilation
+    test_state_invoke_single_dict
+    test_state_invoke_list_of_dicts
 
 TestTransition
     test_transition_basic
     test_transition_with_guard_and_actions
     test_transition_combine_with_pipe
-    test_transition_internal
-    test_transition_reenter
+    test_transition_group_passed_to_build_machine
+    test_transition_internal_omits_target
+    test_transition_reenter_compiles_flag
     test_transition_standalone_function
+    test_transition_without_event_raises
+
+TestAlwaysTransitions
+    test_always_string_compiles_to_empty_event
+    test_always_dict_compiles_to_empty_event
+    test_always_list_compiles_to_empty_event
+    test_always_works_with_sync_interpreter
+    test_always_in_builder
+    test_always_in_functional
 
 TestDecorators
     test_action_decorator_auto_name
     test_action_decorator_explicit_name
     test_guard_decorator
     test_service_decorator
-    test_state_enter_exit_decorators
+    test_state_enter_exit_decorators_in_class
+    test_state_enter_outside_class_raises
     test_guard_async_raises_error
+    test_invalid_action_signature_raises
 
 TestStateMachineClassBased
     test_basic_machine_creation
     test_transitions_work_with_interpreter
     test_actions_fire_on_transition
     test_guards_block_transition
-    test_hierarchical_states
-    test_parallel_states
+    test_hierarchical_states_nested_class
+    test_parallel_states_nested_class
     test_invoke_service
     test_after_delayed_transition
     test_final_state_on_done
     test_always_transition
     test_context_override
     test_entry_exit_decorators
+    test_self_binding_with_functools_partial
+    test_final_state_with_transitions_raises
+    test_parallel_child_with_initial_raises
 
 TestMachineBuilder
     test_basic_builder
     test_builder_transitions
     test_builder_with_logic
-    test_builder_hierarchical
+    test_builder_hierarchical_child_states
+    test_builder_child_states_unknown_parent_raises
     test_builder_parallel
     test_builder_invoke
     test_builder_after
+    test_builder_always
     test_builder_accepts_decorated_functions
+    test_builder_context_override
+    test_builder_on_done
 
 TestBuildMachineFunctional
     test_basic_functional
     test_functional_with_transitions
+    test_functional_with_transition_group
     test_functional_with_decorated_actions
     test_functional_with_undecorated_functions
     test_functional_hierarchical
     test_functional_invoke
     test_functional_after
+    test_functional_always
     test_functional_guards
+    test_functional_on_done
+
+TestMergeRules
+    test_transition_overrides_state_on_for_same_event
+    test_state_on_preserved_when_no_transition_conflict
+    test_mixed_on_and_transitions_different_events
 
 TestCompileConfig
     test_config_output_matches_json_format
     test_snake_to_camel_conversion
     test_nested_state_dot_paths
+    test_always_compiles_to_empty_string_event
 
 TestErrorHandling
     test_no_initial_state_raises
@@ -731,6 +975,12 @@ TestErrorHandling
     test_unknown_transition_source_raises
     test_duplicate_state_name_raises
     test_async_guard_raises
+    test_final_and_parallel_raises
+    test_final_with_transitions_raises
+    test_parallel_child_initial_raises
+    test_to_without_event_raises
+    test_enter_decorator_outside_class_raises
+    test_invalid_action_signature_raises
 
 TestBackwardCompatibility
     test_json_api_still_works_unchanged
