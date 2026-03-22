@@ -14,6 +14,7 @@ from xstate_statemachine.pythonic import (
     _compile_config,
     _compile_logic_from_functions,
     _compile_logic_from_instance,
+    build_machine,
     State,
     Transition,
     TransitionGroup,
@@ -26,7 +27,7 @@ from xstate_statemachine.exceptions import (
     InvalidConfigError,
     NotSupportedError,
 )
-from xstate_statemachine import MachineLogic
+from xstate_statemachine import MachineLogic, SyncInterpreter
 
 
 class TestSnakeToCamel(unittest.TestCase):
@@ -633,3 +634,109 @@ class TestCompileLogic(unittest.TestCase):
         )
         bound_fn = logic.guards["isReady"]
         self.assertTrue(bound_fn({}, None))
+
+
+class TestBuildMachineFunctional(unittest.TestCase):
+    """Tests for the build_machine() functional API."""
+
+    def test_basic_functional(self):
+        idle = State("idle", initial=True)
+        running = State("running")
+        t = idle.to(running, event="START")
+        machine = build_machine(
+            id="test", states=[idle, running], transitions=[t]
+        )
+        interp = SyncInterpreter(machine).start()
+        self.assertIn("test.idle", interp.current_state_ids)
+        interp.send("START")
+        self.assertIn("test.running", interp.current_state_ids)
+        interp.stop()
+
+    def test_functional_with_decorated_actions(self):
+        idle = State("idle", initial=True)
+        active = State("active")
+        result = {}
+
+        @action
+        def log_start(i, ctx, e, a):
+            result["called"] = True
+
+        t = idle.to(active, event="GO", actions=["logStart"])
+        machine = build_machine(
+            id="test",
+            states=[idle, active],
+            transitions=[t],
+            actions=[log_start],
+        )
+        interp = SyncInterpreter(machine).start()
+        interp.send("GO")
+        interp.stop()
+        self.assertTrue(result["called"])
+
+    def test_functional_with_guards(self):
+        idle = State("idle", initial=True)
+        active = State("active")
+
+        @guard
+        def is_ready(ctx, e):
+            return ctx.get("ready", False)
+
+        t = idle.to(active, event="GO", guard="isReady")
+        machine = build_machine(
+            id="test",
+            states=[idle, active],
+            transitions=[t],
+            guards=[is_ready],
+            context={"ready": False},
+        )
+        interp = SyncInterpreter(machine).start()
+        interp.send("GO")
+        # Guard blocks -- still in idle
+        self.assertIn("test.idle", interp.current_state_ids)
+        interp.stop()
+
+    def test_functional_with_undecorated_functions(self):
+        idle = State("idle", initial=True)
+        active = State("active")
+        result = {}
+
+        def log_start(i, ctx, e, a):
+            result["called"] = True
+
+        t = idle.to(active, event="GO", actions=["logStart"])
+        machine = build_machine(
+            id="test",
+            states=[idle, active],
+            transitions=[t],
+            actions=[log_start],
+        )
+        interp = SyncInterpreter(machine).start()
+        interp.send("GO")
+        interp.stop()
+        self.assertTrue(result["called"])
+
+    def test_functional_with_transition_group(self):
+        a = State("a", initial=True)
+        b = State("b")
+        c = State("c")
+        group = a.to(b, event="X") | b.to(c, event="X")
+        machine = build_machine(
+            id="test", states=[a, b, c], transitions=[group]
+        )
+        interp = SyncInterpreter(machine).start()
+        interp.send("X")
+        self.assertIn("test.b", interp.current_state_ids)
+        interp.send("X")
+        self.assertIn("test.c", interp.current_state_ids)
+        interp.stop()
+
+    def test_functional_context(self):
+        idle = State("idle", initial=True)
+        machine = build_machine(
+            id="test",
+            states=[idle],
+            context={"count": 42},
+        )
+        interp = SyncInterpreter(machine).start()
+        self.assertEqual(interp.context["count"], 42)
+        interp.stop()

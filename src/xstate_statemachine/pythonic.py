@@ -35,6 +35,7 @@ from typing import (
 from .exceptions import InvalidConfigError, NotSupportedError
 from .factory import create_machine as _original_create_machine
 from .machine_logic import MachineLogic
+from .models import MachineNode
 
 # -------------------------------------------------------------------------
 # 🛠️ Internal Helpers
@@ -794,3 +795,50 @@ def _compile_logic_from_instance(
         guards=guard_dict,
         services=service_dict,
     )
+
+
+# -------------------------------------------------------------------------
+# Functional API: build_machine()
+# -------------------------------------------------------------------------
+
+
+def build_machine(
+    *,
+    id: str,
+    states: List[State],
+    transitions: Optional[List[Union[Transition, TransitionGroup]]] = None,
+    actions: Optional[List[Callable]] = None,
+    guards: Optional[List[Callable]] = None,
+    services: Optional[List[Callable]] = None,
+    context: Optional[Dict] = None,
+) -> "MachineNode":
+    """Build a state machine from Python objects (functional API).
+
+    This is the simplest API style -- define ``State`` objects and
+    ``Transition`` objects at module level, then call this function.
+
+    Args:
+        id: Machine ID string.
+        states: List of ``State`` objects.
+        transitions: Optional list of transitions.
+        actions: Optional list of action callables.
+        guards: Optional list of guard callables.
+        services: Optional list of service callables.
+        context: Optional initial context dict.
+
+    Returns:
+        A ``MachineNode`` ready for use with ``Interpreter``
+        or ``SyncInterpreter``.
+    """
+    config = _compile_config(
+        machine_id=id,
+        states=states,
+        transitions=transitions or [],
+        context=context,
+    )
+    logic = _compile_logic_from_functions(
+        actions=actions or [],
+        guards=guards or [],
+        services=services or [],
+    )
+    return _original_create_machine(config, logic=logic)
