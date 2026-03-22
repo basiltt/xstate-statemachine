@@ -7,8 +7,7 @@ fluent API to assemble the machine.
 """
 
 import keyword
-from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set
 
 from ..extractor import extract_events
 from .base import BaseStrategy, GenerationContext
@@ -18,7 +17,6 @@ from ._shared import (
     generate_imports,
     generate_logger_setup,
     generate_section_header,
-    pascal_case_name,
     snake_case_name,
 )
 
@@ -236,6 +234,8 @@ class PythonicBuilderStrategy(BaseStrategy):
                 "async " if is_async and component_type != "guard" else ""
             )
 
+            interpreter_type = "Interpreter" if is_async else "SyncInterpreter"
+
             if component_type == "guard":
                 args = [
                     "    context: Dict[str, Any],",
@@ -244,7 +244,7 @@ class PythonicBuilderStrategy(BaseStrategy):
                 ret_type = "bool"
             elif component_type == "service":
                 args = [
-                    "    interpreter: SyncInterpreter,",
+                    f"    interpreter: {interpreter_type},",
                     "    context: Dict[str, Any],",
                     "    event: Any,",
                 ]
@@ -252,7 +252,7 @@ class PythonicBuilderStrategy(BaseStrategy):
             else:
                 # action
                 args = [
-                    "    interpreter: SyncInterpreter,",
+                    f"    interpreter: {interpreter_type},",
                     "    context: Dict[str, Any],",
                     "    event: Any,",
                     "    action_def: Any,",
@@ -270,8 +270,9 @@ class PythonicBuilderStrategy(BaseStrategy):
             docstring_body = generate_action_docstring(
                 original, component_type
             )
-            code_lines.append('    """')
-            for doc_line in docstring_body.split("\n"):
+            doc_parts = docstring_body.split("\n")
+            code_lines.append(f'    """{doc_parts[0]}')
+            for doc_line in doc_parts[1:]:
                 if doc_line:
                     code_lines.append(f"    {doc_line}")
                 else:
@@ -294,7 +295,8 @@ class PythonicBuilderStrategy(BaseStrategy):
                         if component_type == "action"
                         else "Running service"
                     )
-                    body_lines.append(f'logger.info("{verb}: {original}")')
+                    # Emit BEFORE the try/except block
+                    code_lines.append(f'    logger.info("{verb}: {original}")')
                 if component_type == "action":
                     body_lines.append("# TODO: implement action logic")
                     body_lines.append("pass")
