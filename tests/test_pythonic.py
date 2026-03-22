@@ -15,6 +15,7 @@ from xstate_statemachine.pythonic import (
     _compile_logic_from_functions,
     _compile_logic_from_instance,
     build_machine,
+    MachineBuilder,
     State,
     Transition,
     TransitionGroup,
@@ -739,4 +740,116 @@ class TestBuildMachineFunctional(unittest.TestCase):
         )
         interp = SyncInterpreter(machine).start()
         self.assertEqual(interp.context["count"], 42)
+        interp.stop()
+
+
+class TestMachineBuilder(unittest.TestCase):
+    """Tests for MachineBuilder fluent API."""
+
+    def test_basic_builder(self):
+        machine = (
+            MachineBuilder("test")
+            .state("idle", initial=True)
+            .state("running")
+            .transition("idle", "START", "running")
+            .build()
+        )
+        interp = SyncInterpreter(machine).start()
+        self.assertIn("test.idle", interp.current_state_ids)
+        interp.send("START")
+        self.assertIn("test.running", interp.current_state_ids)
+        interp.stop()
+
+    def test_builder_with_logic(self):
+        result = {}
+        machine = (
+            MachineBuilder("test")
+            .state("idle", initial=True)
+            .state("active")
+            .transition("idle", "GO", "active", actions=["logIt"])
+            .action(
+                "logIt",
+                lambda i, ctx, e, a: result.update({"ok": True}),
+            )
+            .build()
+        )
+        interp = SyncInterpreter(machine).start()
+        interp.send("GO")
+        interp.stop()
+        self.assertTrue(result["ok"])
+
+    def test_builder_context(self):
+        machine = (
+            MachineBuilder("test")
+            .context({"x": 1})
+            .state("idle", initial=True)
+            .build()
+        )
+        interp = SyncInterpreter(machine).start()
+        self.assertEqual(interp.context["x"], 1)
+        interp.stop()
+
+    def test_builder_context_override(self):
+        machine = (
+            MachineBuilder("test")
+            .context({"x": 1})
+            .state("idle", initial=True)
+            .build(context={"x": 99})
+        )
+        interp = SyncInterpreter(machine).start()
+        self.assertEqual(interp.context["x"], 99)
+        interp.stop()
+
+    def test_builder_guard(self):
+        machine = (
+            MachineBuilder("test")
+            .state("idle", initial=True)
+            .state("active")
+            .transition("idle", "GO", "active", guard="isOk")
+            .guard("isOk", lambda ctx, e: False)
+            .build()
+        )
+        interp = SyncInterpreter(machine).start()
+        interp.send("GO")
+        self.assertIn("test.idle", interp.current_state_ids)
+        interp.stop()
+
+    def test_builder_child_states(self):
+        machine = (
+            MachineBuilder("test")
+            .state("idle", initial=True)
+            .state("moving")
+            .child_states(
+                "moving",
+                initial="up",
+                states={"up": {}, "down": {}},
+            )
+            .transition("idle", "GO", "moving")
+            .build()
+        )
+        interp = SyncInterpreter(machine).start()
+        interp.send("GO")
+        self.assertIn("test.moving.up", interp.current_state_ids)
+        interp.stop()
+
+    def test_builder_child_states_unknown_parent_raises(self):
+        builder = MachineBuilder("test").state("idle", initial=True)
+        with self.assertRaises(InvalidConfigError):
+            builder.child_states(
+                "nonexistent",
+                initial="x",
+                states={"x": {}},
+            )
+
+    def test_builder_final_state(self):
+        machine = (
+            MachineBuilder("test")
+            .state("idle", initial=True)
+            .state("done", final=True)
+            .transition("idle", "FINISH", "done")
+            .build()
+        )
+        interp = SyncInterpreter(machine).start()
+        interp.send("FINISH")
+        self.assertIn("test.done", interp.current_state_ids)
         interp.stop()

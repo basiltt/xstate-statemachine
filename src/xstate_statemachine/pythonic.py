@@ -842,3 +842,216 @@ def build_machine(
         services=services or [],
     )
     return _original_create_machine(config, logic=logic)
+
+
+# -------------------------------------------------------------------------
+# Builder API: MachineBuilder
+# -------------------------------------------------------------------------
+
+
+class MachineBuilder:
+    """Fluent builder for constructing state machines.
+
+    Example::
+
+        machine = (
+            MachineBuilder("myMachine")
+            .context({"count": 0})
+            .state("idle", initial=True)
+            .state("running")
+            .transition("idle", "START", "running")
+            .action("logIt", my_action_fn)
+            .build()
+        )
+
+    Args:
+        machine_id: The machine's ID string.
+    """
+
+    def __init__(self, machine_id: str) -> None:
+        self._machine_id = machine_id
+        self._context: Optional[Dict] = None
+        self._states: Dict[str, Dict[str, Any]] = {}
+        self._initial_state: Optional[str] = None
+        self._transitions: List[Dict[str, Any]] = []
+        self._actions: Dict[str, Callable] = {}
+        self._guards: Dict[str, Callable] = {}
+        self._services: Dict[str, Callable] = {}
+
+    def context(self, ctx: Dict) -> "MachineBuilder":
+        """Set the initial context."""
+        self._context = ctx
+        return self
+
+    def state(
+        self,
+        name: str,
+        *,
+        initial: bool = False,
+        final: bool = False,
+        parallel: bool = False,
+        on: Optional[Dict] = None,
+        entry: Optional[List] = None,
+        exit: Optional[List] = None,
+        after: Optional[Dict] = None,
+        invoke: Optional[Union[Dict, List]] = None,
+        on_done: Optional[Union[str, Dict]] = None,
+        always: Optional[Union[str, Dict, List]] = None,
+    ) -> "MachineBuilder":
+        """Add a state to the machine."""
+        if final and parallel:
+            raise InvalidConfigError(
+                f"State '{name}' cannot be both " f"final and parallel"
+            )
+        config: Dict[str, Any] = {}
+        if final:
+            config["type"] = "final"
+        if parallel:
+            config["type"] = "parallel"
+        if on:
+            config["on"] = on
+        if entry:
+            config["entry"] = entry
+        if exit:
+            config["exit"] = exit
+        if after:
+            config["after"] = after
+        if invoke:
+            config["invoke"] = invoke
+        if on_done is not None:
+            if isinstance(on_done, str):
+                config["onDone"] = {"target": on_done}
+            else:
+                config["onDone"] = on_done
+        if always is not None:
+            if "on" not in config:
+                config["on"] = {}
+            config["on"][""] = always
+        if initial:
+            self._initial_state = name
+        self._states[name] = config
+        return self
+
+    def transition(
+        self,
+        source: str,
+        event: str,
+        target: str,
+        *,
+        guard: Optional[str] = None,
+        actions: Optional[List[str]] = None,
+        reenter: bool = False,
+        internal: bool = False,
+    ) -> "MachineBuilder":
+        """Add a transition between states."""
+        self._transitions.append(
+            {
+                "source": source,
+                "event": event,
+                "target": target,
+                "guard": guard,
+                "actions": actions,
+                "reenter": reenter,
+                "internal": internal,
+            }
+        )
+        return self
+
+    def child_states(
+        self,
+        parent: str,
+        *,
+        initial: Optional[str] = None,
+        states: Optional[Dict[str, Dict]] = None,
+        parallel: bool = False,
+    ) -> "MachineBuilder":
+        """Add child states to an existing state."""
+        if parent not in self._states:
+            raise InvalidConfigError(
+                f"Parent state '{parent}' not found. "
+                f"Add it with .state() first"
+            )
+        parent_config = self._states[parent]
+        if parallel:
+            parent_config["type"] = "parallel"
+        if states:
+            parent_config["states"] = states
+        if initial and not parallel:
+            parent_config["initial"] = initial
+        return self
+
+    def action(self, name: str, fn: Callable) -> "MachineBuilder":
+        """Register an action function."""
+        reg_name = getattr(fn, "_xsm_name", name)
+        self._actions[reg_name] = fn
+        return self
+
+    def guard(self, name: str, fn: Callable) -> "MachineBuilder":
+        """Register a guard function."""
+        reg_name = getattr(fn, "_xsm_name", name)
+        self._guards[reg_name] = fn
+        return self
+
+    def service(self, name: str, fn: Callable) -> "MachineBuilder":
+        """Register a service function."""
+        reg_name = getattr(fn, "_xsm_name", name)
+        self._services[reg_name] = fn
+        return self
+
+    def build(self, context: Optional[Dict] = None) -> MachineNode:
+        """Build and return the MachineNode.
+
+        Args:
+            context: Optional context override.
+
+        Returns:
+            A ``MachineNode`` ready for interpreter use.
+        """
+        # Merge transitions into state configs
+        for t in self._transitions:
+            source = t["source"]
+            if source not in self._states:
+                raise InvalidConfigError(
+                    f"Transition source '{source}' " f"is not a defined state"
+                )
+            state_config = self._states[source]
+            if "on" not in state_config:
+                state_config["on"] = {}
+            entry: Dict[str, Any] = {}
+            if not t["internal"]:
+                entry["target"] = t["target"]
+            if t["guard"]:
+                entry["guard"] = t["guard"]
+            if t["actions"]:
+                entry["actions"] = t["actions"]
+            if t["reenter"]:
+                entry["reenter"] = True
+            event = t["event"]
+            if event in state_config["on"]:
+                existing = state_config["on"][event]
+                if isinstance(existing, list):
+                    existing.append(entry)
+                else:
+                    state_config["on"][event] = [
+                        existing,
+                        entry,
+                    ]
+            else:
+                state_config["on"][event] = entry
+
+        config: Dict[str, Any] = {
+            "id": self._machine_id,
+            "states": self._states,
+        }
+        if self._initial_state:
+            config["initial"] = self._initial_state
+        ctx = context or self._context
+        if ctx:
+            config["context"] = ctx
+
+        logic = MachineLogic(
+            actions=self._actions,
+            guards=self._guards,
+            services=self._services,
+        )
+        return _original_create_machine(config, logic=logic)
