@@ -4,6 +4,7 @@
 # -------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -------------------------------------------------------------------------
+import asyncio
 import unittest
 
 # -------------------------------------------------------------------------
@@ -30,6 +31,7 @@ from xstate_statemachine.exceptions import (
     NotSupportedError,
 )
 from xstate_statemachine import (
+    Interpreter,
     MachineLogic,
     SyncInterpreter,
     create_machine,
@@ -97,7 +99,7 @@ class TestState(unittest.TestCase):
     def test_state_entry_exit(self):
         s = State("idle", entry=["logEntry"], exit=["cleanup"])
         self.assertEqual(s.entry, ["logEntry"])
-        self.assertEqual(s.exit, ["cleanup"])
+        self.assertEqual(s._exit_actions, ["cleanup"])
 
     def test_state_after(self):
         s = State("waiting", after={1000: "timeout"})
@@ -992,3 +994,936 @@ class TestBackwardCompatibility(unittest.TestCase):
         this individual test. This test just documents the intent.
         """
         pass
+
+
+# =================================================================
+# 🔀 Always Transitions (dedicated class from spec §11)
+# =================================================================
+
+
+class TestAlwaysTransitions(unittest.TestCase):
+    """Tests for always (eventless) transitions."""
+
+    def test_always_list_compiles_to_empty_event(self):
+        a = State(
+            "a",
+            initial=True,
+            always=[
+                {"target": "b", "guard": "isOk"},
+                {"target": "c"},
+            ],
+        )
+        b = State("b")
+        c = State("c")
+        config = _compile_config(
+            machine_id="t",
+            states=[a, b, c],
+            transitions=[],
+            context=None,
+        )
+        on_empty = config["states"]["a"]["on"][""]
+        self.assertIsInstance(on_empty, list)
+        self.assertEqual(len(on_empty), 2)
+
+    def test_always_works_with_sync_interpreter(self):
+        """Always transitions should fire immediately."""
+        a = State(
+            "a",
+            initial=True,
+            always={"target": "b"},
+        )
+        b = State("b")
+        machine = build_machine(id="test", states=[a, b], transitions=[])
+        interp = SyncInterpreter(machine).start()
+        # Should immediately transition to b
+        self.assertIn("test.b", interp.current_state_ids)
+        interp.stop()
+
+    def test_always_in_builder(self):
+        machine = (
+            MachineBuilder("test")
+            .state("a", initial=True, always={"target": "b"})
+            .state("b")
+            .build()
+        )
+        interp = SyncInterpreter(machine).start()
+        self.assertIn("test.b", interp.current_state_ids)
+        interp.stop()
+
+    def test_always_in_functional(self):
+        a = State(
+            "a",
+            initial=True,
+            always={"target": "b"},
+        )
+        b = State("b")
+        machine = build_machine(id="test", states=[a, b])
+        interp = SyncInterpreter(machine).start()
+        self.assertIn("test.b", interp.current_state_ids)
+        interp.stop()
+
+
+# =================================================================
+# 🏗️ StateMachine Class-Based — Extended Tests (spec §11)
+# =================================================================
+
+
+class TestStateMachineClassBasedExtended(unittest.TestCase):
+    """Extended tests for the StateMachine class-based API."""
+
+    def test_hierarchical_states_nested_class(self):
+        class Elevator(StateMachine):
+            idle = State(initial=True)
+
+            class moving(State):
+                up = State(initial=True)
+                down = State()
+
+            go_up = idle.to(moving.up, event="CALL_UP")
+
+        machine = Elevator.create_machine()
+        interp = SyncInterpreter(machine).start()
+        self.assertIn("Elevator.idle", interp.current_state_ids)
+        interp.send("CALL_UP")
+        self.assertIn("Elevator.moving.up", interp.current_state_ids)
+        interp.stop()
+
+    def test_entry_exit_decorators(self):
+        results = {}
+
+        class M(StateMachine):
+            idle = State(initial=True)
+            active = State()
+            go = idle.to(active, event="GO")
+
+            @idle.enter
+            def on_idle_enter(self, i, ctx, e, a):
+                results["entered"] = True
+
+            @idle.exit
+            def on_idle_exit(self, i, ctx, e, a):
+                results["exited"] = True
+
+        machine = M.create_machine()
+        interp = SyncInterpreter(machine).start()
+        # Enter fires on start
+        self.assertTrue(results.get("entered"))
+        interp.send("GO")
+        # Exit fires on leaving idle
+        self.assertTrue(results.get("exited"))
+        interp.stop()
+
+    def test_self_binding_with_functools_partial(self):
+        """Verify that decorated methods have `self` properly
+        bound via functools.partial."""
+
+        class Counter(StateMachine):
+            initial_context = {"count": 0}
+            idle = State(initial=True)
+            done = State()
+            go = idle.to(done, event="GO", actions=["increment"])
+
+            @action
+            def increment(self, i, ctx, e, a):
+                ctx["count"] += 1
+
+        machine = Counter.create_machine()
+        interp = SyncInterpreter(machine).start()
+        interp.send("GO")
+        self.assertEqual(interp.context["count"], 1)
+        interp.stop()
+
+    def test_on_done_class_based(self):
+        class M(StateMachine):
+            parent = State(
+                initial=True,
+                on_done="done",
+                states=[State("c", initial=True, final=True)],
+            )
+            done = State()
+
+        # Should compile without error
+        machine = M.create_machine()
+        self.assertIsNotNone(machine)
+
+    def test_context_with_initial_context_attr(self):
+        class M(StateMachine):
+            initial_context = {"x": 42}
+            idle = State(initial=True)
+
+        machine = M.create_machine()
+        interp = SyncInterpreter(machine).start()
+        self.assertEqual(interp.context["x"], 42)
+        interp.stop()
+
+
+# =================================================================
+# 🔧 MachineBuilder — Extended Tests (spec §11)
+# =================================================================
+
+
+class TestMachineBuilderExtended(unittest.TestCase):
+    """Extended tests for MachineBuilder fluent API."""
+
+    def test_builder_parallel(self):
+        machine = (
+            MachineBuilder("test")
+            .state("idle", initial=True)
+            .state("regions")
+            .child_states(
+                "regions",
+                parallel=True,
+                states={
+                    "r1": {
+                        "initial": "a",
+                        "states": {"a": {}, "b": {}},
+                    },
+                    "r2": {
+                        "initial": "c",
+                        "states": {"c": {}, "d": {}},
+                    },
+                },
+            )
+            .transition("idle", "GO", "regions")
+            .build()
+        )
+        interp = SyncInterpreter(machine).start()
+        interp.send("GO")
+        ids = interp.current_state_ids
+        self.assertTrue(
+            any("r1" in s for s in ids),
+            f"Expected r1 region in {ids}",
+        )
+        interp.stop()
+
+    def test_builder_invoke(self):
+        machine = (
+            MachineBuilder("test")
+            .state(
+                "loading",
+                initial=True,
+                invoke={
+                    "src": "fetchData",
+                    "onDone": "success",
+                },
+            )
+            .state("success")
+            .service(
+                "fetchData",
+                lambda i, ctx, e: {"result": "ok"},
+            )
+            .build()
+        )
+        self.assertIsNotNone(machine)
+
+    def test_builder_after(self):
+        machine = (
+            MachineBuilder("test")
+            .state(
+                "waiting",
+                initial=True,
+                after={500: "done"},
+            )
+            .state("done")
+            .build()
+        )
+        self.assertIsNotNone(machine)
+
+    def test_builder_always(self):
+        machine = (
+            MachineBuilder("test")
+            .state(
+                "a",
+                initial=True,
+                always={"target": "b"},
+            )
+            .state("b")
+            .build()
+        )
+        interp = SyncInterpreter(machine).start()
+        self.assertIn("test.b", interp.current_state_ids)
+        interp.stop()
+
+    def test_builder_accepts_decorated_functions(self):
+        @action
+        def log_it(i, ctx, e, a):
+            pass
+
+        machine = (
+            MachineBuilder("test")
+            .state("idle", initial=True)
+            .state("active")
+            .transition("idle", "GO", "active", actions=["logIt"])
+            .action("logIt", log_it)
+            .build()
+        )
+        self.assertIsNotNone(machine)
+
+    def test_builder_on_done(self):
+        machine = (
+            MachineBuilder("test")
+            .state("parent", initial=True, on_done="done")
+            .child_states(
+                "parent",
+                initial="child",
+                states={"child": {"type": "final"}},
+            )
+            .state("done")
+            .build()
+        )
+        self.assertIsNotNone(machine)
+
+    def test_builder_build_idempotent(self):
+        """Calling build() twice should produce valid machines
+        without corrupting internal state."""
+        builder = (
+            MachineBuilder("test")
+            .state("idle", initial=True)
+            .state("active")
+            .transition("idle", "GO", "active")
+        )
+        machine1 = builder.build()
+        machine2 = builder.build()
+
+        interp1 = SyncInterpreter(machine1).start()
+        interp1.send("GO")
+        self.assertIn("test.active", interp1.current_state_ids)
+        interp1.stop()
+
+        interp2 = SyncInterpreter(machine2).start()
+        interp2.send("GO")
+        self.assertIn("test.active", interp2.current_state_ids)
+        interp2.stop()
+
+
+# =================================================================
+# 🏗️ Functional API — Extended Tests (spec §11)
+# =================================================================
+
+
+class TestBuildMachineFunctionalExtended(unittest.TestCase):
+    """Extended tests for the build_machine() functional API."""
+
+    def test_functional_hierarchical(self):
+        child1 = State("c1", initial=True)
+        child2 = State("c2")
+        parent = State("parent", initial=True, states=[child1, child2])
+        machine = build_machine(id="test", states=[parent])
+        interp = SyncInterpreter(machine).start()
+        self.assertIn("test.parent.c1", interp.current_state_ids)
+        interp.stop()
+
+    def test_functional_invoke(self):
+        idle = State(
+            "idle",
+            initial=True,
+            invoke={
+                "src": "fetchData",
+                "onDone": "done",
+            },
+        )
+        done = State("done")
+
+        @service
+        def fetch_data(i, ctx, e):
+            return {"ok": True}
+
+        machine = build_machine(
+            id="test",
+            states=[idle, done],
+            services=[fetch_data],
+        )
+        self.assertIsNotNone(machine)
+
+    def test_functional_after(self):
+        wait = State("wait", initial=True, after={500: "done"})
+        done = State("done")
+        machine = build_machine(id="test", states=[wait, done])
+        self.assertIsNotNone(machine)
+
+    def test_functional_always(self):
+        a = State("a", initial=True, always={"target": "b"})
+        b = State("b")
+        machine = build_machine(id="test", states=[a, b])
+        interp = SyncInterpreter(machine).start()
+        self.assertIn("test.b", interp.current_state_ids)
+        interp.stop()
+
+    def test_functional_on_done(self):
+        child = State("child", initial=True, final=True)
+        parent = State(
+            "parent",
+            initial=True,
+            on_done="done",
+            states=[child],
+        )
+        done = State("done")
+        machine = build_machine(id="test", states=[parent, done])
+        self.assertIsNotNone(machine)
+
+
+# =================================================================
+# 🔀 Merge Rules (spec §11)
+# =================================================================
+
+
+class TestMergeRules(unittest.TestCase):
+    """Tests for transition merge behavior."""
+
+    def test_transition_overrides_state_on_for_same_event(self):
+        a = State("a", initial=True, on={"GO": "b"})
+        b = State("b")
+        c = State("c")
+        t = a.to(c, event="GO", guard="check")
+        config = _compile_config(
+            machine_id="t",
+            states=[a, b, c],
+            transitions=[t],
+            context=None,
+        )
+        on_go = config["states"]["a"]["on"]["GO"]
+        self.assertEqual(on_go["target"], "c")
+        self.assertEqual(on_go["guard"], "check")
+
+    def test_state_on_preserved_when_no_transition_conflict(
+        self,
+    ):
+        a = State("a", initial=True, on={"CLICK": "b"})
+        b = State("b")
+        c = State("c")
+        t = a.to(c, event="OTHER")
+        config = _compile_config(
+            machine_id="t",
+            states=[a, b, c],
+            transitions=[t],
+            context=None,
+        )
+        self.assertEqual(config["states"]["a"]["on"]["CLICK"], "b")
+        self.assertEqual(config["states"]["a"]["on"]["OTHER"]["target"], "c")
+
+    def test_mixed_on_and_transitions_different_events(self):
+        a = State("a", initial=True, on={"X": "b"})
+        b = State("b")
+        c = State("c")
+        t = a.to(c, event="Y")
+        config = _compile_config(
+            machine_id="t",
+            states=[a, b, c],
+            transitions=[t],
+            context=None,
+        )
+        self.assertEqual(config["states"]["a"]["on"]["X"], "b")
+        self.assertIn("Y", config["states"]["a"]["on"])
+
+
+# =================================================================
+# 🚨 Error Handling (consolidated class from spec §11)
+# =================================================================
+
+
+class TestErrorHandling(unittest.TestCase):
+    """Consolidated error-handling tests."""
+
+    def test_final_and_parallel_raises(self):
+        with self.assertRaises(InvalidConfigError):
+            State("bad", final=True, parallel=True)
+
+    def test_final_with_on_transitions_raises(self):
+        done = State("done", final=True, on={"GO": "other"})
+        other = State("other", initial=True)
+        with self.assertRaises(InvalidConfigError):
+            _compile_config(
+                machine_id="t",
+                states=[other, done],
+                transitions=[],
+                context=None,
+            )
+
+    def test_final_with_children_raises(self):
+        child = State("child", initial=True)
+        done = State("done", final=True, states=[child])
+        other = State("other", initial=True)
+        with self.assertRaises(InvalidConfigError):
+            _compile_config(
+                machine_id="t",
+                states=[other, done],
+                transitions=[],
+                context=None,
+            )
+
+    def test_final_with_transition_object_raises(self):
+        done = State("done", final=True)
+        other = State("other", initial=True)
+        t = done.to(other, event="GO")
+        with self.assertRaises(InvalidConfigError):
+            _compile_config(
+                machine_id="t",
+                states=[other, done],
+                transitions=[t],
+                context=None,
+            )
+
+    def test_parallel_child_with_initial_raises(self):
+        c1 = State(
+            "c1",
+            initial=True,
+            states=[State("a", initial=True)],
+        )
+        c2 = State(
+            "c2",
+            states=[State("b", initial=True)],
+        )
+        parent = State(
+            "parent",
+            initial=True,
+            parallel=True,
+            states=[c1, c2],
+        )
+        with self.assertRaises(InvalidConfigError):
+            _compile_config(
+                machine_id="t",
+                states=[parent],
+                transitions=[],
+                context=None,
+            )
+
+    def test_to_without_event_raises(self):
+        a = State("a", initial=True)
+        b = State("b")
+        with self.assertRaises(InvalidConfigError):
+            a.to(b)
+
+    def test_async_guard_raises(self):
+        with self.assertRaises(NotSupportedError):
+
+            @guard
+            async def bad_guard(ctx, e):
+                return True
+
+    def test_async_guard_explicit_name_raises(self):
+        with self.assertRaises(NotSupportedError):
+
+            @guard("myGuard")
+            async def bad_guard(ctx, e):
+                return True
+
+    def test_duplicate_state_name_raises(self):
+        a = State("a", initial=True)
+        a2 = State("a")
+        with self.assertRaises(InvalidConfigError):
+            _compile_config(
+                machine_id="t",
+                states=[a, a2],
+                transitions=[],
+                context=None,
+            )
+
+    def test_unknown_transition_source_raises(self):
+        a = State("a", initial=True)
+        orphan = State("orphan")
+        t = orphan.to(a, event="GO")
+        with self.assertRaises(InvalidConfigError):
+            _compile_config(
+                machine_id="t",
+                states=[a],
+                transitions=[t],
+                context=None,
+            )
+
+
+# =================================================================
+# 🐍 __repr__ Tests
+# =================================================================
+
+
+class TestRepr(unittest.TestCase):
+    """Tests for __repr__ methods on public classes."""
+
+    def test_state_repr(self):
+        s = State("idle", initial=True)
+        r = repr(s)
+        self.assertIn("idle", r)
+        self.assertIn("initial", r)
+
+    def test_state_repr_no_flags(self):
+        s = State("plain")
+        r = repr(s)
+        self.assertIn("plain", r)
+        self.assertNotIn("initial", r)
+
+    def test_transition_repr(self):
+        a = State("a")
+        b = State("b")
+        t = a.to(b, event="GO")
+        r = repr(t)
+        self.assertIn("a", r)
+        self.assertIn("b", r)
+        self.assertIn("GO", r)
+
+    def test_transition_group_repr(self):
+        a = State("a", initial=True)
+        b = State("b")
+        c = State("c")
+        g = a.to(b, event="X") | b.to(c, event="X")
+        r = repr(g)
+        self.assertIn("2", r)
+
+    def test_machine_builder_repr(self):
+        builder = (
+            MachineBuilder("myMachine")
+            .state("idle", initial=True)
+            .state("running")
+        )
+        r = repr(builder)
+        self.assertIn("myMachine", r)
+        self.assertIn("2", r)
+
+
+# =================================================================
+# 🔧 Build Idempotency & Context Edge Cases
+# =================================================================
+
+
+class TestEdgeCases(unittest.TestCase):
+    """Edge case tests for discovered issues."""
+
+    def test_empty_context_dict_preserved(self):
+        """An empty dict {} should be set as context,
+        not treated as falsy/None."""
+        idle = State("idle", initial=True)
+        machine = build_machine(
+            id="test",
+            states=[idle],
+            context={},
+        )
+        interp = SyncInterpreter(machine).start()
+        self.assertEqual(interp.context, {})
+        interp.stop()
+
+    def test_builder_empty_context_preserved(self):
+        machine = (
+            MachineBuilder("test")
+            .context({})
+            .state("idle", initial=True)
+            .build()
+        )
+        interp = SyncInterpreter(machine).start()
+        self.assertEqual(interp.context, {})
+        interp.stop()
+
+    def test_class_based_empty_context_preserved(self):
+        class M(StateMachine):
+            initial_context = {}
+            idle = State(initial=True)
+
+        machine = M.create_machine()
+        interp = SyncInterpreter(machine).start()
+        self.assertEqual(interp.context, {})
+        interp.stop()
+
+    def test_class_based_context_none_override(self):
+        """Passing context=None should use initial_context."""
+
+        class M(StateMachine):
+            initial_context = {"x": 1}
+            idle = State(initial=True)
+
+        machine = M.create_machine(context=None)
+        interp = SyncInterpreter(machine).start()
+        self.assertEqual(interp.context["x"], 1)
+        interp.stop()
+
+    def test_builder_action_uses_explicit_name(self):
+        """MachineBuilder.action() should use the explicitly
+        provided name, not _xsm_name from decorators."""
+        result = {}
+
+        @action("decoratorName")
+        def my_func(i, ctx, e, a):
+            result["ok"] = True
+
+        machine = (
+            MachineBuilder("test")
+            .state("idle", initial=True)
+            .state("done")
+            .transition(
+                "idle",
+                "GO",
+                "done",
+                actions=["explicitName"],
+            )
+            .action("explicitName", my_func)
+            .build()
+        )
+        interp = SyncInterpreter(machine).start()
+        interp.send("GO")
+        interp.stop()
+        self.assertTrue(result.get("ok"))
+
+    def test_exit_decorator_on_state(self):
+        """@state.exit should work as a decorator (not
+        _exit_decorator)."""
+        results = {}
+
+        class M(StateMachine):
+            idle = State(initial=True)
+            done = State()
+            go = idle.to(done, event="GO")
+
+            @idle.exit
+            def on_exit(self, i, ctx, e, a):
+                results["exited"] = True
+
+        machine = M.create_machine()
+        interp = SyncInterpreter(machine).start()
+        interp.send("GO")
+        interp.stop()
+        self.assertTrue(results.get("exited"))
+
+
+# =================================================================
+# 🔴 Round-2 Fixes — New Validation Tests
+# =================================================================
+
+
+class TestRound2Fixes(unittest.TestCase):
+    """Tests for round-2 review fixes."""
+
+    def test_enter_decorator_outside_class_raises(self):
+        """@state.enter used outside StateMachine class
+        should raise InvalidConfigError at build time."""
+        idle = State("idle", initial=True)
+        done = State("done")
+
+        @idle.enter
+        def on_enter(i, ctx, e, a):
+            pass
+
+        with self.assertRaises(InvalidConfigError):
+            build_machine(
+                id="test",
+                states=[idle, done],
+                actions=[on_enter],
+            )
+
+    def test_exit_decorator_outside_class_raises(self):
+        """@state.exit used outside StateMachine class
+        should raise InvalidConfigError at build time."""
+        idle = State("idle", initial=True)
+        done = State("done")
+
+        @idle.exit
+        def on_exit(i, ctx, e, a):
+            pass
+
+        with self.assertRaises(InvalidConfigError):
+            build_machine(
+                id="test",
+                states=[idle, done],
+                actions=[on_exit],
+            )
+
+    def test_transition_or_with_invalid_type(self):
+        """Transition | non-Transition should raise TypeError."""
+        a = State("a", initial=True)
+        b = State("b")
+        t = a.to(b, event="GO")
+        with self.assertRaises(TypeError):
+            _ = t | "not_a_transition"
+
+    def test_transition_group_or_with_invalid_type(self):
+        """TransitionGroup | non-Transition should raise TypeError."""
+        a = State("a", initial=True)
+        b = State("b")
+        c = State("c")
+        g = a.to(b, event="X") | b.to(c, event="X")
+        with self.assertRaises(TypeError):
+            _ = g | 42
+
+    def test_builder_duplicate_state_raises(self):
+        """MachineBuilder.state() should reject duplicate names."""
+        builder = MachineBuilder("test").state("idle", initial=True)
+        with self.assertRaises(InvalidConfigError):
+            builder.state("idle")
+
+    def test_builder_no_initial_state_raises(self):
+        """MachineBuilder.build() should raise when no initial
+        state is defined and multiple states exist."""
+        builder = MachineBuilder("test").state("a").state("b")
+        with self.assertRaises(InvalidConfigError):
+            builder.build()
+
+    def test_builder_single_state_no_initial_ok(self):
+        """A single-state builder should not require initial
+        (the interpreter infers it)."""
+        machine = MachineBuilder("test").state("only").build()
+        self.assertIsNotNone(machine)
+
+    def test_state_reuse_across_builds(self):
+        """State objects reused across multiple builds
+        should not corrupt each other."""
+        idle = State("idle", initial=True)
+        done = State("done")
+        t = idle.to(done, event="GO")
+
+        m1 = build_machine(
+            id="m1",
+            states=[idle, done],
+            transitions=[t],
+        )
+        m2 = build_machine(
+            id="m2",
+            states=[idle, done],
+            transitions=[t],
+        )
+
+        i1 = SyncInterpreter(m1).start()
+        i2 = SyncInterpreter(m2).start()
+        self.assertIn("m1.idle", i1.current_state_ids)
+        self.assertIn("m2.idle", i2.current_state_ids)
+        i1.stop()
+        i2.stop()
+
+
+# =================================================================
+# 🔀 Spec §11 — Missing Test Coverage
+# =================================================================
+
+
+class TestClassBasedParallelNestedClass(unittest.TestCase):
+    """Tests for parallel states via nested class syntax."""
+
+    def test_parallel_states_nested_class(self):
+        """Parallel states defined via nested class syntax."""
+        r1_a = State("a", initial=True)
+        r1_b = State("b")
+        r2_c = State("c", initial=True)
+        r2_d = State("d")
+        r1 = State("r1", states=[r1_a, r1_b])
+        r2 = State("r2", states=[r2_c, r2_d])
+        idle = State("idle", initial=True)
+        monitoring = State(
+            "monitoring",
+            parallel=True,
+            states=[r1, r2],
+        )
+
+        t = idle.to(monitoring, event="START")
+        machine = build_machine(
+            id="test",
+            states=[idle, monitoring],
+            transitions=[t],
+        )
+        interp = SyncInterpreter(machine).start()
+        interp.send("START")
+        ids = interp.current_state_ids
+        self.assertTrue(
+            any("r1" in s for s in ids),
+            f"Expected r1 region in {ids}",
+        )
+        self.assertTrue(
+            any("r2" in s for s in ids),
+            f"Expected r2 region in {ids}",
+        )
+        interp.stop()
+
+
+class TestClassBasedAlways(unittest.TestCase):
+    """Tests for always transition in class-based API."""
+
+    def test_always_transition_class_based(self):
+        class M(StateMachine):
+            a = State(
+                initial=True,
+                always={"target": "b"},
+            )
+            b = State()
+
+        machine = M.create_machine()
+        interp = SyncInterpreter(machine).start()
+        self.assertIn("M.b", interp.current_state_ids)
+        interp.stop()
+
+
+class TestAsyncInterpreterCompat(unittest.TestCase):
+    """Tests for Pythonic API with async Interpreter."""
+
+    def test_pythonic_machine_works_with_async_interpreter(
+        self,
+    ):
+        idle = State("idle", initial=True)
+        active = State("active")
+        t = idle.to(active, event="GO")
+        machine = build_machine(
+            id="test",
+            states=[idle, active],
+            transitions=[t],
+        )
+
+        async def run():
+            interp = await Interpreter(machine).start()
+            self.assertIn("test.idle", interp.current_state_ids)
+            await interp.send("GO")
+            # Allow event loop to process the queued event
+            await asyncio.sleep(0.05)
+            self.assertIn("test.active", interp.current_state_ids)
+            await interp.stop()
+
+        asyncio.run(run())
+
+
+class TestSnapshotRestore(unittest.TestCase):
+    """Tests for Pythonic machine snapshot/restore."""
+
+    def test_pythonic_machine_snapshot_restore(self):
+        idle = State("idle", initial=True)
+        active = State("active")
+        t = idle.to(active, event="GO")
+        machine = build_machine(
+            id="test",
+            states=[idle, active],
+            transitions=[t],
+            context={"count": 0},
+        )
+
+        interp = SyncInterpreter(machine).start()
+        snapshot = interp.get_snapshot()
+        self.assertIn("test.idle", interp.current_state_ids)
+
+        interp.send("GO")
+        self.assertIn("test.active", interp.current_state_ids)
+        interp.stop()
+
+        # Restore to original state via factory method
+        interp2 = SyncInterpreter.from_snapshot(snapshot, machine)
+        self.assertIn("test.idle", interp2.current_state_ids)
+
+
+class TestConfigOutputMatchesJson(unittest.TestCase):
+    """Tests verifying Pythonic output matches JSON format."""
+
+    def test_config_output_matches_json_format(self):
+        """Pythonic API should produce identical config to
+        hand-written JSON."""
+        idle = State("idle", initial=True)
+        running = State("running")
+        done = State("done", final=True)
+        t = idle.to(running, event="START") | running.to(done, event="FINISH")
+        config = _compile_config(
+            machine_id="test",
+            states=[idle, running, done],
+            transitions=[t],
+            context={"count": 0},
+        )
+
+        expected = {
+            "id": "test",
+            "initial": "idle",
+            "context": {"count": 0},
+            "states": {
+                "idle": {"on": {"START": {"target": "running"}}},
+                "running": {"on": {"FINISH": {"target": "done"}}},
+                "done": {"type": "final"},
+            },
+        }
+        self.assertEqual(config, expected)

@@ -17,6 +17,7 @@ All three styles compile to the same JSON config dict +
 # -------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -------------------------------------------------------------------------
+import copy
 import functools
 import inspect
 from collections import defaultdict
@@ -42,6 +43,7 @@ from .models import MachineNode
 # -------------------------------------------------------------------------
 
 
+@functools.lru_cache(maxsize=256)
 def _snake_to_camel(snake_str: str) -> str:
     """Convert snake_case to camelCase.
 
@@ -122,7 +124,7 @@ class State:
         self.parallel = parallel
         self.on = on
         self.entry = entry or []
-        self.exit = exit or []
+        self._exit_actions: List[str] = exit or []
         self.after = after
         self.invoke = invoke
         self.on_done = on_done
@@ -132,6 +134,11 @@ class State:
         # 📝 Internal: tracks functions registered via decorators
         self._enter_decorators: List[Callable] = []
         self._exit_decorators: List[Callable] = []
+
+    @property
+    def exit_actions(self) -> List[str]:
+        """The list of exit action names for this state."""
+        return self._exit_actions
 
     def __init_subclass__(
         cls,
@@ -146,6 +153,18 @@ class State:
         cls._xsm_initial = initial
         cls._xsm_final = final
         cls._xsm_parallel = parallel
+
+    def __repr__(self) -> str:
+        """Provide a readable representation for debugging."""
+        flags = []
+        if self.initial:
+            flags.append("initial")
+        if self.final:
+            flags.append("final")
+        if self.parallel:
+            flags.append("parallel")
+        flag_str = ", " + ", ".join(flags) if flags else ""
+        return f"State({self.name!r}{flag_str})"
 
     def to(
         self,
@@ -235,10 +254,11 @@ class State:
             self.entry.append(name)
         return fn
 
-    def _exit_decorator(self, fn: Callable) -> Callable:
+    def exit(self, fn: Callable) -> Callable:
         """Decorator to register a function as an exit action.
 
         Only valid inside a ``StateMachine`` class definition.
+        Use ``@state.exit`` to decorate exit actions.
 
         Args:
             fn: The function to register.
@@ -252,8 +272,8 @@ class State:
         fn._xsm_name = name
         fn._xsm_state_exit = self
         self._exit_decorators.append(fn)
-        if name not in self.exit:
-            self.exit.append(name)
+        if name not in self._exit_actions:
+            self._exit_actions.append(name)
         return fn
 
 
@@ -304,7 +324,15 @@ class Transition:
         """Combine transitions with the ``|`` operator."""
         if isinstance(other, TransitionGroup):
             return TransitionGroup([self] + other.transitions)
+        if not isinstance(other, Transition):
+            return NotImplemented
         return TransitionGroup([self, other])
+
+    def __repr__(self) -> str:
+        """Provide a readable representation for debugging."""
+        src = self.source.name if self.source else "?"
+        tgt = self.target.name if self.target else "(internal)"
+        return f"Transition({src!r} --{self.event!r}--> " f"{tgt!r})"
 
 
 class TransitionGroup:
@@ -327,7 +355,13 @@ class TransitionGroup:
         """Combine with another transition or group."""
         if isinstance(other, TransitionGroup):
             return TransitionGroup(self.transitions + other.transitions)
+        if not isinstance(other, Transition):
+            return NotImplemented
         return TransitionGroup(self.transitions + [other])
+
+    def __repr__(self) -> str:
+        """Provide a readable representation for debugging."""
+        return f"TransitionGroup({len(self.transitions)} " f"transitions)"
 
 
 def transition(
@@ -492,8 +526,30 @@ def service(fn_or_name=None):
 def _compile_state(
     state: State,
     all_states_by_name: Dict[str, State],
+    parent_parallel: bool = False,
 ) -> Dict[str, Any]:
     """Compile a single State into a JSON config dict entry."""
+    # 📝 Validate: final state cannot have transitions or children
+    if state.final:
+        if state.on:
+            raise InvalidConfigError(
+                f"Final state '{state.name}' cannot have "
+                f"outgoing transitions or child states"
+            )
+        if state.states:
+            raise InvalidConfigError(
+                f"Final state '{state.name}' cannot have "
+                f"outgoing transitions or child states"
+            )
+
+    # 📝 Validate: child of parallel parent should not be initial
+    if parent_parallel and state.initial:
+        raise InvalidConfigError(
+            f"State '{state.name}' is a child of a parallel "
+            f"state and should not have initial=True. "
+            f"All parallel regions are active simultaneously."
+        )
+
     config: Dict[str, Any] = {}
 
     # 📝 Type
@@ -502,17 +558,22 @@ def _compile_state(
     elif state.parallel:
         config["type"] = "parallel"
 
-    # 📝 Entry / Exit actions
-    if state.entry:
-        config["entry"] = (
-            state.entry[0] if len(state.entry) == 1 else state.entry
-        )
-    if state.exit:
-        config["exit"] = state.exit[0] if len(state.exit) == 1 else state.exit
+    # 📝 Entry / Exit actions (defensive copy to avoid
+    # mutating State objects shared across builds)
+    entry = list(state.entry) if state.entry else []
+    exit_acts = list(state._exit_actions) if state._exit_actions else []
+    if entry:
+        config["entry"] = entry[0] if len(entry) == 1 else entry
+    if exit_acts:
+        config["exit"] = exit_acts[0] if len(exit_acts) == 1 else exit_acts
 
     # 📝 On (event transitions from State.on dict)
+    # Defensive deep copy to avoid mutating shared State objects
     if state.on:
-        config["on"] = dict(state.on)
+        config["on"] = {
+            k: (v if not isinstance(v, dict) else dict(v))
+            for k, v in state.on.items()
+        }
 
     # 📝 Always → compiled to "on": {"": ...}
     if state.always is not None:
@@ -549,7 +610,9 @@ def _compile_state(
                 )
             child_names.add(child.name)
             child_configs[child.name] = _compile_state(
-                child, all_states_by_name
+                child,
+                all_states_by_name,
+                parent_parallel=state.parallel,
             )
             if child.initial:
                 if initial_child is not None:
@@ -596,15 +659,22 @@ def _compile_config(
             initial state, or unknown transition sources.
     """
     # 🔍 Build flat lookup of all states by name
+    # Uses dot-path keys to avoid collisions between
+    # states with the same name at different hierarchy levels
     all_states_by_name: Dict[str, State] = {}
 
     def _register_states(
         state_list: List[State],
+        prefix: str = "",
     ) -> None:
         for s in state_list:
+            key = f"{prefix}.{s.name}" if prefix else s.name
+            all_states_by_name[key] = s
+            # Also register the bare name for transition
+            # source lookups (backward compat)
             all_states_by_name[s.name] = s
             if s.states:
-                _register_states(s.states)
+                _register_states(s.states, prefix=key)
 
     _register_states(states)
 
@@ -642,13 +712,19 @@ def _compile_config(
         else:
             flat_transitions.append(t)
 
-    # 🔍 Validate transition sources exist
+    # 🔍 Validate transition sources exist and are not final
     for t in flat_transitions:
         if t.source.name not in all_states_by_name:
             raise InvalidConfigError(
                 f"Transition source "
                 f"'{t.source.name}' "
                 f"is not a defined state"
+            )
+        src = all_states_by_name[t.source.name]
+        if src.final:
+            raise InvalidConfigError(
+                f"Final state '{t.source.name}' cannot "
+                f"have outgoing transitions or child states"
             )
 
     # ⚙️ Compile each top-level state
@@ -703,7 +779,7 @@ def _compile_config(
     }
     if initial_state:
         result["initial"] = initial_state
-    if context:
+    if context is not None:
         result["context"] = context
 
     return result
@@ -732,10 +808,30 @@ def _compile_logic_from_functions(
 
     Returns:
         A ``MachineLogic`` instance with populated dicts.
+
+    Raises:
+        InvalidConfigError: If any function was decorated
+            with ``@state.enter`` or ``@state.exit``, which
+            are only valid inside a ``StateMachine`` class.
     """
     action_dict: Dict[str, Callable] = {}
     guard_dict: Dict[str, Callable] = {}
     service_dict: Dict[str, Callable] = {}
+
+    all_fns = list(actions) + list(guards) + list(services)
+    for fn in all_fns:
+        if hasattr(fn, "_xsm_state_enter"):
+            raise InvalidConfigError(
+                f"@{fn._xsm_state_enter.name}.enter "
+                f"decorator is only valid inside a "
+                f"StateMachine class"
+            )
+        if hasattr(fn, "_xsm_state_exit"):
+            raise InvalidConfigError(
+                f"@{fn._xsm_state_exit.name}.exit "
+                f"decorator is only valid inside a "
+                f"StateMachine class"
+            )
 
     for fn in actions:
         name = getattr(fn, "_xsm_name", _snake_to_camel(fn.__name__))
@@ -802,7 +898,7 @@ def _compile_logic_from_instance(
 
 def build_machine(
     *,
-    id: str,
+    id: str,  # noqa: A002 — shadows builtin intentionally
     states: List[State],
     transitions: Optional[List[Union[Transition, TransitionGroup]]] = None,
     actions: Optional[List[Callable]] = None,
@@ -828,8 +924,9 @@ def build_machine(
         A ``MachineNode`` ready for use with ``Interpreter``
         or ``SyncInterpreter``.
     """
+    machine_id = id
     config = _compile_config(
-        machine_id=id,
+        machine_id=machine_id,
         states=states,
         transitions=transitions or [],
         context=context,
@@ -876,6 +973,14 @@ class MachineBuilder:
         self._guards: Dict[str, Callable] = {}
         self._services: Dict[str, Callable] = {}
 
+    def __repr__(self) -> str:
+        """Provide a readable representation for debugging."""
+        return (
+            f"MachineBuilder({self._machine_id!r}, "
+            f"{len(self._states)} states, "
+            f"{len(self._transitions)} transitions)"
+        )
+
     def context(self, ctx: Dict) -> "MachineBuilder":
         """Set the initial context."""
         self._context = ctx
@@ -896,7 +1001,14 @@ class MachineBuilder:
         on_done: Optional[Union[str, Dict]] = None,
         always: Optional[Union[str, Dict, List]] = None,
     ) -> "MachineBuilder":
-        """Add a state to the machine."""
+        """Add a state to the machine.
+
+        Raises:
+            InvalidConfigError: If ``name`` is already defined,
+                or ``final`` and ``parallel`` are both True.
+        """
+        if name in self._states:
+            raise InvalidConfigError(f"Duplicate state name '{name}'")
         if final and parallel:
             raise InvalidConfigError(
                 f"State '{name}' cannot be both " f"final and parallel"
@@ -979,40 +1091,78 @@ class MachineBuilder:
         return self
 
     def action(self, name: str, fn: Callable) -> "MachineBuilder":
-        """Register an action function."""
-        reg_name = getattr(fn, "_xsm_name", name)
-        self._actions[reg_name] = fn
+        """Register an action function.
+
+        The explicitly provided ``name`` is always used as the
+        registration key, regardless of any ``_xsm_name``
+        attribute on ``fn``.
+        """
+        self._actions[name] = fn
         return self
 
     def guard(self, name: str, fn: Callable) -> "MachineBuilder":
-        """Register a guard function."""
-        reg_name = getattr(fn, "_xsm_name", name)
-        self._guards[reg_name] = fn
+        """Register a guard function.
+
+        The explicitly provided ``name`` is always used as the
+        registration key.
+        """
+        self._guards[name] = fn
         return self
 
     def service(self, name: str, fn: Callable) -> "MachineBuilder":
-        """Register a service function."""
-        reg_name = getattr(fn, "_xsm_name", name)
-        self._services[reg_name] = fn
+        """Register a service function.
+
+        The explicitly provided ``name`` is always used as the
+        registration key.
+        """
+        self._services[name] = fn
         return self
 
     def build(self, context: Optional[Dict] = None) -> MachineNode:
         """Build and return the MachineNode.
+
+        This method is idempotent — it can be called multiple
+        times on the same builder (e.g. with different context
+        overrides) without corrupting internal state.
 
         Args:
             context: Optional context override.
 
         Returns:
             A ``MachineNode`` ready for interpreter use.
+
+        Raises:
+            InvalidConfigError: If no initial state is defined
+                and the machine has more than one non-parallel
+                state, or if a transition source is invalid.
         """
-        # Merge transitions into state configs
+        # Validate initial state is defined (unless single
+        # parallel root or single state)
+        has_parallel_root = (
+            len(self._states) == 1
+            and next(iter(self._states.values())).get("type") == "parallel"
+        )
+        if (
+            not has_parallel_root
+            and self._initial_state is None
+            and len(self._states) > 1
+        ):
+            raise InvalidConfigError(
+                "No initial state defined. Exactly one "
+                "state must have initial=True"
+            )
+
+        # Deep-copy states so repeated builds don't corrupt
+        states_copy = copy.deepcopy(self._states)
+
+        # Merge transitions into the copied state configs
         for t in self._transitions:
             source = t["source"]
-            if source not in self._states:
+            if source not in states_copy:
                 raise InvalidConfigError(
                     f"Transition source '{source}' " f"is not a defined state"
                 )
-            state_config = self._states[source]
+            state_config = states_copy[source]
             if "on" not in state_config:
                 state_config["on"] = {}
             entry: Dict[str, Any] = {}
@@ -1039,18 +1189,18 @@ class MachineBuilder:
 
         config: Dict[str, Any] = {
             "id": self._machine_id,
-            "states": self._states,
+            "states": states_copy,
         }
         if self._initial_state:
             config["initial"] = self._initial_state
-        ctx = context or self._context
-        if ctx:
+        ctx = context if context is not None else self._context
+        if ctx is not None:
             config["context"] = ctx
 
         logic = MachineLogic(
-            actions=self._actions,
-            guards=self._guards,
-            services=self._services,
+            actions=dict(self._actions),
+            guards=dict(self._guards),
+            services=dict(self._services),
         )
         return _original_create_machine(config, logic=logic)
 
@@ -1178,7 +1328,7 @@ class StateMachine(metaclass=_StateMachineMeta):
             A ``MachineNode`` ready for interpreter use.
         """
         mid = cls.machine_id or cls.__name__
-        ctx = context or cls.initial_context
+        ctx = context if context is not None else cls.initial_context
 
         config = _compile_config(
             machine_id=mid,

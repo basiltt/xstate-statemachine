@@ -17,6 +17,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `@action`, `@guard`, `@service` decorators with auto snake_case-to-camelCase naming
   - `transition()` standalone function for functional API
   - Full backward compatibility — all existing JSON-based APIs work unchanged
+- **Comprehensive validation** for Pythonic API:
+  - Final state validation: blocks outgoing transitions, child states, and Transition objects from final states
+  - Parallel child validation: raises `InvalidConfigError` if a child of a parallel state has `initial=True`
+  - `MachineBuilder` duplicate state name detection
+  - `MachineBuilder.build()` validates initial state is defined (multi-state machines)
+  - `@state.enter`/`@state.exit` decorators raise `InvalidConfigError` when used outside a `StateMachine` class
+  - `Transition.__or__` and `TransitionGroup.__or__` return `NotImplemented` for invalid operand types
+- **`__repr__` methods** on `State`, `Transition`, `TransitionGroup`, and `MachineBuilder` for better debugging
+- **143 Pythonic API tests** across 20 test classes covering all three API styles, error handling, edge cases, merge rules, async/sync interpreter compatibility, and snapshot/restore
+
+### Changed
+- **Performance**: `_snake_to_camel` helper uses `@functools.lru_cache(maxsize=256)` for hot-path optimization
+- **Idempotent builds**: `MachineBuilder.build()` uses `copy.deepcopy` on internal state so repeated calls produce independent machines
+- **Defensive copying**: `_compile_state()` copies `entry`, `exit`, and `on` data from State objects to prevent mutation of shared State instances across builds
+- **Falsy context handling**: All context checks use `is not None` instead of truthiness to preserve empty dicts `{}`
+- **State.exit naming**: Internal storage uses `_exit_actions` with a public `exit_actions` property, keeping `exit()` as the decorator method — avoids shadowing Python's `exit` builtin
 
 ## [0.4.3] - 2025-02-03
 
