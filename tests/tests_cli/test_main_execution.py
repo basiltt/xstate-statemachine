@@ -221,7 +221,7 @@ class TestMainExecution(CLITestCaseBase):
         # ✅ Assert: Check that key imports and sections are present only once.
         self.assertEqual(content.count("import logging"), 1)
         self.assertEqual(content.count("from pathlib import Path"), 1)
-        self.assertIn("# 🧠 Class‑based Logic", content)
+        self.assertIn("# Class-based Logic", content)
         self.assertIn("# Runner part", content)
 
     @patch("sys.argv", new_callable=list)
@@ -832,9 +832,14 @@ class TestHierarchyExecution(CLITestCaseBase):
 
     def test_generate_logic_with_noqa_comments(self) -> None:
         """
-        🧪 Ensures generated logic includes noqa comments for IDE warnings.
+        🧪 Ensures generated logic omits noqa comments for production quality.
+
+        The strategy-based output is production-quality code that does not
+        require linter suppression comments.
         """
-        logger.info("🤫 Testing for noqa comments in generated logic.")
+        logger.info(
+            "🤫 Testing for absence of noqa comments in generated logic."
+        )
         # 🔧 Setup: Generate logic code with all construct types.
         logic_code = generate_logic_code(
             actions={"myAction"},
@@ -846,11 +851,8 @@ class TestHierarchyExecution(CLITestCaseBase):
             machine_name="test",
             file_count=2,
         )
-        # ✅ Assert: Check for specific noqa comments to suppress IDE warnings.
-        self.assertIn("# noqa: ignore IDE static method warning", logic_code)
-        self.assertIn(
-            "# noqa : ignore IDE return type hint warning", logic_code
-        )
+        # ✅ Assert: Verify noqa comments are NOT present in strategy output.
+        self.assertNotIn("# noqa", logic_code)
 
     @patch("sys.argv", new_callable=list)
     def test_main_explicit_parent_with_positional_children(

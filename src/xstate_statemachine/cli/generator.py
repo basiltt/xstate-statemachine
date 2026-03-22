@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Set
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from .extractor import extract_events
+from .strategies import GenerationContext, get_strategy
 from .utils import camel_to_snake
 
 # -----------------------------------------------------------------------------
@@ -438,8 +439,8 @@ def generate_logic_code(
     Generates the source code for the logic file (*_logic.py).
 
     This function orchestrates the generation of different parts of the logic
-    file, including headers, actions, guards, and services, by calling
-    specialized helper functions.
+    file, including headers, actions, guards, and services, by delegating
+    to the appropriate code generation strategy.
 
     Args:
         actions (Set[str]): ⚙️ A set of action names to generate.
@@ -456,43 +457,30 @@ def generate_logic_code(
     """
     logger.info("🚀 Starting logic code generation...")
 
-    header = _generate_logic_header(is_async, log, file_count, services)
-    body = []
-    indent = ""
-
-    if style == "class":
-        class_name = (
-            "".join(p.capitalize() for p in machine_name.split("_")) + "Logic"
-        )
-        body.extend(
-            [
-                "# -----------------------------------------------------------------------------",
-                # FIX: Use non-breaking hyphen (U+2011) to match test assertion
-                "# 🧠 Class‑based Logic",
-                "# -----------------------------------------------------------------------------",
-                f"class {class_name}:",
-            ]
-        )
-        indent = "    "
-
-    # 🏭 Generate components
-    action_code = _generate_logic_component(
-        actions, "action", is_async, log, style, indent
+    template = "class-json" if style == "class" else "function-json"
+    strategy = get_strategy(template)
+    ctx = GenerationContext(
+        actions=actions,
+        guards=guards,
+        services=services,
+        is_async=is_async,
+        log=log,
+        machine_name=machine_name,
+        machine_id=machine_name,
+        machine_names=[machine_name],
+        machine_ids=[machine_name],
+        file_count=file_count,
+        configs=[{}],
+        json_filenames=[""],
+        hierarchy=False,
+        sleep=False,
+        sleep_time=0,
+        loader=False,
+        style=style,
     )
-    guard_code = _generate_logic_component(
-        guards, "guard", is_async, log, style, indent
-    )
-    service_code = _generate_logic_component(
-        services, "service", is_async, log, style, indent
-    )
-
-    # Combine all generated parts
-    if any([action_code, guard_code, service_code]):
-        body.append("")  # Add a newline if any components were generated
-        body.extend(filter(None, [action_code, guard_code, service_code]))
 
     logger.info("✅ Logic code generation complete.")
-    return f"{header}\n" + "\n".join(body)
+    return strategy.generate_logic(ctx)
 
 
 def generate_runner_code(

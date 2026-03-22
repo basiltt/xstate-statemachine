@@ -164,9 +164,15 @@ class TestLogicCodeGenerator(unittest.TestCase):
 
     def test_generate_noqa_comments(self) -> None:
         """
-        ✅ Ensures generated logic includes noqa comments for common IDE warnings.
+        ✅ Ensures generated logic omits noqa comments for production quality.
+
+        The strategy-based output is production-quality code that does not
+        require linter suppression comments. Instead, proper signatures
+        avoid the warnings entirely.
         """
-        logger.info("🧪 Testing for noqa comments in generated logic.")
+        logger.info(
+            "🧪 Testing for absence of noqa comments in generated logic."
+        )
         # 🎬 ACT: Generate a standard logic file.
         code = generate_logic_code(
             actions={"a"},
@@ -178,9 +184,9 @@ class TestLogicCodeGenerator(unittest.TestCase):
             machine_name="test",
             file_count=2,
         )
-        # 🧐 ASSERT: Verify that linter-suppressing comments are present.
-        self.assertIn("# noqa: ignore IDE static method warning", code)
-        self.assertIn("# noqa : ignore IDE return type hint warning", code)
+        # 🧐 ASSERT: Verify that linter-suppressing comments are NOT present
+        # in the production-quality strategy output.
+        self.assertNotIn("# noqa", code)
 
     def test_generate_logic_code_with_service_aliasing(self) -> None:
         """
@@ -376,7 +382,11 @@ class TestLogicCodeGenerator(unittest.TestCase):
 
     def test_generate_return_type_for_actions(self) -> None:
         """
-        ✅ Ensures action return type hint changes based on async mode.
+        ✅ Ensures action return type hint is `None` for both sync and async.
+
+        The strategy-based output uses `-> None:` for all actions (even async),
+        because async functions implicitly return a coroutine and the return
+        type annotation should reflect the unwrapped type.
         """
         logger.info("🧪 Testing return type hints for actions.")
         # 🎬 ACT: Generate both sync and async actions.
@@ -400,13 +410,17 @@ class TestLogicCodeGenerator(unittest.TestCase):
             machine_name=self.machine_name,
             file_count=2,
         )
-        # 🧐 ASSERT: Check for the correct return type hint.
+        # 🧐 ASSERT: Both sync and async actions return None.
         self.assertIn("-> None:", code_sync)
-        self.assertIn("-> Awaitable[None]:", code_async)
+        self.assertIn("-> None:", code_async)
 
     def test_generate_return_type_for_services(self) -> None:
         """
-        ✅ Ensures service return type hint changes based on async mode.
+        ✅ Ensures service return type is `Dict[str, Any]` for both sync and async.
+
+        The strategy-based output uses `-> Dict[str, Any]:` for all services
+        (even async), because async functions implicitly return a coroutine
+        and the return type annotation should reflect the unwrapped type.
         """
         logger.info("🧪 Testing return type hints for services.")
         # 🎬 ACT: Generate both sync and async services.
@@ -430,9 +444,9 @@ class TestLogicCodeGenerator(unittest.TestCase):
             machine_name=self.machine_name,
             file_count=2,
         )
-        # 🧐 ASSERT: Check for the correct return type hint.
+        # 🧐 ASSERT: Both sync and async services return Dict[str, Any].
         self.assertIn("-> Dict[str, Any]:", code_sync)
-        self.assertIn("-> Awaitable[Dict[str, Any]]:", code_async)
+        self.assertIn("-> Dict[str, Any]:", code_async)
 
     def test_generate_guards_return_bool(self) -> None:
         """
@@ -548,11 +562,10 @@ class TestLogicCodeGenerator(unittest.TestCase):
         )
 
         # 🧐 ASSERT: Check that all required typing components are imported.
-        # This approach is robust against changes in import formatting (e.g.,
-        # splitting `from typing import ...` across multiple lines).
+        # The strategy-based output no longer uses Awaitable (async functions
+        # annotate their return type directly), but still needs the other types.
         self.assertIn("from typing import", code)
         self.assertIn("Any", code)
-        self.assertIn("Awaitable", code)
         self.assertIn("Dict", code)
         self.assertIn("Union", code)
 
@@ -638,7 +651,8 @@ class TestLogicCodeGenerator(unittest.TestCase):
             file_count=2,
         )
         # 🧐 ASSERT: Content within the class should be indented.
-        self.assertIn("    # ⚙️ Actions", code)
+        # Strategy output uses plain section titles without emojis.
+        self.assertIn("    # Actions", code)
 
     def test_generate_function_indent_correct(self) -> None:
         """
@@ -656,9 +670,10 @@ class TestLogicCodeGenerator(unittest.TestCase):
             machine_name=self.machine_name,
             file_count=2,
         )
-        # 🧐 ASSERT: Content should not be indented as it's at the module level.
-        self.assertIn("# ⚙️ Actions", code)
-        self.assertNotIn("    # ⚙️ Actions", code)
+        # 🧐 ASSERT: Section header should be at module level (no leading indent).
+        # Strategy output uses a section header block with "# Actions" title.
+        self.assertIn("# Actions", code)
+        self.assertNotIn("    # Actions", code)
 
     def test_generate_docstring_for_actions(self) -> None:
         """
@@ -676,8 +691,8 @@ class TestLogicCodeGenerator(unittest.TestCase):
             machine_name=self.machine_name,
             file_count=2,
         )
-        # 🧐 ASSERT: Check for the specific docstring format.
-        self.assertIn('"""Action: `my_act`."""', code)
+        # 🧐 ASSERT: Check for the rich docstring format from the strategy.
+        self.assertIn("Execute the ``my_act`` action.", code)
 
     def test_generate_docstring_for_guards(self) -> None:
         """
@@ -695,8 +710,8 @@ class TestLogicCodeGenerator(unittest.TestCase):
             machine_name=self.machine_name,
             file_count=2,
         )
-        # 🧐 ASSERT: Check for the specific docstring format.
-        self.assertIn('"""Guard: `my_g`."""', code)
+        # 🧐 ASSERT: Check for the rich docstring format from the strategy.
+        self.assertIn("Evaluate the ``my_g`` guard.", code)
 
     def test_generate_docstring_for_services(self) -> None:
         """
@@ -714,8 +729,8 @@ class TestLogicCodeGenerator(unittest.TestCase):
             machine_name=self.machine_name,
             file_count=2,
         )
-        # 🧐 ASSERT: Check for the specific docstring format.
-        self.assertIn('"""Service: `my_srv`."""', code)
+        # 🧐 ASSERT: Check for the rich docstring format from the strategy.
+        self.assertIn("Run the ``my_srv`` service.", code)
 
     def test_generate_pass_todo_for_actions(self) -> None:
         """
