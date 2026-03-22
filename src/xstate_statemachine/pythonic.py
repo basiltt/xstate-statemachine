@@ -481,3 +481,230 @@ def service(fn_or_name=None):
             return fn
 
         return decorator
+
+
+# -----------------------------------------------------------------
+# ⚙️ Config Compiler
+# -----------------------------------------------------------------
+
+
+def _compile_state(
+    state: State,
+    all_states_by_name: Dict[str, State],
+) -> Dict[str, Any]:
+    """Compile a single State into a JSON config dict entry."""
+    config: Dict[str, Any] = {}
+
+    # 📝 Type
+    if state.final:
+        config["type"] = "final"
+    elif state.parallel:
+        config["type"] = "parallel"
+
+    # 📝 Entry / Exit actions
+    if state.entry:
+        config["entry"] = (
+            state.entry[0] if len(state.entry) == 1 else state.entry
+        )
+    if state.exit:
+        config["exit"] = state.exit[0] if len(state.exit) == 1 else state.exit
+
+    # 📝 On (event transitions from State.on dict)
+    if state.on:
+        config["on"] = dict(state.on)
+
+    # 📝 Always → compiled to "on": {"": ...}
+    if state.always is not None:
+        if "on" not in config:
+            config["on"] = {}
+        config["on"][""] = state.always
+
+    # 📝 After (delayed transitions)
+    if state.after:
+        config["after"] = state.after
+
+    # 📝 Invoke (services)
+    if state.invoke:
+        config["invoke"] = state.invoke
+
+    # 📝 onDone (completion transition)
+    if state.on_done is not None:
+        if isinstance(state.on_done, str):
+            config["onDone"] = {"target": state.on_done}
+        else:
+            config["onDone"] = state.on_done
+
+    # 📝 Child states (recurse)
+    if state.states:
+        child_configs = {}
+        initial_child = None
+        child_names: set = set()
+        for child in state.states:
+            if child.name in child_names:
+                raise InvalidConfigError(
+                    f"Duplicate state name "
+                    f"'{child.name}' "
+                    f"at the same level"
+                )
+            child_names.add(child.name)
+            child_configs[child.name] = _compile_state(
+                child, all_states_by_name
+            )
+            if child.initial:
+                if initial_child is not None:
+                    raise InvalidConfigError(
+                        f"Multiple initial states: "
+                        f"{initial_child}, "
+                        f"{child.name}. "
+                        f"Exactly one allowed"
+                    )
+                initial_child = child.name
+        config["states"] = child_configs
+        if not state.parallel and initial_child:
+            config["initial"] = initial_child
+        elif not state.parallel and not initial_child and state.states:
+            raise InvalidConfigError(
+                "No initial state defined. Exactly one "
+                "state must have initial=True"
+            )
+
+    return config
+
+
+def _compile_config(
+    machine_id: str,
+    states: List[State],
+    transitions: List[Union[Transition, TransitionGroup]],
+    context: Optional[Dict] = None,
+) -> Dict[str, Any]:
+    """Compile State and Transition objects into a config dict.
+
+    Args:
+        machine_id: The machine identifier string.
+        states: List of top-level ``State`` objects.
+        transitions: List of ``Transition`` or
+            ``TransitionGroup`` objects.
+        context: Optional initial context dict.
+
+    Returns:
+        A JSON-compatible config dict suitable for
+        ``create_machine()``.
+
+    Raises:
+        InvalidConfigError: On duplicate states, missing
+            initial state, or unknown transition sources.
+    """
+    from collections import defaultdict
+
+    # 🔍 Build flat lookup of all states by name
+    all_states_by_name: Dict[str, State] = {}
+
+    def _register_states(
+        state_list: List[State],
+    ) -> None:
+        for s in state_list:
+            all_states_by_name[s.name] = s
+            if s.states:
+                _register_states(s.states)
+
+    _register_states(states)
+
+    # 🔍 Validate top-level: duplicates, initial
+    top_names: set = set()
+    initial_state = None
+    has_parallel_root = len(states) == 1 and states[0].parallel
+
+    for s in states:
+        if s.name in top_names:
+            raise InvalidConfigError(
+                f"Duplicate state name '{s.name}' " f"at the same level"
+            )
+        top_names.add(s.name)
+        if s.initial:
+            if initial_state is not None:
+                raise InvalidConfigError(
+                    f"Multiple initial states: "
+                    f"{initial_state}, {s.name}. "
+                    f"Exactly one allowed"
+                )
+            initial_state = s.name
+
+    if not has_parallel_root and initial_state is None and len(states) > 0:
+        raise InvalidConfigError(
+            "No initial state defined. Exactly one "
+            "state must have initial=True"
+        )
+
+    # 🔍 Flatten all transitions
+    flat_transitions: List[Transition] = []
+    for t in transitions:
+        if isinstance(t, TransitionGroup):
+            flat_transitions.extend(t.transitions)
+        else:
+            flat_transitions.append(t)
+
+    # 🔍 Validate transition sources exist
+    for t in flat_transitions:
+        if t.source.name not in all_states_by_name:
+            raise InvalidConfigError(
+                f"Transition source "
+                f"'{t.source.name}' "
+                f"is not a defined state"
+            )
+
+    # ⚙️ Compile each top-level state
+    state_configs: Dict[str, Any] = {}
+    for s in states:
+        state_configs[s.name] = _compile_state(s, all_states_by_name)
+
+    # ⚙️ Merge transitions into state configs
+    trans_by_source_event: Dict[str, Dict[str, List[Transition]]] = (
+        defaultdict(lambda: defaultdict(list))
+    )
+
+    for t in flat_transitions:
+        trans_by_source_event[t.source.name][t.event].append(t)
+
+    def _merge_transitions_into(
+        state_name: str,
+        state_config: Dict[str, Any],
+    ) -> None:
+        if state_name in trans_by_source_event:
+            if "on" not in state_config:
+                state_config["on"] = {}
+            for event, t_list in trans_by_source_event[state_name].items():
+                compiled = []
+                for t in t_list:
+                    entry: Dict[str, Any] = {}
+                    if not t.internal and t.target is not None:
+                        entry["target"] = t.target.name
+                    if t.guard:
+                        entry["guard"] = t.guard
+                    if t.actions:
+                        entry["actions"] = t.actions
+                    if t.reenter:
+                        entry["reenter"] = True
+                    compiled.append(entry)
+                if len(compiled) == 1:
+                    state_config["on"][event] = compiled[0]
+                else:
+                    state_config["on"][event] = compiled
+        # 📝 Recurse into child states
+        if "states" in state_config:
+            for child_name, child_config in state_config["states"].items():
+                _merge_transitions_into(child_name, child_config)
+
+    for sname, sconfig in state_configs.items():
+        _merge_transitions_into(sname, sconfig)
+
+    # ⚙️ Assemble top-level config
+    result: Dict[str, Any] = {
+        "id": machine_id,
+        "states": state_configs,
+    }
+    if initial_state:
+        result["initial"] = initial_state
+    if context:
+        result["context"] = context
+
+    return result
