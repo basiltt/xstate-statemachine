@@ -30,9 +30,15 @@ from typing import Any, Dict, List, Set, Tuple
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 # Assuming these modules exist in the same directory (`.`) as per the original.
-from .args import get_parser, validate_args
+from .args import (
+    get_parser,
+    resolve_async_mode,
+    resolve_template,
+    validate_args,
+)
 from .extractor import extract_logic_names, guess_hierarchy
 from .generator import generate_logic_code, generate_runner_code
+from .strategies import GenerationContext, get_strategy
 from .utils import camel_to_snake, normalize_bool
 
 # -----------------------------------------------------------------------------
@@ -523,33 +529,46 @@ def run_generation_workflow(
     # 6. 🔧 Parse boolean settings from args
     settings = _parse_boolean_flags(args, parser)
 
-    # 7. 📜 Generate logic and runner code
+    # 7. 📜 Resolve template, async mode, and generate code via strategy
     logger.info("🤖 Generating logic and runner code...")
-    base_name = Path(paths["single_file"].stem).name
-    style = args.style if args.style is not None else "class"
-    logic_code = generate_logic_code(
-        all_actions,
-        all_guards,
-        all_services,
-        style,
-        settings["log"],
-        settings["async_mode"],
-        base_name,
-        args.file_count,
+    try:
+        template = resolve_template(
+            getattr(args, "style", None),
+            getattr(args, "template", None),
+        )
+    except ValueError as e:
+        parser.error(str(e))
+
+    is_async = resolve_async_mode(args.async_mode, template)
+
+    # Build context and generate code
+    strategy = get_strategy(template)
+    machine_name = (
+        machine_names[0] if hierarchy_flag else "_".join(machine_names)
     )
-    runner_code = generate_runner_code(
-        machine_names,
-        settings["async_mode"],
-        style,
-        settings["loader"],
-        settings["sleep"],
-        args.sleep_time,
-        settings["log"],
-        args.file_count,
-        configs,
-        json_filenames,
+    machine_id = machine_ids[0]
+
+    ctx = GenerationContext(
+        actions=all_actions,
+        guards=all_guards,
+        services=all_services,
+        is_async=is_async,
+        log=settings["log"],
+        machine_name=machine_name,
+        machine_id=machine_id,
+        machine_names=machine_names,
+        machine_ids=machine_ids,
+        file_count=args.file_count,
+        configs=configs,
+        json_filenames=json_filenames,
         hierarchy=hierarchy_flag,
+        sleep=settings["sleep"],
+        sleep_time=args.sleep_time,
+        loader=settings["loader"],
+        style=getattr(args, "style", None),
     )
+    logic_code = strategy.generate_logic(ctx)
+    runner_code = strategy.generate_runner(ctx)
     logger.info("✅ Code generation complete.")
 
     # 8. 💾 Write generated code to files

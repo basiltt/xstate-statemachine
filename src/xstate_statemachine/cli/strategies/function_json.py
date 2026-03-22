@@ -130,68 +130,302 @@ class FunctionJsonStrategy(BaseStrategy):
         if ctx.log:
             lines.append(self._generate_runner_logger_setup(ctx))
 
-        # -- main function --------------------------------------------
-        run_func_name = "main"
-        lines.append(f"{func_prefix}def {run_func_name}() -> None:")
+        # -- hierarchy mode -------------------------------------------
+        if ctx.hierarchy and len(ctx.machine_names) > 1:
+            lines.extend(
+                self._generate_hierarchy_runner(
+                    ctx,
+                    func_prefix,
+                    await_prefix,
+                    sleep_cmd,
+                    interpreter_class,
+                    logic_file_name,
+                )
+            )
+        else:
+            # -- flat / single machine mode ---------------------------
+            lines.extend(
+                self._generate_flat_runner(
+                    ctx,
+                    func_prefix,
+                    await_prefix,
+                    sleep_cmd,
+                    interpreter_class,
+                    logic_file_name,
+                )
+            )
+
+        return "\n".join(lines)
+
+    def _generate_flat_runner(
+        self,
+        ctx: GenerationContext,
+        func_prefix: str,
+        await_prefix: str,
+        sleep_cmd: str,
+        interpreter_class: str,
+        logic_file_name: str,
+    ) -> List[str]:
+        """Generate flat (non-hierarchy) runner body.
+
+        When there is only one machine, a single ``main()`` function is
+        generated.  When there are multiple machines, each gets its own
+        ``run_<name>()`` function and a top-level ``main()`` calls them
+        sequentially.
+        """
+        lines: List[str] = []
+        multi = len(ctx.machine_names) > 1
+        main_runs: List[str] = []
+
+        for i, name in enumerate(ctx.machine_names):
+            run_func_name = f"run_{name}" if multi else "main"
+            main_runs.append(f"{await_prefix}{run_func_name}()")
+
+            lines.append(f"{func_prefix}def {run_func_name}() -> None:")
+            lines.append(
+                f'    """Executes the simulation for the '
+                f'{name} machine."""'
+            )
+            lines.append("")
+
+            # -- config loading ---------------------------------------
+            json_filename = ctx.json_filenames[i]
+            lines.append(self._generate_config_path_code(json_filename))
+            lines.append("")
+
+            # -- logic binding (module-based) -------------------------
+            lines.append("    # Logic Binding")
+            if ctx.file_count == 1:
+                lines.append("    import sys")
+                lines.append(
+                    "    machine = create_machine("
+                    "config, logic_modules=[sys.modules[__name__]])"
+                )
+            else:
+                lines.append(
+                    f"    machine = create_machine("
+                    f"config, logic_modules=[{logic_file_name}])"
+                )
+            lines.append("")
+
+            # -- interpreter setup ------------------------------------
+            lines.append("    # Interpreter Setup")
+            lines.append(f"    interpreter = {interpreter_class}(machine)")
+            lines.append("    interpreter.use(LoggingInspector())")
+            lines.append(f"    {await_prefix}interpreter.start()")
+            if ctx.log:
+                lines.append(
+                    "    logger.info("
+                    "f'Initial state: {interpreter.current_state_ids}')"
+                )
+            lines.append("")
+
+            # -- event simulation -------------------------------------
+            lines.append("    # Event Simulation")
+            events = sorted(extract_events(ctx.configs[i]))
+            if events:
+                for ev in events:
+                    if ctx.log:
+                        lines.append(
+                            f"    logger.info('Sending event: %s', '{ev}')"
+                        )
+                    lines.append(f"    {await_prefix}interpreter.send('{ev}')")
+                    if ctx.sleep:
+                        lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
+                    lines.append("")
+            else:
+                lines.append(
+                    "    logger.info(" "'No events declared in the machine.')"
+                )
+                lines.append("")
+
+            # -- stop -------------------------------------------------
+            lines.append(f"    {await_prefix}interpreter.stop()")
+            lines.append("")
+
+        # -- multi-machine main wrapper -------------------------------
+        if multi:
+            lines.append(f"{func_prefix}def main() -> None:")
+            lines.append(
+                '    """Runs all machine simulations sequentially."""'
+            )
+            for run_call in main_runs:
+                lines.append(f"    {run_call}")
+            lines.append("")
+
+        # -- main guard -----------------------------------------------
+        if ctx.is_async:
+            lines.append("if __name__ == '__main__':")
+            lines.append("    asyncio.run(main())")
+        else:
+            lines.append("if __name__ == '__main__':")
+            lines.append("    main()")
+
+        return lines
+
+    def _generate_hierarchy_runner(
+        self,
+        ctx: GenerationContext,
+        func_prefix: str,
+        await_prefix: str,
+        sleep_cmd: str,
+        interpreter_class: str,
+        logic_file_name: str,
+    ) -> List[str]:
+        """Generate hierarchical (parent + actors) runner body."""
+        lines: List[str] = []
+
+        parent_name, *actor_names = ctx.machine_names
+        parent_json, *actor_jsons = ctx.json_filenames
+        parent_cfg = ctx.configs[0]
+
+        lines.append(f"{func_prefix}def main() -> None:")
         lines.append(
-            f'    """Executes the simulation for the '
-            f'{ctx.machine_name} machine."""'
+            '    """Run the parent machine and spawn actor machines."""'
+        )
+        lines.append("    root_dir = Path(__file__).parent")
+        lines.append(
+            f"    parent_cfg = json.loads("
+            f"(root_dir / '{parent_json}').read_text())"
+        )
+        lines.append("    actor_cfgs = {")
+        for name, jfn in zip(actor_names, actor_jsons):
+            lines.append(
+                f"        '{name}': json.loads("
+                f"(root_dir / '{jfn}').read_text()),"
+            )
+        lines.append("    }")
+        lines.append("")
+
+        # -- parent machine + logic binding ---------------------------
+        lines.append(
+            "    # -------------------------------------------"
+            "----------------------------"
+        )
+        lines.append("    # 🧠 Parent machine + logic binding")
+        lines.append(
+            "    # -------------------------------------------"
+            "----------------------------"
+        )
+
+        # Function-based logic binding
+        if ctx.file_count == 1:
+            lines.append("    import sys")
+            logic_module = "sys.modules[__name__]"
+        else:
+            logic_module = logic_file_name
+        lines.append(
+            f"    parent_machine = create_machine("
+            f"parent_cfg, logic_modules=[{logic_module}])"
+        )
+        lines.append(f"    parent = {interpreter_class}(parent_machine)")
+        lines.append("    parent.use(LoggingInspector())")
+        lines.append(f"    {await_prefix}parent.start()")
+        lines.append(
+            "    logger.info("
+            "'👑 Parent started. Initial state(s): %s', "
+            "parent.current_state_ids)"
         )
         lines.append("")
 
-        # -- config loading -------------------------------------------
-        json_filename = ctx.json_filenames[0]
-        lines.append(self._generate_config_path_code(json_filename))
-        lines.append("")
+        # -- spawn actors ---------------------------------------------
+        lines.append(
+            "    # -------------------------------------------"
+            "------------------------"
+        )
+        lines.append("    # 🎭 Spawn & start every actor interpreter")
+        lines.append(
+            "    # -------------------------------------------"
+            "------------------------"
+        )
+        lines.append(f"    actor_ctor = {interpreter_class}")
+        lines.append("    actors = {}")
 
-        # -- logic binding (module-based) -----------------------------
-        lines.append("    # Logic Binding")
-        if ctx.file_count == 1:
-            lines.append("    import sys")
+        for a_name in actor_names:
             lines.append(
-                "    machine = create_machine("
-                "config, logic_modules=[sys.modules[__name__]])"
+                f"    machine_{a_name} = create_machine("
+                f"actor_cfgs['{a_name}'])"
             )
-        else:
-            lines.append(
-                f"    machine = create_machine("
-                f"config, logic_modules=[{logic_file_name}])"
-            )
-        lines.append("")
+            lines.append(f"    ai_{a_name} = actor_ctor(machine_{a_name})")
+            lines.append(f"    ai_{a_name}.use(LoggingInspector())")
+            lines.append(f"    {await_prefix}ai_{a_name}.start()")
+            lines.append(f"    actors['{a_name}'] = ai_{a_name}")
 
-        # -- interpreter setup ----------------------------------------
-        lines.append("    # Interpreter Setup")
-        lines.append(f"    interpreter = {interpreter_class}(machine)")
-        lines.append("    interpreter.use(LoggingInspector())")
-        lines.append(f"    {await_prefix}interpreter.start()")
-        if ctx.log:
-            lines.append(
-                "    logger.info("
-                "f'Initial state: {interpreter.current_state_ids}')"
-            )
+        # -- parent event simulation ----------------------------------
+        parent_events = sorted(extract_events(parent_cfg))
         lines.append("")
-
-        # -- event simulation -----------------------------------------
-        lines.append("    # Event Simulation")
-        events = sorted(extract_events(ctx.configs[0]))
-        if events:
-            for ev in events:
+        lines.append(
+            "    # -------------------------------------------"
+            "------------------------"
+        )
+        lines.append("    # 🚀 Simulating Parent Machine")
+        lines.append(
+            "    # -------------------------------------------"
+            "------------------------"
+        )
+        if parent_events:
+            for ev in parent_events:
+                lines.append(f"    # {ev.replace('_', ' ').title()}")
                 if ctx.log:
                     lines.append(
-                        f"    logger.info('Sending event: %s', '{ev}')"
+                        f"    logger.info(" f"'Parent → sending %s', '{ev}')"
                     )
-                lines.append(f"    {await_prefix}interpreter.send('{ev}')")
+                lines.append(f"    {await_prefix}parent.send('{ev}')")
                 if ctx.sleep:
                     lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                 lines.append("")
         else:
             lines.append(
-                "    logger.info('No events declared in the machine.')"
+                "    logger.info(" "'No events declared in parent machine.')"
             )
             lines.append("")
 
-        # -- stop -----------------------------------------------------
-        lines.append(f"    {await_prefix}interpreter.stop()")
+        # -- actor event simulation -----------------------------------
+        for idx, a_name in enumerate(actor_names):
+            actor_events = sorted(extract_events(ctx.configs[idx + 1]))
+            lines.append(
+                "    # -------------------------------------------"
+                "------------------------"
+            )
+            lines.append(f"    # 🚀 Simulating Actor «{a_name}»")
+            lines.append(
+                "    # -------------------------------------------"
+                "------------------------"
+            )
+            if actor_events:
+                for ev in actor_events:
+                    lines.append(f"    # {ev.replace('_', ' ').title()}")
+                    if ctx.log:
+                        lines.append(
+                            f"    logger.info("
+                            f"'{a_name} → sending %s', '{ev}')"
+                        )
+                    lines.append(
+                        f"    {await_prefix}actors['{a_name}'].send('{ev}')"
+                    )
+                    if ctx.sleep:
+                        lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
+                    lines.append("")
+            else:
+                lines.append(
+                    f"    logger.info("
+                    f"'No events declared in actor \"{a_name}\".')"
+                )
+                lines.append("")
+
+        # -- shutdown -------------------------------------------------
+        lines.append(
+            "    # -------------------------------------------"
+            "------------------------"
+        )
+        lines.append("    # 🛑 Graceful shutdown of actors then parent")
+        lines.append(
+            "    # -------------------------------------------"
+            "------------------------"
+        )
+        for a_name in actor_names:
+            lines.append(f"    {await_prefix}actors['{a_name}'].stop()")
+        lines.append(f"    {await_prefix}parent.stop()")
         lines.append("")
 
         # -- main guard -----------------------------------------------
@@ -202,7 +436,7 @@ class FunctionJsonStrategy(BaseStrategy):
             lines.append("if __name__ == '__main__':")
             lines.append("    main()")
 
-        return "\n".join(lines)
+        return lines
 
     # -----------------------------------------------------------------
     # Private helpers
