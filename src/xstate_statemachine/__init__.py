@@ -101,6 +101,20 @@ from .exceptions import (
     XStateMachineError,
 )
 
+# -------------------------------------------------------------------------
+# 🐍 Pythonic API
+# -------------------------------------------------------------------------
+from .pythonic import (
+    State,
+    StateMachine,
+    MachineBuilder,
+    build_machine,
+    transition,
+    action,
+    guard,
+    service,
+)
+
 # -----------------------------------------------------------------------------
 # 📦 Version Information
 # -----------------------------------------------------------------------------
@@ -137,5 +151,14 @@ __all__ = [
     "ActorSpawningError",
     "NotSupportedError",
     "MachineNode",
+    # 🐍 Pythonic API
+    "State",
+    "StateMachine",
+    "MachineBuilder",
+    "build_machine",
+    "transition",
+    "action",
+    "guard",
+    "service",
     "__version__",
 ]
