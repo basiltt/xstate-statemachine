@@ -19,12 +19,13 @@ error handling, and structured logging.
 4. Maintain full backward compatibility with existing `--style` flag (deprecation warning)
 5. Support hierarchical parent/child machine generation for Pythonic templates
 6. Template-aware async defaults (JSON templates default async, Pythonic templates default sync)
+7. Bump version to 0.5.0 to reflect the new feature set
 
 ## Non-Goals
 
-- Blank scaffold generation (no JSON input) — not in scope
-- Jinja2 or external template engine — stay dependency-free
-- Removing existing `--style` flag — deprecate only, remove in future v0.6.0
+- Blank scaffold generation (no JSON input) -- not in scope
+- Jinja2 or external template engine -- stay dependency-free
+- Removing existing `--style` flag -- deprecate only, remove in future v0.6.0
 
 ---
 
@@ -44,18 +45,48 @@ error handling, and structured logging.
 
 ### Backward Compatibility
 
-- `--style class` maps to `--template class-json` and emits:
+- `--style class` maps to `--template class-json` and emits a deprecation
+  warning via `warnings.warn()`:
   `DeprecationWarning: --style is deprecated, use --template class-json instead. Will be removed in v0.6.0`
 - `--style function` maps to `--template function-json` with the same warning.
 - If both `--style` and `--template` are provided: error
   `"Cannot use both --style and --template. Use --template only."`
 - The `--style` flag remains in the parser with `choices=["class", "function"]`.
+- The deprecation mechanism uses `warnings.warn(..., DeprecationWarning, stacklevel=2)`
+  so tests can verify it with `pytest.warns(DeprecationWarning)`.
 
 ### Async Mode Defaults
 
-- JSON templates (`class-json`, `function-json`): default `--async-mode yes`
-- Pythonic templates (`pythonic-*`): default `--async-mode no` (sync)
-- Explicit `--async-mode yes/no` overrides the template default in all cases.
+The `--async-mode` argparse default changes from `"yes"` to `None`. The actual
+default is resolved after template selection:
+
+- If `--async-mode` is explicitly provided: use that value.
+- If `--async-mode` is `None` (not provided):
+  - JSON templates (`class-json`, `function-json`): default to async (True)
+  - Pythonic templates (`pythonic-*`): default to sync (False)
+
+### Behavior of `--file-count` with Pythonic Templates
+
+- `--file-count 2` (default): generates separate `*_logic.py` and `*_runner.py`
+  files, same as JSON templates.
+- `--file-count 1`: merges logic and runner into a single file. For Pythonic
+  templates, the merge uses the same import-dedup logic as JSON templates --
+  the `_merge_code_for_single_file()` function in `__main__.py` handles this
+  generically by extracting imports and joining bodies.
+
+### Behavior of `--loader` with Pythonic Templates
+
+The `--loader` flag is **ignored** for Pythonic templates. Pythonic templates use
+`@action`, `@guard`, `@service` decorators which are compiled directly into
+`MachineLogic` -- there is no need for a `LogicLoader` auto-discovery pass. If
+the user explicitly passes `--loader yes` with a Pythonic template, the flag is
+silently ignored (no warning, no error). The `loader` field in
+`GenerationContext` remains for JSON strategies that use it.
+
+### Behavior of `--force` with Pythonic Templates
+
+The `--force` flag works identically for all templates -- it controls whether
+existing files are overwritten without prompting. No template-specific behavior.
 
 ---
 
@@ -73,7 +104,7 @@ src/xstate_statemachine/cli/
   strategies/
     __init__.py        # Exports BaseStrategy, STRATEGY_REGISTRY, get_strategy()
     base.py            # Abstract BaseStrategy + GenerationContext dataclass
-    _shared.py         # Shared helpers: imports, logging setup, docstring builders
+    _shared.py         # Shared helpers (see _shared.py specification below)
     class_json.py      # ClassJsonStrategy (extracted from current generator.py)
     function_json.py   # FunctionJsonStrategy (extracted from current generator.py)
     pythonic_class.py      # PythonicClassStrategy (new)
@@ -86,7 +117,7 @@ src/xstate_statemachine/cli/
 ```python
 from abc import ABC, abstractmethod
 import dataclasses
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set, Type
 
 
 @dataclasses.dataclass
@@ -98,8 +129,10 @@ class GenerationContext:
     services: Set[str]
     is_async: bool
     log: bool
-    machine_name: str
-    machine_names: List[str]
+    machine_name: str           # snake_case name for filenames
+    machine_id: str             # original camelCase ID from JSON
+    machine_names: List[str]    # all snake_case names (multi-machine)
+    machine_ids: List[str]      # all original camelCase IDs
     file_count: int
     configs: List[Dict[str, Any]]
     json_filenames: List[str]
@@ -107,6 +140,7 @@ class GenerationContext:
     sleep: bool
     sleep_time: int
     loader: bool
+    style: Optional[str] = None  # "class"/"function" for JSON strategies
 
 
 class BaseStrategy(ABC):
@@ -129,13 +163,15 @@ class BaseStrategy(ABC):
 ### Strategy Registry
 
 ```python
+from typing import Dict, Type
+from .base import BaseStrategy
 from .class_json import ClassJsonStrategy
 from .function_json import FunctionJsonStrategy
 from .pythonic_class import PythonicClassStrategy
 from .pythonic_builder import PythonicBuilderStrategy
 from .pythonic_functional import PythonicFunctionalStrategy
 
-STRATEGY_REGISTRY: Dict[str, type] = {
+STRATEGY_REGISTRY: Dict[str, Type[BaseStrategy]] = {
     "class-json": ClassJsonStrategy,
     "function-json": FunctionJsonStrategy,
     "pythonic-class": PythonicClassStrategy,
@@ -159,6 +195,50 @@ def get_strategy(template: str) -> BaseStrategy:
 `ClassJsonStrategy` or `FunctionJsonStrategy` based on the `style` parameter.
 Existing callers and tests work without modification.
 
+### `_shared.py` Specification
+
+The `_shared.py` module provides reusable helper functions used across multiple
+strategies:
+
+```python
+def generate_module_header(title: str, file_count: int) -> str:
+    """Generate the file header comment block."""
+
+def generate_imports(
+    is_async: bool,
+    services: Set[str],
+    template_type: str,
+) -> str:
+    """Generate import statements appropriate for the template type.
+
+    For JSON templates: imports Interpreter/SyncInterpreter, Event, etc.
+    For Pythonic templates: imports State, StateMachine/MachineBuilder/
+    build_machine, action, guard, service, etc.
+    """
+
+def generate_logger_setup(log: bool) -> str:
+    """Generate logger configuration lines."""
+
+def generate_action_docstring(
+    original_name: str, component_type: str
+) -> str:
+    """Generate a rich docstring with Args section for a callback."""
+
+def generate_error_handling(
+    original_name: str,
+    component_type: str,
+    body_lines: List[str],
+    indent: str,
+) -> str:
+    """Wrap body lines in try/except with logger.exception."""
+
+def snake_case_name(camel_name: str) -> str:
+    """Convert camelCase to snake_case (delegates to utils.camel_to_snake)."""
+
+def pascal_case_name(snake_name: str) -> str:
+    """Convert snake_case to PascalCase for class names."""
+```
+
 ---
 
 ## Generated Code: Pythonic Templates
@@ -174,30 +254,517 @@ code using the Pythonic API. They share these production-quality features:
 - Error handling with try/except + `logger.exception()` + re-raise
 - `if __name__ == "__main__":` runner guard
 
+### JSON-to-Pythonic Conversion Algorithm
+
+The core conversion from JSON config to Pythonic API code follows these rules:
+
+1. **States**: Each key in `config["states"]` becomes a `State()` instance.
+   - `"initial"` key -> `State(initial=True)` on the matching state
+   - `"type": "final"` -> `State(final=True)`
+   - `"type": "parallel"` -> `State(parallel=True)`
+   - `"entry"` -> `State(entry=[...])`
+   - `"exit"` -> `State(exit_actions=[...])`
+   - `"invoke"` -> `State(invoke={...})`
+   - `"after"` -> `State(after={...})`
+   - `"always"` -> `State(always=[...])`
+   - `"states"` (nested) -> `State(states={...})` for child states
+   - `"onDone"` -> `State(on_done=...)` for compound states
+
+2. **Transitions**: Each `"on"` event in the JSON becomes a `.to()` call:
+   - `"on": {"EVENT": "target"}` -> `source.to(target_state, event="EVENT")`
+   - `"on": {"EVENT": {"target": "t", "actions": "a"}}` ->
+     `source.to(target_state, event="EVENT", actions="a")`
+   - `"on": {"EVENT": {"target": "t", "cond": "g"}}` ->
+     `source.to(target_state, event="EVENT", guard="g")`
+   - `"on": {"EVENT": [trans1, trans2]}` -> multiple `.to()` calls combined
+     with `|` operator into a `TransitionGroup`
+   - Self-transitions (no target or target == source) -> `state.to(state, ...)`
+
+3. **Actions/Guards/Services**: Each unique name from the JSON becomes a
+   decorated function stub:
+   - camelCase JSON name -> snake_case Python function name
+   - `@action` / `@guard` / `@service` decorator applied
+   - Full type-annotated signature with docstring and error handling
+
 ### pythonic-class (StateMachine subclass)
 
 Generates a `StateMachine` subclass with:
-- Class-level `id` and `context` attributes
-- `State` instances as class attributes
-- Transition definitions via `state.to(target, event=..., ...)`
+- `machine_id` class attribute set to the JSON `id`
+- `initial_context` class attribute set to the JSON `context`
+- `State` instances as class attributes (one per state)
+- Transition definitions via `state.to(target, event=..., ...)` combined with `|`
 - `@action`, `@guard`, `@service` decorated methods with `self` parameter
-- `.create()` classmethod call in the runner section
+- `.create_machine()` classmethod call in the runner section
+
+**Complete example output** (from the traffic light JSON config):
+
+```python
+"""Traffic Light state machine -- generated by xsm CLI."""
+
+import logging
+from typing import Any, Dict, Optional, Union
+
+from xstate_statemachine import (
+    State,
+    StateMachine,
+    SyncInterpreter,
+    action,
+    guard,
+    service,
+    transition,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class TrafficLightMachine(StateMachine):
+    """Traffic Light state machine using the declarative class-based API.
+
+    Generated from: traffic_light.json
+    """
+
+    machine_id = "trafficLight"
+    initial_context = {"count": 0}
+
+    green = State(initial=True, entry=["logEnter"])
+    yellow = State()
+    red = State(invoke={"src": "fetchData", "onDone": "green"})
+
+    # Transitions
+    TIMER = (
+        green.to(yellow, event="TIMER", actions="increment")
+        | yellow.to(red, event="TIMER", guard="isReady")
+        | red.to(green, event="TIMER")
+    )
+
+    # -----------------------------------------------------------------------
+    # Actions
+    # -----------------------------------------------------------------------
+    @action
+    def log_enter(
+        self,
+        interpreter: SyncInterpreter,
+        context: Dict[str, Any],
+        event: Any,
+        action_def: Any,
+    ) -> None:
+        """Execute the ``logEnter`` action.
+
+        Args:
+            interpreter: The running interpreter instance.
+            context: Mutable machine context dictionary.
+            event: The event that triggered this action.
+            action_def: Metadata about the action being executed.
+        """
+        logger.info("Executing action: logEnter")
+        try:
+            # TODO: implement action logic
+            pass
+        except Exception:
+            logger.exception("Action 'logEnter' failed")
+            raise
+
+    @action
+    def increment(
+        self,
+        interpreter: SyncInterpreter,
+        context: Dict[str, Any],
+        event: Any,
+        action_def: Any,
+    ) -> None:
+        """Execute the ``increment`` action.
+
+        Args:
+            interpreter: The running interpreter instance.
+            context: Mutable machine context dictionary.
+            event: The event that triggered this action.
+            action_def: Metadata about the action being executed.
+        """
+        logger.info("Executing action: increment")
+        try:
+            # TODO: implement action logic
+            pass
+        except Exception:
+            logger.exception("Action 'increment' failed")
+            raise
+
+    # -----------------------------------------------------------------------
+    # Guards
+    # -----------------------------------------------------------------------
+    @guard
+    def is_ready(
+        self,
+        context: Dict[str, Any],
+        event: Any,
+    ) -> bool:
+        """Evaluate the ``isReady`` guard.
+
+        Args:
+            context: Current machine context dictionary.
+            event: The event being evaluated.
+        """
+        logger.info("Evaluating guard: isReady")
+        # TODO: implement guard logic
+        return True
+
+    # -----------------------------------------------------------------------
+    # Services
+    # -----------------------------------------------------------------------
+    @service
+    def fetch_data(
+        self,
+        interpreter: SyncInterpreter,
+        context: Dict[str, Any],
+        event: Any,
+    ) -> Dict[str, Any]:
+        """Run the ``fetchData`` service.
+
+        Args:
+            interpreter: The running interpreter instance.
+            context: Mutable machine context dictionary.
+            event: The event that triggered this service.
+        """
+        logger.info("Running service: fetchData")
+        try:
+            # TODO: implement service logic
+            return {"result": "done"}
+        except Exception:
+            logger.exception("Service 'fetchData' failed")
+            raise
+
+
+if __name__ == "__main__":
+    machine = TrafficLightMachine.create_machine()
+    interpreter = SyncInterpreter(machine)
+    interpreter.start()
+
+    logger.info(
+        f"Initial state: {interpreter.current_state_ids}"
+    )
+
+    # Simulate events
+    interpreter.send("TIMER")
+
+    interpreter.stop()
+```
 
 ### pythonic-builder (MachineBuilder fluent API)
 
-Generates:
-- Module-level `@action`, `@guard`, `@service` decorated functions (no `self`)
-- A `build()` function that creates `State` objects, defines transitions, and
-  uses `MachineBuilder("id").context({...}).state("name", state).build(...)` chain
-- Runner calls `build()` then creates an interpreter
+The `MachineBuilder` API uses a fluent `.state(name, **kwargs).transition()`
+chain -- it does **not** accept `State` objects. Transitions are added via
+`.transition(source, event, target, ...)`.
+
+**Complete example output:**
+
+```python
+"""Traffic Light state machine -- generated by xsm CLI."""
+
+import logging
+from typing import Any, Dict, Union
+
+from xstate_statemachine import (
+    MachineBuilder,
+    SyncInterpreter,
+    action,
+    guard,
+    service,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Actions
+# ---------------------------------------------------------------------------
+@action
+def log_enter(
+    interpreter: SyncInterpreter,
+    context: Dict[str, Any],
+    event: Any,
+    action_def: Any,
+) -> None:
+    """Execute the ``logEnter`` action.
+
+    Args:
+        interpreter: The running interpreter instance.
+        context: Mutable machine context dictionary.
+        event: The event that triggered this action.
+        action_def: Metadata about the action being executed.
+    """
+    logger.info("Executing action: logEnter")
+    try:
+        # TODO: implement action logic
+        pass
+    except Exception:
+        logger.exception("Action 'logEnter' failed")
+        raise
+
+
+@action
+def increment(
+    interpreter: SyncInterpreter,
+    context: Dict[str, Any],
+    event: Any,
+    action_def: Any,
+) -> None:
+    """Execute the ``increment`` action.
+
+    Args:
+        interpreter: The running interpreter instance.
+        context: Mutable machine context dictionary.
+        event: The event that triggered this action.
+        action_def: Metadata about the action being executed.
+    """
+    logger.info("Executing action: increment")
+    try:
+        # TODO: implement action logic
+        pass
+    except Exception:
+        logger.exception("Action 'increment' failed")
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Guards
+# ---------------------------------------------------------------------------
+@guard
+def is_ready(context: Dict[str, Any], event: Any) -> bool:
+    """Evaluate the ``isReady`` guard.
+
+    Args:
+        context: Current machine context dictionary.
+        event: The event being evaluated.
+    """
+    logger.info("Evaluating guard: isReady")
+    # TODO: implement guard logic
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+@service
+def fetch_data(
+    interpreter: SyncInterpreter,
+    context: Dict[str, Any],
+    event: Any,
+) -> Dict[str, Any]:
+    """Run the ``fetchData`` service.
+
+    Args:
+        interpreter: The running interpreter instance.
+        context: Mutable machine context dictionary.
+        event: The event that triggered this service.
+    """
+    logger.info("Running service: fetchData")
+    try:
+        # TODO: implement service logic
+        return {"result": "done"}
+    except Exception:
+        logger.exception("Service 'fetchData' failed")
+        raise
+
+
+def build() -> Any:
+    """Build the trafficLight machine using MachineBuilder."""
+    machine = (
+        MachineBuilder("trafficLight")
+        .context({"count": 0})
+        .state("green", initial=True, entry=["logEnter"])
+        .state("yellow")
+        .state(
+            "red",
+            invoke={"src": "fetchData", "onDone": "green"},
+        )
+        .transition(
+            "green", "TIMER", "yellow", actions=["increment"]
+        )
+        .transition(
+            "yellow", "TIMER", "red", guard="isReady"
+        )
+        .transition("red", "TIMER", "green")
+        .action("logEnter", log_enter)
+        .action("increment", increment)
+        .guard("isReady", is_ready)
+        .service("fetchData", fetch_data)
+        .build()
+    )
+    return machine
+
+
+if __name__ == "__main__":
+    machine = build()
+    interpreter = SyncInterpreter(machine)
+    interpreter.start()
+
+    logger.info(
+        f"Initial state: {interpreter.current_state_ids}"
+    )
+
+    # Simulate events
+    interpreter.send("TIMER")
+
+    interpreter.stop()
+```
 
 ### pythonic-functional (build_machine function)
 
-Generates:
-- Module-level `@action`, `@guard`, `@service` decorated functions (no `self`)
-- A `build()` function that creates `State` objects, defines transitions, and
-  calls `build_machine(id=..., states={...}, context={...}, actions=[...], ...)`
-- Runner calls `build()` then creates an interpreter
+The `build_machine()` API accepts `states` as a `List[State]` (not a dict).
+Transitions are defined via `state.to()` calls before passing states to
+`build_machine()`.
+
+**Complete example output:**
+
+```python
+"""Traffic Light state machine -- generated by xsm CLI."""
+
+import logging
+from typing import Any, Dict, Union
+
+from xstate_statemachine import (
+    State,
+    SyncInterpreter,
+    action,
+    build_machine,
+    guard,
+    service,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Actions
+# ---------------------------------------------------------------------------
+@action
+def log_enter(
+    interpreter: SyncInterpreter,
+    context: Dict[str, Any],
+    event: Any,
+    action_def: Any,
+) -> None:
+    """Execute the ``logEnter`` action.
+
+    Args:
+        interpreter: The running interpreter instance.
+        context: Mutable machine context dictionary.
+        event: The event that triggered this action.
+        action_def: Metadata about the action being executed.
+    """
+    logger.info("Executing action: logEnter")
+    try:
+        # TODO: implement action logic
+        pass
+    except Exception:
+        logger.exception("Action 'logEnter' failed")
+        raise
+
+
+@action
+def increment(
+    interpreter: SyncInterpreter,
+    context: Dict[str, Any],
+    event: Any,
+    action_def: Any,
+) -> None:
+    """Execute the ``increment`` action.
+
+    Args:
+        interpreter: The running interpreter instance.
+        context: Mutable machine context dictionary.
+        event: The event that triggered this action.
+        action_def: Metadata about the action being executed.
+    """
+    logger.info("Executing action: increment")
+    try:
+        # TODO: implement action logic
+        pass
+    except Exception:
+        logger.exception("Action 'increment' failed")
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Guards
+# ---------------------------------------------------------------------------
+@guard
+def is_ready(context: Dict[str, Any], event: Any) -> bool:
+    """Evaluate the ``isReady`` guard.
+
+    Args:
+        context: Current machine context dictionary.
+        event: The event being evaluated.
+    """
+    logger.info("Evaluating guard: isReady")
+    # TODO: implement guard logic
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+@service
+def fetch_data(
+    interpreter: SyncInterpreter,
+    context: Dict[str, Any],
+    event: Any,
+) -> Dict[str, Any]:
+    """Run the ``fetchData`` service.
+
+    Args:
+        interpreter: The running interpreter instance.
+        context: Mutable machine context dictionary.
+        event: The event that triggered this service.
+    """
+    logger.info("Running service: fetchData")
+    try:
+        # TODO: implement service logic
+        return {"result": "done"}
+    except Exception:
+        logger.exception("Service 'fetchData' failed")
+        raise
+
+
+def build() -> Any:
+    """Build the trafficLight machine using build_machine()."""
+    green = State(
+        "green", initial=True, entry=["logEnter"]
+    )
+    yellow = State("yellow")
+    red = State(
+        "red",
+        invoke={"src": "fetchData", "onDone": "green"},
+    )
+
+    green.to(yellow, event="TIMER", actions="increment")
+    yellow.to(red, event="TIMER", guard="isReady")
+    red.to(green, event="TIMER")
+
+    machine = build_machine(
+        id="trafficLight",
+        states=[green, yellow, red],
+        context={"count": 0},
+        actions=[log_enter, increment],
+        guards=[is_ready],
+        services=[fetch_data],
+    )
+    return machine
+
+
+if __name__ == "__main__":
+    machine = build()
+    interpreter = SyncInterpreter(machine)
+    interpreter.start()
+
+    logger.info(
+        f"Initial state: {interpreter.current_state_ids}"
+    )
+
+    # Simulate events
+    interpreter.send("TIMER")
+
+    interpreter.stop()
+```
 
 ---
 
@@ -261,14 +828,46 @@ async def increment(
 When `--json-parent` and `--json-child` are used with a Pythonic template:
 
 1. **Parent machine** -- generated in the chosen Pythonic style with `invoke`
-   references to child machine IDs
-2. **Child machines** -- each child gets its own class/build function within
-   the same logic file, clearly separated with section comments
-3. **Runner** -- creates parent via Pythonic API, loads child configs from JSON,
-   creates interpreters for all, wires and starts them, simulates events, shuts
-   down in reverse order (children first, then parent)
-4. **Actor spawning** -- child machines are loaded from JSON configs at runtime
-   (consistent with how `xstate_statemachine` actors work internally)
+   references to child machine IDs intact in the generated State objects.
+2. **Child machines** -- each child is loaded from its JSON config file at
+   runtime via `create_machine()`. The child JSON configs are NOT converted
+   to Pythonic code -- they remain as runtime JSON loading. This is consistent
+   with how `xstate_statemachine` actors work internally (parent spawns child
+   interpreters from configs).
+3. **Logic stubs** -- actions, guards, and services from ALL machines (parent
+   and children) are extracted and generated as stubs in the logic file, so
+   the user has a complete set of callbacks to implement.
+4. **Runner** -- creates the parent machine via the Pythonic API, loads child
+   configs from JSON, creates interpreters for all, wires and starts them,
+   simulates events for parent then each child, shuts down in reverse order
+   (children first, then parent).
+
+**Example runner snippet (pythonic-class, hierarchical):**
+
+```python
+def main() -> None:
+    """Run the parent machine and spawn actor machines."""
+    # Parent machine (Pythonic API)
+    parent_machine = ParentMachine.create_machine()
+
+    # Child machines (from JSON configs)
+    root_dir = Path(__file__).parent
+    child_cfg = json.loads(
+        (root_dir / "child.json").read_text()
+    )
+    child_machine = create_machine(child_cfg)
+
+    parent = SyncInterpreter(parent_machine)
+    child_interp = SyncInterpreter(child_machine)
+
+    parent.start()
+    child_interp.start()
+
+    # ... simulation events ...
+
+    child_interp.stop()
+    parent.stop()
+```
 
 ---
 
@@ -297,7 +896,7 @@ tests/tests_cli/
 1. **Backward compatibility** -- existing tests in `test_generator.py` and
    `test_main_execution.py` must pass unchanged
 2. **Deprecation warnings** -- `--style class` and `--style function` emit
-   `DeprecationWarning` with the correct message
+   `DeprecationWarning`, verified via `pytest.warns(DeprecationWarning)`
 3. **Flag conflicts** -- `--style` + `--template` together produces an error
 4. **Strategy registry** -- correct strategy returned for each template name,
    `InvalidConfigError` for unknown templates
@@ -313,7 +912,8 @@ tests/tests_cli/
 
 Each strategy test uses a standard sample JSON config (traffic light machine)
 and asserts the generated output contains expected code patterns via `assertIn`
-checks on the generated string output.
+checks on the generated string output. This is consistent with the existing
+`unittest.TestCase` style used throughout the `tests_cli` directory.
 
 ---
 
@@ -321,9 +921,11 @@ checks on the generated string output.
 
 | Version | Behavior |
 |---------|----------|
-| Current (0.4.3) | `--style class\|function` only |
-| This release (0.5.0) | `--template` added, `--style` works with deprecation warning |
-| Future (0.6.0) | `--style` removed, `--template` only |
+| 0.4.3 (current) | `--style class\|function` only |
+| 0.5.0 (this release) | `--template` added, `--style` works with deprecation warning |
+| 0.6.0 (future) | `--style` removed, `--template` only |
+
+The version bump to 0.5.0 is part of this change to signal the new feature set.
 
 ---
 
@@ -331,17 +933,18 @@ checks on the generated string output.
 
 | File | Change |
 |------|--------|
-| `cli/args.py` | Add `--template`/`-t`, deprecation logic for `--style`, async default resolution |
-| `cli/__main__.py` | Route through strategy registry, build `GenerationContext` |
+| `cli/args.py` | Add `--template`/`-t`, deprecation logic for `--style`, `--async-mode` default to `None` |
+| `cli/__main__.py` | Route through strategy registry, build `GenerationContext`, resolve async default |
 | `cli/generator.py` | Refactor to thin orchestrator delegating to strategies |
 | `cli/strategies/__init__.py` | Registry, `get_strategy()`, exports |
 | `cli/strategies/base.py` | `BaseStrategy` ABC, `GenerationContext` dataclass |
-| `cli/strategies/_shared.py` | Shared helpers for imports, logging, docstrings |
+| `cli/strategies/_shared.py` | Shared helpers (imports, logging, docstrings, error handling) |
 | `cli/strategies/class_json.py` | Extracted from current generator (class style) |
 | `cli/strategies/function_json.py` | Extracted from current generator (function style) |
 | `cli/strategies/pythonic_class.py` | New: StateMachine generation |
 | `cli/strategies/pythonic_builder.py` | New: MachineBuilder generation |
 | `cli/strategies/pythonic_functional.py` | New: build_machine generation |
+| `__init__.py` | Version bump to 0.5.0 |
 | `tests/tests_cli/test_args.py` | New: template flag tests |
 | `tests/tests_cli/test_strategy_registry.py` | New: registry tests |
 | `tests/tests_cli/test_class_json_strategy.py` | New: class-json strategy tests |
