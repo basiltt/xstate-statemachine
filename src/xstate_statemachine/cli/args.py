@@ -17,11 +17,13 @@
 import argparse
 import logging
 import sys
+from typing import Optional
 
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from .. import __version__ as package_version
+from .utils import normalize_bool
 
 # -----------------------------------------------------------------------------
 # 🪵 Module-level Logger
@@ -92,8 +94,27 @@ def _add_generation_option_args(parser: argparse.ArgumentParser) -> None:
         "-s",
         "--style",
         choices=["class", "function"],
-        default="class",
-        help="Code style for logic: 'class' or 'function'. Default: class.",
+        default=None,
+        help=(
+            "DEPRECATED: Use --template instead. "
+            "Code style for logic: 'class' or 'function'."
+        ),
+    )
+    parser.add_argument(
+        "-t",
+        "--template",
+        choices=[
+            "class-json",
+            "function-json",
+            "pythonic-class",
+            "pythonic-builder",
+            "pythonic-functional",
+        ],
+        default=None,
+        help=(
+            "Code generation template. Default: class-json. "
+            "Replaces --style (deprecated)."
+        ),
     )
     parser.add_argument(
         "-fc",
@@ -106,8 +127,12 @@ def _add_generation_option_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "-am",
         "--async-mode",
-        default="yes",
-        help="Generate asynchronous code: 'yes' or 'no'. Default: yes.",
+        default=None,
+        help=(
+            "Generate asynchronous code: 'yes' or 'no'. "
+            "Default: 'yes' for JSON templates, 'no' for "
+            "Pythonic templates."
+        ),
     )
     parser.add_argument(
         "-l",
@@ -239,3 +264,65 @@ def validate_args(parser: argparse.ArgumentParser) -> None:
 
     # ✅ If this point is reached, the arguments are valid.
     logger.info("✅ All command-line arguments are valid.")
+
+
+def resolve_template(
+    style: Optional[str],
+    template: Optional[str],
+) -> str:
+    """Resolve the template from --style and --template flags.
+
+    Args:
+        style: Value of deprecated --style flag (or None).
+        template: Value of --template flag (or None).
+
+    Returns:
+        The resolved template string.
+
+    Raises:
+        ValueError: If both --style and --template are set.
+    """
+    if style is not None and template is not None:
+        raise ValueError(
+            "Cannot use both --style and --template. " "Use --template only."
+        )
+    if template is not None:
+        return template
+    if style is not None:
+        import warnings
+
+        mapping = {
+            "class": "class-json",
+            "function": "function-json",
+        }
+        resolved = mapping[style]
+        warnings.warn(
+            f"--style is deprecated, use --template "
+            f"{resolved} instead. "
+            f"Will be removed in v0.6.0",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return resolved
+    return "class-json"
+
+
+def resolve_async_mode(
+    async_mode: Optional[str],
+    template: str,
+) -> bool:
+    """Resolve async mode based on explicit flag and template.
+
+    Args:
+        async_mode: The raw --async-mode value (or None).
+        template: The resolved template string.
+
+    Returns:
+        True for async mode, False for sync mode.
+    """
+    if async_mode is not None:
+        return normalize_bool(async_mode)
+    # Template-aware defaults
+    if template.startswith("pythonic"):
+        return False
+    return True

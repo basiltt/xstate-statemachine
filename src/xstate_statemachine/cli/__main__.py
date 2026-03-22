@@ -269,12 +269,16 @@ def _parse_boolean_flags(
         Dict[str, bool]: A dictionary mapping flag names to their boolean values.
     """
     try:
-        return {
+        result = {
             "loader": normalize_bool(args.loader),
             "sleep": normalize_bool(args.sleep),
-            "async_mode": normalize_bool(args.async_mode),
             "log": normalize_bool(args.log),
         }
+        if args.async_mode is not None:
+            result["async_mode"] = normalize_bool(args.async_mode)
+        else:
+            result["async_mode"] = True  # Default for backward compat
+        return result
     except ValueError as e:
         parser.error(str(e))
 
@@ -522,11 +526,12 @@ def run_generation_workflow(
     # 7. 📜 Generate logic and runner code
     logger.info("🤖 Generating logic and runner code...")
     base_name = Path(paths["single_file"].stem).name
+    style = args.style if args.style is not None else "class"
     logic_code = generate_logic_code(
         all_actions,
         all_guards,
         all_services,
-        args.style,
+        style,
         settings["log"],
         settings["async_mode"],
         base_name,
@@ -535,7 +540,7 @@ def run_generation_workflow(
     runner_code = generate_runner_code(
         machine_names,
         settings["async_mode"],
-        args.style,
+        style,
         settings["loader"],
         settings["sleep"],
         args.sleep_time,
