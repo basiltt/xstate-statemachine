@@ -19,6 +19,7 @@ All three styles compile to the same JSON config dict +
 # -------------------------------------------------------------------------
 import asyncio
 import functools
+import inspect
 from typing import (
     Any,
     Callable,
@@ -363,3 +364,120 @@ def transition(
         reenter=reenter,
         internal=internal,
     )
+
+
+# -------------------------------------------------------------------------
+# 🏷️ Decorators
+# -------------------------------------------------------------------------
+
+
+def action(fn_or_name=None):
+    """Decorator to mark a function as a state machine action.
+
+    Can be used with or without arguments:
+        - ``@action`` — auto-generates name from function name
+        - ``@action("customName")`` — uses explicit name
+
+    Args:
+        fn_or_name: Either the function (when used as
+            ``@action``) or a string name (when used as
+            ``@action("name")``).
+
+    Returns:
+        The decorated function with ``_xsm_type`` and
+        ``_xsm_name`` attributes set.
+    """
+    if callable(fn_or_name):
+        # 📝 Used as @action (no parentheses)
+        fn = fn_or_name
+        fn._xsm_type = "action"
+        fn._xsm_name = _snake_to_camel(fn.__name__)
+        return fn
+    else:
+        # 📝 Used as @action("customName")
+        name = fn_or_name
+
+        def decorator(fn):
+            fn._xsm_type = "action"
+            fn._xsm_name = name
+            return fn
+
+        return decorator
+
+
+def guard(fn_or_name=None):
+    """Decorator to mark a function as a state machine guard.
+
+    Guards MUST be synchronous. Async guards raise
+    ``NotSupportedError``.
+
+    Can be used with or without arguments:
+        - ``@guard`` — auto-generates name from function name
+        - ``@guard("customName")`` — uses explicit name
+
+    Args:
+        fn_or_name: Either the function or a string name.
+
+    Returns:
+        The decorated function with ``_xsm_type`` and
+        ``_xsm_name`` attributes set.
+
+    Raises:
+        NotSupportedError: If the function is async.
+    """
+    if callable(fn_or_name):
+        fn = fn_or_name
+        if inspect.iscoroutinefunction(fn):
+            raise NotSupportedError(
+                f"Guard '{fn.__name__}' must be synchronous "
+                f"(guards cannot be async)"
+            )
+        fn._xsm_type = "guard"
+        fn._xsm_name = _snake_to_camel(fn.__name__)
+        return fn
+    else:
+        name = fn_or_name
+
+        def decorator(fn):
+            if inspect.iscoroutinefunction(fn):
+                raise NotSupportedError(
+                    f"Guard '{fn.__name__}' must be "
+                    f"synchronous (guards cannot be async)"
+                )
+            fn._xsm_type = "guard"
+            fn._xsm_name = name
+            return fn
+
+        return decorator
+
+
+def service(fn_or_name=None):
+    """Decorator to mark a function as a state machine service.
+
+    Services can be sync or async.
+
+    Can be used with or without arguments:
+        - ``@service`` — auto-generates name from function name
+        - ``@service("customName")`` — uses explicit name
+
+    Args:
+        fn_or_name: Either the function or a string name.
+
+    Returns:
+        The decorated function with ``_xsm_type`` and
+        ``_xsm_name`` attributes set.
+    """
+    if callable(fn_or_name):
+        fn = fn_or_name
+        fn._xsm_type = "service"
+        fn._xsm_name = _snake_to_camel(fn.__name__)
+        return fn
+    else:
+        name = fn_or_name
+
+        def decorator(fn):
+            fn._xsm_type = "service"
+            fn._xsm_name = name
+            return fn
+
+        return decorator

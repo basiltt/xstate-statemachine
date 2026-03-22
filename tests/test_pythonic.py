@@ -15,7 +15,11 @@ from xstate_statemachine.pythonic import (
     Transition,
     TransitionGroup,
     transition,
+    action,
+    guard,
+    service,
 )
+from xstate_statemachine.exceptions import NotSupportedError
 
 
 class TestSnakeToCamel(unittest.TestCase):
@@ -178,3 +182,66 @@ class TestTransition(unittest.TestCase):
         )
         self.assertEqual(t.guard, "ok")
         self.assertEqual(t.actions, ["log"])
+
+
+class TestDecorators(unittest.TestCase):
+    """Tests for @action, @guard, @service decorators."""
+
+    def test_action_decorator_auto_name(self):
+        @action
+        def increment_counter(i, ctx, e, a):
+            pass
+
+        self.assertEqual(increment_counter._xsm_type, "action")
+        self.assertEqual(increment_counter._xsm_name, "incrementCounter")
+
+    def test_action_decorator_explicit_name(self):
+        @action("customName")
+        def my_func(i, ctx, e, a):
+            pass
+
+        self.assertEqual(my_func._xsm_name, "customName")
+
+    def test_guard_decorator(self):
+        @guard
+        def can_retry(ctx, e):
+            return True
+
+        self.assertEqual(can_retry._xsm_type, "guard")
+        self.assertEqual(can_retry._xsm_name, "canRetry")
+
+    def test_service_decorator(self):
+        @service
+        def fetch_data(i, ctx, e):
+            pass
+
+        self.assertEqual(fetch_data._xsm_type, "service")
+        self.assertEqual(fetch_data._xsm_name, "fetchData")
+
+    def test_guard_async_raises_error(self):
+        with self.assertRaises(NotSupportedError):
+
+            @guard
+            async def bad_guard(ctx, e):
+                return True
+
+    def test_action_decorator_preserves_function(self):
+        @action
+        def my_action(i, ctx, e, a):
+            return 42
+
+        self.assertEqual(my_action(None, None, None, None), 42)
+
+    def test_guard_explicit_name(self):
+        @guard("myGuard")
+        def some_guard(ctx, e):
+            return True
+
+        self.assertEqual(some_guard._xsm_name, "myGuard")
+
+    def test_service_explicit_name(self):
+        @service("myService")
+        def some_service(i, ctx, e):
+            pass
+
+        self.assertEqual(some_service._xsm_name, "myService")
