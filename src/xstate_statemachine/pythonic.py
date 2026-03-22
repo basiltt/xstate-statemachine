@@ -153,7 +153,7 @@ class State:
         guard: Optional[str] = None,
         actions: Optional[List[str]] = None,
         reenter: bool = False,
-    ) -> "Transition":  # noqa: F821
+    ) -> "Transition":
         """Create a transition from this state to a target.
 
         Args:
@@ -175,7 +175,7 @@ class State:
                 "For eventless transitions, use the 'always' "
                 "parameter on State()"
             )
-        return Transition(  # noqa: F821
+        return Transition(
             source=self,
             target=target,
             event=event,
@@ -191,7 +191,7 @@ class State:
         *,
         guard: Optional[str] = None,
         actions: Optional[List[str]] = None,
-    ) -> "Transition":  # noqa: F821
+    ) -> "Transition":
         """Create an internal transition (no state change).
 
         Args:
@@ -202,7 +202,7 @@ class State:
         Returns:
             A ``Transition`` object with ``internal=True``.
         """
-        return Transition(  # noqa: F821
+        return Transition(
             source=self,
             target=None,
             event=event,
@@ -253,3 +253,113 @@ class State:
         if name not in self.exit:
             self.exit.append(name)
         return fn
+
+
+# -------------------------------------------------------------------------
+# 🔀 Transition & TransitionGroup
+# -------------------------------------------------------------------------
+
+
+class Transition:
+    """A transition between two states, triggered by an event.
+
+    Created by ``State.to()`` or the ``transition()`` function.
+    Not typically instantiated directly by users.
+
+    Attributes:
+        source: The source ``State``.
+        target: The target ``State`` (``None`` for internal
+            transitions).
+        event: The event name that triggers this transition.
+        guard: Optional guard function name.
+        actions: List of action names to execute.
+        reenter: Whether to force exit/re-entry on
+            self-transitions.
+        internal: Whether this is an internal transition.
+    """
+
+    def __init__(
+        self,
+        source: State,
+        target: Optional[State],
+        event: str,
+        guard: Optional[str] = None,
+        actions: Optional[List[str]] = None,
+        reenter: bool = False,
+        internal: bool = False,
+    ) -> None:
+        self.source = source
+        self.target = target
+        self.event = event
+        self.guard = guard
+        self.actions = actions or []
+        self.reenter = reenter
+        self.internal = internal
+
+    def __or__(
+        self, other: "Union[Transition, TransitionGroup]"
+    ) -> "TransitionGroup":
+        """Combine transitions with the ``|`` operator."""
+        if isinstance(other, TransitionGroup):
+            return TransitionGroup([self] + other.transitions)
+        return TransitionGroup([self, other])
+
+
+class TransitionGroup:
+    """A collection of ``Transition`` objects, created by ``|``.
+
+    Users never instantiate this directly. It is created
+    implicitly when combining transitions with ``|``.
+
+    Attributes:
+        transitions: The list of ``Transition`` objects in this
+            group.
+    """
+
+    def __init__(self, transitions: List[Transition]) -> None:
+        self.transitions = transitions
+
+    def __or__(
+        self, other: "Union[Transition, TransitionGroup]"
+    ) -> "TransitionGroup":
+        """Combine with another transition or group."""
+        if isinstance(other, TransitionGroup):
+            return TransitionGroup(self.transitions + other.transitions)
+        return TransitionGroup(self.transitions + [other])
+
+
+def transition(
+    source: State,
+    event: str,
+    target: State,
+    *,
+    guard: Optional[str] = None,
+    actions: Optional[List[str]] = None,
+    reenter: bool = False,
+    internal: bool = False,
+) -> Transition:
+    """Create a transition between two states (functional API).
+
+    Equivalent to ``source.to(target, event=event, ...)``.
+
+    Args:
+        source: The source ``State``.
+        event: The event name (required).
+        target: The target ``State``.
+        guard: Optional guard function name.
+        actions: Optional list of action names.
+        reenter: Whether to force exit/re-entry.
+        internal: Whether this is an internal transition.
+
+    Returns:
+        A ``Transition`` object.
+    """
+    return Transition(
+        source=source,
+        target=target,
+        event=event,
+        guard=guard,
+        actions=actions or [],
+        reenter=reenter,
+        internal=internal,
+    )
