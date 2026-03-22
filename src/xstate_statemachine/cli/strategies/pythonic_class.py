@@ -180,6 +180,48 @@ class PythonicClassStrategy(BaseStrategy):
         if ctx.log:
             lines.append(self._generate_runner_logger_setup(ctx))
 
+        # -- hierarchy mode -------------------------------------------
+        if ctx.hierarchy and len(ctx.machine_names) > 1:
+            lines.extend(
+                self._generate_hierarchy_runner(
+                    ctx,
+                    class_name,
+                    func_prefix,
+                    await_prefix,
+                    sleep_cmd,
+                    interpreter_class,
+                    logic_file_name,
+                )
+            )
+        else:
+            # -- flat / single machine mode ---------------------------
+            lines.extend(
+                self._generate_flat_runner(
+                    ctx,
+                    config,
+                    class_name,
+                    func_prefix,
+                    await_prefix,
+                    sleep_cmd,
+                    interpreter_class,
+                )
+            )
+
+        return "\n".join(lines)
+
+    def _generate_flat_runner(
+        self,
+        ctx: GenerationContext,
+        config: Dict[str, Any],
+        class_name: str,
+        func_prefix: str,
+        await_prefix: str,
+        sleep_cmd: str,
+        interpreter_class: str,
+    ) -> List[str]:
+        """Generate flat (non-hierarchy) runner body."""
+        lines: List[str] = []
+
         # -- main function --------------------------------------------
         lines.append(f"{func_prefix}def main() -> None:")
         lines.append(
@@ -233,7 +275,168 @@ class PythonicClassStrategy(BaseStrategy):
         else:
             lines.append("    main()")
 
-        return "\n".join(lines)
+        return lines
+
+    def _generate_hierarchy_runner(
+        self,
+        ctx: GenerationContext,
+        class_name: str,
+        func_prefix: str,
+        await_prefix: str,
+        sleep_cmd: str,
+        interpreter_class: str,
+        logic_file_name: str,
+    ) -> List[str]:
+        """Generate hierarchical (parent + actors) runner body."""
+        lines: List[str] = []
+
+        parent_name, *actor_names = ctx.machine_names
+        parent_json, *actor_jsons = ctx.json_filenames
+        parent_cfg = ctx.configs[0]
+
+        lines.append(f"{func_prefix}def main() -> None:")
+        lines.append(
+            '    """Run the parent machine and spawn actor machines."""'
+        )
+        lines.append("    root_dir = Path(__file__).parent")
+        lines.append("")
+
+        # -- load child configs from JSON -----------------------------
+        for name, jfn in zip(actor_names, actor_jsons):
+            lines.append(
+                f"    with open(root_dir / '{jfn}', 'r', "
+                f"encoding='utf-8') as f:"
+            )
+            lines.append(f"        {name}_cfg = json.load(f)")
+        lines.append("")
+
+        # -- parent machine via Pythonic API --------------------------
+        lines.append(
+            "    # -------------------------------------------"
+            "----------------------------"
+        )
+        lines.append("    # 🧠 Parent machine via Pythonic API")
+        lines.append(
+            "    # -------------------------------------------"
+            "----------------------------"
+        )
+        lines.append(f"    parent_machine = {class_name}.create_machine()")
+        lines.append(f"    parent = {interpreter_class}(parent_machine)")
+        lines.append(f"    {await_prefix}parent.start()")
+        if ctx.log:
+            lines.append(
+                "    logger.info("
+                "'👑 Parent started. Initial state(s): %s', "
+                "parent.current_state_ids)"
+            )
+        lines.append("")
+
+        # -- spawn actors from JSON -----------------------------------
+        lines.append(
+            "    # -------------------------------------------"
+            "------------------------"
+        )
+        lines.append("    # 🎭 Spawn & start every actor interpreter")
+        lines.append(
+            "    # -------------------------------------------"
+            "------------------------"
+        )
+        lines.append("    actors = {}")
+
+        for a_name in actor_names:
+            lines.append(
+                f"    machine_{a_name} = create_machine(" f"{a_name}_cfg)"
+            )
+            lines.append(
+                f"    ai_{a_name} = {interpreter_class}(machine_{a_name})"
+            )
+            lines.append(f"    {await_prefix}ai_{a_name}.start()")
+            lines.append(f"    actors['{a_name}'] = ai_{a_name}")
+        lines.append("")
+
+        # -- parent event simulation ----------------------------------
+        parent_events = sorted(extract_events(parent_cfg))
+        lines.append(
+            "    # -------------------------------------------"
+            "------------------------"
+        )
+        lines.append("    # 🚀 Simulating Parent Machine")
+        lines.append(
+            "    # -------------------------------------------"
+            "------------------------"
+        )
+        if parent_events:
+            for ev in parent_events:
+                if ctx.log:
+                    lines.append(
+                        f"    logger.info(" f"'Parent → sending %s', '{ev}')"
+                    )
+                lines.append(f"    {await_prefix}parent.send('{ev}')")
+                if ctx.sleep:
+                    lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
+                lines.append("")
+        else:
+            lines.append(
+                "    logger.info(" "'No events declared in parent machine.')"
+            )
+            lines.append("")
+
+        # -- actor event simulation -----------------------------------
+        for idx, a_name in enumerate(actor_names):
+            actor_events = sorted(extract_events(ctx.configs[idx + 1]))
+            lines.append(
+                "    # -------------------------------------------"
+                "------------------------"
+            )
+            lines.append(f"    # 🚀 Simulating Actor «{a_name}»")
+            lines.append(
+                "    # -------------------------------------------"
+                "------------------------"
+            )
+            if actor_events:
+                for ev in actor_events:
+                    if ctx.log:
+                        lines.append(
+                            f"    logger.info("
+                            f"'{a_name} → sending %s', '{ev}')"
+                        )
+                    lines.append(
+                        f"    {await_prefix}actors['{a_name}'].send('{ev}')"
+                    )
+                    if ctx.sleep:
+                        lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
+                    lines.append("")
+            else:
+                lines.append(
+                    f"    logger.info("
+                    f"'No events declared in actor \"{a_name}\".')"
+                )
+                lines.append("")
+
+        # -- shutdown -------------------------------------------------
+        lines.append(
+            "    # -------------------------------------------"
+            "------------------------"
+        )
+        lines.append("    # 🛑 Graceful shutdown of actors then parent")
+        lines.append(
+            "    # -------------------------------------------"
+            "------------------------"
+        )
+        for a_name in actor_names:
+            lines.append(f"    {await_prefix}actors['{a_name}'].stop()")
+        lines.append(f"    {await_prefix}parent.stop()")
+        lines.append("")
+
+        # -- main guard -----------------------------------------------
+        if ctx.is_async:
+            lines.append("if __name__ == '__main__':")
+            lines.append("    asyncio.run(main())")
+        else:
+            lines.append("if __name__ == '__main__':")
+            lines.append("    main()")
+
+        return lines
 
     # -----------------------------------------------------------------
     # Private helpers – State declarations
@@ -503,6 +706,12 @@ class PythonicClassStrategy(BaseStrategy):
     ) -> str:
         """Generate import block for the runner file."""
         lines: List[str] = []
+
+        is_hierarchy = ctx.hierarchy and len(ctx.machine_names) > 1
+
+        if is_hierarchy:
+            lines.append("from pathlib import Path")
+            lines.append("import json")
         if ctx.log:
             lines.append("import logging")
         if ctx.sleep and not ctx.is_async:
@@ -510,7 +719,15 @@ class PythonicClassStrategy(BaseStrategy):
         if ctx.is_async:
             lines.append("import asyncio")
 
-        lines.append(f"from xstate_statemachine import {interpreter_class}")
+        if is_hierarchy:
+            lines.append(
+                f"from xstate_statemachine import "
+                f"create_machine, {interpreter_class}"
+            )
+        else:
+            lines.append(
+                f"from xstate_statemachine import {interpreter_class}"
+            )
 
         if ctx.file_count == 2:
             lines.append("")
