@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-22
+
 ### Added
+- **CLI `--template` flag** with 5 template types for Pythonic code generation:
+  - `pythonic-class`: Class-based state machine using `StateMachine` base class
+  - `pythonic-builder`: Builder pattern using `MachineBuilder` fluent API
+  - `pythonic-functional`: Functional style using `build_machine()` factory
+  - `class`: Classic class-based template (existing behavior)
+  - `functional`: Classic functional template (existing behavior)
+- **Strategy pattern architecture** for code generation with pluggable `CodeGenStrategy` implementations
 - **Pythonic API** for defining state machines in pure Python without JSON dicts:
   - `StateMachine` base class with metaclass for class-based declarations
   - `MachineBuilder` fluent builder for programmatic/dynamic construction
@@ -28,11 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **143 Pythonic API tests** across 20 test classes covering all three API styles, error handling, edge cases, merge rules, async/sync interpreter compatibility, and snapshot/restore
 
 ### Changed
+- Generated code now includes rich docstrings, error handling, and type hints
+- `--async-mode` defaults are template-aware (Pythonic templates default to sync)
 - **Performance**: `_snake_to_camel` helper uses `@functools.lru_cache(maxsize=256)` for hot-path optimization
 - **Idempotent builds**: `MachineBuilder.build()` uses `copy.deepcopy` on internal state so repeated calls produce independent machines
 - **Defensive copying**: `_compile_state()` copies `entry`, `exit`, and `on` data from State objects to prevent mutation of shared State instances across builds
 - **Falsy context handling**: All context checks use `is not None` instead of truthiness to preserve empty dicts `{}`
 - **State.exit naming**: Internal storage uses `_exit_actions` with a public `exit_actions` property, keeping `exit()` as the decorator method — avoids shadowing Python's `exit` builtin
+
+### Deprecated
+- `--style` flag (use `--template` instead; `--style` will be removed in v0.6.0)
 
 ## [0.4.3] - 2025-02-03
 
