@@ -217,9 +217,12 @@ class PythonicFunctionalStrategy(BaseStrategy):
                     lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                 lines.append("")
         else:
-            lines.append(
-                "    logger.info('No events declared in the machine.')"
-            )
+            if ctx.log:
+                lines.append(
+                    "    logger.info(" "'No events declared in the machine.')"
+                )
+            else:
+                lines.append("    pass  # No events declared in the machine")
             lines.append("")
 
         # -- stop -----------------------------------------------------
@@ -591,6 +594,15 @@ class PythonicFunctionalStrategy(BaseStrategy):
                 elif isinstance(entry, list):
                     entry_repr = ", ".join(f'"{a}"' for a in entry)
                     kwargs.append(f"entry=[{entry_repr}]")
+
+            # exit actions
+            exit_actions = state_def.get("exit")
+            if exit_actions is not None:
+                if isinstance(exit_actions, str):
+                    kwargs.append(f'exit=["{exit_actions}"]')
+                elif isinstance(exit_actions, list):
+                    exit_repr = ", ".join(f'"{a}"' for a in exit_actions)
+                    kwargs.append(f"exit=[{exit_repr}]")
 
             # invoke
             invoke = state_def.get("invoke")

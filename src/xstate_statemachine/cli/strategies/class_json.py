@@ -219,7 +219,8 @@ class ClassJsonStrategy(BaseStrategy):
             # -- interpreter setup ------------------------------------
             lines.append("    # Interpreter Setup")
             lines.append(f"    interpreter = {interpreter_class}(machine)")
-            lines.append("    interpreter.use(LoggingInspector())")
+            if ctx.log:
+                lines.append("    interpreter.use(LoggingInspector())")
             lines.append(f"    {await_prefix}interpreter.start()")
             if ctx.log:
                 lines.append(
@@ -242,9 +243,15 @@ class ClassJsonStrategy(BaseStrategy):
                         lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                     lines.append("")
             else:
-                lines.append(
-                    "    logger.info(" "'No events declared in the machine.')"
-                )
+                if ctx.log:
+                    lines.append(
+                        "    logger.info("
+                        "'No events declared in the machine.')"
+                    )
+                else:
+                    lines.append(
+                        "    pass  # No events declared in the machine"
+                    )
                 lines.append("")
 
             # -- stop -------------------------------------------------
@@ -326,13 +333,15 @@ class ClassJsonStrategy(BaseStrategy):
             "parent_cfg, logic_providers=[logic_provider])"
         )
         lines.append(f"    parent = {interpreter_class}(parent_machine)")
-        lines.append("    parent.use(LoggingInspector())")
+        if ctx.log:
+            lines.append("    parent.use(LoggingInspector())")
         lines.append(f"    {await_prefix}parent.start()")
-        lines.append(
-            "    logger.info("
-            "'👑 Parent started. Initial state(s): %s', "
-            "parent.current_state_ids)"
-        )
+        if ctx.log:
+            lines.append(
+                "    logger.info("
+                "'👑 Parent started. Initial state(s): %s', "
+                "parent.current_state_ids)"
+            )
         lines.append("")
 
         # -- spawn actors ---------------------------------------------
@@ -354,7 +363,8 @@ class ClassJsonStrategy(BaseStrategy):
                 f"actor_cfgs['{a_name}'])"
             )
             lines.append(f"    ai_{a_name} = actor_ctor(machine_{a_name})")
-            lines.append(f"    ai_{a_name}.use(LoggingInspector())")
+            if ctx.log:
+                lines.append(f"    ai_{a_name}.use(LoggingInspector())")
             lines.append(f"    {await_prefix}ai_{a_name}.start()")
             lines.append(f"    actors['{a_name}'] = ai_{a_name}")
 
@@ -605,9 +615,10 @@ class ClassJsonStrategy(BaseStrategy):
         lines = [
             "from pathlib import Path",
             "import json",
-            "from xstate_statemachine import LoggingInspector",
             f"from xstate_statemachine import create_machine, {interpreter_class}",
         ]
+        if ctx.log:
+            lines.append("from xstate_statemachine import LoggingInspector")
         if ctx.log:
             lines.append("import logging")
         if ctx.sleep and not ctx.is_async:

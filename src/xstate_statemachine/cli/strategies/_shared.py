@@ -101,6 +101,23 @@ def generate_error_handling(
     Returns:
         The wrapped code as a string.
     """
+    # When logging is disabled, try/except that just re-raises is
+    # pointless dead code — emit the body lines directly instead.
+    if not log:
+        result: List[str] = []
+        has_statement = False
+        for line in body_lines:
+            stripped = line.lstrip()
+            if stripped:
+                result.append(f"{indent}{stripped}")
+                if not stripped.startswith("#"):
+                    has_statement = True
+            else:
+                result.append("")
+        if not has_statement:
+            result.append(f"{indent}pass")
+        return "\n".join(result)
+
     lines = [f"{indent}try:"]
     # Track whether the try body contains any executable statements
     has_statement = False
@@ -117,12 +134,11 @@ def generate_error_handling(
     if not has_statement:
         lines.append(f"{indent}    pass")
     lines.append(f"{indent}except Exception:")
-    if log:
-        lines.append(
-            f"{indent}    logger.exception("
-            f'"{component_type.capitalize()} '
-            f"'{original_name}' failed\")"
-        )
+    lines.append(
+        f"{indent}    logger.exception("
+        f'"{component_type.capitalize()} '
+        f"'{original_name}' failed\")"
+    )
     lines.append(f"{indent}    raise")
     return "\n".join(lines)
 
@@ -155,6 +171,11 @@ def generate_imports(
         lines.append("")
         interpreter = "Interpreter" if is_async else "SyncInterpreter"
         xsm_imports = [interpreter]
+        # Both Interpreter and SyncInterpreter are needed for
+        # Union[Interpreter, SyncInterpreter] type hints in generated code.
+        other = "SyncInterpreter" if is_async else "Interpreter"
+        if other not in xsm_imports:
+            xsm_imports.append(other)
         if "class" in template_type:
             xsm_imports.extend(
                 [
@@ -163,7 +184,6 @@ def generate_imports(
                     "action",
                     "guard",
                     "service",
-                    "transition",
                 ]
             )
         elif "builder" in template_type:

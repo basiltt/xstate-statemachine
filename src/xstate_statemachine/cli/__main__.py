@@ -452,20 +452,78 @@ def _merge_code_for_single_file(logic_code: str, runner_code: str) -> str:
     logic_imports, logic_body = _split_imports_and_body(logic_lines)
     runner_imports, runner_body = _split_imports_and_body(runner_lines)
 
-    # De-duplicate imports while preserving order
-    seen: Set[str] = set()
-    unique_imports: List[str] = []
-    for imp in logic_imports + runner_imports:
-        if imp not in seen:
-            seen.add(imp)
-            unique_imports.append(imp)
-    imports = sorted(unique_imports)
+    # ---------------------------------------------------------------
+    # Symbol-level dedup for ``from X import ...`` statements.
+    # Plain ``import X`` statements are kept as-is (string dedup).
+    # ---------------------------------------------------------------
+    import re as _re
 
-    # 🏃 Strip logger setup from runner body to avoid duplicates.
+    # Bucket: module_path -> ordered list of symbols
+    from_imports: dict[str, list[str]] = {}
+    # Ordered list of ``import X`` (non-from) statements
+    plain_imports: List[str] = []
+    _seen_plain: Set[str] = set()
+
+    def _parse_from_import(stmt: str) -> Tuple[str, List[str]]:
+        """Extract (module, [symbols]) from a ``from M import ...``."""
+        # Flatten multi-line into single line for parsing
+        flat = " ".join(stmt.split())
+        # Pattern: from <module> import (<symbols>) or from <module> import <symbols>
+        m = _re.match(r"from\s+([\w.]+)\s+import\s+\(?(.*?)\)?\s*$", flat)
+        if m:
+            mod = m.group(1)
+            symbols = [
+                s.strip().rstrip(",")
+                for s in m.group(2).split(",")
+                if s.strip().rstrip(",")
+            ]
+            return mod, symbols
+        return "", []
+
+    for imp in logic_imports + runner_imports:
+        if imp.startswith("from "):
+            mod, symbols = _parse_from_import(imp)
+            if mod:
+                if mod not in from_imports:
+                    from_imports[mod] = []
+                for sym in symbols:
+                    if sym not in from_imports[mod]:
+                        from_imports[mod].append(sym)
+            else:
+                # Could not parse — keep raw
+                if imp not in _seen_plain:
+                    _seen_plain.add(imp)
+                    plain_imports.append(imp)
+        else:
+            if imp not in _seen_plain:
+                _seen_plain.add(imp)
+                plain_imports.append(imp)
+
+    # Reconstruct from-imports as single-line statements
+    merged_from: List[str] = []
+    for mod, symbols in from_imports.items():
+        if len(symbols) == 1:
+            merged_from.append(f"from {mod} import {symbols[0]}")
+        else:
+            merged_from.append(f"from {mod} import {', '.join(symbols)}")
+
+    imports = sorted(plain_imports + merged_from)
+
+    # 🏃 Strip logger setup from runner body to avoid duplicates —
+    # but keep ``logging.basicConfig(...)`` if the logic body does NOT
+    # already contain it.
+    logic_has_basic_config = any(
+        line.startswith("logging.basicConfig") for line in logic_body
+    )
     runner_body = [
         line
         for line in runner_body
-        if not (line.startswith("logging.basicConfig"))
+        if (
+            not (
+                line.startswith("logging.basicConfig")
+                and logic_has_basic_config
+            )
+        )
         and "logger = logging.getLogger" not in line
     ]
 
