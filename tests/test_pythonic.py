@@ -16,6 +16,7 @@ from xstate_statemachine.pythonic import (
     _compile_logic_from_instance,
     build_machine,
     MachineBuilder,
+    StateMachine,
     State,
     Transition,
     TransitionGroup,
@@ -852,4 +853,87 @@ class TestMachineBuilder(unittest.TestCase):
         interp = SyncInterpreter(machine).start()
         interp.send("FINISH")
         self.assertIn("test.done", interp.current_state_ids)
+        interp.stop()
+
+
+class TestStateMachineClassBased(unittest.TestCase):
+    """Tests for the StateMachine class-based API."""
+
+    def test_basic_machine_creation(self):
+        class Light(StateMachine):
+            off = State(initial=True)
+            on = State()
+            toggle = off.to(on, event="TOGGLE") | on.to(off, event="TOGGLE")
+
+        machine = Light.create_machine()
+        interp = SyncInterpreter(machine).start()
+        self.assertIn("Light.off", interp.current_state_ids)
+        interp.send("TOGGLE")
+        self.assertIn("Light.on", interp.current_state_ids)
+        interp.send("TOGGLE")
+        self.assertIn("Light.off", interp.current_state_ids)
+        interp.stop()
+
+    def test_custom_machine_id(self):
+        class Light(StateMachine):
+            machine_id = "myLight"
+            off = State(initial=True)
+            on = State()
+
+        machine = Light.create_machine()
+        interp = SyncInterpreter(machine).start()
+        self.assertIn("myLight.off", interp.current_state_ids)
+        interp.stop()
+
+    def test_actions_fire(self):
+        result = {}
+
+        class Counter(StateMachine):
+            idle = State(initial=True)
+            done = State()
+            go = idle.to(done, event="GO", actions=["logIt"])
+
+            @action
+            def log_it(self, i, ctx, e, a):
+                result["fired"] = True
+
+        machine = Counter.create_machine()
+        interp = SyncInterpreter(machine).start()
+        interp.send("GO")
+        interp.stop()
+        self.assertTrue(result["fired"])
+
+    def test_guards_block(self):
+        class Gated(StateMachine):
+            idle = State(initial=True)
+            active = State()
+            go = idle.to(active, event="GO", guard="isReady")
+
+            @guard
+            def is_ready(self, ctx, e):
+                return ctx.get("ready", False)
+
+        machine = Gated.create_machine(context={"ready": False})
+        interp = SyncInterpreter(machine).start()
+        interp.send("GO")
+        self.assertIn("Gated.idle", interp.current_state_ids)
+        interp.stop()
+
+    def test_context_override(self):
+        class WithCtx(StateMachine):
+            initial_context = {"x": 1}
+            idle = State(initial=True)
+
+        machine = WithCtx.create_machine(context={"x": 99})
+        interp = SyncInterpreter(machine).start()
+        self.assertEqual(interp.context["x"], 99)
+        interp.stop()
+
+    def test_state_names_auto_inferred(self):
+        class M(StateMachine):
+            my_state = State(initial=True)
+
+        machine = M.create_machine()
+        interp = SyncInterpreter(machine).start()
+        self.assertIn("M.my_state", interp.current_state_ids)
         interp.stop()

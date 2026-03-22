@@ -1055,3 +1055,144 @@ class MachineBuilder:
             services=self._services,
         )
         return _original_create_machine(config, logic=logic)
+
+
+# -------------------------------------------------------------------------
+# Class-Based API: StateMachine + Metaclass
+# -------------------------------------------------------------------------
+
+
+class _StateMachineMeta(type):
+    """Metaclass for ``StateMachine`` that collects States,
+    Transitions, and decorated methods at class-definition time.
+    """
+
+    def __new__(mcs, name, bases, namespace):
+        # Skip processing for the base StateMachine class
+        if name == "StateMachine" and not any(
+            hasattr(b, "_xsm_is_base") for b in bases
+        ):
+            cls = super().__new__(mcs, name, bases, namespace)
+            cls._xsm_is_base = True
+            return cls
+
+        states: List[State] = []
+        transitions: List[Union[Transition, TransitionGroup]] = []
+        decorated: List[Callable] = []
+
+        for attr_name, attr_value in list(namespace.items()):
+            if attr_name.startswith("_"):
+                continue
+
+            # Collect nested State subclasses
+            if (
+                isinstance(attr_value, type)
+                and issubclass(attr_value, State)
+                and attr_value is not State
+            ):
+                child_states = []
+                for (
+                    child_attr_name,
+                    child_attr_value,
+                ) in vars(attr_value).items():
+                    if child_attr_name.startswith("_"):
+                        continue
+                    if isinstance(child_attr_value, State):
+                        if not child_attr_value.name:
+                            child_attr_value.name = child_attr_name
+                        child_states.append(child_attr_value)
+                state_obj = State(
+                    name=attr_name,
+                    initial=getattr(
+                        attr_value,
+                        "_xsm_initial",
+                        False,
+                    ),
+                    final=getattr(attr_value, "_xsm_final", False),
+                    parallel=getattr(
+                        attr_value,
+                        "_xsm_parallel",
+                        False,
+                    ),
+                    states=(child_states if child_states else None),
+                )
+                states.append(state_obj)
+                continue
+
+            # Collect State instances
+            if isinstance(attr_value, State):
+                if not attr_value.name:
+                    attr_value.name = attr_name
+                states.append(attr_value)
+                continue
+
+            # Collect Transitions / TransitionGroups
+            if isinstance(attr_value, (Transition, TransitionGroup)):
+                transitions.append(attr_value)
+                continue
+
+            # Collect decorated methods
+            if callable(attr_value) and hasattr(attr_value, "_xsm_type"):
+                decorated.append(attr_value)
+
+        cls = super().__new__(mcs, name, bases, namespace)
+        cls._xsm_states = states
+        cls._xsm_transitions = transitions
+        cls._xsm_decorated = decorated
+        return cls
+
+
+class StateMachine(metaclass=_StateMachineMeta):
+    """Base class for defining state machines using class syntax.
+
+    Subclass this and define ``State`` attributes, transitions,
+    and decorated action/guard/service methods.
+
+    Class Attributes:
+        machine_id: Optional machine ID (defaults to class
+            name).
+        initial_context: Optional initial context dict.
+
+    Example::
+
+        class Light(StateMachine):
+            off = State(initial=True)
+            on = State()
+            toggle = (
+                off.to(on, event="TOGGLE")
+                | on.to(off, event="TOGGLE")
+            )
+
+        machine = Light.create_machine()
+    """
+
+    machine_id: Optional[str] = None
+    initial_context: Optional[Dict] = None
+
+    @classmethod
+    def create_machine(cls, context=None):
+        """Create a ``MachineNode`` from this class.
+
+        Args:
+            context: Optional context override.
+
+        Returns:
+            A ``MachineNode`` ready for interpreter use.
+        """
+        mid = cls.machine_id or cls.__name__
+        ctx = context or cls.initial_context
+
+        config = _compile_config(
+            machine_id=mid,
+            states=cls._xsm_states,
+            transitions=cls._xsm_transitions,
+            context=ctx,
+        )
+
+        instance = cls()
+        logic = _compile_logic_from_instance(
+            instance=instance,
+            decorated=cls._xsm_decorated,
+        )
+
+        return _original_create_machine(config, logic=logic)
