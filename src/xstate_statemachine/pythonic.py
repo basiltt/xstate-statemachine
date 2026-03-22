@@ -17,9 +17,9 @@ All three styles compile to the same JSON config dict +
 # -------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -------------------------------------------------------------------------
-import asyncio
 import functools
 import inspect
+from collections import defaultdict
 from typing import (
     Any,
     Callable,
@@ -595,8 +595,6 @@ def _compile_config(
         InvalidConfigError: On duplicate states, missing
             initial state, or unknown transition sources.
     """
-    from collections import defaultdict
-
     # 🔍 Build flat lookup of all states by name
     all_states_by_name: Dict[str, State] = {}
 
@@ -775,9 +773,9 @@ def _compile_logic_from_instance(
     Returns:
         A ``MachineLogic`` instance with bound callables.
     """
-    action_dict: Dict[str, Callable] = {}
-    guard_dict: Dict[str, Callable] = {}
-    service_dict: Dict[str, Callable] = {}
+    action_dict: Dict[str, Any] = {}
+    guard_dict: Dict[str, Any] = {}
+    service_dict: Dict[str, Any] = {}
 
     for fn in decorated:
         name = fn._xsm_name
