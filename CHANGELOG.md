@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-03-22
+## [0.5.0] - 2026-03-23
 
 ### Added
 - **CLI `--template` flag** with 5 template types for Pythonic code generation:
@@ -35,6 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `Transition.__or__` and `TransitionGroup.__or__` return `NotImplemented` for invalid operand types
 - **`__repr__` methods** on `State`, `Transition`, `TransitionGroup`, and `MachineBuilder` for better debugging
 - **143 Pythonic API tests** across 20 test classes covering all three API styles, error handling, edge cases, merge rules, async/sync interpreter compatibility, and snapshot/restore
+- **Comprehensive README rewrite** (2,508 lines): Complete documentation overhaul covering all 24 public API symbols with accurate signatures, code examples, and full feature coverage including:
+  - `get_snapshot()` / `from_snapshot()` API with persistence examples
+  - `transition()` standalone function, `TransitionGroup`, `State.internal()`, `reenter` parameter
+  - `MachineLogic` constructor, `LogicLoader` singleton with global module registration
+  - `DoneEvent` / `AfterEvent` internal event types
+  - `MachineNode.get_state_by_id()` / `.get_next_state()` inspection methods
+  - `State.__init_subclass__` class inheritance pattern
+  - `PluginBase` hooks with correct signatures (`on_transition(interpreter, from_states, to_states, transition)`)
+  - `LoggingInspector` output format reference
+  - `always` (eventless transitions) with full example
+  - All 5 CLI templates deep dive with generated code examples
+- **Stress test suite**: 50 real-world XState machine configs tested against all 5 templates (250 code generation runs) with `py_compile` + `importlib` validation
 
 ### Changed
 - Generated code now includes rich docstrings, error handling, and type hints
@@ -44,6 +56,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Defensive copying**: `_compile_state()` copies `entry`, `exit`, and `on` data from State objects to prevent mutation of shared State instances across builds
 - **Falsy context handling**: All context checks use `is not None` instead of truthiness to preserve empty dicts `{}`
 - **State.exit naming**: Internal storage uses `_exit_actions` with a public `exit_actions` property, keeping `exit()` as the decorator method — avoids shadowing Python's `exit` builtin
+- **`_resolve_target()` signature**: Added optional `source_prefix` parameter for hierarchical context-aware target resolution
+- **`collect_all_transitions()`**: Now passes `source_prefix` to `_resolve_target()` for accurate nested state resolution
+
+### Fixed
+- **Nested state target resolution**: Fixed 14 `pythonic-class` template failures where child states with the same name under different parents (e.g., `login.idle` vs `signup.idle`) resolved to the wrong target. Added `source_prefix` parameter to `_resolve_target()` for context-aware sibling resolution that walks up the parent chain to find the closest matching state.
+- **State/event name collision in code generation**: Fixed `'Transition' object has no attribute 'to'` error when event names (e.g., `preview_failed`) collide with state variable names. Code generator now detects collisions and appends `_event` suffix to transition variable names.
+- **Empty actions list emission**: Changed `actions_val is not None` to truthy check to avoid emitting `actions=[]` in generated `pythonic-class` code.
+- **Conditional `service` decorator import**: The `service` decorator is now only imported in generated code when the machine actually defines services, preventing unused import warnings.
+- **Function complexity compliance**: Extracted `_format_action_list_kwarg()` helper in `pythonic_functional.py` to reduce `_generate_build_function` complexity from 36 to ≤35, fixing flake8 C901 violation.
 
 ### Deprecated
 - `--style` flag (use `--template` instead; `--style` will be removed in v0.6.0)

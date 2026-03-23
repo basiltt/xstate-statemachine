@@ -18,7 +18,6 @@ from ._shared import (
     generate_imports,
     generate_logger_setup,
     generate_section_header,
-    safe_identifier,
     snake_case_name,
 )
 

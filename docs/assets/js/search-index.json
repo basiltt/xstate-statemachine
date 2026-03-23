@@ -1,0 +1,158 @@
+[
+  {
+    "description": "Install XState-StateMachine, verify setup, build your first machine, project structure.",
+    "section": "Getting Started",
+    "title": "Getting Started",
+    "url": "/guide/getting-started/"
+  },
+  {
+    "description": "Build your first state machine in 5 minutes \u2014 functional, JSON, CLI, class-based, builder approaches.",
+    "section": "Getting Started",
+    "title": "Quick Start",
+    "url": "/guide/quick-start/"
+  },
+  {
+    "description": "States, events, transitions, guards, actions, context, lifecycle \u2014 the building blocks.",
+    "section": "Getting Started",
+    "title": "Core Concepts",
+    "url": "/guide/core-concepts/"
+  },
+  {
+    "description": "Every field in the XState JSON format \u2014 id, initial, states, on, always, after, invoke, context, entry, exit.",
+    "section": "Configuration",
+    "title": "JSON Configuration",
+    "url": "/guide/json-config/"
+  },
+  {
+    "description": "Define machines in pure Python \u2014 State, StateMachine, MachineBuilder, build_machine, @action, @guard, @service decorators, .to(), .internal(), transition().",
+    "section": "Configuration",
+    "title": "Pythonic API",
+    "url": "/guide/pythonic-api/"
+  },
+  {
+    "description": "Execute machines with Interpreter (async) or SyncInterpreter (sync) \u2014 start, stop, send events, lifecycle, plugins.",
+    "section": "Configuration",
+    "title": "Interpreters",
+    "url": "/guide/interpreters/"
+  },
+  {
+    "description": "Mutable data attached to the machine \u2014 initial_context, nested objects, arrays, mutation in actions.",
+    "section": "Features",
+    "title": "Context",
+    "url": "/guide/context/"
+  },
+  {
+    "description": "Conditional transitions with guard functions \u2014 cond, multiple guards, fallbacks, guard evaluation order, @guard decorator.",
+    "section": "Features",
+    "title": "Guards",
+    "url": "/guide/guards/"
+  },
+  {
+    "description": "Side effects on entry, exit, and transitions \u2014 action signatures, MachineLogic, @action decorator, LogicLoader auto-discovery.",
+    "section": "Features",
+    "title": "Actions",
+    "url": "/guide/actions/"
+  },
+  {
+    "description": "Async operations with invoke \u2014 src, onDone, onError, service functions, @service decorator, array invoke.",
+    "section": "Features",
+    "title": "Services & Invoke",
+    "url": "/guide/services/"
+  },
+  {
+    "description": "Timer-based auto-transitions with after \u2014 timeouts, polling, debounce, timer reset, guards on timers.",
+    "section": "Features",
+    "title": "Delayed Transitions",
+    "url": "/guide/delayed-transitions/"
+  },
+  {
+    "description": "Nested compound states \u2014 parent-child, initial substates, deep nesting, target resolution, history.",
+    "section": "Features",
+    "title": "Hierarchical States",
+    "url": "/guide/hierarchical/"
+  },
+  {
+    "description": "Concurrent orthogonal regions \u2014 type parallel, independent substates, synchronization.",
+    "section": "Features",
+    "title": "Parallel States",
+    "url": "/guide/parallel/"
+  },
+  {
+    "description": "Terminal completion states \u2014 type final, done events, onDone transitions, nested final states.",
+    "section": "Features",
+    "title": "Final States",
+    "url": "/guide/final-states/"
+  },
+  {
+    "description": "Spawn independent child machines \u2014 spawn_ prefix, spawn_blocking_, factory functions, actor communication.",
+    "section": "Advanced",
+    "title": "Actor Model",
+    "url": "/guide/actors/"
+  },
+  {
+    "description": "Observe events, transitions, actions \u2014 PluginBase, LoggingInspector, custom plugins, on_transition, on_event.",
+    "section": "Advanced",
+    "title": "Plugins & Observability",
+    "url": "/guide/plugins/"
+  },
+  {
+    "description": "Save and restore machine state \u2014 take_snapshot, restore_snapshot, persistence, time-travel debugging.",
+    "section": "Advanced",
+    "title": "Snapshots",
+    "url": "/guide/snapshots/"
+  },
+  {
+    "description": "Generate diagrams from machines \u2014 Mermaid, PlantUML, ASCII format, statechart visualization.",
+    "section": "Advanced",
+    "title": "Diagram Export",
+    "url": "/guide/diagrams/"
+  },
+  {
+    "description": "Real-world patterns \u2014 retry with backoff, form wizard, e-commerce checkout, CI/CD pipeline, video player.",
+    "section": "Advanced",
+    "title": "Advanced Patterns",
+    "url": "/guide/examples/"
+  },
+  {
+    "description": "Generate production-ready Python from XState JSON \u2014 xsm command, generate-template, --template flag.",
+    "section": "CLI",
+    "title": "CLI Generator",
+    "url": "/guide/cli/"
+  },
+  {
+    "description": "All 5 code generation templates \u2014 pythonic-class, pythonic-builder, pythonic-functional, class-json, function-json.",
+    "section": "CLI",
+    "title": "CLI Templates Deep Dive",
+    "url": "/guide/cli-templates/"
+  },
+  {
+    "description": "Generate parent-child machine code \u2014 --json-parent, --json-child flags, multi-machine projects.",
+    "section": "CLI",
+    "title": "Hierarchical Generation",
+    "url": "/guide/cli-hierarchy/"
+  },
+  {
+    "description": "Complete reference \u2014 create_machine, Interpreter, SyncInterpreter, MachineLogic, State, StateMachine, MachineBuilder, Event, exceptions.",
+    "section": "Reference",
+    "title": "API Reference",
+    "url": "/api/"
+  },
+  {
+    "description": "Common errors, exception hierarchy, debugging tips \u2014 InvalidConfigError, StateNotFoundError, ImplementationMissingError.",
+    "section": "Reference",
+    "title": "Troubleshooting",
+    "url": "/guide/troubleshooting/"
+  },
+  {
+    "description": "Frequently asked questions \u2014 async vs sync, XState compatibility, testing, deployment, performance.",
+    "section": "Reference",
+    "title": "FAQ",
+    "url": "/guide/faq/"
+  },
+  {
+    "description": "Release history \u2014 v0.5.0 Pythonic API, v0.4.x CLI tool, v0.3.x plugins and snapshots.",
+    "section": "Reference",
+    "title": "Changelog",
+    "url": "/guide/changelog/"
+  }
+]

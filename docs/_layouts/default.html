@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% if page.title %}{{ page.title }} | {% endif %}{{ site.title }}</title>
+  <meta name="description" content="{{ page.description | default: site.description }}">
+  <meta name="theme-color" content="#4361ee">
+
+  <!-- Canonical URL -->
+  <link rel="canonical" href="{{ page.url | absolute_url }}">
+
+  <!-- Open Graph / Social Meta Tags -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{% if page.title %}{{ page.title }} | {{ site.title }}{% else %}{{ site.title }}{% endif %}">
+  <meta property="og:description" content="{{ page.description | default: site.description | truncate: 200 }}">
+  <meta property="og:url" content="{{ page.url | absolute_url }}">
+  <meta property="og:site_name" content="{{ site.title }}">
+  <meta property="og:image" content="{{ '/assets/images/og-banner.svg' | absolute_url }}">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{% if page.title %}{{ page.title }} | {{ site.title }}{% else %}{{ site.title }}{% endif %}">
+  <meta name="twitter:description" content="{{ page.description | default: site.description | truncate: 200 }}">
+  <meta name="twitter:image" content="{{ '/assets/images/og-banner.svg' | absolute_url }}">
+
+  <!-- Preload critical fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="{{ '/assets/css/style.css' | relative_url }}">
+
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x2699;&#xFE0F;</text></svg>">
+
+  <!-- Dark mode: prevent flash -->
+  <script>
+    (function() {
+      var theme = localStorage.getItem('theme');
+      if (theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+</head>
+<body>
+  <!-- Skip to main content (accessibility) -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <!-- Scroll progress bar -->
+  <div class="scroll-progress" id="scrollProgress"></div>
+
+  <!-- Navigation -->
+  <nav class="top-nav" id="topNav" role="navigation" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="{{ '/' | relative_url }}" class="nav-brand" aria-label="XState-SM Home">
+        <span class="nav-logo">&#x2699;&#xFE0F;</span>
+        <span class="nav-title">XState-SM</span>
+        <span class="version-badge">v0.5.0</span>
+      </a>
+      <div class="nav-links" id="navLinks">
+        <a href="{{ '/guide/getting-started/' | relative_url }}" class="nav-link">Guide</a>
+        <a href="{{ '/guide/pythonic-api/' | relative_url }}" class="nav-link">Pythonic API</a>
+        <a href="{{ '/guide/cli/' | relative_url }}" class="nav-link">CLI</a>
+        <a href="{{ '/api/' | relative_url }}" class="nav-link">API Reference</a>
+        <a href="{{ '/guide/examples/' | relative_url }}" class="nav-link">Examples</a>
+        <button class="nav-search-btn" id="searchBtn" aria-label="Search documentation (Ctrl+K)">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 7a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Zm-.82 4.74a6 6 0 1 1 1.06-1.06l3.04 3.04a.75.75 0 1 1-1.06 1.06l-3.04-3.04Z"/></svg>
+          <span class="search-shortcut">Ctrl K</span>
+        </button>
+        <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode" title="Toggle dark mode">
+          <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+        <a href="https://github.com/basiltt/xstate-statemachine" class="nav-link nav-github" target="_blank" rel="noopener" aria-label="GitHub repository">
+          <svg height="20" width="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        </a>
+      </div>
+      <button class="nav-toggle" id="navToggle" type="button" aria-label="Toggle navigation" aria-expanded="false" aria-controls="navLinks">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Search Modal -->
+  <div class="search-modal" id="searchModal" role="dialog" aria-label="Search documentation" aria-hidden="true" aria-modal="true">
+    <div class="search-overlay" id="searchOverlay"></div>
+    <div class="search-dialog">
+      <div class="search-header">
+        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" class="search-icon"><path d="M11.5 7a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Zm-.82 4.74a6 6 0 1 1 1.06-1.06l3.04 3.04a.75.75 0 1 1-1.06 1.06l-3.04-3.04Z"/></svg>
+        <input type="text" class="search-input" id="searchInput" placeholder="Search documentation..." autocomplete="off" autofocus>
+        <kbd class="search-kbd">Esc</kbd>
+      </div>
+      <div class="search-results" id="searchResults">
+        <div class="search-empty">Type to search the documentation...</div>
+      </div>
+      <div class="search-footer">
+        <span><kbd>&uarr;</kbd><kbd>&darr;</kbd> Navigate</span>
+        <span><kbd>Enter</kbd> Open</span>
+        <span><kbd>Esc</kbd> Close</span>
+      </div>
+    </div>
+  </div>
+
+  {% if page.layout == 'home' %}
+  {{ content }}
+  {% else %}
+  <div class="page-wrapper">
+    <!-- Left Sidebar -->
+    <aside class="sidebar" id="sidebar" role="navigation" aria-label="Documentation navigation">
+      <div class="sidebar-inner">
+        <div class="sidebar-section">
+          <h3 class="sidebar-heading">Getting Started</h3>
+          <a href="{{ '/guide/getting-started/' | relative_url }}" class="sidebar-link">Installation</a>
+          <a href="{{ '/guide/quick-start/' | relative_url }}" class="sidebar-link">Quick Start</a>
+          <a href="{{ '/guide/core-concepts/' | relative_url }}" class="sidebar-link">Core Concepts</a>
+        </div>
+        <div class="sidebar-section">
+          <h3 class="sidebar-heading">Configuration</h3>
+          <a href="{{ '/guide/json-config/' | relative_url }}" class="sidebar-link">JSON Reference</a>
+          <a href="{{ '/guide/pythonic-api/' | relative_url }}" class="sidebar-link">Pythonic API</a>
+          <a href="{{ '/guide/interpreters/' | relative_url }}" class="sidebar-link">Interpreters</a>
+        </div>
+        <div class="sidebar-section">
+          <h3 class="sidebar-heading">Features</h3>
+          <a href="{{ '/guide/context/' | relative_url }}" class="sidebar-link">Context</a>
+          <a href="{{ '/guide/guards/' | relative_url }}" class="sidebar-link">Guards</a>
+          <a href="{{ '/guide/actions/' | relative_url }}" class="sidebar-link">Actions</a>
+          <a href="{{ '/guide/services/' | relative_url }}" class="sidebar-link">Services &amp; Invoke</a>
+          <a href="{{ '/guide/delayed-transitions/' | relative_url }}" class="sidebar-link">Delayed Transitions</a>
+          <a href="{{ '/guide/hierarchical/' | relative_url }}" class="sidebar-link">Hierarchical States</a>
+          <a href="{{ '/guide/parallel/' | relative_url }}" class="sidebar-link">Parallel States</a>
+          <a href="{{ '/guide/final-states/' | relative_url }}" class="sidebar-link">Final States</a>
+        </div>
+        <div class="sidebar-section">
+          <h3 class="sidebar-heading">Advanced</h3>
+          <a href="{{ '/guide/actors/' | relative_url }}" class="sidebar-link">Actor Model</a>
+          <a href="{{ '/guide/plugins/' | relative_url }}" class="sidebar-link">Plugins</a>
+          <a href="{{ '/guide/snapshots/' | relative_url }}" class="sidebar-link">Snapshots</a>
+          <a href="{{ '/guide/diagrams/' | relative_url }}" class="sidebar-link">Diagram Export</a>
+          <a href="{{ '/guide/examples/' | relative_url }}" class="sidebar-link">Advanced Patterns</a>
+        </div>
+        <div class="sidebar-section">
+          <h3 class="sidebar-heading">CLI Tool</h3>
+          <a href="{{ '/guide/cli/' | relative_url }}" class="sidebar-link">CLI Generator</a>
+          <a href="{{ '/guide/cli-templates/' | relative_url }}" class="sidebar-link">Templates Deep Dive</a>
+          <a href="{{ '/guide/cli-hierarchy/' | relative_url }}" class="sidebar-link">Hierarchical Generation</a>
+        </div>
+        <div class="sidebar-section">
+          <h3 class="sidebar-heading">Reference</h3>
+          <a href="{{ '/api/' | relative_url }}" class="sidebar-link">API Reference</a>
+          <a href="{{ '/guide/troubleshooting/' | relative_url }}" class="sidebar-link">Troubleshooting</a>
+          <a href="{{ '/guide/faq/' | relative_url }}" class="sidebar-link">FAQ</a>
+          <a href="{{ '/guide/changelog/' | relative_url }}" class="sidebar-link">Changelog</a>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content" id="main-content" role="main">
+      <!-- Breadcrumbs -->
+      <nav class="breadcrumbs" aria-label="Breadcrumb">
+        <a href="{{ '/' | relative_url }}">Home</a>
+        {% if page.url contains '/guide/' %}
+        <span class="breadcrumb-sep">/</span>
+        <a href="{{ '/guide/getting-started/' | relative_url }}">Guide</a>
+        {% elsif page.url contains '/api/' %}
+        <span class="breadcrumb-sep">/</span>
+        <a href="{{ '/api/' | relative_url }}">API</a>
+        {% endif %}
+        {% if page.title %}
+        <span class="breadcrumb-sep">/</span>
+        <span class="breadcrumb-current">{{ page.title }}</span>
+        {% endif %}
+      </nav>
+
+      <article class="content">
+        {% if page.title %}
+        <h1 class="page-title">{{ page.title }}</h1>
+        {% endif %}
+        {% if page.description %}
+        <p class="page-description">{{ page.description }}</p>
+        {% endif %}
+
+        {% assign words = content | number_of_words %}
+        {% assign reading_time = words | divided_by: 200 %}
+        {% if reading_time < 1 %}{% assign reading_time = 1 %}{% endif %}
+        <div class="article-meta">
+          <span class="reading-time">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 3.5a.5.5 0 0 0-1 0V8a.5.5 0 0 0 .252.434l3.5 2a.5.5 0 0 0 .496-.868L8 7.71V3.5z"/><path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zm7-8A7 7 0 1 1 1 8a7 7 0 0 1 14 0z"/></svg>
+            {{ reading_time }} min read
+          </span>
+        </div>
+
+        {{ content }}
+
+        <!-- Edit on GitHub link -->
+        <div class="edit-link">
+          <a href="https://github.com/basiltt/xstate-statemachine/edit/main/docs/{{ page.path }}" target="_blank" rel="noopener">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25a1.75 1.75 0 01.445-.758l8.61-8.61zm1.414 1.06a.25.25 0 00-.354 0L3.463 11.098a.25.25 0 00-.064.108l-.631 2.208 2.208-.63a.25.25 0 00.108-.064l8.609-8.61a.25.25 0 000-.353l-1.086-1.086-.18.179z"/></svg>
+            Edit this page on GitHub
+          </a>
+        </div>
+
+        <!-- Previous / Next Navigation -->
+        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,diagrams,examples,cli,cli-templates,cli-hierarchy,troubleshooting,faq,changelog" | split: "," %}
+        {% assign current_name = page.url | remove: "/guide/" | remove: "/" %}
+        {% assign prev_page = nil %}
+        {% assign next_page = nil %}
+        {% assign found = false %}
+        {% for name in pages_order %}
+          {% if found and next_page == nil %}
+            {% assign next_page = name %}
+          {% endif %}
+          {% if name == current_name %}
+            {% assign found = true %}
+          {% endif %}
+          {% unless found %}
+            {% assign prev_page = name %}
+          {% endunless %}
+        {% endfor %}
+
+        {% if prev_page or next_page %}
+        <nav class="page-nav" aria-label="Page navigation">
+          {% if prev_page %}
+          {% assign prev_url = '/guide/' | append: prev_page | append: '/' %}
+          {% assign prev_doc = site.guide | where_exp: "doc", "doc.url == prev_url" | first %}
+          {% unless prev_doc %}{% assign prev_doc = site.guide | where_exp: "doc", "doc.slug == prev_page" | first %}{% endunless %}
+          <a href="{{ prev_url | relative_url }}" class="page-nav-link page-nav-prev">
+            <span class="page-nav-direction">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M7.78 12.53a.75.75 0 01-1.06 0L2.47 8.28a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 1.06L4.81 7h7.44a.75.75 0 010 1.5H4.81l2.97 2.97a.75.75 0 010 1.06z"/></svg>
+              Previous
+            </span>
+            <span class="page-nav-title">{% if prev_doc %}{{ prev_doc.title }}{% else %}{{ prev_page | replace: '-', ' ' | capitalize }}{% endif %}</span>
+          </a>
+          {% else %}
+          <span></span>
+          {% endif %}
+
+          {% if next_page %}
+          {% assign next_url = '/guide/' | append: next_page | append: '/' %}
+          {% assign next_doc = site.guide | where_exp: "doc", "doc.url == next_url" | first %}
+          {% unless next_doc %}{% assign next_doc = site.guide | where_exp: "doc", "doc.slug == next_page" | first %}{% endunless %}
+          <a href="{{ next_url | relative_url }}" class="page-nav-link page-nav-next">
+            <span class="page-nav-direction">
+              Next
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M8.22 3.47a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06L11.19 9H3.75a.75.75 0 010-1.5h7.44L8.22 4.53a.75.75 0 010-1.06z"/></svg>
+            </span>
+            <span class="page-nav-title">{% if next_doc %}{{ next_doc.title }}{% else %}{{ next_page | replace: '-', ' ' | capitalize }}{% endif %}</span>
+          </a>
+          {% endif %}
+        </nav>
+        {% endif %}
+      </article>
+
+      <!-- Page Footer -->
+      <footer class="page-footer">
+        <div class="footer-inner">
+          <p>XState-StateMachine for Python &mdash; MIT License</p>
+          <p>Built with precision. Tested with 2,403 tests across Python 3.9&ndash;3.14.</p>
+          <div class="footer-links">
+            <a href="https://github.com/basiltt/xstate-statemachine" target="_blank">GitHub</a>
+            <a href="https://pypi.org/project/xstate-statemachine/" target="_blank">PyPI</a>
+            <a href="{{ '/guide/changelog/' | relative_url }}">Changelog</a>
+          </div>
+        </div>
+      </footer>
+    </main>
+
+    <!-- Table of Contents (right sidebar) -->
+    <aside class="toc-sidebar" id="tocSidebar" aria-label="Table of contents">
+      <div class="toc-header">On this page</div>
+      <nav class="toc-list" id="tocList">
+        <!-- Auto-populated by JavaScript -->
+      </nav>
+    </aside>
+  </div>
+
+  <!-- Mobile TOC Toggle -->
+  <button class="mobile-toc-toggle" id="mobileTocToggle" aria-label="Table of contents" title="Table of contents">
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M2 4a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3.75-1.5a.75.75 0 0 0 0 1.5h8.5a.75.75 0 0 0 0-1.5h-8.5zm0 5a.75.75 0 0 0 0 1.5h8.5a.75.75 0 0 0 0-1.5h-8.5zm0 5a.75.75 0 0 0 0 1.5h8.5a.75.75 0 0 0 0-1.5h-8.5zM3 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm-1 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/></svg>
+  </button>
+
+  <!-- Mobile TOC Drawer -->
+  <div class="mobile-toc-overlay" id="mobileTocOverlay"></div>
+  <div class="mobile-toc-drawer" id="mobileTocDrawer" role="dialog" aria-label="Table of contents" aria-hidden="true">
+    <div class="mobile-toc-header">
+      <span>On this page</span>
+      <button class="mobile-toc-close" id="mobileTocClose" aria-label="Close table of contents">&times;</button>
+    </div>
+    <nav class="mobile-toc-list" id="mobileTocList">
+      <!-- Cloned from tocList by JavaScript -->
+    </nav>
+  </div>
+  {% endif %}
+
+  <script src="{{ '/assets/js/main.js' | relative_url }}"></script>
+</body>
+</html>

@@ -1,0 +1,403 @@
+---
+layout: home
+title: Home
+---
+
+<!-- Hero Section -->
+<section class="hero">
+  <div class="hero-content">
+    <div class="hero-badge">v0.5.0 &mdash; Pythonic API &amp; CLI Generator</div>
+    <h1>
+      State Machines for Python,<br>
+      <span class="gradient-text">Done Right.</span>
+    </h1>
+    <p class="hero-subtitle">
+      Define state machines in JSON or pure Python. Run them with async or sync interpreters.
+      Generate production code with the CLI. Zero dependencies.
+    </p>
+    <div class="hero-actions">
+      <a href="{{ '/guide/getting-started/' | relative_url }}" class="btn btn-primary">Get Started</a>
+      <a href="{{ '/api/' | relative_url }}" class="btn btn-outline">API Reference</a>
+    </div>
+    <div class="hero-install">
+      <span>$</span> <code>pip install xstate-statemachine</code>
+      <button class="copy-btn" onclick="navigator.clipboard.writeText('pip install xstate-statemachine')" title="Copy to clipboard">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25zM5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25z"/></svg>
+      </button>
+    </div>
+    <div class="hero-stats">
+      <div class="hero-stat">
+        <span class="hero-stat-value">2,403</span>
+        <span class="hero-stat-label">Tests Passing</span>
+      </div>
+      <div class="hero-stat">
+        <span class="hero-stat-value">6</span>
+        <span class="hero-stat-label">Python Versions</span>
+      </div>
+      <div class="hero-stat">
+        <span class="hero-stat-value">0</span>
+        <span class="hero-stat-label">Dependencies</span>
+      </div>
+      <div class="hero-stat">
+        <span class="hero-stat-value">5</span>
+        <span class="hero-stat-label">CLI Templates</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Why State Machines? -->
+<section class="why-section">
+  <div class="why-inner">
+    <h2 class="section-title">Why State Machines?</h2>
+    <p class="section-subtitle">Replace brittle boolean flags and tangled conditionals with predictable, testable state logic.</p>
+
+    <div class="why-grid">
+      <div class="why-card why-before">
+        <div class="why-label">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>
+          Without State Machines
+        </div>
+<pre><code>is_loading = True
+has_error = False
+is_authenticated = True
+is_submitting = False
+
+# What state are we actually in?
+# Can we have is_loading AND has_error?
+# Who resets is_submitting?
+# 🤯 16 possible boolean combinations</code></pre>
+      </div>
+      <div class="why-card why-after">
+        <div class="why-label">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>
+          With XState-StateMachine
+        </div>
+<pre><code>machine = create_machine({
+    "id": "app",
+    "initial": "idle",
+    "states": {
+        "idle":       {"on": {"FETCH": "loading"}},
+        "loading":    {"on": {"SUCCESS": "ready",
+                              "ERROR": "error"}},
+        "ready":      {"on": {"REFRESH": "loading"}},
+        "error":      {"on": {"RETRY": "loading"}}
+    }
+})
+# ✅ Exactly ONE state at a time. Always.</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Features -->
+<section class="features-section">
+  <h2 class="section-title">Everything You Need</h2>
+  <p class="section-subtitle">A complete state machine runtime with no compromises. From simple toggles to complex multi-actor workflows.</p>
+
+  <div class="feature-grid">
+    <div class="feature-card">
+      <span class="feature-icon">&#x1F40D;</span>
+      <h3>Pythonic API</h3>
+      <p>Define machines in pure Python with class-based, builder, or functional styles. No JSON required. Full type safety with decorators.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">&#x1F4CB;</span>
+      <h3>XState Compatible</h3>
+      <p>Load machines from XState JSON &mdash; the universal state machine format. Design visually in Stately.ai, run in Python.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">&#x26A1;</span>
+      <h3>Dual Interpreters</h3>
+      <p>Async interpreter for web servers and event loops. Sync interpreter for scripts, CLI tools, and Django views.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">&#x1F6E0;&#xFE0F;</span>
+      <h3>CLI Code Generator</h3>
+      <p>Generate production-ready Python from XState JSON with 5 templates. Full type hints, docstrings, error handling, and logging.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">&#x1F50C;</span>
+      <h3>Plugin System</h3>
+      <p>Observe every event, transition, action, guard, and service with pluggable hooks. Built-in LoggingInspector included.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">&#x1F4F8;</span>
+      <h3>Snapshots</h3>
+      <p>Save and restore machine state with <code>get_snapshot()</code> and <code>from_snapshot()</code>. Perfect for persistence and crash recovery.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">&#x1F3D7;&#xFE0F;</span>
+      <h3>Hierarchical &amp; Parallel</h3>
+      <p>Nested compound states for complex flows. Parallel regions for concurrent activity. Full XState v5 compatibility.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">&#x1F3AD;</span>
+      <h3>Actor Model</h3>
+      <p>Spawn independent child machines from parent machines. Each actor has its own state, context, and lifecycle.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">&#x23F1;&#xFE0F;</span>
+      <h3>Delayed Transitions</h3>
+      <p>Timer-based <code>after</code> transitions for timeouts, polling, and auto-progression. Multiple timers per state supported.</p>
+    </div>
+  </div>
+</section>
+
+<!-- Code Showcase -->
+<section class="code-showcase">
+  <h2 class="section-title">Four Ways to Define Machines</h2>
+  <p class="section-subtitle">Pick the style that matches your team. All compile to the same runtime.</p>
+
+  <div class="code-tabs">
+    <div class="code-tab-buttons">
+      <button class="code-tab-btn active" data-tab="class">Class-Based</button>
+      <button class="code-tab-btn" data-tab="builder">Builder</button>
+      <button class="code-tab-btn" data-tab="functional">Functional</button>
+      <button class="code-tab-btn" data-tab="json">JSON</button>
+    </div>
+
+    <div class="code-tab-panel active" data-tab="class">
+<pre><code><span style="color:#cba6f7">from</span> <span style="color:#89b4fa">xstate_statemachine</span> <span style="color:#cba6f7">import</span> (
+    State, StateMachine, SyncInterpreter, action, guard
+)
+
+<span style="color:#cba6f7">class</span> <span style="color:#89b4fa">TrafficLight</span>(StateMachine):
+    machine_id = <span style="color:#a6e3a1">"trafficLight"</span>
+
+    <span style="color:#6c7086"># States</span>
+    green  = State(<span style="color:#a6e3a1">"green"</span>,  initial=<span style="color:#fab387">True</span>)
+    yellow = State(<span style="color:#a6e3a1">"yellow"</span>)
+    red    = State(<span style="color:#a6e3a1">"red"</span>)
+
+    <span style="color:#6c7086"># Transitions</span>
+    slow_down = green.to(yellow, event=<span style="color:#a6e3a1">"TIMER"</span>)
+    stop      = yellow.to(red,   event=<span style="color:#a6e3a1">"TIMER"</span>)
+    go        = red.to(green,    event=<span style="color:#a6e3a1">"TIMER"</span>)
+
+    <span style="color:#cba6f7">@action</span>
+    <span style="color:#cba6f7">def</span> <span style="color:#89b4fa">log_change</span>(self, interpreter, context, event, action_def):
+        print(f<span style="color:#a6e3a1">"Light: {interpreter.active_state_ids}"</span>)
+
+<span style="color:#6c7086"># Run it</span>
+machine = TrafficLight.create_machine()
+interp = SyncInterpreter(machine).start()
+interp.send(<span style="color:#a6e3a1">"TIMER"</span>)  <span style="color:#6c7086"># green &rarr; yellow</span>
+interp.send(<span style="color:#a6e3a1">"TIMER"</span>)  <span style="color:#6c7086"># yellow &rarr; red</span>
+interp.stop()</code></pre>
+    </div>
+
+    <div class="code-tab-panel" data-tab="builder">
+<pre><code><span style="color:#cba6f7">from</span> <span style="color:#89b4fa">xstate_statemachine</span> <span style="color:#cba6f7">import</span> MachineBuilder, SyncInterpreter
+
+machine = (
+    MachineBuilder(<span style="color:#a6e3a1">"trafficLight"</span>)
+    .state(<span style="color:#a6e3a1">"green"</span>,  initial=<span style="color:#fab387">True</span>)
+    .state(<span style="color:#a6e3a1">"yellow"</span>)
+    .state(<span style="color:#a6e3a1">"red"</span>)
+    .transition(<span style="color:#a6e3a1">"green"</span>,  <span style="color:#a6e3a1">"TIMER"</span>, <span style="color:#a6e3a1">"yellow"</span>)
+    .transition(<span style="color:#a6e3a1">"yellow"</span>, <span style="color:#a6e3a1">"TIMER"</span>, <span style="color:#a6e3a1">"red"</span>)
+    .transition(<span style="color:#a6e3a1">"red"</span>,    <span style="color:#a6e3a1">"TIMER"</span>, <span style="color:#a6e3a1">"green"</span>)
+    .build()
+)
+
+interp = SyncInterpreter(machine).start()
+interp.send(<span style="color:#a6e3a1">"TIMER"</span>)  <span style="color:#6c7086"># green &rarr; yellow</span>
+interp.send(<span style="color:#a6e3a1">"TIMER"</span>)  <span style="color:#6c7086"># yellow &rarr; red</span>
+interp.stop()</code></pre>
+    </div>
+
+    <div class="code-tab-panel" data-tab="functional">
+<pre><code><span style="color:#cba6f7">from</span> <span style="color:#89b4fa">xstate_statemachine</span> <span style="color:#cba6f7">import</span> State, build_machine, SyncInterpreter
+
+green  = State(<span style="color:#a6e3a1">"green"</span>,  initial=<span style="color:#fab387">True</span>)
+yellow = State(<span style="color:#a6e3a1">"yellow"</span>)
+red    = State(<span style="color:#a6e3a1">"red"</span>)
+
+green.to(yellow, event=<span style="color:#a6e3a1">"TIMER"</span>)
+yellow.to(red,   event=<span style="color:#a6e3a1">"TIMER"</span>)
+red.to(green,    event=<span style="color:#a6e3a1">"TIMER"</span>)
+
+machine = build_machine(
+    id=<span style="color:#a6e3a1">"trafficLight"</span>,
+    states=[green, yellow, red],
+)
+
+interp = SyncInterpreter(machine).start()
+interp.send(<span style="color:#a6e3a1">"TIMER"</span>)  <span style="color:#6c7086"># green &rarr; yellow</span>
+interp.send(<span style="color:#a6e3a1">"TIMER"</span>)  <span style="color:#6c7086"># yellow &rarr; red</span>
+interp.stop()</code></pre>
+    </div>
+
+    <div class="code-tab-panel" data-tab="json">
+<pre><code><span style="color:#cba6f7">from</span> <span style="color:#89b4fa">xstate_statemachine</span> <span style="color:#cba6f7">import</span> create_machine, SyncInterpreter
+
+config = {
+    <span style="color:#a6e3a1">"id"</span>: <span style="color:#a6e3a1">"trafficLight"</span>,
+    <span style="color:#a6e3a1">"initial"</span>: <span style="color:#a6e3a1">"green"</span>,
+    <span style="color:#a6e3a1">"states"</span>: {
+        <span style="color:#a6e3a1">"green"</span>:  {<span style="color:#a6e3a1">"on"</span>: {<span style="color:#a6e3a1">"TIMER"</span>: <span style="color:#a6e3a1">"yellow"</span>}},
+        <span style="color:#a6e3a1">"yellow"</span>: {<span style="color:#a6e3a1">"on"</span>: {<span style="color:#a6e3a1">"TIMER"</span>: <span style="color:#a6e3a1">"red"</span>}},
+        <span style="color:#a6e3a1">"red"</span>:    {<span style="color:#a6e3a1">"on"</span>: {<span style="color:#a6e3a1">"TIMER"</span>: <span style="color:#a6e3a1">"green"</span>}},
+    }
+}
+
+machine = create_machine(config)
+interp = SyncInterpreter(machine).start()
+interp.send(<span style="color:#a6e3a1">"TIMER"</span>)  <span style="color:#6c7086"># green &rarr; yellow</span>
+interp.send(<span style="color:#a6e3a1">"TIMER"</span>)  <span style="color:#6c7086"># yellow &rarr; red</span>
+interp.stop()</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- Use Cases -->
+<section class="usecases-section">
+  <h2 class="section-title">Built for Real-World Use Cases</h2>
+  <p class="section-subtitle">From simple toggles to complex enterprise workflows.</p>
+
+  <div class="usecase-grid">
+    <div class="usecase-card">
+      <div class="usecase-icon">&#x1F6D2;</div>
+      <h4>E-Commerce</h4>
+      <p>Cart &rarr; checkout &rarr; payment &rarr; shipping &rarr; delivered. Never lose an order to an impossible state.</p>
+    </div>
+    <div class="usecase-card">
+      <div class="usecase-icon">&#x1F512;</div>
+      <h4>Authentication</h4>
+      <p>Login flows, MFA, session management, token refresh. Every auth state transition is explicit and auditable.</p>
+    </div>
+    <div class="usecase-card">
+      <div class="usecase-icon">&#x1F4DD;</div>
+      <h4>Form Wizards</h4>
+      <p>Multi-step forms with validation, back navigation, and conditional branching. Guards ensure data integrity.</p>
+    </div>
+    <div class="usecase-card">
+      <div class="usecase-icon">&#x1F504;</div>
+      <h4>CI/CD Pipelines</h4>
+      <p>Build &rarr; test &rarr; deploy &rarr; verify. With invoke for async steps, guards for approval gates, and retry on failure.</p>
+    </div>
+    <div class="usecase-card">
+      <div class="usecase-icon">&#x1F3AE;</div>
+      <h4>Game Logic</h4>
+      <p>Character states, turn management, quest progression. Parallel states for simultaneous systems.</p>
+    </div>
+    <div class="usecase-card">
+      <div class="usecase-icon">&#x1F916;</div>
+      <h4>IoT &amp; Devices</h4>
+      <p>Device lifecycle, connection management, sensor monitoring. Delayed transitions for timeouts and heartbeats.</p>
+    </div>
+  </div>
+</section>
+
+<!-- CLI Templates -->
+<section class="templates-section">
+  <h2 class="section-title">5 CLI Templates</h2>
+  <p class="section-subtitle">Generate production-ready Python from any XState JSON config.</p>
+
+  <div class="template-grid">
+    <a href="{{ '/guide/cli-templates/' | relative_url }}" class="template-card">
+      <span class="template-name">pythonic-class</span>
+      <h4>Class-Based</h4>
+      <p>StateMachine subclass with @action, @guard, @service decorators. OOP at its best.</p>
+    </a>
+    <a href="{{ '/guide/cli-templates/' | relative_url }}" class="template-card">
+      <span class="template-name">pythonic-builder</span>
+      <h4>Builder Pattern</h4>
+      <p>Fluent MachineBuilder API for dynamic, programmatic construction.</p>
+    </a>
+    <a href="{{ '/guide/cli-templates/' | relative_url }}" class="template-card">
+      <span class="template-name">pythonic-functional</span>
+      <h4>Functional</h4>
+      <p>Simple build_machine() with explicit state and transition definitions.</p>
+    </a>
+    <a href="{{ '/guide/cli-templates/' | relative_url }}" class="template-card">
+      <span class="template-name">class-json</span>
+      <h4>Class + JSON</h4>
+      <p>OOP logic class bound to JSON config loaded at runtime.</p>
+    </a>
+    <a href="{{ '/guide/cli-templates/' | relative_url }}" class="template-card">
+      <span class="template-name">function-json</span>
+      <h4>Functions + JSON</h4>
+      <p>Module-level functions with LogicLoader auto-discovery.</p>
+    </a>
+  </div>
+</section>
+
+<!-- Comparison -->
+<section class="comparison-section">
+  <h2 class="section-title">How It Compares</h2>
+  <p class="section-subtitle">The most comprehensive Python state machine library available.</p>
+
+  <div class="comparison-table">
+    <table>
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>XState-SM</th>
+          <th>transitions</th>
+          <th>python-statemachine</th>
+          <th>sismic</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Hierarchical States</td><td>&#x2705;</td><td>&#x26A0;&#xFE0F;</td><td>&#x274C;</td><td>&#x2705;</td></tr>
+        <tr><td>Parallel States</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x2705;</td></tr>
+        <tr><td>Delayed Transitions</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x274C;</td></tr>
+        <tr><td>Invoke / Services</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x274C;</td></tr>
+        <tr><td>Actor Model</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x274C;</td></tr>
+        <tr><td>XState JSON Compat</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x274C;</td></tr>
+        <tr><td>Pythonic API</td><td>&#x2705;</td><td>&#x2705;</td><td>&#x2705;</td><td>&#x274C;</td></tr>
+        <tr><td>Async + Sync</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x274C;</td></tr>
+        <tr><td>CLI Code Generator</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x274C;</td></tr>
+        <tr><td>Plugin System</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x2705;</td><td>&#x274C;</td></tr>
+        <tr><td>Snapshot/Restore</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x274C;</td></tr>
+        <tr><td>Diagram Export</td><td>&#x2705;</td><td>&#x2705;</td><td>&#x2705;</td><td>&#x2705;</td></tr>
+        <tr><td>Zero Dependencies</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x274C;</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- Workflow -->
+<section class="workflow-section">
+  <h2 class="section-title">Design &rarr; Generate &rarr; Run</h2>
+  <p class="section-subtitle">Seamless workflow from visual design to production Python code.</p>
+
+  <div class="workflow-steps">
+    <div class="workflow-step">
+      <div class="workflow-number">1</div>
+      <h4>Design</h4>
+      <p>Design your machine visually at <a href="https://stately.ai" target="_blank" rel="noopener">stately.ai</a> or write XState JSON by hand.</p>
+    </div>
+    <div class="workflow-arrow">&#x2192;</div>
+    <div class="workflow-step">
+      <div class="workflow-number">2</div>
+      <h4>Generate</h4>
+      <p>Run <code>xsm gt machine.json --template pythonic-class</code> to generate Python code.</p>
+    </div>
+    <div class="workflow-arrow">&#x2192;</div>
+    <div class="workflow-step">
+      <div class="workflow-number">3</div>
+      <h4>Implement</h4>
+      <p>Fill in action, guard, and service stubs with your business logic.</p>
+    </div>
+    <div class="workflow-arrow">&#x2192;</div>
+    <div class="workflow-step">
+      <div class="workflow-number">4</div>
+      <h4>Run</h4>
+      <p>Execute with <code>SyncInterpreter</code> or <code>Interpreter</code>. Attach plugins for observability.</p>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section">
+  <h2>Ready to Tame Complexity?</h2>
+  <p>Build reliable, predictable Python applications with formal state management.</p>
+  <div class="cta-actions">
+    <a href="{{ '/guide/getting-started/' | relative_url }}" class="btn btn-primary">Read the Guide</a>
+    <a href="{{ '/guide/quick-start/' | relative_url }}" class="btn btn-outline">Quick Start (5 min)</a>
+    <a href="https://github.com/basiltt/xstate-statemachine" class="btn btn-outline" target="_blank">View on GitHub</a>
+  </div>
+</section>

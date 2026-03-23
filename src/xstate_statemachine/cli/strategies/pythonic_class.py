@@ -570,7 +570,10 @@ class PythonicClassStrategy(BaseStrategy):
         )
 
         # Group by event name
-        event_transitions: Dict[str, List[Tuple[str, str, Optional[Any], Optional[str]]]] = defaultdict(list)  # type: ignore[arg-type]
+        event_transitions: Dict[  # type: ignore[arg-type]
+            str,
+            List[Tuple[str, str, Optional[Any], Optional[str]]],
+        ] = defaultdict(list)
         for (
             event_name,
             source_flat,
