@@ -1092,9 +1092,8 @@ body {
   .page-footer {
     padding: 24px;
   }
-}
 
-@media (max-width: 768px) {
+  /* Collapse nav links into hamburger menu at 1024px */
   .nav-links {
     display: none;
     position: absolute;
@@ -1115,7 +1114,9 @@ body {
   .nav-toggle {
     display: flex;
   }
+}
 
+@media (max-width: 768px) {
   .hero {
     padding: 120px 20px 60px;
   }
