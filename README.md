@@ -116,8 +116,8 @@ uv pip install -e . --group dev --group lint --group test
 
 ```bash
 # Verify installation
-python -c "import xstate_statemachine; print(xstate_statemachine.__version__)"
-# ✅ Output: 0.5.0
+xsm --version
+# ✅ Output: xsm 0.5.0
 ```
 
 <br>

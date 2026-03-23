@@ -26,8 +26,8 @@ poetry add xstate-statemachine
 ## Verify Your Installation
 
 ```bash
-python -c "import xstate_statemachine; print(xstate_statemachine.__version__)"
-# Output: 0.5.0
+xsm --version
+# Output: xsm 0.5.0
 ```
 
 You can also verify the CLI tool is available:
