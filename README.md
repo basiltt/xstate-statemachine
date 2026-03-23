@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/basiltt/xstate-statemachine/main/docs/assets/images/xstate-python-logo.png" alt="XState-StateMachine for Python" width="200">
-
 # ⚙️ XState-StateMachine for Python
 
 ### Production-Grade State Machine Runtime — XState-Compatible, Zero Dependencies
