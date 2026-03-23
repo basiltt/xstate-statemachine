@@ -39,16 +39,25 @@ xsm --help
 Expected output:
 
 ```
-usage: xsm [-h] {generate-template,gt} ...
+usage: xsm [-h] [-v]
+           {generate-template,gt,list-templates,lt,validate,val,info} ...
 
 XState-StateMachine CLI — Generate Python code from XState JSON.
 
 positional arguments:
-  {generate-template,gt}
-    generate-template (gt)  Generate Python code from an XState JSON file
+  {generate-template,gt,list-templates,lt,validate,val,info}
+                        Available commands
+    generate-template (gt)
+                        Generate Python code from an XState JSON file.
+    list-templates (lt)
+                        List all available code generation templates.
+    validate (val)      Validate an XState JSON config file.
+    info                Show library version, Python version, and feature
+                        summary.
 
 options:
   -h, --help            show this help message and exit
+  -v, --version         Show program's version number and exit.
 ```
 
 ## Requirements

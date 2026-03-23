@@ -194,19 +194,17 @@ def get_parser() -> argparse.ArgumentParser:
     """
     # 📜 Main parser definition
     parser = argparse.ArgumentParser(
-        description="CLI tool for xstate-statemachine boilerplate generation.",
+        prog="xsm",
+        description="XState-StateMachine CLI — Generate Python code from XState JSON.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         allow_abbrev=False,  # Disable partial matching of long options
         epilog="""
-            Examples:
-              # Generate from a single file with default options (async, class-based, 2 files)
-              xsm generate-template my_machine.json
-
-              # Generate sync, function-style code into a specific directory
-              xsm generate-template machine.json --async-mode no --style function --output ./generated
-
-              # Generate a hierarchical machine and force overwrite of existing files
-              xsm generate-template --json-parent=p.json --json-child=c.json --force
+examples:
+  xsm generate-template my_machine.json
+  xsm gt machine.json -t pythonic-class -o ./generated
+  xsm list-templates
+  xsm validate machine.json
+  xsm info
             """,
     )
 
@@ -226,8 +224,7 @@ def get_parser() -> argparse.ArgumentParser:
     gen_parser = subparsers.add_parser(
         "generate-template",
         aliases=["gt"],
-        # MODIFIED LINE: Remove " (alias: gt)" from help string for cleaner output.
-        help="Generate boilerplate templates from JSON machine configurations.",
+        help="Generate Python code from an XState JSON file.",
         description="Generates Python code from one or more XState JSON machine definitions.",
     )
 
@@ -235,6 +232,34 @@ def get_parser() -> argparse.ArgumentParser:
     _add_file_input_args(gen_parser)
     _add_generation_option_args(gen_parser)
     _add_simulation_option_args(gen_parser)
+
+    # 📋 list-templates subcommand
+    subparsers.add_parser(
+        "list-templates",
+        aliases=["lt"],
+        help="List all available code generation templates.",
+        description="Shows available templates with descriptions.",
+    )
+
+    # ✅ validate subcommand
+    val_parser = subparsers.add_parser(
+        "validate",
+        aliases=["val"],
+        help="Validate an XState JSON config file.",
+        description="Validates that JSON files are well-formed XState machine configs.",
+    )
+    val_parser.add_argument(
+        "json_files",
+        nargs="+",
+        help="One or more JSON config files to validate.",
+    )
+
+    # ℹ️ info subcommand
+    subparsers.add_parser(
+        "info",
+        help="Show library version, Python version, and feature summary.",
+        description="Displays information about the xstate-statemachine installation.",
+    )
 
     return parser
 

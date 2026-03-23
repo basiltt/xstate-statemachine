@@ -158,94 +158,94 @@ is_submitting = False
     </div>
 
     <div class="code-tab-panel active" data-tab="class">
-<pre><code><span style="color:#cba6f7">from</span> <span style="color:#89b4fa">xstate_statemachine</span> <span style="color:#cba6f7">import</span> (
+<pre><code><span style="color:#ff7b72">from</span> <span style="color:#d2a8ff">xstate_statemachine</span> <span style="color:#ff7b72">import</span> (
     State, StateMachine, SyncInterpreter, action, guard
 )
 
-<span style="color:#cba6f7">class</span> <span style="color:#89b4fa">TrafficLight</span>(StateMachine):
-    machine_id = <span style="color:#a6e3a1">"trafficLight"</span>
+<span style="color:#ff7b72">class</span> <span style="color:#d2a8ff">TrafficLight</span>(StateMachine):
+    machine_id = <span style="color:#a5d6ff">"trafficLight"</span>
 
-    <span style="color:#6c7086"># States</span>
-    green  = State(<span style="color:#a6e3a1">"green"</span>,  initial=<span style="color:#fab387">True</span>)
-    yellow = State(<span style="color:#a6e3a1">"yellow"</span>)
-    red    = State(<span style="color:#a6e3a1">"red"</span>)
+    <span style="color:#8b949e"># States</span>
+    green  = State(<span style="color:#a5d6ff">"green"</span>,  initial=<span style="color:#79c0ff">True</span>)
+    yellow = State(<span style="color:#a5d6ff">"yellow"</span>)
+    red    = State(<span style="color:#a5d6ff">"red"</span>)
 
-    <span style="color:#6c7086"># Transitions</span>
-    slow_down = green.to(yellow, event=<span style="color:#a6e3a1">"TIMER"</span>)
-    stop      = yellow.to(red,   event=<span style="color:#a6e3a1">"TIMER"</span>)
-    go        = red.to(green,    event=<span style="color:#a6e3a1">"TIMER"</span>)
+    <span style="color:#8b949e"># Transitions</span>
+    slow_down = green.to(yellow, event=<span style="color:#a5d6ff">"TIMER"</span>)
+    stop      = yellow.to(red,   event=<span style="color:#a5d6ff">"TIMER"</span>)
+    go        = red.to(green,    event=<span style="color:#a5d6ff">"TIMER"</span>)
 
-    <span style="color:#cba6f7">@action</span>
-    <span style="color:#cba6f7">def</span> <span style="color:#89b4fa">log_change</span>(self, interpreter, context, event, action_def):
-        print(f<span style="color:#a6e3a1">"Light: {interpreter.active_state_ids}"</span>)
+    <span style="color:#ff7b72">@action</span>
+    <span style="color:#ff7b72">def</span> <span style="color:#d2a8ff">log_change</span>(self, interpreter, context, event, action_def):
+        print(f<span style="color:#a5d6ff">"Light: {interpreter.active_state_ids}"</span>)
 
-<span style="color:#6c7086"># Run it</span>
+<span style="color:#8b949e"># Run it</span>
 machine = TrafficLight.create_machine()
 interp = SyncInterpreter(machine).start()
-interp.send(<span style="color:#a6e3a1">"TIMER"</span>)  <span style="color:#6c7086"># green &rarr; yellow</span>
-interp.send(<span style="color:#a6e3a1">"TIMER"</span>)  <span style="color:#6c7086"># yellow &rarr; red</span>
+interp.send(<span style="color:#a5d6ff">"TIMER"</span>)  <span style="color:#8b949e"># green &rarr; yellow</span>
+interp.send(<span style="color:#a5d6ff">"TIMER"</span>)  <span style="color:#8b949e"># yellow &rarr; red</span>
 interp.stop()</code></pre>
     </div>
 
     <div class="code-tab-panel" data-tab="builder">
-<pre><code><span style="color:#cba6f7">from</span> <span style="color:#89b4fa">xstate_statemachine</span> <span style="color:#cba6f7">import</span> MachineBuilder, SyncInterpreter
+<pre><code><span style="color:#ff7b72">from</span> <span style="color:#d2a8ff">xstate_statemachine</span> <span style="color:#ff7b72">import</span> MachineBuilder, SyncInterpreter
 
 machine = (
-    MachineBuilder(<span style="color:#a6e3a1">"trafficLight"</span>)
-    .state(<span style="color:#a6e3a1">"green"</span>,  initial=<span style="color:#fab387">True</span>)
-    .state(<span style="color:#a6e3a1">"yellow"</span>)
-    .state(<span style="color:#a6e3a1">"red"</span>)
-    .transition(<span style="color:#a6e3a1">"green"</span>,  <span style="color:#a6e3a1">"TIMER"</span>, <span style="color:#a6e3a1">"yellow"</span>)
-    .transition(<span style="color:#a6e3a1">"yellow"</span>, <span style="color:#a6e3a1">"TIMER"</span>, <span style="color:#a6e3a1">"red"</span>)
-    .transition(<span style="color:#a6e3a1">"red"</span>,    <span style="color:#a6e3a1">"TIMER"</span>, <span style="color:#a6e3a1">"green"</span>)
+    MachineBuilder(<span style="color:#a5d6ff">"trafficLight"</span>)
+    .state(<span style="color:#a5d6ff">"green"</span>,  initial=<span style="color:#79c0ff">True</span>)
+    .state(<span style="color:#a5d6ff">"yellow"</span>)
+    .state(<span style="color:#a5d6ff">"red"</span>)
+    .transition(<span style="color:#a5d6ff">"green"</span>,  <span style="color:#a5d6ff">"TIMER"</span>, <span style="color:#a5d6ff">"yellow"</span>)
+    .transition(<span style="color:#a5d6ff">"yellow"</span>, <span style="color:#a5d6ff">"TIMER"</span>, <span style="color:#a5d6ff">"red"</span>)
+    .transition(<span style="color:#a5d6ff">"red"</span>,    <span style="color:#a5d6ff">"TIMER"</span>, <span style="color:#a5d6ff">"green"</span>)
     .build()
 )
 
 interp = SyncInterpreter(machine).start()
-interp.send(<span style="color:#a6e3a1">"TIMER"</span>)  <span style="color:#6c7086"># green &rarr; yellow</span>
-interp.send(<span style="color:#a6e3a1">"TIMER"</span>)  <span style="color:#6c7086"># yellow &rarr; red</span>
+interp.send(<span style="color:#a5d6ff">"TIMER"</span>)  <span style="color:#8b949e"># green &rarr; yellow</span>
+interp.send(<span style="color:#a5d6ff">"TIMER"</span>)  <span style="color:#8b949e"># yellow &rarr; red</span>
 interp.stop()</code></pre>
     </div>
 
     <div class="code-tab-panel" data-tab="functional">
-<pre><code><span style="color:#cba6f7">from</span> <span style="color:#89b4fa">xstate_statemachine</span> <span style="color:#cba6f7">import</span> State, build_machine, SyncInterpreter
+<pre><code><span style="color:#ff7b72">from</span> <span style="color:#d2a8ff">xstate_statemachine</span> <span style="color:#ff7b72">import</span> State, build_machine, SyncInterpreter
 
-green  = State(<span style="color:#a6e3a1">"green"</span>,  initial=<span style="color:#fab387">True</span>)
-yellow = State(<span style="color:#a6e3a1">"yellow"</span>)
-red    = State(<span style="color:#a6e3a1">"red"</span>)
+green  = State(<span style="color:#a5d6ff">"green"</span>,  initial=<span style="color:#79c0ff">True</span>)
+yellow = State(<span style="color:#a5d6ff">"yellow"</span>)
+red    = State(<span style="color:#a5d6ff">"red"</span>)
 
-green.to(yellow, event=<span style="color:#a6e3a1">"TIMER"</span>)
-yellow.to(red,   event=<span style="color:#a6e3a1">"TIMER"</span>)
-red.to(green,    event=<span style="color:#a6e3a1">"TIMER"</span>)
+green.to(yellow, event=<span style="color:#a5d6ff">"TIMER"</span>)
+yellow.to(red,   event=<span style="color:#a5d6ff">"TIMER"</span>)
+red.to(green,    event=<span style="color:#a5d6ff">"TIMER"</span>)
 
 machine = build_machine(
-    id=<span style="color:#a6e3a1">"trafficLight"</span>,
+    id=<span style="color:#a5d6ff">"trafficLight"</span>,
     states=[green, yellow, red],
 )
 
 interp = SyncInterpreter(machine).start()
-interp.send(<span style="color:#a6e3a1">"TIMER"</span>)  <span style="color:#6c7086"># green &rarr; yellow</span>
-interp.send(<span style="color:#a6e3a1">"TIMER"</span>)  <span style="color:#6c7086"># yellow &rarr; red</span>
+interp.send(<span style="color:#a5d6ff">"TIMER"</span>)  <span style="color:#8b949e"># green &rarr; yellow</span>
+interp.send(<span style="color:#a5d6ff">"TIMER"</span>)  <span style="color:#8b949e"># yellow &rarr; red</span>
 interp.stop()</code></pre>
     </div>
 
     <div class="code-tab-panel" data-tab="json">
-<pre><code><span style="color:#cba6f7">from</span> <span style="color:#89b4fa">xstate_statemachine</span> <span style="color:#cba6f7">import</span> create_machine, SyncInterpreter
+<pre><code><span style="color:#ff7b72">from</span> <span style="color:#d2a8ff">xstate_statemachine</span> <span style="color:#ff7b72">import</span> create_machine, SyncInterpreter
 
 config = {
-    <span style="color:#a6e3a1">"id"</span>: <span style="color:#a6e3a1">"trafficLight"</span>,
-    <span style="color:#a6e3a1">"initial"</span>: <span style="color:#a6e3a1">"green"</span>,
-    <span style="color:#a6e3a1">"states"</span>: {
-        <span style="color:#a6e3a1">"green"</span>:  {<span style="color:#a6e3a1">"on"</span>: {<span style="color:#a6e3a1">"TIMER"</span>: <span style="color:#a6e3a1">"yellow"</span>}},
-        <span style="color:#a6e3a1">"yellow"</span>: {<span style="color:#a6e3a1">"on"</span>: {<span style="color:#a6e3a1">"TIMER"</span>: <span style="color:#a6e3a1">"red"</span>}},
-        <span style="color:#a6e3a1">"red"</span>:    {<span style="color:#a6e3a1">"on"</span>: {<span style="color:#a6e3a1">"TIMER"</span>: <span style="color:#a6e3a1">"green"</span>}},
+    <span style="color:#a5d6ff">"id"</span>: <span style="color:#a5d6ff">"trafficLight"</span>,
+    <span style="color:#a5d6ff">"initial"</span>: <span style="color:#a5d6ff">"green"</span>,
+    <span style="color:#a5d6ff">"states"</span>: {
+        <span style="color:#a5d6ff">"green"</span>:  {<span style="color:#a5d6ff">"on"</span>: {<span style="color:#a5d6ff">"TIMER"</span>: <span style="color:#a5d6ff">"yellow"</span>}},
+        <span style="color:#a5d6ff">"yellow"</span>: {<span style="color:#a5d6ff">"on"</span>: {<span style="color:#a5d6ff">"TIMER"</span>: <span style="color:#a5d6ff">"red"</span>}},
+        <span style="color:#a5d6ff">"red"</span>:    {<span style="color:#a5d6ff">"on"</span>: {<span style="color:#a5d6ff">"TIMER"</span>: <span style="color:#a5d6ff">"green"</span>}},
     }
 }
 
 machine = create_machine(config)
 interp = SyncInterpreter(machine).start()
-interp.send(<span style="color:#a6e3a1">"TIMER"</span>)  <span style="color:#6c7086"># green &rarr; yellow</span>
-interp.send(<span style="color:#a6e3a1">"TIMER"</span>)  <span style="color:#6c7086"># yellow &rarr; red</span>
+interp.send(<span style="color:#a5d6ff">"TIMER"</span>)  <span style="color:#8b949e"># green &rarr; yellow</span>
+interp.send(<span style="color:#a5d6ff">"TIMER"</span>)  <span style="color:#8b949e"># yellow &rarr; red</span>
 interp.stop()</code></pre>
     </div>
   </div>
@@ -334,7 +334,7 @@ interp.stop()</code></pre>
       <thead>
         <tr>
           <th>Feature</th>
-          <th>XState-SM</th>
+          <th>XState-StateMachine</th>
           <th>transitions</th>
           <th>python-statemachine</th>
           <th>sismic</th>
