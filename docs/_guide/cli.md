@@ -334,6 +334,105 @@ The runner will start the interpreter, send the `SUBMIT` event, invoke the payme
 
 > **Tip:** After initial generation, you only edit the logic file. The runner file rarely needs changes unless you want custom event sequences.
 
+## All Commands Overview
+
+The `xsm` CLI provides four commands:
+
+```
+xsm [-h] [-v]
+    {generate-template,gt,list-templates,lt,validate,val,info} ...
+```
+
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `generate-template` | `gt` | Generate Python code from an XState JSON file |
+| `list-templates` | `lt` | List all available code generation templates |
+| `validate` | `val` | Validate an XState JSON config file |
+| `info` | — | Show library version, Python version, and feature summary |
+
+## List Templates
+
+Shows all available code generation templates with descriptions:
+
+```bash
+xsm list-templates
+# or
+xsm lt
+```
+
+Output:
+
+```
+Available Templates:
+
+  Template                Description
+  ----------------------  -------------------------------------------------------
+  class-json              Class-based logic with JSON config loaded at runtime
+  function-json           Function-based logic with JSON config loaded at runtime
+  pythonic-class          StateMachine subclass with @action/@guard decorators
+  pythonic-builder        MachineBuilder fluent API with decorated functions
+  pythonic-functional     build_machine() with State objects and decorators
+
+Use: xsm gt <json_file> --template <template_name>
+```
+
+## Validate
+
+Validates that JSON files are well-formed XState machine configurations:
+
+```bash
+xsm validate my_machine.json
+# or
+xsm val my_machine.json
+
+# Validate multiple files at once
+xsm val auth.json profile.json settings.json
+```
+
+The validator checks:
+- Valid JSON syntax
+- Required fields (`id`, `initial`, `states`)
+- State structure and transitions
+- Reports all actions, guards, and services found in the config
+
+Example output for a valid file:
+
+```
+Validating: checkout.json
+  Machine ID:  checkout
+  States:      cart, payment, confirmed
+  Actions:     calculateTotal, clearCart, showError
+  Guards:      cartNotEmpty
+  Services:    processPayment
+  Result:      ok
+
+All 1 file(s) are valid.
+```
+
+## Info
+
+Displays library version, Python version, platform, and feature summary:
+
+```bash
+xsm info
+```
+
+Example output:
+
+```
+xstate-statemachine info
+  Version:     0.5.0
+  Python:      3.12.0
+  Platform:    Windows-11
+  Install:     C:\...\xstate_statemachine
+  Features:    Hierarchical states, Parallel states, Guards,
+               Actions, Invoke/Services, Delayed transitions,
+               Context, Snapshots, Plugins, Diagram export,
+               Pythonic API, CLI code generator
+  Homepage:    https://github.com/basiltt/xstate-statemachine
+  Docs:        https://basiltt.github.io/xstate-statemachine/
+```
+
 ## Version and Help
 
 ```bash

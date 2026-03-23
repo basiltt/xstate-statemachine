@@ -1355,7 +1355,44 @@ stateDiagram-v2
 
 The `xsm` CLI generates production-ready Python code from XState JSON configs. It creates complete, runnable logic and runner files with type hints, docstrings, error handling, and logging.
 
-### Basic Usage
+### Available Commands
+
+```
+xsm [-h] [-v]
+    {generate-template,gt,list-templates,lt,validate,val,info} ...
+
+Commands:
+  generate-template (gt)   Generate Python code from an XState JSON file
+  list-templates (lt)      List all available code generation templates
+  validate (val)           Validate an XState JSON config file
+  info                     Show library version, Python version, and feature summary
+```
+
+### Quick Reference
+
+```bash
+# Generate code from JSON
+xsm generate-template my_machine.json
+xsm gt my_machine.json                    # short alias
+
+# List available templates
+xsm list-templates
+xsm lt                                    # short alias
+
+# Validate a JSON config
+xsm validate my_machine.json
+xsm val my_machine.json auth.json         # multiple files
+
+# Show library info
+xsm info
+
+# Version and help
+xsm --version
+xsm --help
+xsm generate-template --help
+```
+
+### Generate Template (`xsm gt`)
 
 ```bash
 # Generate 2 files: logic + runner (default)
@@ -1436,6 +1473,61 @@ xsm gt machine.json -o ./generated/ --force
 # Multiple JSON files
 xsm gt auth.json profile.json settings.json
 ```
+
+### List Templates (`xsm lt`)
+
+Shows all available code generation templates with descriptions:
+
+```bash
+xsm list-templates
+# or
+xsm lt
+```
+
+Output:
+
+```
+Available Templates:
+
+  Template                Description
+  ----------------------  -------------------------------------------------------
+  class-json              Class-based logic with JSON config loaded at runtime
+  function-json           Function-based logic with JSON config loaded at runtime
+  pythonic-class          StateMachine subclass with @action/@guard decorators
+  pythonic-builder        MachineBuilder fluent API with decorated functions
+  pythonic-functional     build_machine() with State objects and decorators
+
+Use: xsm gt <json_file> --template <template_name>
+```
+
+### Validate (`xsm val`)
+
+Validates that JSON files are well-formed XState machine configurations:
+
+```bash
+xsm validate my_machine.json
+# or
+xsm val my_machine.json
+
+# Validate multiple files
+xsm val auth.json profile.json settings.json
+```
+
+The validator checks:
+- Valid JSON syntax
+- Required fields (`id`, `initial`, `states`)
+- State structure and transitions
+- Reports all actions, guards, and services found
+
+### Info (`xsm info`)
+
+Displays library version, Python version, platform, and feature summary:
+
+```bash
+xsm info
+```
+
+Output includes version, Python version, platform, install path, available features, and project URLs.
 
 ---
 
