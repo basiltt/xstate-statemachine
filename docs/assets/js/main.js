@@ -339,14 +339,28 @@
       powershell: 'PowerShell', ps1: 'PowerShell'
     };
 
-    qsa('.content pre').forEach(function (pre) {
+    // Target ALL pre>code blocks across the entire page:
+    //   - .content pre          (guide/doc pages)
+    //   - .code-tab-panel pre   (homepage code showcase tabs)
+    //   - .why-card pre         (homepage "Why" comparison blocks)
+    //   - any other pre>code    (catch-all for future sections)
+    qsa('pre').forEach(function (pre) {
+      // Only process <pre> blocks that contain a <code> element
+      var code = qs('code', pre);
+      if (!code) return;
+
       // Guard against duplicate initialization
       if (pre.querySelector('.code-copy-btn')) return;
 
-      var code = qs('code', pre);
+      // Ensure the pre is positioned so the button can be placed absolutely
+      var prePosition = window.getComputedStyle(pre).position;
+      if (prePosition === 'static') {
+        pre.style.position = 'relative';
+      }
 
-      // --- Language Label ---
-      if (code) {
+      // --- Language Label (only for .content pre, not homepage showcase) ---
+      var isContentPre = pre.closest('.content');
+      if (isContentPre) {
         var langClass = Array.from(code.classList).find(function (cls) {
           return cls.startsWith('language-');
         });

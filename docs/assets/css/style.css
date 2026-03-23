@@ -487,6 +487,7 @@ body {
   background: transparent;
   border: none;
   border-radius: 0;
+  position: relative;
 }
 
 .code-tab-panel code {
@@ -1982,6 +1983,7 @@ input:focus-visible {
   border: none;
   border-radius: 0;
   font-size: 0.8rem;
+  position: relative;
 }
 
 /* --- Use Cases Section (Landing Page) --- */
