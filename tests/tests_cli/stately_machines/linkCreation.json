@@ -1,0 +1,121 @@
+{
+  "context": {
+    "changeBlockGid": null,
+    "error": null,
+    "graphic": null,
+    "isImported": false,
+    "linkCreationModel": null,
+    "originalLink": null
+  },
+  "id": "linkCreation",
+  "initial": "idle",
+  "states": {
+    "done": {
+      "on": {
+        "ACTIVATE": [
+          {
+            "actions": [],
+            "target": "sketching"
+          }
+        ],
+        "RESET": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ]
+      }
+    },
+    "error": {
+      "on": {
+        "CANCEL": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ],
+        "RESET": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ]
+      }
+    },
+    "idle": {
+      "entry": {
+        "type": "inline:linkCreation.idle#entry[0]"
+      },
+      "on": {
+        "ACTIVATE": [
+          {
+            "actions": [],
+            "target": "sketching"
+          }
+        ]
+      }
+    },
+    "popup": {
+      "on": {
+        "CANCEL": [
+          {
+            "actions": [],
+            "target": "sketching"
+          }
+        ],
+        "DEACTIVATE": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ],
+        "SUBMIT": [
+          {
+            "actions": [
+              {
+                "type": "inline:linkCreation.popup#SUBMIT[-1]#transition[0]"
+              }
+            ],
+            "target": "registering"
+          }
+        ]
+      }
+    },
+    "registering": {
+      "on": {
+        "RESET": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ]
+      }
+    },
+    "sketching": {
+      "on": {
+        "DEACTIVATE": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ],
+        "SKETCH_CANCELLED": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ],
+        "SKETCH_COMPLETE": [
+          {
+            "actions": [
+              {
+                "type": "inline:linkCreation.sketching#SKETCH_COMPLETE[-1]#transition[0]"
+              }
+            ],
+            "target": "popup"
+          }
+        ]
+      }
+    }
+  }
+}

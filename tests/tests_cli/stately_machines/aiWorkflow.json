@@ -1,0 +1,229 @@
+{
+  "id": "aiWorkflow",
+  "initial": "draft",
+  "states": {
+    "archived": {
+      "description": "Deprecated; read-only or disabled."
+    },
+    "canary": {
+      "description": "Small percentage of production traffic or selected tenants.",
+      "on": {
+        "promote_to_production": [
+          {
+            "actions": [],
+            "guard": "isApproved",
+            "target": "production"
+          }
+        ],
+        "rollback": [
+          {
+            "actions": [],
+            "target": "staging"
+          }
+        ]
+      }
+    },
+    "draft": {
+      "description": "Flow is being edited; not executable in production.",
+      "on": {
+        "archive": [
+          {
+            "actions": [],
+            "target": "archived"
+          }
+        ],
+        "submit_for_validation": [
+          {
+            "actions": [],
+            "target": "validating"
+          }
+        ]
+      }
+    },
+    "pending_approval": {
+      "description": "Preview succeeded; waiting for human approval (compliance / budget).",
+      "on": {
+        "approve": [
+          {
+            "actions": [],
+            "target": "staging"
+          }
+        ],
+        "reject": [
+          {
+            "actions": [],
+            "target": "rejected"
+          }
+        ]
+      }
+    },
+    "preview_failed": {
+      "description": "Sandbox run failed; capture trace and errors.",
+      "on": {
+        "start_preview": [
+          {
+            "actions": [],
+            "target": "preview_running"
+          }
+        ]
+      }
+    },
+    "preview_running": {
+      "description": "Safe sandbox execution against synthetic or sampled inputs.",
+      "on": {
+        "preview_failed": [
+          {
+            "actions": [],
+            "target": "preview_failed"
+          }
+        ],
+        "preview_passed": [
+          {
+            "actions": [],
+            "target": "pending_approval"
+          }
+        ]
+      }
+    },
+    "production": {
+      "description": "Full rollout; monitored.",
+      "on": {
+        "archive": [
+          {
+            "actions": [],
+            "target": "archived"
+          }
+        ]
+      },
+      "states": {
+        "deployment": {
+          "initial": "active",
+          "states": {
+            "active": {
+              "on": {
+                "rollback_to_draft": [
+                  {
+                    "actions": [],
+                    "target": "#aiWorkflow.draft"
+                  }
+                ],
+                "rollback_to_staging": [
+                  {
+                    "actions": [],
+                    "target": "#aiWorkflow.staging"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "health": {
+          "initial": "normal",
+          "states": {
+            "degraded": {
+              "description": "SLO breach or anomaly; automatic throttling / fallback model.",
+              "on": {
+                "open_incident": [
+                  {
+                    "actions": [],
+                    "target": "incident"
+                  }
+                ],
+                "recovered": [
+                  {
+                    "actions": [],
+                    "target": "normal"
+                  }
+                ]
+              }
+            },
+            "incident": {
+              "description": "Human acknowledged severe failure; freeze changes.",
+              "on": {
+                "close_incident": [
+                  {
+                    "actions": [],
+                    "target": "normal"
+                  }
+                ]
+              }
+            },
+            "normal": {
+              "on": {
+                "degradation_detected": [
+                  {
+                    "actions": [],
+                    "target": "degraded"
+                  }
+                ],
+                "open_incident": [
+                  {
+                    "actions": [],
+                    "target": "incident"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "type": "parallel"
+    },
+    "rejected": {
+      "description": "Reviewer rejected; return to draft with comments.",
+      "on": {
+        "resubmit": [
+          {
+            "actions": [],
+            "target": "draft"
+          }
+        ]
+      }
+    },
+    "staging": {
+      "description": "Approved; deployed to staging environment only.",
+      "on": {
+        "rollback": [
+          {
+            "actions": [],
+            "target": "draft"
+          }
+        ],
+        "start_canary": [
+          {
+            "actions": [],
+            "target": "canary"
+          }
+        ]
+      }
+    },
+    "validating": {
+      "description": "Automated checks run (schema, policy, cost estimate, eval gates).",
+      "on": {
+        "validation_failed": [
+          {
+            "actions": [],
+            "target": "validation_failed"
+          }
+        ],
+        "validation_passed": [
+          {
+            "actions": [],
+            "target": "preview_running"
+          }
+        ]
+      }
+    },
+    "validation_failed": {
+      "description": "Show errors; user must fix and resubmit.",
+      "on": {
+        "submit_for_validation": [
+          {
+            "actions": [],
+            "target": "validating"
+          }
+        ]
+      }
+    }
+  }
+}

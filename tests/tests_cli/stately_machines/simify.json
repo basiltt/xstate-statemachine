@@ -1,0 +1,177 @@
+{
+  "id": "simify",
+  "initial": "liveMode",
+  "states": {
+    "buildMode": {
+      "description": "The player is in build mode, constructing and modifying buildings.",
+      "on": {
+        "adjust_camera": [
+          {
+            "actions": [],
+            "target": "cameraAdjustment"
+          }
+        ],
+        "interact_with_object": [
+          {
+            "actions": [],
+            "target": "objectInteraction"
+          }
+        ],
+        "open_ui_menu": [
+          {
+            "actions": [],
+            "target": "uiMenu"
+          }
+        ],
+        "switch_to_buy_mode": [
+          {
+            "actions": [],
+            "target": "buyMode"
+          }
+        ],
+        "switch_to_live_mode": [
+          {
+            "actions": [],
+            "target": "liveMode"
+          }
+        ]
+      }
+    },
+    "buyMode": {
+      "description": "The player is in buy mode, purchasing items and furnishings for the Sims.",
+      "on": {
+        "adjust_camera": [
+          {
+            "actions": [],
+            "target": "cameraAdjustment"
+          }
+        ],
+        "interact_with_object": [
+          {
+            "actions": [],
+            "target": "objectInteraction"
+          }
+        ],
+        "open_ui_menu": [
+          {
+            "actions": [],
+            "target": "uiMenu"
+          }
+        ],
+        "switch_to_build_mode": [
+          {
+            "actions": [],
+            "target": "buildMode"
+          }
+        ],
+        "switch_to_live_mode": [
+          {
+            "actions": [],
+            "target": "liveMode"
+          }
+        ]
+      }
+    },
+    "cameraAdjustment": {
+      "description": "The player is adjusting the camera to change the view of the game world.",
+      "on": {
+        "stop_adjusting_camera": [
+          {
+            "actions": [],
+            "guard": "wasInLiveMode",
+            "target": "liveMode"
+          },
+          {
+            "actions": [],
+            "guard": "wasInBuildMode",
+            "target": "buildMode"
+          },
+          {
+            "actions": [],
+            "guard": "wasInBuyMode",
+            "target": "buyMode"
+          }
+        ]
+      }
+    },
+    "liveMode": {
+      "description": "The player is in live mode, controlling Sims and managing their lives.",
+      "on": {
+        "adjust_camera": [
+          {
+            "actions": [],
+            "target": "cameraAdjustment"
+          }
+        ],
+        "interact_with_object": [
+          {
+            "actions": [],
+            "target": "objectInteraction"
+          }
+        ],
+        "open_ui_menu": [
+          {
+            "actions": [],
+            "target": "uiMenu"
+          }
+        ],
+        "switch_to_build_mode": [
+          {
+            "actions": [],
+            "target": "buildMode"
+          }
+        ],
+        "switch_to_buy_mode": [
+          {
+            "actions": [],
+            "target": "buyMode"
+          }
+        ]
+      }
+    },
+    "objectInteraction": {
+      "description": "The player is interacting with an object, such as moving, using, or modifying it.",
+      "on": {
+        "finish_interaction": [
+          {
+            "actions": [],
+            "guard": "wasInLiveMode",
+            "target": "liveMode"
+          },
+          {
+            "actions": [],
+            "guard": "wasInBuildMode",
+            "target": "buildMode"
+          },
+          {
+            "actions": [],
+            "guard": "wasInBuyMode",
+            "target": "buyMode"
+          }
+        ]
+      }
+    },
+    "uiMenu": {
+      "description": "The UI menu is open, allowing the player to manage settings, save, and load games.",
+      "on": {
+        "close_ui_menu": [
+          {
+            "actions": [],
+            "guard": "wasInLiveMode",
+            "target": "liveMode"
+          },
+          {
+            "actions": [],
+            "guard": "wasInBuildMode",
+            "target": "buildMode"
+          },
+          {
+            "actions": [],
+            "guard": "wasInBuyMode",
+            "target": "buyMode"
+          }
+        ]
+      }
+    }
+  }
+}

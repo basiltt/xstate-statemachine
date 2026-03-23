@@ -1,0 +1,63 @@
+{
+  "id": "TMC2209 UART motion",
+  "initial": "Paused",
+  "states": {
+    "New state 1": {},
+    "Paused": {
+      "on": {
+        "go": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "start motion"
+          }
+        ],
+        "menu": [
+          {
+            "actions": [],
+            "target": "New state 1"
+          }
+        ]
+      }
+    },
+    "in motion": {
+      "on": {
+        "end": [
+          {
+            "actions": [],
+            "target": "stopped"
+          }
+        ],
+        "pause": [
+          {
+            "actions": [],
+            "target": "Paused"
+          }
+        ]
+      }
+    },
+    "start motion": {
+      "on": {
+        "at speed": [
+          {
+            "actions": [],
+            "target": "in motion"
+          }
+        ]
+      }
+    },
+    "stopped": {
+      "entry": {
+        "type": "emit_next"
+      },
+      "on": {
+        "next": [
+          {
+            "actions": [],
+            "target": "Paused"
+          }
+        ]
+      }
+    }
+  }
+}

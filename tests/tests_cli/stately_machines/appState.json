@@ -1,0 +1,785 @@
+{
+  "context": {
+    "activeChromeModel": null,
+    "applicationPrimed": false,
+    "applicationTitle": "DryNotes",
+    "areasOfFocusCollections": null,
+    "areasOfFocusCollectionsIterable": [],
+    "attachmentsVisibility": false,
+    "baseFontColor": "#333333",
+    "breakpoint": "mobile",
+    "chromeModels": null,
+    "defaultNotebook": null,
+    "editorType": "wysiwyg",
+    "errorPageMessage": "Something went wrong",
+    "hasAreasOfFocusCollections": false,
+    "hasAreasOfFocusCollectionsLocalDatabaseContent": false,
+    "hasChromeModels": false,
+    "hasChromeModelsLocalDatabaseContent": false,
+    "hasError": false,
+    "hasNotebooks": false,
+    "hasNotebooksLocalDatabaseContent": false,
+    "hasNotes": false,
+    "hasNotesLocalDatabaseContent": false,
+    "hasUserPanelConfigs": false,
+    "hasUserPanelConfigsLocalDatabaseContent": false,
+    "hasUserSettings": false,
+    "hasUserSettingsLocalDatabaseContent": false,
+    "height": null,
+    "loggedIn": false,
+    "notebooks": null,
+    "notes": null,
+    "redirectToLogin": false,
+    "selectedAreaOfFocus": null,
+    "selectedFontColor": "#333333",
+    "selectedNote": null,
+    "selectedNotebook": null,
+    "showPanels": false,
+    "userPanelConfigs": null,
+    "userSettings": null,
+    "width": null
+  },
+  "id": "appState",
+  "initial": "initalize",
+  "states": {
+    "ERROR": {
+      "entry": {
+        "type": "inline:appState.ERROR#entry[0]"
+      }
+    },
+    "applicationReady": {},
+    "fetchRequiredAppData": {
+      "onDone": {
+        "actions": [
+          {
+            "type": "inline:appState.fetchRequiredAppData#done.state.appState.fetchRequiredAppData[-1]#transition[0]"
+          }
+        ],
+        "target": "validateRequiredAppData"
+      },
+      "states": {
+        "areasOfFocusCollections": {
+          "initial": "INITIALIZE",
+          "states": {
+            "CHECK_LOCAL_DB": {
+              "invoke": {
+                "id": "checkAreasOfFocusCollectionsLocalDatabaseContent",
+                "input": {},
+                "onDone": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.areasOfFocusCollections.CHECK_LOCAL_DB#done.invoke.checkAreasOfFocusCollectionsLocalDatabaseContent[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "VALIDATE_LOCAL_DB_CONTENT"
+                  }
+                ],
+                "onError": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.areasOfFocusCollections.CHECK_LOCAL_DB#error.platform.checkAreasOfFocusCollectionsLocalDatabaseContent[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_ERROR"
+                  }
+                ],
+                "src": "inline:appState.fetchRequiredAppData.areasOfFocusCollections.CHECK_LOCAL_DB#actor[0]"
+              }
+            },
+            "FETCH_REQUIRED_DATA": {
+              "invoke": {
+                "id": "fetchAreasOfFocusCollectionsFromCloud",
+                "input": {},
+                "onDone": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.areasOfFocusCollections.FETCH_REQUIRED_DATA#done.invoke.fetchAreasOfFocusCollectionsFromCloud[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_READY"
+                  }
+                ],
+                "onError": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.areasOfFocusCollections.FETCH_REQUIRED_DATA#error.platform.fetchAreasOfFocusCollectionsFromCloud[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_ERROR"
+                  }
+                ],
+                "src": "inline:appState.fetchRequiredAppData.areasOfFocusCollections.FETCH_REQUIRED_DATA#actor[0]"
+              }
+            },
+            "INITIALIZE": {
+              "always": {
+                "actions": [],
+                "target": "CHECK_LOCAL_DB"
+              }
+            },
+            "REQUIRED_DATA_ERROR": {
+              "entry": {
+                "type": "inline:appState.fetchRequiredAppData.areasOfFocusCollections.REQUIRED_DATA_ERROR#entry[0]"
+              },
+              "type": "final"
+            },
+            "REQUIRED_DATA_READY": {
+              "entry": {
+                "type": "inline:appState.fetchRequiredAppData.areasOfFocusCollections.REQUIRED_DATA_READY#entry[0]"
+              },
+              "type": "final"
+            },
+            "VALIDATE_LOCAL_DB_CONTENT": {
+              "always": [
+                {
+                  "actions": [],
+                  "guard": "hasAreasOfFocusCollectionsLocalDatabaseContent",
+                  "target": "REQUIRED_DATA_READY"
+                },
+                {
+                  "actions": [],
+                  "guard": "hasNoAreasOfFocusCollectionsLocalDatabaseContent",
+                  "target": "FETCH_REQUIRED_DATA"
+                }
+              ]
+            }
+          }
+        },
+        "chromeModels": {
+          "initial": "INITIALIZE",
+          "states": {
+            "CHECK_LOCAL_DB": {
+              "invoke": {
+                "id": "checkChromeModelsLocalDatabaseContent",
+                "input": {},
+                "onDone": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.chromeModels.CHECK_LOCAL_DB#done.invoke.checkChromeModelsLocalDatabaseContent[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "VALIDATE_LOCAL_DB_CONTENT"
+                  }
+                ],
+                "onError": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.chromeModels.CHECK_LOCAL_DB#error.platform.checkChromeModelsLocalDatabaseContent[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_ERROR"
+                  }
+                ],
+                "src": "inline:appState.fetchRequiredAppData.chromeModels.CHECK_LOCAL_DB#actor[0]"
+              }
+            },
+            "FETCH_REQUIRED_DATA": {
+              "invoke": {
+                "id": "fetchChromeModelsFromCloud",
+                "input": {},
+                "onDone": [
+                  {
+                    "actions": [
+                      {
+                        "type": "saveRequiredModels"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_READY"
+                  }
+                ],
+                "onError": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.chromeModels.FETCH_REQUIRED_DATA#error.platform.fetchChromeModelsFromCloud[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_ERROR"
+                  }
+                ],
+                "src": "inline:appState.fetchRequiredAppData.chromeModels.FETCH_REQUIRED_DATA#actor[0]"
+              }
+            },
+            "INITIALIZE": {
+              "always": {
+                "actions": [],
+                "target": "CHECK_LOCAL_DB"
+              }
+            },
+            "REQUIRED_DATA_ERROR": {
+              "entry": {
+                "type": "inline:appState.fetchRequiredAppData.chromeModels.REQUIRED_DATA_ERROR#entry[0]"
+              },
+              "type": "final"
+            },
+            "REQUIRED_DATA_READY": {
+              "entry": {
+                "type": "inline:appState.fetchRequiredAppData.chromeModels.REQUIRED_DATA_READY#entry[0]"
+              },
+              "type": "final"
+            },
+            "VALIDATE_LOCAL_DB_CONTENT": {
+              "always": [
+                {
+                  "actions": [],
+                  "guard": "hasChromeModelsLocalDatabaseContent",
+                  "target": "REQUIRED_DATA_READY"
+                },
+                {
+                  "actions": [],
+                  "guard": "hasNoChromeModelsLocalDatabaseContent",
+                  "target": "FETCH_REQUIRED_DATA"
+                }
+              ]
+            }
+          }
+        },
+        "notebooks": {
+          "initial": "INITIALIZE",
+          "states": {
+            "CHECK_LOCAL_DB": {
+              "invoke": {
+                "id": "checkNotebooksLocalDatabaseContent",
+                "input": {},
+                "onDone": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.notebooks.CHECK_LOCAL_DB#done.invoke.checkNotebooksLocalDatabaseContent[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "VALIDATE_LOCAL_DB_CONTENT"
+                  }
+                ],
+                "onError": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.notebooks.CHECK_LOCAL_DB#error.platform.checkNotebooksLocalDatabaseContent[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_ERROR"
+                  }
+                ],
+                "src": "inline:appState.fetchRequiredAppData.notebooks.CHECK_LOCAL_DB#actor[0]"
+              }
+            },
+            "FETCH_REQUIRED_DATA": {
+              "invoke": {
+                "id": "fetchNotebooksFromCloud",
+                "input": {},
+                "onDone": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.notebooks.FETCH_REQUIRED_DATA#done.invoke.fetchNotebooksFromCloud[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_READY"
+                  }
+                ],
+                "onError": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.notebooks.FETCH_REQUIRED_DATA#error.platform.fetchNotebooksFromCloud[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_ERROR"
+                  }
+                ],
+                "src": "inline:appState.fetchRequiredAppData.notebooks.FETCH_REQUIRED_DATA#actor[0]"
+              }
+            },
+            "INITIALIZE": {
+              "always": {
+                "actions": [],
+                "target": "CHECK_LOCAL_DB"
+              }
+            },
+            "REQUIRED_DATA_ERROR": {
+              "entry": {
+                "type": "inline:appState.fetchRequiredAppData.notebooks.REQUIRED_DATA_ERROR#entry[0]"
+              },
+              "type": "final"
+            },
+            "REQUIRED_DATA_READY": {
+              "entry": {
+                "type": "inline:appState.fetchRequiredAppData.notebooks.REQUIRED_DATA_READY#entry[0]"
+              },
+              "type": "final"
+            },
+            "VALIDATE_LOCAL_DB_CONTENT": {
+              "always": [
+                {
+                  "actions": [],
+                  "guard": "hasNotebooksLocalDatabaseContent",
+                  "target": "REQUIRED_DATA_READY"
+                },
+                {
+                  "actions": [],
+                  "guard": "hasNoNotebooksLocalDatabaseContent",
+                  "target": "FETCH_REQUIRED_DATA"
+                }
+              ]
+            }
+          }
+        },
+        "notes": {
+          "initial": "INITIALIZE",
+          "states": {
+            "CHECK_LOCAL_DB": {
+              "invoke": {
+                "id": "checkNotesLocalDatabaseContent",
+                "input": {},
+                "onDone": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.notes.CHECK_LOCAL_DB#done.invoke.checkNotesLocalDatabaseContent[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "VALIDATE_LOCAL_DB_CONTENT"
+                  }
+                ],
+                "onError": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.notes.CHECK_LOCAL_DB#error.platform.checkNotesLocalDatabaseContent[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_ERROR"
+                  }
+                ],
+                "src": "inline:appState.fetchRequiredAppData.notes.CHECK_LOCAL_DB#actor[0]"
+              }
+            },
+            "FETCH_REQUIRED_DATA": {
+              "invoke": {
+                "id": "fetchNotesFromCloud",
+                "input": {},
+                "onDone": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.notes.FETCH_REQUIRED_DATA#done.invoke.fetchNotesFromCloud[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_READY"
+                  }
+                ],
+                "onError": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.notes.FETCH_REQUIRED_DATA#error.platform.fetchNotesFromCloud[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_ERROR"
+                  }
+                ],
+                "src": "inline:appState.fetchRequiredAppData.notes.FETCH_REQUIRED_DATA#actor[0]"
+              }
+            },
+            "INITIALIZE": {
+              "always": {
+                "actions": [],
+                "target": "CHECK_LOCAL_DB"
+              }
+            },
+            "REQUIRED_DATA_ERROR": {
+              "entry": {
+                "type": "inline:appState.fetchRequiredAppData.notes.REQUIRED_DATA_ERROR#entry[0]"
+              },
+              "type": "final"
+            },
+            "REQUIRED_DATA_READY": {
+              "entry": {
+                "type": "inline:appState.fetchRequiredAppData.notes.REQUIRED_DATA_READY#entry[0]"
+              },
+              "type": "final"
+            },
+            "VALIDATE_LOCAL_DB_CONTENT": {
+              "always": [
+                {
+                  "actions": [],
+                  "guard": "hasNotesLocalDatabaseContent",
+                  "target": "REQUIRED_DATA_READY"
+                },
+                {
+                  "actions": [],
+                  "guard": "hasNoNotesLocalDatabaseContent",
+                  "target": "FETCH_REQUIRED_DATA"
+                }
+              ]
+            }
+          }
+        },
+        "userPanelConfigs": {
+          "initial": "INITIALIZE",
+          "states": {
+            "CHECK_LOCAL_DB": {
+              "invoke": {
+                "id": "checkUserPanelConfigsLocalDatabaseContent",
+                "input": {},
+                "onDone": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.userPanelConfigs.CHECK_LOCAL_DB#done.invoke.checkUserPanelConfigsLocalDatabaseContent[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "validateUserPanelConfigsLocalDBContent"
+                  }
+                ],
+                "onError": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.userPanelConfigs.CHECK_LOCAL_DB#error.platform.checkUserPanelConfigsLocalDatabaseContent[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_ERROR"
+                  }
+                ],
+                "src": "inline:appState.fetchRequiredAppData.userPanelConfigs.CHECK_LOCAL_DB#actor[0]"
+              }
+            },
+            "INITIALIZE": {
+              "always": {
+                "actions": [],
+                "target": "CHECK_LOCAL_DB"
+              }
+            },
+            "REQUIRED_DATA_ERROR": {
+              "entry": {
+                "type": "inline:appState.fetchRequiredAppData.userPanelConfigs.REQUIRED_DATA_ERROR#entry[0]"
+              },
+              "type": "final"
+            },
+            "REQUIRED_DATA_READY": {
+              "entry": {
+                "type": "inline:appState.fetchRequiredAppData.userPanelConfigs.REQUIRED_DATA_READY#entry[0]"
+              },
+              "type": "final"
+            },
+            "fetchUserPanelConfigsFromCloud": {
+              "invoke": {
+                "id": "fetchUserPanelConfigsFromCloud",
+                "input": {},
+                "onDone": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.userPanelConfigs.fetchUserPanelConfigsFromCloud#done.invoke.fetchUserPanelConfigsFromCloud[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_READY"
+                  }
+                ],
+                "onError": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.userPanelConfigs.fetchUserPanelConfigsFromCloud#error.platform.fetchUserPanelConfigsFromCloud[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_ERROR"
+                  }
+                ],
+                "src": "inline:appState.fetchRequiredAppData.userPanelConfigs.fetchUserPanelConfigsFromCloud#actor[0]"
+              }
+            },
+            "validateUserPanelConfigsLocalDBContent": {
+              "always": [
+                {
+                  "actions": [],
+                  "guard": "hasUserPanelConfigsLocalDatabaseContent",
+                  "target": "REQUIRED_DATA_READY"
+                },
+                {
+                  "actions": [],
+                  "guard": "hasNoUserPanelConfigsLocalDatabaseContent",
+                  "target": "fetchUserPanelConfigsFromCloud"
+                }
+              ]
+            }
+          }
+        },
+        "userSettings": {
+          "initial": "userSettingsInitialize",
+          "states": {
+            "FETCH_REQUIRED_DATA": {
+              "invoke": {
+                "id": "fetchUserSettingsFromCloud",
+                "input": {},
+                "onDone": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.userSettings.FETCH_REQUIRED_DATA#done.invoke.fetchUserSettingsFromCloud[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_READY"
+                  }
+                ],
+                "onError": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.userSettings.FETCH_REQUIRED_DATA#error.platform.fetchUserSettingsFromCloud[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_ERROR"
+                  }
+                ],
+                "src": "inline:appState.fetchRequiredAppData.userSettings.FETCH_REQUIRED_DATA#actor[0]"
+              }
+            },
+            "REQUIRED_DATA_ERROR": {
+              "entry": {
+                "type": "inline:appState.fetchRequiredAppData.userSettings.REQUIRED_DATA_ERROR#entry[0]"
+              },
+              "type": "final"
+            },
+            "REQUIRED_DATA_READY": {
+              "entry": {
+                "type": "inline:appState.fetchRequiredAppData.userSettings.REQUIRED_DATA_READY#entry[0]"
+              },
+              "type": "final"
+            },
+            "VALIDATE_LOCAL_DB_CONTENT": {
+              "always": [
+                {
+                  "actions": [],
+                  "guard": "hasUserSettingsLocalDatabaseContent",
+                  "target": "REQUIRED_DATA_READY"
+                },
+                {
+                  "actions": [],
+                  "guard": "hasNoUserSettingsLocalDatabaseContent",
+                  "target": "FETCH_REQUIRED_DATA"
+                }
+              ]
+            },
+            "userSettingsCheckLocalDB": {
+              "invoke": {
+                "id": "checkUserSettingsLocalDatabaseContent",
+                "input": {},
+                "onDone": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.userSettings.userSettingsCheckLocalDB#done.invoke.checkUserSettingsLocalDatabaseContent[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "VALIDATE_LOCAL_DB_CONTENT"
+                  }
+                ],
+                "onError": [
+                  {
+                    "actions": [
+                      {
+                        "type": "inline:appState.fetchRequiredAppData.userSettings.userSettingsCheckLocalDB#error.platform.checkUserSettingsLocalDatabaseContent[-1]#transition[0]"
+                      }
+                    ],
+                    "target": "REQUIRED_DATA_ERROR"
+                  }
+                ],
+                "src": "inline:appState.fetchRequiredAppData.userSettings.userSettingsCheckLocalDB#actor[0]"
+              }
+            },
+            "userSettingsInitialize": {
+              "always": {
+                "actions": [],
+                "target": "userSettingsCheckLocalDB"
+              }
+            }
+          }
+        }
+      },
+      "type": "parallel"
+    },
+    "initalize": {
+      "always": {
+        "actions": [],
+        "target": "validateLoggedInStateAPI"
+      }
+    },
+    "loggedOut": {
+      "entry": {
+        "type": "inline:appState.loggedOut#entry[0]"
+      }
+    },
+    "primeApplication": {
+      "initial": "running",
+      "on": {
+        "GetChromeModelPrime": [
+          {
+            "actions": [
+              {
+                "type": "inline:appState.primeApplication#GetChromeModelPrime[-1]#transition[0]"
+              }
+            ]
+          }
+        ]
+      },
+      "states": {
+        "running": {
+          "entry": {
+            "type": "inline:appState.primeApplication.running#entry[0]"
+          },
+          "invoke": {
+            "id": "dryChrome",
+            "input": {},
+            "src": "inline:appState.primeApplication.running#actor[0]"
+          },
+          "on": {
+            "CLOSE_NOTE": [
+              {
+                "actions": [],
+                "target": "running"
+              }
+            ],
+            "HYDRATE_USER_SETTINGS": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:appState.primeApplication.running#HYDRATE_USER_SETTINGS[-1]#transition[0]"
+                  }
+                ],
+                "target": "running"
+              }
+            ],
+            "OPEN_NOTE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:appState.primeApplication.running#OPEN_NOTE[-1]#transition[0]"
+                  }
+                ],
+                "target": "running"
+              }
+            ],
+            "REMOVE_USER_SETTING": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:appState.primeApplication.running#REMOVE_USER_SETTING[-1]#transition[0]"
+                  }
+                ]
+              }
+            ],
+            "RESET_USER_SETTINGS": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:appState.primeApplication.running#RESET_USER_SETTINGS[-1]#transition[0]"
+                  }
+                ]
+              }
+            ],
+            "TOGGLE_PANEL_VISABILITY": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:appState.primeApplication.running#TOGGLE_PANEL_VISABILITY[-1]#transition[0]"
+                  }
+                ]
+              }
+            ],
+            "UPDATE_SELECTED_AREA_OF_FOCUS": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:appState.primeApplication.running#UPDATE_SELECTED_AREA_OF_FOCUS[-1]#transition[0]"
+                  }
+                ],
+                "reenter": false
+              }
+            ],
+            "UPDATE_USER_SETTING": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:appState.primeApplication.running#UPDATE_USER_SETTING[-1]#transition[0]"
+                  }
+                ]
+              }
+            ],
+            "UPDATE_WINDOW_DETAILS": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:appState.primeApplication.running#UPDATE_WINDOW_DETAILS[-1]#transition[0]"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "validateLoggedInStateAPI": {
+      "invoke": {
+        "id": "validateAuth",
+        "input": {},
+        "onDone": [
+          {
+            "actions": [
+              {
+                "type": "inline:appState.validateLoggedInStateAPI#done.invoke.validateAuth[-1]#transition[0]"
+              }
+            ],
+            "target": "fetchRequiredAppData"
+          }
+        ],
+        "onError": [
+          {
+            "actions": [
+              {
+                "type": "inline:appState.validateLoggedInStateAPI#error.platform.validateAuth[-1]#transition[0]"
+              }
+            ],
+            "target": "loggedOut"
+          }
+        ],
+        "src": "inline:appState.validateLoggedInStateAPI#actor[0]"
+      },
+      "on": {
+        "TOGGLE_PANEL_VISABILITY": [
+          {
+            "actions": [
+              {
+                "type": "inline:appState.validateLoggedInStateAPI#TOGGLE_PANEL_VISABILITY[-1]#transition[0]"
+              }
+            ]
+          }
+        ],
+        "UPDATE_WINDOW_DETAILS": [
+          {
+            "actions": [
+              {
+                "type": "inline:appState.validateLoggedInStateAPI#UPDATE_WINDOW_DETAILS[-1]#transition[0]"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "validateRequiredAppData": {
+      "always": {
+        "actions": [],
+        "guard": "hasRequiredData",
+        "target": "primeApplication"
+      }
+    }
+  }
+}

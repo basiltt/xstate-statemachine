@@ -1,0 +1,175 @@
+{
+  "id": "authentication",
+  "initial": "idle",
+  "states": {
+    "idle": {
+      "description": "The initial state where the user has not started any authentication process.",
+      "on": {
+        "start_login": [
+          {
+            "actions": [],
+            "target": "login"
+          }
+        ],
+        "start_signup": [
+          {
+            "actions": [],
+            "target": "signup"
+          }
+        ]
+      }
+    },
+    "loggedIn": {
+      "description": "The state where the user is successfully authenticated and logged in.",
+      "type": "final"
+    },
+    "login": {
+      "description": "The state where the user is attempting to log in, either via email or an OAuth provider.",
+      "initial": "chooseMethod",
+      "states": {
+        "chooseMethod": {
+          "description": "The user selects the method to log in, either by email or using an OAuth provider.",
+          "on": {
+            "choose_email": [
+              {
+                "actions": [],
+                "target": "emailLogin"
+              }
+            ],
+            "choose_oauth": [
+              {
+                "actions": [],
+                "target": "oauthLogin"
+              }
+            ]
+          }
+        },
+        "emailLogin": {
+          "description": "The user is logging in using an email and password.",
+          "on": {
+            "failure": [
+              {
+                "actions": [],
+                "target": "#authentication.loginFailed"
+              }
+            ],
+            "success": [
+              {
+                "actions": [],
+                "target": "#authentication.loggedIn"
+              }
+            ]
+          }
+        },
+        "oauthLogin": {
+          "description": "The user is logging in using an OAuth provider.",
+          "on": {
+            "failure": [
+              {
+                "actions": [],
+                "target": "#authentication.loginFailed"
+              }
+            ],
+            "success": [
+              {
+                "actions": [],
+                "target": "#authentication.loggedIn"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "loginFailed": {
+      "description": "The state where the login attempt has failed. The user can retry or choose another method.",
+      "on": {
+        "back": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ],
+        "retry": [
+          {
+            "actions": [],
+            "target": "login"
+          }
+        ]
+      }
+    },
+    "signup": {
+      "description": "The state where the user is attempting to sign up, either via email or an OAuth provider.",
+      "initial": "chooseMethod",
+      "states": {
+        "chooseMethod": {
+          "description": "The user selects the method to sign up, either by email or using an OAuth provider.",
+          "on": {
+            "choose_email": [
+              {
+                "actions": [],
+                "target": "emailSignup"
+              }
+            ],
+            "choose_oauth": [
+              {
+                "actions": [],
+                "target": "oauthSignup"
+              }
+            ]
+          }
+        },
+        "emailSignup": {
+          "description": "The user is signing up using an email and password.",
+          "on": {
+            "failure": [
+              {
+                "actions": [],
+                "target": "#authentication.signupFailed"
+              }
+            ],
+            "success": [
+              {
+                "actions": [],
+                "target": "#authentication.loggedIn"
+              }
+            ]
+          }
+        },
+        "oauthSignup": {
+          "description": "The user is signing up using an OAuth provider.",
+          "on": {
+            "failure": [
+              {
+                "actions": [],
+                "target": "#authentication.signupFailed"
+              }
+            ],
+            "success": [
+              {
+                "actions": [],
+                "target": "#authentication.loggedIn"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "signupFailed": {
+      "description": "The state where the signup attempt has failed. The user can retry or choose another method.",
+      "on": {
+        "back": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ],
+        "retry": [
+          {
+            "actions": [],
+            "target": "signup"
+          }
+        ]
+      }
+    }
+  }
+}

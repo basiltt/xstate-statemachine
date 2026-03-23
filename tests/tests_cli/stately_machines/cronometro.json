@@ -1,0 +1,32 @@
+{
+  "id": "cronometro",
+  "initial": "parado",
+  "states": {
+    "executando": {
+      "on": {
+        "parar": [
+          {
+            "actions": [],
+            "target": "parado"
+          }
+        ],
+        "resetar": [
+          {
+            "actions": [],
+            "target": "parado"
+          }
+        ]
+      }
+    },
+    "parado": {
+      "on": {
+        "executar": [
+          {
+            "actions": [],
+            "target": "executando"
+          }
+        ]
+      }
+    }
+  }
+}

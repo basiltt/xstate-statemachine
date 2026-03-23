@@ -1,0 +1,305 @@
+{
+  "id": "Lane Change One Side - maya draft",
+  "initial": "Off",
+  "states": {
+    "Error": {},
+    "Off": {
+      "on": {
+        "enablement": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "On"
+          }
+        ]
+      }
+    },
+    "On": {
+      "initial": "Standby",
+      "on": {
+        "disablement": [
+          {
+            "actions": [],
+            "target": "Off"
+          }
+        ],
+        "error": [
+          {
+            "actions": [],
+            "target": "Error"
+          }
+        ]
+      },
+      "onDone": {
+        "actions": [],
+        "target": "Off"
+      },
+      "states": {
+        "Aborting": {
+          "always": [
+            {
+              "actions": [],
+              "guard": "!disablement",
+              "target": "Monitoring"
+            },
+            {
+              "actions": [],
+              "guard": "disablement",
+              "target": "finished abort after disablement"
+            }
+          ]
+        },
+        "Finished": {
+          "on": {
+            "finished timer timeout": [
+              {
+                "actions": [],
+                "target": "Monitoring"
+              }
+            ]
+          }
+        },
+        "Lane Chage Procedure": {
+          "initial": "Pending",
+          "on": {
+            "disablement": [
+              {
+                "actions": [],
+                "guard": "maneuver",
+                "target": "Aborting"
+              }
+            ],
+            "driver cancelled": [
+              {
+                "actions": [],
+                "target": "Aborting"
+              }
+            ]
+          },
+          "states": {
+            "Lat Before PNR": {
+              "on": {
+                "crossed PNR": [
+                  {
+                    "actions": [],
+                    "target": "#Lane Change One Side - maya draft.On.Lat After PNR"
+                  }
+                ]
+              }
+            },
+            "Long": {
+              "on": {
+                "maneuver started": [
+                  {
+                    "actions": [],
+                    "target": "Lat Before PNR"
+                  }
+                ]
+              }
+            },
+            "Pending": {
+              "on": {
+                "pending timeout": [
+                  {
+                    "actions": [],
+                    "target": "Long"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "Lat After PNR": {
+          "on": {
+            "disablement": [
+              {
+                "actions": [],
+                "target": "Lat After PNR"
+              }
+            ],
+            "driver cancelled": [
+              {
+                "actions": [],
+                "target": "Lat After PNR"
+              }
+            ],
+            "maneuver finished": [
+              {
+                "actions": [],
+                "target": "Finished"
+              }
+            ],
+            "system abort": [
+              {
+                "actions": [],
+                "target": "Aborting"
+              }
+            ]
+          }
+        },
+        "Monitoring": {
+          "description": "A = valid lane (dashed lane mark, same way driving, no vehcile)\n\nB = not valid\n\nC = constraints only for system: special lane, driver triggered mode, cooldown\n\nD = no constraints: cooldown timeout, no special lane, \\[system suggested/automatic allowed\\]\n\nE = driver blinked and wait allowed\n\nF = timeout and lane is not valid\n\nG = driver blinked and wait is not allowed",
+          "initial": "Not Ready",
+          "on": {
+            "symmetric activation prevention": [
+              {
+                "actions": [],
+                "target": "Standby"
+              }
+            ]
+          },
+          "states": {
+            "Not Ready": {
+              "on": {
+                "A+C": [
+                  {
+                    "actions": [],
+                    "target": "Ready Only for Driver"
+                  }
+                ],
+                "A+D": [
+                  {
+                    "actions": [],
+                    "target": "Ready for All"
+                  }
+                ],
+                "B": [
+                  {
+                    "actions": [],
+                    "target": "Not Ready"
+                  }
+                ],
+                "E": [
+                  {
+                    "actions": [],
+                    "target": "Waiting for Ready"
+                  }
+                ],
+                "G": [
+                  {
+                    "actions": [],
+                    "target": "Not Ready"
+                  }
+                ]
+              }
+            },
+            "Ready Only for Driver": {
+              "on": {
+                "B": [
+                  {
+                    "actions": [],
+                    "target": "Not Ready"
+                  }
+                ],
+                "D": [
+                  {
+                    "actions": [],
+                    "target": "Ready for All"
+                  }
+                ],
+                "driver request": [
+                  {
+                    "actions": [],
+                    "target": "#Lane Change One Side - maya draft.On.Lane Chage Procedure"
+                  }
+                ],
+                "system request": [
+                  {
+                    "actions": [],
+                    "target": "Ready Only for Driver"
+                  }
+                ]
+              }
+            },
+            "Ready for All": {
+              "on": {
+                "C": [
+                  {
+                    "actions": [],
+                    "target": "Ready Only for Driver"
+                  }
+                ],
+                "driver request": [
+                  {
+                    "actions": [],
+                    "target": "#Lane Change One Side - maya draft.On.Lane Chage Procedure"
+                  }
+                ],
+                "system request auto mode": [
+                  {
+                    "actions": [],
+                    "target": "#Lane Change One Side - maya draft.On.Lane Chage Procedure"
+                  }
+                ],
+                "system request suggested mode": [
+                  {
+                    "actions": [],
+                    "target": "#Lane Change One Side - maya draft.On.Pending Driver Approval"
+                  }
+                ]
+              }
+            },
+            "Waiting for Ready": {
+              "on": {
+                "A": [
+                  {
+                    "actions": [],
+                    "target": "#Lane Change One Side - maya draft.On.Lane Chage Procedure"
+                  }
+                ],
+                "F": [
+                  {
+                    "actions": [],
+                    "target": "Not Ready"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "Pending Driver Approval": {
+          "on": {
+            "driver approved": [
+              {
+                "actions": [],
+                "target": "Lane Chage Procedure"
+              }
+            ],
+            "driver rejected": [
+              {
+                "actions": [],
+                "target": "Monitoring"
+              }
+            ],
+            "symmetric activation prevention": [
+              {
+                "actions": [],
+                "target": "Standby"
+              }
+            ]
+          }
+        },
+        "Standby": {
+          "description": "LC is porhibited on either sides",
+          "on": {
+            "no symmetric activation prevention": [
+              {
+                "actions": [],
+                "target": "Monitoring"
+              }
+            ],
+            "symmetric activation prevention": [
+              {
+                "actions": [],
+                "target": "Standby"
+              }
+            ]
+          }
+        },
+        "finished abort after disablement": {
+          "type": "final"
+        }
+      }
+    }
+  }
+}

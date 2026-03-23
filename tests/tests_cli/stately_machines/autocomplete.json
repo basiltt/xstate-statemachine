@@ -1,0 +1,209 @@
+{
+  "context": "{{{\n        selectedValue: null,\n        selectedLabel: \"\",\n        searchValue: \"\",\n        items: [],\n        filteredItems: [],\n        isLoading: false,\n        disabled: false,\n        isControlled: false,\n    } as AutocompleteContext<string>}}",
+  "id": "autocomplete",
+  "initial": "closed",
+  "states": {
+    "closed": {
+      "entry": [
+        {
+          "type": "syncSearchValueToLabel"
+        },
+        {
+          "type": "notifyClose"
+        }
+      ],
+      "on": {
+        "CLICK_ANCHOR": [
+          {
+            "actions": [],
+            "guard": "isNotDisabled",
+            "target": "open"
+          }
+        ],
+        "EXTERNAL_VALUE_CHANGE": [
+          {
+            "actions": [
+              {
+                "type": "updateSelectedValue"
+              },
+              {
+                "type": "syncSearchValueToLabel"
+              }
+            ]
+          }
+        ],
+        "FOCUS": [
+          {
+            "actions": [],
+            "guard": "isNotDisabled",
+            "target": "open"
+          }
+        ],
+        "ITEMS_LOADED": [
+          {
+            "actions": [
+              {
+                "type": "updateItems"
+              },
+              {
+                "type": "syncSearchValueToLabel"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "open": {
+      "entry": [
+        {
+          "type": "selectInputText"
+        },
+        {
+          "type": "notifyOpen"
+        }
+      ],
+      "initial": "idle",
+      "on": {
+        "BLUR": [
+          {
+            "actions": [
+              {
+                "type": "handleBlur"
+              }
+            ],
+            "target": "closed"
+          }
+        ],
+        "CLEAR": [
+          {
+            "actions": [
+              {
+                "type": "clearSelection"
+              },
+              {
+                "type": "notifyClear"
+              }
+            ]
+          }
+        ],
+        "ESCAPE": [
+          {
+            "actions": [],
+            "target": "closed"
+          }
+        ],
+        "INPUT_CHANGE": [
+          {
+            "actions": [
+              {
+                "type": "setSearchValue"
+              },
+              {
+                "type": "filterItems"
+              }
+            ]
+          }
+        ],
+        "ITEMS_LOADED": [
+          {
+            "actions": [
+              {
+                "type": "updateItems"
+              },
+              {
+                "type": "filterItems"
+              }
+            ]
+          }
+        ],
+        "SELECT_ITEM": [
+          {
+            "actions": [
+              {
+                "type": "selectItem"
+              },
+              {
+                "type": "notifySelection"
+              }
+            ],
+            "target": "closed"
+          }
+        ],
+        "SET_LOADING": [
+          {
+            "actions": [
+              {
+                "type": "setLoading"
+              }
+            ]
+          }
+        ]
+      },
+      "states": {
+        "filtering": {
+          "always": {
+            "actions": [],
+            "guard": "hasNoFilteredItems",
+            "target": "noResults"
+          },
+          "entry": {
+            "type": "filterItems"
+          },
+          "on": {
+            "INPUT_CHANGE": [
+              {
+                "actions": [
+                  {
+                    "type": "setSearchValue"
+                  },
+                  {
+                    "type": "filterItems"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "idle": {
+          "always": [
+            {
+              "actions": [],
+              "guard": "isLoading",
+              "target": "loading"
+            },
+            {
+              "actions": [],
+              "guard": "hasSearchValue",
+              "target": "filtering"
+            }
+          ]
+        },
+        "loading": {
+          "on": {
+            "SET_LOADING": [
+              {
+                "actions": [],
+                "guard": "loadingComplete",
+                "target": "idle"
+              }
+            ]
+          }
+        },
+        "noResults": {
+          "on": {
+            "INPUT_CHANGE": [
+              {
+                "actions": [
+                  {
+                    "type": "setSearchValue"
+                  }
+                ],
+                "target": "filtering"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

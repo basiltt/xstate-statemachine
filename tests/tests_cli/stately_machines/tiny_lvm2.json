@@ -1,0 +1,143 @@
+{
+  "id": "tiny-lvm",
+  "initial": "Initial state",
+  "states": {
+    "Initial state": {
+      "on": {
+        "initialized": [
+          {
+            "actions": [],
+            "target": "run processes"
+          }
+        ]
+      }
+    },
+    "run processes": {
+      "on": {
+        "reinitialize": [
+          {
+            "actions": [
+              {
+                "type": "reset"
+              }
+            ],
+            "meta": {},
+            "target": "Initial state"
+          }
+        ]
+      },
+      "states": {
+        "Wifi": {
+          "initial": "idle",
+          "states": {
+            "connecting to AP": {
+              "on": {
+                "connected": [
+                  {
+                    "actions": [],
+                    "target": "web server"
+                  }
+                ],
+                "error": [
+                  {
+                    "actions": [],
+                    "target": "error"
+                  }
+                ]
+              }
+            },
+            "error": {
+              "on": {
+                "3s timeout": [
+                  {
+                    "actions": [],
+                    "target": "idle"
+                  }
+                ]
+              }
+            },
+            "idle": {
+              "on": {
+                "join ap": [
+                  {
+                    "actions": [],
+                    "target": "connecting to AP"
+                  }
+                ],
+                "start ap": [
+                  {
+                    "actions": [],
+                    "target": "starting AP"
+                  }
+                ]
+              }
+            },
+            "starting AP": {
+              "on": {
+                "error": [
+                  {
+                    "actions": [],
+                    "target": "error"
+                  }
+                ],
+                "started": [
+                  {
+                    "actions": [],
+                    "target": "web server"
+                  }
+                ]
+              }
+            },
+            "web server": {
+              "on": {
+                "error": [
+                  {
+                    "actions": [],
+                    "target": "error"
+                  }
+                ],
+                "inactivity": [
+                  {
+                    "actions": [],
+                    "target": "idle"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "record data": {
+          "initial": "save data",
+          "states": {
+            "save data": {
+              "on": {
+                "timeout": [
+                  {
+                    "actions": [],
+                    "target": "save data"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "voltage": {
+          "initial": "request data",
+          "states": {
+            "request data": {
+              "on": {
+                "timeout": [
+                  {
+                    "actions": [],
+                    "target": "request data"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "type": "parallel"
+    }
+  }
+}

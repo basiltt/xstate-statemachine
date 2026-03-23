@@ -1,0 +1,302 @@
+{
+  "id": "IRStateMachine",
+  "initial": "NewUnassigned",
+  "states": {
+    "InProgress": {
+      "initial": "Assigned",
+      "on": {
+        "deadlineExceeded": [
+          {
+            "actions": [
+              {
+                "type": "\ud83c\udfab Ticket Audit:   \"Incident status updated to Overdue\""
+              }
+            ],
+            "target": "Overdue"
+          }
+        ],
+        "reassign": [
+          {
+            "actions": [
+              {
+                "type": "\ud83d\udc64 User Audit: you reassigned to incident"
+              },
+              {
+                "type": "\ud83d\udee1\ufe0f System Audit: analyst reassignment executed"
+              },
+              {
+                "type": "\ud83c\udfab Ticket Audit: Incident reassigned and ownership updated"
+              },
+              {
+                "type": "\ud83d\udc64 other User Audit: you unassigned from incident"
+              },
+              {
+                "type": "\ud83d\udd14 Notification: Ticket assigned to me"
+              }
+            ],
+            "target": ".Assigned"
+          }
+        ]
+      },
+      "states": {
+        "Assigned": {
+          "on": {
+            "comment": [
+              {
+                "actions": [
+                  {
+                    "type": "\ud83d\udee1\ufe0f System Audit: Analyst added comment"
+                  },
+                  {
+                    "type": "\ud83d\udd14 Notification: Comment added to assigned ticket"
+                  },
+                  {
+                    "type": "\ud83d\udd14 Notification: You were mentioned"
+                  }
+                ],
+                "target": "#IRStateMachine.InProgress"
+              }
+            ],
+            "createBoard": [
+              {
+                "actions": [
+                  {
+                    "type": "\ud83d\udc64 User Audit: Analyst created investigation board for incident"
+                  },
+                  {
+                    "type": "\ud83d\udee1\ufe0f System Audit:  investigation board successfully provisioned"
+                  },
+                  {
+                    "type": "\ud83c\udfab Ticket Audit: investigation board linked and  BoardCreated\""
+                  }
+                ],
+                "target": "BoardCreated"
+              }
+            ]
+          }
+        },
+        "BoardCreated": {
+          "on": {
+            "save to board": [
+              {
+                "actions": [
+                  {
+                    "type": "\ud83d\udee1\ufe0f System Audit:  artifact saved to board sucessfully"
+                  },
+                  {
+                    "type": "\ud83c\udfab Ticket Audit:\ud83d\udee1\ufe0f System Audit:  artifact saved to board sucessfully"
+                  }
+                ],
+                "target": "Investigating"
+              }
+            ]
+          }
+        },
+        "Investigating": {
+          "on": {
+            "performAction": [
+              {
+                "actions": [],
+                "target": "Mitigating"
+              }
+            ]
+          }
+        },
+        "Mitigating": {
+          "initial": "CreateAction",
+          "states": {
+            "ActionFailed": {},
+            "Completed": {
+              "type": "final"
+            },
+            "CreateAction": {
+              "on": {
+                "execute": [
+                  {
+                    "actions": [
+                      {
+                        "type": "\u26a1 Response: Command packaged and sent to Queue"
+                      }
+                    ],
+                    "target": "Pending"
+                  }
+                ],
+                "livesession": [
+                  {
+                    "actions": [
+                      {
+                        "type": "\u26a1 Response: the Live action completed\""
+                      }
+                    ],
+                    "target": "Completed"
+                  }
+                ]
+              }
+            },
+            "Executing": {
+              "on": {
+                "failure": [
+                  {
+                    "actions": [
+                      {
+                        "type": "\u26a1 Response: Action Execution Failed on Target Host"
+                      }
+                    ],
+                    "target": "ActionFailed"
+                  }
+                ],
+                "success": [
+                  {
+                    "actions": [
+                      {
+                        "type": "\ud83d\udcdf System : Agent executing command.(in responses audit)"
+                      },
+                      {
+                        "type": "\u26a1 Response: 'sphinx.exe' (4052) Terminated.(in actions history)"
+                      }
+                    ],
+                    "target": "#IRStateMachine.Success"
+                  }
+                ]
+              }
+            },
+            "Pending": {
+              "on": {
+                "agentreceived": [
+                  {
+                    "actions": [],
+                    "target": "Executing"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "NewUnassigned": {
+      "on": {
+        "assignAnalyst": [
+          {
+            "actions": [
+              {
+                "type": "\ud83d\udc64 User Audit: You assigned to incident"
+              },
+              {
+                "type": "\ud83d\udee1\ufe0f System Audit:  analyst assignment executed"
+              },
+              {
+                "type": "\ud83c\udfab Ticket Audit:  this Incident status updated to InProgress"
+              },
+              {
+                "type": "\ud83d\udd14 Notification: Ticket assigned to me"
+              }
+            ],
+            "target": "InProgress"
+          }
+        ]
+      }
+    },
+    "Overdue": {
+      "on": {
+        "reQueue as overdue": [
+          {
+            "actions": [],
+            "target": "InProgress"
+          }
+        ]
+      }
+    },
+    "Success": {
+      "on": {
+        "No more actions": [
+          {
+            "actions": [],
+            "target": "#IRStateMachine.completed.Resolved"
+          }
+        ]
+      }
+    },
+    "completed": {
+      "initial": "Resolved",
+      "states": {
+        "Closed": {
+          "type": "final"
+        },
+        "ReopenProcess": {
+          "initial": "Pending",
+          "states": {
+            "Approved": {
+              "on": {
+                "restart work": [
+                  {
+                    "actions": [],
+                    "target": "#IRStateMachine.InProgress.Investigating"
+                  }
+                ]
+              }
+            },
+            "Pending": {
+              "on": {
+                "approve": [
+                  {
+                    "actions": [
+                      {
+                        "type": "\ud83d\udee1\ufe0f System Audit: request reopen approved"
+                      }
+                    ],
+                    "target": "Approved"
+                  }
+                ],
+                "reject": [
+                  {
+                    "actions": [
+                      {
+                        "type": "\ud83d\udee1\ufe0f System Audit: request reopenrejected"
+                      }
+                    ],
+                    "target": "Rejected"
+                  }
+                ]
+              }
+            },
+            "Rejected": {
+              "on": {
+                "resolved": [
+                  {
+                    "actions": [],
+                    "target": "#IRStateMachine.completed.Resolved"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "Resolved": {
+          "on": {
+            "closeIncident": [
+              {
+                "actions": [
+                  {
+                    "type": "\ud83d\udee1\ufe0f System Audit: incident resolved"
+                  }
+                ],
+                "target": "Closed"
+              }
+            ],
+            "requestReopen": [
+              {
+                "actions": [
+                  {
+                    "type": "\ud83d\udee1\ufe0f System Audit:  request reopen initiated"
+                  }
+                ],
+                "target": "ReopenProcess"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

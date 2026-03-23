@@ -1,0 +1,48 @@
+{
+  "context": {
+    "links": []
+  },
+  "id": "linkStateMachine",
+  "initial": "Idle",
+  "states": {
+    "Idle": {
+      "on": {
+        "selectLink": [
+          {
+            "actions": [
+              {
+                "params": {
+                  "link": "linkObject"
+                },
+                "type": "addLinkToContext"
+              }
+            ],
+            "meta": {},
+            "target": "SelectedLinks"
+          }
+        ]
+      }
+    },
+    "PopupOpen": {},
+    "SelectedLinks": {
+      "on": {
+        "deselectLink": [
+          {
+            "actions": [
+              {
+                "type": "removeLinkFromContext"
+              }
+            ],
+            "target": "Idle"
+          }
+        ],
+        "showPopup": [
+          {
+            "actions": [],
+            "target": "PopupOpen"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "id": "Joyride",
+  "initial": "IDLE",
+  "states": {
+    "IDLE": {
+      "on": {
+        "init": [
+          {
+            "actions": [],
+            "target": "READY"
+          }
+        ]
+      }
+    },
+    "READY": {
+      "on": {
+        "start": [
+          {
+            "actions": [],
+            "guard": "steps",
+            "target": "RUNNING"
+          },
+          {
+            "actions": []
+          }
+        ]
+      }
+    },
+    "RUNNING": {
+      "entry": {
+        "type": "tour:start"
+      },
+      "exit": {
+        "type": "tour:end"
+      },
+      "initial": "LIFECYCLE:INIT",
+      "on": {
+        "error": [
+          {
+            "actions": []
+          }
+        ],
+        "skip": [
+          {
+            "actions": []
+          }
+        ],
+        "stop": [
+          {
+            "actions": []
+          }
+        ],
+        "update": [
+          {
+            "actions": []
+          }
+        ]
+      },
+      "states": {
+        "LIFECYCLE:INIT": {
+          "on": {
+            "update": [
+              {
+                "actions": []
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

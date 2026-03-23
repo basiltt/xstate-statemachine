@@ -1,0 +1,141 @@
+{
+  "context": {
+    "isDirty": false,
+    "nodesCount": 0,
+    "playbookId": "",
+    "version": 1
+  },
+  "id": "PlaybookMachine",
+  "initial": "Idle",
+  "states": {
+    "Active": {
+      "on": {
+        "ADD_NODE": [
+          {
+            "actions": [
+              {
+                "type": "inline:PlaybookEditorMachine.Active#ADD_NODE[-1]#transition[0]"
+              }
+            ],
+            "target": "#PlaybookMachine.Editing.Unsaved"
+          }
+        ],
+        "ARCHIVE": [
+          {
+            "actions": [],
+            "target": "Archived"
+          }
+        ]
+      }
+    },
+    "Archived": {
+      "type": "final"
+    },
+    "Editing": {
+      "initial": "Unsaved",
+      "states": {
+        "Saved": {
+          "on": {
+            "ADD_NODE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:PlaybookEditorMachine.Editing.Saved#ADD_NODE[-1]#transition[0]"
+                  }
+                ],
+                "target": "Unsaved"
+              }
+            ],
+            "RUN_TEST": [
+              {
+                "actions": [],
+                "target": "#PlaybookMachine.Testing"
+              }
+            ]
+          }
+        },
+        "Unsaved": {
+          "on": {
+            "ADD_NODE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:PlaybookEditorMachine.Editing.Unsaved#ADD_NODE[-1]#transition[0]"
+                  }
+                ]
+              }
+            ],
+            "SAVE_CHANGES": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:PlaybookEditorMachine.Editing.Unsaved#SAVE_CHANGES[-1]#transition[0]"
+                  },
+                  {
+                    "type": "notifySuccess"
+                  }
+                ],
+                "target": "Saved"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "Idle": {
+      "on": {
+        "ADD_NODE": [
+          {
+            "actions": [
+              {
+                "type": "inline:PlaybookEditorMachine.Idle#ADD_NODE[-1]#transition[0]"
+              },
+              {
+                "type": "logAudit"
+              }
+            ],
+            "target": "Editing"
+          }
+        ],
+        "EDIT_EXISTING": [
+          {
+            "actions": [],
+            "target": "Editing"
+          }
+        ]
+      }
+    },
+    "ReadyToPublish": {
+      "on": {
+        "ADD_NODE": [
+          {
+            "actions": [],
+            "target": "#PlaybookMachine.Editing.Unsaved"
+          }
+        ],
+        "PUBLISH": [
+          {
+            "actions": [],
+            "target": "Active"
+          }
+        ]
+      }
+    },
+    "Testing": {
+      "on": {
+        "TEST_FAILURE": [
+          {
+            "actions": [],
+            "target": "#PlaybookMachine.Editing.Unsaved"
+          }
+        ],
+        "TEST_SUCCESS": [
+          {
+            "actions": [],
+            "target": "ReadyToPublish"
+          }
+        ]
+      }
+    }
+  }
+}

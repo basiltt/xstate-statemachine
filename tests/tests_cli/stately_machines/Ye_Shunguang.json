@@ -1,0 +1,25 @@
+{
+  "id": "Ye Shunguang",
+  "initial": "Normal Mind",
+  "states": {
+    "Bearer": {},
+    "Enlightened Mind": {},
+    "New state 1": {},
+    "Normal Mind": {
+      "on": {
+        "Charge attack": [
+          {
+            "actions": [],
+            "target": "Enlightened Mind"
+          }
+        ],
+        "Ultimate": [
+          {
+            "actions": [],
+            "target": "Enlightened Mind"
+          }
+        ]
+      }
+    }
+  }
+}

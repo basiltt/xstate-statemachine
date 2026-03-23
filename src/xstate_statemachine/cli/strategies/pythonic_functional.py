@@ -8,11 +8,14 @@ the machine.
 """
 
 import keyword
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set
 
 from ..extractor import extract_events
 from .base import BaseStrategy, GenerationContext
 from ._shared import (
+    _resolve_target,
+    collect_all_states,
+    escape_for_string,
     generate_action_docstring,
     generate_error_handling,
     generate_imports,
@@ -210,9 +213,11 @@ class PythonicFunctionalStrategy(BaseStrategy):
             for ev in events:
                 if ctx.log:
                     lines.append(
-                        f"    logger.info('Sending event: %s', '{ev}')"
+                        f"    logger.info('Sending event: %s', '{escape_for_string(ev)}')"
                     )
-                lines.append(f'    {await_prefix}interpreter.send("{ev}")')
+                lines.append(
+                    f'    {await_prefix}interpreter.send("{escape_for_string(ev)}")'
+                )
                 if ctx.sleep:
                     lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                 lines.append("")
@@ -332,9 +337,12 @@ class PythonicFunctionalStrategy(BaseStrategy):
             for ev in parent_events:
                 if ctx.log:
                     lines.append(
-                        f"    logger.info(" f"'Parent → sending %s', '{ev}')"
+                        f"    logger.info("
+                        f"'Parent → sending %s', '{escape_for_string(ev)}')"
                     )
-                lines.append(f"    {await_prefix}parent.send('{ev}')")
+                lines.append(
+                    f"    {await_prefix}parent.send('{escape_for_string(ev)}')"
+                )
                 if ctx.sleep:
                     lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                 lines.append("")
@@ -367,10 +375,10 @@ class PythonicFunctionalStrategy(BaseStrategy):
                     if ctx.log:
                         lines.append(
                             f"    logger.info("
-                            f"'{a_name} → sending %s', '{ev}')"
+                            f"'{a_name} → sending %s', '{escape_for_string(ev)}')"
                         )
                     lines.append(
-                        f"    {await_prefix}actors['{a_name}'].send('{ev}')"
+                        f"    {await_prefix}actors['{a_name}'].send('{escape_for_string(ev)}')"
                     )
                     if ctx.sleep:
                         lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
@@ -379,7 +387,7 @@ class PythonicFunctionalStrategy(BaseStrategy):
                 if ctx.log:
                     lines.append(
                         f"    logger.info("
-                        f"'No events declared in actor \"{a_name}\".')"
+                        f"'No events declared in actor \"{escape_for_string(a_name)}\".')"
                     )
                 else:
                     lines.append(
@@ -504,7 +512,8 @@ class PythonicFunctionalStrategy(BaseStrategy):
             if component_type == "guard":
                 if log:
                     code_lines.append(
-                        f"    logger.info(" f'"Evaluating guard: {original}")'
+                        f"    logger.info("
+                        f'"Evaluating guard: {escape_for_string(original)}")'
                     )
                 code_lines.append("    # TODO: implement guard logic")
                 code_lines.append("    return True")
@@ -517,7 +526,9 @@ class PythonicFunctionalStrategy(BaseStrategy):
                         else "Running service"
                     )
                     # Emit BEFORE the try/except block
-                    code_lines.append(f'    logger.info("{verb}: {original}")')
+                    code_lines.append(
+                        f'    logger.info("{verb}: {escape_for_string(original)}")'
+                    )
                 if component_type == "action":
                     body_lines.append("# TODO: implement action logic")
                     body_lines.append("pass")
@@ -545,6 +556,29 @@ class PythonicFunctionalStrategy(BaseStrategy):
     # -----------------------------------------------------------------
 
     @staticmethod
+    def _format_action_list_kwarg(key: str, value: Any) -> Optional[str]:
+        """Format an entry/exit action list as a State() kwarg string.
+
+        Returns ``None`` when *value* is ``None``, otherwise returns
+        e.g. ``'entry=["action1", "action2"]'``.
+        """
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return f'{key}=["{escape_for_string(value)}"]'
+        if isinstance(value, list):
+            repr_parts = ", ".join(
+                (
+                    f'"{escape_for_string(a)}"'
+                    if isinstance(a, str)
+                    else repr(a)
+                )
+                for a in value
+            )
+            return f"{key}=[{repr_parts}]"
+        return None
+
+    @staticmethod
     def _generate_build_function(
         config: Dict[str, Any],
         ctx: GenerationContext,
@@ -569,40 +603,38 @@ class PythonicFunctionalStrategy(BaseStrategy):
             f'using build_machine()."""'
         )
 
-        # -- State object creation ------------------------------------
+        # -- State object creation (recursive for nested) ---------------
         state_names: List[str] = []
-        # Map original state names → safe Python identifiers
+        # Map flattened state names → safe Python identifiers
         safe_state_vars: Dict[str, str] = {}
-        for state_name, state_def in states_config.items():
-            if not isinstance(state_def, dict):
-                state_def = {}
-
-            var_name = safe_identifier(state_name)
-            safe_state_vars[state_name] = var_name
+        all_states = collect_all_states(states_config, initial_state)
+        for flat_name, original_name, state_def, is_initial in all_states:
+            var_name = safe_identifier(flat_name)
+            safe_state_vars[flat_name] = var_name
+            # Also register original name for target resolution
+            orig_key: str = original_name
+            if orig_key not in safe_state_vars:
+                safe_state_vars[orig_key] = var_name
             state_names.append(var_name)
             kwargs: List[str] = []
 
             # initial
-            if state_name == initial_state:
+            if is_initial:
                 kwargs.append("initial=True")
 
             # entry actions
-            entry = state_def.get("entry")
-            if entry is not None:
-                if isinstance(entry, str):
-                    kwargs.append(f'entry=["{entry}"]')
-                elif isinstance(entry, list):
-                    entry_repr = ", ".join(f'"{a}"' for a in entry)
-                    kwargs.append(f"entry=[{entry_repr}]")
+            entry_kwarg = PythonicFunctionalStrategy._format_action_list_kwarg(
+                "entry", state_def.get("entry")
+            )
+            if entry_kwarg:
+                kwargs.append(entry_kwarg)
 
             # exit actions
-            exit_actions = state_def.get("exit")
-            if exit_actions is not None:
-                if isinstance(exit_actions, str):
-                    kwargs.append(f'exit=["{exit_actions}"]')
-                elif isinstance(exit_actions, list):
-                    exit_repr = ", ".join(f'"{a}"' for a in exit_actions)
-                    kwargs.append(f"exit=[{exit_repr}]")
+            exit_kwarg = PythonicFunctionalStrategy._format_action_list_kwarg(
+                "exit", state_def.get("exit")
+            )
+            if exit_kwarg:
+                kwargs.append(exit_kwarg)
 
             # invoke
             invoke = state_def.get("invoke")
@@ -612,70 +644,105 @@ class PythonicFunctionalStrategy(BaseStrategy):
             if kwargs:
                 args_str = ", ".join(kwargs)
                 lines.append(
-                    f"    {var_name} = State(" f'"{state_name}", {args_str})'
+                    f"    {var_name} = State("
+                    f'"{escape_for_string(original_name)}", {args_str})'
                 )
             else:
-                lines.append(f'    {var_name} = State("{state_name}")')
+                lines.append(
+                    f'    {var_name} = State("{escape_for_string(original_name)}")'
+                )
 
         lines.append("")
 
-        # -- .to() transition calls -----------------------------------
-        for state_name, state_def in states_config.items():
-            if not isinstance(state_def, dict):
-                continue
-            on_block = state_def.get("on", {})
-            if not isinstance(on_block, dict):
-                continue
+        # -- .to() transition calls (recursive for nested) ---------------
+        def _emit_transitions_recursive(
+            sc: Dict[str, Any],
+            prefix: str = "",
+        ) -> None:
+            for sn, sd in sc.items():
+                if not isinstance(sd, dict):
+                    continue
+                flat = f"{prefix}_{sn}" if prefix else sn
+                src_var = safe_state_vars.get(flat, safe_identifier(flat))
 
-            src_var = safe_state_vars.get(state_name, state_name)
-
-            for event_name, transition_data in on_block.items():
-                transitions = (
-                    transition_data
-                    if isinstance(transition_data, list)
-                    else [transition_data]
-                )
-                for trans in transitions:
-                    if isinstance(trans, str):
-                        # Simple target string
-                        tgt_var = safe_state_vars.get(trans, trans)
-                        lines.append(
-                            f"    {src_var}.to("
-                            f'{tgt_var}, event="{event_name}")'
+                on_block = sd.get("on", {})
+                if isinstance(on_block, dict):
+                    for event_name, transition_data in on_block.items():
+                        transitions = (
+                            transition_data
+                            if isinstance(transition_data, list)
+                            else [transition_data]
                         )
-                    elif isinstance(trans, dict):
-                        target = trans.get("target", "")
-                        tgt_var = safe_state_vars.get(target, target)
-                        t_kwargs: List[str] = [
-                            f'event="{event_name}"',
-                        ]
-
-                        # actions
-                        actions_val = trans.get("actions")
-                        if actions_val is not None:
-                            if isinstance(actions_val, str):
-                                t_kwargs.append(f'actions="{actions_val}"')
-                            elif isinstance(actions_val, list):
-                                act_repr = ", ".join(
-                                    f'"{a}"' for a in actions_val
+                        for trans in transitions:
+                            if isinstance(trans, str):
+                                tgt_var = _resolve_target(
+                                    trans,
+                                    machine_id,
+                                    safe_state_vars,
+                                    source_prefix=prefix,
                                 )
-                                t_kwargs.append(f"actions=[{act_repr}]")
+                                lines.append(
+                                    f"    {src_var}.to("
+                                    f'{tgt_var}, event="{escape_for_string(event_name)}")'
+                                )
+                            elif isinstance(trans, dict):
+                                target = trans.get("target", "") or sn
+                                tgt_var = _resolve_target(
+                                    target,
+                                    machine_id,
+                                    safe_state_vars,
+                                    source_prefix=prefix,
+                                )
+                                t_kwargs: List[str] = [
+                                    f'event="{escape_for_string(event_name)}"',
+                                ]
 
-                        # guard
-                        guard_val = trans.get("cond") or trans.get("guard")
-                        if guard_val is not None:
-                            t_kwargs.append(f'guard="{guard_val}"')
+                                # actions
+                                actions_val = trans.get("actions")
+                                if actions_val is not None:
+                                    if isinstance(actions_val, str):
+                                        t_kwargs.append(
+                                            f'actions="{escape_for_string(actions_val)}"'
+                                        )
+                                    elif isinstance(actions_val, list):
+                                        act_repr = ", ".join(
+                                            (
+                                                f'"{escape_for_string(a)}"'
+                                                if isinstance(a, str)
+                                                else repr(a)
+                                            )
+                                            for a in actions_val
+                                        )
+                                        t_kwargs.append(
+                                            f"actions=[{act_repr}]"
+                                        )
 
-                        extra = ", ".join(t_kwargs)
-                        lines.append(
-                            f"    {src_var}.to(" f"{tgt_var}, {extra})"
-                        )
+                                # guard
+                                guard_val = trans.get("cond") or trans.get(
+                                    "guard"
+                                )
+                                if guard_val is not None:
+                                    t_kwargs.append(
+                                        f'guard="{escape_for_string(guard_val)}"'
+                                    )
+
+                                extra = ", ".join(t_kwargs)
+                                lines.append(
+                                    f"    {src_var}.to(" f"{tgt_var}, {extra})"
+                                )
+
+                # Recurse into child states
+                child_states = sd.get("states")
+                if isinstance(child_states, dict) and child_states:
+                    _emit_transitions_recursive(child_states, prefix=flat)
+
+        _emit_transitions_recursive(states_config)
 
         lines.append("")
 
         # -- build_machine() call -------------------------------------
         bm_args: List[str] = []
-        bm_args.append(f'id="{machine_id}"')
+        bm_args.append(f'id="{escape_for_string(machine_id)}"')
         bm_args.append(f"states=[{', '.join(state_names)}]")
 
         if initial_context is not None:

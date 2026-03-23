@@ -1,0 +1,278 @@
+{
+  "context": "{{({ spawn }) => ({\n        rooms: [],\n        currentRoom: 0,\n        lastText: \"\",\n        lastConfidence: 0,\n        volume: 0,\n        templeAttempts: 0,\n        templeNoInputCount: 0,\n        spstRef: spawn(speechstate, { input: settings }),\n    })}}",
+  "id": "game",
+  "initial": "loading",
+  "states": {
+    "awaitGuardIntent": {
+      "entry": {
+        "type": "checkGuardIntent"
+      },
+      "on": {
+        "GUARD_THREAT": [
+          {
+            "actions": [],
+            "target": "guardKill"
+          }
+        ]
+      }
+    },
+    "death": {
+      "type": "final"
+    },
+    "dragonPass": {
+      "entry": {
+        "type": "inline:game.dragonPass#entry[0]"
+      }
+    },
+    "dying": {
+      "entry": {
+        "type": "speakDeath"
+      },
+      "on": {
+        "SPEAK_COMPLETE": [
+          {
+            "actions": [],
+            "target": "death"
+          }
+        ]
+      }
+    },
+    "evaluating": {},
+    "guardKill": {
+      "entry": {
+        "type": "speakGuardKill"
+      },
+      "on": {
+        "SPEAK_COMPLETE": [
+          {
+            "actions": [],
+            "target": "death"
+          }
+        ]
+      }
+    },
+    "guardRejected": {
+      "entry": {
+        "type": "inline:game.guardRejected#entry[0]"
+      },
+      "on": {
+        "SPEAK_COMPLETE": [
+          {
+            "actions": [],
+            "target": "room"
+          }
+        ]
+      }
+    },
+    "loading": {
+      "entry": {
+        "type": "inline:game.loading#entry[0]"
+      },
+      "on": {
+        "ASRTTS_READY": [
+          {
+            "actions": [],
+            "target": "waitForInit"
+          }
+        ]
+      }
+    },
+    "nextRoom": {
+      "entry": {
+        "type": "inline:game.nextRoom#entry[0]"
+      }
+    },
+    "retrying": {
+      "entry": {
+        "type": "speakRetry"
+      },
+      "on": {
+        "ASR_NOINPUT": [
+          {
+            "actions": [],
+            "target": "retrying"
+          }
+        ],
+        "RECOGNISED": [
+          {
+            "actions": [],
+            "guard": "inline:game.retrying#RECOGNISED[-1]#guard",
+            "target": "retrying"
+          },
+          {
+            "actions": [
+              {
+                "type": "saveRecognised"
+              }
+            ],
+            "target": "evaluating"
+          }
+        ],
+        "SPEAK_COMPLETE": [
+          {
+            "actions": [
+              {
+                "type": "listenForInput"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "room": {
+      "entry": {
+        "type": "speakRoom"
+      },
+      "on": {
+        "ASR_NOINPUT": [
+          {
+            "actions": [],
+            "guard": "isTempleRoom",
+            "target": "templeNoInput"
+          },
+          {
+            "actions": [],
+            "target": "retrying"
+          }
+        ],
+        "RECOGNISED": [
+          {
+            "actions": [],
+            "guard": "inline:game.room#RECOGNISED[-1]#guard",
+            "target": "retrying"
+          },
+          {
+            "actions": [
+              {
+                "type": "saveRecognised"
+              }
+            ],
+            "target": "evaluating"
+          }
+        ],
+        "SPEAK_COMPLETE": [
+          {
+            "actions": [
+              {
+                "type": "listenForInput"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "templeFailed": {
+      "entry": {
+        "type": "inline:game.templeFailed#entry[0]"
+      },
+      "on": {
+        "SPEAK_COMPLETE": [
+          {
+            "actions": [],
+            "target": "room"
+          }
+        ]
+      }
+    },
+    "templeNoInput": {
+      "entry": {
+        "type": "inline:game.templeNoInput#entry[0]"
+      },
+      "on": {
+        "ASR_NOINPUT": [
+          {
+            "actions": [],
+            "target": "templeNoInput"
+          }
+        ],
+        "RECOGNISED": [
+          {
+            "actions": [],
+            "guard": "inline:game.templeNoInput#RECOGNISED[-1]#guard",
+            "target": "templeNoInput"
+          },
+          {
+            "actions": [
+              {
+                "type": "saveRecognised"
+              }
+            ],
+            "target": "evaluating"
+          }
+        ]
+      }
+    },
+    "templeRetrying": {
+      "entry": {
+        "type": "inline:game.templeRetrying#entry[0]"
+      },
+      "on": {
+        "ASR_NOINPUT": [
+          {
+            "actions": [],
+            "target": "templeNoInput"
+          }
+        ],
+        "RECOGNISED": [
+          {
+            "actions": [],
+            "guard": "inline:game.templeRetrying#RECOGNISED[-1]#guard",
+            "target": "templeNoInput"
+          },
+          {
+            "actions": [
+              {
+                "type": "saveRecognised"
+              }
+            ],
+            "target": "evaluating"
+          }
+        ],
+        "SPEAK_COMPLETE": [
+          {
+            "actions": [
+              {
+                "type": "listenForInput"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "templeWrongAndLoud": {
+      "entry": {
+        "type": "inline:game.templeWrongAndLoud#entry[0]"
+      }
+    },
+    "victory": {
+      "type": "final"
+    },
+    "waitForInit": {
+      "on": {
+        "INIT": [
+          {
+            "actions": [
+              {
+                "type": "inline:game.waitForInit#INIT[-1]#transition[0]"
+              }
+            ],
+            "target": "room"
+          }
+        ]
+      }
+    },
+    "winning": {
+      "entry": {
+        "type": "speakVictory"
+      },
+      "on": {
+        "SPEAK_COMPLETE": [
+          {
+            "actions": [],
+            "target": "victory"
+          }
+        ]
+      }
+    }
+  }
+}

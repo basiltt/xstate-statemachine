@@ -1,0 +1,120 @@
+{
+  "id": "userModeration",
+  "initial": "notBanned",
+  "states": {
+    "banned": {
+      "description": "User is banned and cannot use services.",
+      "on": {
+        "UNBAN": [
+          {
+            "actions": [],
+            "target": "notBanned"
+          }
+        ]
+      },
+      "states": {
+        "permanent": {
+          "description": "User is permanently banned."
+        },
+        "temporary": {
+          "description": "User is temporarily banned.",
+          "on": {
+            "TIME_EXPIRED": [
+              {
+                "actions": [],
+                "target": "#userModeration.notBanned"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "muted": {
+      "description": "User cannot send messages but may access other services.",
+      "on": {
+        "BAN": [
+          {
+            "actions": [],
+            "guard": "isPermanentBan",
+            "target": "#userModeration.banned.permanent"
+          },
+          {
+            "actions": [],
+            "guard": "isTemporaryBan",
+            "target": "#userModeration.banned.temporary"
+          }
+        ],
+        "SILENCE": [
+          {
+            "actions": [],
+            "target": "silenced"
+          }
+        ],
+        "UNMUTE": [
+          {
+            "actions": [],
+            "target": "notBanned"
+          }
+        ]
+      }
+    },
+    "notBanned": {
+      "description": "User has full access with no moderation restrictions.",
+      "on": {
+        "BAN": [
+          {
+            "actions": [],
+            "guard": "isPermanentBan",
+            "target": "#userModeration.banned.permanent"
+          },
+          {
+            "actions": [],
+            "guard": "isTemporaryBan",
+            "target": "#userModeration.banned.temporary"
+          }
+        ],
+        "MUTE": [
+          {
+            "actions": [],
+            "target": "muted"
+          }
+        ],
+        "SILENCE": [
+          {
+            "actions": [],
+            "target": "silenced"
+          }
+        ]
+      }
+    },
+    "silenced": {
+      "description": "User cannot send messages or interact with others.",
+      "on": {
+        "BAN": [
+          {
+            "actions": [],
+            "guard": "isPermanentBan",
+            "target": "#userModeration.banned.permanent"
+          },
+          {
+            "actions": [],
+            "guard": "isTemporaryBan",
+            "target": "#userModeration.banned.temporary"
+          }
+        ],
+        "MUTE": [
+          {
+            "actions": [],
+            "target": "muted"
+          }
+        ],
+        "UNSILENCE": [
+          {
+            "actions": [],
+            "target": "notBanned"
+          }
+        ]
+      }
+    }
+  }
+}

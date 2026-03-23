@@ -1,0 +1,70 @@
+{
+  "context": {
+    "cognitoSession": null,
+    "signInChallengeStep": null,
+    "state": "SIGN_IN_SILENT",
+    "userProfile": null
+  },
+  "description": "Handles all Cognito auth logic (via `aws-amplify/auth`). Aside from retrieving the Cognito session, custom user profile information is retrieved from the API before treating the user as signed in. \n\nThe context object is typed to indicate state-dependent invariants. For example, `SIGN_IN_CHALLENGE` state guarantees the existence of information determining the challenge type.",
+  "id": "authMachine",
+  "initial": "SIGN_IN_SILENT",
+  "on": {
+    "*": [
+      {
+        "actions": [
+          {
+            "type": "emitEventOut"
+          }
+        ],
+        "description": "Pass all events to an outside handler. \n\nSome events don't lead to state transitions but should be observable (especially error events)."
+      }
+    ]
+  },
+  "states": {
+    "NOT_SIGNED_IN": {
+      "description": "User not authenticated and not attempting to sign in / sign up",
+      "entry": {
+        "type": "stateContext.NOT_SIGNED_IN"
+      }
+    },
+    "SIGNED_IN": {
+      "description": "User is authenticated (`AuthSession` & `UserProfile` available in context)"
+    },
+    "SIGN_IN": {
+      "description": "User is not authenticated but attempting to sign in"
+    },
+    "SIGN_IN_CHALLENGE": {
+      "description": "User is not authenticated and attempting to sign in but needs to complete a challenge"
+    },
+    "SIGN_IN_SILENT": {
+      "description": "Retrieve `AuthSession` -> get `accessToken` -> fetch `UserProfile` from API using the token",
+      "invoke": {
+        "id": "fetchSession",
+        "input": {},
+        "onDone": [
+          {
+            "actions": [
+              {
+                "type": "stateContext.SIGNED_IN"
+              },
+              {
+                "type": "emit.silent-sign-in-success"
+              }
+            ],
+            "target": "SIGNED_IN"
+          }
+        ],
+        "onError": [
+          {
+            "actions": [],
+            "target": "NOT_SIGNED_IN"
+          }
+        ],
+        "src": "fetchSession"
+      }
+    },
+    "SIGN_OUT": {
+      "description": "Sign out is pending. User is still authenticated (session & user profile available)"
+    }
+  }
+}

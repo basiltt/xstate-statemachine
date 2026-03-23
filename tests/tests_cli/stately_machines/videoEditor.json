@@ -1,0 +1,132 @@
+{
+  "context": {
+    "changesSaved": true,
+    "videoLoaded": false
+  },
+  "id": "videoEditor",
+  "initial": "idle",
+  "states": {
+    "editing": {
+      "description": "The user is editing the video.",
+      "on": {
+        "finish_editing": [
+          {
+            "actions": [],
+            "guard": "inline:videoEditor.editing#finish_editing[-1]#guard",
+            "meta": {},
+            "target": "ready"
+          },
+          {
+            "actions": [],
+            "guard": "inline:videoEditor.editing#finish_editing[-1]#guard",
+            "target": "unsaved_changes"
+          }
+        ],
+        "make_changes": [
+          {
+            "actions": [
+              {
+                "type": "inline:videoEditor.editing#make_changes[-1]#transition[0]"
+              }
+            ]
+          }
+        ],
+        "save_changes": [
+          {
+            "actions": [
+              {
+                "type": "inline:videoEditor.editing#save_changes[-1]#transition[0]"
+              }
+            ],
+            "target": "ready"
+          }
+        ]
+      }
+    },
+    "idle": {
+      "description": "The editor is idle, waiting for a video to be loaded or an action to be performed.",
+      "on": {
+        "load_video": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "loading"
+          }
+        ]
+      }
+    },
+    "loading": {
+      "description": "A video is being loaded into the editor.",
+      "on": {
+        "failure": [
+          {
+            "actions": [
+              {
+                "type": "inline:videoEditor.loading#failure[-1]#transition[0]"
+              }
+            ],
+            "meta": {},
+            "target": "idle"
+          }
+        ],
+        "success": [
+          {
+            "actions": [
+              {
+                "type": "inline:videoEditor.loading#success[-1]#transition[0]"
+              }
+            ],
+            "target": "ready"
+          }
+        ]
+      }
+    },
+    "ready": {
+      "description": "The video is loaded and ready for editing.",
+      "on": {
+        "start_editing": [
+          {
+            "actions": [],
+            "target": "editing"
+          }
+        ],
+        "unload_video": [
+          {
+            "actions": [
+              {
+                "type": "inline:videoEditor.ready#unload_video[-1]#transition[0]"
+              }
+            ],
+            "meta": {},
+            "target": "idle"
+          }
+        ]
+      }
+    },
+    "unsaved_changes": {
+      "description": "There are unsaved changes that need to be addressed before proceeding.",
+      "on": {
+        "discard_changes": [
+          {
+            "actions": [
+              {
+                "type": "inline:videoEditor.unsaved_changes#discard_changes[-1]#transition[0]"
+              }
+            ],
+            "target": "ready"
+          }
+        ],
+        "save_changes": [
+          {
+            "actions": [
+              {
+                "type": "inline:videoEditor.unsaved_changes#save_changes[-1]#transition[0]"
+              }
+            ],
+            "target": "ready"
+          }
+        ]
+      }
+    }
+  }
+}

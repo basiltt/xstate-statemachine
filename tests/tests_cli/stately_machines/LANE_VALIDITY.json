@@ -1,0 +1,107 @@
+{
+  "id": "LANE_VALIDITY_SYS_ALLOWANCE",
+  "initial": "SYS_READINESS_LEFT",
+  "states": {
+    "LEFT_LANE_VALIDITY": {
+      "initial": "NO_VALID",
+      "states": {
+        "NO_VALID": {
+          "on": {
+            "valid_left": [
+              {
+                "actions": [],
+                "target": "VALID_LANE"
+              }
+            ]
+          }
+        },
+        "VALID_LANE": {
+          "on": {
+            "!valid_left": [
+              {
+                "actions": [],
+                "target": "NO_VALID"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "RIGHT_LANE_VALIDITY": {
+      "initial": "NO_VALID",
+      "states": {
+        "NO_VALID": {
+          "on": {
+            "valid_right": [
+              {
+                "actions": [],
+                "target": "VALID_LANE"
+              }
+            ]
+          }
+        },
+        "VALID_LANE": {
+          "on": {
+            "!valid_right": [
+              {
+                "actions": [],
+                "target": "NO_VALID"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "SYS_READINESS_LEFT": {
+      "initial": "NOT_READY",
+      "states": {
+        "NOT_READY": {
+          "on": {
+            "!system_blocked_left": [
+              {
+                "actions": [],
+                "target": "SYS_READY"
+              }
+            ]
+          }
+        },
+        "SYS_READY": {
+          "on": {
+            "system_blocked_left": [
+              {
+                "actions": [],
+                "target": "NOT_READY"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "SYS_READINESS_RIGHT": {
+      "initial": "NOT_READY",
+      "states": {
+        "NOT_READY": {
+          "on": {
+            "!system_blocked_right": [
+              {
+                "actions": [],
+                "target": "SYS_READY"
+              }
+            ]
+          }
+        },
+        "SYS_READY": {
+          "on": {
+            "system_blocked_right": [
+              {
+                "actions": [],
+                "target": "NOT_READY"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "type": "parallel"
+}

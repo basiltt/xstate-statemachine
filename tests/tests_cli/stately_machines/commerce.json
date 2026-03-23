@@ -1,0 +1,365 @@
+{
+  "context": "{{initialContext}}",
+  "id": "commerce",
+  "initial": "UNINITIALIZED",
+  "on": {
+    "ERROR_OCCURRED": [
+      {
+        "actions": [
+          {
+            "type": "assignError"
+          }
+        ],
+        "meta": {},
+        "target": ".ERROR"
+      }
+    ]
+  },
+  "states": {
+    "CHECKING_ERROR_TOAST": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "shouldShowErrorToast",
+          "target": "ERROR_TOAST"
+        },
+        {
+          "actions": [],
+          "guard": "shouldSkipErrorToast",
+          "target": "CHECKING_PRE_PAYWALL_TOAST"
+        }
+      ]
+    },
+    "CHECKING_LOGIN_STATUS": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "isSignedIn",
+          "target": "WAITING_FOR_ENTITLEMENT"
+        },
+        {
+          "actions": [
+            {
+              "type": "assignDialogGuest"
+            }
+          ],
+          "guard": "isNotSignedIn",
+          "target": "PREPARING_COMMERCE_DIALOG"
+        }
+      ]
+    },
+    "CHECKING_POST_PAYWALL_TOAST": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "postPaywallNeeded",
+          "target": "POST_PAYWALL_TOAST"
+        },
+        {
+          "actions": [
+            {
+              "type": "assignResultFail"
+            },
+            {
+              "type": "cleanupWorkflow"
+            }
+          ],
+          "guard": "postPaywallNotNeeded",
+          "target": "IDLE"
+        }
+      ]
+    },
+    "CHECKING_PRE_PAYWALL_TOAST": {
+      "on": {
+        "PRE_PAYWALL_TOAST_NONE": [
+          {
+            "actions": [
+              {
+                "type": "assignDialogParams"
+              }
+            ],
+            "target": "PREPARING_COMMERCE_DIALOG"
+          }
+        ],
+        "PRE_PAYWALL_TOAST_SHOW": [
+          {
+            "actions": [],
+            "target": "PRE_PAYWALL_TOAST"
+          }
+        ],
+        "PRE_PAYWALL_TOAST_SKIP": [
+          {
+            "actions": [
+              {
+                "type": "assignResultNoAction"
+              },
+              {
+                "type": "cleanupWorkflow"
+              }
+            ],
+            "target": "IDLE"
+          }
+        ]
+      }
+    },
+    "ERROR": {
+      "entry": {
+        "type": "logError"
+      },
+      "on": {
+        "RESET": [
+          {
+            "actions": [
+              {
+                "type": "assignResultFail"
+              },
+              {
+                "type": "cleanupWorkflow"
+              }
+            ],
+            "target": "IDLE"
+          }
+        ]
+      }
+    },
+    "ERROR_TOAST": {
+      "on": {
+        "CLOSE": [
+          {
+            "actions": [
+              {
+                "type": "assignResultFail"
+              },
+              {
+                "type": "cleanupWorkflow"
+              }
+            ],
+            "target": "IDLE"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [
+              {
+                "type": "assignResultFail"
+              },
+              {
+                "type": "cleanupWorkflow"
+              }
+            ],
+            "target": "IDLE"
+          }
+        ]
+      }
+    },
+    "IDLE": {
+      "entry": {
+        "type": "cleanupWorkflow"
+      },
+      "on": {
+        "START": [
+          {
+            "actions": [
+              {
+                "type": "assignStart"
+              }
+            ],
+            "target": "CHECKING_LOGIN_STATUS"
+          }
+        ]
+      }
+    },
+    "PAYWALL": {
+      "on": {
+        "CLOSE": [
+          {
+            "actions": [],
+            "target": "CHECKING_POST_PAYWALL_TOAST"
+          }
+        ],
+        "ORDER_CANCEL": [
+          {
+            "actions": [],
+            "target": "CHECKING_POST_PAYWALL_TOAST"
+          }
+        ],
+        "ORDER_COMPLETE": [
+          {
+            "actions": [
+              {
+                "type": "assignResultSuccess"
+              },
+              {
+                "type": "cleanupWorkflow"
+              }
+            ],
+            "target": "IDLE"
+          }
+        ]
+      }
+    },
+    "POST_PAYWALL_TOAST": {
+      "on": {
+        "CLOSE": [
+          {
+            "actions": [
+              {
+                "type": "assignResultFail"
+              },
+              {
+                "type": "cleanupWorkflow"
+              }
+            ],
+            "target": "IDLE"
+          }
+        ],
+        "OK": [
+          {
+            "actions": [
+              {
+                "type": "assignDialogParams"
+              }
+            ],
+            "target": "PREPARING_COMMERCE_DIALOG"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [
+              {
+                "type": "assignResultFail"
+              },
+              {
+                "type": "cleanupWorkflow"
+              }
+            ],
+            "target": "IDLE"
+          }
+        ]
+      }
+    },
+    "PREPARING_COMMERCE_DIALOG": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "dialogIsGuestPaywall",
+          "target": "PAYWALL"
+        },
+        {
+          "actions": [],
+          "guard": "dialogIsCCIOrAdminPaywall",
+          "target": "PAYWALL"
+        },
+        {
+          "actions": [],
+          "guard": "dialogIsRequestAccess",
+          "target": "REQUEST_ACCESS"
+        },
+        {
+          "actions": [
+            {
+              "type": "logImpossibleCase"
+            },
+            {
+              "type": "assignResultFail"
+            },
+            {
+              "type": "cleanupWorkflow"
+            }
+          ],
+          "guard": "dialogIsImpossibleCase",
+          "target": "IDLE"
+        }
+      ]
+    },
+    "PRE_PAYWALL_TOAST": {
+      "on": {
+        "CLOSE": [
+          {
+            "actions": [
+              {
+                "type": "assignResultNoAction"
+              },
+              {
+                "type": "cleanupWorkflow"
+              }
+            ],
+            "target": "IDLE"
+          }
+        ],
+        "OK": [
+          {
+            "actions": [
+              {
+                "type": "assignDialogParams"
+              }
+            ],
+            "target": "PREPARING_COMMERCE_DIALOG"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [
+              {
+                "type": "assignResultNoAction"
+              },
+              {
+                "type": "cleanupWorkflow"
+              }
+            ],
+            "target": "IDLE"
+          }
+        ]
+      }
+    },
+    "REQUEST_ACCESS": {
+      "on": {
+        "CLOSE": [
+          {
+            "actions": [],
+            "target": "CHECKING_POST_PAYWALL_TOAST"
+          }
+        ],
+        "ORDER_CANCEL": [
+          {
+            "actions": [],
+            "target": "CHECKING_POST_PAYWALL_TOAST"
+          }
+        ],
+        "ORDER_PENDING": [
+          {
+            "actions": [
+              {
+                "type": "assignResultPending"
+              },
+              {
+                "type": "cleanupWorkflow"
+              }
+            ],
+            "target": "IDLE"
+          }
+        ]
+      }
+    },
+    "UNINITIALIZED": {
+      "always": {
+        "actions": [],
+        "target": "IDLE"
+      }
+    },
+    "WAITING_FOR_ENTITLEMENT": {
+      "on": {
+        "ENTITLEMENT_READY": [
+          {
+            "actions": [
+              {
+                "type": "assignEntitlementReady"
+              }
+            ],
+            "target": "CHECKING_ERROR_TOAST"
+          }
+        ]
+      }
+    }
+  }
+}

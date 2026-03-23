@@ -1,0 +1,90 @@
+{
+  "id": "phoneDialer",
+  "initial": "idle",
+  "states": {
+    "call ended": {
+      "description": "The call has ended, and the phone returns to idle state.",
+      "on": {
+        "reset": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ]
+      }
+    },
+    "call ongoing": {
+      "description": "A call is currently in progress, either outgoing or incoming.",
+      "on": {
+        "hangup": [
+          {
+            "actions": [],
+            "target": "hunging up"
+          }
+        ]
+      }
+    },
+    "dialing out": {
+      "description": "The phone is in the process of dialing a number to establish an outgoing call.",
+      "on": {
+        "cancel": [
+          {
+            "actions": [],
+            "target": "call ended"
+          }
+        ],
+        "connect": [
+          {
+            "actions": [],
+            "target": "call ongoing"
+          }
+        ]
+      }
+    },
+    "hunging up": {
+      "description": "The call is in the process of being terminated, transitioning to call ended.",
+      "on": {
+        "complete": [
+          {
+            "actions": [],
+            "target": "call ended"
+          }
+        ]
+      }
+    },
+    "idle": {
+      "description": "The phone is in a resting state, waiting for an action like dialing or receiving a call.",
+      "on": {
+        "dial": [
+          {
+            "actions": [],
+            "target": "dialing out"
+          }
+        ],
+        "receive": [
+          {
+            "actions": [],
+            "target": "incoming calls"
+          }
+        ]
+      }
+    },
+    "incoming calls": {
+      "description": "The phone is ringing due to an incoming call, waiting for the user to answer or decline.",
+      "on": {
+        "answer": [
+          {
+            "actions": [],
+            "target": "call ongoing"
+          }
+        ],
+        "decline": [
+          {
+            "actions": [],
+            "target": "call ended"
+          }
+        ]
+      }
+    }
+  }
+}

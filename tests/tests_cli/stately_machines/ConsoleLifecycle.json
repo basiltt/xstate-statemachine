@@ -1,0 +1,205 @@
+{
+  "id": "ConsoleLifecycle",
+  "initial": "SystemSetup",
+  "states": {
+    "EndProcedure": {
+      "initial": "WaitAlignDone",
+      "states": {
+        "Shutdown": {
+          "entry": {
+            "type": "shutdown"
+          },
+          "type": "final"
+        },
+        "WaitAlignDone": {
+          "entry": {
+            "type": "notifyRestartProcedure"
+          },
+          "on": {
+            "CommandRestartProcedure": [
+              {
+                "actions": [],
+                "description": "- \ud0a4\ud2b8 \uc7a5\ucc29 \ub2e8\uacc4\ub85c \ub3cc\uc544\uac10",
+                "meta": {},
+                "target": "#ConsoleLifecycle.SystemSetup.WaitRobotSetup"
+              }
+            ],
+            "CommandShutdown": [
+              {
+                "actions": [],
+                "meta": {},
+                "target": "Shutdown"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "ErrorState": {
+      "initial": "CheckError",
+      "on": {
+        "CommandEnd": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "EndProcedure"
+          }
+        ],
+        "FaultRest": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "OnProcedure"
+          }
+        ]
+      },
+      "states": {
+        "CheckError": {
+          "on": {
+            "ErrorCC": [
+              {
+                "actions": [],
+                "meta": {},
+                "target": "Idle"
+              }
+            ],
+            "ErrorLC": [
+              {
+                "actions": [],
+                "meta": {},
+                "target": "WaitRecovery"
+              }
+            ],
+            "ErrorRC": [
+              {
+                "actions": [],
+                "meta": {},
+                "target": "WaitRecovery"
+              }
+            ]
+          }
+        },
+        "Idle": {},
+        "WaitRecovery": {
+          "on": {
+            "RecoveryFailed": [
+              {
+                "actions": [
+                  {
+                    "type": "notifyRecoveryFailed"
+                  }
+                ],
+                "meta": {},
+                "target": "Idle"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "NaviSetup": {
+      "description": "- NAVI \uc0ac\uc6a9 \uc120\ud0dd",
+      "entry": {
+        "type": "runNavi"
+      },
+      "on": {
+        "StartProcedure": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "OnProcedure"
+          }
+        ]
+      }
+    },
+    "OnProcedure": {
+      "description": "- GC engage \ud6c4\n- \uc804\ud6c4\uc9c4/\ud68c\uc804 \ub3d9\uc791",
+      "on": {
+        "CommandEnd": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "EndProcedure"
+          }
+        ],
+        "ErrorOccurred": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "ErrorState"
+          }
+        ]
+      }
+    },
+    "ProcedureSetup": {
+      "description": "- GC engage",
+      "on": {
+        "ProcedureReady": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "NaviSetup"
+          }
+        ]
+      }
+    },
+    "SystemSetup": {
+      "description": "- \ubd80\ud305 \ud6c4 \ub85c\uadf8\uc778 \ud654\uba74\uc5d0\uc11c \ub300\uae30\n- \ub85c\uadf8\uc778 \ud654\uba74\uc5d0 joystick / ethernet \uc5f0\uacb0 \uc5ec\ubd80 \ud45c\uc2dc -&gt; \ubaa8\ub4e0 \ub514\ubc14\uc774\uc2a4 \uc5f0\ub3d9\ub41c \ud6c4\uc5d0 \ub85c\uadf8\uc778 \uac00\ub2a5\ud558\ub3c4\ub85d",
+      "initial": "WaitJoystickConn",
+      "on": {
+        "ErrorOccurred": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "ErrorState"
+          }
+        ],
+        "SystemReady": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "ProcedureSetup"
+          }
+        ]
+      },
+      "states": {
+        "WaitEtherentConn": {
+          "on": {
+            "EthernetConnected": [
+              {
+                "actions": [],
+                "meta": {},
+                "target": "WaitLogin"
+              }
+            ]
+          }
+        },
+        "WaitJoystickConn": {
+          "on": {
+            "JoystickConnected": [
+              {
+                "actions": [],
+                "meta": {},
+                "target": "WaitEtherentConn"
+              }
+            ]
+          }
+        },
+        "WaitLogin": {
+          "on": {
+            "LoginComplete": [
+              {
+                "actions": [],
+                "meta": {},
+                "target": "WaitRobotSetup"
+              }
+            ]
+          }
+        },
+        "WaitRobotSetup": {
+          "description": "- AVIAR \ud0a4\ud2b8 \uc7a5\ucc29"
+        }
+      }
+    }
+  }
+}

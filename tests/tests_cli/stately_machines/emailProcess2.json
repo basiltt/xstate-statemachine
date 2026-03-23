@@ -1,0 +1,63 @@
+{
+  "id": "emailProcessing",
+  "initial": "Receive an email",
+  "states": {
+    "Forward to accounts": {
+      "description": "In this state, the email is being forwarded to the accounts department at accounts@example.com.",
+      "entry": {
+        "type": "inline:emailProcessing.Forward to accounts#entry[0]"
+      },
+      "type": "final"
+    },
+    "Forward to legal": {
+      "description": "In this state, the email is being forwarded to the legal department at legal@example.com.",
+      "entry": {
+        "type": "inline:emailProcessing.Forward to legal#entry[0]"
+      },
+      "type": "final"
+    },
+    "Forward to reception": {
+      "description": "In this state, the email is being forwarded to the reception at reception@example.com.",
+      "entry": {
+        "type": "inline:emailProcessing.Forward to reception#entry[0]"
+      },
+      "type": "final"
+    },
+    "Read it": {
+      "description": "This state indicates that the email content is being read to determine the appropriate action based on its content.",
+      "on": {
+        "determine.accounts": [
+          {
+            "actions": [],
+            "guard": "inline:emailProcessing.Read it#determine.accounts[-1]#guard",
+            "target": "Forward to accounts"
+          }
+        ],
+        "determine.legal": [
+          {
+            "actions": [],
+            "guard": "inline:emailProcessing.Read it#determine.legal[-1]#guard",
+            "target": "Forward to legal"
+          }
+        ],
+        "determine.other": [
+          {
+            "actions": [],
+            "target": "Forward to reception"
+          }
+        ]
+      }
+    },
+    "Receive an email": {
+      "description": "This state represents the initial stage where an email is received and ready to be processed.",
+      "on": {
+        "read": [
+          {
+            "actions": [],
+            "target": "Read it"
+          }
+        ]
+      }
+    }
+  }
+}

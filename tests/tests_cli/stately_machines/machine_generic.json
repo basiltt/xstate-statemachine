@@ -1,0 +1,132 @@
+{
+  "context": {
+    "lastNack": null,
+    "result": null,
+    "retries": 0,
+    "startTime": null,
+    "timeoutId": null
+  },
+  "id": "(machine)",
+  "initial": "sendingCmd",
+  "states": {
+    "checkRetry": {
+      "always": [
+        {
+          "actions": [
+            {
+              "type": "incrementRetry"
+            }
+          ],
+          "guard": "canRetry",
+          "target": "retrying"
+        },
+        {
+          "actions": [],
+          "target": "error"
+        }
+      ]
+    },
+    "done": {
+      "entry": {
+        "type": "clearAutoDoneTimer"
+      },
+      "type": "final"
+    },
+    "error": {
+      "entry": [
+        {
+          "type": "showErrorToaster"
+        },
+        {
+          "type": "clearAutoDoneTimer"
+        }
+      ],
+      "type": "final"
+    },
+    "retrying": {
+      "after": {
+        "250": [
+          {
+            "actions": [],
+            "target": "#(machine).sendingCmd"
+          }
+        ]
+      }
+    },
+    "sendingCmd": {
+      "invoke": {
+        "input": {},
+        "onDone": [
+          {
+            "actions": [],
+            "target": "waitingResponse"
+          }
+        ],
+        "onError": [
+          {
+            "actions": [],
+            "target": "error"
+          }
+        ],
+        "src": "sendActor"
+      }
+    },
+    "waitingResponse": {
+      "entry": {
+        "type": "maybeStartAutoDoneTimer"
+      },
+      "on": {
+        "MESSAGE": [
+          {
+            "actions": [
+              {
+                "type": "logSuccess"
+              },
+              {
+                "type": "assignResult"
+              }
+            ],
+            "guard": "isMsg45",
+            "target": "done"
+          },
+          {
+            "actions": [
+              {
+                "type": "assignFailureMessage"
+              },
+              {
+                "type": "assignResult"
+              }
+            ],
+            "guard": "isFailureMessage",
+            "target": "error"
+          },
+          {
+            "actions": [
+              {
+                "type": "assignNack"
+              },
+              {
+                "type": "assignResult"
+              }
+            ],
+            "guard": "isNack",
+            "target": "checkRetry"
+          },
+          {
+            "actions": [
+              {
+                "type": "logSuccess"
+              },
+              {
+                "type": "assignResult"
+              }
+            ],
+            "guard": "isExpectedMessage",
+            "target": "done"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,177 @@
+{
+  "context": {
+    "entranceSide": "one",
+    "isBrightLight": false,
+    "isDoorClosedOnSideOne": true,
+    "isDoorClosedOnSideTwo": true
+  },
+  "id": "Trap Room v2",
+  "initial": "IDLE_STATE",
+  "on": {
+    "emergencyButton": [
+      {
+        "actions": [],
+        "target": ".EXIT_INIT_STATE"
+      }
+    ]
+  },
+  "states": {
+    "EXIT_INIT_STATE": {
+      "after": {
+        "8000": [
+          {
+            "actions": [],
+            "target": "#Trap Room v2.EXIT_STATE"
+          }
+        ]
+      },
+      "on": {
+        "insideMotion": [
+          {
+            "actions": [],
+            "target": "EXIT_STATE"
+          }
+        ]
+      }
+    },
+    "EXIT_STATE": {
+      "after": {
+        "2000": [
+          {
+            "actions": [],
+            "target": "#Trap Room v2.IDLE_STATE"
+          }
+        ]
+      },
+      "on": {
+        "emptyConfirmation": [
+          {
+            "actions": [],
+            "target": "IDLE_STATE"
+          }
+        ],
+        "insideMotion": [
+          {
+            "actions": [],
+            "target": "EXIT_STATE"
+          }
+        ]
+      }
+    },
+    "IDLE_STATE": {
+      "on": {
+        "insideMotion": [
+          {
+            "actions": [],
+            "target": "TRAP_INIT_STATE"
+          }
+        ],
+        "outsideMotionSideOne": [
+          {
+            "actions": [],
+            "target": "WELCOME_STATE_SIDE_ONE"
+          }
+        ],
+        "outsideMotionSideTwo": [
+          {
+            "actions": [],
+            "target": "WELCOME_STATE_SIDE_TWO"
+          }
+        ]
+      }
+    },
+    "TRAP_INIT_STATE": {
+      "after": {
+        "10000": [
+          {
+            "actions": [],
+            "target": "#Trap Room v2.TRAP_STATE"
+          }
+        ]
+      },
+      "on": {
+        "insideMotion": [
+          {
+            "actions": [],
+            "target": "TRAP_INIT_STATE"
+          }
+        ]
+      }
+    },
+    "TRAP_STATE": {
+      "after": {
+        "30000": [
+          {
+            "actions": [],
+            "target": "#Trap Room v2.EXIT_INIT_STATE"
+          }
+        ]
+      },
+      "on": {
+        "emptyConfirmation": [
+          {
+            "actions": [],
+            "target": "IDLE_STATE"
+          }
+        ],
+        "insideMotion": [
+          {
+            "actions": [],
+            "reenter": true,
+            "target": "TRAP_STATE"
+          }
+        ]
+      }
+    },
+    "WELCOME_STATE_SIDE_ONE": {
+      "after": {
+        "5000": [
+          {
+            "actions": [],
+            "target": "#Trap Room v2.IDLE_STATE"
+          }
+        ]
+      },
+      "on": {
+        "insideMotion": [
+          {
+            "actions": [],
+            "target": "TRAP_INIT_STATE"
+          }
+        ],
+        "outsideMotionSideOne": [
+          {
+            "actions": [],
+            "reenter": true,
+            "target": "WELCOME_STATE_SIDE_ONE"
+          }
+        ]
+      }
+    },
+    "WELCOME_STATE_SIDE_TWO": {
+      "after": {
+        "5000": [
+          {
+            "actions": [],
+            "target": "#Trap Room v2.IDLE_STATE"
+          }
+        ]
+      },
+      "on": {
+        "insideMotion": [
+          {
+            "actions": [],
+            "target": "TRAP_INIT_STATE"
+          }
+        ],
+        "outsideMotionSideTwo": [
+          {
+            "actions": [],
+            "reenter": true,
+            "target": "WELCOME_STATE_SIDE_TWO"
+          }
+        ]
+      }
+    }
+  }
+}

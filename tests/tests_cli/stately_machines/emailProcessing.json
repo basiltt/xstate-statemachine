@@ -1,0 +1,21 @@
+{
+  "context": {
+    "attachments": [],
+    "emailData": null,
+    "emailResponse": null,
+    "extractedData": null
+  },
+  "id": "emailProcessing",
+  "on": {
+    "cassacacascASCAScc": [
+      {
+        "actions": [
+          {
+            "type": "sacascac"
+          }
+        ],
+        "target": "#emailProcessing"
+      }
+    ]
+  }
+}

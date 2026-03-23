@@ -1,0 +1,101 @@
+{
+  "id": "yeShunguangSkills",
+  "initial": "idle",
+  "on": {
+    "reset": [
+      {
+        "actions": [
+          {
+            "type": "inline:yeShunguangSkills#reset[-1]#transition[0]"
+          }
+        ],
+        "target": ".idle"
+      }
+    ]
+  },
+  "states": {
+    "critical": {
+      "description": "Ye Shunguang is in a critical state after taking significant damage.",
+      "on": {
+        "defeated": [
+          {
+            "actions": [],
+            "target": "defeated"
+          }
+        ],
+        "heal": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ]
+      }
+    },
+    "damaged": {
+      "description": "Ye Shunguang has taken damage and may need to recover.",
+      "on": {
+        "recover": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ],
+        "take_more_damage": [
+          {
+            "actions": [],
+            "target": "critical"
+          }
+        ]
+      }
+    },
+    "defeated": {
+      "description": "Ye Shunguang has been defeated and cannot continue.",
+      "type": "final"
+    },
+    "idle": {
+      "description": "Ye Shunguang is in a neutral state, waiting to perform an action.",
+      "on": {
+        "activate_skill": [
+          {
+            "actions": [],
+            "target": "usingSkill"
+          }
+        ],
+        "take_damage": [
+          {
+            "actions": [],
+            "target": "damaged"
+          }
+        ]
+      }
+    },
+    "stunned": {
+      "description": "Ye Shunguang is stunned and cannot perform any actions temporarily.",
+      "on": {
+        "recover": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ]
+      }
+    },
+    "usingSkill": {
+      "description": "Ye Shunguang is actively using one of her skills.",
+      "on": {
+        "finish_skill": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ],
+        "interrupted": [
+          {
+            "actions": [],
+            "target": "stunned"
+          }
+        ]
+      }
+    }
+  }
+}

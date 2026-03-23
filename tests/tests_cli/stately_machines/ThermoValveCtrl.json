@@ -1,0 +1,65 @@
+{
+  "id": "Thermostatic Valve Controller",
+  "initial": "offline",
+  "states": {
+    "offline": {
+      "on": {
+        "deviceOnline": [
+          {
+            "actions": [],
+            "target": "#Thermostatic Valve Controller.online.history"
+          }
+        ]
+      }
+    },
+    "online": {
+      "initial": "off",
+      "on": {
+        "deviceOffline": [
+          {
+            "actions": [],
+            "target": "offline"
+          }
+        ]
+      },
+      "states": {
+        "heat": {
+          "entry": {
+            "type": "setExternalTemperature"
+          },
+          "on": {
+            "deviceOff": [
+              {
+                "actions": [],
+                "target": "off"
+              }
+            ],
+            "deviceTemperature": [
+              {
+                "actions": [
+                  {
+                    "type": "setTemperature"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "history": {
+          "history": "shallow",
+          "type": "history"
+        },
+        "off": {
+          "on": {
+            "deviceHeat": [
+              {
+                "actions": [],
+                "target": "heat"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

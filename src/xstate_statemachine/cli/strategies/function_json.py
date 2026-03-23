@@ -7,6 +7,7 @@ from typing import List, Set
 from ..extractor import extract_events
 from .base import BaseStrategy, GenerationContext
 from ._shared import (
+    escape_for_string,
     generate_action_docstring,
     generate_error_handling,
     generate_imports,
@@ -228,9 +229,11 @@ class FunctionJsonStrategy(BaseStrategy):
                 for ev in events:
                     if ctx.log:
                         lines.append(
-                            f"    logger.info('Sending event: %s', '{ev}')"
+                            f"    logger.info('Sending event: %s', '{escape_for_string(ev)}')"
                         )
-                    lines.append(f"    {await_prefix}interpreter.send('{ev}')")
+                    lines.append(
+                        f"    {await_prefix}interpreter.send('{escape_for_string(ev)}')"
+                    )
                     if ctx.sleep:
                         lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                     lines.append("")
@@ -378,9 +381,12 @@ class FunctionJsonStrategy(BaseStrategy):
                 lines.append(f"    # {ev.replace('_', ' ').title()}")
                 if ctx.log:
                     lines.append(
-                        f"    logger.info(" f"'Parent → sending %s', '{ev}')"
+                        f"    logger.info("
+                        f"'Parent → sending %s', '{escape_for_string(ev)}')"
                     )
-                lines.append(f"    {await_prefix}parent.send('{ev}')")
+                lines.append(
+                    f"    {await_prefix}parent.send('{escape_for_string(ev)}')"
+                )
                 if ctx.sleep:
                     lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                 lines.append("")
@@ -414,10 +420,10 @@ class FunctionJsonStrategy(BaseStrategy):
                     if ctx.log:
                         lines.append(
                             f"    logger.info("
-                            f"'{a_name} → sending %s', '{ev}')"
+                            f"'{a_name} → sending %s', '{escape_for_string(ev)}')"
                         )
                     lines.append(
-                        f"    {await_prefix}actors['{a_name}'].send('{ev}')"
+                        f"    {await_prefix}actors['{a_name}'].send('{escape_for_string(ev)}')"
                     )
                     if ctx.sleep:
                         lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
@@ -426,7 +432,7 @@ class FunctionJsonStrategy(BaseStrategy):
                 if ctx.log:
                     lines.append(
                         f"    logger.info("
-                        f"'No events declared in actor \"{a_name}\".')"
+                        f"'No events declared in actor \"{escape_for_string(a_name)}\".')"
                     )
                 else:
                     lines.append(
@@ -546,7 +552,8 @@ class FunctionJsonStrategy(BaseStrategy):
                 # Guards: no try/except, just return True
                 if log:
                     code_lines.append(
-                        f"    logger.info(" f'"Evaluating guard {original}")'
+                        f"    logger.info("
+                        f'"Evaluating guard {escape_for_string(original)}")'
                     )
                 code_lines.append("    # TODO: implement guard logic")
                 code_lines.append("    return True")
@@ -559,7 +566,9 @@ class FunctionJsonStrategy(BaseStrategy):
                         if component_type == "action"
                         else "Running service"
                     )
-                    body_lines.append(f'logger.info("{verb} {original}")')
+                    body_lines.append(
+                        f'logger.info("{verb} {escape_for_string(original)}")'
+                    )
                 if component_type == "action":
                     if is_async:
                         body_lines.append(
@@ -585,8 +594,12 @@ class FunctionJsonStrategy(BaseStrategy):
                     )
                 )
 
-            # service alias (module-level, no indent)
-            if fn_name != original and component_type == "service":
+            # service alias (module-level, no indent; only if valid identifier)
+            if (
+                fn_name != original
+                and component_type == "service"
+                and original.isidentifier()
+            ):
                 code_lines.append("")
                 code_lines.append(
                     f"{original} = {fn_name}  # alias for JSON name"

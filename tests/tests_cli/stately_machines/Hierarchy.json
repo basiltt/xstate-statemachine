@@ -1,0 +1,146 @@
+{
+  "id": "Hierarchy",
+  "initial": "OFF",
+  "states": {
+    "ERROR": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "!error",
+          "target": "ON"
+        },
+        {
+          "actions": [],
+          "guard": "off",
+          "target": "OFF"
+        }
+      ]
+    },
+    "OFF": {
+      "on": {
+        "on": [
+          {
+            "actions": [],
+            "guard": "!error",
+            "target": "ON"
+          },
+          {
+            "actions": [],
+            "guard": "error",
+            "target": "ERROR"
+          }
+        ]
+      }
+    },
+    "ON": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "error",
+          "target": "ERROR"
+        },
+        {
+          "actions": [],
+          "guard": "off",
+          "target": "OFF"
+        }
+      ],
+      "description": "sys_ready = !error && !off",
+      "initial": "STANDBY",
+      "states": {
+        "ACTIVE LEFT": {
+          "description": "sys_ready = !error && !off",
+          "initial": "READY",
+          "on": {
+            "!left": [
+              {
+                "actions": [],
+                "guard": "sys_ready",
+                "target": "STANDBY"
+              }
+            ]
+          },
+          "states": {
+            "CONTROL": {
+              "on": {
+                "!close_to_event": [
+                  {
+                    "actions": [],
+                    "guard": "sys_ready",
+                    "target": "READY"
+                  }
+                ]
+              }
+            },
+            "READY": {
+              "on": {
+                "close_to_event": [
+                  {
+                    "actions": [],
+                    "guard": "sys_ready",
+                    "target": "CONTROL"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "ACTIVE RIGHT": {
+          "description": "sys_ready = !error && !off",
+          "initial": "READY",
+          "on": {
+            "!right": [
+              {
+                "actions": [],
+                "guard": "sys_ready",
+                "target": "STANDBY"
+              }
+            ]
+          },
+          "states": {
+            "CONTROL": {
+              "on": {
+                "!close_to_event": [
+                  {
+                    "actions": [],
+                    "guard": "sys_ready",
+                    "target": "READY"
+                  }
+                ]
+              }
+            },
+            "READY": {
+              "on": {
+                "close_to_event": [
+                  {
+                    "actions": [],
+                    "guard": "sys_ready",
+                    "target": "CONTROL"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "STANDBY": {
+          "on": {
+            "left": [
+              {
+                "actions": [],
+                "guard": "sys_ready",
+                "target": "ACTIVE LEFT"
+              }
+            ],
+            "right": [
+              {
+                "actions": [],
+                "guard": "sys_ready",
+                "target": "ACTIVE RIGHT"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

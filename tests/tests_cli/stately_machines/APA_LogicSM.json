@@ -1,0 +1,321 @@
+{
+  "description": "Autonomous Parking Assist (APA) Logic State Machine \u2014 Mobileye Parking_Applications",
+  "id": "APA_LogicStateMachine",
+  "initial": "Idle",
+  "states": {
+    "Abort": {
+      "description": "Maneuver aborted by driver or system due to non-critical conditions. Vehicle is safely stopped: P gear applied, EPB engaged, turn signals cancelled. ResetParkingSignals() called. Driver fully resumes control.",
+      "on": {
+        "DRIVER_ACKNOWLEDGES": [
+          {
+            "actions": [],
+            "description": "Driver acknowledges abort message on HMI and exits.",
+            "target": "Idle"
+          }
+        ],
+        "RETRY_PARK_IN": [
+          {
+            "actions": [],
+            "description": "Driver chooses to retry scanning for a new spot (DrvrAsscSysBtnPush = SelectAutomaticParking).",
+            "target": "Search"
+          }
+        ]
+      }
+    },
+    "Idle": {
+      "description": "APA system is inactive. No parking session in progress. Driver has not activated APA.",
+      "on": {
+        "APA_BUTTON_PRESSED": [
+          {
+            "actions": [],
+            "description": "Driver presses APA button (DrvrAsscSysBtnPush = EnterAPA) or automatic activation (AutActvPrkgFctSwt = On)",
+            "target": "PreSearch"
+          }
+        ],
+        "RPA_BUTTON_PRESSED": [
+          {
+            "actions": [],
+            "description": "Remote Park Assist activation via Key Fob (MobDevRPAReq = Start)",
+            "target": "PreSearch"
+          }
+        ]
+      }
+    },
+    "ParkActive": {
+      "description": "Autonomous parking maneuver is actively executing. System controls steering and longitudinal motion (forward/reverse passes). HMI shows trajectory and obstacle proximity. Driver supervises but system drives. Turn signals activated as needed.",
+      "on": {
+        "CRITICAL_FAILURE": [
+          {
+            "actions": [],
+            "description": "Critical system/vehicle failure during maneuver: ADCU failure, vehicle failure, lateral/longitudinal control failure (PrkLatLgtFailr), SteerStsToParkAssi fault, BrkSysSts = Fault.",
+            "target": "ParkFailure"
+          }
+        ],
+        "DRIVER_ABORT": [
+          {
+            "actions": [],
+            "description": "Driver explicitly aborts the maneuver (DrvrAsscSysBtnPush = Abort).",
+            "target": "Abort"
+          }
+        ],
+        "DRIVER_INTERVENTION": [
+          {
+            "actions": [],
+            "description": "Driver overrides: accelerator pedal pressed (AccrPedlPsd = Yes), steering torque override (SteerStsToParkAssi = SteerAbortByDrvrIntv), or door opened during maneuver.",
+            "target": "Abort"
+          }
+        ],
+        "DRIVER_SUSPEND": [
+          {
+            "actions": [],
+            "description": "Driver requests temporary pause (DrvrAsscSysBtnPush = Suspend / PrkgIntrptReldBtn = NotContinue).",
+            "target": "ParkHold"
+          }
+        ],
+        "MANEUVER_COMPLETE": [
+          {
+            "actions": [],
+            "description": "Vehicle successfully parked within defined tolerances. KPI evaluation triggered.",
+            "target": "ParkComplete"
+          }
+        ],
+        "ODD_EXIT": [
+          {
+            "actions": [],
+            "description": "Vehicle exits ODD during maneuver (e.g., speed exceeds limit, critical USS/camera fault detected).",
+            "target": "ParkFailure"
+          }
+        ],
+        "SPOT_PARTIALLY_OBSCURED": [
+          {
+            "actions": [],
+            "description": "If spot is partially obscured: attempt next adjacent spot on same side (same-side fallback logic).",
+            "target": "PreParkActive"
+          }
+        ]
+      }
+    },
+    "ParkComplete": {
+      "description": "Parking maneuver successfully completed. Vehicle is within the defined parking spot tolerances. EPB applied, gear set to P. KPI compliance evaluated (APA-KPI-REQ-011). HMI displays success. Park Out option becomes available if ParkOutValid() conditions are met.",
+      "on": {
+        "DRIVER_ACKNOWLEDGES": [
+          {
+            "actions": [],
+            "description": "Driver acknowledges completion and exits APA session.",
+            "target": "Idle"
+          }
+        ],
+        "PARK_OUT_REQUESTED": [
+          {
+            "actions": [],
+            "description": "Driver requests Park Out (DrvrAsscSysBtnPush = ConfirmParkOut). Valid only if ParkOutValid() = true (drive distance and speed constraints from wakeup point met).",
+            "target": "PreParkActive"
+          }
+        ],
+        "RPA_EXIT_REQUESTED": [
+          {
+            "actions": [],
+            "description": "Remote Park Out requested via Key Fob (MobDevRPAReqRPAReq = RPA_Park_Out_Req).",
+            "target": "PreParkActive"
+          }
+        ]
+      }
+    },
+    "ParkFailure": {
+      "description": "Critical failure DURING active maneuver. Vehicle brought to immediate safe stop: P gear + EPB applied, turn signals cancelled, ResetParkingSignals() called. DrvrAsscSysDisp error output set (0x30\u20130x35 priority 1\u20135). Driver must take immediate control.",
+      "on": {
+        "DRIVER_ACKNOWLEDGES": [
+          {
+            "actions": [],
+            "description": "Driver acknowledges the failure and takes control. Session ends.",
+            "target": "Idle"
+          }
+        ]
+      }
+    },
+    "ParkHold": {
+      "description": "Maneuver temporarily paused. Vehicle is held stationary (EPB applied, P gear if needed). Driver can choose to resume or cancel. HMI prompts driver for action.",
+      "on": {
+        "CRITICAL_FAILURE": [
+          {
+            "actions": [],
+            "description": "Critical system failure detected while in hold state.",
+            "target": "ParkFailure"
+          }
+        ],
+        "DRIVER_CANCEL": [
+          {
+            "actions": [],
+            "description": "Driver decides not to continue (DrvrAsscSysBtnPush = Abort / PrkgIntrptReldBtn = NotContinue).",
+            "target": "Abort"
+          }
+        ],
+        "DRIVER_RESUMES": [
+          {
+            "actions": [],
+            "description": "Driver resumes maneuver (DrvrAsscSysBtnPush = Continue / PrkgIntrptReldBtn = Continue).",
+            "target": "ParkActive"
+          }
+        ],
+        "HOLD_TIMEOUT": [
+          {
+            "actions": [],
+            "description": "Hold timeout expired with no driver action; system safely aborts.",
+            "target": "Abort"
+          }
+        ]
+      }
+    },
+    "PreParkActive": {
+      "description": "Spot confirmed. Vehicle stops. System prepares trajectory. Driver is instructed to stop the vehicle and approve maneuver start. System requests longitudinal control (AsyALgtCtrlMod = APA) and lateral control (AsyLatCtrlModReq = APA).",
+      "on": {
+        "DRIVER_APPROVES_MANEUVER": [
+          {
+            "actions": [],
+            "description": "Driver approves start of autonomous maneuver (DrvrAsscSysBtnPush = StartParking / ConfirmButton). Vehicle is stationary, EPB or brake hold engaged.",
+            "target": "ParkActive"
+          }
+        ],
+        "DRIVER_CANCEL": [
+          {
+            "actions": [],
+            "description": "Driver cancels before maneuver starts (DrvrAsscSysBtnPush = Abort / ExitAPA).",
+            "target": "Abort"
+          }
+        ],
+        "DRIVER_SUSPEND": [
+          {
+            "actions": [],
+            "description": "Driver presses Suspend (DrvrAsscSysBtnPush = Suspend) to temporarily pause.",
+            "target": "ParkHold"
+          }
+        ],
+        "ODD_VIOLATION": [
+          {
+            "actions": [],
+            "description": "Critical failure before maneuver start (ADCU failure, vehicle failure, severe sensor fault).",
+            "target": "ParkFailure"
+          }
+        ],
+        "SPOT_NOT_AVAILABLE": [
+          {
+            "actions": [],
+            "description": "Selected spot becomes unavailable; revert to searching for next spot.",
+            "target": "Search"
+          }
+        ]
+      }
+    },
+    "PreParkFailure": {
+      "description": "APA cannot be activated or maintained due to ODD/precondition failure BEFORE maneuver started. DrvrAsscSysDisp output set per error priority table (0x30\u20130x4F). Reason displayed on HMI (e.g., road slope, rain, USS fault, ADCU failure).",
+      "on": {
+        "DRIVER_ACKNOWLEDGES": [
+          {
+            "actions": [],
+            "description": "Driver acknowledges the failure notification.",
+            "target": "Idle"
+          }
+        ],
+        "FAILURE_CLEARED": [
+          {
+            "actions": [],
+            "description": "Failure condition is resolved; system returns to idle.",
+            "target": "Idle"
+          }
+        ]
+      }
+    },
+    "PreSearch": {
+      "description": "APA is activated. System is initializing and checking preconditions (ODD validation, sensor health, vehicle speed, gear, etc.) before scanning for parking spots.",
+      "on": {
+        "DRIVER_CANCEL": [
+          {
+            "actions": [],
+            "description": "Driver presses Cancel (DrvrAsscSysBtnPush = ExitAPA or Abort).",
+            "target": "Idle"
+          }
+        ],
+        "PRECONDITIONS_FAILED": [
+          {
+            "actions": [],
+            "description": "ODD conditions not met (e.g., VehicleFailure, ADCUFailure, camera/USS/RADAR fault, road slope exceeded).",
+            "target": "PreParkFailure"
+          }
+        ],
+        "PRECONDITIONS_MET": [
+          {
+            "actions": [],
+            "description": "All ODD conditions satisfied: vehicle speed within range, sensors operational, no system failures.",
+            "target": "Search"
+          }
+        ]
+      }
+    },
+    "Search": {
+      "description": "APA is actively scanning for available parking spots while the driver drives slowly along the road. Detected spots are displayed on the HMI. Driver remains fully responsible.",
+      "on": {
+        "DRIVER_CANCEL": [
+          {
+            "actions": [],
+            "description": "Driver exits APA (DrvrAsscSysBtnPush = ExitAPA / Abort).",
+            "target": "Idle"
+          }
+        ],
+        "ODD_VIOLATION": [
+          {
+            "actions": [],
+            "description": "An ODD condition is violated during search (sensor failure, speed exceeded, etc.).",
+            "target": "PreParkFailure"
+          }
+        ],
+        "SPOT_DETECTED": [
+          {
+            "actions": [],
+            "description": "One or more valid parking spots detected and presented to driver on AVD UI.",
+            "target": "SpotPresentation"
+          }
+        ]
+      }
+    },
+    "SpotPresentation": {
+      "description": "Detected parking spots are shown to the driver on the HMI. Driver can browse, select, or confirm a spot. System may highlight a recommended slot (RecommendSlotInAPAGrpPrkgSlotSlctByDrvr). Driver can also manually choose a spot (CustomPrkgLotSwt / PrkgTouchCoornReq).",
+      "on": {
+        "DRIVER_CANCEL": [
+          {
+            "actions": [],
+            "description": "Driver cancels (DrvrAsscSysBtnPush = ExitAPA / Cancel).",
+            "target": "Idle"
+          }
+        ],
+        "DRIVER_CONFIRMS_SPOT": [
+          {
+            "actions": [],
+            "description": "Driver selects and confirms a parking spot (DrvrAsscSysBtnPush = StartParking or ConfirmButton).",
+            "target": "PreParkActive"
+          }
+        ],
+        "DRIVER_SELECTS_PARK_OUT": [
+          {
+            "actions": [],
+            "description": "Driver selects Park Out mode (DrvrFbOfPrkgMod2 = HorizontalLeftParkingOut / PerpendicularParkingOut etc.).",
+            "target": "PreParkActive"
+          }
+        ],
+        "ODD_VIOLATION": [
+          {
+            "actions": [],
+            "description": "System or vehicle failure detected during spot presentation.",
+            "target": "PreParkFailure"
+          }
+        ],
+        "SPOT_LOST": [
+          {
+            "actions": [],
+            "description": "Previously detected spot is no longer available; return to searching.",
+            "target": "Search"
+          }
+        ]
+      }
+    }
+  }
+}

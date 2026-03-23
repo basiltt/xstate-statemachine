@@ -1,0 +1,271 @@
+{
+  "id": "APA",
+  "initial": "Idle",
+  "states": {
+    "Abort": {
+      "on": {
+        "BTN: Acknowledge": [
+          {
+            "actions": [],
+            "target": "Idle"
+          }
+        ],
+        "BTN: SelectAutomaticParking [Retry]": [
+          {
+            "actions": [],
+            "target": "Search"
+          }
+        ]
+      }
+    },
+    "Idle": {
+      "on": {
+        "BTN: EnterAPA / AutActvPrkgFctSwt=On": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "PreSearch"
+          }
+        ],
+        "BTN: MobDevRPAReq=Start [RPA]": [
+          {
+            "actions": [],
+            "target": "PreSearch"
+          }
+        ]
+      }
+    },
+    "ParkActive": {
+      "on": {
+        "BTN: Abort": [
+          {
+            "actions": [],
+            "target": "Abort"
+          }
+        ],
+        "BTN: Suspend / PrkgIntrptReldBtn=NotContinue": [
+          {
+            "actions": [],
+            "target": "ParkHold"
+          }
+        ],
+        "CriticalFailure() / PrkLatLgtFailr": [
+          {
+            "actions": [],
+            "target": "ParkFailure"
+          }
+        ],
+        "DriverOverride: AccrPedl / SteerTorque / DoorOpen": [
+          {
+            "actions": [],
+            "target": "Abort"
+          }
+        ],
+        "Maneuver Complete / InTolerance": [
+          {
+            "actions": [],
+            "target": "ParkComplete"
+          }
+        ],
+        "ODD Exit / Speed Exceeded": [
+          {
+            "actions": [],
+            "target": "ParkFailure"
+          }
+        ],
+        "Spot Partially Obscured \u2192 Next Spot": [
+          {
+            "actions": [],
+            "target": "PreParkActive"
+          }
+        ]
+      }
+    },
+    "ParkComplete": {
+      "on": {
+        "BTN: Acknowledge / Exit": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "Idle"
+          }
+        ],
+        "BTN: ConfirmParkOut [ParkOutValid=true]": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "PreParkActive"
+          }
+        ],
+        "MobDevRPAReq: RPA_Park_Out_Req": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "PreParkActive"
+          }
+        ]
+      }
+    },
+    "ParkFailure": {
+      "on": {
+        "BTN: Acknowledge / Driver Takes Control": [
+          {
+            "actions": [],
+            "target": "Idle"
+          }
+        ]
+      }
+    },
+    "ParkHold": {
+      "on": {
+        "BTN: Abort / NotContinue": [
+          {
+            "actions": [],
+            "target": "Abort"
+          }
+        ],
+        "BTN: Continue / PrkgIntrptReldBtn=Continue": [
+          {
+            "actions": [],
+            "target": "ParkActive"
+          }
+        ],
+        "CriticalFailure()": [
+          {
+            "actions": [],
+            "target": "ParkFailure"
+          }
+        ],
+        "Hold Timeout": [
+          {
+            "actions": [],
+            "target": "Abort"
+          }
+        ]
+      }
+    },
+    "PreParkActive": {
+      "on": {
+        "BTN: Abort / ExitAPA": [
+          {
+            "actions": [],
+            "target": "Abort"
+          }
+        ],
+        "BTN: StartParking / Confirm \u2192 Vehicle Stopped": [
+          {
+            "actions": [],
+            "target": "ParkActive"
+          }
+        ],
+        "BTN: Suspend": [
+          {
+            "actions": [],
+            "target": "ParkHold"
+          }
+        ],
+        "CriticalFailure()": [
+          {
+            "actions": [],
+            "target": "ParkFailure"
+          }
+        ],
+        "Spot Unavailable": [
+          {
+            "actions": [],
+            "target": "Search"
+          }
+        ]
+      }
+    },
+    "PreParkFailure": {
+      "on": {
+        "Failure Cleared / BTN: Acknowledge": [
+          {
+            "actions": [],
+            "target": "Idle"
+          }
+        ]
+      }
+    },
+    "PreSearch": {
+      "on": {
+        "BTN: ExitAPA / Abort": [
+          {
+            "actions": [],
+            "target": "Idle"
+          }
+        ],
+        "ODD FAIL / SystemFailure()": [
+          {
+            "actions": [],
+            "target": "PreParkFailure"
+          }
+        ],
+        "ODD OK / Sensors Healthy": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "Search"
+          }
+        ]
+      }
+    },
+    "Search": {
+      "on": {
+        "BTN: ExitAPA / Abort": [
+          {
+            "actions": [],
+            "target": "Idle"
+          }
+        ],
+        "ODD Violation / SensorFault": [
+          {
+            "actions": [],
+            "target": "PreParkFailure"
+          }
+        ],
+        "Parking Spot Detected": [
+          {
+            "actions": [],
+            "target": "SpotPresentation"
+          }
+        ]
+      }
+    },
+    "SpotPresentation": {
+      "on": {
+        "BTN: ConfirmParkOut [ParkOut]": [
+          {
+            "actions": [],
+            "target": "PreParkActive"
+          }
+        ],
+        "BTN: ExitAPA / Cancel": [
+          {
+            "actions": [],
+            "target": "Idle"
+          }
+        ],
+        "BTN: StartParking / ConfirmButton": [
+          {
+            "actions": [],
+            "target": "PreParkActive"
+          }
+        ],
+        "ODD Violation": [
+          {
+            "actions": [],
+            "target": "PreParkFailure"
+          }
+        ],
+        "Spot Lost": [
+          {
+            "actions": [],
+            "target": "Search"
+          }
+        ]
+      }
+    }
+  }
+}

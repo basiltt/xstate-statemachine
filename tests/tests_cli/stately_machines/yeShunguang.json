@@ -1,0 +1,326 @@
+{
+  "context": {
+    "bearerStacks": 0,
+    "enlightenedTimer": 0,
+    "hasCulmination": false,
+    "qingmingSwordForce": 0,
+    "veilVulnerability": 0
+  },
+  "id": "yeShunguang",
+  "initial": "offField",
+  "states": {
+    "offField": {
+      "on": {
+        "ENTER_BATTLEFIELD": [
+          {
+            "actions": [
+              {
+                "type": "grantBattlefieldForce"
+              }
+            ],
+            "target": "onField"
+          }
+        ]
+      }
+    },
+    "onField": {
+      "initial": "normal",
+      "states": {
+        "enlightenedMind": {
+          "entry": {
+            "type": "resetEnlightenedTimer"
+          },
+          "exit": {
+            "type": "convertBearerToForce"
+          },
+          "on": {
+            "USE_ULTIMATE": [
+              {
+                "actions": [
+                  {
+                    "type": "resetEnlightenedTimer"
+                  }
+                ]
+              }
+            ]
+          },
+          "states": {
+            "bearer": {
+              "initial": "idle",
+              "states": {
+                "idle": {
+                  "on": {
+                    "TEAMMATE_ETHER_VEIL": [
+                      {
+                        "actions": [
+                          {
+                            "type": "addBearerStacks"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "etherVeil": {
+              "initial": "active",
+              "states": {
+                "active": {
+                  "on": {
+                    "ENEMY_STUNNED": [
+                      {
+                        "actions": [
+                          {
+                            "type": "applyVeilVulnerability"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "expired": {
+                  "type": "final"
+                }
+              }
+            },
+            "stance": {
+              "initial": "airborne",
+              "states": {
+                "airborne": {
+                  "on": {
+                    "BASIC_ATTACK": [
+                      {
+                        "actions": [],
+                        "target": ".sunderlight"
+                      }
+                    ],
+                    "EX_SOARING_LIGHT": [
+                      {
+                        "actions": [
+                          {
+                            "type": "consumeForceForSoaringLight"
+                          }
+                        ],
+                        "guard": "hasSwordForce",
+                        "target": ".soaringLight"
+                      }
+                    ],
+                    "SPECIAL_RETURN_TO_DUST": [
+                      {
+                        "actions": [],
+                        "target": ".annihilationPending"
+                      }
+                    ],
+                    "SWAP_OUT": [
+                      {
+                        "actions": [],
+                        "target": ".annihilationPending"
+                      }
+                    ]
+                  },
+                  "states": {
+                    "annihilationPending": {
+                      "always": {
+                        "actions": [
+                          {
+                            "type": "sunderightAnnihilation"
+                          }
+                        ],
+                        "target": "#yeShunguang.onField.enlightenedMind.stance.grounded"
+                      }
+                    },
+                    "idle": {},
+                    "soaringLight": {
+                      "entry": {
+                        "type": "setCulmination"
+                      },
+                      "exit": {
+                        "type": "clearCulmination"
+                      },
+                      "on": {
+                        "BASIC_ATTACK": [
+                          {
+                            "actions": [],
+                            "target": "sunderlight"
+                          }
+                        ]
+                      }
+                    },
+                    "sunderlight": {
+                      "after": {
+                        "3000": [
+                          {
+                            "actions": [
+                              {
+                                "type": "sunderightAnnihilation"
+                              }
+                            ],
+                            "target": "#yeShunguang.onField.enlightenedMind.stance.grounded"
+                          }
+                        ]
+                      },
+                      "on": {
+                        "BASIC_ATTACK": [
+                          {
+                            "actions": [
+                              {
+                                "type": "sunderightAnnihilation"
+                              }
+                            ],
+                            "target": "#yeShunguang.onField.enlightenedMind.stance.grounded"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                "grounded": {
+                  "on": {
+                    "HOLD_SPECIAL_EXIT": [
+                      {
+                        "actions": []
+                      }
+                    ],
+                    "SPECIAL_RETURN_TO_DUST": [
+                      {
+                        "actions": []
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "timer": {
+              "initial": "running",
+              "states": {
+                "paused": {
+                  "on": {
+                    "SWAP_IN": [
+                      {
+                        "actions": [],
+                        "target": "running"
+                      }
+                    ]
+                  }
+                },
+                "running": {
+                  "on": {
+                    "SWAP_OUT": [
+                      {
+                        "actions": [],
+                        "target": "paused"
+                      }
+                    ],
+                    "TIMER_TICK": [
+                      {
+                        "actions": [],
+                        "guard": "timerExpired"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "tickTimer"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "type": "parallel"
+        },
+        "exiting": {
+          "always": {
+            "actions": [
+              {
+                "type": "convertBearerToForce"
+              }
+            ],
+            "target": "normal"
+          }
+        },
+        "normal": {
+          "initial": "buildingForce",
+          "on": {
+            "QUICK_ASSIST": [
+              {
+                "actions": [
+                  {
+                    "type": "enterEnlightenedMind"
+                  }
+                ],
+                "target": "enlightenedMind"
+              }
+            ],
+            "USE_ENTRY_SKILL": [
+              {
+                "actions": [
+                  {
+                    "type": "enterEnlightenedMind"
+                  }
+                ],
+                "target": "enlightenedMind"
+              }
+            ],
+            "USE_ULTIMATE": [
+              {
+                "actions": [
+                  {
+                    "type": "enterEnlightenedMind"
+                  }
+                ],
+                "target": "enlightenedMind"
+              }
+            ]
+          },
+          "states": {
+            "buildingForce": {
+              "always": {
+                "actions": [],
+                "guard": "hasMaxForce",
+                "target": "readyToEnter"
+              },
+              "on": {
+                "BASIC_ATTACK": [
+                  {
+                    "actions": [
+                      {
+                        "type": "gainSwordForce"
+                      }
+                    ]
+                  }
+                ],
+                "TEAMMATE_ETHER_VEIL": [
+                  {
+                    "actions": [
+                      {
+                        "type": "gainThreeForce"
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            "readyToEnter": {
+              "on": {
+                "BASIC_ATTACK": [
+                  {
+                    "actions": [
+                      {
+                        "type": "enterEnlightenedMind"
+                      }
+                    ],
+                    "target": "#yeShunguang.onField.enlightenedMind"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

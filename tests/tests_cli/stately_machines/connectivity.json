@@ -1,0 +1,243 @@
+{
+  "context": {
+    "apiStatus": "checking",
+    "isAuthenticated": false,
+    "isOnline": true,
+    "lastError": null,
+    "retryCount": 0,
+    "syncStatus": "disconnected"
+  },
+  "id": "connectivity",
+  "initial": "Initializing",
+  "on": {
+    "api_health_changed": [
+      {
+        "actions": [
+          {
+            "type": "inline:connectivity#api_health_changed[-1]#transition[0]"
+          }
+        ]
+      }
+    ],
+    "auth_changed": [
+      {
+        "actions": [
+          {
+            "type": "inline:connectivity#auth_changed[-1]#transition[0]"
+          }
+        ]
+      }
+    ],
+    "network_changed": [
+      {
+        "actions": [
+          {
+            "type": "inline:connectivity#network_changed[-1]#transition[0]"
+          }
+        ]
+      }
+    ],
+    "powersync_status_changed": [
+      {
+        "actions": [
+          {
+            "type": "inline:connectivity#powersync_status_changed[-1]#transition[0]"
+          }
+        ]
+      }
+    ]
+  },
+  "states": {
+    "Checking": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "inline:connectivity.Checking#always[-1]#guard",
+          "target": "Offline"
+        },
+        {
+          "actions": [],
+          "guard": "inline:connectivity.Checking#always[-1]#guard",
+          "target": "Unauthenticated"
+        },
+        {
+          "actions": [],
+          "guard": "inline:connectivity.Checking#always[-1]#guard",
+          "target": "Connected"
+        },
+        {
+          "actions": [],
+          "guard": "inline:connectivity.Checking#always[-1]#guard",
+          "target": "Reconnecting"
+        }
+      ],
+      "description": "Transient state: evaluates conditions to determine which state to move to.",
+      "entry": {
+        "type": "inline:connectivity.Checking#entry[0]"
+      },
+      "on": {
+        "api_health_changed": [
+          {
+            "actions": [],
+            "guard": "inline:connectivity.Checking#api_health_changed[-1]#guard",
+            "target": "Reconnecting"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:connectivity.Checking#api_health_changed[-1]#transition[0]"
+              }
+            ]
+          }
+        ],
+        "powersync_status_changed": [
+          {
+            "actions": [],
+            "guard": "inline:connectivity.Checking#powersync_status_changed[-1]#guard",
+            "target": "Reconnecting"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:connectivity.Checking#powersync_status_changed[-1]#transition[0]"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "Connected": {
+      "description": "Internet is available, session is valid, API and PowerSync are both reachable.",
+      "on": {
+        "api_health_changed": [
+          {
+            "actions": [],
+            "guard": "inline:connectivity.Connected#api_health_changed[-1]#guard",
+            "target": "Reconnecting"
+          }
+        ],
+        "auth_changed": [
+          {
+            "actions": [],
+            "guard": "inline:connectivity.Connected#auth_changed[-1]#guard",
+            "target": "Unauthenticated"
+          }
+        ],
+        "network_changed": [
+          {
+            "actions": [],
+            "guard": "inline:connectivity.Connected#network_changed[-1]#guard",
+            "target": "Offline"
+          }
+        ],
+        "powersync_status_changed": [
+          {
+            "actions": [],
+            "guard": "inline:connectivity.Connected#powersync_status_changed[-1]#guard",
+            "target": "Reconnecting"
+          }
+        ]
+      }
+    },
+    "Initializing": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "inline:connectivity.Initializing#always[-1]#guard",
+          "target": "Offline"
+        },
+        {
+          "actions": [],
+          "guard": "inline:connectivity.Initializing#always[-1]#guard",
+          "target": "Unauthenticated"
+        },
+        {
+          "actions": [],
+          "target": "Checking"
+        }
+      ],
+      "description": "Checks initial context to route to the correct state on mount."
+    },
+    "Offline": {
+      "description": "The device has no internet access. App works fully offline (local-first).",
+      "on": {
+        "network_changed": [
+          {
+            "actions": [],
+            "guard": "inline:connectivity.Offline#network_changed[-1]#guard",
+            "target": "Checking"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:connectivity.Offline#network_changed[-1]#transition[0]"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "Reconnecting": {
+      "after": {
+        "BACKOFF_DELAY": [
+          {
+            "actions": [],
+            "target": "#connectivity.Checking"
+          }
+        ]
+      },
+      "description": "One or more backends are unreachable. Will auto-retry with exponential backoff + jitter.",
+      "entry": {
+        "type": "inline:connectivity.Reconnecting#entry[0]"
+      },
+      "on": {
+        "network_changed": [
+          {
+            "actions": [],
+            "guard": "inline:connectivity.Reconnecting#network_changed[-1]#guard",
+            "target": "Offline"
+          }
+        ],
+        "retry": [
+          {
+            "actions": [],
+            "target": "Checking"
+          }
+        ]
+      }
+    },
+    "Unauthenticated": {
+      "description": "The device is online but there is no authenticated session.",
+      "on": {
+        "auth_changed": [
+          {
+            "actions": [],
+            "guard": "inline:connectivity.Unauthenticated#auth_changed[-1]#guard",
+            "target": "Checking"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:connectivity.Unauthenticated#auth_changed[-1]#transition[0]"
+              }
+            ]
+          }
+        ],
+        "network_changed": [
+          {
+            "actions": [],
+            "guard": "inline:connectivity.Unauthenticated#network_changed[-1]#guard",
+            "target": "Offline"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:connectivity.Unauthenticated#network_changed[-1]#transition[0]"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

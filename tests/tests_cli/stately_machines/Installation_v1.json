@@ -1,0 +1,70 @@
+{
+  "id": "Installation of Experience",
+  "initial": "Idle",
+  "on": {
+    "EMERGENCY_BUTTON": [
+      {
+        "actions": [],
+        "target": ".Exiting"
+      }
+    ]
+  },
+  "states": {
+    "Exiting": {
+      "after": {
+        "2000": [
+          {
+            "actions": [],
+            "target": "#Installation of Experience.Idle"
+          }
+        ]
+      },
+      "on": {
+        "INSIDE_MOTION": [
+          {
+            "actions": [],
+            "target": "Exiting"
+          }
+        ]
+      }
+    },
+    "Idle": {
+      "on": {
+        "INSIDE_MOTION": [
+          {
+            "actions": [],
+            "target": "TrappedDelay"
+          }
+        ]
+      }
+    },
+    "Trapped": {
+      "after": {
+        "30000": [
+          {
+            "actions": [],
+            "target": "#Installation of Experience.Exiting"
+          }
+        ]
+      },
+      "on": {
+        "INSIDE_MOTION": [
+          {
+            "actions": [],
+            "target": "Trapped"
+          }
+        ]
+      }
+    },
+    "TrappedDelay": {
+      "after": {
+        "5000": [
+          {
+            "actions": [],
+            "target": "#Installation of Experience.Trapped"
+          }
+        ]
+      }
+    }
+  }
+}

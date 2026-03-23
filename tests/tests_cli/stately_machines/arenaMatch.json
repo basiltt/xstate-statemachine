@@ -1,0 +1,34 @@
+{
+  "context": {
+    "playersCount": 0
+  },
+  "id": "arenaMatch",
+  "initial": "waiting_opponent",
+  "on": {
+    "PLAYERS_COUNT_SYNC": [
+      {
+        "actions": [
+          {
+            "type": "syncPlayersCount"
+          }
+        ]
+      }
+    ]
+  },
+  "states": {
+    "ready": {
+      "always": {
+        "actions": [],
+        "guard": "isMissingOpponent",
+        "target": "waiting_opponent"
+      }
+    },
+    "waiting_opponent": {
+      "always": {
+        "actions": [],
+        "guard": "hasEnoughPlayers",
+        "target": "ready"
+      }
+    }
+  }
+}

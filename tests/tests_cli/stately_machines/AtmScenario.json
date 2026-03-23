@@ -1,0 +1,2915 @@
+{
+  "id": "AtmScenario",
+  "states": {
+    "AcceptPage": {
+      "on": {
+        "BACK": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [],
+            "target": "OnPayAction"
+          }
+        ],
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "OnPayAction"
+          }
+        ],
+        "NEXT": [
+          {
+            "actions": [],
+            "target": "OnPayAction"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "OnPayAction"
+          }
+        ],
+        "TIMEOUT_NO_BUTTON": [
+          {
+            "actions": [],
+            "target": "OnPayAction"
+          }
+        ]
+      }
+    },
+    "BalanceMenuPage": {
+      "on": {
+        "BACK": [
+          {
+            "actions": [],
+            "target": "MainMenuPage"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [],
+            "target": "ErrorPage"
+          }
+        ],
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "NEXT": [
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.BalanceMenuPage#NEXT[-1]#transition[0]"
+              }
+            ],
+            "guard": "isPrintBalance",
+            "target": "BalanceOnReceiptFlow"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.BalanceMenuPage#NEXT[-1]#transition[0]"
+              }
+            ],
+            "guard": "isShowBalancePage",
+            "target": "BalanceOnScreenFlow"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "CapturedCardStateAction"
+          }
+        ],
+        "TIMEOUT_NO_BUTTON": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ]
+      }
+    },
+    "BalanceOnReceiptFlow": {
+      "states": {
+        "CheckPrinterStatusAction": {
+          "invoke": {
+            "id": "0.AtmScenario.BalanceOnReceiptFlow.CheckPrinterStatusAction",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.BalanceOnReceiptFlow.CheckPrinterStatusAction"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.BalanceOnReceiptFlow.CheckPrinterStatusAction": [
+              {
+                "actions": [],
+                "target": "PaperEndPage"
+              },
+              {
+                "actions": [],
+                "target": "GetCommissionAction"
+              },
+              {
+                "actions": [],
+                "target": "CommissionMessagePage"
+              },
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.BalanceOnReceiptFlow.CheckPrinterStatusAction": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "CommissionMessagePage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "LoadingBeforeGetBalance"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "FinishPage": {
+          "on": {
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "#AtmScenario.FinishPage"
+              }
+            ]
+          }
+        },
+        "GetBalanceAction": {
+          "invoke": {
+            "id": "0.AtmScenario.BalanceOnReceiptFlow.GetBalanceAction",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.BalanceOnReceiptFlow.GetBalanceAction"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.BalanceOnReceiptFlow.GetBalanceAction": [
+              {
+                "actions": [],
+                "target": "PrintReceiptPage"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.BalanceOnReceiptFlow.GetBalanceAction": [
+              {
+                "actions": [],
+                "target": "NotEnoughFundsPage"
+              }
+            ]
+          }
+        },
+        "GetCommissionAction": {
+          "invoke": {
+            "id": "0.AtmScenario.BalanceOnReceiptFlow.GetCommissionAction",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.BalanceOnReceiptFlow.GetCommissionAction"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.BalanceOnReceiptFlow.GetCommissionAction": [
+              {
+                "actions": [],
+                "target": "CommissionMessagePage"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.BalanceOnReceiptFlow.GetCommissionAction": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "GoToCapturedCardStateAction": {},
+        "GoToErrorPage": {},
+        "GoToFinishPage": {},
+        "GoToMainMenuPage": {},
+        "GoToPresentedCardStateAction": {},
+        "LoadingBeforeGetBalance": {
+          "invoke": {
+            "id": "0.AtmScenario.BalanceOnReceiptFlow.LoadingBeforeGetBalance",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.BalanceOnReceiptFlow.LoadingBeforeGetBalance"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.BalanceOnReceiptFlow.LoadingBeforeGetBalance": [
+              {
+                "actions": [],
+                "target": "GetBalanceAction"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.BalanceOnReceiptFlow.LoadingBeforeGetBalance": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "LoadingPage": {
+          "invoke": {
+            "id": "0.AtmScenario.BalanceOnReceiptFlow.LoadingPage",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.BalanceOnReceiptFlow.LoadingPage"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.BalanceOnReceiptFlow.LoadingPage": [
+              {
+                "actions": [],
+                "target": "CheckPrinterStatusAction"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.BalanceOnReceiptFlow.LoadingPage": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "NotEnoughFundsPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "PaperEndPage": {
+          "entry": {
+            "type": "entry"
+          },
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "PrintReceiptPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "BalanceOnScreenFlow": {
+      "states": {
+        "BalancePage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "ChoosInitialStateAction": {},
+        "CommissionMessagePage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "LoadingBeforeGetBalance"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "FinishPage": {
+          "on": {
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "#AtmScenario.FinishPage"
+              }
+            ]
+          }
+        },
+        "GetBalanceAction": {
+          "invoke": {
+            "id": "0.AtmScenario.BalanceOnScreenFlow.GetBalanceAction",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.BalanceOnScreenFlow.GetBalanceAction"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.BalanceOnScreenFlow.GetBalanceAction": [
+              {
+                "actions": [],
+                "target": "BalancePage"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.BalanceOnScreenFlow.GetBalanceAction": [
+              {
+                "actions": [],
+                "target": "NotEnoughFundsPage"
+              }
+            ]
+          }
+        },
+        "GetCommissionAction": {
+          "invoke": {
+            "id": "0.AtmScenario.BalanceOnScreenFlow.GetCommissionAction",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.BalanceOnScreenFlow.GetCommissionAction"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.BalanceOnScreenFlow.GetCommissionAction": [
+              {
+                "actions": [],
+                "target": "CommissionMessagePage"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.BalanceOnScreenFlow.GetCommissionAction": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "GoToCapturedCardStateAction": {},
+        "GoToErrorPage": {},
+        "GoToFinishPage": {},
+        "GoToMainMenuPage": {},
+        "GoToPresentedCardStateAction": {},
+        "LoadingBeforeGetBalance": {
+          "invoke": {
+            "id": "0.AtmScenario.BalanceOnScreenFlow.LoadingBeforeGetBalance",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.BalanceOnScreenFlow.LoadingBeforeGetBalance"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.BalanceOnScreenFlow.LoadingBeforeGetBalance": [
+              {
+                "actions": [],
+                "target": "GetBalanceAction"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.BalanceOnScreenFlow.LoadingBeforeGetBalance": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "LoadingPage": {
+          "invoke": {
+            "id": "0.AtmScenario.BalanceOnScreenFlow.LoadingPage",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.BalanceOnScreenFlow.LoadingPage"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.BalanceOnScreenFlow.LoadingPage": [
+              {
+                "actions": [],
+                "target": "GetCommissionAction"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.BalanceOnScreenFlow.LoadingPage": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "NotEnoughFundsPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "CapturedCardStateAction": {},
+    "CardHoldPage": {
+      "on": {
+        "NEXT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "TIMEOUT_NO_BUTTON": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ]
+      }
+    },
+    "CashWithdrawalFlow": {
+      "states": {
+        "ActivityLimitExceededPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "BeforeCustomSelectAmountPage": {
+          "invoke": {
+            "id": "0.AtmScenario.CashWithdrawalFlow.BeforeCustomSelectAmountPage",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.CashWithdrawalFlow.BeforeCustomSelectAmountPage"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.CashWithdrawalFlow.BeforeCustomSelectAmountPage": [
+              {
+                "actions": [],
+                "target": "CustomSelectAmountPage"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.CashWithdrawalFlow.BeforeCustomSelectAmountPage": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "CashHoldPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": []
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ]
+          }
+        },
+        "ChangeWithdrawalAmountPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "SelectAmountPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "CheckAmountToWithdrawalPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "ChangeWithdrawalAmountPage"
+              },
+              {
+                "actions": [],
+                "target": "LoadingBeforeGetCommission"
+              },
+              {
+                "actions": [],
+                "target": "CommissionMessagePage"
+              },
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "CheckPrinterStatusAction": {
+          "invoke": {
+            "id": "0.AtmScenario.CashWithdrawalFlow.CheckPrinterStatusAction",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.CashWithdrawalFlow.CheckPrinterStatusAction"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.CashWithdrawalFlow.CheckPrinterStatusAction": [
+              {
+                "actions": [],
+                "target": "PaperEndPage"
+              },
+              {
+                "actions": [],
+                "target": "NeedPrintReceiptPage"
+              },
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.CashWithdrawalFlow.CheckPrinterStatusAction": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "CheckWithdrawalAction": {
+          "invoke": {
+            "id": "0.AtmScenario.CashWithdrawalFlow.CheckWithdrawalAction",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.CashWithdrawalFlow.CheckWithdrawalAction"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.CashWithdrawalFlow.CheckWithdrawalAction": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              },
+              {
+                "actions": [],
+                "target": "NotEnoughFundsPage"
+              },
+              {
+                "actions": [],
+                "target": "ActivityLimitExceededPage"
+              },
+              {
+                "actions": [],
+                "target": "WithdrawalCardPresentedPage"
+              },
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.CashWithdrawalFlow.CheckWithdrawalAction": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "CommissionMessagePage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "LoadingBeforeCheckPrinterStatus"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "CustomSelectAmountPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "CheckAmountToWithdrawalPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "FetchCassetteStatusPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "NoCashForWithdrawalsPage"
+              },
+              {
+                "actions": [],
+                "target": "SelectAmountPage"
+              },
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "FinishPage": {
+          "on": {
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "#AtmScenario.FinishPage"
+              }
+            ]
+          }
+        },
+        "GetCommissionAction": {
+          "invoke": {
+            "id": "0.AtmScenario.CashWithdrawalFlow.GetCommissionAction",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.CashWithdrawalFlow.GetCommissionAction"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.CashWithdrawalFlow.GetCommissionAction": [
+              {
+                "actions": [],
+                "target": "WithdrawalOverdrafPage"
+              },
+              {
+                "actions": [],
+                "target": "CommissionMessagePage"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.CashWithdrawalFlow.GetCommissionAction": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "GoToCapturedCardStateAction": {},
+        "GoToErrorPage": {},
+        "GoToFinishPage": {},
+        "GoToMainMenuPage": {},
+        "GoToPresentedCardStateAction": {},
+        "LoadingBeforeCheckPrinterStatus": {
+          "invoke": {
+            "id": "0.AtmScenario.CashWithdrawalFlow.LoadingBeforeCheckPrinterStatus",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.CashWithdrawalFlow.LoadingBeforeCheckPrinterStatus"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.CashWithdrawalFlow.LoadingBeforeCheckPrinterStatus": [
+              {
+                "actions": [],
+                "target": "CheckPrinterStatusAction"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.CashWithdrawalFlow.LoadingBeforeCheckPrinterStatus": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "LoadingBeforeGetCommission": {
+          "invoke": {
+            "id": "0.AtmScenario.CashWithdrawalFlow.LoadingBeforeGetCommission",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.CashWithdrawalFlow.LoadingBeforeGetCommission"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.CashWithdrawalFlow.LoadingBeforeGetCommission": [
+              {
+                "actions": [],
+                "target": "GetCommissionAction"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.CashWithdrawalFlow.LoadingBeforeGetCommission": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "LoadingBeforeWithdrawal": {
+          "invoke": {
+            "id": "0.AtmScenario.CashWithdrawalFlow.LoadingBeforeWithdrawal",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.CashWithdrawalFlow.LoadingBeforeWithdrawal"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.CashWithdrawalFlow.LoadingBeforeWithdrawal": [
+              {
+                "actions": [],
+                "target": "CheckWithdrawalAction"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.CashWithdrawalFlow.LoadingBeforeWithdrawal": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "NeedPrintReceiptPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:AtmScenario.CashWithdrawalFlow.NeedPrintReceiptPage#BACK[-1]#transition[0]"
+                  }
+                ],
+                "target": "LoadingBeforeWithdrawal"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:AtmScenario.CashWithdrawalFlow.NeedPrintReceiptPage#NEXT[-1]#transition[0]"
+                  }
+                ],
+                "target": "LoadingBeforeWithdrawal"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "NoCashForWithdrawalsPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "NotEnoughFundsPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "PaperEndPage": {
+          "entry": {
+            "type": "entry"
+          },
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:AtmScenario.CashWithdrawalFlow.PaperEndPage#NEXT[-1]#transition[0]"
+                  }
+                ],
+                "target": "LoadingBeforeWithdrawal"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "SelectAmountPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "BeforeCustomSelectAmountPage"
+              },
+              {
+                "actions": [],
+                "target": "CheckAmountToWithdrawalPage"
+              },
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "WithdrawalCardPresentedPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "WithdrawalCashPresentedPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ]
+          }
+        },
+        "WithdrawalCashPresentedPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "CashHoldPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "WithdrawalReceiptPresentedPage"
+              },
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              },
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ]
+          }
+        },
+        "WithdrawalOverdrafPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "LoadingBeforeCheckPrinterStatus"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "WithdrawalReceiptPresentedPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToFinishPage"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "ChangePinFlow": {
+      "states": {
+        "ChangePinDataAction": {
+          "invoke": {
+            "id": "0.AtmScenario.ChangePinFlow.ChangePinDataAction",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.ChangePinFlow.ChangePinDataAction"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.ChangePinFlow.ChangePinDataAction": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              },
+              {
+                "actions": [],
+                "target": "InvalidNewPinPage"
+              },
+              {
+                "actions": [],
+                "target": "NotEnoughFundsPage"
+              },
+              {
+                "actions": [],
+                "target": "PrintReceiptPage"
+              },
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.ChangePinFlow.ChangePinDataAction": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "CheckPrinterStatusAction": {
+          "invoke": {
+            "id": "0.AtmScenario.ChangePinFlow.CheckPrinterStatusAction",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.ChangePinFlow.CheckPrinterStatusAction"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.ChangePinFlow.CheckPrinterStatusAction": [
+              {
+                "actions": [],
+                "target": "PaperEndPage"
+              },
+              {
+                "actions": [],
+                "target": "GetCommissionAction"
+              },
+              {
+                "actions": [],
+                "target": "CommissionMessagePage"
+              },
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.ChangePinFlow.CheckPrinterStatusAction": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "CommissionMessagePage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "EnterPinPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "ComparePinDataAction": {
+          "invoke": {
+            "id": "0.AtmScenario.ChangePinFlow.ComparePinDataAction",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.ChangePinFlow.ComparePinDataAction"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.ChangePinFlow.ComparePinDataAction": [
+              {
+                "actions": [],
+                "target": "ChangePinDataAction"
+              },
+              {
+                "actions": [],
+                "target": "ComparePinFalsePage"
+              },
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.ChangePinFlow.ComparePinDataAction": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "ComparePinFalsePage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "EnterPinPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "ConfirmPinPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "LoadingBeforePinGhange"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "EnterPinPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "ConfirmPinPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "FinishPage": {
+          "on": {
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "#AtmScenario.FinishPage"
+              }
+            ]
+          }
+        },
+        "GetCommissionAction": {
+          "invoke": {
+            "id": "0.AtmScenario.ChangePinFlow.GetCommissionAction",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.ChangePinFlow.GetCommissionAction"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.ChangePinFlow.GetCommissionAction": [
+              {
+                "actions": [],
+                "target": "CommissionMessagePage"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.ChangePinFlow.GetCommissionAction": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "GoToCapturedCardStateAction": {},
+        "GoToErrorPage": {},
+        "GoToFinishPage": {},
+        "GoToMainMenuPage": {},
+        "GoToPresentedCardStateAction": {},
+        "InvalidNewPinPage": {
+          "entry": {
+            "type": "entry"
+          },
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "EnterPinPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "LoadingBeforeGetCommission": {
+          "invoke": {
+            "id": "0.AtmScenario.ChangePinFlow.LoadingBeforeGetCommission",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.ChangePinFlow.LoadingBeforeGetCommission"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.ChangePinFlow.LoadingBeforeGetCommission": [
+              {
+                "actions": [],
+                "target": "GetCommissionAction"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.ChangePinFlow.LoadingBeforeGetCommission": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "LoadingBeforePinGhange": {
+          "invoke": {
+            "id": "0.AtmScenario.ChangePinFlow.LoadingBeforePinGhange",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.ChangePinFlow.LoadingBeforePinGhange"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.ChangePinFlow.LoadingBeforePinGhange": [
+              {
+                "actions": [],
+                "target": "ComparePinDataAction"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.ChangePinFlow.LoadingBeforePinGhange": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "LoadingPage": {
+          "invoke": {
+            "id": "0.AtmScenario.ChangePinFlow.LoadingPage",
+            "input": {},
+            "src": "xstate.invoke.0.AtmScenario.ChangePinFlow.LoadingPage"
+          },
+          "on": {
+            "xstate.done.actor.0.AtmScenario.ChangePinFlow.LoadingPage": [
+              {
+                "actions": [],
+                "target": "CheckPrinterStatusAction"
+              }
+            ],
+            "xstate.error.actor.0.AtmScenario.ChangePinFlow.LoadingPage": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ]
+          }
+        },
+        "NotEnoughFundsPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "PaperEndPage": {
+          "entry": {
+            "type": "entry"
+          },
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "LoadingBeforeGetCommission"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        },
+        "PrintReceiptPage": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "FinishPage"
+              }
+            ],
+            "ERROR": [
+              {
+                "actions": [],
+                "target": "GoToErrorPage"
+              }
+            ],
+            "EXIT": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ],
+            "NEXT": [
+              {
+                "actions": [],
+                "target": "GoToMainMenuPage"
+              }
+            ],
+            "TIMEOUT": [
+              {
+                "actions": [],
+                "target": "GoToCapturedCardStateAction"
+              }
+            ],
+            "TIMEOUT_NO_BUTTON": [
+              {
+                "actions": [],
+                "target": "GoToPresentedCardStateAction"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "CheckOperationAllowedAction": {},
+    "ChoosNeedChangePinAction": {},
+    "ContactCapturedCardPage": {
+      "on": {
+        "BACK": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "NEXT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ]
+      }
+    },
+    "ContactNeedChangePinPage": {
+      "entry": {
+        "type": "entry"
+      },
+      "on": {
+        "BACK": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ],
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ],
+        "NEXT": [
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.ContactNeedChangePinPage#NEXT[-1]#transition[0]"
+              }
+            ],
+            "target": "ChangePinFlow"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "CapturedCardStateAction"
+          }
+        ],
+        "TIMEOUT_NO_BUTTON": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ]
+      }
+    },
+    "ContactlessCapturedCardPage": {
+      "on": {
+        "BACK": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "NEXT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ]
+      }
+    },
+    "ContactlessNeedChangePinPage": {
+      "entry": {
+        "type": "entry"
+      },
+      "on": {
+        "BACK": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ],
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ],
+        "NEXT": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "CapturedCardStateAction"
+          }
+        ],
+        "TIMEOUT_NO_BUTTON": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ]
+      }
+    },
+    "CreateSessionTransactionAction": {
+      "invoke": {
+        "id": "0.AtmScenario.CreateSessionTransactionAction",
+        "input": {},
+        "src": "xstate.invoke.0.AtmScenario.CreateSessionTransactionAction"
+      },
+      "on": {
+        "xstate.done.actor.0.AtmScenario.CreateSessionTransactionAction": [
+          {
+            "actions": [],
+            "target": "SkimmingCheckPage"
+          }
+        ],
+        "xstate.error.actor.0.AtmScenario.CreateSessionTransactionAction": [
+          {
+            "actions": [],
+            "target": "OperationNotPossiblePage"
+          }
+        ]
+      }
+    },
+    "EnterPinPage": {
+      "on": {
+        "BACK": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [],
+            "target": "ErrorPage"
+          }
+        ],
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "NEXT": [
+          {
+            "actions": [],
+            "target": "LoadingPage"
+          },
+          {
+            "actions": [],
+            "guard": "isContactOperation",
+            "target": "MainMenuPage"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.EnterPinPage#NEXT[-1]#transition[0]"
+              }
+            ],
+            "guard": "isCashWithdrawal",
+            "target": "CashWithdrawalFlow"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.EnterPinPage#NEXT[-1]#transition[0]"
+              }
+            ],
+            "guard": "isPrintBalance",
+            "target": "BalanceOnReceiptFlow"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.EnterPinPage#NEXT[-1]#transition[0]"
+              }
+            ],
+            "guard": "isShowBalancePage",
+            "target": "BalanceOnScreenFlow"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.EnterPinPage#NEXT[-1]#transition[0]"
+              }
+            ],
+            "guard": "isChangePinCode",
+            "target": "ChangePinFlow"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "CapturedCardStateAction"
+          }
+        ],
+        "TIMEOUT_NO_BUTTON": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ]
+      }
+    },
+    "ErrorPage": {
+      "on": {
+        "BACK": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "NEXT": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "CapturedCardStateAction"
+          }
+        ],
+        "TIMEOUT_NO_BUTTON": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ]
+      }
+    },
+    "FinishPage": {
+      "on": {
+        "NEXT": [
+          {
+            "actions": [],
+            "target": "TouchScreenPage"
+          }
+        ]
+      }
+    },
+    "LoadingPage": {
+      "invoke": {
+        "id": "0.AtmScenario.LoadingPage",
+        "input": {},
+        "src": "xstate.invoke.0.AtmScenario.LoadingPage"
+      },
+      "on": {
+        "xstate.done.actor.0.AtmScenario.LoadingPage": [
+          {
+            "actions": [],
+            "target": "PinAuthAction"
+          }
+        ],
+        "xstate.error.actor.0.AtmScenario.LoadingPage": [
+          {
+            "actions": [],
+            "target": "ErrorPage"
+          }
+        ]
+      }
+    },
+    "MainMenuPage": {
+      "on": {
+        "BACK": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [],
+            "target": "ErrorPage"
+          }
+        ],
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "NEXT": [
+          {
+            "actions": [],
+            "guard": "isContactlessOperation",
+            "target": "EnterPinPage"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.MainMenuPage#NEXT[-1]#transition[0]"
+              }
+            ],
+            "guard": "isCashWithdrawal",
+            "target": "CashWithdrawalFlow"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.MainMenuPage#NEXT[-1]#transition[0]"
+              }
+            ],
+            "guard": "isPrintBalance",
+            "target": "BalanceOnReceiptFlow"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.MainMenuPage#NEXT[-1]#transition[0]"
+              }
+            ],
+            "guard": "isShowBalancePage",
+            "target": "BalanceOnScreenFlow"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.MainMenuPage#NEXT[-1]#transition[0]"
+              }
+            ],
+            "guard": "isChangePinCode",
+            "target": "ChangePinFlow"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "CapturedCardStateAction"
+          }
+        ],
+        "TIMEOUT_NO_BUTTON": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ]
+      }
+    },
+    "OnPayAction": {
+      "invoke": {
+        "id": "0.AtmScenario.OnPayAction",
+        "input": {},
+        "src": "xstate.invoke.0.AtmScenario.OnPayAction"
+      },
+      "on": {
+        "xstate.done.actor.0.AtmScenario.OnPayAction": [
+          {
+            "actions": [],
+            "guard": "hasAcceptedMoney",
+            "target": "OperationResultPage"
+          },
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "xstate.error.actor.0.AtmScenario.OnPayAction": [
+          {
+            "actions": [],
+            "target": "OperationResultPage"
+          }
+        ]
+      }
+    },
+    "OnRepeatOperationAction": {
+      "invoke": {
+        "id": "0.AtmScenario.OnRepeatOperationAction",
+        "input": {},
+        "src": "xstate.invoke.0.AtmScenario.OnRepeatOperationAction"
+      },
+      "on": {
+        "xstate.done.actor.0.AtmScenario.OnRepeatOperationAction": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "xstate.error.actor.0.AtmScenario.OnRepeatOperationAction": [
+          {
+            "actions": [],
+            "target": "ErrorPage"
+          }
+        ]
+      }
+    },
+    "OperationNotPossiblePage": {
+      "on": {
+        "BACK": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [],
+            "target": "ErrorPage"
+          }
+        ],
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "CapturedCardStateAction"
+          }
+        ],
+        "TIMEOUT_NO_BUTTON": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ]
+      }
+    },
+    "OperationResultPage": {
+      "on": {
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "NEXT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "REPEAT_OPERATION": [
+          {
+            "actions": [],
+            "target": "OnRepeatOperationAction"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ]
+      }
+    },
+    "PinAuthAction": {
+      "invoke": {
+        "id": "0.AtmScenario.PinAuthAction",
+        "input": {},
+        "src": "xstate.invoke.0.AtmScenario.PinAuthAction"
+      },
+      "on": {
+        "xstate.done.actor.0.AtmScenario.PinAuthAction": [
+          {
+            "actions": [],
+            "target": "WrongPinPage"
+          },
+          {
+            "actions": [],
+            "target": "CapturedCardStateAction"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.PinAuthAction#xstate.done.actor.0.AtmScenario.PinAuthAction[-1]#transition[0]"
+              }
+            ],
+            "target": "ChoosNeedChangePinAction"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.PinAuthAction#xstate.done.actor.0.AtmScenario.PinAuthAction[-1]#transition[0]"
+              }
+            ],
+            "target": "OperationNotPossiblePage"
+          },
+          {
+            "actions": [],
+            "guard": "isContactOperation",
+            "target": "MainMenuPage"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.PinAuthAction#xstate.done.actor.0.AtmScenario.PinAuthAction[-1]#transition[0]"
+              }
+            ],
+            "guard": "isCashWithdrawal",
+            "target": "CashWithdrawalFlow"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.PinAuthAction#xstate.done.actor.0.AtmScenario.PinAuthAction[-1]#transition[0]"
+              }
+            ],
+            "guard": "isPrintBalance",
+            "target": "BalanceOnReceiptFlow"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.PinAuthAction#xstate.done.actor.0.AtmScenario.PinAuthAction[-1]#transition[0]"
+              }
+            ],
+            "guard": "isShowBalancePage",
+            "target": "BalanceOnScreenFlow"
+          },
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.PinAuthAction#xstate.done.actor.0.AtmScenario.PinAuthAction[-1]#transition[0]"
+              }
+            ],
+            "guard": "isChangePinCode",
+            "target": "ChangePinFlow"
+          }
+        ],
+        "xstate.error.actor.0.AtmScenario.PinAuthAction": [
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.PinAuthAction#xstate.error.actor.0.AtmScenario.PinAuthAction[-1]#transition[0]"
+              }
+            ],
+            "target": "OperationNotPossiblePage"
+          }
+        ]
+      }
+    },
+    "PresentedCardPage": {
+      "on": {
+        "NEXT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "CardHoldPage"
+          }
+        ]
+      }
+    },
+    "PresentedCardStateAction": {},
+    "PrintReceiptPage": {
+      "on": {
+        "BACK": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "NEXT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "TIMEOUT_NO_BUTTON": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ]
+      }
+    },
+    "SelectLanguagePage": {
+      "on": {
+        "BACK": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [],
+            "target": "ErrorPage"
+          }
+        ],
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "NEXT": [
+          {
+            "actions": [],
+            "target": "CreateSessionTransactionAction"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "CapturedCardStateAction"
+          }
+        ],
+        "TIMEOUT_NO_BUTTON": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ]
+      }
+    },
+    "ServicesMenuPage": {
+      "on": {
+        "BACK": [
+          {
+            "actions": [],
+            "target": "MainMenuPage"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [],
+            "target": "ErrorPage"
+          }
+        ],
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "NEXT": [
+          {
+            "actions": [
+              {
+                "type": "inline:AtmScenario.ServicesMenuPage#NEXT[-1]#transition[0]"
+              }
+            ],
+            "guard": "isChangePinCode",
+            "target": "ChangePinFlow"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "CapturedCardStateAction"
+          }
+        ],
+        "TIMEOUT_NO_BUTTON": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ]
+      }
+    },
+    "SkimmingCheckPage": {
+      "on": {
+        "BACK": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [],
+            "target": "ErrorPage"
+          }
+        ],
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "NEXT": [
+          {
+            "actions": [],
+            "guard": "isContactlessOperation",
+            "target": "MainMenuPage"
+          },
+          {
+            "actions": [],
+            "target": "EnterPinPage"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "CapturedCardStateAction"
+          }
+        ],
+        "TIMEOUT_NO_BUTTON": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ]
+      }
+    },
+    "TouchScreenPage": {
+      "on": {
+        "BACK": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [],
+            "target": "ErrorPage"
+          }
+        ],
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "TOUCH": [
+          {
+            "actions": [],
+            "target": "CheckOperationAllowedAction"
+          }
+        ]
+      }
+    },
+    "WrongPinPage": {
+      "on": {
+        "BACK": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [],
+            "target": "ErrorPage"
+          }
+        ],
+        "EXIT": [
+          {
+            "actions": [],
+            "target": "FinishPage"
+          }
+        ],
+        "NEXT": [
+          {
+            "actions": [],
+            "target": "EnterPinPage"
+          }
+        ],
+        "TIMEOUT": [
+          {
+            "actions": [],
+            "target": "CapturedCardStateAction"
+          }
+        ],
+        "TIMEOUT_NO_BUTTON": [
+          {
+            "actions": [],
+            "target": "PresentedCardStateAction"
+          }
+        ]
+      }
+    },
+    "history": {
+      "history": "shallow",
+      "type": "history"
+    }
+  }
+}

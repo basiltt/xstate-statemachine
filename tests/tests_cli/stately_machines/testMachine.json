@@ -1,0 +1,90 @@
+{
+  "id": "testMachine",
+  "initial": "idle",
+  "states": {
+    "New state 1": {},
+    "failure": {
+      "description": "The test has failed.",
+      "type": "final"
+    },
+    "idle": {
+      "description": "The machine is in an idle state, waiting to start the test.",
+      "on": {
+        "start": [
+          {
+            "actions": [
+              {
+                "type": "inline:testMachine.idle#start[-1]#transition[0]"
+              }
+            ],
+            "target": "running"
+          }
+        ]
+      }
+    },
+    "paused": {
+      "description": "The test is currently paused.",
+      "on": {
+        "resume": [
+          {
+            "actions": [
+              {
+                "type": "inline:testMachine.paused#resume[-1]#transition[0]"
+              }
+            ],
+            "target": "running"
+          }
+        ],
+        "stop": [
+          {
+            "actions": [
+              {
+                "type": "inline:testMachine.paused#stop[-1]#transition[0]"
+              }
+            ],
+            "target": "idle"
+          }
+        ]
+      }
+    },
+    "running": {
+      "description": "The test is currently running.",
+      "on": {
+        "failure": [
+          {
+            "actions": [
+              {
+                "type": "inline:testMachine.running#failure[-1]#transition[0]"
+              }
+            ],
+            "target": "failure"
+          }
+        ],
+        "pause": [
+          {
+            "actions": [
+              {
+                "type": "inline:testMachine.running#pause[-1]#transition[0]"
+              }
+            ],
+            "target": "paused"
+          }
+        ],
+        "success": [
+          {
+            "actions": [
+              {
+                "type": "inline:testMachine.running#success[-1]#transition[0]"
+              }
+            ],
+            "target": "success"
+          }
+        ]
+      }
+    },
+    "success": {
+      "description": "The test has completed successfully.",
+      "type": "final"
+    }
+  }
+}

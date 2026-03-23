@@ -1,0 +1,35 @@
+{
+  "context": {
+    "age": 0,
+    "name": ""
+  },
+  "id": "wizard",
+  "initial": "step1",
+  "states": {
+    "confirmation": {
+      "type": "final"
+    },
+    "step1": {
+      "on": {
+        "NEXT": [
+          {
+            "actions": [],
+            "guard": "nameEntered",
+            "target": "step2"
+          }
+        ]
+      }
+    },
+    "step2": {
+      "on": {
+        "NEXT": [
+          {
+            "actions": [],
+            "guard": "ageEntered",
+            "target": "confirmation"
+          }
+        ]
+      }
+    }
+  }
+}

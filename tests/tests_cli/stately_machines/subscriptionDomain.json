@@ -1,0 +1,177 @@
+{
+  "context": {
+    "knownUserIds": [
+      "viewer-2",
+      "viewer-3"
+    ],
+    "lastResult": null,
+    "picks": {
+      "pick-1": {
+        "ownerUserId": "viewer-1",
+        "usedHints": []
+      },
+      "pick-2": {
+        "ownerUserId": "viewer-1",
+        "usedHints": [
+          "HINT_SURNAME_LAST_LETTER"
+        ]
+      },
+      "pick-3": {
+        "ownerUserId": "viewer-1",
+        "usedHints": [
+          "HINT_NAME_LETTER_COUNT",
+          "HINT_SURNAME_LAST_LETTER"
+        ]
+      }
+    },
+    "purchasedHints": {
+      "HINT_NAME_FIRST_LETTER": 1,
+      "REVEAL": 1
+    },
+    "questionsDailyByTarget": {},
+    "questionsDailyTotal": 0,
+    "questionsWeeklyByTarget": {},
+    "subscriptionTier": "NONE",
+    "userId": "viewer-1"
+  },
+  "id": "subscriptionSpecialtyDomain",
+  "initial": "idle",
+  "states": {
+    "idle": {
+      "on": {
+        "CANCEL_SUBSCRIPTION": [
+          {
+            "actions": [
+              {
+                "type": "cancelSubscription"
+              }
+            ]
+          }
+        ],
+        "CONSUME_PICK_HINT": [
+          {
+            "actions": [],
+            "target": "resolvingPickHint"
+          }
+        ],
+        "EXPIRE_SUBSCRIPTION": [
+          {
+            "actions": [
+              {
+                "type": "cancelSubscription"
+              }
+            ]
+          }
+        ],
+        "PURCHASE_SPECIALTY": [
+          {
+            "actions": [
+              {
+                "type": "purchaseSpecialty"
+              }
+            ]
+          }
+        ],
+        "RESET_DAILY_LIMITS": [
+          {
+            "actions": [
+              {
+                "type": "resetDailyLimits"
+              }
+            ]
+          }
+        ],
+        "RESET_WEEKLY_LIMITS": [
+          {
+            "actions": [
+              {
+                "type": "resetWeeklyLimits"
+              }
+            ]
+          }
+        ],
+        "SEND_QUESTION": [
+          {
+            "actions": [],
+            "target": "resolvingQuestion"
+          }
+        ],
+        "SUBSCRIBE": [
+          {
+            "actions": [
+              {
+                "type": "startSubscription"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "pickHintConsumed": {
+      "always": {
+        "actions": [],
+        "target": "idle"
+      }
+    },
+    "pickHintRejected": {
+      "always": {
+        "actions": [],
+        "target": "idle"
+      }
+    },
+    "questionRejected": {
+      "always": {
+        "actions": [],
+        "target": "idle"
+      }
+    },
+    "questionSent": {
+      "always": {
+        "actions": [],
+        "target": "idle"
+      }
+    },
+    "resolvingPickHint": {
+      "always": [
+        {
+          "actions": [
+            {
+              "type": "consumePickHint"
+            }
+          ],
+          "guard": "canConsumePickHint",
+          "target": "pickHintConsumed"
+        },
+        {
+          "actions": [
+            {
+              "type": "rejectPickHint"
+            }
+          ],
+          "target": "pickHintRejected"
+        }
+      ]
+    },
+    "resolvingQuestion": {
+      "always": [
+        {
+          "actions": [
+            {
+              "type": "sendQuestion"
+            }
+          ],
+          "guard": "canSendQuestion",
+          "target": "questionSent"
+        },
+        {
+          "actions": [
+            {
+              "type": "rejectQuestion"
+            }
+          ],
+          "target": "questionRejected"
+        }
+      ]
+    }
+  }
+}

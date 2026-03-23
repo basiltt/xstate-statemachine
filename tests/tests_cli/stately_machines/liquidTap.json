@@ -1,0 +1,128 @@
+{
+  "context": {
+    "limitAmountMl": 200,
+    "servedAmountMl": 0
+  },
+  "id": "liquidTap",
+  "initial": "idle",
+  "states": {
+    "finished": {
+      "after": {
+        "2000": [
+          {
+            "actions": [
+              {
+                "type": "inline:liquidTap.finished#xstate.after(2000)#liquidTap.finished[-1]#transition[0]"
+              }
+            ],
+            "target": "#liquidTap.idle"
+          }
+        ]
+      },
+      "description": "Finished dispensing; sending results and resetting context.",
+      "entry": [
+        {
+          "type": "inline:liquidTap.finished#entry[0]"
+        },
+        {
+          "type": "sendResult"
+        }
+      ]
+    },
+    "idle": {
+      "description": "The machine is idle and waiting for user identification.",
+      "entry": {
+        "type": "inline:liquidTap.idle#entry[0]"
+      },
+      "on": {
+        "IDENTIFY": [
+          {
+            "actions": [
+              {
+                "type": "inline:liquidTap.idle#IDENTIFY[-1]#transition[0]"
+              }
+            ],
+            "meta": {},
+            "target": "validating"
+          }
+        ]
+      }
+    },
+    "invalid": {
+      "after": {
+        "2000": [
+          {
+            "actions": [],
+            "target": "#liquidTap.idle"
+          }
+        ]
+      },
+      "description": "The validation failed; returning to idle after a delay.",
+      "entry": {
+        "type": "inline:liquidTap.invalid#entry[0]"
+      }
+    },
+    "operation": {
+      "after": {
+        "500": [
+          {
+            "actions": [],
+            "target": "#liquidTap.finished"
+          }
+        ]
+      },
+      "always": {
+        "actions": [],
+        "guard": "inline:liquidTap.operation#always[-1]#guard",
+        "meta": {},
+        "target": "finished"
+      },
+      "description": "The machine is in operation, dispensing liquid on pulses.",
+      "entry": {
+        "type": "inline:liquidTap.operation#entry[0]"
+      },
+      "on": {
+        "PULSE": [
+          {
+            "actions": [
+              {
+                "type": "inline:liquidTap.operation#PULSE[-1]#transition[0]"
+              }
+            ],
+            "guard": "inline:liquidTap.operation#PULSE[-1]#guard",
+            "meta": {},
+            "reenter": false,
+            "target": "operation"
+          }
+        ]
+      }
+    },
+    "validating": {
+      "description": "The machine is validating the user credits asynchronously.",
+      "entry": {
+        "type": "inline:liquidTap.validating#entry[0]"
+      },
+      "invoke": {
+        "input": {},
+        "onDone": [
+          {
+            "actions": [
+              {
+                "type": "inline:liquidTap.validating#done.invoke.liquidTap.validating:invocation[0][-1]#transition[0]"
+              }
+            ],
+            "meta": {},
+            "target": "operation"
+          }
+        ],
+        "onError": [
+          {
+            "actions": [],
+            "target": "invalid"
+          }
+        ],
+        "src": "validateUserCredits"
+      }
+    }
+  }
+}

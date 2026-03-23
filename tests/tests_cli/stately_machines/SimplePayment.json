@@ -1,0 +1,69 @@
+{
+  "id": "Simple payment flow",
+  "initial": "idle",
+  "states": {
+    "cardEntry": {
+      "on": {
+        "SUBMIT": [
+          {
+            "actions": [],
+            "target": "fingerprint"
+          }
+        ]
+      }
+    },
+    "challenge": {
+      "on": {
+        "CHALLENGE_OK": [
+          {
+            "actions": [],
+            "target": "success"
+          }
+        ],
+        "FAIL": [
+          {
+            "actions": [],
+            "target": "failed"
+          }
+        ]
+      }
+    },
+    "failed": {
+      "on": {
+        "RETRY": [
+          {
+            "actions": [],
+            "target": "cardEntry"
+          }
+        ]
+      }
+    },
+    "fingerprint": {
+      "on": {
+        "FAIL": [
+          {
+            "actions": [],
+            "target": "failed"
+          }
+        ],
+        "FINGERPRINT_OK": [
+          {
+            "actions": [],
+            "target": "challenge"
+          }
+        ]
+      }
+    },
+    "idle": {
+      "on": {
+        "START": [
+          {
+            "actions": [],
+            "target": "cardEntry"
+          }
+        ]
+      }
+    },
+    "success": {}
+  }
+}

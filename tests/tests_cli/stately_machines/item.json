@@ -1,0 +1,44 @@
+{
+  "context": {
+    "retryCount": 0
+  },
+  "id": "item",
+  "initial": "error",
+  "states": {
+    "done": {
+      "type": "final"
+    },
+    "error": {
+      "on": {
+        "RETRY": [
+          {
+            "actions": [
+              {
+                "type": "incrementRetry"
+              }
+            ],
+            "guard": "canRetry",
+            "target": "running"
+          },
+          {
+            "actions": [],
+            "target": "failed"
+          }
+        ]
+      }
+    },
+    "failed": {
+      "type": "final"
+    },
+    "running": {
+      "on": {
+        "COMPLETE": [
+          {
+            "actions": [],
+            "target": "done"
+          }
+        ]
+      }
+    }
+  }
+}

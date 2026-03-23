@@ -1,0 +1,34 @@
+{
+  "id": "Hello world",
+  "initial": "idle",
+  "states": {
+    "failure": {},
+    "idle": {
+      "on": {
+        "FETCH": [
+          {
+            "actions": [],
+            "target": "loading"
+          }
+        ]
+      }
+    },
+    "loading": {
+      "on": {
+        "REJECT": [
+          {
+            "actions": [],
+            "target": "failure"
+          }
+        ],
+        "RESOLVE": [
+          {
+            "actions": [],
+            "target": "success"
+          }
+        ]
+      }
+    },
+    "success": {}
+  }
+}

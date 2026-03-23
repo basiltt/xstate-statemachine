@@ -1,0 +1,78 @@
+{
+  "id": "Installation of Experience v2",
+  "initial": "IDLE_STATE",
+  "on": {
+    "emergencyButton": [
+      {
+        "actions": [],
+        "target": ".EXIT_STATE"
+      }
+    ]
+  },
+  "states": {
+    "EXIT_STATE": {
+      "after": {
+        "5000": [
+          {
+            "actions": [],
+            "target": "#Installation of Experience v2.IDLE_STATE"
+          }
+        ]
+      },
+      "on": {
+        "insideMotion": [
+          {
+            "actions": [],
+            "target": "EXIT_STATE"
+          }
+        ]
+      }
+    },
+    "IDLE_STATE": {
+      "on": {
+        "insideMotion": [
+          {
+            "actions": [],
+            "target": "TRAP_INIT_STATE"
+          }
+        ]
+      }
+    },
+    "TRAP_INIT_STATE": {
+      "after": {
+        "5000": [
+          {
+            "actions": [],
+            "target": "#Installation of Experience v2.TRAP_STATE"
+          }
+        ]
+      },
+      "on": {
+        "insideMotion": [
+          {
+            "actions": [],
+            "target": "TRAP_INIT_STATE"
+          }
+        ]
+      }
+    },
+    "TRAP_STATE": {
+      "after": {
+        "30000": [
+          {
+            "actions": [],
+            "target": "#Installation of Experience v2.EXIT_STATE"
+          }
+        ]
+      },
+      "on": {
+        "insideMotion": [
+          {
+            "actions": [],
+            "target": "TRAP_STATE"
+          }
+        ]
+      }
+    }
+  }
+}

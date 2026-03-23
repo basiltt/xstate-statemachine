@@ -1,0 +1,266 @@
+{
+  "id": "APA",
+  "initial": "Idle",
+  "states": {
+    "Abort": {
+      "on": {
+        "T33": [
+          {
+            "actions": [],
+            "target": "Idle"
+          }
+        ],
+        "T34": [
+          {
+            "actions": [],
+            "target": "Search"
+          }
+        ]
+      }
+    },
+    "Idle": {
+      "on": {
+        "T01": [
+          {
+            "actions": [],
+            "target": "PreSearch"
+          }
+        ],
+        "T02": [
+          {
+            "actions": [],
+            "target": "PreSearch"
+          }
+        ]
+      }
+    },
+    "ParkActive": {
+      "on": {
+        "T19": [
+          {
+            "actions": [],
+            "target": "ParkComplete"
+          }
+        ],
+        "T20": [
+          {
+            "actions": [],
+            "target": "ParkHold"
+          }
+        ],
+        "T21": [
+          {
+            "actions": [],
+            "target": "Abort"
+          }
+        ],
+        "T22": [
+          {
+            "actions": [],
+            "target": "ParkFailure"
+          }
+        ],
+        "T23": [
+          {
+            "actions": [],
+            "target": "Abort"
+          }
+        ],
+        "T24": [
+          {
+            "actions": [],
+            "target": "ParkFailure"
+          }
+        ],
+        "T25": [
+          {
+            "actions": [],
+            "target": "PreParkActive"
+          }
+        ]
+      }
+    },
+    "ParkComplete": {
+      "on": {
+        "T30": [
+          {
+            "actions": [],
+            "target": "Idle"
+          }
+        ],
+        "T31": [
+          {
+            "actions": [],
+            "target": "PreParkActive"
+          }
+        ],
+        "T32": [
+          {
+            "actions": [],
+            "target": "PreParkActive"
+          }
+        ]
+      }
+    },
+    "ParkFailure": {
+      "on": {
+        "T36": [
+          {
+            "actions": [],
+            "target": "Idle"
+          }
+        ]
+      }
+    },
+    "ParkHold": {
+      "on": {
+        "T26": [
+          {
+            "actions": [],
+            "target": "ParkActive"
+          }
+        ],
+        "T27": [
+          {
+            "actions": [],
+            "target": "Abort"
+          }
+        ],
+        "T28": [
+          {
+            "actions": [],
+            "target": "Abort"
+          }
+        ],
+        "T29": [
+          {
+            "actions": [],
+            "target": "ParkFailure"
+          }
+        ]
+      }
+    },
+    "PreParkActive": {
+      "on": {
+        "T14": [
+          {
+            "actions": [],
+            "target": "ParkActive"
+          }
+        ],
+        "T15": [
+          {
+            "actions": [],
+            "target": "ParkHold"
+          }
+        ],
+        "T16": [
+          {
+            "actions": [],
+            "target": "Abort"
+          }
+        ],
+        "T17": [
+          {
+            "actions": [],
+            "target": "ParkFailure"
+          }
+        ],
+        "T18": [
+          {
+            "actions": [],
+            "target": "Search"
+          }
+        ]
+      }
+    },
+    "PreParkFailure": {
+      "on": {
+        "T35": [
+          {
+            "actions": [],
+            "target": "Idle"
+          }
+        ]
+      }
+    },
+    "PreSearch": {
+      "on": {
+        "T03": [
+          {
+            "actions": [],
+            "target": "Search"
+          }
+        ],
+        "T04": [
+          {
+            "actions": [],
+            "target": "PreParkFailure"
+          }
+        ],
+        "T05": [
+          {
+            "actions": [],
+            "target": "Idle"
+          }
+        ]
+      }
+    },
+    "Search": {
+      "on": {
+        "T06": [
+          {
+            "actions": [],
+            "target": "SpotPresentation"
+          }
+        ],
+        "T07": [
+          {
+            "actions": [],
+            "target": "PreParkFailure"
+          }
+        ],
+        "T08": [
+          {
+            "actions": [],
+            "target": "Idle"
+          }
+        ]
+      }
+    },
+    "SpotPresentation": {
+      "on": {
+        "T09": [
+          {
+            "actions": [],
+            "target": "PreParkActive"
+          }
+        ],
+        "T10": [
+          {
+            "actions": [],
+            "target": "PreParkActive"
+          }
+        ],
+        "T11": [
+          {
+            "actions": [],
+            "target": "Search"
+          }
+        ],
+        "T12": [
+          {
+            "actions": [],
+            "target": "Idle"
+          }
+        ],
+        "T13": [
+          {
+            "actions": [],
+            "target": "PreParkFailure"
+          }
+        ]
+      }
+    }
+  }
+}

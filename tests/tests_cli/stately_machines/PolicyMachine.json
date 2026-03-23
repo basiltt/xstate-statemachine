@@ -1,0 +1,156 @@
+{
+  "context": {
+    "policyId": "",
+    "targetGroupCount": 0,
+    "version": 1
+  },
+  "id": "PolicyMachine",
+  "initial": "Draft",
+  "states": {
+    "Applied": {
+      "on": {
+        "EDIT": [
+          {
+            "actions": [
+              {
+                "type": "inline:PolicyDeploymentMachine.Applied#EDIT[-1]#transition[0]"
+              }
+            ],
+            "target": "Draft"
+          }
+        ],
+        "ROLLBACK": [
+          {
+            "actions": [
+              {
+                "type": "\ud83d\udee1\ufe0f System Audit: Emergency rollback executed"
+              }
+            ],
+            "target": "Draft"
+          }
+        ]
+      }
+    },
+    "Approved": {
+      "on": {
+        "EDIT": [
+          {
+            "actions": [],
+            "target": "Draft"
+          }
+        ],
+        "PUSH_TO_ENDPOINTS": [
+          {
+            "actions": [
+              {
+                "type": "\ud83d\udee1\ufe0f System Audit: Policy deployment initiated"
+              }
+            ],
+            "target": "Pushing"
+          }
+        ]
+      }
+    },
+    "Conflict": {
+      "description": "Detected when two rules contradict each other (e.g., Allow vs Block)",
+      "on": {
+        "EDIT": [
+          {
+            "actions": [],
+            "target": "Draft"
+          }
+        ],
+        "ROLLBACK": [
+          {
+            "actions": [],
+            "target": "Applied"
+          }
+        ]
+      }
+    },
+    "Draft": {
+      "on": {
+        "SAVE_DRAFT": [
+          {
+            "actions": [],
+            "reenter": false
+          }
+        ],
+        "SUBMIT_FOR_APPROVAL": [
+          {
+            "actions": [
+              {
+                "type": "\ud83d\udd14 Notification: Policy awaiting approval"
+              }
+            ],
+            "target": "PendingApproval"
+          }
+        ]
+      }
+    },
+    "Failed": {
+      "on": {
+        "EDIT": [
+          {
+            "actions": [],
+            "target": "Draft"
+          }
+        ],
+        "PUSH_TO_ENDPOINTS": [
+          {
+            "actions": [],
+            "target": "Pushing"
+          }
+        ]
+      }
+    },
+    "PendingApproval": {
+      "on": {
+        "APPROVE": [
+          {
+            "actions": [],
+            "target": "Approved"
+          }
+        ],
+        "EDIT": [
+          {
+            "actions": [],
+            "target": "Draft"
+          }
+        ],
+        "REJECT": [
+          {
+            "actions": [],
+            "target": "Draft"
+          }
+        ]
+      }
+    },
+    "Pushing": {
+      "on": {
+        "CONFLICT_DETECTED": [
+          {
+            "actions": [],
+            "target": "Conflict"
+          }
+        ],
+        "SYNC_ERROR": [
+          {
+            "actions": [
+              {
+                "type": "inline:PolicyDeploymentMachine.Pushing#SYNC_ERROR[-1]#transition[0]"
+              }
+            ],
+            "target": "Failed"
+          }
+        ],
+        "SYNC_SUCCESS": [
+          {
+            "actions": [],
+            "target": "Applied"
+          }
+        ]
+      }
+    }
+  }
+}

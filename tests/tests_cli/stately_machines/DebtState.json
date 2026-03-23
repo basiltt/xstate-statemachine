@@ -1,0 +1,57 @@
+{
+  "exit": {
+    "type": "\u0447\u0442\u043e \u0442\u043e"
+  },
+  "id": "DebtState",
+  "initial": "ActiveDebt",
+  "on": {
+    "Event 1": [
+      {
+        "actions": []
+      }
+    ]
+  },
+  "states": {
+    "ActiveDebt": {
+      "on": {
+        "CloseDebt": [
+          {
+            "actions": [],
+            "guard": "onlyClosedLoan",
+            "target": "ClosedDebt"
+          }
+        ],
+        "MakeDebtOverdue": [
+          {
+            "actions": [],
+            "guard": "anyOverdueLoanAndonlyOverdueLoanOrActiveLoanOrClosedLoan",
+            "target": "OverdueDebt"
+          }
+        ]
+      }
+    },
+    "ClosedDebt": {
+      "type": "final"
+    },
+    "New state 1": {},
+    "OverdueDebt": {
+      "on": {
+        "ChangeOverdueDebtToActive": [
+          {
+            "actions": [],
+            "guard": "anyActiveLoanAndonlyActiveLoanOrClosedLoan",
+            "target": "ActiveDebt"
+          }
+        ],
+        "CloseDebt": [
+          {
+            "actions": [],
+            "guard": "onlyClosedLoan",
+            "target": "ClosedDebt"
+          }
+        ]
+      }
+    }
+  },
+  "tags": "New tag 0"
+}

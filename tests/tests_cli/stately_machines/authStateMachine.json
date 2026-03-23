@@ -1,0 +1,654 @@
+{
+  "context": {
+    "activeStateSpan": null,
+    "error": null,
+    "loginRequest": null,
+    "loginResponse": null,
+    "sessionExpiredPayload": null,
+    "tracingTransaction": null
+  },
+  "id": "authStateMachine",
+  "initial": "unauthenticated",
+  "states": {
+    "authenticated": {
+      "initial": "loadingEssentialData",
+      "on": {
+        "CREATE_DEMO_ACCOUNT": [
+          {
+            "actions": [
+              {
+                "type": "assignLoginRequestToContext"
+              }
+            ],
+            "target": "#authStateMachine.unauthenticated.authenticating"
+          }
+        ],
+        "CREATE_LIVE_ACCOUNT": [
+          {
+            "actions": [
+              {
+                "type": "assignLoginRequestToContext"
+              }
+            ],
+            "target": "#authStateMachine.unauthenticated.authenticating"
+          }
+        ],
+        "LOG_OUT": [
+          {
+            "actions": [],
+            "target": "loggingOut"
+          }
+        ],
+        "RE_LOG_IN": [
+          {
+            "actions": [
+              {
+                "type": "onReLoginCleanup"
+              },
+              {
+                "type": "buildTokenLoginRequest"
+              }
+            ],
+            "target": ".reAuthenticating"
+          }
+        ],
+        "SESSION_EXPIRED": [
+          {
+            "actions": [],
+            "guard": "inline:authStateMachine.authenticated#SESSION_EXPIRED[-1]#guard",
+            "target": ".preparingRevalidation"
+          },
+          {
+            "actions": [],
+            "guard": "hasLoginToken",
+            "target": ".awaitingRevalidation"
+          },
+          {
+            "actions": [],
+            "target": "#authStateMachine.unauthenticated.resettingState"
+          }
+        ],
+        "SWITCH_ACCOUNT": [
+          {
+            "actions": [
+              {
+                "type": "assignLoginRequestToContext"
+              }
+            ],
+            "target": ".switchingAccount"
+          }
+        ],
+        "SWITCH_SUBSYSTEM": [
+          {
+            "actions": [
+              {
+                "type": "assignLoginRequestToContext"
+              }
+            ],
+            "target": "#authStateMachine.unauthenticated.authenticating"
+          }
+        ]
+      },
+      "states": {
+        "awaitingRevalidation": {
+          "entry": [
+            {
+              "type": "assignSessionExpiredPayload"
+            },
+            {
+              "type": "onSessionExpired"
+            }
+          ],
+          "on": {
+            "CANCEL_RETRY": [
+              {
+                "actions": [],
+                "target": "#authStateMachine.unauthenticated.resettingState"
+              }
+            ],
+            "RETRY_REQUESTED": [
+              {
+                "actions": [],
+                "target": "preparingRevalidation"
+              }
+            ]
+          }
+        },
+        "idle": {
+          "entry": {
+            "params": {
+              "status": "success"
+            },
+            "type": "finishTracingTransaction"
+          }
+        },
+        "loadingEssentialData": {
+          "entry": {
+            "type": "inline:authStateMachine.authenticated.loadingEssentialData#entry[0]"
+          },
+          "exit": {
+            "type": "finishStateSpan"
+          },
+          "initial": "loading",
+          "states": {
+            "loading": {
+              "invoke": {
+                "input": {},
+                "onDone": [
+                  {
+                    "actions": [
+                      {
+                        "type": "onReady"
+                      },
+                      {
+                        "type": "clearLoginRequest"
+                      },
+                      {
+                        "type": "clearSessionExpiredPayload"
+                      }
+                    ],
+                    "target": "#authStateMachine.authenticated.idle"
+                  }
+                ],
+                "onError": [
+                  {
+                    "actions": [],
+                    "target": "retryFailed"
+                  }
+                ],
+                "src": "loadEssentialData"
+              }
+            },
+            "retryFailed": {
+              "on": {
+                "CANCEL_RETRY": [
+                  {
+                    "actions": [
+                      {
+                        "type": "assignErrorToContext"
+                      }
+                    ],
+                    "target": "#authStateMachine.unauthenticated.resettingState"
+                  }
+                ],
+                "RETRY_REQUESTED": [
+                  {
+                    "actions": [],
+                    "target": "loading"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "preparingRevalidation": {
+          "entry": [
+            {
+              "type": "assignSessionExpiredPayload"
+            },
+            {
+              "type": "buildTokenLoginRequest"
+            },
+            {
+              "type": "onSessionExpired"
+            }
+          ],
+          "invoke": {
+            "input": {},
+            "onDone": [
+              {
+                "actions": [
+                  {
+                    "type": "assignLoginResponseToContext"
+                  }
+                ],
+                "target": "#authStateMachine.syncingSessionData"
+              }
+            ],
+            "onError": [
+              {
+                "actions": [
+                  {
+                    "type": "showAlertMessage"
+                  }
+                ],
+                "guard": "isUnsupportedVersionError",
+                "target": "#authStateMachine.unauthenticated.resettingState"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "showAlertMessage"
+                  }
+                ],
+                "guard": "isAccountDeactivatedError",
+                "target": "#authStateMachine.unauthenticated.resettingState"
+              },
+              {
+                "actions": [],
+                "guard": "isInvalidTokenError",
+                "target": "#authStateMachine.unauthenticated.resettingState"
+              },
+              {
+                "actions": [],
+                "target": "#authStateMachine.unauthenticated.resettingState"
+              }
+            ],
+            "src": "authenticate"
+          }
+        },
+        "reAuthenticating": {
+          "entry": {
+            "type": "onLoginStart"
+          },
+          "invoke": {
+            "input": {},
+            "onDone": [
+              {
+                "actions": [
+                  {
+                    "type": "assignLoginResponseToContext"
+                  }
+                ],
+                "target": "#authStateMachine.syncingSessionData"
+              }
+            ],
+            "onError": [
+              {
+                "actions": [
+                  {
+                    "type": "showAlertMessage"
+                  }
+                ],
+                "guard": "isUnsupportedVersionError",
+                "target": "#authStateMachine.unauthenticated.resettingState"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "showAlertMessage"
+                  }
+                ],
+                "guard": "isAccountDeactivatedError",
+                "target": "#authStateMachine.unauthenticated.resettingState"
+              },
+              {
+                "actions": [],
+                "guard": "isInvalidTokenError",
+                "target": "#authStateMachine.unauthenticated.resettingState"
+              },
+              {
+                "actions": [],
+                "target": "#authStateMachine.unauthenticated.resettingState"
+              }
+            ],
+            "src": "authenticate"
+          }
+        },
+        "switchingAccount": {
+          "entry": [
+            {
+              "type": "inline:authStateMachine.authenticated.switchingAccount#entry[0]"
+            },
+            {
+              "type": "onLoginStart"
+            }
+          ],
+          "exit": {
+            "type": "finishStateSpan"
+          },
+          "invoke": {
+            "input": {},
+            "onDone": [
+              {
+                "actions": [
+                  {
+                    "type": "assignLoginResponseToContext"
+                  },
+                  {
+                    "type": "persistLoginToken"
+                  },
+                  {
+                    "type": "onLoginSuccess"
+                  }
+                ],
+                "target": "loadingEssentialData"
+              }
+            ],
+            "onError": [
+              {
+                "actions": [
+                  {
+                    "type": "convertToTokenLogin"
+                  }
+                ],
+                "guard": "isInvalidSessionWithToken",
+                "target": "reAuthenticating"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "showAlertMessage"
+                  }
+                ],
+                "target": "idle"
+              }
+            ],
+            "src": "authenticate"
+          }
+        }
+      }
+    },
+    "loggingOut": {
+      "entry": {
+        "type": "onLogoutStart"
+      },
+      "exit": {
+        "type": "onLogoutComplete"
+      },
+      "invoke": {
+        "input": {},
+        "onDone": [
+          {
+            "actions": [],
+            "target": "#authStateMachine.unauthenticated.resettingState"
+          }
+        ],
+        "onError": [
+          {
+            "actions": [],
+            "target": "#authStateMachine.unauthenticated.resettingState"
+          }
+        ],
+        "src": "logout"
+      }
+    },
+    "syncingSessionData": {
+      "entry": {
+        "type": "inline:authStateMachine.syncingSessionData#entry[0]"
+      },
+      "exit": {
+        "type": "finishStateSpan"
+      },
+      "initial": "syncing",
+      "states": {
+        "retryFailed": {
+          "on": {
+            "CANCEL_RETRY": [
+              {
+                "actions": [],
+                "target": "#authStateMachine.unauthenticated.resettingState"
+              }
+            ],
+            "RETRY_REQUESTED": [
+              {
+                "actions": [],
+                "target": "syncing"
+              }
+            ]
+          }
+        },
+        "syncing": {
+          "invoke": {
+            "input": {},
+            "onDone": [
+              {
+                "actions": [
+                  {
+                    "type": "persistLoginToken"
+                  },
+                  {
+                    "type": "onLoginSuccess"
+                  }
+                ],
+                "target": "#authStateMachine.authenticated"
+              }
+            ],
+            "onError": [
+              {
+                "actions": [],
+                "target": "retryFailed"
+              }
+            ],
+            "src": "syncSessionData"
+          }
+        }
+      }
+    },
+    "unauthenticated": {
+      "initial": "idle",
+      "states": {
+        "authenticating": {
+          "entry": [
+            {
+              "type": "inline:authStateMachine.unauthenticated.authenticating#entry[0]"
+            },
+            {
+              "type": "onLoginStart"
+            }
+          ],
+          "exit": {
+            "type": "finishStateSpan"
+          },
+          "invoke": {
+            "input": {},
+            "onDone": [
+              {
+                "actions": [
+                  {
+                    "type": "assignLoginResponseToContext"
+                  }
+                ],
+                "target": "#authStateMachine.syncingSessionData"
+              }
+            ],
+            "onError": [
+              {
+                "actions": [
+                  {
+                    "type": "convertToTokenLogin"
+                  }
+                ],
+                "guard": "isInvalidSessionOnSubsystemSwitchWithToken",
+                "target": "authenticating"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "convertToTokenLogin"
+                  }
+                ],
+                "guard": "isTwoFactorAuthOnSubsystemSwitchWithToken",
+                "target": "twoFactorAuthentication"
+              },
+              {
+                "actions": [],
+                "guard": "isTwoFactorAuthenticationError",
+                "target": "twoFactorAuthentication"
+              },
+              {
+                "actions": [],
+                "guard": "isAuthenticationFailedError",
+                "target": "resettingState"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "showAlertMessage"
+                  }
+                ],
+                "guard": "isUnsupportedVersionError",
+                "target": "resettingState"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "showAlertMessage"
+                  }
+                ],
+                "guard": "isAccountDeactivatedError",
+                "target": "resettingState"
+              },
+              {
+                "actions": [],
+                "guard": "isInvalidTokenError",
+                "target": "resettingState"
+              },
+              {
+                "actions": [],
+                "guard": "isTokenLogin",
+                "target": "resettingState"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "showAlertMessage"
+                  }
+                ],
+                "target": "resettingState"
+              }
+            ],
+            "src": "authenticate"
+          }
+        },
+        "idle": {
+          "entry": {
+            "params": {
+              "status": "error"
+            },
+            "type": "finishTracingTransaction"
+          },
+          "on": {
+            "LOG_IN_WITH_PASSWORD": [
+              {
+                "actions": [
+                  {
+                    "type": "assignLoginRequestToContext"
+                  }
+                ],
+                "target": "authenticating"
+              }
+            ],
+            "LOG_IN_WITH_TOKEN": [
+              {
+                "actions": [
+                  {
+                    "type": "assignLoginRequestToContext"
+                  }
+                ],
+                "target": "authenticating"
+              }
+            ],
+            "SIGN_UP": [
+              {
+                "actions": [
+                  {
+                    "type": "assignLoginRequestToContext"
+                  }
+                ],
+                "target": "authenticating"
+              }
+            ]
+          }
+        },
+        "resettingState": {
+          "always": {
+            "actions": [],
+            "target": "idle"
+          },
+          "entry": [
+            {
+              "type": "resetContextOnLogout"
+            },
+            {
+              "type": "deleteLoginToken"
+            },
+            {
+              "type": "onTeardown"
+            }
+          ]
+        },
+        "twoFactorAuthentication": {
+          "entry": {
+            "type": "displayTwoFactorAuthenticationPrompt"
+          },
+          "initial": "waitingUserInput",
+          "on": {
+            "CANCEL_TWO_FACTOR_AUTHENTICATION": [
+              {
+                "actions": [],
+                "target": "resettingState"
+              }
+            ]
+          },
+          "states": {
+            "verifyingTwoFactorAuthentication": {
+              "entry": {
+                "type": "inline:authStateMachine.unauthenticated.twoFactorAuthentication.verifyingTwoFactorAuthentication#entry[0]"
+              },
+              "exit": {
+                "type": "finishStateSpan"
+              },
+              "invoke": {
+                "input": {},
+                "onDone": [
+                  {
+                    "actions": [
+                      {
+                        "type": "assignLoginResponseToContext"
+                      },
+                      {
+                        "type": "closeTwoFactorAuthenticationPrompt"
+                      },
+                      {
+                        "type": "onTwoFactorAuthSuccess"
+                      }
+                    ],
+                    "target": "#authStateMachine.syncingSessionData"
+                  }
+                ],
+                "onError": [
+                  {
+                    "actions": [
+                      {
+                        "type": "showAlertMessage"
+                      }
+                    ],
+                    "target": "waitingUserInput"
+                  }
+                ],
+                "src": "authenticate"
+              }
+            },
+            "waitingUserInput": {
+              "entry": {
+                "params": {
+                  "status": "success"
+                },
+                "type": "finishTracingTransaction"
+              },
+              "on": {
+                "SELFIE_AUTH_COMPLETED": [
+                  {
+                    "actions": [],
+                    "target": "verifyingTwoFactorAuthentication"
+                  }
+                ],
+                "TFA_SUBMIT_CODE": [
+                  {
+                    "actions": [
+                      {
+                        "type": "extendLoginRequestWithTfaCode"
+                      }
+                    ],
+                    "target": "verifyingTwoFactorAuthentication"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "context": {
+    "sentiment": "neutral"
+  },
+  "id": "mascotAnimation",
+  "initial": "wait",
+  "states": {
+    "react": {
+      "after": {
+        "1000": [
+          {
+            "actions": [],
+            "target": "#mascotAnimation.type"
+          }
+        ]
+      },
+      "description": "Triggered briefly when a new user message arrives. The mascot reacts emotionally to the message content before transitioning to typing."
+    },
+    "sleep": {
+      "description": "The mascot is inactive due to prolonged user inactivity. It performs no active actions. Any user re-engagement will wake it back to Wait.",
+      "on": {
+        "user returns": [
+          {
+            "actions": [],
+            "target": "wait"
+          }
+        ]
+      }
+    },
+    "type": {
+      "description": "The mascot types out a response. The typing animation reflects the tone based on the sentiment. The mascot remains in this state until the response is ready.",
+      "on": {
+        "llm response done": [
+          {
+            "actions": [],
+            "target": "wait"
+          }
+        ],
+        "user sends message": [
+          {
+            "actions": [
+              {
+                "type": "inline:mascotAnimation.type#user sends message[-1]#transition[0]"
+              }
+            ],
+            "target": "react"
+          }
+        ]
+      }
+    },
+    "wait": {
+      "description": "The mascot is in an idle state, performing background tasks or idle motions while ready to respond. It may execute small quirk animations to add personality.",
+      "on": {
+        "no user activity for 3 min": [
+          {
+            "actions": [],
+            "target": "sleep"
+          }
+        ],
+        "user asks \"What are you doing?\"": [
+          {
+            "actions": [
+              {
+                "type": "showScreen"
+              }
+            ]
+          }
+        ],
+        "user sends message": [
+          {
+            "actions": [
+              {
+                "type": "inline:mascotAnimation.wait#user sends message[-1]#transition[0]"
+              }
+            ],
+            "target": "react"
+          }
+        ],
+        "user stress detected": [
+          {
+            "actions": [
+              {
+                "type": "meditate"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

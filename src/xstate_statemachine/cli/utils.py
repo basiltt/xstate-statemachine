@@ -18,16 +18,34 @@ def camel_to_snake(name: str) -> str:
     """Converts a string from camelCase or PascalCase to snake_case.
 
     This is a pure function used for normalizing machine and logic names to
-    adhere to Python's PEP 8 naming conventions.
+    adhere to Python's PEP 8 naming conventions.  It also sanitizes the
+    result so that it is always a valid Python identifier (spaces, hyphens,
+    dots, and other non-alphanumeric characters are replaced with
+    underscores, leading digits are prefixed with ``_``, and consecutive /
+    trailing underscores are collapsed).
 
     Args:
         name (str): The string in camelCase or PascalCase.
 
     Returns:
-        str: The converted string in snake_case.
+        str: The converted string in snake_case that is a valid Python
+        identifier.
     """
+    # 1. Standard camelCase / PascalCase -> snake_case
     name = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
-    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name).lower()
+    name = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name).lower()
+    # 2. Replace any non-alphanumeric characters (spaces, hyphens, dots,
+    #    parentheses, colons, etc.) with underscores
+    name = re.sub(r"[^a-z0-9]+", "_", name)
+    # 3. Strip leading/trailing underscores and collapse multiples
+    name = re.sub(r"_+", "_", name).strip("_")
+    # 4. Ensure the name doesn't start with a digit
+    if name and name[0].isdigit():
+        name = f"_{name}"
+    # 5. Fallback for completely empty names
+    if not name:
+        name = "machine"
+    return name
 
 
 def normalize_bool(value: str) -> bool:

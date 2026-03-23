@@ -1,0 +1,766 @@
+{
+  "context": {
+    "balance": 1000,
+    "buffer": 0,
+    "cardHistory": [],
+    "currentCard": null,
+    "currentLossSideBetTypes": [],
+    "currentWinSideBetTypes": [],
+    "equalCoefficient": 13,
+    "lastAction": null,
+    "mainBet": 10,
+    "minBet": 10,
+    "previousCard": null,
+    "sideBetCheckOrigin": null,
+    "sideBetCoefficients": {
+      "flush": 25,
+      "seven": 77,
+      "straight": 20
+    },
+    "sideBetWinNotification": null,
+    "sideBets": {
+      "flush": {
+        "active": false,
+        "bet": 0,
+        "locked": false,
+        "progress": []
+      },
+      "seven": {
+        "active": false,
+        "bet": 0,
+        "locked": false,
+        "progress": []
+      },
+      "straight": {
+        "active": false,
+        "bet": 0,
+        "locked": false,
+        "progress": []
+      }
+    },
+    "winAmount": 0
+  },
+  "id": "hiLoGame",
+  "initial": "idle",
+  "on": {
+    "SESSION_DISCONNECT": [
+      {
+        "actions": [],
+        "target": ".sessionRecovery"
+      }
+    ]
+  },
+  "states": {
+    "activateSideBets": {
+      "always": {
+        "actions": [
+          {
+            "type": "lockSideBetAmounts"
+          }
+        ],
+        "target": "lockSideBet"
+      }
+    },
+    "checkSideBets": {
+      "entry": {
+        "type": "updateSideBetProgress"
+      },
+      "onDone": {
+        "actions": [],
+        "target": "processSideBetsResults"
+      },
+      "states": {
+        "flush": {
+          "initial": "checking",
+          "states": {
+            "broken": {
+              "always": {
+                "actions": [],
+                "target": "complete"
+              }
+            },
+            "checking": {
+              "always": [
+                {
+                  "actions": [
+                    {
+                      "type": "inline:hiLoGame.checkSideBets.flush.checking#always[-1]#transition[0]"
+                    }
+                  ],
+                  "guard": "brokenFlush",
+                  "target": "broken"
+                },
+                {
+                  "actions": [
+                    {
+                      "type": "inline:hiLoGame.checkSideBets.flush.checking#always[-1]#transition[0]"
+                    }
+                  ],
+                  "guard": "hasFlush",
+                  "target": "win"
+                },
+                {
+                  "actions": [],
+                  "target": "inactive"
+                }
+              ]
+            },
+            "complete": {
+              "type": "final"
+            },
+            "inactive": {
+              "type": "final"
+            },
+            "reset": {
+              "always": {
+                "actions": [],
+                "target": "complete"
+              }
+            },
+            "win": {
+              "always": {
+                "actions": [],
+                "target": "reset"
+              }
+            }
+          }
+        },
+        "seven": {
+          "initial": "checking",
+          "states": {
+            "broken": {
+              "always": {
+                "actions": [],
+                "target": "complete"
+              }
+            },
+            "checking": {
+              "always": [
+                {
+                  "actions": [
+                    {
+                      "type": "inline:hiLoGame.checkSideBets.seven.checking#always[-1]#transition[0]"
+                    }
+                  ],
+                  "guard": "brokenSeven",
+                  "target": "broken"
+                },
+                {
+                  "actions": [
+                    {
+                      "type": "inline:hiLoGame.checkSideBets.seven.checking#always[-1]#transition[0]"
+                    }
+                  ],
+                  "guard": "hasSeven",
+                  "target": "win"
+                },
+                {
+                  "actions": [],
+                  "target": "inactive"
+                }
+              ]
+            },
+            "complete": {
+              "type": "final"
+            },
+            "inactive": {
+              "type": "final"
+            },
+            "reset": {
+              "always": {
+                "actions": [],
+                "target": "complete"
+              }
+            },
+            "win": {
+              "always": {
+                "actions": [],
+                "target": "reset"
+              }
+            }
+          }
+        },
+        "straight": {
+          "initial": "checking",
+          "states": {
+            "broken": {
+              "always": {
+                "actions": [],
+                "target": "complete"
+              }
+            },
+            "checking": {
+              "always": [
+                {
+                  "actions": [
+                    {
+                      "type": "inline:hiLoGame.checkSideBets.straight.checking#always[-1]#transition[0]"
+                    }
+                  ],
+                  "guard": "brokenStraight",
+                  "target": "broken"
+                },
+                {
+                  "actions": [
+                    {
+                      "type": "inline:hiLoGame.checkSideBets.straight.checking#always[-1]#transition[0]"
+                    }
+                  ],
+                  "guard": "hasStraight",
+                  "target": "win"
+                },
+                {
+                  "actions": [],
+                  "target": "inactive"
+                }
+              ]
+            },
+            "complete": {
+              "type": "final"
+            },
+            "inactive": {
+              "type": "final"
+            },
+            "reset": {
+              "always": {
+                "actions": [],
+                "target": "complete"
+              }
+            },
+            "win": {
+              "always": {
+                "actions": [],
+                "target": "reset"
+              }
+            }
+          }
+        }
+      },
+      "type": "parallel"
+    },
+    "completeSideBetCycle": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "inline:hiLoGame.completeSideBetCycle#always[-1]#guard",
+          "target": "manageWinnings"
+        },
+        {
+          "actions": [],
+          "target": "idle"
+        }
+      ]
+    },
+    "completeSideBetCycleWithoutPrediction": {
+      "always": {
+        "actions": [],
+        "target": "#hiLoGame.gameLoop.displayCard"
+      }
+    },
+    "gameLoop": {
+      "initial": "fetchFirstCard",
+      "states": {
+        "actionSelection": {
+          "on": {
+            "SELECT_ACTION": [
+              {
+                "actions": [
+                  {
+                    "type": "recordPlayerAction"
+                  },
+                  {
+                    "type": "deductSideBetsFromBalance"
+                  },
+                  {
+                    "type": "lockSideBetAmounts"
+                  }
+                ],
+                "guard": "isValidAction",
+                "target": "awaitResult"
+              }
+            ],
+            "TOGGLE_SIDE_BETS": [
+              {
+                "actions": [
+                  {
+                    "type": "toggleSideBets"
+                  }
+                ],
+                "guard": "canActivateSideBet"
+              }
+            ]
+          }
+        },
+        "awaitResult": {
+          "on": {
+            "RECEIVE_RESULT": [
+              {
+                "actions": [
+                  {
+                    "type": "processServerResult"
+                  },
+                  {
+                    "type": "storePreviousCard"
+                  },
+                  {
+                    "type": "storeNewCard"
+                  }
+                ],
+                "guard": "isValidResult",
+                "target": "showResult"
+              }
+            ],
+            "SERVER_ERROR": [
+              {
+                "actions": [],
+                "target": "#hiLoGame.idle"
+              }
+            ]
+          }
+        },
+        "checkSideBetsAfterCard": {
+          "always": {
+            "actions": [
+              {
+                "type": "storeSideBetCheckOrigin"
+              },
+              {
+                "type": "inline:hiLoGame.gameLoop.checkSideBetsAfterCard#always[-1]#transition[1]"
+              }
+            ],
+            "target": "#hiLoGame.checkSideBets"
+          }
+        },
+        "displayCard": {
+          "entry": {
+            "type": "prepareCardDisplay"
+          },
+          "on": {
+            "SHOW_CARD": [
+              {
+                "actions": [],
+                "target": "actionSelection"
+              }
+            ]
+          }
+        },
+        "fetchFirstCard": {
+          "on": {
+            "SERVER_ERROR": [
+              {
+                "actions": [],
+                "target": "#hiLoGame.idle"
+              }
+            ],
+            "SERVER_RESPONSE": [
+              {
+                "actions": [
+                  {
+                    "type": "storePreviousCard"
+                  },
+                  {
+                    "type": "storeNewCard"
+                  }
+                ],
+                "guard": "isValidCard",
+                "target": "checkSideBetsAfterCard"
+              }
+            ]
+          }
+        },
+        "showResult": {
+          "initial": "evaluate",
+          "states": {
+            "evaluate": {
+              "always": [
+                {
+                  "actions": [
+                    {
+                      "type": "calculateWin"
+                    }
+                  ],
+                  "guard": "isWin",
+                  "target": "win"
+                },
+                {
+                  "actions": [
+                    {
+                      "type": "resetBufferOnLoss"
+                    }
+                  ],
+                  "target": "#hiLoGame.checkSideBets"
+                }
+              ]
+            },
+            "win": {
+              "always": {
+                "actions": [
+                  {
+                    "type": "updateBuffer"
+                  }
+                ],
+                "target": "#hiLoGame.checkSideBets"
+              }
+            }
+          }
+        }
+      }
+    },
+    "handleSideBetsLosses": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "inline:hiLoGame.handleSideBetsLosses#always[-1]#guard",
+          "target": "completeSideBetCycleWithoutPrediction"
+        },
+        {
+          "actions": [],
+          "target": "completeSideBetCycle"
+        }
+      ],
+      "entry": [
+        {
+          "type": "notifySideBetLoss"
+        },
+        {
+          "type": "resetLostSideBetProgress"
+        }
+      ]
+    },
+    "handleSideBetsLossesAndWins": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "inline:hiLoGame.handleSideBetsLossesAndWins#always[-1]#guard",
+          "target": "completeSideBetCycleWithoutPrediction"
+        },
+        {
+          "actions": [],
+          "target": "completeSideBetCycle"
+        }
+      ],
+      "entry": [
+        {
+          "type": "notifyMixedResults"
+        },
+        {
+          "type": "resetLostSideBetProgress"
+        },
+        {
+          "type": "applySideBetWin"
+        },
+        {
+          "type": "resetWinningSideBetProgress"
+        }
+      ]
+    },
+    "handleSideBetsWins": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "inline:hiLoGame.handleSideBetsWins#always[-1]#guard",
+          "target": "completeSideBetCycleWithoutPrediction"
+        },
+        {
+          "actions": [],
+          "target": "completeSideBetCycle"
+        }
+      ],
+      "entry": [
+        {
+          "type": "notifySideBetWin"
+        },
+        {
+          "type": "applySideBetWin"
+        },
+        {
+          "type": "resetWinningSideBetProgress"
+        }
+      ]
+    },
+    "idle": {
+      "always": {
+        "actions": [
+          {
+            "type": "resetGameState"
+          }
+        ],
+        "target": "initialSetup"
+      }
+    },
+    "initialSetup": {
+      "initial": "settingBet",
+      "states": {
+        "readyToPlay": {
+          "always": [
+            {
+              "actions": [],
+              "guard": "hasActiveSideBets",
+              "target": "#hiLoGame.activateSideBets"
+            },
+            {
+              "actions": [],
+              "guard": "hasValidMainBet",
+              "target": "#hiLoGame.lockSideBet"
+            }
+          ]
+        },
+        "settingBet": {
+          "on": {
+            "SET_MAIN_BET": [
+              {
+                "actions": [
+                  {
+                    "type": "updateMainBet"
+                  }
+                ]
+              }
+            ],
+            "START_GAME": [
+              {
+                "actions": [],
+                "guard": "hasValidMainBet",
+                "target": "readyToPlay"
+              }
+            ],
+            "TOGGLE_SIDE_BETS": [
+              {
+                "actions": [
+                  {
+                    "type": "toggleSideBets"
+                  }
+                ],
+                "guard": "canActivateSideBet"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "lockSideBet": {
+      "always": {
+        "actions": [
+          {
+            "type": "deductMainBetFromBalance"
+          },
+          {
+            "type": "deductSideBetsFromBalance"
+          }
+        ],
+        "target": "#hiLoGame.gameLoop.fetchFirstCard"
+      }
+    },
+    "manageWinnings": {
+      "initial": "bufferAction",
+      "states": {
+        "bufferAction": {
+          "exit": {
+            "type": "resetSideBetWinNotification"
+          },
+          "on": {
+            "ACTIVATE_NEW_SIDE_BET": [
+              {
+                "actions": [
+                  {
+                    "type": "activateNewSideBet"
+                  }
+                ],
+                "guard": "canActivateSideBet",
+                "target": "lockNewSideBet"
+              }
+            ],
+            "CONTINUE": [
+              {
+                "actions": [
+                  {
+                    "type": "maintainSideBetLock"
+                  },
+                  {
+                    "type": "deductSideBetsFromBalance"
+                  }
+                ],
+                "target": "#hiLoGame.gameLoop.actionSelection"
+              }
+            ],
+            "TAKE_ALL": [
+              {
+                "actions": [
+                  {
+                    "type": "transferBufferToBalance"
+                  }
+                ],
+                "target": "endGame"
+              }
+            ],
+            "TAKE_HALF": [
+              {
+                "actions": [],
+                "guard": "bufferAboveMinimum",
+                "target": "transferHalf"
+              }
+            ]
+          }
+        },
+        "checkBufferSize": {
+          "initial": "evaluateBuffer",
+          "states": {
+            "evaluateBuffer": {
+              "always": [
+                {
+                  "actions": [],
+                  "guard": "bufferAboveMinimum",
+                  "target": "#hiLoGame.manageWinnings.bufferAction"
+                },
+                {
+                  "actions": [
+                    {
+                      "type": "transferBufferToBalance"
+                    }
+                  ],
+                  "guard": "bufferBelowMinimum",
+                  "target": "#hiLoGame.manageWinnings.endGame"
+                }
+              ]
+            }
+          }
+        },
+        "endGame": {
+          "always": {
+            "actions": [
+              {
+                "type": "resetGameState"
+              }
+            ],
+            "target": "#hiLoGame.idle"
+          }
+        },
+        "lockNewSideBet": {
+          "always": {
+            "actions": [],
+            "target": "bufferAction"
+          }
+        },
+        "transferHalf": {
+          "always": {
+            "actions": [
+              {
+                "type": "transferHalfToBalance"
+              }
+            ],
+            "target": "checkBufferSize"
+          }
+        }
+      }
+    },
+    "processSideBetsResults": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "inline:hiLoGame.processSideBetsResults#always[-1]#guard",
+          "target": "handleSideBetsLossesAndWins"
+        },
+        {
+          "actions": [],
+          "guard": "inline:hiLoGame.processSideBetsResults#always[-1]#guard",
+          "target": "handleSideBetsLosses"
+        },
+        {
+          "actions": [],
+          "guard": "inline:hiLoGame.processSideBetsResults#always[-1]#guard",
+          "target": "handleSideBetsWins"
+        },
+        {
+          "actions": [],
+          "guard": "inline:hiLoGame.processSideBetsResults#always[-1]#guard",
+          "target": "completeSideBetCycleWithoutPrediction"
+        },
+        {
+          "actions": [],
+          "target": "completeSideBetCycle"
+        }
+      ]
+    },
+    "sessionRecovery": {
+      "initial": "loadState",
+      "states": {
+        "loadState": {
+          "on": {
+            "LOAD_BUFFER": [
+              {
+                "actions": [
+                  {
+                    "type": "restoreBufferFromServer"
+                  }
+                ],
+                "guard": "isValidServerData",
+                "target": "restoreBuffer"
+              }
+            ],
+            "SERVER_ERROR": [
+              {
+                "actions": [],
+                "target": "#hiLoGame.idle"
+              }
+            ]
+          }
+        },
+        "restoreBuffer": {
+          "on": {
+            "LOAD_CARDS": [
+              {
+                "actions": [
+                  {
+                    "type": "restoreCardHistory"
+                  }
+                ],
+                "target": "restoreCards"
+              }
+            ]
+          }
+        },
+        "restoreCards": {
+          "on": {
+            "LOAD_SIDE_BETS": [
+              {
+                "actions": [
+                  {
+                    "type": "restoreSideBets"
+                  }
+                ],
+                "target": "restoreSideBets"
+              }
+            ]
+          }
+        },
+        "restoreLastCard": {
+          "on": {
+            "RESTORE_COMPLETE": [
+              {
+                "actions": [
+                  {
+                    "type": "finalizeSessionRestore"
+                  }
+                ],
+                "target": "#hiLoGame.gameLoop.displayCard"
+              }
+            ]
+          }
+        },
+        "restoreSideBets": {
+          "on": {
+            "LOAD_LAST_CARD": [
+              {
+                "actions": [
+                  {
+                    "type": "restoreLastCard"
+                  }
+                ],
+                "target": "restoreLastCard"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

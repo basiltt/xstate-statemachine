@@ -1,0 +1,26 @@
+{
+  "id": "Authentication",
+  "initial": "Login",
+  "states": {
+    "Logged in": {},
+    "Login": {
+      "on": {
+        "sign up": [
+          {
+            "actions": [],
+            "guard": "user does not exist",
+            "target": "Sign up"
+          }
+        ],
+        "submit": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "Logged in"
+          }
+        ]
+      }
+    },
+    "Sign up": {}
+  }
+}

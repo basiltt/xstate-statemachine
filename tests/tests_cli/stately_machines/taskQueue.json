@@ -1,0 +1,75 @@
+{
+  "id": "taskQueue",
+  "initial": "backlog",
+  "states": {
+    "backlog": {
+      "description": "This state represents tasks that are yet to be started. They are in the queue waiting for prioritization and allocation.",
+      "on": {
+        "START_TASK": [
+          {
+            "actions": [
+              {
+                "type": "inline:taskQueue.backlog#START_TASK[-1]#transition[0]"
+              }
+            ],
+            "target": "inProgress"
+          }
+        ]
+      }
+    },
+    "done": {
+      "description": "This state represents tasks that have been completed and approved. No further action is required for tasks in this state.",
+      "type": "final"
+    },
+    "inProgress": {
+      "description": "This state represents tasks that are currently being worked on. Developers are actively making progress on these tasks.",
+      "on": {
+        "MOVE_TO_REVIEW": [
+          {
+            "actions": [
+              {
+                "type": "inline:taskQueue.inProgress#MOVE_TO_REVIEW[-1]#transition[0]"
+              }
+            ],
+            "target": "review"
+          }
+        ],
+        "RETURN_TO_BACKLOG": [
+          {
+            "actions": [
+              {
+                "type": "inline:taskQueue.inProgress#RETURN_TO_BACKLOG[-1]#transition[0]"
+              }
+            ],
+            "target": "backlog"
+          }
+        ]
+      }
+    },
+    "review": {
+      "description": "This state represents tasks that have been completed but are awaiting review. Tasks in this state need to be evaluated for quality and correctness.",
+      "on": {
+        "APPROVE": [
+          {
+            "actions": [
+              {
+                "type": "inline:taskQueue.review#APPROVE[-1]#transition[0]"
+              }
+            ],
+            "target": "done"
+          }
+        ],
+        "REQUEST_CHANGES": [
+          {
+            "actions": [
+              {
+                "type": "inline:taskQueue.review#REQUEST_CHANGES[-1]#transition[0]"
+              }
+            ],
+            "target": "inProgress"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "id": "ui",
+  "initial": "idle",
+  "states": {
+    "discovered": {
+      "on": {
+        "CANCEL": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ],
+        "DOWNLOAD": [
+          {
+            "actions": [],
+            "target": "downloading"
+          }
+        ]
+      }
+    },
+    "discovering": {
+      "on": {
+        "FAILURE": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ],
+        "SUCCESS": [
+          {
+            "actions": [],
+            "target": "discovered"
+          }
+        ]
+      }
+    },
+    "downloaded": {
+      "on": {
+        "RESET": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ]
+      }
+    },
+    "downloading": {
+      "on": {
+        "FAILURE": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ],
+        "SUCCESS": [
+          {
+            "actions": [],
+            "target": "downloaded"
+          }
+        ]
+      }
+    },
+    "idle": {
+      "on": {
+        "DISCOVER": [
+          {
+            "actions": [],
+            "target": "discovering"
+          }
+        ]
+      }
+    }
+  }
+}

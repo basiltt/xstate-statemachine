@@ -1,0 +1,136 @@
+{
+  "description": "FeatureIsOn: (PREDICTIVE feature Switched ON) and !(ERROR)\n\nFeatureError: Critical Error.\n\nFeatureIsFixed: Recovery\n\nFeatureIsOff: Switch OFF",
+  "id": "Predictive Original (Polarion version)",
+  "initial": "Off",
+  "states": {
+    "Error": {
+      "on": {
+        "FeatureIsFixed": [
+          {
+            "actions": [],
+            "target": "On"
+          }
+        ],
+        "FeatureIsOff": [
+          {
+            "actions": [],
+            "target": "Off"
+          }
+        ]
+      }
+    },
+    "Off": {
+      "on": {
+        "FeatureIsOn": [
+          {
+            "actions": [],
+            "target": "On"
+          }
+        ]
+      }
+    },
+    "On": {
+      "description": "CloseToEvent: Time/Distance to event &lt; t1/D1 AND WorstTech != Event_Type AND Set Speed is ON\n\nAVIsOn: Set Speed is available\n\nAVIsOff: TOR",
+      "initial": "Passive",
+      "on": {
+        "FeatureError": [
+          {
+            "actions": [],
+            "target": "Error"
+          }
+        ],
+        "FeatureIsOff": [
+          {
+            "actions": [],
+            "target": "Off"
+          }
+        ]
+      },
+      "states": {
+        "ACTIVE": {
+          "description": "InControlToEvent: Time/Distance to event &lt; t2/D2 OR WorstTech == Event_Type\n\nInEvent: Static State signal indicates the Event Type (REM, SD, PSD, other) and Set Speed is ON\n\nNoCloseEvent: NOT Static State signal indicates the Event Type (REM, SD, PSD, other)\n\nAwaitingConfirmation: Time/Distance to event &lt; t2/D2 OR WorstTech == Event_Type. Single frame transition to Confirmation message. Driver_Confirmation: Awaiting confirmation\n\nEventConfirmed: Driver_Confirmation: Confirmed.",
+          "initial": "(BLUE)Announcement",
+          "on": {
+            "AVIsOff": [
+              {
+                "actions": [],
+                "target": "Passive"
+              }
+            ],
+            "NoCloseToEvent": [
+              {
+                "actions": [],
+                "target": "Standby"
+              }
+            ]
+          },
+          "states": {
+            "(BLUE)Announcement": {
+              "on": {
+                "AwaitingConfirmation": [
+                  {
+                    "actions": [],
+                    "target": "*(WHITE) Confirmation Request & Predictive Deceleration"
+                  }
+                ],
+                "InControlToEvent": [
+                  {
+                    "actions": [],
+                    "target": "(GREEN 1) In_Control_Entry"
+                  }
+                ]
+              }
+            },
+            "(GREEN 1) In_Control_Entry": {
+              "on": {
+                "InEvent": [
+                  {
+                    "actions": [],
+                    "target": "(GREEN 2) In_Control_Event"
+                  }
+                ]
+              }
+            },
+            "(GREEN 2) In_Control_Event": {},
+            "*(WHITE) Confirmation Request & Predictive Deceleration": {
+              "on": {
+                "EventConfirmed": [
+                  {
+                    "actions": [],
+                    "target": "(GREEN 1) In_Control_Entry"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "Passive": {
+          "on": {
+            "AVIsOn": [
+              {
+                "actions": [],
+                "target": "Standby"
+              }
+            ]
+          }
+        },
+        "Standby": {
+          "on": {
+            "AVIsOff": [
+              {
+                "actions": [],
+                "target": "Passive"
+              }
+            ],
+            "CloseToEvent": [
+              {
+                "actions": [],
+                "target": "ACTIVE"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

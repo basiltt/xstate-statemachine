@@ -1,0 +1,333 @@
+{
+  "context": {
+    "amount": 0,
+    "authType": null,
+    "error": null,
+    "user": null
+  },
+  "description": "\u041c\u0430\u0448\u0438\u043d\u0430 \u0434\u043b\u044f \u0437\u043d\u044f\u0442\u0442\u044f \u0433\u043e\u0442\u0456\u0432\u043a\u0438 \u0442\u0430 \u043f\u0435\u0440\u0435\u0432\u0456\u0440\u043a\u0438 \u0431\u0430\u043b\u0430\u043d\u0441\u0443",
+  "id": "atm",
+  "initial": "StartScreen",
+  "meta": {
+    "color": "blue",
+    "description": "\u041c\u0430\u0448\u0438\u043d\u0430 \u0434\u043b\u044f \u0437\u043d\u044f\u0442\u0442\u044f \u0433\u043e\u0442\u0456\u0432\u043a\u0438 \u0442\u0430 \u043f\u0435\u0440\u0435\u0432\u0456\u0440\u043a\u0438 \u0431\u0430\u043b\u0430\u043d\u0441\u0443",
+    "name": "ATM Machine"
+  },
+  "states": {
+    "AuthScreen": {
+      "initial": "authenticating",
+      "states": {
+        "authenticating": {
+          "invoke": {
+            "input": {},
+            "onDone": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:atm.AuthScreen.authenticating#done.invoke.atm.AuthScreen.authenticating:invocation[0][-1]#transition[0]"
+                  }
+                ],
+                "target": "#atm.MenuScreen"
+              }
+            ],
+            "onError": [
+              {
+                "actions": [
+                  {
+                    "type": "setError"
+                  }
+                ],
+                "target": "#atm.ErrorScreen"
+              }
+            ],
+            "src": "authService"
+          }
+        }
+      }
+    },
+    "BalanceFlow": {
+      "initial": "pinAuth",
+      "states": {
+        "pinAuth": {
+          "invoke": {
+            "input": {},
+            "onDone": [
+              {
+                "actions": [],
+                "guard": "isPinAuthSuccess",
+                "target": "showing"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "setPinError"
+                  }
+                ],
+                "target": "#atm.ErrorScreen"
+              }
+            ],
+            "src": "inline:atm.BalanceFlow.pinAuth#actor[0]"
+          }
+        },
+        "showing": {
+          "after": {
+            "5000": [
+              {
+                "actions": [],
+                "target": "#atm.MenuScreen"
+              }
+            ]
+          },
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "#atm.MenuScreen"
+              }
+            ],
+            "CANCEL": [
+              {
+                "actions": [
+                  {
+                    "type": "resetContext"
+                  }
+                ],
+                "target": "#atm.StartScreen"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "ErrorScreen": {
+      "initial": "showing",
+      "states": {
+        "showing": {
+          "on": {
+            "CANCEL": [
+              {
+                "actions": [
+                  {
+                    "type": "resetContext"
+                  }
+                ],
+                "target": "#atm.StartScreen"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "InterbankBalanceInfoScreen": {
+      "initial": "showing",
+      "states": {
+        "showing": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "#atm.MenuScreen"
+              }
+            ],
+            "CANCEL": [
+              {
+                "actions": [
+                  {
+                    "type": "resetContext"
+                  }
+                ],
+                "target": "#atm.StartScreen"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "InterbankWithdrawalFlow": {
+      "initial": "feeInfo",
+      "states": {
+        "feeInfo": {
+          "on": {
+            "CANCEL": [
+              {
+                "actions": [
+                  {
+                    "type": "resetContext"
+                  }
+                ],
+                "target": "#atm.StartScreen"
+              }
+            ],
+            "CONTINUE_INTERBANK": [
+              {
+                "actions": [],
+                "target": "#atm.WithdrawalScreen"
+              }
+            ],
+            "DECLINE_INTERBANK": [
+              {
+                "actions": [],
+                "target": "#atm.MenuScreen"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "MenuScreen": {
+      "initial": "selection",
+      "states": {
+        "selection": {
+          "on": {
+            "CANCEL": [
+              {
+                "actions": [
+                  {
+                    "type": "resetContext"
+                  }
+                ],
+                "target": "#atm.StartScreen"
+              }
+            ],
+            "CHECK_BALANCE": [
+              {
+                "actions": [],
+                "guard": "isOwnBankClient",
+                "target": "#atm.BalanceFlow"
+              },
+              {
+                "actions": [],
+                "target": "#atm.InterbankBalanceInfoScreen"
+              }
+            ],
+            "CHOOSE_AMOUNT": [
+              {
+                "actions": [
+                  {
+                    "type": "setAmount"
+                  }
+                ],
+                "guard": "isOwnBankClient",
+                "target": "#atm.WithdrawalScreen"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "setAmount"
+                  }
+                ],
+                "target": "#atm.InterbankWithdrawalFlow"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "StartScreen": {
+      "initial": "waiting",
+      "states": {
+        "waiting": {
+          "on": {
+            "INSERT_CARD": [
+              {
+                "actions": [
+                  {
+                    "type": "setCardAuth"
+                  }
+                ],
+                "target": "#atm.AuthScreen"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "SuccessScreen": {
+      "initial": "displaying",
+      "states": {
+        "displaying": {
+          "after": {
+            "3000": [
+              {
+                "actions": [],
+                "target": "#atm.StartScreen"
+              }
+            ]
+          },
+          "on": {
+            "CANCEL": [
+              {
+                "actions": [],
+                "target": "#atm.StartScreen"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "WithdrawalScreen": {
+      "initial": "pinAuth",
+      "states": {
+        "confirming": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "#atm.MenuScreen"
+              }
+            ],
+            "CONFIRM": [
+              {
+                "actions": [],
+                "target": "processing"
+              }
+            ]
+          }
+        },
+        "pinAuth": {
+          "invoke": {
+            "input": {},
+            "onDone": [
+              {
+                "actions": [],
+                "guard": "isPinAuthSuccess",
+                "target": "confirming"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "setPinError"
+                  }
+                ],
+                "target": "#atm.ErrorScreen"
+              }
+            ],
+            "src": "inline:atm.WithdrawalScreen.pinAuth#actor[0]"
+          }
+        },
+        "processing": {
+          "invoke": {
+            "input": {},
+            "onDone": [
+              {
+                "actions": [],
+                "target": "#atm.SuccessScreen"
+              }
+            ],
+            "onError": [
+              {
+                "actions": [
+                  {
+                    "type": "setError"
+                  }
+                ],
+                "target": "#atm.ErrorScreen"
+              }
+            ],
+            "src": "executeTransaction"
+          }
+        }
+      }
+    }
+  }
+}

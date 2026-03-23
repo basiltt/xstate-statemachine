@@ -1,0 +1,493 @@
+{
+  "id": "LANE_CHANGE_TWO_SIDES",
+  "initial": "OFF",
+  "states": {
+    "ABORT_FROM_LEFT": {
+      "always": {
+        "actions": [],
+        "guard": "hard_error",
+        "target": "ERROR"
+      },
+      "description": "Perform abort maneuver",
+      "initial": "ABORT_MANEUVER_FROM_LEFT",
+      "onDone": {
+        "actions": [],
+        "target": "MANEUVER_FINISHED"
+      },
+      "states": {
+        "ABORT_FROM_LEFT_FINISHED": {
+          "type": "final"
+        },
+        "ABORT_MANEUVER_FROM_LEFT": {
+          "on": {
+            "close_to_dp_left": [
+              {
+                "actions": [],
+                "target": "ABORT_FROM_LEFT_FINISHED"
+              }
+            ],
+            "timer_elapsed_left": [
+              {
+                "actions": [],
+                "target": "ABORT_FROM_LEFT_FINISHED"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "ABORT_FROM_RIGHT": {
+      "always": {
+        "actions": [],
+        "guard": "hard_error",
+        "target": "ERROR"
+      },
+      "description": "Perform abort maneuver",
+      "initial": "ABORT_MANEUVER_FROM_RIGHT",
+      "onDone": {
+        "actions": [],
+        "target": "MANEUVER_FINISHED"
+      },
+      "states": {
+        "ABORT_FROM_RIGHT_FINISHED": {
+          "type": "final"
+        },
+        "ABORT_MANEUVER_FROM_RIGHT": {
+          "on": {
+            "close_to_dp_right": [
+              {
+                "actions": [],
+                "target": "ABORT_FROM_RIGHT_FINISHED"
+              }
+            ],
+            "timer_elapsed_right": [
+              {
+                "actions": [],
+                "target": "ABORT_FROM_RIGHT_FINISHED"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "COMMITTED_LEFT": {
+      "always": {
+        "actions": [],
+        "guard": "hard_error",
+        "target": "ERROR"
+      },
+      "description": "Committed maneuver handling. \\\nDo NOT bounce out immediately on \\\ns_a_p/disablement/off. \\\nFinish/abort first, then decide where to go.",
+      "initial": "LAT_AFTER_PNR_LEFT",
+      "onDone": {
+        "actions": [],
+        "target": "MANEUVER_FINISHED"
+      },
+      "states": {
+        "LAT_AFTER_PNR_LEFT": {
+          "on": {
+            "close_to_dp_left": [
+              {
+                "actions": [],
+                "target": "LC_LEFT_MANEUVER_FINISHED"
+              }
+            ]
+          }
+        },
+        "LC_LEFT_MANEUVER_FINISHED": {
+          "type": "final"
+        }
+      }
+    },
+    "COMMITTED_RIGHT": {
+      "description": "Committed maneuver handling. \\\nDo NOT bounce out immediately on \\\ns_a_p/disablement/off. \\\nFinish/abort first, then decide where to go.",
+      "initial": "LAT_AFTER_PNR_RIGHT",
+      "onDone": {
+        "actions": [],
+        "target": "MANEUVER_FINISHED"
+      },
+      "states": {
+        "LAT_AFTER_PNR_RIGHT": {
+          "on": {
+            "close_to_dp_right": [
+              {
+                "actions": [],
+                "target": "LC_RIGHT_MANEUVER_FINISHED"
+              }
+            ]
+          }
+        },
+        "LC_RIGHT_MANEUVER_FINISHED": {
+          "type": "final"
+        }
+      }
+    },
+    "ENABLED": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "hard_error",
+          "target": "ERROR"
+        },
+        {
+          "actions": [],
+          "guard": "soft_error",
+          "target": "ERROR"
+        },
+        {
+          "actions": [],
+          "guard": "!enablement",
+          "target": "OFF"
+        }
+      ],
+      "description": "All states that must immediately fall back to STANDBY when s_a_p becomes false live here.",
+      "initial": "STANDBY",
+      "onDone": [
+        {
+          "actions": [],
+          "guard": "lc_left_req",
+          "target": "PROCEDURE_LEFT"
+        },
+        {
+          "actions": [],
+          "guard": "lc_right_req",
+          "target": "PROCEDURE_RIGHT"
+        }
+      ],
+      "states": {
+        "PENDING_DRIVER_APPROVAL_LEFT": {
+          "always": [
+            {
+              "actions": [],
+              "guard": "!driver_approved_left",
+              "target": "READY"
+            },
+            {
+              "actions": [],
+              "guard": "driver_approved_left",
+              "target": "START_LEFT_PROCEDURE"
+            }
+          ]
+        },
+        "PENDING_DRIVER_APPROVAL_RIGHT": {
+          "always": [
+            {
+              "actions": [],
+              "guard": "!driver_approved_right",
+              "target": "READY"
+            },
+            {
+              "actions": [],
+              "guard": "driver_approved_right",
+              "target": "START_RIGHT_PROCEDURE"
+            }
+          ]
+        },
+        "READY": {
+          "always": {
+            "actions": [],
+            "guard": "s_a_p",
+            "target": "STANDBY"
+          },
+          "description": "Handle 3 types of LC request: \\\n(1) auto system request\\\n(2) system suggested request\n\n(3) driver request\n\nIn case of driver request, if lane is not valid, wait for a valid lane or cancel request after a predefined time period",
+          "initial": "NO_REQUEST",
+          "onDone": [
+            {
+              "actions": [],
+              "guard": "lc_left_req && approve_needed",
+              "target": "PENDING_DRIVER_APPROVAL_LEFT"
+            },
+            {
+              "actions": [],
+              "guard": "lc_left_req && !approve_needed",
+              "target": "START_LEFT_PROCEDURE"
+            },
+            {
+              "actions": [],
+              "guard": "lc_right_req && approve_needed",
+              "target": "PENDING_DRIVER_APPROVAL_RIGHT"
+            },
+            {
+              "actions": [],
+              "guard": "lc_right_req && !approve_needed",
+              "target": "START_RIGHT_PROCEDURE"
+            }
+          ],
+          "states": {
+            "LEFT_LC_REQ_APPROVAL_NEEDED": {
+              "type": "final"
+            },
+            "LEFT_LC_REQ_APPROVAL_NOT_NEEDED": {
+              "type": "final"
+            },
+            "NO_REQUEST": {
+              "on": {
+                "auto_sys_req_left": [
+                  {
+                    "actions": [],
+                    "guard": "valid_left && !system_blocked_left",
+                    "target": "LEFT_LC_REQ_APPROVAL_NOT_NEEDED"
+                  }
+                ],
+                "auto_sys_req_right": [
+                  {
+                    "actions": [],
+                    "guard": "valid_right && !system_blocked_right",
+                    "target": "RIGHT_LC_REQ_APPROVAL_NOT_NEEDED"
+                  }
+                ],
+                "driver_req_left": [
+                  {
+                    "actions": [],
+                    "guard": "valid_left",
+                    "target": "LEFT_LC_REQ_APPROVAL_NOT_NEEDED"
+                  },
+                  {
+                    "actions": [],
+                    "guard": "!valid_left",
+                    "target": "WAITING_FOR_VALID_LEFT_LANE"
+                  }
+                ],
+                "driver_req_right": [
+                  {
+                    "actions": [],
+                    "guard": "valid_right",
+                    "target": "RIGHT_LC_REQ_APPROVAL_NOT_NEEDED"
+                  },
+                  {
+                    "actions": [],
+                    "guard": "!valid_right",
+                    "target": "WAITING_FOR_VALID_RIGHT_LANE"
+                  }
+                ],
+                "sys_suggested_req_left": [
+                  {
+                    "actions": [],
+                    "guard": "valid_left && !system_blocked_left",
+                    "target": "LEFT_LC_REQ_APPROVAL_NEEDED"
+                  }
+                ],
+                "sys_suggested_req_right": [
+                  {
+                    "actions": [],
+                    "guard": "valid_right && !system_blocked_right",
+                    "target": "RIGHT_LC_REQ_APPROVAL_NEEDED"
+                  }
+                ]
+              }
+            },
+            "RIGHT_LC_REQ_APPROVAL_NEEDED": {
+              "type": "final"
+            },
+            "RIGHT_LC_REQ_APPROVAL_NOT_NEEDED": {
+              "type": "final"
+            },
+            "WAITING_FOR_VALID_LEFT_LANE": {
+              "always": [
+                {
+                  "actions": [],
+                  "guard": "timeout_wait_valid_lane_left",
+                  "target": "NO_REQUEST"
+                },
+                {
+                  "actions": [],
+                  "guard": "valid_left",
+                  "target": "LEFT_LC_REQ_APPROVAL_NOT_NEEDED"
+                }
+              ]
+            },
+            "WAITING_FOR_VALID_RIGHT_LANE": {
+              "always": [
+                {
+                  "actions": [],
+                  "guard": "valid_right",
+                  "target": "RIGHT_LC_REQ_APPROVAL_NOT_NEEDED"
+                },
+                {
+                  "actions": [],
+                  "guard": "timeout_wait_valid_lane_right",
+                  "target": "NO_REQUEST"
+                }
+              ]
+            }
+          }
+        },
+        "STANDBY": {
+          "on": {
+            "!s_a_p": [
+              {
+                "actions": [],
+                "target": "READY"
+              }
+            ]
+          }
+        },
+        "START_LEFT_PROCEDURE": {
+          "type": "final"
+        },
+        "START_RIGHT_PROCEDURE": {
+          "type": "final"
+        }
+      }
+    },
+    "ERROR": {
+      "always": {
+        "actions": [],
+        "guard": "!enablement",
+        "target": "OFF"
+      },
+      "on": {
+        "!error": [
+          {
+            "actions": [],
+            "guard": "enablement",
+            "target": "ENABLED"
+          }
+        ]
+      }
+    },
+    "MANEUVER_FINISHED": {
+      "after": {
+        "delay_after_finished": [
+          {
+            "actions": [],
+            "guard": "enablement",
+            "target": "#LANE_CHANGE_TWO_SIDES.ENABLED"
+          }
+        ]
+      },
+      "always": [
+        {
+          "actions": [],
+          "guard": "hard_error",
+          "target": "ERROR"
+        },
+        {
+          "actions": [],
+          "guard": "!enablement",
+          "target": "OFF"
+        }
+      ],
+      "description": "Return to DP"
+    },
+    "OFF": {
+      "on": {
+        "enablement": [
+          {
+            "actions": [],
+            "target": "ENABLED"
+          }
+        ]
+      }
+    },
+    "PROCEDURE_LEFT": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "hard_error",
+          "target": "ERROR"
+        },
+        {
+          "actions": [],
+          "guard": "abort_req_from_left",
+          "target": "ABORT_FROM_LEFT"
+        }
+      ],
+      "description": "Left Procedure handling",
+      "initial": "PENDING_LEFT",
+      "onDone": {
+        "actions": [],
+        "target": "COMMITTED_LEFT"
+      },
+      "states": {
+        "LAT_BEFORE_PNR_LEFT": {
+          "on": {
+            "left_crossed_pnr": [
+              {
+                "actions": [],
+                "target": "PNR_LEFT"
+              }
+            ]
+          }
+        },
+        "LONG_LEFT": {
+          "on": {
+            "left_maneuver_started": [
+              {
+                "actions": [],
+                "target": "LAT_BEFORE_PNR_LEFT"
+              }
+            ]
+          }
+        },
+        "PENDING_LEFT": {
+          "on": {
+            "left_delay_maneuver_start": [
+              {
+                "actions": [],
+                "target": "LONG_LEFT"
+              }
+            ]
+          }
+        },
+        "PNR_LEFT": {
+          "type": "final"
+        }
+      }
+    },
+    "PROCEDURE_RIGHT": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "hard_error",
+          "target": "ERROR"
+        },
+        {
+          "actions": [],
+          "guard": "abort_req_from_right",
+          "target": "ABORT_FROM_RIGHT"
+        }
+      ],
+      "description": "Right procedure handling",
+      "initial": "PENDING_RIGHT",
+      "onDone": {
+        "actions": [],
+        "target": "COMMITTED_RIGHT"
+      },
+      "states": {
+        "LAT_BEFORE_PNR_RIGHT": {
+          "on": {
+            "right_crossed_pnr": [
+              {
+                "actions": [],
+                "target": "PNR_RIGHT"
+              }
+            ]
+          }
+        },
+        "LONG_RIGHT": {
+          "on": {
+            "right_maneuver_started": [
+              {
+                "actions": [],
+                "target": "LAT_BEFORE_PNR_RIGHT"
+              }
+            ]
+          }
+        },
+        "PENDING_RIGHT": {
+          "on": {
+            "right_delay_maneuver_start": [
+              {
+                "actions": [],
+                "target": "LONG_RIGHT"
+              }
+            ]
+          }
+        },
+        "PNR_RIGHT": {
+          "type": "final"
+        }
+      }
+    }
+  }
+}

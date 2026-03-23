@@ -1,0 +1,81 @@
+{
+  "id": "Parallelism",
+  "initial": "multi-tasking",
+  "states": {
+    "multi-tasking": {
+      "onDone": {
+        "actions": [],
+        "meta": {},
+        "target": "single mindedness"
+      },
+      "states": {
+        "task 1": {
+          "initial": "consider",
+          "states": {
+            "consider": {
+              "description": "show a list \n\nof items for \n\nselection",
+              "on": {
+                "select cheese": [
+                  {
+                    "actions": [],
+                    "target": "selected"
+                  }
+                ]
+              }
+            },
+            "selected": {
+              "on": {
+                "unselect cheese": [
+                  {
+                    "actions": [],
+                    "description": "reconsider your selection",
+                    "target": "consider"
+                  }
+                ]
+              },
+              "type": "final"
+            }
+          }
+        },
+        "task 2": {
+          "initial": "consider",
+          "states": {
+            "consider": {
+              "description": "show a list \n\nof items for \n\nselection",
+              "on": {
+                "select fruit": [
+                  {
+                    "actions": [],
+                    "target": "selected"
+                  }
+                ]
+              }
+            },
+            "selected": {
+              "on": {
+                "unselect fruit": [
+                  {
+                    "actions": [],
+                    "target": "consider"
+                  }
+                ]
+              },
+              "type": "final"
+            }
+          }
+        }
+      },
+      "type": "parallel"
+    },
+    "single mindedness": {
+      "on": {
+        "back": [
+          {
+            "actions": [],
+            "target": "multi-tasking"
+          }
+        ]
+      }
+    }
+  }
+}

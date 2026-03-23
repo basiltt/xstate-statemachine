@@ -1,0 +1,61 @@
+{
+  "id": "invoiceCreation",
+  "initial": "Recipient page",
+  "states": {
+    "Invoice details page": {
+      "description": "This state represents the page where users input the details of the invoice, such as items, quantities, and prices.",
+      "on": {
+        "next": [
+          {
+            "actions": [
+              {
+                "type": "inline:invoiceCreation.Invoice details page#next[-1]#transition[0]"
+              }
+            ],
+            "target": "Success page"
+          }
+        ],
+        "previous": [
+          {
+            "actions": [
+              {
+                "type": "inline:invoiceCreation.Invoice details page#previous[-1]#transition[0]"
+              }
+            ],
+            "target": "Recipient page"
+          }
+        ]
+      }
+    },
+    "Recipient page": {
+      "description": "This state represents the page where users input recipient information for the invoice.",
+      "on": {
+        "next": [
+          {
+            "actions": [
+              {
+                "type": "inline:invoiceCreation.Recipient page#next[-1]#transition[0]"
+              }
+            ],
+            "target": "Invoice details page"
+          }
+        ]
+      }
+    },
+    "Success page": {
+      "description": "This state represents the confirmation page that indicates the invoice has been successfully created.",
+      "on": {
+        "restart": [
+          {
+            "actions": [
+              {
+                "type": "inline:invoiceCreation.Success page#restart[-1]#transition[0]"
+              }
+            ],
+            "target": "Recipient page"
+          }
+        ]
+      }
+    }
+  }
+}

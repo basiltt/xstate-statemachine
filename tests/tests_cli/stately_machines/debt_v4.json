@@ -1,0 +1,189 @@
+{
+  "id": "debt",
+  "initial": "ActiveDebt",
+  "states": {
+    "ActiveDebt": {
+      "onDone": {
+        "actions": [],
+        "target": "ClosedDebt"
+      },
+      "states": {
+        "loan1": {
+          "initial": "ActiveLoan1",
+          "states": {
+            "ActiveLoan1": {
+              "on": {
+                "LOAN1_OVERDUE": [
+                  {
+                    "actions": [],
+                    "target": "#debt.OverdueDebt"
+                  }
+                ],
+                "LOAN1_PAY": [
+                  {
+                    "actions": [],
+                    "target": "ClosedLoan1"
+                  }
+                ]
+              }
+            },
+            "ClosedLoan1": {
+              "type": "final"
+            },
+            "loan1Hist": {
+              "history": "shallow",
+              "type": "history"
+            }
+          }
+        },
+        "loan2": {
+          "initial": "ActiveLoan2",
+          "states": {
+            "ActiveLoan2": {
+              "on": {
+                "LOAN2_OVERDUE": [
+                  {
+                    "actions": [],
+                    "target": "#debt.OverdueDebt"
+                  }
+                ],
+                "LOAN2_PAY": [
+                  {
+                    "actions": [],
+                    "target": "ClosedLoan2"
+                  }
+                ]
+              }
+            },
+            "ClosedLoan2": {
+              "type": "final"
+            },
+            "loan2Hist": {
+              "history": "shallow",
+              "type": "history"
+            }
+          }
+        }
+      },
+      "type": "parallel"
+    },
+    "ClosedDebt": {
+      "states": {
+        "loan1": {
+          "initial": "ClosedLoan1",
+          "states": {
+            "ClosedLoan1": {
+              "type": "final"
+            }
+          }
+        },
+        "loan2": {
+          "initial": "ClosedLoan2",
+          "states": {
+            "ClosedLoan2": {
+              "type": "final"
+            }
+          }
+        }
+      },
+      "type": "parallel"
+    },
+    "OverdueDebt": {
+      "onDone": {
+        "actions": [],
+        "target": "ClosedDebt"
+      },
+      "states": {
+        "loan1": {
+          "initial": "ActiveLoan1",
+          "states": {
+            "ActiveLoan1": {
+              "on": {
+                "LOAN1_OVERDUE": [
+                  {
+                    "actions": [],
+                    "target": "OverdueLoan1"
+                  }
+                ],
+                "LOAN1_PAY": [
+                  {
+                    "actions": [],
+                    "target": "ClosedLoan1"
+                  }
+                ]
+              }
+            },
+            "ClosedLoan1": {
+              "type": "final"
+            },
+            "OverdueLoan1": {
+              "on": {
+                "LOAN1_DEFER": [
+                  {
+                    "actions": [],
+                    "target": "#debt.ActiveDebt.loan1.loan1Hist"
+                  }
+                ],
+                "LOAN1_PAY": [
+                  {
+                    "actions": [],
+                    "target": "ClosedLoan1"
+                  }
+                ]
+              }
+            },
+            "loan1Hist": {
+              "history": "shallow",
+              "type": "history"
+            }
+          }
+        },
+        "loan2": {
+          "initial": "ActiveLoan2",
+          "states": {
+            "ActiveLoan2": {
+              "on": {
+                "LOAN2_OVERDUE": [
+                  {
+                    "actions": [],
+                    "target": "OverdueLoan2"
+                  }
+                ],
+                "LOAN2_PAY": [
+                  {
+                    "actions": [],
+                    "target": "ClosedLoan2"
+                  }
+                ]
+              }
+            },
+            "ClosedLoan2": {
+              "type": "final"
+            },
+            "OverdueLoan2": {
+              "on": {
+                "LOAN2_DEFER": [
+                  {
+                    "actions": [],
+                    "target": "#debt.ActiveDebt.loan2.loan2Hist"
+                  }
+                ],
+                "LOAN2_PAY": [
+                  {
+                    "actions": [],
+                    "target": "ClosedLoan2"
+                  }
+                ]
+              }
+            },
+            "loan2Hist": {
+              "history": "shallow",
+              "type": "history"
+            }
+          }
+        }
+      },
+      "type": "parallel"
+    }
+  }
+}

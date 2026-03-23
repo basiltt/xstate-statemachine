@@ -1,0 +1,180 @@
+{
+  "description": "FeatureIsOn: (PREDICTIVE feature Switched ON) and !(ERROR)\n\nFeatureError: Critical Error.\n\nFeatureIsFixed: Recovery\n\nFeatureIsOff: Switch OFF",
+  "id": "Predictive Original with passive announcement",
+  "initial": "Off",
+  "states": {
+    "Error": {
+      "always": {
+        "actions": [],
+        "guard": "!FeatureIsOn",
+        "target": "Off"
+      },
+      "on": {
+        "!FeatureError": [
+          {
+            "actions": [],
+            "target": "On"
+          }
+        ]
+      }
+    },
+    "Off": {
+      "on": {
+        "FeatureIsOn": [
+          {
+            "actions": [],
+            "target": "On"
+          }
+        ]
+      }
+    },
+    "On": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "!FeatureIsOn",
+          "target": "Off"
+        },
+        {
+          "actions": [],
+          "guard": "FeatureError",
+          "target": "Error"
+        }
+      ],
+      "description": "CloseToEvent: Time/Distance to event &lt; t1/D1 AND WorstTech != Event_Type AND Set Speed is ON\n\nAVIsOn: Set Speed is available\n\nAVIsOff: TOR",
+      "initial": "Passive",
+      "states": {
+        "ACTIVE": {
+          "always": [
+            {
+              "actions": [],
+              "guard": "!AVIsOn",
+              "target": "Passive"
+            },
+            {
+              "actions": [],
+              "guard": "!CloseToEvent",
+              "target": "Standby"
+            }
+          ],
+          "description": "InControlToEvent: Time/Distance to event &lt; t2/D2 OR WorstTech == Event_Type\n\nInEvent: Static State signal indicates the Event Type (REM, SD, PSD, other) and Set Speed is ON\n\nNoCloseEvent: NOT Static State signal indicates the Event Type (REM, SD, PSD, other)\n\nAwaitingConfirmation: Time/Distance to event &lt; t2/D2 OR WorstTech == Event_Type. Single frame transition to Confirmation message. Driver_Confirmation: Awaiting confirmation\n\nEventConfirmed: Driver_Confirmation: Confirmed.",
+          "initial": "Active Announcement",
+          "states": {
+            "Active Announcement": {
+              "always": [
+                {
+                  "actions": [],
+                  "guard": "AwaitingConfirmation",
+                  "target": "Confirmation Request & Predictive Deceleration"
+                },
+                {
+                  "actions": [],
+                  "guard": "InEvent",
+                  "target": "In_Control_Event"
+                },
+                {
+                  "actions": [],
+                  "guard": "InControlToEvent",
+                  "target": "In_Control_Entry"
+                }
+              ]
+            },
+            "Confirmation Request & Predictive Deceleration": {
+              "on": {
+                "EventConfirmed": [
+                  {
+                    "actions": [],
+                    "target": "ConfirmationGranted"
+                  }
+                ]
+              }
+            },
+            "ConfirmationGranted": {
+              "always": [
+                {
+                  "actions": [],
+                  "guard": "InControlToEvent",
+                  "target": "In_Control_Entry"
+                },
+                {
+                  "actions": [],
+                  "guard": "InEvent",
+                  "target": "In_Control_Event"
+                }
+              ]
+            },
+            "In_Control_Entry": {
+              "on": {
+                "InEvent": [
+                  {
+                    "actions": [],
+                    "target": "In_Control_Event"
+                  }
+                ]
+              }
+            },
+            "In_Control_Event": {
+              "on": {
+                "InEvent": [
+                  {
+                    "actions": [],
+                    "target": "In_Control_Event"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "Passive": {
+          "on": {
+            "AVIsOn": [
+              {
+                "actions": [],
+                "target": "Standby"
+              }
+            ],
+            "CloseToEvent": [
+              {
+                "actions": [],
+                "guard": "!AVIsOn",
+                "target": "Passive Announcement"
+              }
+            ]
+          }
+        },
+        "Passive Announcement": {
+          "on": {
+            "!CloseToEvent": [
+              {
+                "actions": [],
+                "target": "Passive"
+              }
+            ],
+            "AVIsOn": [
+              {
+                "actions": [],
+                "target": "ACTIVE"
+              }
+            ]
+          }
+        },
+        "Standby": {
+          "on": {
+            "!AVIsOn": [
+              {
+                "actions": [],
+                "target": "Passive"
+              }
+            ],
+            "CloseToEvent": [
+              {
+                "actions": [],
+                "target": "ACTIVE"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

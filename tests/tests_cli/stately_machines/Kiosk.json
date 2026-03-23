@@ -1,0 +1,152 @@
+{
+  "context": {
+    "currentProductType": "string",
+    "orderedProducts": "Array<OrderedProduct>"
+  },
+  "id": "Kiosk",
+  "initial": "BROWSING",
+  "states": {
+    "BROWSING": {
+      "description": "The initial load of the app",
+      "entry": {
+        "params": {
+          "productType": "string"
+        },
+        "type": "getProducts"
+      },
+      "on": {
+        "add.select": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "ORDERING_PRODUCT"
+          }
+        ],
+        "products.change": [
+          {
+            "actions": [],
+            "description": "when we reselect the products to show",
+            "guard": "productType !== currentProductType",
+            "target": "BROWSING"
+          }
+        ],
+        "user.checkout": [
+          {
+            "actions": [],
+            "target": "CHECKING_OUT"
+          }
+        ]
+      }
+    },
+    "CHECKING_OUT": {
+      "description": "The sidebar with the \n\nselected products open",
+      "on": {
+        "user.change_product": [
+          {
+            "actions": [
+              {
+                "params": {
+                  "qunatity": "number"
+                },
+                "type": "changeProduct"
+              }
+            ],
+            "target": "CHECKING_OUT"
+          }
+        ],
+        "user.close_checkout": [
+          {
+            "actions": [],
+            "target": "BROWSING"
+          }
+        ],
+        "user.finish": [
+          {
+            "actions": [],
+            "guard": "products > 0",
+            "target": "FINISH_ORDER"
+          }
+        ]
+      }
+    },
+    "FAIL_TRANSACTION": {
+      "on": {
+        "transaction.close": [
+          {
+            "actions": [],
+            "target": "BROWSING"
+          }
+        ],
+        "transaction.retry": [
+          {
+            "actions": [],
+            "target": "FINISH_ORDER"
+          }
+        ]
+      }
+    },
+    "FINISH_ORDER": {
+      "after": {
+        "5000": [
+          {
+            "actions": [],
+            "guard": "no response",
+            "target": "#Kiosk.FAIL_TRANSACTION"
+          }
+        ]
+      },
+      "invoke": {
+        "id": "payment_processor",
+        "input": {},
+        "src": "paymentProcessor"
+      },
+      "on": {
+        "transaction.sucessessfulll": [
+          {
+            "actions": [],
+            "target": "SUCCESS_TRANSACTION"
+          }
+        ],
+        "transaction.unsucessessfulll": [
+          {
+            "actions": [],
+            "target": "FAIL_TRANSACTION"
+          }
+        ]
+      }
+    },
+    "ORDERING_PRODUCT": {
+      "description": "A pop-up shows in which the user chooses\n\nthe customization of his drink",
+      "invoke": {
+        "id": "adding",
+        "input": {
+          "additionMilk": "string",
+          "additionSyrup": "Array<string>",
+          "img": "string",
+          "price": "string",
+          "productName": "string",
+          "quantity": "string"
+        },
+        "src": "addToCart"
+      },
+      "on": {
+        "add.close": [
+          {
+            "actions": [],
+            "target": "BROWSING"
+          }
+        ]
+      }
+    },
+    "SUCCESS_TRANSACTION": {
+      "on": {
+        "transaction.close": [
+          {
+            "actions": [],
+            "target": "BROWSING"
+          }
+        ]
+      }
+    }
+  }
+}

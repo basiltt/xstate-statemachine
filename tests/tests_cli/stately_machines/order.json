@@ -1,0 +1,132 @@
+{
+  "context": "{{createInitialContext()}}",
+  "id": "upload",
+  "initial": "idle",
+  "states": {
+    "completion": {
+      "on": {
+        "RESET": [
+          {
+            "actions": [
+              {
+                "type": "inline:upload.completion#RESET[-1]#transition[0]"
+              }
+            ],
+            "target": "idle"
+          }
+        ],
+        "UPLOAD": [
+          {
+            "actions": [
+              {
+                "type": "inline:upload.completion#UPLOAD[-1]#transition[0]"
+              }
+            ],
+            "target": "uploading"
+          }
+        ]
+      }
+    },
+    "failure": {
+      "on": {
+        "RESET": [
+          {
+            "actions": [
+              {
+                "type": "inline:upload.failure#RESET[-1]#transition[0]"
+              }
+            ],
+            "target": "idle"
+          }
+        ],
+        "RETRY": [
+          {
+            "actions": [
+              {
+                "type": "inline:upload.failure#RETRY[-1]#transition[0]"
+              }
+            ],
+            "guard": "inline:upload.failure#RETRY[-1]#guard",
+            "target": "uploading"
+          }
+        ],
+        "UPLOAD": [
+          {
+            "actions": [
+              {
+                "type": "inline:upload.failure#UPLOAD[-1]#transition[0]"
+              }
+            ],
+            "target": "uploading"
+          }
+        ]
+      }
+    },
+    "idle": {
+      "on": {
+        "RESET": [
+          {
+            "actions": [
+              {
+                "type": "inline:upload.idle#RESET[-1]#transition[0]"
+              }
+            ]
+          }
+        ],
+        "UPLOAD": [
+          {
+            "actions": [
+              {
+                "type": "inline:upload.idle#UPLOAD[-1]#transition[0]"
+              }
+            ],
+            "target": "uploading"
+          }
+        ]
+      }
+    },
+    "uploading": {
+      "on": {
+        "FAIL": [
+          {
+            "actions": [
+              {
+                "type": "inline:upload.uploading#FAIL[-1]#transition[0]"
+              }
+            ],
+            "target": "failure"
+          }
+        ],
+        "PROGRESS": [
+          {
+            "actions": [
+              {
+                "type": "inline:upload.uploading#PROGRESS[-1]#transition[0]"
+              }
+            ]
+          }
+        ],
+        "RESET": [
+          {
+            "actions": [
+              {
+                "type": "inline:upload.uploading#RESET[-1]#transition[0]"
+              }
+            ],
+            "target": "idle"
+          }
+        ],
+        "SUCCESS": [
+          {
+            "actions": [
+              {
+                "type": "inline:upload.uploading#SUCCESS[-1]#transition[0]"
+              }
+            ],
+            "target": "completion"
+          }
+        ]
+      }
+    }
+  }
+}

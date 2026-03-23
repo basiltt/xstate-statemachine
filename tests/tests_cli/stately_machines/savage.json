@@ -1,0 +1,1522 @@
+{
+  "context": "{{({ input }) => ({\n        wounds: wounds(0),\n        distractedTimer: conditionTimer(-1),\n        vulnerableTimer: conditionTimer(-1),\n        isWildCard: input.isWildCard ?? true,\n        maxWounds: maxWounds((input.isWildCard ?? true) ? 3 : 1),\n        ownTurn: false,\n        onHold: false,\n        holdUsed: false,\n        interruptedSuccessfully: false,\n        injuries: [],\n        grappledBy: \"\",\n        afflictionTimer: -1,\n        activeEffects: []\n    })}}",
+  "id": "savage",
+  "initial": "alive",
+  "states": {
+    "alive": {
+      "on": {
+        "APPLY_POWER_EFFECT": [
+          {
+            "actions": [
+              {
+                "type": "applyPowerEffect"
+              }
+            ],
+            "guard": "durationPositive"
+          }
+        ],
+        "BACKLASH": [
+          {
+            "actions": [
+              {
+                "type": "backlashClearEffects"
+              },
+              {
+                "type": "raiseFatigue"
+              }
+            ]
+          }
+        ],
+        "DISMISS_EFFECT": [
+          {
+            "actions": [
+              {
+                "type": "dismissEffect"
+              }
+            ]
+          }
+        ]
+      },
+      "states": {
+        "afflictionTrack": {
+          "initial": "healthy",
+          "states": {
+            "afflicted": {
+              "always": {
+                "actions": [
+                  {
+                    "type": "clearAfflictionTimer"
+                  }
+                ],
+                "guard": "afflictionTimerExpired",
+                "target": "healthy"
+              },
+              "initial": "paralytic",
+              "on": {
+                "APPLY_AFFLICTION": [
+                  {
+                    "actions": [
+                      {
+                        "type": "setAfflictionTimer"
+                      }
+                    ],
+                    "guard": "afflictionParalytic",
+                    "target": ".paralytic"
+                  },
+                  {
+                    "actions": [
+                      {
+                        "type": "setAfflictionTimer"
+                      },
+                      {
+                        "type": "raiseFatigue"
+                      }
+                    ],
+                    "guard": "afflictionWeak",
+                    "target": ".weak"
+                  },
+                  {
+                    "actions": [
+                      {
+                        "type": "setAfflictionTimer"
+                      },
+                      {
+                        "type": "raiseLethalTick"
+                      }
+                    ],
+                    "guard": "afflictionLethal",
+                    "target": ".lethal"
+                  },
+                  {
+                    "actions": [
+                      {
+                        "type": "setAfflictionTimer"
+                      }
+                    ],
+                    "guard": "afflictionSleep",
+                    "target": ".sleep"
+                  }
+                ],
+                "CURE_AFFLICTION": [
+                  {
+                    "actions": [
+                      {
+                        "type": "clearAfflictionTimer"
+                      }
+                    ],
+                    "target": "healthy"
+                  }
+                ]
+              },
+              "states": {
+                "lethal": {
+                  "always": {
+                    "actions": [
+                      {
+                        "type": "clearAfflictionTimer"
+                      }
+                    ],
+                    "guard": "afflictionTimerExpired",
+                    "target": "#savage.dead"
+                  }
+                },
+                "paralytic": {},
+                "sleep": {},
+                "weak": {}
+              }
+            },
+            "healthy": {
+              "on": {
+                "APPLY_AFFLICTION": [
+                  {
+                    "actions": [
+                      {
+                        "type": "setAfflictionTimer"
+                      }
+                    ],
+                    "guard": "afflictionParalytic",
+                    "target": "#savage.alive.afflictionTrack.afflicted.paralytic"
+                  },
+                  {
+                    "actions": [
+                      {
+                        "type": "setAfflictionTimer"
+                      },
+                      {
+                        "type": "raiseFatigue"
+                      }
+                    ],
+                    "guard": "afflictionWeak",
+                    "target": "#savage.alive.afflictionTrack.afflicted.weak"
+                  },
+                  {
+                    "actions": [
+                      {
+                        "type": "setAfflictionTimer"
+                      },
+                      {
+                        "type": "raiseLethalTick"
+                      }
+                    ],
+                    "guard": "afflictionLethal",
+                    "target": "#savage.alive.afflictionTrack.afflicted.lethal"
+                  },
+                  {
+                    "actions": [
+                      {
+                        "type": "setAfflictionTimer"
+                      }
+                    ],
+                    "guard": "afflictionSleep",
+                    "target": "#savage.alive.afflictionTrack.afflicted.sleep"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "conditionTrack": {
+          "states": {
+            "defense": {
+              "initial": "notDefending",
+              "states": {
+                "defending": {
+                  "always": [
+                    {
+                      "actions": [],
+                      "guard": "inline:savage.alive.conditionTrack.defense.defending#always[-1]#guard",
+                      "target": "notDefending"
+                    },
+                    {
+                      "actions": [],
+                      "guard": "inline:savage.alive.conditionTrack.defense.defending#always[-1]#guard",
+                      "target": "notDefending"
+                    },
+                    {
+                      "actions": [],
+                      "guard": "inline:savage.alive.conditionTrack.defense.defending#always[-1]#guard",
+                      "target": "notDefending"
+                    }
+                  ],
+                  "on": {
+                    "START_OF_TURN": [
+                      {
+                        "actions": [],
+                        "guard": "inline:savage.alive.conditionTrack.defense.defending#START_OF_TURN[-1]#guard",
+                        "target": "notDefending"
+                      }
+                    ]
+                  }
+                },
+                "notDefending": {
+                  "on": {
+                    "DEFEND": [
+                      {
+                        "actions": [],
+                        "guard": "inline:savage.alive.conditionTrack.defense.notDefending#DEFEND[-1]#guard",
+                        "target": "defending"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "distraction": {
+              "initial": "clear",
+              "states": {
+                "clear": {
+                  "on": {
+                    "APPLY_BOUND": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setDistractedTimer"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.distraction.clear#APPLY_BOUND[-1]#guard",
+                        "target": "distracted"
+                      }
+                    ],
+                    "APPLY_DISTRACTED": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setDistractedTimer"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.distraction.clear#APPLY_DISTRACTED[-1]#guard",
+                        "target": "distracted"
+                      }
+                    ],
+                    "APPLY_STUNNED": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setDistractedTimer"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.distraction.clear#APPLY_STUNNED[-1]#guard",
+                        "target": "distracted"
+                      }
+                    ],
+                    "GRAPPLE_ATTEMPT": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setDistractedTimer"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.distraction.clear#GRAPPLE_ATTEMPT[-1]#guard",
+                        "target": "distracted"
+                      }
+                    ]
+                  }
+                },
+                "distracted": {
+                  "always": {
+                    "actions": [],
+                    "guard": "inline:savage.alive.conditionTrack.distraction.distracted#always[-1]#guard",
+                    "target": "clear"
+                  },
+                  "on": {
+                    "APPLY_BOUND": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setDistractedTimer"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.distraction.distracted#APPLY_BOUND[-1]#guard"
+                      }
+                    ],
+                    "APPLY_DISTRACTED": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setDistractedTimer"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.distraction.distracted#APPLY_DISTRACTED[-1]#guard"
+                      }
+                    ],
+                    "APPLY_STUNNED": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setDistractedTimer"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.distraction.distracted#APPLY_STUNNED[-1]#guard"
+                      }
+                    ],
+                    "GRAPPLE_ATTEMPT": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setDistractedTimer"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.distraction.distracted#GRAPPLE_ATTEMPT[-1]#guard"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "stun": {
+              "initial": "normal",
+              "states": {
+                "normal": {
+                  "on": {
+                    "APPLY_STUNNED": [
+                      {
+                        "actions": [
+                          {
+                            "type": "raiseDropProne"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.stun.normal#APPLY_STUNNED[-1]#guard",
+                        "target": "stunned"
+                      }
+                    ]
+                  }
+                },
+                "stunned": {
+                  "always": {
+                    "actions": [],
+                    "guard": "inline:savage.alive.conditionTrack.stun.stunned#always[-1]#guard",
+                    "target": "normal"
+                  },
+                  "on": {
+                    "APPLY_STUNNED": [
+                      {
+                        "actions": [
+                          {
+                            "type": "raiseDropProne"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.stun.stunned#APPLY_STUNNED[-1]#guard"
+                      }
+                    ],
+                    "START_OF_TURN": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setVulnerableTimerRecoveryRaise"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.stun.stunned#START_OF_TURN[-1]#guard",
+                        "target": "normal"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "setVulnerableTimerRecoverySuccess"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.stun.stunned#START_OF_TURN[-1]#guard",
+                        "target": "normal"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "vision": {
+              "initial": "clear",
+              "states": {
+                "blinded": {
+                  "always": [
+                    {
+                      "actions": [],
+                      "guard": "inline:savage.alive.conditionTrack.vision.blinded#always[-1]#guard",
+                      "target": "clear"
+                    },
+                    {
+                      "actions": [],
+                      "guard": "inline:savage.alive.conditionTrack.vision.blinded#always[-1]#guard",
+                      "target": "clear"
+                    }
+                  ],
+                  "on": {
+                    "END_OF_TURN": [
+                      {
+                        "actions": [],
+                        "guard": "inline:savage.alive.conditionTrack.vision.blinded#END_OF_TURN[-1]#guard",
+                        "target": "clear"
+                      },
+                      {
+                        "actions": [],
+                        "guard": "inline:savage.alive.conditionTrack.vision.blinded#END_OF_TURN[-1]#guard",
+                        "target": "impaired"
+                      }
+                    ]
+                  }
+                },
+                "clear": {
+                  "on": {
+                    "APPLY_BLINDED": [
+                      {
+                        "actions": [],
+                        "guard": "inline:savage.alive.conditionTrack.vision.clear#APPLY_BLINDED[-1]#guard",
+                        "target": "blinded"
+                      },
+                      {
+                        "actions": [],
+                        "guard": "inline:savage.alive.conditionTrack.vision.clear#APPLY_BLINDED[-1]#guard",
+                        "target": "impaired"
+                      }
+                    ]
+                  }
+                },
+                "impaired": {
+                  "always": [
+                    {
+                      "actions": [],
+                      "guard": "inline:savage.alive.conditionTrack.vision.impaired#always[-1]#guard",
+                      "target": "clear"
+                    },
+                    {
+                      "actions": [],
+                      "guard": "inline:savage.alive.conditionTrack.vision.impaired#always[-1]#guard",
+                      "target": "clear"
+                    }
+                  ],
+                  "on": {
+                    "APPLY_BLINDED": [
+                      {
+                        "actions": [],
+                        "guard": "inline:savage.alive.conditionTrack.vision.impaired#APPLY_BLINDED[-1]#guard",
+                        "target": "blinded"
+                      }
+                    ],
+                    "END_OF_TURN": [
+                      {
+                        "actions": [],
+                        "guard": "inline:savage.alive.conditionTrack.vision.impaired#END_OF_TURN[-1]#guard",
+                        "target": "clear"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "vulnerability": {
+              "initial": "clear",
+              "states": {
+                "clear": {
+                  "on": {
+                    "APPLY_BOUND": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setVulnerableTimer"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.vulnerability.clear#APPLY_BOUND[-1]#guard",
+                        "target": "vulnerable"
+                      }
+                    ],
+                    "APPLY_ENTANGLED": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setVulnerableTimerPersistent"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.vulnerability.clear#APPLY_ENTANGLED[-1]#guard",
+                        "target": "vulnerable"
+                      }
+                    ],
+                    "APPLY_VULNERABLE": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setVulnerableTimer"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.vulnerability.clear#APPLY_VULNERABLE[-1]#guard",
+                        "target": "vulnerable"
+                      }
+                    ],
+                    "GRAPPLE_ATTEMPT": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setVulnerableTimer"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.vulnerability.clear#GRAPPLE_ATTEMPT[-1]#guard",
+                        "target": "vulnerable"
+                      }
+                    ],
+                    "START_OF_TURN": [
+                      {
+                        "actions": [],
+                        "guard": "inline:savage.alive.conditionTrack.vulnerability.clear#START_OF_TURN[-1]#guard",
+                        "target": "vulnerable"
+                      }
+                    ]
+                  }
+                },
+                "vulnerable": {
+                  "always": {
+                    "actions": [],
+                    "guard": "inline:savage.alive.conditionTrack.vulnerability.vulnerable#always[-1]#guard",
+                    "target": "clear"
+                  },
+                  "on": {
+                    "APPLY_BOUND": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setVulnerableTimer"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.vulnerability.vulnerable#APPLY_BOUND[-1]#guard"
+                      }
+                    ],
+                    "APPLY_ENTANGLED": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setVulnerableTimerPersistent"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.vulnerability.vulnerable#APPLY_ENTANGLED[-1]#guard"
+                      }
+                    ],
+                    "APPLY_VULNERABLE": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setVulnerableTimer"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.vulnerability.vulnerable#APPLY_VULNERABLE[-1]#guard"
+                      }
+                    ],
+                    "GRAPPLE_ATTEMPT": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setVulnerableTimer"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.conditionTrack.vulnerability.vulnerable#GRAPPLE_ATTEMPT[-1]#guard"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "type": "parallel"
+        },
+        "damageTrack": {
+          "initial": "active",
+          "states": {
+            "active": {
+              "initial": "unshaken",
+              "states": {
+                "shaken": {
+                  "on": {
+                    "HEAL": [
+                      {
+                        "actions": [
+                          {
+                            "type": "healWounds"
+                          }
+                        ],
+                        "guard": "hasWounds"
+                      }
+                    ],
+                    "SPEND_BENNY": [
+                      {
+                        "actions": [],
+                        "guard": "hasWounds",
+                        "target": "wounded"
+                      },
+                      {
+                        "actions": [],
+                        "target": "unshaken"
+                      }
+                    ],
+                    "START_OF_TURN": [
+                      {
+                        "actions": [],
+                        "guard": "inline:savage.alive.damageTrack.active.shaken#START_OF_TURN[-1]#guard",
+                        "target": "wounded"
+                      },
+                      {
+                        "actions": [],
+                        "guard": "inline:savage.alive.damageTrack.active.shaken#START_OF_TURN[-1]#guard",
+                        "target": "unshaken"
+                      }
+                    ],
+                    "TAKE_DAMAGE": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          }
+                        ],
+                        "guard": "extraDiesShaken",
+                        "target": "#savage.dead"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.damageTrack.active.shaken#TAKE_DAMAGE[-1]#guard",
+                        "target": "#savage.dead"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.damageTrack.active.shaken#TAKE_DAMAGE[-1]#guard",
+                        "target": "#savage.alive.damageTrack.incapacitated.bleedingOut"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          },
+                          {
+                            "type": "appendInjury"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.damageTrack.active.shaken#TAKE_DAMAGE[-1]#guard",
+                        "target": "#savage.alive.damageTrack.incapacitated.stable"
+                      },
+                      {
+                        "actions": [],
+                        "guard": "inline:savage.alive.damageTrack.active.shaken#TAKE_DAMAGE[-1]#guard",
+                        "target": "wounded"
+                      },
+                      {
+                        "actions": [],
+                        "guard": "allSoakedShaken",
+                        "target": "unshaken"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "addWoundsShaken"
+                          }
+                        ],
+                        "guard": "woundsNotExceedMaxShaken"
+                      }
+                    ],
+                    "_LETHAL_TICK": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          }
+                        ],
+                        "guard": "lethalExtraDies",
+                        "target": "#savage.dead"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          }
+                        ],
+                        "guard": "lethalExceedsMax",
+                        "target": "#savage.alive.damageTrack.incapacitated.bleedingOut"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "lethalAddWound"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "unshaken": {
+                  "on": {
+                    "TAKE_DAMAGE": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          }
+                        ],
+                        "guard": "extraDies",
+                        "target": "#savage.dead"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.damageTrack.active.unshaken#TAKE_DAMAGE[-1]#guard",
+                        "target": "#savage.dead"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.damageTrack.active.unshaken#TAKE_DAMAGE[-1]#guard",
+                        "target": "#savage.alive.damageTrack.incapacitated.bleedingOut"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          },
+                          {
+                            "type": "appendInjury"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.damageTrack.active.unshaken#TAKE_DAMAGE[-1]#guard",
+                        "target": "#savage.alive.damageTrack.incapacitated.stable"
+                      },
+                      {
+                        "actions": [],
+                        "guard": "allSoaked"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "addWounds"
+                          }
+                        ],
+                        "guard": "woundsNotExceedMax",
+                        "target": "shaken"
+                      },
+                      {
+                        "actions": [],
+                        "guard": "marginNonNeg",
+                        "target": "shaken"
+                      }
+                    ],
+                    "_LETHAL_TICK": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          }
+                        ],
+                        "guard": "lethalExtraDies",
+                        "target": "#savage.dead"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          }
+                        ],
+                        "guard": "lethalExceedsMax",
+                        "target": "#savage.alive.damageTrack.incapacitated.bleedingOut"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "lethalAddWound"
+                          }
+                        ],
+                        "target": "shaken"
+                      }
+                    ]
+                  }
+                },
+                "wounded": {
+                  "on": {
+                    "HEAL": [
+                      {
+                        "actions": [
+                          {
+                            "type": "healWounds"
+                          }
+                        ],
+                        "guard": "healToZero",
+                        "target": "unshaken"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "healWounds"
+                          }
+                        ]
+                      }
+                    ],
+                    "TAKE_DAMAGE": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          }
+                        ],
+                        "guard": "extraDies",
+                        "target": "#savage.dead"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.damageTrack.active.wounded#TAKE_DAMAGE[-1]#guard",
+                        "target": "#savage.dead"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.damageTrack.active.wounded#TAKE_DAMAGE[-1]#guard",
+                        "target": "#savage.alive.damageTrack.incapacitated.bleedingOut"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          },
+                          {
+                            "type": "appendInjury"
+                          }
+                        ],
+                        "guard": "inline:savage.alive.damageTrack.active.wounded#TAKE_DAMAGE[-1]#guard",
+                        "target": "#savage.alive.damageTrack.incapacitated.stable"
+                      },
+                      {
+                        "actions": [],
+                        "guard": "allSoaked"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "addWounds"
+                          }
+                        ],
+                        "guard": "woundsNotExceedMax",
+                        "target": "shaken"
+                      },
+                      {
+                        "actions": [],
+                        "guard": "marginNonNeg",
+                        "target": "shaken"
+                      }
+                    ],
+                    "_LETHAL_TICK": [
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          }
+                        ],
+                        "guard": "lethalExtraDies",
+                        "target": "#savage.dead"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "setWoundsToMax"
+                          }
+                        ],
+                        "guard": "lethalExceedsMax",
+                        "target": "#savage.alive.damageTrack.incapacitated.bleedingOut"
+                      },
+                      {
+                        "actions": [
+                          {
+                            "type": "lethalAddWound"
+                          }
+                        ],
+                        "target": "shaken"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "incapacitated": {
+              "initial": "stable",
+              "on": {
+                "FINISHING_MOVE": [
+                  {
+                    "actions": [],
+                    "target": "#savage.dead"
+                  }
+                ],
+                "HEAL": [
+                  {
+                    "actions": [
+                      {
+                        "type": "healWounds"
+                      }
+                    ],
+                    "guard": "healToZero",
+                    "target": "#savage.alive.damageTrack.active.unshaken"
+                  },
+                  {
+                    "actions": [
+                      {
+                        "type": "healWounds"
+                      }
+                    ],
+                    "guard": "hasWounds",
+                    "target": "#savage.alive.damageTrack.active.wounded"
+                  }
+                ]
+              },
+              "states": {
+                "bleedingOut": {
+                  "on": {
+                    "START_OF_TURN": [
+                      {
+                        "actions": [],
+                        "guard": "inline:savage.alive.damageTrack.incapacitated.bleedingOut#START_OF_TURN[-1]#guard",
+                        "target": "#savage.dead"
+                      },
+                      {
+                        "actions": [],
+                        "guard": "inline:savage.alive.damageTrack.incapacitated.bleedingOut#START_OF_TURN[-1]#guard",
+                        "target": "stable"
+                      }
+                    ]
+                  }
+                },
+                "stable": {}
+              }
+            }
+          }
+        },
+        "fatigueTrack": {
+          "initial": "fresh",
+          "states": {
+            "exhausted": {
+              "on": {
+                "APPLY_FATIGUE": [
+                  {
+                    "actions": [],
+                    "target": "incapByFatigue"
+                  }
+                ],
+                "RECOVER_FATIGUE": [
+                  {
+                    "actions": [],
+                    "target": "fatigued"
+                  }
+                ]
+              }
+            },
+            "fatigued": {
+              "on": {
+                "APPLY_FATIGUE": [
+                  {
+                    "actions": [],
+                    "target": "exhausted"
+                  }
+                ],
+                "RECOVER_FATIGUE": [
+                  {
+                    "actions": [],
+                    "target": "fresh"
+                  }
+                ]
+              }
+            },
+            "fresh": {
+              "on": {
+                "APPLY_FATIGUE": [
+                  {
+                    "actions": [],
+                    "target": "fatigued"
+                  }
+                ]
+              }
+            },
+            "incapByFatigue": {
+              "on": {
+                "RECOVER_FATIGUE": [
+                  {
+                    "actions": [],
+                    "target": "exhausted"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "positionTrack": {
+          "initial": "standing",
+          "states": {
+            "prone": {
+              "always": {
+                "actions": [],
+                "guard": "inline:savage.alive.positionTrack.prone#always[-1]#guard",
+                "target": "standing"
+              },
+              "on": {
+                "STAND_UP": [
+                  {
+                    "actions": [],
+                    "guard": "inline:savage.alive.positionTrack.prone#STAND_UP[-1]#guard",
+                    "target": "standing"
+                  }
+                ]
+              }
+            },
+            "standing": {
+              "on": {
+                "DROP_PRONE": [
+                  {
+                    "actions": [],
+                    "guard": "inline:savage.alive.positionTrack.standing#DROP_PRONE[-1]#guard",
+                    "target": "prone"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "restraintTrack": {
+          "initial": "free",
+          "states": {
+            "bound": {
+              "always": [
+                {
+                  "actions": [],
+                  "guard": "inline:savage.alive.restraintTrack.bound#always[-1]#guard",
+                  "target": "free"
+                },
+                {
+                  "actions": [],
+                  "guard": "inline:savage.alive.restraintTrack.bound#always[-1]#guard",
+                  "target": "free"
+                }
+              ],
+              "on": {
+                "ESCAPE_ATTEMPT": [
+                  {
+                    "actions": [
+                      {
+                        "type": "clearDistractedTimer"
+                      },
+                      {
+                        "type": "clearVulnerableTimer"
+                      }
+                    ],
+                    "guard": "escapeRaise",
+                    "target": "free"
+                  },
+                  {
+                    "actions": [],
+                    "guard": "escapeSuccess",
+                    "target": "entangled"
+                  }
+                ],
+                "GRAPPLE_ATTEMPT": [
+                  {
+                    "actions": [
+                      {
+                        "type": "setGrappledBy"
+                      }
+                    ],
+                    "guard": "inline:savage.alive.restraintTrack.bound#GRAPPLE_ATTEMPT[-1]#guard",
+                    "target": "pinned"
+                  },
+                  {
+                    "actions": [
+                      {
+                        "type": "setGrappledBy"
+                      }
+                    ],
+                    "guard": "inline:savage.alive.restraintTrack.bound#GRAPPLE_ATTEMPT[-1]#guard",
+                    "target": "grabbed"
+                  }
+                ]
+              }
+            },
+            "entangled": {
+              "always": [
+                {
+                  "actions": [],
+                  "guard": "inline:savage.alive.restraintTrack.entangled#always[-1]#guard",
+                  "target": "free"
+                },
+                {
+                  "actions": [],
+                  "guard": "inline:savage.alive.restraintTrack.entangled#always[-1]#guard",
+                  "target": "free"
+                }
+              ],
+              "on": {
+                "APPLY_BOUND": [
+                  {
+                    "actions": [],
+                    "guard": "inline:savage.alive.restraintTrack.entangled#APPLY_BOUND[-1]#guard",
+                    "target": "bound"
+                  }
+                ],
+                "ESCAPE_ATTEMPT": [
+                  {
+                    "actions": [
+                      {
+                        "type": "clearVulnerableTimer"
+                      }
+                    ],
+                    "guard": "escapeSuccess",
+                    "target": "free"
+                  }
+                ],
+                "GRAPPLE_ATTEMPT": [
+                  {
+                    "actions": [
+                      {
+                        "type": "setGrappledBy"
+                      }
+                    ],
+                    "guard": "inline:savage.alive.restraintTrack.entangled#GRAPPLE_ATTEMPT[-1]#guard",
+                    "target": "pinned"
+                  },
+                  {
+                    "actions": [
+                      {
+                        "type": "setGrappledBy"
+                      }
+                    ],
+                    "guard": "inline:savage.alive.restraintTrack.entangled#GRAPPLE_ATTEMPT[-1]#guard",
+                    "target": "grabbed"
+                  }
+                ]
+              }
+            },
+            "free": {
+              "on": {
+                "APPLY_BOUND": [
+                  {
+                    "actions": [],
+                    "guard": "inline:savage.alive.restraintTrack.free#APPLY_BOUND[-1]#guard",
+                    "target": "bound"
+                  }
+                ],
+                "APPLY_ENTANGLED": [
+                  {
+                    "actions": [
+                      {
+                        "type": "setVulnerableTimerPersistent"
+                      }
+                    ],
+                    "guard": "inline:savage.alive.restraintTrack.free#APPLY_ENTANGLED[-1]#guard",
+                    "target": "entangled"
+                  }
+                ],
+                "GRAPPLE_ATTEMPT": [
+                  {
+                    "actions": [
+                      {
+                        "type": "setGrappledBy"
+                      }
+                    ],
+                    "guard": "inline:savage.alive.restraintTrack.free#GRAPPLE_ATTEMPT[-1]#guard",
+                    "target": "pinned"
+                  },
+                  {
+                    "actions": [
+                      {
+                        "type": "setGrappledBy"
+                      }
+                    ],
+                    "guard": "inline:savage.alive.restraintTrack.free#GRAPPLE_ATTEMPT[-1]#guard",
+                    "target": "grabbed"
+                  }
+                ]
+              }
+            },
+            "grabbed": {
+              "always": [
+                {
+                  "actions": [
+                    {
+                      "type": "clearGrappledBy"
+                    }
+                  ],
+                  "guard": "inline:savage.alive.restraintTrack.grabbed#always[-1]#guard",
+                  "target": "free"
+                },
+                {
+                  "actions": [
+                    {
+                      "type": "clearGrappledBy"
+                    }
+                  ],
+                  "guard": "inline:savage.alive.restraintTrack.grabbed#always[-1]#guard",
+                  "target": "free"
+                }
+              ],
+              "on": {
+                "APPLY_BOUND": [
+                  {
+                    "actions": [
+                      {
+                        "type": "clearGrappledBy"
+                      }
+                    ],
+                    "target": "bound"
+                  }
+                ],
+                "GRAPPLE_ESCAPE": [
+                  {
+                    "actions": [
+                      {
+                        "type": "clearGrappledBy"
+                      }
+                    ],
+                    "guard": "grappleEscapeSuccess",
+                    "target": "free"
+                  }
+                ],
+                "PIN_ATTEMPT": [
+                  {
+                    "actions": [],
+                    "guard": "pinSuccess",
+                    "target": "pinned"
+                  }
+                ]
+              }
+            },
+            "pinned": {
+              "always": [
+                {
+                  "actions": [
+                    {
+                      "type": "clearGrappledBy"
+                    }
+                  ],
+                  "guard": "inline:savage.alive.restraintTrack.pinned#always[-1]#guard",
+                  "target": "free"
+                },
+                {
+                  "actions": [
+                    {
+                      "type": "clearGrappledBy"
+                    }
+                  ],
+                  "guard": "inline:savage.alive.restraintTrack.pinned#always[-1]#guard",
+                  "target": "free"
+                }
+              ],
+              "on": {
+                "APPLY_BOUND": [
+                  {
+                    "actions": [
+                      {
+                        "type": "clearGrappledBy"
+                      }
+                    ],
+                    "target": "bound"
+                  }
+                ],
+                "GRAPPLE_ESCAPE": [
+                  {
+                    "actions": [
+                      {
+                        "type": "clearGrappledBy"
+                      }
+                    ],
+                    "guard": "grappleEscapeRaise",
+                    "target": "free"
+                  },
+                  {
+                    "actions": [],
+                    "guard": "grappleEscapeSuccessNoRaise",
+                    "target": "grabbed"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "turnPhase": {
+          "initial": "idle",
+          "states": {
+            "acting": {
+              "on": {
+                "END_OF_TURN": [
+                  {
+                    "actions": [
+                      {
+                        "type": "tickAfflictionTimer"
+                      },
+                      {
+                        "type": "tickEffectTimers"
+                      },
+                      {
+                        "type": "setOwnTurnFalse"
+                      }
+                    ],
+                    "guard": "inline:savage.alive.turnPhase.acting#END_OF_TURN[-1]#guard",
+                    "target": "idle"
+                  },
+                  {
+                    "actions": [
+                      {
+                        "type": "tickDistractedOnly"
+                      },
+                      {
+                        "type": "tickAfflictionTimer"
+                      },
+                      {
+                        "type": "tickEffectTimers"
+                      },
+                      {
+                        "type": "setOwnTurnFalse"
+                      }
+                    ],
+                    "guard": "inline:savage.alive.turnPhase.acting#END_OF_TURN[-1]#guard",
+                    "target": "idle"
+                  },
+                  {
+                    "actions": [
+                      {
+                        "type": "tickTimers"
+                      },
+                      {
+                        "type": "tickAfflictionTimer"
+                      },
+                      {
+                        "type": "tickEffectTimers"
+                      },
+                      {
+                        "type": "setOwnTurnFalse"
+                      }
+                    ],
+                    "target": "idle"
+                  }
+                ],
+                "GO_ON_HOLD": [
+                  {
+                    "actions": [
+                      {
+                        "type": "setOnHold"
+                      }
+                    ],
+                    "guard": "inline:savage.alive.turnPhase.acting#GO_ON_HOLD[-1]#guard",
+                    "target": "holdingAction"
+                  }
+                ]
+              }
+            },
+            "holdingAction": {
+              "always": [
+                {
+                  "actions": [
+                    {
+                      "type": "clearOnHold"
+                    },
+                    {
+                      "type": "setOwnTurnFalse"
+                    }
+                  ],
+                  "guard": "inline:savage.alive.turnPhase.holdingAction#always[-1]#guard",
+                  "target": "idle"
+                },
+                {
+                  "actions": [
+                    {
+                      "type": "clearOnHold"
+                    },
+                    {
+                      "type": "setOwnTurnFalse"
+                    }
+                  ],
+                  "guard": "inline:savage.alive.turnPhase.holdingAction#always[-1]#guard",
+                  "target": "idle"
+                },
+                {
+                  "actions": [
+                    {
+                      "type": "clearOnHold"
+                    },
+                    {
+                      "type": "setOwnTurnFalse"
+                    }
+                  ],
+                  "guard": "inline:savage.alive.turnPhase.holdingAction#always[-1]#guard",
+                  "target": "idle"
+                },
+                {
+                  "actions": [
+                    {
+                      "type": "clearOnHold"
+                    },
+                    {
+                      "type": "setOwnTurnFalse"
+                    }
+                  ],
+                  "guard": "inline:savage.alive.turnPhase.holdingAction#always[-1]#guard",
+                  "target": "idle"
+                }
+              ],
+              "on": {
+                "ACT_FROM_HOLD": [
+                  {
+                    "actions": [
+                      {
+                        "type": "clearOnHold"
+                      },
+                      {
+                        "type": "setOwnTurnTrue"
+                      }
+                    ],
+                    "target": "acting"
+                  }
+                ],
+                "END_OF_TURN": [
+                  {
+                    "actions": [
+                      {
+                        "type": "setOwnTurnFalse"
+                      }
+                    ],
+                    "target": "idle"
+                  }
+                ],
+                "INTERRUPT": [
+                  {
+                    "actions": [
+                      {
+                        "type": "clearOnHold"
+                      },
+                      {
+                        "type": "setOwnTurnTrue"
+                      },
+                      {
+                        "type": "setInterruptSuccess"
+                      }
+                    ],
+                    "guard": "interruptSuccess",
+                    "target": "acting"
+                  },
+                  {
+                    "actions": [
+                      {
+                        "type": "clearOnHold"
+                      },
+                      {
+                        "type": "setOwnTurnTrue"
+                      },
+                      {
+                        "type": "setInterruptFail"
+                      }
+                    ],
+                    "target": "acting"
+                  }
+                ]
+              }
+            },
+            "idle": {
+              "on": {
+                "START_OF_TURN": [
+                  {
+                    "actions": [
+                      {
+                        "type": "setOwnTurnFalse"
+                      }
+                    ],
+                    "guard": "isOnHold",
+                    "target": "holdingAction"
+                  },
+                  {
+                    "actions": [
+                      {
+                        "type": "setOwnTurnTrue"
+                      },
+                      {
+                        "type": "clearHoldUsed"
+                      }
+                    ],
+                    "target": "acting"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "type": "parallel"
+    },
+    "dead": {
+      "entry": {
+        "type": "inline:savage.dead#entry[0]"
+      },
+      "type": "final"
+    }
+  }
+}

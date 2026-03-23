@@ -1,0 +1,57 @@
+{
+  "id": "debt",
+  "initial": "ActiveDebt",
+  "states": {
+    "ActiveDebt": {
+      "initial": "ActiveLoan",
+      "states": {
+        "ActiveLoan": {
+          "on": {
+            "LOAN_OVERDUE": [
+              {
+                "actions": [],
+                "target": "#debt.OverdueDebt"
+              }
+            ],
+            "LOAN_PAY": [
+              {
+                "actions": [],
+                "target": "#debt.ClosedDebt"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "ClosedDebt": {
+      "initial": "ClosedLoan",
+      "states": {
+        "ClosedLoan": {
+          "type": "final"
+        }
+      },
+      "type": "final"
+    },
+    "OverdueDebt": {
+      "initial": "OverdueLoan",
+      "states": {
+        "OverdueLoan": {
+          "on": {
+            "LOAN_DEFER": [
+              {
+                "actions": [],
+                "target": "#debt.ActiveDebt"
+              }
+            ],
+            "LOAN_PAY": [
+              {
+                "actions": [],
+                "target": "#debt.ClosedDebt"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

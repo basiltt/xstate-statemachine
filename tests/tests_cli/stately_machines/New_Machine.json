@@ -1,0 +1,167 @@
+{
+  "context": {
+    "df": "",
+    "fd": "fd"
+  },
+  "id": "New Machine",
+  "initial": "Initial state",
+  "states": {
+    "Another state": {
+      "on": {
+        "next": [
+          {
+            "actions": [],
+            "meta": {},
+            "reenter": true,
+            "target": "Initial state"
+          }
+        ]
+      }
+    },
+    "Hauptprogramm": {
+      "initial": "Main Laden/Neustarten",
+      "states": {
+        "Main Laden/Neustarten": {},
+        "Schiffe_setzen": {},
+        "Spielfl\u00e4cge_Ausgabe": {}
+      }
+    },
+    "Initial state": {
+      "on": {
+        "next": [
+          {
+            "actions": [],
+            "meta": {},
+            "reenter": true,
+            "target": "Another state"
+          }
+        ]
+      }
+    },
+    "KI_Schiffsflotte_Spielfl\u00e4che": {
+      "initial": "Spielfl\u00e4che_KI_Info_Wiedergabe",
+      "states": {
+        "Anzahl_noch_Verf\u00fcgbarer_Schiffe": {},
+        "Anzahl_noch_Verf\u00fcgbarer_Schiffe_Update": {},
+        "Leeren_Spielfeld": {
+          "on": {
+            "Event 1": [
+              {
+                "actions": [],
+                "reenter": true,
+                "target": "#New Machine.Unterprogramm.Blank_Spielfeld"
+              }
+            ],
+            "Event 2": [
+              {
+                "actions": [],
+                "reenter": true,
+                "target": "#New Machine.Unterprogramm.Verf\u00fcgbare_Schiffe_Reset"
+              }
+            ]
+          }
+        },
+        "Spielfl\u00e4che_KI_Info_Wiedergabe": {}
+      }
+    },
+    "KI_Schuss_Spielfl\u00e4che": {
+      "initial": "Schuss_KI_Info_Wiedergabe",
+      "states": {
+        "Leeren_Spielfeld": {
+          "on": {
+            "Event 1": [
+              {
+                "actions": [],
+                "reenter": true,
+                "target": "#New Machine.Unterprogramm.Blank_Spielfeld"
+              }
+            ]
+          }
+        },
+        "Schuss_KI_Info_Wiedergabe": {}
+      }
+    },
+    "Laden": {},
+    "Main": {
+      "on": {
+        "Game Laden/Neustarten": [
+          {
+            "actions": [],
+            "guard": "New guard",
+            "reenter": true,
+            "target": "Laden"
+          },
+          {
+            "actions": [],
+            "reenter": true,
+            "target": "Neustarten"
+          }
+        ]
+      }
+    },
+    "Neustarten": {},
+    "Spieler_Schiffsflotte_Spielfl\u00e4che": {
+      "initial": "Spielfl\u00e4che_Spieler_Info_Wiedergabe",
+      "states": {
+        "Anzahl_noch_Verf\u00fcgbarer_Schiffe": {},
+        "Anzahl_noch_Verf\u00fcgbarer_Schiffe_Update": {},
+        "Leeren_Spielfeld": {
+          "on": {
+            "Event 1": [
+              {
+                "actions": [],
+                "reenter": true,
+                "target": "#New Machine.Unterprogramm.Blank_Spielfeld"
+              }
+            ],
+            "Event 2": [
+              {
+                "actions": [],
+                "reenter": true,
+                "target": "#New Machine.Unterprogramm.Verf\u00fcgbare_Schiffe_Reset"
+              }
+            ]
+          }
+        },
+        "Spielfl\u00e4che_Spieler_Info_Wiedergabe": {}
+      }
+    },
+    "Spieler_Schuss_Spielfl\u00e4che": {
+      "initial": "Schuss_Spieler_Info_Wiedergabe",
+      "states": {
+        "Leeren_Spielfeld": {
+          "on": {
+            "Event 1": [
+              {
+                "actions": [],
+                "reenter": true,
+                "target": "#New Machine.Unterprogramm.Blank_Spielfeld"
+              }
+            ]
+          }
+        },
+        "Schuss_Spieler_Info_Wiedergabe": {}
+      }
+    },
+    "Unterprogramm": {
+      "initial": "Blank_Spielfeld",
+      "states": {
+        "Blank_Spielfeld": {},
+        "Eingabe_Verarbeiten": {},
+        "Horizontal_Schiff_auf_Spielfeld_setzen": {},
+        "KI_Verf\u00fcgbare_Schiffe_Reduzieren": {},
+        "KI_setzt_Schiffe": {},
+        "KI_w\u00e4hlt_random_Position_Ausrichtung": {},
+        "Schie\u00dfen": {},
+        "Schiffs_Ausrichtung": {},
+        "Schiffsnamen_Ausgabe": {},
+        "Schleife-Ausgabe": {},
+        "Spieler_Feststellung_welches_Schiff_zu_setzen": {},
+        "Spieler_Verf\u00fcgbare_Schiffe_Reduzieren": {},
+        "Spielfeld_Ausgabe": {},
+        "Verf\u00fcgbare_Schiffe_Reset": {},
+        "Vertikal_Schiff_auf_Spielfeld_setzen": {}
+      }
+    }
+  }
+}

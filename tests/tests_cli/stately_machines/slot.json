@@ -1,0 +1,346 @@
+{
+  "context": {
+    "autoSpinsCount": 0,
+    "balanceAtStartAutoSpins": "0",
+    "isWinSkip": false,
+    "lossFromStartAutoSpins": "0",
+    "lossLimit": 9007199254740991,
+    "winFromStartAutoSpins": "0",
+    "winLimit": 9007199254740991
+  },
+  "id": "slot",
+  "initial": "loading",
+  "states": {
+    "autoNextSpin": {
+      "entry": {
+        "type": "handleEntryAutoNextSpinState"
+      },
+      "on": {
+        "global:stopAutoSpins": [
+          {
+            "actions": [
+              {
+                "type": "handleEndAutoSpins"
+              }
+            ],
+            "target": "idle"
+          }
+        ]
+      }
+    },
+    "idle": {
+      "entry": {
+        "type": "handleEntryIdleState"
+      },
+      "on": {
+        "global:startAutoSpins": [
+          {
+            "actions": [
+              {
+                "type": "handleStartAutoSpins"
+              }
+            ],
+            "target": "spin"
+          }
+        ],
+        "global:stopAutoSpins": [
+          {
+            "actions": [
+              {
+                "type": "handleEndAutoSpins"
+              }
+            ]
+          }
+        ],
+        "request:settings:toggle": [
+          {
+            "actions": [
+              {
+                "type": "handleSettingsToggle"
+              }
+            ]
+          }
+        ],
+        "request:spin:start": [
+          {
+            "actions": [],
+            "target": "spin"
+          }
+        ]
+      }
+    },
+    "loading": {
+      "initial": "initState",
+      "states": {
+        "initMainScene": {
+          "entry": {
+            "type": "handleEntryInitMainScene"
+          },
+          "on": {
+            "global:loading:initMainSceneDone": [
+              {
+                "actions": [
+                  {
+                    "type": "handleInitMainSceneDone"
+                  }
+                ],
+                "guard": "isFromInitMainSceneToIdle",
+                "target": "#slot.idle"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "handleInitMainSceneDone"
+                  }
+                ],
+                "guard": "isFromInitMainSceneToRoundFinished",
+                "target": "#slot.roundFinished"
+              }
+            ]
+          }
+        },
+        "initPixiApp": {
+          "entry": {
+            "type": "handleEntryInitPixiApp"
+          },
+          "on": {
+            "global:loading:initPixiAppDone": [
+              {
+                "actions": [],
+                "target": "initMainScene"
+              }
+            ]
+          }
+        },
+        "initServices": {
+          "entry": {
+            "type": "handleEntryInitServices"
+          },
+          "on": {
+            "global:loading:servicesInitDone": [
+              {
+                "actions": [],
+                "target": "loadAssets"
+              }
+            ]
+          }
+        },
+        "initState": {
+          "entry": {
+            "type": "handleEntryInitState"
+          },
+          "on": {
+            "global:stateInitDone": [
+              {
+                "actions": [],
+                "target": "initServices"
+              }
+            ]
+          }
+        },
+        "loadAssets": {
+          "entry": {
+            "type": "handleEntryLoadAssets"
+          },
+          "on": {
+            "global:loading:loadAssetsDone": [
+              {
+                "actions": [],
+                "target": "initPixiApp"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "pick": {
+      "entry": {
+        "type": "handleEntryPickState"
+      },
+      "exit": {
+        "type": "handleExitPickState"
+      },
+      "on": {
+        "global:endShowingLines": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ],
+        "global:startAutoSpins": [
+          {
+            "actions": [
+              {
+                "type": "handleStartAutoSpins"
+              }
+            ],
+            "target": "spin"
+          }
+        ],
+        "request:settings:toggle": [
+          {
+            "actions": [
+              {
+                "type": "handleSettingsToggle"
+              }
+            ]
+          }
+        ],
+        "request:spin:start": [
+          {
+            "actions": [],
+            "target": "spin"
+          }
+        ]
+      }
+    },
+    "roundAction": {
+      "entry": {
+        "type": "handleEntryRoundActionState"
+      },
+      "on": {
+        "global:completeRoundAction": [
+          {
+            "actions": [],
+            "target": "pick"
+          }
+        ]
+      }
+    },
+    "roundFinished": {
+      "entry": {
+        "type": "handleEntryRoundFinishedState"
+      },
+      "on": {
+        "global:completeRound": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ]
+      }
+    },
+    "spin": {
+      "entry": {
+        "type": "handleEntrySpinState"
+      },
+      "on": {
+        "global:notEnoughMoneyForPlaceBet": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ],
+        "global:stopAutoSpins": [
+          {
+            "actions": [
+              {
+                "type": "handleEndAutoSpins"
+              }
+            ]
+          }
+        ],
+        "global:tryRegressBet": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ],
+        "request:settings:toggle": [
+          {
+            "actions": [
+              {
+                "type": "handleSettingsToggle"
+              }
+            ]
+          }
+        ],
+        "request:spin:stop": [
+          {
+            "actions": [],
+            "guard": "isFromSpinToWin",
+            "target": "win"
+          },
+          {
+            "actions": [],
+            "guard": "isFromSpinToRoundFinished",
+            "target": "roundFinished"
+          },
+          {
+            "actions": [
+              {
+                "type": "handleLimits"
+              }
+            ],
+            "guard": "isFromSpinToAutoNextSpin",
+            "target": "autoNextSpin"
+          }
+        ]
+      }
+    },
+    "win": {
+      "entry": [
+        {
+          "type": "handleEntryWinState"
+        },
+        {
+          "type": "handleEndWinSkip"
+        }
+      ],
+      "on": {
+        "global:endShowWin": [
+          {
+            "actions": [
+              {
+                "type": "handleLimits"
+              }
+            ],
+            "guard": "isFromWinToNextAutoSpin",
+            "target": "autoNextSpin"
+          },
+          {
+            "actions": [],
+            "guard": "isFromWinToSpin",
+            "target": "spin"
+          },
+          {
+            "actions": [
+              {
+                "type": "handleEntryPick"
+              }
+            ],
+            "guard": "isFromWinToRoundAction",
+            "target": "roundAction"
+          }
+        ],
+        "global:stopAutoSpins": [
+          {
+            "actions": [
+              {
+                "type": "handleEndAutoSpins"
+              }
+            ]
+          }
+        ],
+        "global:winSkip": [
+          {
+            "actions": [
+              {
+                "type": "handleWinSkip"
+              }
+            ]
+          }
+        ],
+        "request:settings:toggle": [
+          {
+            "actions": [
+              {
+                "type": "handleSettingsToggle"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,158 @@
+{
+  "context": {
+    "nodes": {},
+    "rels": {}
+  },
+  "id": "process mining",
+  "initial": "Initial state",
+  "states": {
+    "CreatingGraph": {
+      "on": {
+        "error": [
+          {
+            "actions": [],
+            "target": "DataError"
+          }
+        ],
+        "success": [
+          {
+            "actions": [],
+            "target": "GraphStable"
+          }
+        ]
+      },
+      "tags": "new data"
+    },
+    "DataError": {
+      "description": "irrecoverable",
+      "type": "final"
+    },
+    "ExpandingNode": {
+      "on": {
+        "error": [
+          {
+            "actions": [],
+            "target": "MiningError"
+          }
+        ],
+        "success": [
+          {
+            "actions": [],
+            "target": "GraphStable"
+          }
+        ]
+      },
+      "tags": "data update"
+    },
+    "GraphStable": {
+      "on": {
+        "expand": [
+          {
+            "actions": [],
+            "target": "ExpandingNode"
+          }
+        ],
+        "recreateGraph": [
+          {
+            "actions": [],
+            "target": "CreatingGraph"
+          }
+        ],
+        "redo": [
+          {
+            "actions": [],
+            "guard": "redoPossible",
+            "target": "Redoing"
+          }
+        ],
+        "refetchGraph": [
+          {
+            "actions": [],
+            "target": "RefetchingGraph"
+          }
+        ],
+        "undo": [
+          {
+            "actions": [],
+            "guard": "undoPossible",
+            "target": "Undoing"
+          }
+        ]
+      }
+    },
+    "Initial state": {
+      "on": {
+        "createGraph": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "CreatingGraph"
+          }
+        ]
+      }
+    },
+    "MiningError": {
+      "description": "potentially recoverable",
+      "on": {
+        "refetchGraph": [
+          {
+            "actions": [],
+            "guard": "New Guard",
+            "target": "RefetchingGraph"
+          }
+        ]
+      }
+    },
+    "Redoing": {
+      "on": {
+        "error": [
+          {
+            "actions": [],
+            "target": "MiningError"
+          }
+        ],
+        "success": [
+          {
+            "actions": [],
+            "target": "GraphStable"
+          }
+        ]
+      },
+      "tags": "data update"
+    },
+    "RefetchingGraph": {
+      "on": {
+        "error": [
+          {
+            "actions": [],
+            "target": "DataError"
+          }
+        ],
+        "success": [
+          {
+            "actions": [],
+            "target": "GraphStable"
+          }
+        ]
+      },
+      "tags": "new data"
+    },
+    "Undoing": {
+      "on": {
+        "error": [
+          {
+            "actions": [],
+            "target": "MiningError"
+          }
+        ],
+        "success": [
+          {
+            "actions": [],
+            "target": "GraphStable"
+          }
+        ]
+      },
+      "tags": "data update"
+    }
+  }
+}

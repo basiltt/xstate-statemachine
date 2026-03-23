@@ -1,0 +1,230 @@
+{
+  "context": {
+    "currentRoom": 0,
+    "lastText": "",
+    "rooms": [],
+    "volume": 0
+  },
+  "id": "game",
+  "initial": "loading",
+  "states": {
+    "awaitGuardIntent": {
+      "entry": {
+        "type": "checkGuardIntent"
+      },
+      "on": {
+        "GUARD_RESULT": [
+          {
+            "actions": [],
+            "guard": "guardPassed",
+            "target": "nextRoom"
+          },
+          {
+            "actions": [],
+            "guard": "guardFailed",
+            "target": "guardRejected"
+          }
+        ]
+      }
+    },
+    "death": {
+      "entry": {
+        "type": "speakDeath"
+      },
+      "type": "final"
+    },
+    "dragonPass": {
+      "entry": [
+        {
+          "type": "inline:game.dragonPass#entry[0]"
+        },
+        {
+          "type": "inline:game.dragonPass#entry[1]"
+        }
+      ],
+      "on": {
+        "FEEDBACK_DONE": [
+          {
+            "actions": [],
+            "guard": "isRoomsExhausted",
+            "target": "victory"
+          },
+          {
+            "actions": [],
+            "target": "room"
+          }
+        ]
+      }
+    },
+    "guardRejected": {
+      "entry": [
+        {
+          "type": "inline:game.guardRejected#entry[0]"
+        },
+        {
+          "type": "speakGuardRejected"
+        }
+      ],
+      "on": {
+        "FEEDBACK_DONE": [
+          {
+            "actions": [],
+            "target": "room"
+          }
+        ]
+      }
+    },
+    "loading": {
+      "on": {
+        "INIT": [
+          {
+            "actions": [
+              {
+                "type": "inline:game.loading#INIT[-1]#transition[0]"
+              }
+            ],
+            "target": "room"
+          }
+        ]
+      }
+    },
+    "nextRoom": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "isRoomsExhausted",
+          "target": "victory"
+        },
+        {
+          "actions": [],
+          "target": "room"
+        }
+      ],
+      "entry": {
+        "type": "inline:game.nextRoom#entry[0]"
+      }
+    },
+    "retrying": {
+      "entry": {
+        "type": "speakRetry"
+      },
+      "on": {
+        "NO_INPUT": [
+          {
+            "actions": [],
+            "target": "retrying"
+          }
+        ],
+        "SPEECH_RESULT": [
+          {
+            "actions": [],
+            "guard": "isDragonAndLoud",
+            "target": "death"
+          },
+          {
+            "actions": [],
+            "guard": "isDragonAndQuiet",
+            "target": "dragonPass"
+          },
+          {
+            "actions": [],
+            "guard": "isGuardRoom",
+            "target": "awaitGuardIntent"
+          },
+          {
+            "actions": [],
+            "guard": "isTempleSuccess",
+            "target": "victory"
+          },
+          {
+            "actions": [],
+            "guard": "isTempleFail",
+            "target": "templeFailed"
+          },
+          {
+            "actions": [],
+            "guard": "isDefaultPass",
+            "target": "nextRoom"
+          },
+          {
+            "actions": [],
+            "target": "retrying"
+          }
+        ]
+      }
+    },
+    "room": {
+      "entry": {
+        "type": "speakRoom"
+      },
+      "on": {
+        "NO_INPUT": [
+          {
+            "actions": [],
+            "target": "retrying"
+          }
+        ],
+        "SPEECH_RESULT": [
+          {
+            "actions": [],
+            "guard": "isDragonAndLoud",
+            "target": "death"
+          },
+          {
+            "actions": [],
+            "guard": "isDragonAndQuiet",
+            "target": "dragonPass"
+          },
+          {
+            "actions": [],
+            "guard": "isGuardRoom",
+            "target": "awaitGuardIntent"
+          },
+          {
+            "actions": [],
+            "guard": "isTempleSuccess",
+            "target": "victory"
+          },
+          {
+            "actions": [],
+            "guard": "isTempleFail",
+            "target": "templeFailed"
+          },
+          {
+            "actions": [],
+            "guard": "isDefaultPass",
+            "target": "nextRoom"
+          },
+          {
+            "actions": [],
+            "target": "retrying"
+          }
+        ]
+      }
+    },
+    "templeFailed": {
+      "entry": [
+        {
+          "type": "inline:game.templeFailed#entry[0]"
+        },
+        {
+          "type": "speakTempleFail"
+        }
+      ],
+      "on": {
+        "FEEDBACK_DONE": [
+          {
+            "actions": [],
+            "target": "room"
+          }
+        ]
+      }
+    },
+    "victory": {
+      "entry": {
+        "type": "speakVictory"
+      },
+      "type": "final"
+    }
+  }
+}

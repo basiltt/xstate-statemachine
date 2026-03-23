@@ -1,0 +1,88 @@
+{
+  "context": {
+    "inventoryCount": 10,
+    "isPurchased": false
+  },
+  "id": "product",
+  "initial": "available",
+  "states": {
+    "available": {
+      "description": "The product is available for purchase. It can be added to the shopping cart, which reduces its availability by one unit.",
+      "initial": "inStock",
+      "states": {
+        "inCart": {
+          "after": {
+            "300000": [
+              {
+                "actions": [],
+                "target": "#product.available.inStock"
+              }
+            ]
+          },
+          "description": "The product is in the user's shopping cart. A timeout is started, and if it fires before checkout, the product is removed from the cart.",
+          "on": {
+            "checkout": [
+              {
+                "actions": [],
+                "target": "#product.unavailable.purchased"
+              }
+            ],
+            "remove": [
+              {
+                "actions": [],
+                "target": "inStock"
+              }
+            ]
+          }
+        },
+        "inStock": {
+          "on": {
+            "add_to_cart": [
+              {
+                "actions": [],
+                "target": "inCart"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "unavailable": {
+      "description": "The product is unavailable for immediate purchase. Users can add themselves to a waitlist.",
+      "initial": "waitlist",
+      "states": {
+        "pendingOffer": {
+          "description": "A user has a pending offer for the product. They can either accept it, placing it in their cart, or decline it, returning the product to available inventory.",
+          "on": {
+            "accept": [
+              {
+                "actions": [],
+                "target": "#product.available.inCart"
+              }
+            ],
+            "decline": [
+              {
+                "actions": [],
+                "target": "#product.available.inStock"
+              }
+            ]
+          }
+        },
+        "purchased": {
+          "description": "The product has been purchased and is no longer available in the inventory."
+        },
+        "waitlist": {
+          "description": "Users are on a waitlist for the product. When availability changes, they receive a pending offer.",
+          "on": {
+            "availability_change": [
+              {
+                "actions": [],
+                "target": "pendingOffer"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "id": "loan",
+  "initial": "ActiveLoan",
+  "states": {
+    "ActiveLoan": {
+      "on": {
+        "LOAN_OVERDUE": [
+          {
+            "actions": [],
+            "target": "OverdueLoan"
+          }
+        ],
+        "LOAN_PAY": [
+          {
+            "actions": [],
+            "target": "ClosedLoan"
+          }
+        ]
+      }
+    },
+    "ClosedLoan": {
+      "type": "final"
+    },
+    "OverdueLoan": {
+      "on": {
+        "LOAN_DEFER": [
+          {
+            "actions": [],
+            "target": "ActiveLoan"
+          }
+        ],
+        "LOAN_PAY": [
+          {
+            "actions": [],
+            "target": "ClosedLoan"
+          }
+        ]
+      }
+    }
+  }
+}

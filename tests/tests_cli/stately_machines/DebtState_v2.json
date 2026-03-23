@@ -1,0 +1,45 @@
+{
+  "id": "DebtState",
+  "initial": "ActiveDebt",
+  "states": {
+    "ActiveDebt": {
+      "on": {
+        "CloseDebt": [
+          {
+            "actions": [],
+            "guard": "onlyClosedLoan",
+            "target": "ClosedDebt"
+          }
+        ],
+        "MakeDebtOverdue": [
+          {
+            "actions": [],
+            "guard": "anyOverdueLoanAndonlyOverdueLoanOrActiveLoanOrClosedLoan",
+            "target": "OverdueDebt"
+          }
+        ]
+      }
+    },
+    "ClosedDebt": {
+      "type": "final"
+    },
+    "OverdueDebt": {
+      "on": {
+        "ChangeOverdueDebtToActive": [
+          {
+            "actions": [],
+            "guard": "anyActiveLoanAndonlyActiveLoanOrClosedLoan",
+            "target": "ActiveDebt"
+          }
+        ],
+        "CloseDebt": [
+          {
+            "actions": [],
+            "guard": "onlyClosedLoan",
+            "target": "ClosedDebt"
+          }
+        ]
+      }
+    }
+  }
+}

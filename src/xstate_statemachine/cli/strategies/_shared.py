@@ -3,7 +3,7 @@
 
 import keyword
 
-from typing import List, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..utils import camel_to_snake
 
@@ -134,10 +134,11 @@ def generate_error_handling(
     if not has_statement:
         lines.append(f"{indent}    pass")
     lines.append(f"{indent}except Exception:")
+    safe_name = escape_for_string(original_name)
     lines.append(
         f"{indent}    logger.exception("
         f'"{component_type.capitalize()} '
-        f"'{original_name}' failed\")"
+        f"'{safe_name}' failed\")"
     )
     lines.append(f"{indent}    raise")
     return "\n".join(lines)
@@ -183,18 +184,20 @@ def generate_imports(
                     "StateMachine",
                     "action",
                     "guard",
-                    "service",
                 ]
             )
+            if services:
+                xsm_imports.append("service")
         elif "builder" in template_type:
             xsm_imports.extend(
                 [
                     "MachineBuilder",
                     "action",
                     "guard",
-                    "service",
                 ]
             )
+            if services:
+                xsm_imports.append("service")
         elif "functional" in template_type:
             xsm_imports.extend(
                 [
@@ -202,9 +205,10 @@ def generate_imports(
                     "action",
                     "build_machine",
                     "guard",
-                    "service",
                 ]
             )
+            if services:
+                xsm_imports.append("service")
         xsm_imports.sort()
         imports_str = ",\n    ".join(xsm_imports)
         lines.append(
@@ -257,3 +261,211 @@ def safe_identifier(name: str) -> str:
     if keyword.iskeyword(safe):
         safe = f"{safe}_"
     return safe
+
+
+def escape_for_string(name: str) -> str:
+    """Escape a raw name so it can be safely embedded in a Python string literal.
+
+    Replaces backslashes first, then double-quotes and single-quotes,
+    producing a value safe inside ``"..."`` *or* ``'...'`` delimiters.
+
+    Args:
+        name: The raw name from JSON config.
+
+    Returns:
+        An escaped string safe for embedding in Python string literals.
+    """
+    return name.replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
+
+
+# ---------------------------------------------------------------------------
+# Recursive state/transition collection for nested/hierarchical machines
+# ---------------------------------------------------------------------------
+
+
+def _resolve_target(
+    target: str,
+    machine_id: str,
+    all_state_vars: Dict[str, str],
+    source_prefix: str = "",
+) -> str:
+    """Resolve an XState target string to a Python variable name.
+
+    Handles:
+    - Plain names: ``"idle"`` → lookup in *all_state_vars*
+    - ID-based absolute targets: ``"#machineId.stateName"`` → strip prefix
+    - Dot-separated nested targets: ``"#machineId.parent.child"`` → flatten
+    - Relative dot targets: ``".child"`` → strip the leading dot
+    - Context-aware sibling resolution using *source_prefix*
+
+    Args:
+        target: The raw target string from the XState config.
+        machine_id: The machine's ``id`` for stripping ``#id.`` prefixes.
+        all_state_vars: Mapping of flattened-state-name → safe Python var.
+        source_prefix: The flattened prefix of the source state's parent,
+            used for context-aware sibling resolution when suffix matching
+            is ambiguous.
+
+    Returns:
+        A safe Python identifier for the target state.
+    """
+    t = target
+    # Strip leading "#machineId."
+    id_prefix = f"#{machine_id}."
+    if t.startswith(id_prefix):
+        t = t.removeprefix(id_prefix)
+    elif t.startswith("#"):
+        # Generic "#something.path" — strip the #id. prefix
+        if "." in t:
+            t = t.split(".", 1)[1]
+        else:
+            t = t.lstrip("#")
+    # Strip leading dot (relative targets like ".child")
+    if t.startswith("."):
+        t = t.lstrip(".")
+
+    # Try direct lookup first
+    if t in all_state_vars:
+        return all_state_vars[t]
+
+    # If target contains dots, try joining with underscores
+    if "." in t:
+        flattened = t.replace(".", "_")
+        if flattened in all_state_vars:
+            return all_state_vars[flattened]
+
+    # Context-aware sibling resolution: prefer targets under the same parent
+    if source_prefix:
+        sibling_key = f"{source_prefix}_{t}"
+        if sibling_key in all_state_vars:
+            return all_state_vars[sibling_key]
+        # Walk up the parent chain for ancestor-scoped resolution
+        parts = source_prefix.split("_")
+        for i in range(len(parts) - 1, 0, -1):
+            ancestor_prefix = "_".join(parts[:i])
+            ancestor_key = f"{ancestor_prefix}_{t}"
+            if ancestor_key in all_state_vars:
+                return all_state_vars[ancestor_key]
+
+    # Suffix match: look for any flattened key ending with _<t>
+    # This handles sibling references like "emailLogin" → "login_emailLogin"
+    suffix = f"_{t}"
+    matches = [v for k, v in all_state_vars.items() if k.endswith(suffix)]
+    if len(matches) == 1:
+        return matches[0]
+
+    # Fallback: make a safe identifier
+    return safe_identifier(t)
+
+
+def collect_all_states(
+    states_config: Dict[str, Any],
+    initial_state: str,
+    prefix: str = "",
+) -> List[Tuple[str, str, Dict[str, Any], bool]]:
+    """Recursively collect all states from a (possibly nested) config.
+
+    Returns a flat list of ``(flat_name, original_name, state_def, is_initial)``
+    tuples where *flat_name* is the prefix-qualified name used as a Python
+    variable (e.g. ``"heizung_lock"``).
+
+    Args:
+        states_config: The ``"states"`` dict from a machine or compound state.
+        initial_state: The ``"initial"`` value at this level.
+        prefix: Dotted prefix for parent states (empty at top level).
+    """
+    result: List[Tuple[str, str, Dict[str, Any], bool]] = []
+    for state_name, state_def in states_config.items():
+        if not isinstance(state_def, dict):
+            state_def = {}
+
+        flat_name = f"{prefix}_{state_name}" if prefix else state_name
+        is_initial = state_name == initial_state
+        result.append((flat_name, state_name, state_def, is_initial))
+
+        # Recurse into child states
+        child_states = state_def.get("states")
+        if isinstance(child_states, dict) and child_states:
+            child_initial = state_def.get("initial", "")
+            result.extend(
+                collect_all_states(
+                    child_states, child_initial, prefix=flat_name
+                )
+            )
+
+    return result
+
+
+def collect_all_transitions(
+    states_config: Dict[str, Any],
+    machine_id: str,
+    all_state_vars: Dict[str, str],
+    prefix: str = "",
+) -> List[Tuple[str, str, str, Optional[Any], Optional[str]]]:
+    """Recursively collect all transitions from ``"on"`` blocks.
+
+    Returns a flat list of
+    ``(event_name, source_flat_name, target_resolved, actions, guard)``
+    tuples.
+
+    Args:
+        states_config: The ``"states"`` dict.
+        machine_id: Machine ID for resolving ``#id.`` targets.
+        all_state_vars: Flat-name → safe Python var mapping.
+        prefix: Current nesting prefix.
+    """
+    result: List[Tuple[str, str, str, Optional[Any], Optional[str]]] = []
+    for state_name, state_def in states_config.items():
+        if not isinstance(state_def, dict):
+            continue
+
+        flat_name = f"{prefix}_{state_name}" if prefix else state_name
+        on_block = state_def.get("on", {})
+        if isinstance(on_block, dict):
+            for event_name, transition_data in on_block.items():
+                transitions = (
+                    transition_data
+                    if isinstance(transition_data, list)
+                    else [transition_data]
+                )
+                for trans in transitions:
+                    if isinstance(trans, str):
+                        resolved = _resolve_target(
+                            trans,
+                            machine_id,
+                            all_state_vars,
+                            source_prefix=prefix,
+                        )
+                        result.append(
+                            (event_name, flat_name, resolved, None, None)
+                        )
+                    elif isinstance(trans, dict):
+                        target = trans.get("target", "") or state_name
+                        resolved = _resolve_target(
+                            target,
+                            machine_id,
+                            all_state_vars,
+                            source_prefix=prefix,
+                        )
+                        actions_val = trans.get("actions")
+                        guard_val = trans.get("cond") or trans.get("guard")
+                        result.append(
+                            (
+                                event_name,
+                                flat_name,
+                                resolved,
+                                actions_val,
+                                guard_val,
+                            )
+                        )
+
+        # Recurse into child states
+        child_states = state_def.get("states")
+        if isinstance(child_states, dict) and child_states:
+            result.extend(
+                collect_all_transitions(
+                    child_states, machine_id, all_state_vars, prefix=flat_name
+                )
+            )
+
+    return result

@@ -1,0 +1,138 @@
+{
+  "id": "Heizstab - ohne AI",
+  "initial": "Init",
+  "states": {
+    "Init": {
+      "on": {
+        "failure detected": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "reboot"
+          }
+        ],
+        "handle heater controller hardware failure": [
+          {
+            "actions": [],
+            "target": "lock"
+          }
+        ],
+        "heater controler qualified": [
+          {
+            "actions": [],
+            "target": "standby"
+          }
+        ],
+        "waiting on heater controller startup message": [
+          {
+            "actions": [],
+            "target": "Init"
+          }
+        ]
+      }
+    },
+    "Phase 1 on": {
+      "on": {
+        "failure detected": [
+          {
+            "actions": [],
+            "target": "reboot"
+          }
+        ],
+        "grid power < -SwitchPower": [
+          {
+            "actions": [],
+            "guard": "star configuration",
+            "target": "Phase 12 on"
+          }
+        ],
+        "grid power > MinConsumption": [
+          {
+            "actions": [],
+            "guard": "star configuration",
+            "target": "standby"
+          }
+        ]
+      }
+    },
+    "Phase 12 on": {
+      "on": {
+        "failure detected": [
+          {
+            "actions": [],
+            "target": "reboot"
+          }
+        ],
+        "grid power < -SwitchPower": [
+          {
+            "actions": [],
+            "target": "Phase 123 on"
+          }
+        ],
+        "grid power > MinConsumption": [
+          {
+            "actions": [],
+            "guard": "triangle configuration",
+            "target": "standby"
+          },
+          {
+            "actions": [],
+            "target": "Phase 1 on"
+          }
+        ]
+      }
+    },
+    "Phase 123 on": {
+      "on": {
+        "failure detected": [
+          {
+            "actions": [],
+            "target": "reboot"
+          }
+        ],
+        "grid power > MinConsumption": [
+          {
+            "actions": [],
+            "target": "Phase 12 on"
+          }
+        ]
+      }
+    },
+    "lock": {},
+    "reboot": {
+      "on": {
+        "heater controller reboots": [
+          {
+            "actions": [],
+            "target": "Init"
+          }
+        ]
+      }
+    },
+    "standby": {
+      "on": {
+        "failure detected": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "reboot"
+          }
+        ],
+        "grid power < -SwitchPower": [
+          {
+            "actions": [],
+            "guard": "star configuration",
+            "target": "Phase 1 on"
+          }
+        ],
+        "suffle random configuration": [
+          {
+            "actions": [],
+            "guard": "random = true",
+            "target": "standby"
+          }
+        ]
+      }
+    }
+  }
+}

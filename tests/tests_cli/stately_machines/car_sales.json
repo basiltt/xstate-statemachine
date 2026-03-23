@@ -1,0 +1,868 @@
+{
+  "context": {
+    "application": null,
+    "carSalesVehicle": null,
+    "farmer": null,
+    "findeksQueryId": 0,
+    "installmentOptions": null,
+    "order": null,
+    "prevention": null,
+    "retailer": null,
+    "retailerUser": null
+  },
+  "id": "car_sales",
+  "initial": "idle",
+  "meta": {
+    "eventMachine": {
+      "actions": {
+        "CalculatePricesAction": {
+          "class": "App\\Machines\\CarSales\\Actions\\CalculatePricesAction",
+          "requiredContext": {
+            "carSalesVehicle": "App\\Models\\CarSalesVehicle",
+            "retailer": "App\\Models\\Retailer"
+          },
+          "type": "actions"
+        },
+        "CopyPreviousCustomerInfoAction": {
+          "class": "App\\Machines\\CarSales\\Actions\\CopyPreviousCustomerInfoAction",
+          "type": "actions"
+        },
+        "StoreAddressInfoAction": {
+          "class": "App\\Machines\\CarSales\\Actions\\StoreAddressInfoAction",
+          "type": "actions"
+        },
+        "StoreApplicationAction": {
+          "class": "App\\Machines\\CarSales\\Actions\\StoreApplicationAction",
+          "type": "actions"
+        },
+        "StoreConsentAction": {
+          "class": "App\\Machines\\CarSales\\Actions\\StoreConsentAction",
+          "type": "actions"
+        },
+        "StoreEmploymentInfoAction": {
+          "class": "App\\Machines\\CarSales\\Actions\\StoreEmploymentInfoAction",
+          "type": "actions"
+        },
+        "StoreFindeksResultAction": {
+          "class": "App\\Machines\\CarSales\\Actions\\StoreFindeksResultAction",
+          "type": "actions"
+        },
+        "StorePaymentOptionsAction": {
+          "class": "App\\Machines\\CarSales\\Actions\\StorePaymentOptionsAction",
+          "requiredContext": {
+            "application": "App\\Models\\Application",
+            "carSalesVehicle": "App\\Models\\CarSalesVehicle",
+            "farmer": "App\\Models\\Farmer",
+            "installmentOptions": "array",
+            "retailer": "App\\Models\\Retailer",
+            "retailerUser": "App\\Models\\RetailerUser"
+          },
+          "type": "actions"
+        },
+        "StorePersonalInfoAction": {
+          "class": "App\\Machines\\CarSales\\Actions\\StorePersonalInfoAction",
+          "type": "actions"
+        },
+        "StoreVehicleInfoAction": {
+          "class": "App\\Machines\\CarSales\\Actions\\StoreVehicleInfoAction",
+          "type": "actions"
+        },
+        "sendApprovalNotificationAction": {
+          "inline": true,
+          "type": "actions"
+        },
+        "sendRejectionNotificationAction": {
+          "inline": true,
+          "type": "actions"
+        },
+        "sendToAllocationAction": {
+          "inline": true,
+          "type": "actions"
+        },
+        "terminateOtherApplicationsAction": {
+          "inline": true,
+          "type": "actions"
+        }
+      },
+      "calculators": {
+        "CustomerContextCalculator": {
+          "class": "App\\Machines\\CarSales\\Calculators\\CustomerContextCalculator",
+          "type": "calculators"
+        },
+        "RetailerContextCalculator": {
+          "class": "App\\Machines\\CarSales\\Calculators\\RetailerContextCalculator",
+          "type": "calculators"
+        }
+      },
+      "events": {
+        "CAR_SALES_ADDRESS_INFO_SUBMITTED": {
+          "class": "App\\Machines\\CarSales\\Events\\AddressInfoSubmittedEvent",
+          "payload": {
+            "address": {
+              "required": true,
+              "type": "string"
+            },
+            "city": {
+              "required": true,
+              "type": "string"
+            },
+            "district": {
+              "required": true,
+              "type": "string"
+            },
+            "residence_duration_months": {
+              "required": true,
+              "type": "number"
+            }
+          },
+          "type": "events"
+        },
+        "CAR_SALES_ALLOCATION_APPROVED": {
+          "class": "App\\Machines\\CarSales\\Events\\AllocationApprovedEvent",
+          "type": "events"
+        },
+        "CAR_SALES_ALLOCATION_REJECTED": {
+          "class": "App\\Machines\\CarSales\\Events\\AllocationRejectedEvent",
+          "type": "events"
+        },
+        "CAR_SALES_APPLICATION_STARTED": {
+          "class": "App\\Machines\\CarSales\\Events\\CarSalesApplicationStartedEvent",
+          "payload": {
+            "birthdate": {
+              "required": true,
+              "type": "string"
+            },
+            "phone": {
+              "required": true,
+              "type": "unknown"
+            },
+            "tckn": {
+              "required": true,
+              "type": "number"
+            }
+          },
+          "type": "events"
+        },
+        "CAR_SALES_CONSENT_GRANTED": {
+          "class": "App\\Machines\\CarSales\\Events\\ConsentGrantedEvent",
+          "payload": {
+            "consent": {
+              "required": true,
+              "type": "boolean"
+            },
+            "marketing_consent": {
+              "required": false,
+              "type": "boolean"
+            }
+          },
+          "type": "events"
+        },
+        "CAR_SALES_CUSTOMER_INFO_SUBMITTED": {
+          "class": "App\\Machines\\CarSales\\Events\\CustomerInfoSubmittedEvent",
+          "type": "events"
+        },
+        "CAR_SALES_CUSTOMER_STARTED": {
+          "class": "App\\Machines\\CarSales\\Events\\CustomerStartedEvent",
+          "type": "events"
+        },
+        "CAR_SALES_DOCUMENTS_RECEIVED": {
+          "class": "App\\Machines\\CarSales\\Events\\DocumentsReceivedEvent",
+          "type": "events"
+        },
+        "CAR_SALES_EMPLOYMENT_INFO_SUBMITTED": {
+          "class": "App\\Machines\\CarSales\\Events\\EmploymentInfoSubmittedEvent",
+          "payload": {
+            "employer_address": {
+              "required": false,
+              "type": "string"
+            },
+            "employer_city": {
+              "required": false,
+              "type": "string"
+            },
+            "employer_district": {
+              "required": false,
+              "type": "string"
+            },
+            "employer_name": {
+              "required": false,
+              "type": "string"
+            },
+            "employment_duration_months": {
+              "required": false,
+              "type": "number"
+            },
+            "has_additional_income": {
+              "required": false,
+              "type": "boolean"
+            },
+            "is_employed": {
+              "required": true,
+              "type": "boolean"
+            },
+            "is_retired": {
+              "required": false,
+              "type": "boolean"
+            },
+            "monthly_income": {
+              "required": true,
+              "type": "number"
+            }
+          },
+          "type": "events"
+        },
+        "CAR_SALES_EXPIRED": {
+          "class": "App\\Machines\\CarSales\\Events\\ExpiredEvent",
+          "type": "events"
+        },
+        "CAR_SALES_PAYMENT_OPTIONS_SELECTED": {
+          "class": "App\\Machines\\CarSales\\Events\\PaymentOptionsSelectedEvent",
+          "payload": {
+            "installment_option": {
+              "required": true,
+              "type": "number"
+            }
+          },
+          "type": "events"
+        },
+        "CAR_SALES_PERSONAL_INFO_SUBMITTED": {
+          "class": "App\\Machines\\CarSales\\Events\\PersonalInfoSubmittedEvent",
+          "payload": {
+            "email": {
+              "required": false,
+              "type": "string"
+            },
+            "first_name": {
+              "required": true,
+              "type": "string"
+            },
+            "gender": {
+              "required": true,
+              "type": "unknown"
+            },
+            "last_name": {
+              "required": true,
+              "type": "string"
+            },
+            "marital_status": {
+              "required": true,
+              "type": "unknown"
+            }
+          },
+          "type": "events"
+        },
+        "CAR_SALES_PROTOCOL_REJECTED": {
+          "class": "App\\Machines\\CarSales\\Events\\ProtocolRejectedEvent",
+          "type": "events"
+        },
+        "CAR_SALES_PROTOCOL_UNDECIDED": {
+          "class": "App\\Machines\\CarSales\\Events\\ProtocolUndecidedEvent",
+          "type": "events"
+        },
+        "CAR_SALES_STATUS_REQUESTED": {
+          "class": "App\\Machines\\CarSales\\Events\\StatusRequestedEvent",
+          "type": "events"
+        },
+        "CAR_SALES_TERMINATED": {
+          "class": "App\\Machines\\CarSales\\Events\\TerminatedEvent",
+          "type": "events"
+        },
+        "CAR_SALES_VEHICLE_AND_PRICING_SUBMITTED": {
+          "class": "App\\Machines\\CarSales\\Events\\VehicleAndPricingSubmittedEvent",
+          "payload": {
+            "cash_price": {
+              "required": true,
+              "type": "number"
+            },
+            "down_payment": {
+              "required": true,
+              "type": "number"
+            },
+            "engine_number": {
+              "required": true,
+              "type": "string"
+            },
+            "is_consignment": {
+              "required": true,
+              "type": "boolean"
+            },
+            "kasko_insurance_amount": {
+              "required": true,
+              "type": "number"
+            },
+            "kasko_value_id": {
+              "required": true,
+              "type": "number"
+            },
+            "kilometer": {
+              "required": true,
+              "type": "number"
+            },
+            "listing_url": {
+              "required": false,
+              "type": "string"
+            },
+            "owner_type": {
+              "required": true,
+              "type": "unknown"
+            },
+            "plate_number": {
+              "required": true,
+              "type": "string"
+            },
+            "vehicle_identification_number": {
+              "required": true,
+              "type": "string"
+            }
+          },
+          "type": "events"
+        },
+        "CAR_SALES_VEHICLE_EDIT_REQUESTED": {
+          "class": "App\\Machines\\CarSales\\Events\\VehicleEditRequestedEvent",
+          "payload": {
+            "brand_code": {
+              "required": true,
+              "type": "number"
+            },
+            "brand_name": {
+              "required": true,
+              "type": "string"
+            },
+            "cash_price": {
+              "required": true,
+              "type": "number"
+            },
+            "down_payment": {
+              "required": true,
+              "type": "number"
+            },
+            "engine_number": {
+              "required": true,
+              "type": "string"
+            },
+            "is_consignment": {
+              "required": true,
+              "type": "boolean"
+            },
+            "kasko_insurance_amount": {
+              "required": true,
+              "type": "number"
+            },
+            "kasko_value_id": {
+              "required": true,
+              "type": "number"
+            },
+            "kilometer": {
+              "required": true,
+              "type": "number"
+            },
+            "listing_url": {
+              "required": false,
+              "type": "string"
+            },
+            "model_year": {
+              "required": true,
+              "type": "number"
+            },
+            "owner_type": {
+              "required": true,
+              "type": "unknown"
+            },
+            "plate_number": {
+              "required": true,
+              "type": "string"
+            },
+            "type_code": {
+              "required": true,
+              "type": "number"
+            },
+            "type_name": {
+              "required": true,
+              "type": "string"
+            },
+            "vehicle_identification_number": {
+              "required": true,
+              "type": "string"
+            }
+          },
+          "type": "events"
+        }
+      },
+      "guards": {
+        "HasConsentGuard": {
+          "class": "App\\Machines\\CarSales\\Guards\\HasConsentGuard",
+          "type": "guards"
+        },
+        "IsCustomerInfoCompleteGuard": {
+          "class": "App\\Machines\\CarSales\\Guards\\IsCustomerInfoCompleteGuard",
+          "type": "guards"
+        },
+        "IsFarmerNotEligibleGuard": {
+          "class": "App\\Machines\\CarSales\\Guards\\IsFarmerNotEligibleGuard",
+          "requiredContext": {
+            "farmer": "App\\Models\\Farmer",
+            "retailer": "App\\Models\\Retailer"
+          },
+          "type": "guards"
+        },
+        "isFindeksRegionCompletedGuard": {
+          "inline": true,
+          "type": "guards"
+        }
+      }
+    }
+  },
+  "on": {
+    "CAR_SALES_EXPIRED": [
+      {
+        "actions": [],
+        "target": ".expired"
+      }
+    ],
+    "CAR_SALES_STATUS_REQUESTED": [
+      {
+        "actions": []
+      }
+    ],
+    "CAR_SALES_TERMINATED": [
+      {
+        "actions": [],
+        "target": ".terminated"
+      }
+    ]
+  },
+  "states": {
+    "allocation": {
+      "description": "Document collection and allocation team review",
+      "initial": "awaiting_documents",
+      "states": {
+        "awaiting_documents": {
+          "description": "Waiting for customer to submit documents via email",
+          "on": {
+            "CAR_SALES_DOCUMENTS_RECEIVED": [
+              {
+                "actions": [
+                  {
+                    "type": "sendToAllocationAction"
+                  }
+                ],
+                "target": "under_review"
+              }
+            ]
+          }
+        },
+        "under_review": {
+          "description": "Allocation team reviewing the application",
+          "on": {
+            "CAR_SALES_ALLOCATION_APPROVED": [
+              {
+                "actions": [],
+                "target": "#car_sales.approved"
+              }
+            ],
+            "CAR_SALES_ALLOCATION_REJECTED": [
+              {
+                "actions": [],
+                "target": "#car_sales.rejected"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "approved": {
+      "description": "Allocation approved, finalizing application",
+      "entry": [
+        {
+          "type": "terminateOtherApplicationsAction"
+        },
+        {
+          "type": "CompleteApplicationAction"
+        },
+        {
+          "type": "sendApprovalNotificationAction"
+        }
+      ],
+      "type": "final"
+    },
+    "awaiting_consent": {
+      "description": "Customer consent collection (KVKK, privacy disclosure)",
+      "entry": {
+        "type": "SendConsentLinkAction"
+      },
+      "on": {
+        "CAR_SALES_CONSENT_GRANTED": [
+          {
+            "actions": [
+              {
+                "type": "StoreConsentAction"
+              }
+            ],
+            "target": "eligibility_check"
+          }
+        ]
+      }
+    },
+    "awaiting_customer_start": {
+      "description": "Registered customer welcome screen, waiting for customer to proceed",
+      "entry": {
+        "type": "SendWelcomeLinkAction"
+      },
+      "on": {
+        "CAR_SALES_CUSTOMER_STARTED": [
+          {
+            "actions": [],
+            "target": "eligibility_check"
+          }
+        ]
+      }
+    },
+    "checking_protocol": {
+      "description": "Protocol eligibility check using Findeks report as parameter",
+      "entry": {
+        "type": "CheckProtocolAction"
+      },
+      "on": {
+        "CAR_SALES_PROTOCOL_REJECTED": [
+          {
+            "actions": [],
+            "target": "rejected"
+          }
+        ],
+        "CAR_SALES_PROTOCOL_UNDECIDED": [
+          {
+            "actions": [],
+            "target": "data_collection"
+          }
+        ]
+      }
+    },
+    "data_collection": {
+      "description": "Parallel data entry: retailer enters vehicle info, customer completes personal details",
+      "meta": {
+        "eventMachine": {
+          "onFail": "rejected"
+        }
+      },
+      "onDone": {
+        "actions": [],
+        "target": "allocation"
+      },
+      "states": {
+        "customer_info": {
+          "description": "Customer personal, address, and employment details",
+          "initial": "info_checking",
+          "states": {
+            "awaiting_address_info": {
+              "description": "Address details: city, district, address, residence duration",
+              "on": {
+                "CAR_SALES_ADDRESS_INFO_SUBMITTED": [
+                  {
+                    "actions": [
+                      {
+                        "type": "StoreAddressInfoAction"
+                      }
+                    ],
+                    "target": "awaiting_employment_info"
+                  }
+                ]
+              }
+            },
+            "awaiting_employment_info": {
+              "description": "Employment details: type, employer, duration, monthly income",
+              "on": {
+                "CAR_SALES_EMPLOYMENT_INFO_SUBMITTED": [
+                  {
+                    "actions": [
+                      {
+                        "type": "StoreEmploymentInfoAction"
+                      }
+                    ],
+                    "target": "under_review"
+                  }
+                ]
+              }
+            },
+            "awaiting_personal_info": {
+              "description": "Personal details: name, email, gender, marital status",
+              "on": {
+                "CAR_SALES_PERSONAL_INFO_SUBMITTED": [
+                  {
+                    "actions": [
+                      {
+                        "type": "StorePersonalInfoAction"
+                      }
+                    ],
+                    "target": "awaiting_address_info"
+                  }
+                ]
+              }
+            },
+            "completed": {
+              "description": "Customer info completed",
+              "type": "final"
+            },
+            "info_checking": {
+              "always": [
+                {
+                  "actions": [
+                    {
+                      "type": "CopyPreviousCustomerInfoAction"
+                    }
+                  ],
+                  "guard": "IsCustomerInfoCompleteGuard",
+                  "target": "under_review"
+                },
+                {
+                  "actions": [],
+                  "target": "awaiting_personal_info"
+                }
+              ],
+              "description": "Routing: check if customer info exists from a previous application"
+            },
+            "under_review": {
+              "description": "Summary review and submission (read-only)",
+              "on": {
+                "CAR_SALES_CUSTOMER_INFO_SUBMITTED": [
+                  {
+                    "actions": [],
+                    "target": "completed"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "retailer": {
+          "description": "Retailer vehicle and pricing data entry",
+          "initial": "awaiting_vehicle_and_pricing",
+          "states": {
+            "awaiting_payment_options": {
+              "description": "Down payment, term, and installment selection",
+              "on": {
+                "CAR_SALES_PAYMENT_OPTIONS_SELECTED": [
+                  {
+                    "actions": [
+                      {
+                        "type": "StorePaymentOptionsAction"
+                      }
+                    ],
+                    "target": "completed"
+                  }
+                ],
+                "CAR_SALES_VEHICLE_EDIT_REQUESTED": [
+                  {
+                    "actions": [
+                      {
+                        "type": "StoreVehicleInfoAction"
+                      }
+                    ],
+                    "target": "calculating_prices"
+                  }
+                ]
+              }
+            },
+            "awaiting_vehicle_and_pricing": {
+              "description": "Vehicle details and sale amount entry",
+              "on": {
+                "CAR_SALES_VEHICLE_AND_PRICING_SUBMITTED": [
+                  {
+                    "actions": [
+                      {
+                        "type": "StoreVehicleInfoAction"
+                      }
+                    ],
+                    "target": "calculating_prices"
+                  }
+                ]
+              }
+            },
+            "calculating_prices": {
+              "always": {
+                "actions": [
+                  {
+                    "type": "CalculatePricesAction"
+                  }
+                ],
+                "target": "awaiting_payment_options"
+              },
+              "description": "Calculating preliminary prices using owner type VAT matrix"
+            },
+            "completed": {
+              "description": "Retailer data entry completed",
+              "type": "final"
+            }
+          }
+        }
+      },
+      "type": "parallel"
+    },
+    "eligibility_check": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "IsFarmerNotEligibleGuard",
+          "target": "prevented"
+        },
+        {
+          "actions": [
+            {
+              "type": "StoreApplicationAction"
+            }
+          ],
+          "target": "verification"
+        }
+      ],
+      "description": "Eligibility check: unpaid sales, age criteria"
+    },
+    "expired": {
+      "description": "Application expired after 30 days of inactivity",
+      "type": "final"
+    },
+    "idle": {
+      "description": "Waiting for retailer to start a new application",
+      "on": {
+        "CAR_SALES_APPLICATION_STARTED": [
+          {
+            "actions": [],
+            "meta": {
+              "eventMachine": {
+                "calculators": [
+                  "CustomerContextCalculator",
+                  "RetailerContextCalculator"
+                ]
+              }
+            },
+            "target": "routing"
+          }
+        ]
+      }
+    },
+    "prevented": {
+      "description": "Blocked due to unpaid sales or age criteria",
+      "type": "final"
+    },
+    "rejected": {
+      "description": "Application rejected",
+      "entry": [
+        {
+          "type": "RejectAction"
+        },
+        {
+          "type": "sendRejectionNotificationAction"
+        }
+      ],
+      "type": "final"
+    },
+    "routing": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "HasConsentGuard",
+          "target": "awaiting_customer_start"
+        },
+        {
+          "actions": [],
+          "target": "awaiting_consent"
+        }
+      ],
+      "description": "Customer type routing: registered vs new customer"
+    },
+    "terminated": {
+      "description": "Terminated because another application was approved",
+      "type": "final"
+    },
+    "verification": {
+      "description": "Parallel verification: Findeks report and T\u00dcRMOB identity check",
+      "meta": {
+        "eventMachine": {
+          "onFail": "rejected"
+        }
+      },
+      "onDone": {
+        "actions": [],
+        "guard": "isFindeksRegionCompletedGuard",
+        "target": "checking_protocol"
+      },
+      "states": {
+        "findeks": {
+          "description": "Findeks credit report retrieval (child machine delegation)",
+          "initial": "running",
+          "states": {
+            "completed": {
+              "description": "Findeks report saved successfully",
+              "type": "final"
+            },
+            "failed": {
+              "description": "Findeks report failed or expired",
+              "type": "final"
+            },
+            "running": {
+              "description": "Delegating to FindeksMachine for async report retrieval",
+              "invoke": {
+                "input": {},
+                "onDone": [
+                  {
+                    "actions": [
+                      {
+                        "type": "StoreFindeksResultAction"
+                      }
+                    ],
+                    "guard": "__finalState_report_saved",
+                    "target": "completed"
+                  },
+                  {
+                    "actions": [],
+                    "guard": "__finalState_failed",
+                    "target": "failed"
+                  },
+                  {
+                    "actions": [],
+                    "guard": "__finalState_expired",
+                    "target": "failed"
+                  }
+                ],
+                "onError": [
+                  {
+                    "actions": [],
+                    "target": "failed"
+                  }
+                ],
+                "src": "FindeksMachine"
+              },
+              "meta": {
+                "eventMachine": {
+                  "onTimeout": "failed"
+                }
+              }
+            }
+          }
+        },
+        "turmob": {
+          "description": "T\u00dcRMOB identity verification (child machine delegation)",
+          "initial": "verifying",
+          "states": {
+            "completed": {
+              "description": "T\u00dcRMOB verification completed (verified or unverified)",
+              "type": "final"
+            },
+            "verifying": {
+              "description": "Delegating to TurmobMachine for TCKN-based name verification",
+              "invoke": {
+                "input": {},
+                "onDone": [
+                  {
+                    "actions": [],
+                    "target": "completed"
+                  }
+                ],
+                "src": "TurmobMachine"
+              }
+            }
+          }
+        }
+      },
+      "type": "parallel"
+    }
+  }
+}

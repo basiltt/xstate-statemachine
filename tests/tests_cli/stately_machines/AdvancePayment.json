@@ -1,0 +1,129 @@
+{
+  "context": {
+    "amount": 149900,
+    "cardHolder": "",
+    "cardNumber": ""
+  },
+  "id": "Advance payment flow",
+  "initial": "editing",
+  "states": {
+    "authenticating3DS": {
+      "invoke": {
+        "id": "authenticate-payment",
+        "input": {},
+        "onDone": [
+          {
+            "actions": [],
+            "guard": "inline:paymentFlow.authenticating3DS#done.invoke.authenticate-payment[-1]#guard",
+            "target": "challenge"
+          },
+          {
+            "actions": [],
+            "target": "success"
+          }
+        ],
+        "onError": [
+          {
+            "actions": [
+              {
+                "type": "inline:paymentFlow.authenticating3DS#error.platform.authenticate-payment[-1]#transition[0]"
+              }
+            ],
+            "target": "failure"
+          }
+        ],
+        "src": "inline:Advance payment flow.authenticating3DS#actor[0]"
+      }
+    },
+    "challenge": {
+      "after": {
+        "2000": [
+          {
+            "actions": [],
+            "target": "#Advance payment flow.success"
+          }
+        ]
+      },
+      "on": {
+        "RESET": [
+          {
+            "actions": [
+              {
+                "type": "resetForm"
+              }
+            ],
+            "target": "editing"
+          }
+        ]
+      }
+    },
+    "editing": {
+      "on": {
+        "SUBMIT": [
+          {
+            "actions": [],
+            "guard": "isFormValid",
+            "target": "authenticating3DS"
+          }
+        ],
+        "UPDATE_FORM": [
+          {
+            "actions": [
+              {
+                "type": "inline:paymentFlow.editing#UPDATE_FORM[-1]#transition[0]"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "failure": {
+      "on": {
+        "RESET": [
+          {
+            "actions": [
+              {
+                "type": "resetForm"
+              }
+            ],
+            "target": "editing"
+          }
+        ],
+        "RETRY": [
+          {
+            "actions": [
+              {
+                "type": "inline:paymentFlow.failure#RETRY[-1]#transition[0]"
+              }
+            ],
+            "target": "authenticating3DS"
+          }
+        ],
+        "UPDATE_FORM": [
+          {
+            "actions": [
+              {
+                "type": "inline:paymentFlow.failure#UPDATE_FORM[-1]#transition[0]"
+              }
+            ],
+            "target": "editing"
+          }
+        ]
+      }
+    },
+    "success": {
+      "on": {
+        "RESET": [
+          {
+            "actions": [
+              {
+                "type": "resetForm"
+              }
+            ],
+            "target": "editing"
+          }
+        ]
+      }
+    }
+  }
+}

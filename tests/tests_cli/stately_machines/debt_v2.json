@@ -1,0 +1,111 @@
+{
+  "id": "debt",
+  "initial": "ActiveDebt",
+  "states": {
+    "ActiveDebt": {
+      "on": {
+        "LOAN_OVERDUE": [
+          {
+            "actions": [],
+            "target": "CheckingOverdue"
+          }
+        ],
+        "LOAN_PAY": [
+          {
+            "actions": [],
+            "target": "CheckingClosed"
+          }
+        ]
+      }
+    },
+    "CheckingActive": {
+      "always": [
+        {
+          "actions": [],
+          "description": "if: \u043d\u0435\u0442 \u043f\u0440\u043e\u0441\u0440\u043e\u0447\u0435\u043d\u043d\u044b\u0445 \u043f\u043b\u0430\u0442\u0435\u0436\u0435\u0439",
+          "guard": "noOverdueLoans",
+          "target": "ActiveDebt"
+        },
+        {
+          "actions": [],
+          "description": "else: \u0435\u0449\u0451 \u0435\u0441\u0442\u044c \u043f\u0440\u043e\u0441\u0440\u043e\u0447\u0435\u043d\u043d\u044b\u0435",
+          "target": "OverdueDebt"
+        }
+      ],
+      "description": "\u0412\u0441\u0435 \u043f\u0440\u043e\u0441\u0440\u043e\u0447\u043a\u0438 \u043f\u043e\u0433\u0430\u0448\u0435\u043d\u044b?"
+    },
+    "CheckingClosed": {
+      "always": [
+        {
+          "actions": [],
+          "description": "if: \u0432\u0441\u0435 \u043f\u043b\u0430\u0442\u0435\u0436\u0438 \u0437\u0430\u043a\u0440\u044b\u0442\u044b",
+          "guard": "allLoansClosed",
+          "target": "ClosedDebt"
+        },
+        {
+          "actions": [],
+          "description": "else: \u0435\u0441\u0442\u044c \u043d\u0435\u0437\u0430\u043a\u0440\u044b\u0442\u044b\u0435 \u043f\u043b\u0430\u0442\u0435\u0436\u0438",
+          "target": "ActiveDebt"
+        }
+      ],
+      "description": "\u0412\u0441\u0435 \u043f\u043b\u0430\u0442\u0435\u0436\u0438 \u0437\u0430\u043a\u0440\u044b\u0442\u044b?"
+    },
+    "CheckingClosedFromOverdue": {
+      "always": [
+        {
+          "actions": [],
+          "description": "if: \u0432\u0441\u0435 \u043f\u043b\u0430\u0442\u0435\u0436\u0438 \u0437\u0430\u043a\u0440\u044b\u0442\u044b",
+          "guard": "allLoansClosed",
+          "target": "ClosedDebt"
+        },
+        {
+          "actions": [],
+          "description": "else if: \u043d\u0435\u0442 \u043f\u0440\u043e\u0441\u0440\u043e\u0447\u0435\u043d\u043d\u044b\u0445",
+          "guard": "noOverdueLoans",
+          "target": "ActiveDebt"
+        },
+        {
+          "actions": [],
+          "description": "else: \u0435\u0449\u0451 \u0435\u0441\u0442\u044c \u043f\u0440\u043e\u0441\u0440\u043e\u0447\u0435\u043d\u043d\u044b\u0435",
+          "target": "OverdueDebt"
+        }
+      ],
+      "description": "\u0412\u0441\u0435 \u043f\u043b\u0430\u0442\u0435\u0436\u0438 \u0437\u0430\u043a\u0440\u044b\u0442\u044b?"
+    },
+    "CheckingOverdue": {
+      "always": [
+        {
+          "actions": [],
+          "description": "if: \u0435\u0441\u0442\u044c \u043f\u0440\u043e\u0441\u0440\u043e\u0447\u0435\u043d\u043d\u044b\u0439 \u043f\u043b\u0430\u0442\u0435\u0436",
+          "guard": "anyLoanOverdue",
+          "target": "OverdueDebt"
+        },
+        {
+          "actions": [],
+          "description": "else: \u0432\u0441\u0435 \u043f\u043b\u0430\u0442\u0435\u0436\u0438 \u0430\u043a\u0442\u0438\u0432\u043d\u044b\u0435",
+          "target": "ActiveDebt"
+        }
+      ],
+      "description": "\u0425\u043e\u0442\u044f \u0431\u044b \u043e\u0434\u0438\u043d \u043f\u043b\u0430\u0442\u0435\u0436 \u043f\u0440\u043e\u0441\u0440\u043e\u0447\u0435\u043d?"
+    },
+    "ClosedDebt": {
+      "type": "final"
+    },
+    "OverdueDebt": {
+      "on": {
+        "LOAN_DEFER": [
+          {
+            "actions": [],
+            "target": "CheckingActive"
+          }
+        ],
+        "LOAN_PAY": [
+          {
+            "actions": [],
+            "target": "CheckingClosedFromOverdue"
+          }
+        ]
+      }
+    }
+  }
+}

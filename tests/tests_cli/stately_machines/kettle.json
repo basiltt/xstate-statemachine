@@ -1,0 +1,49 @@
+{
+  "context": {
+    "temperature": 80
+  },
+  "id": "kettle",
+  "initial": "lukewarm",
+  "on": {
+    "temp.update": [
+      {
+        "actions": [
+          {
+            "type": "updateTemperature"
+          }
+        ],
+        "meta": {}
+      }
+    ]
+  },
+  "states": {
+    "boiling": {
+      "always": {
+        "actions": [],
+        "meta": {},
+        "target": "heating"
+      },
+      "entry": {
+        "type": "turnOffLight"
+      }
+    },
+    "heating": {
+      "always": {
+        "actions": [],
+        "meta": {},
+        "target": "boiling"
+      }
+    },
+    "lukewarm": {
+      "on": {
+        "boil": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "heating"
+          }
+        ]
+      }
+    }
+  }
+}

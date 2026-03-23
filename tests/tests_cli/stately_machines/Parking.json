@@ -1,0 +1,138 @@
+{
+  "id": "Parking",
+  "initial": "OFF",
+  "states": {
+    "ERROR": {
+      "on": {
+        "t12": [
+          {
+            "actions": [],
+            "target": "OFF"
+          }
+        ],
+        "t33": [
+          {
+            "actions": [],
+            "target": "ON"
+          }
+        ]
+      }
+    },
+    "OFF": {
+      "description": "Configurable",
+      "on": {
+        "t11": [
+          {
+            "actions": [],
+            "target": "ON"
+          }
+        ]
+      }
+    },
+    "ON": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "t32",
+          "target": "ERROR"
+        },
+        {
+          "actions": [],
+          "guard": "t12",
+          "target": "OFF"
+        }
+      ],
+      "initial": "STANDBY",
+      "states": {
+        "ABORT": {
+          "on": {
+            "t35": [
+              {
+                "actions": [],
+                "target": "PRE_PARK_ACTIVE"
+              }
+            ]
+          }
+        },
+        "PARK_ACTIVE": {
+          "on": {
+            "t27": [
+              {
+                "actions": [],
+                "target": "PARK_SUSPEND"
+              }
+            ],
+            "t29": [
+              {
+                "actions": [],
+                "target": "PARK_COMPLETE"
+              }
+            ],
+            "t34": [
+              {
+                "actions": [],
+                "target": "ABORT"
+              }
+            ]
+          }
+        },
+        "PARK_COMPLETE": {
+          "on": {
+            "t31": [
+              {
+                "actions": [],
+                "target": "STANDBY"
+              }
+            ]
+          }
+        },
+        "PARK_SUSPEND": {
+          "on": {
+            "t28": [
+              {
+                "actions": [],
+                "target": "PARK_ACTIVE"
+              }
+            ],
+            "t34": [
+              {
+                "actions": [],
+                "target": "ABORT"
+              }
+            ]
+          }
+        },
+        "PRE_PARK_ACTIVE": {
+          "on": {
+            "t25": [
+              {
+                "actions": [],
+                "target": "PARK_ACTIVE"
+              }
+            ]
+          }
+        },
+        "PRE_PARK_SEARCH": {
+          "on": {
+            "t23": [
+              {
+                "actions": [],
+                "target": "PRE_PARK_ACTIVE"
+              }
+            ]
+          }
+        },
+        "STANDBY": {
+          "on": {
+            "t21": [
+              {
+                "actions": [],
+                "target": "PRE_PARK_SEARCH"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

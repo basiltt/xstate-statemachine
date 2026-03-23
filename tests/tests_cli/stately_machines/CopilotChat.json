@@ -1,0 +1,416 @@
+{
+  "context": {
+    "activeTurnId": null,
+    "pendingToolConfirmation": null,
+    "pendingUserQuestion": null,
+    "queue": [],
+    "toolsById": {}
+  },
+  "id": "CopilotChatRuntime",
+  "initial": "idle",
+  "states": {
+    "awaitingToolConfirmation": {
+      "on": {
+        "CONFIRM_RESOLVED_APPROVE": [
+          {
+            "actions": [
+              {
+                "type": "approveToolConfirmation"
+              }
+            ],
+            "target": "streaming"
+          }
+        ],
+        "CONFIRM_RESOLVED_REJECT": [
+          {
+            "actions": [
+              {
+                "type": "rejectToolConfirmation"
+              }
+            ],
+            "target": "streaming"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [
+              {
+                "type": "recordError"
+              }
+            ],
+            "target": "errored"
+          }
+        ],
+        "USER_STOP": [
+          {
+            "actions": [
+              {
+                "type": "abortTurn"
+              }
+            ],
+            "target": "stopped"
+          }
+        ]
+      }
+    },
+    "awaitingUserQuestion": {
+      "on": {
+        "ASK_USER_RESOLVED": [
+          {
+            "actions": [
+              {
+                "type": "resolveUserQuestionAndContinue"
+              }
+            ],
+            "target": "streaming"
+          }
+        ],
+        "ERROR": [
+          {
+            "actions": [
+              {
+                "type": "recordError"
+              }
+            ],
+            "target": "errored"
+          }
+        ],
+        "USER_STOP": [
+          {
+            "actions": [
+              {
+                "type": "abortTurn"
+              }
+            ],
+            "target": "stopped"
+          }
+        ]
+      }
+    },
+    "completing": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "queueNonEmpty",
+          "target": "drainingQueue"
+        },
+        {
+          "actions": [
+            {
+              "type": "clearActiveTurn"
+            }
+          ],
+          "target": "idle"
+        }
+      ],
+      "entry": {
+        "type": "finalCleanupForTurn"
+      }
+    },
+    "drainingQueue": {
+      "always": [
+        {
+          "actions": [
+            {
+              "type": "dequeueAndStageNext"
+            }
+          ],
+          "guard": "queueNonEmpty",
+          "target": "staging"
+        },
+        {
+          "actions": [
+            {
+              "type": "clearActiveTurn"
+            }
+          ],
+          "target": "idle"
+        }
+      ]
+    },
+    "errored": {
+      "always": {
+        "actions": [],
+        "guard": "queueNonEmpty",
+        "target": "drainingQueue"
+      },
+      "entry": {
+        "type": "cleanupPendingPrompts"
+      },
+      "on": {
+        "RECOVER_DONE": [
+          {
+            "actions": [],
+            "guard": "queueNonEmpty",
+            "target": "drainingQueue"
+          },
+          {
+            "actions": [
+              {
+                "type": "clearActiveTurn"
+              }
+            ],
+            "target": "idle"
+          }
+        ]
+      }
+    },
+    "idle": {
+      "on": {
+        "QUEUE_ENQUEUE": [
+          {
+            "actions": [
+              {
+                "type": "enqueueMessage"
+              }
+            ]
+          }
+        ],
+        "QUEUE_PREPEND": [
+          {
+            "actions": [
+              {
+                "type": "prependMessage"
+              }
+            ]
+          }
+        ],
+        "QUEUE_REMOVE": [
+          {
+            "actions": [
+              {
+                "type": "removeFromQueue"
+              }
+            ]
+          }
+        ],
+        "QUEUE_REPLACE": [
+          {
+            "actions": [
+              {
+                "type": "replaceInQueue"
+              }
+            ]
+          }
+        ],
+        "USER_SEND": [
+          {
+            "actions": [
+              {
+                "type": "stageTurnFromUserSend"
+              }
+            ],
+            "target": "staging"
+          }
+        ]
+      }
+    },
+    "staging": {
+      "on": {
+        "ERROR": [
+          {
+            "actions": [
+              {
+                "type": "recordError"
+              }
+            ],
+            "target": "errored"
+          }
+        ],
+        "SNAPSHOT_CANCELLED": [
+          {
+            "actions": [
+              {
+                "type": "rollbackStagedTurn"
+              }
+            ],
+            "target": "idle"
+          }
+        ],
+        "SNAPSHOT_READY": [
+          {
+            "actions": [
+              {
+                "type": "openStream"
+              }
+            ],
+            "target": "streaming"
+          }
+        ],
+        "USER_STOP": [
+          {
+            "actions": [
+              {
+                "type": "abortTurn"
+              }
+            ],
+            "target": "stopped"
+          }
+        ]
+      }
+    },
+    "stopped": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "queueNonEmpty",
+          "target": "drainingQueue"
+        },
+        {
+          "actions": [
+            {
+              "type": "clearActiveTurn"
+            }
+          ],
+          "target": "idle"
+        }
+      ],
+      "entry": {
+        "type": "cleanupPendingPrompts"
+      }
+    },
+    "streaming": {
+      "on": {
+        "ERROR": [
+          {
+            "actions": [
+              {
+                "type": "recordError"
+              }
+            ],
+            "target": "errored"
+          }
+        ],
+        "QUEUE_ENQUEUE": [
+          {
+            "actions": [
+              {
+                "type": "enqueueMessage"
+              }
+            ]
+          }
+        ],
+        "QUEUE_PREPEND": [
+          {
+            "actions": [
+              {
+                "type": "prependMessage"
+              }
+            ]
+          }
+        ],
+        "QUEUE_REMOVE": [
+          {
+            "actions": [
+              {
+                "type": "removeFromQueue"
+              }
+            ]
+          }
+        ],
+        "QUEUE_REPLACE": [
+          {
+            "actions": [
+              {
+                "type": "replaceInQueue"
+              }
+            ]
+          }
+        ],
+        "STREAM_COMPLETE": [
+          {
+            "actions": [
+              {
+                "type": "finalizeStream"
+              }
+            ],
+            "target": "completing"
+          }
+        ],
+        "STREAM_TEXT_DELTA": [
+          {
+            "actions": [
+              {
+                "type": "applyStreamTextDelta"
+              }
+            ]
+          }
+        ],
+        "STREAM_THINKING": [
+          {
+            "actions": [
+              {
+                "type": "applyThinkingDelta"
+              }
+            ]
+          }
+        ],
+        "STREAM_TOOL_REQUEST": [
+          {
+            "actions": [
+              {
+                "type": "queueToolConfirmation"
+              }
+            ],
+            "guard": "requiresConfirmation",
+            "target": "awaitingToolConfirmation"
+          },
+          {
+            "actions": [
+              {
+                "type": "queueUserQuestion"
+              }
+            ],
+            "guard": "requiresUserInput",
+            "target": "awaitingUserQuestion"
+          },
+          {
+            "actions": [
+              {
+                "type": "dispatchToolExecution"
+              }
+            ],
+            "target": "streaming"
+          }
+        ],
+        "STREAM_TOOL_USE": [
+          {
+            "actions": [
+              {
+                "type": "upsertToolUseAsExecuting"
+              }
+            ]
+          }
+        ],
+        "TOOL_EXECUTION_DONE": [
+          {
+            "actions": [
+              {
+                "type": "markToolCompleted"
+              }
+            ]
+          }
+        ],
+        "TOOL_EXECUTION_FAILED": [
+          {
+            "actions": [
+              {
+                "type": "markToolFailed"
+              }
+            ]
+          }
+        ],
+        "USER_STOP": [
+          {
+            "actions": [
+              {
+                "type": "abortTurn"
+              }
+            ],
+            "target": "stopped"
+          }
+        ]
+      }
+    }
+  }
+}

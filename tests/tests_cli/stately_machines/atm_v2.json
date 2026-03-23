@@ -1,0 +1,151 @@
+{
+  "context": {
+    "amount": 0,
+    "authType": null,
+    "error": null,
+    "user": "\u041e\u043b\u0435\u043a\u0441\u0430\u043d\u0434\u0440"
+  },
+  "id": "atm",
+  "initial": "idle",
+  "states": {
+    "authenticating": {
+      "invoke": {
+        "input": {},
+        "onDone": [
+          {
+            "actions": [
+              {
+                "type": "inline:atm.authenticating#done.invoke.atm.authenticating:invocation[0][-1]#transition[0]"
+              }
+            ],
+            "target": "mainMenu"
+          }
+        ],
+        "onError": [
+          {
+            "actions": [
+              {
+                "type": "setError"
+              }
+            ],
+            "target": "error"
+          }
+        ],
+        "src": "authService"
+      }
+    },
+    "error": {
+      "on": {
+        "CANCEL": [
+          {
+            "actions": [
+              {
+                "type": "resetContext"
+              }
+            ],
+            "target": "idle"
+          }
+        ]
+      }
+    },
+    "idle": {
+      "on": {
+        "INSERT_CARD": [
+          {
+            "actions": [
+              {
+                "type": "setCardAuth"
+              }
+            ],
+            "target": "authenticating"
+          }
+        ]
+      }
+    },
+    "mainMenu": {
+      "on": {
+        "CANCEL": [
+          {
+            "actions": [
+              {
+                "type": "resetContext"
+              }
+            ],
+            "target": "idle"
+          }
+        ],
+        "CHOOSE_AMOUNT": [
+          {
+            "actions": [
+              {
+                "type": "setAmount"
+              }
+            ],
+            "target": "withdrawal"
+          }
+        ]
+      }
+    },
+    "success": {
+      "after": {
+        "3000": [
+          {
+            "actions": [],
+            "target": "#atm.idle"
+          }
+        ]
+      },
+      "on": {
+        "CANCEL": [
+          {
+            "actions": [],
+            "target": "idle"
+          }
+        ]
+      }
+    },
+    "withdrawal": {
+      "initial": "confirming",
+      "states": {
+        "confirming": {
+          "on": {
+            "BACK": [
+              {
+                "actions": [],
+                "target": "#atm.mainMenu"
+              }
+            ],
+            "CONFIRM": [
+              {
+                "actions": [],
+                "target": "processing"
+              }
+            ]
+          }
+        },
+        "processing": {
+          "invoke": {
+            "input": {},
+            "onDone": [
+              {
+                "actions": [],
+                "target": "#atm.success"
+              }
+            ],
+            "onError": [
+              {
+                "actions": [
+                  {
+                    "type": "setError"
+                  }
+                ],
+                "target": "#atm.error"
+              }
+            ],
+            "src": "executeTransaction"
+          }
+        }
+      }
+    }
+  }
+}

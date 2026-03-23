@@ -1,0 +1,179 @@
+{
+  "context": "{{({ input }) => ({\n        baseState: input.baseState,\n    })}}",
+  "id": "interactiveBonusCasinoCard",
+  "initial": "default",
+  "states": {
+    "confirmActivation": {
+      "on": {
+        "CANCEL_CONFIRM": [
+          {
+            "actions": [],
+            "target": "default"
+          }
+        ],
+        "SUBMIT_ACTIVATION": [
+          {
+            "actions": [],
+            "guard": "canSubmitActivation",
+            "target": "submittingActivation"
+          }
+        ]
+      }
+    },
+    "confirmDeleting": {
+      "on": {
+        "CANCEL_CONFIRM": [
+          {
+            "actions": [],
+            "target": "default"
+          }
+        ],
+        "SUBMIT_DELETING": [
+          {
+            "actions": [],
+            "target": "submittingDeleting"
+          }
+        ]
+      }
+    },
+    "confirmPausing": {
+      "on": {
+        "CANCEL_CONFIRM": [
+          {
+            "actions": [],
+            "target": "default"
+          }
+        ],
+        "SUBMIT_PAUSING": [
+          {
+            "actions": [],
+            "guard": "canSubmitPausing",
+            "target": "submittingPausing"
+          }
+        ]
+      }
+    },
+    "default": {
+      "on": {
+        "OPEN_CONFIRM_ACTIVATION": [
+          {
+            "actions": [],
+            "guard": "canOpenActivation",
+            "target": "confirmActivation"
+          }
+        ],
+        "OPEN_CONFIRM_DELETING": [
+          {
+            "actions": [],
+            "target": "confirmDeleting"
+          }
+        ],
+        "OPEN_CONFIRM_PAUSING": [
+          {
+            "actions": [],
+            "guard": "canOpenPausing",
+            "target": "confirmPausing"
+          }
+        ],
+        "OPEN_INFO": [
+          {
+            "actions": [],
+            "target": "info"
+          }
+        ]
+      }
+    },
+    "info": {
+      "on": {
+        "CLOSE_INFO": [
+          {
+            "actions": [],
+            "target": "default"
+          }
+        ],
+        "OPEN_CONFIRM_ACTIVATION": [
+          {
+            "actions": [],
+            "guard": "canOpenActivation",
+            "target": "confirmActivation"
+          }
+        ],
+        "OPEN_CONFIRM_DELETING": [
+          {
+            "actions": [],
+            "target": "confirmDeleting"
+          }
+        ],
+        "OPEN_CONFIRM_PAUSING": [
+          {
+            "actions": [],
+            "guard": "canOpenPausing",
+            "target": "confirmPausing"
+          }
+        ]
+      }
+    },
+    "submittingActivation": {
+      "invoke": {
+        "input": {},
+        "onDone": [
+          {
+            "actions": [
+              {
+                "type": "setActiveBase"
+              }
+            ],
+            "target": "default"
+          }
+        ],
+        "onError": [
+          {
+            "actions": [],
+            "target": "confirmActivation"
+          }
+        ],
+        "src": "activateBonus"
+      }
+    },
+    "submittingDeleting": {
+      "invoke": {
+        "input": {},
+        "onDone": [
+          {
+            "actions": [],
+            "target": "default"
+          }
+        ],
+        "onError": [
+          {
+            "actions": [],
+            "target": "confirmDeleting"
+          }
+        ],
+        "src": "deleteBonus"
+      }
+    },
+    "submittingPausing": {
+      "invoke": {
+        "input": {},
+        "onDone": [
+          {
+            "actions": [
+              {
+                "type": "setPausedBase"
+              }
+            ],
+            "target": "default"
+          }
+        ],
+        "onError": [
+          {
+            "actions": [],
+            "target": "confirmPausing"
+          }
+        ],
+        "src": "pauseBonus"
+      }
+    }
+  }
+}

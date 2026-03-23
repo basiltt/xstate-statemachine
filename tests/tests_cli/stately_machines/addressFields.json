@@ -1,0 +1,972 @@
+{
+  "context": {
+    "city": "",
+    "cityDebouncedQuery": "",
+    "cityFetching": false,
+    "cityQuery": "",
+    "cityText": "",
+    "driver": null,
+    "houseNumberFetching": false,
+    "mode": "syrius",
+    "street": "",
+    "streetFetching": false,
+    "streetNumber": "",
+    "streetNumberSuffix": "",
+    "streetNumberSuffixText": "",
+    "streetNumberText": "",
+    "streetText": "",
+    "submissionAttempts": 0,
+    "zip": "",
+    "zipDebouncedQuery": "",
+    "zipFetching": false,
+    "zipQuery": "",
+    "zipText": ""
+  },
+  "id": "addressFields",
+  "states": {
+    "citySearch": {
+      "initial": "idle",
+      "states": {
+        "debouncing": {
+          "description": "User is typing in city. Waiting for debounce delay (300ms).",
+          "on": {
+            "CITY_DEBOUNCE_TICK": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.citySearch.debouncing#CITY_DEBOUNCE_TICK[-1]#transition[0]"
+                  }
+                ],
+                "guard": "cityQueryLongEnough",
+                "target": "fetching"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.citySearch.debouncing#CITY_DEBOUNCE_TICK[-1]#transition[0]"
+                  }
+                ],
+                "target": "idle"
+              }
+            ],
+            "CITY_INPUT_CHANGE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.citySearch.debouncing#CITY_INPUT_CHANGE[-1]#transition[0]"
+                  }
+                ],
+                "target": "debouncing"
+              }
+            ]
+          }
+        },
+        "fetching": {
+          "description": "API call in flight for city communities.",
+          "entry": {
+            "type": "inline:addressFields.citySearch.fetching#entry[0]"
+          },
+          "on": {
+            "CITY_COMMUNITIES_ERROR": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.citySearch.fetching#CITY_COMMUNITIES_ERROR[-1]#transition[0]"
+                  }
+                ],
+                "target": "idle"
+              }
+            ],
+            "CITY_COMMUNITIES_LOADED": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.citySearch.fetching#CITY_COMMUNITIES_LOADED[-1]#transition[0]"
+                  }
+                ],
+                "target": "loaded"
+              }
+            ],
+            "CITY_INPUT_CHANGE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.citySearch.fetching#CITY_INPUT_CHANGE[-1]#transition[0]"
+                  }
+                ],
+                "target": "debouncing"
+              }
+            ]
+          }
+        },
+        "idle": {
+          "on": {
+            "CITY_INPUT_CHANGE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.citySearch.idle#CITY_INPUT_CHANGE[-1]#transition[0]"
+                  }
+                ],
+                "target": "debouncing"
+              }
+            ]
+          }
+        },
+        "loaded": {
+          "description": "City community data available. Items derived from cityCommunityData.",
+          "on": {
+            "CITY_INPUT_CHANGE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.citySearch.loaded#CITY_INPUT_CHANGE[-1]#transition[0]"
+                  }
+                ],
+                "target": "debouncing"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "communityPair": {
+      "initial": "idle",
+      "states": {
+        "cityDriven": {
+          "on": {
+            "CITY_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.communityPair.cityDriven#CITY_CLEAR[-1]#transition[0]"
+                  },
+                  {
+                    "type": "resetStreetFields"
+                  }
+                ],
+                "target": "idle"
+              }
+            ],
+            "CITY_SELECT": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.communityPair.cityDriven#CITY_SELECT[-1]#transition[0]"
+                  }
+                ]
+              }
+            ],
+            "ZIP_SELECT": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.communityPair.cityDriven#ZIP_SELECT[-1]#transition[0]"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "idle": {
+          "description": "No field selected yet. driver=null. Both fields accept input independently.",
+          "on": {
+            "CITY_SELECT": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.communityPair.idle#CITY_SELECT[-1]#transition[0]"
+                  }
+                ],
+                "target": "cityDriven"
+              }
+            ],
+            "ZIP_SELECT": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.communityPair.idle#ZIP_SELECT[-1]#transition[0]"
+                  }
+                ],
+                "target": "zipDriven"
+              }
+            ]
+          }
+        },
+        "zipDriven": {
+          "on": {
+            "CITY_SELECT": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.communityPair.zipDriven#CITY_SELECT[-1]#transition[0]"
+                  }
+                ]
+              }
+            ],
+            "ZIP_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.communityPair.zipDriven#ZIP_CLEAR[-1]#transition[0]"
+                  },
+                  {
+                    "type": "resetStreetFields"
+                  }
+                ],
+                "target": "idle"
+              }
+            ],
+            "ZIP_SELECT": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.communityPair.zipDriven#ZIP_SELECT[-1]#transition[0]"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "houseNumberField": {
+      "initial": "disabled",
+      "states": {
+        "disabled": {
+          "always": {
+            "actions": [],
+            "guard": "hasStreet",
+            "target": "fetching"
+          },
+          "description": "No street selected \u2014 house number autocomplete is disabled."
+        },
+        "fetching": {
+          "description": "Fetching house numbers for the selected street.",
+          "entry": {
+            "type": "inline:addressFields.houseNumberField.fetching#entry[0]"
+          },
+          "on": {
+            "HOUSE_NUMBERS_LOADED": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.houseNumberField.fetching#HOUSE_NUMBERS_LOADED[-1]#transition[0]"
+                  }
+                ],
+                "target": "ready"
+              }
+            ],
+            "STREET_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "resetHouseNumberFields"
+                  }
+                ],
+                "target": "disabled"
+              }
+            ],
+            "STREET_SELECT": [
+              {
+                "actions": [
+                  {
+                    "type": "resetHouseNumberFields"
+                  }
+                ],
+                "target": "fetching"
+              }
+            ]
+          }
+        },
+        "ready": {
+          "description": "House number data loaded. Items filtered client-side by streetNumberText query.",
+          "on": {
+            "STREET_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "resetHouseNumberFields"
+                  }
+                ],
+                "target": "disabled"
+              }
+            ],
+            "STREET_NUMBER_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.houseNumberField.ready#STREET_NUMBER_CLEAR[-1]#transition[0]"
+                  },
+                  {
+                    "type": "resetSuffixFields"
+                  }
+                ]
+              }
+            ],
+            "STREET_NUMBER_INPUT_CHANGE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.houseNumberField.ready#STREET_NUMBER_INPUT_CHANGE[-1]#transition[0]"
+                  }
+                ]
+              }
+            ],
+            "STREET_NUMBER_SELECT": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.houseNumberField.ready#STREET_NUMBER_SELECT[-1]#transition[0]"
+                  },
+                  {
+                    "type": "resetSuffixFields"
+                  }
+                ],
+                "target": "selected"
+              }
+            ],
+            "STREET_SELECT": [
+              {
+                "actions": [
+                  {
+                    "type": "resetHouseNumberFields"
+                  }
+                ],
+                "target": "fetching"
+              }
+            ]
+          }
+        },
+        "selected": {
+          "description": "A house number is selected. Suffix field is now enabled.",
+          "on": {
+            "STREET_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "resetHouseNumberFields"
+                  }
+                ],
+                "target": "disabled"
+              }
+            ],
+            "STREET_NUMBER_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.houseNumberField.selected#STREET_NUMBER_CLEAR[-1]#transition[0]"
+                  },
+                  {
+                    "type": "resetSuffixFields"
+                  }
+                ],
+                "target": "ready"
+              }
+            ],
+            "STREET_NUMBER_INPUT_CHANGE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.houseNumberField.selected#STREET_NUMBER_INPUT_CHANGE[-1]#transition[0]"
+                  },
+                  {
+                    "type": "resetSuffixFields"
+                  }
+                ],
+                "target": "ready"
+              }
+            ],
+            "STREET_NUMBER_SELECT": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.houseNumberField.selected#STREET_NUMBER_SELECT[-1]#transition[0]"
+                  },
+                  {
+                    "type": "resetSuffixFields"
+                  }
+                ]
+              }
+            ],
+            "STREET_SELECT": [
+              {
+                "actions": [
+                  {
+                    "type": "resetHouseNumberFields"
+                  }
+                ],
+                "target": "fetching"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "inputMode": {
+      "initial": "syrius",
+      "states": {
+        "manual": {
+          "on": {
+            "TOGGLE_MODE": [
+              {
+                "actions": [
+                  {
+                    "type": "resetAllFields"
+                  },
+                  {
+                    "type": "inline:addressFields.inputMode.manual#TOGGLE_MODE[-1]#transition[1]"
+                  }
+                ],
+                "target": "syrius"
+              }
+            ]
+          }
+        },
+        "syrius": {
+          "on": {
+            "TOGGLE_MODE": [
+              {
+                "actions": [
+                  {
+                    "type": "resetAllFields"
+                  },
+                  {
+                    "type": "inline:addressFields.inputMode.syrius#TOGGLE_MODE[-1]#transition[1]"
+                  }
+                ],
+                "target": "manual"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "streetField": {
+      "initial": "disabled",
+      "states": {
+        "disabled": {
+          "always": {
+            "actions": [],
+            "guard": "hasCommunityId",
+            "target": "fetching"
+          },
+          "description": "No communityId yet \u2014 street autocomplete is disabled."
+        },
+        "fetching": {
+          "description": "Fetching streets for the resolved communityId.",
+          "entry": {
+            "type": "inline:addressFields.streetField.fetching#entry[0]"
+          },
+          "on": {
+            "CITY_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "resetStreetFields"
+                  }
+                ],
+                "target": "disabled"
+              }
+            ],
+            "STREET_DATA_LOADED": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.streetField.fetching#STREET_DATA_LOADED[-1]#transition[0]"
+                  }
+                ],
+                "target": "ready"
+              }
+            ],
+            "ZIP_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "resetStreetFields"
+                  }
+                ],
+                "target": "disabled"
+              }
+            ]
+          }
+        },
+        "ready": {
+          "description": "Street data loaded. User can type to filter and select a street.",
+          "on": {
+            "CITY_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "resetStreetFields"
+                  }
+                ],
+                "target": "disabled"
+              }
+            ],
+            "STREET_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.streetField.ready#STREET_CLEAR[-1]#transition[0]"
+                  },
+                  {
+                    "type": "resetHouseNumberFields"
+                  }
+                ]
+              }
+            ],
+            "STREET_INPUT_CHANGE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.streetField.ready#STREET_INPUT_CHANGE[-1]#transition[0]"
+                  }
+                ]
+              }
+            ],
+            "STREET_SELECT": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.streetField.ready#STREET_SELECT[-1]#transition[0]"
+                  },
+                  {
+                    "type": "resetHouseNumberFields"
+                  }
+                ],
+                "target": "selected"
+              }
+            ],
+            "ZIP_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "resetStreetFields"
+                  }
+                ],
+                "target": "disabled"
+              }
+            ]
+          }
+        },
+        "selected": {
+          "description": "A street is selected. House number fetching can begin.",
+          "on": {
+            "CITY_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "resetStreetFields"
+                  }
+                ],
+                "target": "disabled"
+              }
+            ],
+            "STREET_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.streetField.selected#STREET_CLEAR[-1]#transition[0]"
+                  },
+                  {
+                    "type": "resetHouseNumberFields"
+                  }
+                ],
+                "target": "ready"
+              }
+            ],
+            "STREET_INPUT_CHANGE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.streetField.selected#STREET_INPUT_CHANGE[-1]#transition[0]"
+                  },
+                  {
+                    "type": "resetHouseNumberFields"
+                  }
+                ],
+                "target": "ready"
+              }
+            ],
+            "STREET_SELECT": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.streetField.selected#STREET_SELECT[-1]#transition[0]"
+                  },
+                  {
+                    "type": "resetHouseNumberFields"
+                  }
+                ]
+              }
+            ],
+            "ZIP_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "resetStreetFields"
+                  }
+                ],
+                "target": "disabled"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "suffixField": {
+      "initial": "disabled",
+      "states": {
+        "disabled": {
+          "always": {
+            "actions": [],
+            "guard": "hasStreetNumber",
+            "target": "ready"
+          },
+          "description": "No house number selected \u2014 suffix autocomplete is disabled."
+        },
+        "ready": {
+          "description": "Suffix items available. Filtered client-side by streetNumberSuffixText.",
+          "on": {
+            "STREET_CLEAR": [
+              {
+                "actions": [],
+                "target": "disabled"
+              }
+            ],
+            "STREET_NUMBER_CLEAR": [
+              {
+                "actions": [],
+                "target": "disabled"
+              }
+            ],
+            "STREET_NUMBER_INPUT_CHANGE": [
+              {
+                "actions": [],
+                "target": "disabled"
+              }
+            ],
+            "SUFFIX_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.suffixField.ready#SUFFIX_CLEAR[-1]#transition[0]"
+                  }
+                ]
+              }
+            ],
+            "SUFFIX_INPUT_CHANGE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.suffixField.ready#SUFFIX_INPUT_CHANGE[-1]#transition[0]"
+                  }
+                ]
+              }
+            ],
+            "SUFFIX_SELECT": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.suffixField.ready#SUFFIX_SELECT[-1]#transition[0]"
+                  }
+                ],
+                "target": "selected"
+              }
+            ]
+          }
+        },
+        "selected": {
+          "description": "A suffix has been selected. Address entry is complete.",
+          "on": {
+            "STREET_CLEAR": [
+              {
+                "actions": [],
+                "target": "disabled"
+              }
+            ],
+            "STREET_NUMBER_CLEAR": [
+              {
+                "actions": [],
+                "target": "disabled"
+              }
+            ],
+            "STREET_NUMBER_INPUT_CHANGE": [
+              {
+                "actions": [],
+                "target": "disabled"
+              }
+            ],
+            "SUFFIX_CLEAR": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.suffixField.selected#SUFFIX_CLEAR[-1]#transition[0]"
+                  }
+                ],
+                "target": "ready"
+              }
+            ],
+            "SUFFIX_INPUT_CHANGE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.suffixField.selected#SUFFIX_INPUT_CHANGE[-1]#transition[0]"
+                  }
+                ],
+                "target": "ready"
+              }
+            ],
+            "SUFFIX_SELECT": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.suffixField.selected#SUFFIX_SELECT[-1]#transition[0]"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "validation": {
+      "initial": "pristine",
+      "states": {
+        "pristine": {
+          "description": "No submission attempts yet. Validation only on blur for dirty fields.",
+          "on": {
+            "CITY_BLUR": [
+              {
+                "actions": [
+                  {
+                    "type": "touchField"
+                  }
+                ]
+              }
+            ],
+            "STREET_BLUR": [
+              {
+                "actions": [
+                  {
+                    "type": "touchField"
+                  }
+                ]
+              }
+            ],
+            "STREET_NUMBER_BLUR": [
+              {
+                "actions": [
+                  {
+                    "type": "touchField"
+                  }
+                ]
+              }
+            ],
+            "SUBMIT": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.validation.pristine#SUBMIT[-1]#transition[0]"
+                  }
+                ],
+                "target": "submitted"
+              }
+            ],
+            "SUFFIX_BLUR": [
+              {
+                "actions": [
+                  {
+                    "type": "touchField"
+                  }
+                ]
+              }
+            ],
+            "ZIP_BLUR": [
+              {
+                "actions": [
+                  {
+                    "type": "touchField"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "submitted": {
+          "description": "Form submitted at least once. All fields validate on blur.",
+          "on": {
+            "CITY_BLUR": [
+              {
+                "actions": [
+                  {
+                    "type": "touchField"
+                  }
+                ]
+              }
+            ],
+            "RESET": [
+              {
+                "actions": [],
+                "target": "pristine"
+              }
+            ],
+            "STREET_BLUR": [
+              {
+                "actions": [
+                  {
+                    "type": "touchField"
+                  }
+                ]
+              }
+            ],
+            "STREET_NUMBER_BLUR": [
+              {
+                "actions": [
+                  {
+                    "type": "touchField"
+                  }
+                ]
+              }
+            ],
+            "SUBMIT": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.validation.submitted#SUBMIT[-1]#transition[0]"
+                  }
+                ]
+              }
+            ],
+            "SUFFIX_BLUR": [
+              {
+                "actions": [
+                  {
+                    "type": "touchField"
+                  }
+                ]
+              }
+            ],
+            "ZIP_BLUR": [
+              {
+                "actions": [
+                  {
+                    "type": "touchField"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "zipSearch": {
+      "initial": "idle",
+      "states": {
+        "debouncing": {
+          "description": "User is typing in zip. Waiting for debounce delay (300ms).",
+          "on": {
+            "ZIP_DEBOUNCE_TICK": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.zipSearch.debouncing#ZIP_DEBOUNCE_TICK[-1]#transition[0]"
+                  }
+                ],
+                "guard": "zipQueryLongEnough",
+                "target": "fetching"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.zipSearch.debouncing#ZIP_DEBOUNCE_TICK[-1]#transition[0]"
+                  }
+                ],
+                "target": "idle"
+              }
+            ],
+            "ZIP_INPUT_CHANGE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.zipSearch.debouncing#ZIP_INPUT_CHANGE[-1]#transition[0]"
+                  }
+                ],
+                "target": "debouncing"
+              }
+            ]
+          }
+        },
+        "fetching": {
+          "description": "API call in flight for zip communities.",
+          "entry": {
+            "type": "inline:addressFields.zipSearch.fetching#entry[0]"
+          },
+          "on": {
+            "ZIP_COMMUNITIES_ERROR": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.zipSearch.fetching#ZIP_COMMUNITIES_ERROR[-1]#transition[0]"
+                  }
+                ],
+                "target": "idle"
+              }
+            ],
+            "ZIP_COMMUNITIES_LOADED": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.zipSearch.fetching#ZIP_COMMUNITIES_LOADED[-1]#transition[0]"
+                  }
+                ],
+                "target": "loaded"
+              }
+            ],
+            "ZIP_INPUT_CHANGE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.zipSearch.fetching#ZIP_INPUT_CHANGE[-1]#transition[0]"
+                  }
+                ],
+                "target": "debouncing"
+              }
+            ]
+          }
+        },
+        "idle": {
+          "on": {
+            "ZIP_INPUT_CHANGE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.zipSearch.idle#ZIP_INPUT_CHANGE[-1]#transition[0]"
+                  }
+                ],
+                "target": "debouncing"
+              }
+            ]
+          }
+        },
+        "loaded": {
+          "description": "Zip community data available. Items derived from zipCommunityData.",
+          "on": {
+            "ZIP_INPUT_CHANGE": [
+              {
+                "actions": [
+                  {
+                    "type": "inline:addressFields.zipSearch.loaded#ZIP_INPUT_CHANGE[-1]#transition[0]"
+                  }
+                ],
+                "target": "debouncing"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "type": "parallel"
+}

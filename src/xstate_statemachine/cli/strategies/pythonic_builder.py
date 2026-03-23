@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Set
 from ..extractor import extract_events
 from .base import BaseStrategy, GenerationContext
 from ._shared import (
+    escape_for_string,
     generate_action_docstring,
     generate_error_handling,
     generate_imports,
@@ -209,9 +210,11 @@ class PythonicBuilderStrategy(BaseStrategy):
             for ev in events:
                 if ctx.log:
                     lines.append(
-                        f"    logger.info('Sending event: %s', '{ev}')"
+                        f"    logger.info('Sending event: %s', '{escape_for_string(ev)}')"
                     )
-                lines.append(f'    {await_prefix}interpreter.send("{ev}")')
+                lines.append(
+                    f'    {await_prefix}interpreter.send("{escape_for_string(ev)}")'
+                )
                 if ctx.sleep:
                     lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                 lines.append("")
@@ -331,9 +334,12 @@ class PythonicBuilderStrategy(BaseStrategy):
             for ev in parent_events:
                 if ctx.log:
                     lines.append(
-                        f"    logger.info(" f"'Parent → sending %s', '{ev}')"
+                        f"    logger.info("
+                        f"'Parent → sending %s', '{escape_for_string(ev)}')"
                     )
-                lines.append(f"    {await_prefix}parent.send('{ev}')")
+                lines.append(
+                    f"    {await_prefix}parent.send('{escape_for_string(ev)}')"
+                )
                 if ctx.sleep:
                     lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
                 lines.append("")
@@ -366,10 +372,10 @@ class PythonicBuilderStrategy(BaseStrategy):
                     if ctx.log:
                         lines.append(
                             f"    logger.info("
-                            f"'{a_name} → sending %s', '{ev}')"
+                            f"'{a_name} → sending %s', '{escape_for_string(ev)}')"
                         )
                     lines.append(
-                        f"    {await_prefix}actors['{a_name}'].send('{ev}')"
+                        f"    {await_prefix}actors['{a_name}'].send('{escape_for_string(ev)}')"
                     )
                     if ctx.sleep:
                         lines.append(f"    {sleep_cmd}({ctx.sleep_time})")
@@ -378,7 +384,7 @@ class PythonicBuilderStrategy(BaseStrategy):
                 if ctx.log:
                     lines.append(
                         f"    logger.info("
-                        f"'No events declared in actor \"{a_name}\".')"
+                        f"'No events declared in actor \"{escape_for_string(a_name)}\".')"
                     )
                 else:
                     lines.append(
@@ -503,7 +509,8 @@ class PythonicBuilderStrategy(BaseStrategy):
             if component_type == "guard":
                 if log:
                     code_lines.append(
-                        f"    logger.info(" f'"Evaluating guard: {original}")'
+                        f"    logger.info("
+                        f'"Evaluating guard: {escape_for_string(original)}")'
                     )
                 code_lines.append("    # TODO: implement guard logic")
                 code_lines.append("    return True")
@@ -516,7 +523,9 @@ class PythonicBuilderStrategy(BaseStrategy):
                         else "Running service"
                     )
                     # Emit BEFORE the try/except block
-                    code_lines.append(f'    logger.info("{verb}: {original}")')
+                    code_lines.append(
+                        f'    logger.info("{verb}: {escape_for_string(original)}")'
+                    )
                 if component_type == "action":
                     body_lines.append("# TODO: implement action logic")
                     body_lines.append("pass")
@@ -562,7 +571,9 @@ class PythonicBuilderStrategy(BaseStrategy):
         chain_parts: List[str] = []
 
         # -- MachineBuilder("id") -------------------------------------
-        chain_parts.append(f'MachineBuilder("{machine_id}")')
+        chain_parts.append(
+            f'MachineBuilder("{escape_for_string(machine_id)}")'
+        )
 
         # -- .context({...}) ------------------------------------------
         if initial_context is not None:
@@ -582,18 +593,34 @@ class PythonicBuilderStrategy(BaseStrategy):
             entry = state_def.get("entry")
             if entry is not None:
                 if isinstance(entry, str):
-                    kwargs.append(f'entry=["{entry}"]')
+                    kwargs.append(f'entry=["{escape_for_string(entry)}"]')
                 elif isinstance(entry, list):
-                    entry_repr = ", ".join(f'"{a}"' for a in entry)
+                    entry_repr = ", ".join(
+                        (
+                            f'"{escape_for_string(a)}"'
+                            if isinstance(a, str)
+                            else repr(a)
+                        )
+                        for a in entry
+                    )
                     kwargs.append(f"entry=[{entry_repr}]")
 
             # exit actions
             exit_actions = state_def.get("exit")
             if exit_actions is not None:
                 if isinstance(exit_actions, str):
-                    kwargs.append(f'exit=["{exit_actions}"]')
+                    kwargs.append(
+                        f'exit=["{escape_for_string(exit_actions)}"]'
+                    )
                 elif isinstance(exit_actions, list):
-                    exit_repr = ", ".join(f'"{a}"' for a in exit_actions)
+                    exit_repr = ", ".join(
+                        (
+                            f'"{escape_for_string(a)}"'
+                            if isinstance(a, str)
+                            else repr(a)
+                        )
+                        for a in exit_actions
+                    )
                     kwargs.append(f"exit=[{exit_repr}]")
 
             # invoke
@@ -603,9 +630,13 @@ class PythonicBuilderStrategy(BaseStrategy):
 
             if kwargs:
                 args_str = ", ".join(kwargs)
-                chain_parts.append(f'.state("{state_name}", {args_str})')
+                chain_parts.append(
+                    f'.state("{escape_for_string(state_name)}", {args_str})'
+                )
             else:
-                chain_parts.append(f'.state("{state_name}")')
+                chain_parts.append(
+                    f'.state("{escape_for_string(state_name)}")'
+                )
 
         # -- .transition(...) calls -----------------------------------
         for state_name, state_def in states_config.items():
@@ -624,33 +655,42 @@ class PythonicBuilderStrategy(BaseStrategy):
                 for trans in transitions:
                     if isinstance(trans, str):
                         chain_parts.append(
-                            f'.transition("{state_name}", '
-                            f'"{event_name}", "{trans}")'
+                            f'.transition("{escape_for_string(state_name)}", '
+                            f'"{escape_for_string(event_name)}", "{escape_for_string(trans)}")'
                         )
                     elif isinstance(trans, dict):
-                        target = trans.get("target", "")
+                        target = trans.get("target", "") or state_name
                         t_kwargs: List[str] = []
 
                         # actions
                         actions_val = trans.get("actions")
                         if actions_val is not None:
                             if isinstance(actions_val, str):
-                                t_kwargs.append(f'actions=["{actions_val}"]')
+                                t_kwargs.append(
+                                    f'actions=["{escape_for_string(actions_val)}"]'
+                                )
                             elif isinstance(actions_val, list):
                                 act_repr = ", ".join(
-                                    f'"{a}"' for a in actions_val
+                                    (
+                                        f'"{escape_for_string(a)}"'
+                                        if isinstance(a, str)
+                                        else repr(a)
+                                    )
+                                    for a in actions_val
                                 )
                                 t_kwargs.append(f"actions=[{act_repr}]")
 
                         # guard
                         guard_val = trans.get("cond") or trans.get("guard")
                         if guard_val is not None:
-                            t_kwargs.append(f'guard="{guard_val}"')
+                            t_kwargs.append(
+                                f'guard="{escape_for_string(guard_val)}"'
+                            )
 
                         base_args = (
-                            f'"{state_name}", '
-                            f'"{event_name}", '
-                            f'"{target}"'
+                            f'"{escape_for_string(state_name)}", '
+                            f'"{escape_for_string(event_name)}", '
+                            f'"{escape_for_string(target)}"'
                         )
                         if t_kwargs:
                             extra = ", ".join(t_kwargs)
@@ -665,21 +705,27 @@ class PythonicBuilderStrategy(BaseStrategy):
             fn_name = snake_case_name(original)
             if keyword.iskeyword(fn_name):
                 fn_name = f"{fn_name}_"
-            chain_parts.append(f'.action("{original}", {fn_name})')
+            chain_parts.append(
+                f'.action("{escape_for_string(original)}", {fn_name})'
+            )
 
         # -- .guard("name", fn_ref) calls -----------------------------
         for original in sorted(ctx.guards):
             fn_name = snake_case_name(original)
             if keyword.iskeyword(fn_name):
                 fn_name = f"{fn_name}_"
-            chain_parts.append(f'.guard("{original}", {fn_name})')
+            chain_parts.append(
+                f'.guard("{escape_for_string(original)}", {fn_name})'
+            )
 
         # -- .service("name", fn_ref) calls ---------------------------
         for original in sorted(ctx.services):
             fn_name = snake_case_name(original)
             if keyword.iskeyword(fn_name):
                 fn_name = f"{fn_name}_"
-            chain_parts.append(f'.service("{original}", {fn_name})')
+            chain_parts.append(
+                f'.service("{escape_for_string(original)}", {fn_name})'
+            )
 
         # -- .build() -------------------------------------------------
         chain_parts.append(".build()")

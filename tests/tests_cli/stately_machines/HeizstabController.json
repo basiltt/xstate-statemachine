@@ -1,0 +1,433 @@
+{
+  "context": "{{initialContext}}",
+  "id": "HeizstabController",
+  "states": {
+    "heizung": {
+      "initial": "init",
+      "on": {
+        "emergency stop": [
+          {
+            "actions": [
+              {
+                "type": "recordEmergencyStop"
+              },
+              {
+                "type": "shellyPowerOff"
+              },
+              {
+                "type": "telegramNotifyEmergencyStop"
+              }
+            ],
+            "target": ".lock"
+          }
+        ]
+      },
+      "states": {
+        "init": {
+          "after": {
+            "5000": [
+              {
+                "actions": [
+                  {
+                    "type": "incrementInitPollCounter"
+                  }
+                ],
+                "target": "#HeizstabController.heizung.init"
+              }
+            ]
+          },
+          "entry": {
+            "type": "resetInitPollCounter"
+          },
+          "on": {
+            "failure detected": [
+              {
+                "actions": [
+                  {
+                    "type": "recordFailure"
+                  }
+                ],
+                "target": "reboot"
+              }
+            ],
+            "handle heater controller hardware failure": [
+              {
+                "actions": [
+                  {
+                    "type": "recordHardwareFailure"
+                  }
+                ],
+                "target": "lock"
+              }
+            ],
+            "heater controller qualified": [
+              {
+                "actions": [
+                  {
+                    "type": "recordStandbyStart"
+                  }
+                ],
+                "target": "standby"
+              }
+            ],
+            "waiting on heater controller startup message": [
+              {
+                "actions": [],
+                "target": "init"
+              }
+            ]
+          }
+        },
+        "lock": {
+          "entry": [
+            {
+              "type": "mqttAllPhasesOffDefensive"
+            },
+            {
+              "type": "telegramNotifyLocked"
+            }
+          ],
+          "on": {
+            "manual reset": [
+              {
+                "actions": [
+                  {
+                    "type": "clearErrorState"
+                  },
+                  {
+                    "type": "shellyPowerOn"
+                  },
+                  {
+                    "type": "telegramNotifyManualReset"
+                  }
+                ],
+                "target": "reboot"
+              }
+            ]
+          }
+        },
+        "phase123on": {
+          "on": {
+            "current check failed": [
+              {
+                "actions": [
+                  {
+                    "type": "recordCurrentCheckFailurePhase3"
+                  }
+                ],
+                "target": "reboot"
+              }
+            ],
+            "failure detected": [
+              {
+                "actions": [
+                  {
+                    "type": "recordFailure"
+                  }
+                ],
+                "target": "reboot"
+              }
+            ],
+            "grid power updated": [
+              {
+                "actions": [
+                  {
+                    "type": "updateGridPower"
+                  },
+                  {
+                    "type": "recordSwitchTimestamp"
+                  },
+                  {
+                    "type": "mqttPhase3OffKeepPhase12"
+                  }
+                ],
+                "guard": "gridAboveSwitchOff",
+                "target": "phase12on"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "updateGridPower"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "phase12on": {
+          "after": {
+            "2500": [
+              {
+                "actions": [
+                  {
+                    "type": "clearSwitchTimestamp"
+                  }
+                ],
+                "target": "#HeizstabController.heizung.phase12on"
+              }
+            ]
+          },
+          "on": {
+            "current check failed": [
+              {
+                "actions": [
+                  {
+                    "type": "recordCurrentCheckFailurePhase2"
+                  }
+                ],
+                "target": "reboot"
+              }
+            ],
+            "failure detected": [
+              {
+                "actions": [
+                  {
+                    "type": "recordFailure"
+                  }
+                ],
+                "target": "reboot"
+              }
+            ],
+            "grid power updated": [
+              {
+                "actions": [
+                  {
+                    "type": "updateGridPower"
+                  },
+                  {
+                    "type": "recordSwitchTimestamp"
+                  },
+                  {
+                    "type": "mqttPhase123On"
+                  }
+                ],
+                "guard": "gridBelowSwitchOnAndSettled",
+                "target": "phase123on"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "updateGridPower"
+                  },
+                  {
+                    "type": "recordStandbyStart"
+                  },
+                  {
+                    "type": "mqttPhase12Off"
+                  }
+                ],
+                "guard": "gridAboveSwitchOffAndTriangle",
+                "target": "standby"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "updateGridPower"
+                  },
+                  {
+                    "type": "recordSwitchTimestamp"
+                  },
+                  {
+                    "type": "mqttPhase2OffKeepPhase1"
+                  }
+                ],
+                "guard": "gridAboveSwitchOffAndStar",
+                "target": "phase1on"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "updateGridPower"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "phase1on": {
+          "after": {
+            "2500": [
+              {
+                "actions": [
+                  {
+                    "type": "clearSwitchTimestamp"
+                  }
+                ],
+                "target": "#HeizstabController.heizung.phase1on"
+              }
+            ]
+          },
+          "on": {
+            "current check failed": [
+              {
+                "actions": [
+                  {
+                    "type": "recordCurrentCheckFailurePhase1"
+                  }
+                ],
+                "target": "reboot"
+              }
+            ],
+            "failure detected": [
+              {
+                "actions": [
+                  {
+                    "type": "recordFailure"
+                  }
+                ],
+                "target": "reboot"
+              }
+            ],
+            "grid power updated": [
+              {
+                "actions": [
+                  {
+                    "type": "updateGridPower"
+                  },
+                  {
+                    "type": "recordSwitchTimestamp"
+                  },
+                  {
+                    "type": "mqttPhase12On"
+                  }
+                ],
+                "guard": "gridBelowSwitchOnAndSettled",
+                "target": "phase12on"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "updateGridPower"
+                  },
+                  {
+                    "type": "recordStandbyStart"
+                  },
+                  {
+                    "type": "mqttPhase1Off"
+                  }
+                ],
+                "guard": "gridAboveSwitchOff",
+                "target": "standby"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "updateGridPower"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "reboot": {
+          "entry": [
+            {
+              "type": "mqttAllPhasesOffBeforeReboot"
+            },
+            {
+              "type": "mqttSendRestart"
+            },
+            {
+              "type": "telegramNotifyReboot"
+            }
+          ],
+          "on": {
+            "heater controller reboots": [
+              {
+                "actions": [],
+                "target": "init"
+              }
+            ]
+          }
+        },
+        "standby": {
+          "on": {
+            "failure detected": [
+              {
+                "actions": [
+                  {
+                    "type": "recordFailure"
+                  }
+                ],
+                "target": "reboot"
+              }
+            ],
+            "grid power updated": [
+              {
+                "actions": [
+                  {
+                    "type": "updateGridPower"
+                  },
+                  {
+                    "type": "recordSwitchTimestamp"
+                  },
+                  {
+                    "type": "mqttPhase1On"
+                  }
+                ],
+                "guard": "gridBelowSwitchOn",
+                "target": "phase1on"
+              },
+              {
+                "actions": [
+                  {
+                    "type": "updateGridPower"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "telegram": {
+      "initial": "idle",
+      "states": {
+        "idle": {
+          "on": {
+            "telegram: ein": [
+              {
+                "actions": [
+                  {
+                    "type": "forwardManualResetToHeizung"
+                  }
+                ]
+              }
+            ],
+            "telegram: notaus": [
+              {
+                "actions": [
+                  {
+                    "type": "forwardEmergencyStopToHeizung"
+                  }
+                ]
+              }
+            ],
+            "telegram: reboot": [
+              {
+                "actions": [
+                  {
+                    "type": "telegramConfirmRebootCommand"
+                  },
+                  {
+                    "type": "forwardRebootToHeizung"
+                  }
+                ]
+              }
+            ],
+            "telegram: status": [
+              {
+                "actions": [
+                  {
+                    "type": "telegramSendStatusReport"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "type": "parallel"
+}

@@ -1,0 +1,40 @@
+{
+  "context": {
+    "points": 0
+  },
+  "id": "game",
+  "initial": "playing",
+  "states": {
+    "lose": {
+      "type": "final"
+    },
+    "playing": {
+      "always": [
+        {
+          "actions": [],
+          "guard": "didPlayerWin",
+          "target": "win"
+        },
+        {
+          "actions": [],
+          "guard": "didPlayerLose",
+          "target": "lose"
+        }
+      ],
+      "on": {
+        "AWARD_POINTS": [
+          {
+            "actions": [
+              {
+                "type": "inline:game.playing#AWARD_POINTS[-1]#transition[0]"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "win": {
+      "type": "final"
+    }
+  }
+}

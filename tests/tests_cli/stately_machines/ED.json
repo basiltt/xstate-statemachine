@@ -1,0 +1,181 @@
+{
+  "id": "ED",
+  "initial": "Patient Arrives",
+  "states": {
+    "Exit System": {
+      "type": "final"
+    },
+    "Patient Arrives": {
+      "on": {
+        "processPatient": [
+          {
+            "actions": [],
+            "meta": {},
+            "target": "Process Patient"
+          }
+        ]
+      }
+    },
+    "Patient Checked In": {
+      "entry": [
+        {
+          "type": "assignUnit"
+        },
+        {
+          "type": "assignBed"
+        }
+      ],
+      "type": "final"
+    },
+    "Perform Assignments": {
+      "entry": [
+        {
+          "type": "assignEsiLevel"
+        },
+        {
+          "type": "assignEDBed"
+        },
+        {
+          "type": "placeProtocolOrders"
+        }
+      ],
+      "on": {
+        "fastrack": [
+          {
+            "actions": [
+              {
+                "type": "assignToCCOrMEOrFT"
+              }
+            ],
+            "guard": "isFastrackOpen",
+            "target": "Waiting for PA"
+          },
+          {
+            "actions": [
+              {
+                "type": "assignToCCOrME"
+              }
+            ],
+            "target": "Waiting for PA"
+          }
+        ]
+      }
+    },
+    "Post Patient Process": {
+      "on": {
+        "assessOpenBedsAndAcuity": [
+          {
+            "actions": [],
+            "guard": "hasOpenBedOrAcuity",
+            "target": "Patient Checked In"
+          },
+          {
+            "actions": [],
+            "target": "WaitForTriageNurse"
+          }
+        ]
+      }
+    },
+    "Process Patient": {
+      "always": {
+        "actions": [],
+        "target": "Post Patient Process"
+      },
+      "states": {
+        "Check Patient": {
+          "initial": "Waiting For Assessment",
+          "states": {
+            "CompleteAssessment": {
+              "entry": {
+                "type": "saveAssessment"
+              },
+              "type": "final"
+            },
+            "Waiting For Assessment": {
+              "on": {
+                "performAssessment": [
+                  {
+                    "actions": [],
+                    "target": "CompleteAssessment"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "Registration": {
+          "initial": "Register Patient",
+          "states": {
+            "Register Patient": {
+              "on": {
+                "completeRegistration": [
+                  {
+                    "actions": [
+                      {
+                        "type": "savePatientInfo"
+                      }
+                    ],
+                    "guard": "isPatientInfoValid",
+                    "target": "Registration Completed"
+                  }
+                ]
+              }
+            },
+            "Registration Completed": {
+              "type": "final"
+            }
+          }
+        }
+      },
+      "type": "parallel"
+    },
+    "WaitForTriageNurse": {
+      "on": {
+        "doAssignment": [
+          {
+            "actions": [],
+            "target": "Perform Assignments"
+          }
+        ],
+        "patientLeavesBeforeBeingSeen": [
+          {
+            "actions": [],
+            "target": "Exit System"
+          }
+        ]
+      }
+    },
+    "Waiting For Bed": {
+      "on": {
+        "escortToBed": [
+          {
+            "actions": [],
+            "target": "Patient Checked In"
+          }
+        ]
+      }
+    },
+    "Waiting for PA": {
+      "on": {
+        "processPA": [
+          {
+            "actions": [
+              {
+                "type": "orderLabs"
+              },
+              {
+                "type": "orderImaging"
+              }
+            ],
+            "guard": "isPARequired",
+            "target": "Waiting For Bed"
+          },
+          {
+            "actions": [],
+            "target": "Waiting For Bed"
+          }
+        ]
+      }
+    }
+  }
+}
