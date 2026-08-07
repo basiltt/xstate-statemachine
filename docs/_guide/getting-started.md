@@ -235,7 +235,7 @@ interp.stop()
 | **CLI Tool (`xsm`)** | Generate production-ready Python from XState JSON with type hints and docstrings |
 | **Plugin System** | Observable hooks for logging, metrics, debugging, and custom extensions |
 | **Snapshot System** | Save and restore machine state for persistence, testing, and time-travel debugging |
-| **Diagram Export** | Generate Mermaid, PlantUML, or ASCII diagrams from machine definitions |
+| **Diagram Export** | Generate Mermaid or PlantUML diagrams from machine definitions |
 
 ## Feature Overview
 
@@ -264,7 +264,7 @@ Here's what XState-StateMachine supports — every feature you'd expect from a p
 
 ### Developer Tools
 - **CLI code generator** — 5 templates from XState JSON
-- **Diagram export** — Mermaid, PlantUML, ASCII
+- **Diagram export** — Mermaid, PlantUML
 - **LoggingInspector** plugin — built-in state transition logging
 - **Zero dependencies** — pure Python standard library
 
@@ -304,7 +304,7 @@ xstate-statemachine/
 │   ├── pythonic.py           # State, StateMachine, MachineBuilder, decorators
 │   ├── snapshot.py           # Snapshot save/restore
 │   ├── plugin.py             # Plugin base + LoggingInspector
-│   ├── diagram_exporter.py   # Mermaid, PlantUML, ASCII export
+│   ├── diagram_exporter.py   # Mermaid, PlantUML export
 │   └── cli/                  # CLI code generator
 │       ├── __main__.py       # Entry point (xsm command)
 │       ├── extractor.py      # JSON feature extraction

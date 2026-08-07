@@ -7,6 +7,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-07
+
+This is a **correctness release**. It repairs a family of defects in the core
+SCXML transition algorithm, aligns the runtime's error handling with the
+contract documented in `AGENTS.md`, and implements the public interpreter
+attributes that the README and guides had been documenting without them
+existing.
+
+> ⚠️ **Behavioural changes.** Exceptions raised inside user-supplied guards and
+> actions are now contained rather than propagated. If your code relied on a
+> failing action tearing down the interpreter, see *Changed* below.
+
+### Fixed
+- **Compound re-entry left the machine dead** (`base_interpreter.py`,
+  `sync_interpreter.py`). `_process_event` finalised the active configuration
+  with `difference_update(states_to_exit)` *after* `_enter_states` had already
+  inserted the recursively-entered initial children. Because those children
+  were themselves members of `states_to_exit`, the finalisation step deleted
+  the states that had just been entered. The machine was left holding only
+  non-atomic ancestors, so `current_state_ids` returned an empty set and no
+  further leaf-level event could ever match — a permanent deadlock. This broke
+  the `reenter: True` feature shipped in 0.4.2 and the standard "restart a
+  submachine" idiom (a child targeting its own compound parent). `_exit_states`
+  and `_enter_states` are now the sole authorities on active-set membership.
+- **Transitions up to an ancestor entered nothing** (`base_interpreter.py`).
+  `_find_transition_domain` could return the target state itself as the
+  transition domain when the target was an ancestor of the source, making
+  `_get_path_to_state` return an empty path. The domain is now always a
+  *proper* ancestor of the target.
+- **Transition selection ranked states by name length** (`base_interpreter.py`,
+  `models.py`). Depth was approximated with `len(state.id)`, so a shallow state
+  with a verbose name outranked a genuinely deeper state with a terse one and
+  the wrong transition was taken. `StateNode` now carries a cached integer
+  `depth`, computed once at construction, which is both correct and cheaper
+  than repeated string work on the hot path.
+- **Parallel regions took only one transition per event** (`base_interpreter.py`,
+  `sync_interpreter.py`). Selection returned a single `max(...)` winner across
+  the whole configuration, so an event handled by two orthogonal regions
+  advanced only one of them — contrary to SCXML, which requires one transition
+  per region. The new `_select_transitions` picks the deepest eligible
+  transition for each active leaf and de-duplicates by identity, so a
+  transition defined on a shared ancestor still fires exactly once.
+- **Actor spawning was incompatible with logic auto-discovery**
+  (`logic_loader.py`). `spawn_<key>` / `spawn_blocking_<key>` are built-in
+  action types resolved from `logic.services` at execution time, but the
+  extractor registered them as required *actions*. Any machine using `spawn_`
+  therefore raised `ImplementationMissingError` unless the caller bypassed
+  discovery with an explicit `logic=`. Spawn keys now route to `services` with
+  their prefix stripped.
+- **Stale doctests** (`exceptions.py`). The `NotSupportedError` example
+  asserted an error message that exists nowhere in the codebase and claimed
+  `after` transitions are unsupported by `SyncInterpreter` — they have been
+  supported (via background threads) since v0.4.1. The `InvalidConfigError`
+  example asserted a stale message. Both now pass under `doctest`.
+- **Documentation claimed ASCII diagram export.** Only `to_mermaid()` and
+  `to_plantuml()` exist; the README, guides, and CLI banner no longer advertise
+  an ASCII exporter.
+
+### Added
+- **`Interpreter.active_state_ids` / `SyncInterpreter.active_state_ids`** — an
+  alias of `current_state_ids`. This name appears in ~130 places across the
+  README and `docs/` guides (including the headline quickstart) but was never
+  implemented, so every published example raised `AttributeError` on contact.
+- **`.is_running`** — a boolean convenience wrapper over `.status`, as
+  documented in the API reference tables.
+- **`.plugins`** — a readable/assignable property over the registered plugin
+  list, supporting the documented `interpreter.plugins = [LoggingInspector()]`
+  form. Assigning a non-list raises `TypeError`.
+- **`StateNode.depth`** — the node's true tree depth, cached at construction.
+- **`tests/test_scxml_correctness.py`** — 23 regression tests, one class per
+  defect, each asserted against *both* the async and sync engines (the two
+  interpreters implement the algorithm independently, so a one-sided fix is a
+  latent bug).
+- **`tests/test_public_api_surface.py`** — 10 contract tests pinning the
+  documented public attributes and `spawn_` auto-discovery, so documentation
+  and implementation cannot silently diverge again.
+
+### Changed
+- **Guards that raise are now treated as `False`** (`base_interpreter.py`).
+  Previously the exception propagated out of `send()` and, in async mode, tore
+  down the run loop. A guard is a user-supplied predicate, so a defect in it
+  blocks its transition and lets lower-priority alternatives (e.g. an unguarded
+  fallback in the same `on` array) be considered, while leaving the machine
+  responsive. This matches the contract documented in `AGENTS.md`.
+  A *missing* guard still raises `ImplementationMissingError` — that is a
+  configuration error, not a runtime condition.
+- **Actions that raise are now contained** (`interpreter.py`,
+  `sync_interpreter.py`). The error is logged with a traceback, the remaining
+  actions in that list are skipped, and the state change still completes. This
+  was the most damaging gap: because `Interpreter.send()` is fire-and-forget,
+  an escaping exception killed `_run_event_loop` while callers still observed
+  `status == "running"` — a silently dead machine. `asyncio.CancelledError`
+  still propagates so cooperative cancellation on `stop()` is unaffected, and
+  `ImplementationMissingError` / `NotSupportedError` remain fatal.
+  - *Migration*: if you depended on an action's exception surfacing, raise it
+    from an `invoke`d service instead — service failures still trigger
+    `onError` transitions — or attach a plugin and inspect the logs.
+
+
 ## [0.5.0] - 2026-03-23
 
 ### Added

@@ -803,7 +803,7 @@ def run_info() -> None:
     _safe_print("    * Actor model (spawn child machines)")
     _safe_print("    * Plugin system & LoggingInspector")
     _safe_print("    * Snapshot save/restore")
-    _safe_print("    * Diagram export (Mermaid, PlantUML, ASCII)")
+    _safe_print("    * Diagram export (Mermaid, PlantUML)")
     _safe_print("    * CLI code generator (5 templates)")
     _safe_print("    * Zero external dependencies")
     _safe_print("")

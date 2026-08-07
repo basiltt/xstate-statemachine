@@ -68,7 +68,7 @@ class InvalidConfigError(XStateMachineError):
     other violations of the expected statechart structure.
 
     Example:
-        >>> from xstate_statemachine import create_machine
+        >>> from xstate_statemachine import InvalidConfigError, create_machine
         >>>
         >>> # This config is invalid because the root 'id' key is missing.
         >>> invalid_config = {"initial": "on", "states": {"on": {}}}
@@ -76,7 +76,7 @@ class InvalidConfigError(XStateMachineError):
         ...     create_machine(invalid_config)
         ... except InvalidConfigError as e:
         ...     print(e)
-        Invalid config: must be a dict with 'id' and 'states' keys.
+        ❌ Machine configuration must have a root 'id'.
     """
 
     pass
@@ -173,26 +173,37 @@ class ActorSpawningError(XStateMachineError):
 class NotSupportedError(XStateMachineError):
     """Raised for features incompatible with the current interpreter mode.
 
-    This is most commonly used to prevent the use of asynchronous operations
-    (like `async def` actions or `after` timers) within the purely
-    synchronous `SyncInterpreter`. It enforces a clean separation of concerns
-    between the two execution modes and prevents subtle concurrency bugs.
+    This is used to prevent the use of `async def` actions and services within
+    the purely synchronous `SyncInterpreter`. It enforces a clean separation of
+    concerns between the two execution modes and prevents subtle concurrency
+    bugs.
+
+    📝 Note: `after` (delayed) transitions ARE supported by `SyncInterpreter`
+    since v0.4.1, where they are backed by background threads rather than
+    asyncio timers. Only genuinely coroutine-based logic is rejected.
 
     Example:
-        >>> from xstate_statemachine import create_machine, SyncInterpreter
+        >>> from xstate_statemachine import (
+        ...     MachineLogic, NotSupportedError, SyncInterpreter, create_machine
+        ... )
         >>>
-        >>> # A machine with an `after` timer, which requires asyncio.
+        >>> async def async_action(interpreter, ctx, event, action_def):
+        ...     pass
+        >>>
+        >>> # A machine whose entry action is a coroutine function.
         >>> config = {
-        ...   "id": "timer", "initial": "a",
-        ...   "states": {"a": {"after": {"100": "b"}}, "b": {}}
+        ...   "id": "m", "initial": "a",
+        ...   "states": {"a": {"entry": "async_action"}}
         ... }
-        >>> machine = create_machine(config)
+        >>> machine = create_machine(
+        ...     config, logic=MachineLogic(actions={"async_action": async_action})
+        ... )
         >>> # Attempting to run it with the SyncInterpreter.
         >>> try:
         ...     SyncInterpreter(machine).start()
         ... except NotSupportedError as e:
         ...     print(e)
-        `after` transitions are not supported by SyncInterpreter.
+        Async action 'async_action' not supported by SyncInterpreter.
     """
 
     pass

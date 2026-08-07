@@ -2039,9 +2039,17 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
             await interpreter.send(123)  # type: ignore
         await interpreter.stop()
 
-    async def test_error_in_async_action_stops_event_loop(self) -> None:
-        """Should stop the interpreter on an unhandled exception in an action."""
-        logger.info("🧪 Testing interpreter stops on unhandled action error.")
+    async def test_error_in_async_action_is_contained(self) -> None:
+        """Should contain an unhandled exception raised inside an action.
+
+        🏛️ Behaviour change (v0.5.1): prior to this release an exception
+        escaping a user action tore down the interpreter's run loop. Because
+        `send()` is fire-and-forget the caller never observed the failure and
+        the machine died silently. Per the documented contract (AGENTS.md,
+        "Error Handling") a faulty action is now logged, the remaining actions
+        in the list are skipped, and the machine stays alive.
+        """
+        logger.info("🧪 Testing interpreter contains unhandled action error.")
 
         # 📋 Arrange: An action that will raise a runtime error.
         async def failing_action(
@@ -2059,14 +2067,22 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
         )
         interpreter = Interpreter(machine)
 
-        # 🚀 Act & Assert: Starting the interpreter should propagate the error.
-        with self.assertRaises(RuntimeError):
-            await interpreter.start()
-        self.assertEqual(interpreter.status, "stopped")
+        # 🚀 Act: Starting must succeed despite the faulty entry action.
+        await interpreter.start()
 
-    async def test_transition_action_error_stops_event_loop(self) -> None:
-        """Should stop the event loop on an error in a transition action."""
-        logger.info("🧪 Testing interpreter stops on transition action error.")
+        # ✅ Assert: The machine started and reached its initial state.
+        self.assertEqual(interpreter.status, "running")
+        self.assertEqual({"fail.a"}, interpreter.current_state_ids)
+        await interpreter.stop()
+
+    async def test_transition_action_error_keeps_loop_alive(self) -> None:
+        """Should keep the event loop running after a transition-action error.
+
+        🏛️ Behaviour change (v0.5.1): see
+        `test_error_in_async_action_is_contained`. The transition itself still
+        completes — a buggy side effect must not corrupt the configuration.
+        """
+        logger.info("🧪 Testing interpreter survives transition action error.")
 
         # 📋 Arrange
         async def failing_action(
@@ -2082,21 +2098,25 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                     "a": {
                         "on": {"NEXT": {"target": "b", "actions": "failing"}}
                     },
-                    "b": {},
+                    "b": {"on": {"AGAIN": "c"}},
+                    "c": {},
                 },
             },
             logic=MachineLogic(actions={"failing": failing_action}),
         )
         interpreter = await Interpreter(machine).start()
 
-        # 🚀 Act: Trigger the failing action.
+        # 🚀 Act: Trigger the failing action, then a follow-up event.
         await interpreter.send("NEXT")
         await asyncio.sleep(0.01)
+        await interpreter.send("AGAIN")
+        await asyncio.sleep(0.01)
 
-        # ✅ Assert: The main event loop task is done and contains the exception.
-        self.assertTrue(interpreter._event_loop_task.done())
-        with self.assertRaises(ValueError):
-            await interpreter._event_loop_task
+        # ✅ Assert: The loop survived and kept processing subsequent events.
+        self.assertFalse(interpreter._event_loop_task.done())
+        self.assertEqual(interpreter.status, "running")
+        self.assertEqual({"fail_trans.c"}, interpreter.current_state_ids)
+        await interpreter.stop()
 
         self.assertEqual(interpreter.status, "stopped")
 

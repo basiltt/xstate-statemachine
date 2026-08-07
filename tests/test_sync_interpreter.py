@@ -2536,9 +2536,15 @@ class TestSyncInterpreter(unittest.TestCase):
         # ✨ Assert
         dummy_action.assert_called_once()
 
-    def test_spawn_blocking_actor_removed_even_if_child_errors(self) -> None:
-        """Tests a blocking actor raising an error surfaces the exception."""
-        logger.info("🧪 Testing error propagation from blocking actor...")
+    def test_spawn_blocking_actor_error_is_contained(self) -> None:
+        """Tests a blocking actor's internal error does not kill the parent.
+
+        🏛️ Behaviour change (v0.5.1): the child's faulty entry action is now
+        contained by the child's own interpreter (logged, remaining actions
+        skipped), so it no longer propagates out through the parent's
+        `start()`. The parent must start cleanly and reach its initial state.
+        """
+        logger.info("🧪 Testing error containment from blocking actor...")
         # 🤖 Arrange
         child_node = create_machine(
             {
@@ -2566,9 +2572,11 @@ class TestSyncInterpreter(unittest.TestCase):
             ),
         )
 
-        # ⚡ Act & ✨ Assert
-        with self.assertRaises(RuntimeError):
-            SyncInterpreter(machine).start()
+        # ⚡ Act
+        interpreter = SyncInterpreter(machine).start()
+
+        # ✨ Assert: the parent survived and settled on its initial state.
+        self.assertEqual({"parentBad.a"}, interpreter.current_state_ids)
 
 
 if __name__ == "__main__":

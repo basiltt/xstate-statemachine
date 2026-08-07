@@ -124,10 +124,26 @@ from .events import Event
 - Use `-> None` for functions that don't return
 
 ### Error Handling
-- **Guards**: Must return `bool`. If guard raises exception, it's treated as `False`
-- **Actions**: Log errors, skip remaining actions in list, continue processing
-- **Services**: Raise exceptions to trigger `onError` transition
+- **Guards**: Must return `bool`. If a guard raises an exception it is logged
+  and treated as `False`, blocking that transition while leaving lower-priority
+  alternatives eligible. A guard that is *declared but not implemented* raises
+  `ImplementationMissingError` (configuration error — fails loudly).
+- **Actions**: If an action raises, the error is logged, the remaining actions
+  in that list are skipped, and the state change still completes. The
+  interpreter — including the async run loop — stays alive. A *missing* action
+  raises `ImplementationMissingError`; an `async` action under `SyncInterpreter`
+  raises `NotSupportedError`. `asyncio.CancelledError` always propagates so
+  `stop()` remains cooperative.
+- **Services**: Raise exceptions to trigger `onError` transitions. This is the
+  supported way to make a failure observable and model its recovery path.
 - **Exceptions**: Use custom exception hierarchy (all inherit from `XStateMachineError`)
+
+> 🏛️ Rationale: guards and actions are *user-supplied callables*. A defect in
+> one is not a machine-level failure and must not corrupt the active
+> configuration. Because `Interpreter.send()` is fire-and-forget, an escaping
+> exception would kill the run loop while callers still observed
+> `status == "running"` — a silently dead machine. Configuration errors are
+> deliberately excluded from this containment.
 
 ```python
 # Guard example - pure function, returns bool

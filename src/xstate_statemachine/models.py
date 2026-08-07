@@ -310,6 +310,17 @@ class StateNode(Generic[TContext, TEvent]):
         self.machine = machine
         self.id = f"{parent.id}.{key}" if parent else key
 
+        # 📏 Tree depth, cached at construction time.
+        #
+        # 🏛️ Architecture decision: depth is stored as an integer rather than
+        # derived from `id` at comparison time. The SCXML transition-selection
+        # rule ("the deepest active state wins") requires a true structural
+        # depth. A previous implementation approximated this with `len(self.id)`,
+        # which silently ranked a shallow state with a verbose name above a
+        # genuinely deeper state with a terse one. Caching an int also removes
+        # repeated string work from the hot event-processing path.
+        self.depth: int = parent.depth + 1 if parent else 0
+
         # ⚙️ Determine and strictly type the state's `type` attribute.
         self.type = self._determine_state_type(config)
         logger.debug(

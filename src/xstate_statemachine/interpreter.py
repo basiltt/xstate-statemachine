@@ -384,10 +384,32 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 )
 
             # 🏃‍♂️ Execute the action, awaiting if it's an async function.
-            if inspect.iscoroutinefunction(action_callable):
-                await action_callable(self, self.context, event, action_def)
-            else:
-                action_callable(self, self.context, event, action_def)
+            #
+            # 🏛️ Architecture decision: exceptions from user-supplied actions
+            # are contained here. `send()` is fire-and-forget, so an escaping
+            # exception would tear down `_run_event_loop` while callers still
+            # observed `status == "running"` — a silently dead machine. Per
+            # the documented contract the error is logged, the remaining
+            # actions are skipped, and the run loop survives. Configuration
+            # errors (missing action) are raised above and remain fatal.
+            try:
+                if inspect.iscoroutinefunction(action_callable):
+                    await action_callable(
+                        self, self.context, event, action_def
+                    )
+                else:
+                    action_callable(self, self.context, event, action_def)
+            except asyncio.CancelledError:
+                # 🛑 Cooperative cancellation must always propagate.
+                raise
+            except Exception:
+                logger.exception(
+                    "🔥 Action '%s' raised while handling event '%s'; "
+                    "skipping remaining actions in this list.",
+                    action_def.type,
+                    event.type,
+                )
+                return
 
     # -------------------------------------------------------------------------
     # 🤖 Asynchronous Task Implementations (Actors, Timers, Services)
