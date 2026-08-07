@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Continuous Integration** (`.github/workflows/ci.yml`). The project had
+  issue and PR templates but no workflows, so nothing verified a push. Every
+  defect fixed in 0.5.1 — including a permanently deadlocked machine and a
+  README whose headline example raised `AttributeError` — was reachable
+  precisely because no automated gate existed. Four independent jobs:
+  - **lint** — `black --check` plus `flake8`, using the same flags and pinned
+    tool versions as `.pre-commit-config.yaml` so a local `pre-commit run` and
+    CI cannot disagree.
+  - **test** — the full suite across Python 3.9–3.14 on Linux, plus Windows
+    3.9/3.14 and macOS 3.14 spot-checks. The matrix mirrors the versions
+    advertised in `pyproject.toml`; a support claim that CI does not exercise
+    is only a hope. Also executes the `doctest` examples, which had rotted
+    silently across releases because nothing ran them.
+  - **coverage** — one authoritative measurement gated at `--cov-fail-under=86`.
+  - **build** — `python -m build` and `twine check`, then installs the built
+    *wheel* into a clean virtualenv and smoke-tests the public API and the
+    `xsm` console entry point. This validates the packaged artifact rather than
+    the source tree, catching a module that exists on disk but was never
+    included in the distribution.
+
 ## [0.5.1] - 2026-08-07
 
 This is a **correctness release**. It repairs a family of defects in the core

@@ -1,0 +1,258 @@
+# /.github/workflows/ci.yml
+# -----------------------------------------------------------------------------
+# 🤖 Continuous Integration
+# -----------------------------------------------------------------------------
+# Runs on every push and pull request targeting `main`.
+#
+# 🏛️ Architecture decision: the job graph is deliberately split so a failure
+# tells you *what kind* of thing broke without reading logs:
+#
+#   lint     → style/format only (fast, fails in ~30s)
+#   test     → the suite across the full supported interpreter matrix
+#   coverage → one authoritative coverage measurement + threshold gate
+#   build    → the distribution actually packages and imports
+#
+# `lint` is NOT a gate for `test`. They run in parallel because a formatting
+# nit should never hide a real test failure — you want both results from one
+# push, not one after the other.
+#
+# The matrix spans every version advertised in `pyproject.toml`
+# (`requires-python = ">=3.9"` plus the trove classifiers). If a version is
+# dropped from the package metadata, drop it here too — a claim of support
+# that is not exercised by CI is just a hope.
+# -----------------------------------------------------------------------------
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # 🖱️ Allow maintainers to trigger a run by hand from the Actions tab.
+  workflow_dispatch:
+
+# 🚦 Cancel superseded runs on the same ref. A force-push should not leave
+#    three stale jobs burning minutes to report on code nobody will merge.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# 🔒 Least privilege: CI only ever needs to read the repository.
+permissions:
+  contents: read
+
+env:
+  # 🎨 Keep tool output readable in the Actions log viewer.
+  FORCE_COLOR: "1"
+  PYTHONUTF8: "1"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 🎨 Style & Formatting
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint (black + flake8)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: 📦 Install lint tooling
+        # 📌 Pinned to the same versions as .pre-commit-config.yaml so a local
+        #    `pre-commit run` and CI can never disagree about formatting.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "black==26.1.0" "flake8==7.3.0" "flake8-isort==7.0.0"
+
+      - name: 🎨 Check formatting (black)
+        run: black --check --diff src/ tests/ --line-length=79
+
+      - name: 🔍 Lint (flake8)
+        # ⚙️ Flags mirror .pre-commit-config.yaml exactly.
+        run: |
+          flake8 src/ tests/ \
+            --max-complexity=35 \
+            --select=B,C,E,F,W,T4,B9 \
+            --ignore=E203,E266,E501,W503,F403,F401,E402
+
+  # ---------------------------------------------------------------------------
+  # 🧪 Test Matrix
+  # ---------------------------------------------------------------------------
+  test:
+    name: Test (py${{ matrix.python-version }} / ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # 🔬 Never stop the whole matrix on one red cell. A failure that is
+      #    specific to one interpreter or OS is exactly the signal we want,
+      #    and cancelling siblings hides whether it is isolated or systemic.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        # 🪟🍎 Spot-check the other platforms on the oldest and newest
+        #     supported interpreters. The library is pure Python with no
+        #     compiled deps, but it uses threads (SyncInterpreter) and asyncio,
+        #     both of which have real platform-specific behaviour.
+        include:
+          - os: windows-latest
+            python-version: "3.9"
+          - os: windows-latest
+            python-version: "3.14"
+          - os: macos-latest
+            python-version: "3.14"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: 📦 Install test dependencies
+        # 📝 The suite imports via `from src.xstate_statemachine import ...`,
+        #    so the package does not need to be installed to run tests. It is
+        #    installed anyway so an accidental packaging break (missing module,
+        #    bad __init__) surfaces here rather than at release time.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install "pytest>=8.3.0"
+
+      - name: 🧪 Run test suite
+        run: pytest -qq --no-header
+
+      - name: 📖 Run doctests
+        # 🐛 Regression guard: exceptions.py shipped doctests asserting error
+        #    messages that existed nowhere in the codebase. Nothing executed
+        #    them, so they rotted silently across releases.
+        #
+        # ⚠️ These modules use relative imports, so `python -m doctest <file>`
+        #    cannot load them ("attempted relative import with no known
+        #    parent package"). They must be imported as package members and
+        #    handed to `doctest.testmod`.
+        run: |
+          python -c "
+          import doctest, sys
+          import xstate_statemachine.exceptions as exceptions
+          import xstate_statemachine.models as models
+
+          failures = 0
+          for module in (exceptions, models):
+              result = doctest.testmod(module, verbose=False)
+              print(f'{module.__name__}: {result}')
+              failures += result.failed
+          sys.exit(1 if failures else 0)
+          "
+
+  # ---------------------------------------------------------------------------
+  # 📊 Coverage Gate
+  # ---------------------------------------------------------------------------
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install "pytest>=8.3.0" "pytest-cov>=6.0.0"
+
+      - name: 📊 Run suite with coverage
+        # 🚧 The threshold is a ratchet, not an aspiration. Raise it when
+        #    coverage genuinely improves; never lower it to make a red build
+        #    green.
+        #
+        # ⚠️ Why 86 and not 87: measured coverage is ~87.4%, which pytest-cov
+        #    truncates to "87%". Setting the gate at 87 leaves under half a
+        #    point of headroom, and `branch = true` means arc counts differ
+        #    slightly between interpreter versions (this job pins 3.13; the
+        #    number above was measured on 3.14). A gate that trips on a Python
+        #    version difference rather than a real regression trains people to
+        #    ignore it. One point of slack keeps the signal trustworthy.
+        run: pytest --cov --cov-report=term-missing --cov-report=xml --cov-fail-under=86
+
+      - name: 📤 Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # 📦 Distribution
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build & verify distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: 📦 Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+
+      - name: 🏗️ Build sdist and wheel
+        run: python -m build
+
+      - name: ✅ Validate package metadata
+        # 🛡️ Catches malformed README rendering and bad metadata *before* a
+        #    release attempt, when the fix is cheap.
+        run: twine check dist/*
+
+      - name: 🚬 Smoke-test the built wheel
+        # 🏛️ Installing the wheel into a clean venv verifies the *packaged*
+        #    artifact, not the source tree. This is what catches a module that
+        #    exists on disk but was never included in the wheel.
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/python -m pip install --upgrade pip --quiet
+          /tmp/smoke/bin/python -m pip install dist/*.whl --quiet
+          /tmp/smoke/bin/python -c "
+          import xstate_statemachine as x
+          from xstate_statemachine import create_machine, MachineLogic, SyncInterpreter
+          print('version:', x.__version__)
+          m = create_machine(
+              {'id': 'ci', 'initial': 'a', 'states': {'a': {'on': {'GO': 'b'}}, 'b': {}}},
+              logic=MachineLogic(),
+          )
+          i = SyncInterpreter(m).start()
+          i.send('GO')
+          assert i.current_state_ids == {'ci.b'}, i.current_state_ids
+          assert i.active_state_ids == {'ci.b'}
+          print('smoke test: OK')
+          "
+
+      - name: 🖥️ Verify the xsm CLI entry point
+        run: |
+          /tmp/smoke/bin/xsm --version
+
+      - name: 📤 Upload distribution artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 14

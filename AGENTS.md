@@ -59,6 +59,27 @@ uv run flake8 src/ tests/
 uv run flake8 src/xstate_statemachine/interpreter.py
 ```
 
+### Continuous Integration
+
+`.github/workflows/ci.yml` runs on every push and PR to `main`. Four
+independent jobs, so a red build tells you *what kind* of thing broke:
+
+| Job | Gate |
+|:----|:-----|
+| **lint** | `black --check` (line length 79) + `flake8` — same flags and pinned versions as `.pre-commit-config.yaml` |
+| **test** | Full suite on Python 3.9–3.14 (Linux) plus Windows 3.9/3.14 and macOS 3.14 spot-checks; also runs the `doctest` examples |
+| **coverage** | Full suite with `--cov-fail-under=86` (a ratchet — raise it, never lower it) |
+| **build** | `python -m build`, `twine check`, then installs the built **wheel** into a clean venv and smoke-tests the public API and the `xsm` entry point |
+
+To reproduce a CI failure locally, run the exact command from the failing
+step — they are plain `pytest`/`black`/`flake8` invocations with no CI-only
+wrappers.
+
+📝 The Windows and macOS cells exist because the library is pure Python but
+uses **threads** (`SyncInterpreter`) and **asyncio**, both of which have real
+platform-specific behaviour. `fail-fast: false` keeps one red cell from
+hiding whether a failure is isolated or systemic.
+
 ### CLI Tool
 ```bash
 # Generate boilerplate from JSON
