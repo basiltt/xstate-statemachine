@@ -1893,7 +1893,21 @@ class TestSyncInterpreter(unittest.TestCase):
         )
         # ⚡ Act
         interp = SyncInterpreter(machine).start()
-        time.sleep(0.05)  # Wait for timer to fire and cleanup
+
+        # ⏳ Poll for the actor to finish and be reaped rather than sleeping a
+        #    fixed interval.
+        #
+        # 🏛️ A bare `time.sleep(0.05)` for a 20ms timer assumes the child
+        #    thread is scheduled, fires, and is cleaned up inside a 30ms
+        #    margin. That holds on an idle machine and fails on a loaded CI
+        #    runner — this test failed on macOS while all 11 other matrix cells
+        #    passed. Polling with a generous ceiling keeps the assertion exact
+        #    while making the wait insensitive to scheduling latency: it
+        #    returns as soon as the condition is true, so the fast path stays
+        #    fast.
+        deadline = time.monotonic() + 5.0
+        while interp._actors and time.monotonic() < deadline:
+            time.sleep(0.005)
 
         # ✨ Assert
         self.assertEqual(len(interp._actors), 0)
