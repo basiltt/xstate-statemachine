@@ -321,19 +321,30 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
         except asyncio.CancelledError:
             # This is an expected, clean shutdown triggered by `stop()`.
+            #
+            # 🏛️ Architecture decision: deliberately do NOT touch `status`
+            # here, and do not use a `finally` clause to force it to
+            # "stopped". Cancellation is not always initiated by `stop()` —
+            # an enclosing TaskGroup, a supervisor, or a timeout around the
+            # owning task can cancel `_event_loop_task` directly. If this path
+            # set `status = "stopped"`, a subsequent `stop()` would hit its own
+            # idempotency guard, return early, and skip actor teardown and
+            # `task_manager.cancel_all()` — leaking invoked services and child
+            # actors that keep running forever. `stop()` owns the status
+            # transition for every orderly shutdown.
             logger.debug("🛑 Event loop for '%s' was cancelled.", self.id)
             raise
         except BaseException as exc:
             # This indicates a critical, unexpected failure in the machine's logic.
             #
             # 🏛️ Architecture decision: this catches `BaseException`, not
-            # `Exception`. A `BaseException` subclass escaping the loop (or a
-            # re-raised `CancelledError` from a nested task) would otherwise
-            # terminate the loop *without* updating `status`, leaving the
+            # `Exception`. A `BaseException` subclass escaping the loop would
+            # otherwise terminate it *without* updating `status`, leaving the
             # interpreter permanently reporting `status == "running"` and
-            # `is_running == True` while nothing drains the queue — every
-            # subsequent `send()` silently dropped. The exception is always
-            # re-raised, so this only corrects the bookkeeping.
+            # nothing draining the queue — every subsequent `send()` silently
+            # dropped. The exception is always re-raised, so this only
+            # corrects the bookkeeping. `CancelledError` is handled above and
+            # never reaches here.
             logger.critical(
                 "💥 Fatal error in event loop for '%s': %s",
                 self.id,
@@ -344,10 +355,6 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             self.status = "stopped"
             raise
         finally:
-            # 🛟 Belt-and-braces: never leave the loop exited while the
-            #    interpreter still advertises itself as running.
-            if self.status == "running":
-                self.status = "stopped"
             logger.debug("⚓ Event loop for '%s' has exited.", self.id)
 
     async def _process_event_and_transient_transitions(

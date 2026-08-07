@@ -23,6 +23,7 @@ Contract tests for the documented public interpreter API.
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
+import asyncio
 import logging
 import types
 import unittest
@@ -188,6 +189,52 @@ class TestDocumentedAttributes(unittest.IsolatedAsyncioTestCase):
 
         # Assert — status may say "running", but liveness must not.
         self.assertFalse(restored.is_running)
+
+    async def test_external_cancel_does_not_skip_stop_cleanup(self) -> None:
+        """`stop()` must still tear down after an external cancellation.
+
+        🐛 Regression guard: the run loop briefly forced `status = "stopped"`
+        in a `finally` clause. Cancellation is not always initiated by
+        `stop()` — an enclosing TaskGroup, supervisor, or timeout can cancel
+        `_event_loop_task` directly. Marking the status there made the
+        subsequent `stop()` hit its idempotency guard and return early,
+        skipping actor teardown and task cancellation, so invoked services
+        kept running forever.
+        """
+        # Arrange — a service that ticks until cancelled.
+        ticks: list = []
+
+        async def ticker(_i: Any, _c: Any, _e: Any) -> None:
+            while True:
+                await asyncio.sleep(0.01)
+                ticks.append(1)
+
+        config = {
+            "id": "m",
+            "initial": "run",
+            "states": {"run": {"invoke": {"src": "ticker"}}},
+        }
+        interpreter = await Interpreter(
+            create_machine(
+                config, logic=MachineLogic(services={"ticker": ticker})
+            )
+        ).start()
+        await asyncio.sleep(0.05)
+
+        # Act — cancel the loop externally, then stop().
+        interpreter._event_loop_task.cancel()
+        try:
+            await interpreter._event_loop_task
+        except asyncio.CancelledError:
+            pass
+        await interpreter.stop()
+
+        # Assert — the invoked service was actually torn down.
+        settled = len(ticks)
+        await asyncio.sleep(0.08)
+        self.assertEqual(
+            settled, len(ticks), "service kept running after stop()"
+        )
 
     def test_use_and_plugins_property_agree(self) -> None:
         """`use()` registrations must be visible through `.plugins`."""

@@ -247,10 +247,25 @@ class TestCompoundReentryKeepsLeafState(unittest.IsolatedAsyncioTestCase):
 class TestTransitionSelectionUsesTrueDepth(unittest.IsolatedAsyncioTestCase):
     """Pins that the deepest state wins, regardless of its name length.
 
-    🐛 Regression: transition selection sorted by `len(state.id)`. A shallow
-    state with a verbose name outranked a genuinely deeper state with a terse
-    one, so the wrong transition was taken. SCXML requires selection by tree
-    depth (segment count), which name length only accidentally approximates.
+    🐛 Regression: transition selection sorted by `len(state.id)`. The original
+    `_find_optimal_transition` took a single `max()` across *all* active leaves
+    — a genuinely cross-chain comparison — so a shallow state with a verbose
+    name outranked a deeper state with a terse one and the wrong transition
+    fired.
+
+    ⚠️ Honest scope note: since selection now runs *per leaf*
+    (`_select_transitions`), the cross-chain comparison no longer decides
+    anything on its own. Within a single ancestor chain `len(id)` is strictly
+    monotonic with `depth` (each level appends `.` plus a key), so the two keys
+    are equivalent at every remaining ranking site. Reverting `StateNode.depth`
+    to `len(state.id)` therefore does **not** fail these tests — verified by
+    mutation testing.
+
+    These tests consequently pin the *observable contract* ("the deepest
+    eligible state's transition wins"), not the implementation detail of which
+    key expresses it. `depth` is retained because it is the correct metric,
+    is insurance against a future change reintroducing a cross-chain
+    comparison, and is cheaper than repeated string work on the hot path.
     """
 
     # 📐 Region "aVeryLongRegionNameHere" is at depth 2 but has a 27-char id;
@@ -724,6 +739,224 @@ class TestActionExceptionsAreContained(unittest.IsolatedAsyncioTestCase):
         # Act / Assert
         with self.assertRaises(ImplementationMissingError):
             interpreter.send("E")
+
+
+# -----------------------------------------------------------------------------
+# 🌐 Defect 6 — Orthogonal Regions Must Survive A Sibling's Transition
+# -----------------------------------------------------------------------------
+class TestParallelSiblingRegionsSurvive(unittest.IsolatedAsyncioTestCase):
+    """Pins that a transition inside one region leaves its siblings alone.
+
+    🐛 Regression: when a descendant targeted one of its own ancestors and that
+    ancestor was a region of a `parallel` state, the transition domain became
+    the parallel node itself. `states_to_exit` then swept up every *sibling*
+    region, while the entry path re-entered only the targeted branch — so the
+    siblings were exited and never restored, leaving them permanently dead and
+    unable to respond to any further event.
+    """
+
+    # 📐 Region A restarts itself; regions B and C must be untouched.
+    CONFIG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "P",
+        "states": {
+            "P": {
+                "type": "parallel",
+                "states": {
+                    "A": {
+                        "initial": "a1",
+                        "states": {
+                            "a1": {"on": {"RESTART": "#m.P.A"}},
+                            "a2": {},
+                        },
+                    },
+                    "B": {
+                        "initial": "b1",
+                        "states": {"b1": {"on": {"NEXT": "b2"}}, "b2": {}},
+                    },
+                    "C": {"initial": "c1", "states": {"c1": {}}},
+                },
+            }
+        },
+    }
+
+    def test_siblings_survive_region_restart_sync(self) -> None:
+        """Restarting one region must not disturb the others."""
+        # Arrange
+        interpreter = SyncInterpreter(build(self.CONFIG)).start()
+        self.assertEqual(
+            {"m.P.A.a1", "m.P.B.b1", "m.P.C.c1"},
+            interpreter.current_state_ids,
+        )
+
+        # Act
+        interpreter.send("RESTART")
+
+        # Assert
+        self.assertEqual(
+            {"m.P.A.a1", "m.P.B.b1", "m.P.C.c1"},
+            interpreter.current_state_ids,
+        )
+
+    async def test_siblings_survive_region_restart_async(self) -> None:
+        """The async engine must preserve siblings identically."""
+        # Arrange
+        interpreter = await Interpreter(build(self.CONFIG)).start()
+        self.addAsyncCleanup(interpreter.stop)
+
+        # Act
+        await send_and_settle(interpreter, "RESTART")
+
+        # Assert
+        self.assertEqual(
+            {"m.P.A.a1", "m.P.B.b1", "m.P.C.c1"},
+            interpreter.current_state_ids,
+        )
+
+    def test_siblings_remain_responsive_after_restart(self) -> None:
+        """The damaging symptom was the deadlock, not the snapshot."""
+        # Arrange
+        interpreter = SyncInterpreter(build(self.CONFIG)).start()
+
+        # Act
+        interpreter.send("RESTART")
+        interpreter.send("NEXT")
+
+        # Assert — region B still processes its own events.
+        self.assertIn("m.P.B.b2", interpreter.current_state_ids)
+
+    def test_exiting_the_parallel_state_still_exits_all_regions(self) -> None:
+        """Scoping the exit set must not break a genuine parallel exit.
+
+        Guards against an over-correction: when the transition leaves the
+        parallel state entirely, every region must still be exited.
+        """
+        # Arrange
+        config = {
+            "id": "m",
+            "initial": "P",
+            "states": {
+                "P": {
+                    "type": "parallel",
+                    "states": {
+                        "A": {
+                            "initial": "a1",
+                            "states": {"a1": {"on": {"OUT": "#m.done"}}},
+                        },
+                        "B": {"initial": "b1", "states": {"b1": {}}},
+                    },
+                },
+                "done": {},
+            },
+        }
+        interpreter = SyncInterpreter(build(config)).start()
+
+        # Act
+        interpreter.send("OUT")
+
+        # Assert
+        self.assertEqual({"m.done"}, interpreter.current_state_ids)
+
+
+# -----------------------------------------------------------------------------
+# 👻 Defect 7 — Entry Path Must Not Spawn A Phantom Sibling Leaf
+# -----------------------------------------------------------------------------
+class TestNoPhantomLeafOnDeepEntry(unittest.IsolatedAsyncioTestCase):
+    """Pins that entering a deep target leaves exactly one leaf per region.
+
+    🐛 Regression: `_enter_states` descended into a compound's `initial` child
+    unconditionally, *in addition* to walking the explicit entry path. A
+    transition targeting `B.b2` while `B.initial == "b1"` therefore activated
+    both `b1` and `b2` — two simultaneously active leaves in one non-parallel
+    region, which SCXML forbids. The phantom leaf then took part in the next
+    selection pass, so a later event fired the wrong transition and duplicated
+    its actions.
+    """
+
+    CONFIG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "A",
+        "states": {
+            "A": {"initial": "a1", "states": {"a1": {"on": {"E": "#m.B.b2"}}}},
+            "B": {
+                "initial": "b1",
+                "states": {
+                    "b1": {"on": {"X": {"actions": ["fromB1"]}}},
+                    "b2": {"on": {"X": {"actions": ["fromB2"]}}},
+                },
+            },
+        },
+    }
+
+    def test_single_leaf_after_deep_entry_sync(self) -> None:
+        """Only the explicitly targeted leaf may be active."""
+        # Arrange
+        interpreter = SyncInterpreter(build(self.CONFIG)).start()
+
+        # Act
+        interpreter.send("E")
+
+        # Assert
+        self.assertEqual({"m.B.b2"}, interpreter.current_state_ids)
+
+    async def test_single_leaf_after_deep_entry_async(self) -> None:
+        """The async engine must not spawn a phantom leaf either."""
+        # Arrange
+        interpreter = await Interpreter(build(self.CONFIG)).start()
+        self.addAsyncCleanup(interpreter.stop)
+
+        # Act
+        await send_and_settle(interpreter, "E")
+
+        # Assert
+        self.assertEqual({"m.B.b2"}, interpreter.current_state_ids)
+
+    def test_no_duplicate_actions_from_phantom_leaf(self) -> None:
+        """A later event must fire exactly one transition, not two."""
+        # Arrange
+        fired: List[str] = []
+
+        def track(name: str) -> Any:
+            def _action(_i: Any, _c: Any, _e: Any, _a: Any) -> None:
+                fired.append(name)
+
+            return _action
+
+        interpreter = SyncInterpreter(
+            build(
+                self.CONFIG,
+                actions={
+                    "fromB1": track("fromB1"),
+                    "fromB2": track("fromB2"),
+                },
+            )
+        ).start()
+        interpreter.send("E")
+
+        # Act
+        interpreter.send("X")
+
+        # Assert — only the real leaf's handler runs.
+        self.assertEqual(["fromB2"], fired)
+
+    def test_default_initial_descent_still_happens(self) -> None:
+        """Guards the over-correction: a plain target still enters `initial`."""
+        # Arrange
+        config = {
+            "id": "m",
+            "initial": "A",
+            "states": {
+                "A": {"on": {"E": "#m.B"}},
+                "B": {"initial": "b1", "states": {"b1": {}, "b2": {}}},
+            },
+        }
+        interpreter = SyncInterpreter(build(config)).start()
+
+        # Act
+        interpreter.send("E")
+
+        # Assert — targeting the compound itself must land on its initial child.
+        self.assertEqual({"m.B.b1"}, interpreter.current_state_ids)
 
 
 if __name__ == "__main__":  # pragma: no cover

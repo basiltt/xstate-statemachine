@@ -105,6 +105,32 @@ existing.
   before de-duplication discarded the duplicates — multiplying any side effects
   and firing `on_guard_evaluated` N times for one logical decision. Guard
   results are now memoised per selection pass.
+- **Sibling parallel regions were annihilated by an in-region transition**
+  (`base_interpreter.py`, `sync_interpreter.py`). When a descendant targeted
+  one of its own ancestors and that ancestor was a region of a `parallel`
+  state, the transition domain became the parallel node itself. `states_to_exit`
+  then swept up every *sibling* region while the entry path re-entered only the
+  targeted branch, so the siblings were exited and never restored — permanently
+  dead and unable to answer any further event. The exit set is now scoped to
+  the branch actually being re-entered whenever the domain is parallel, via the
+  shared `_compute_states_to_exit()` helper.
+- **Deep entry left a phantom sibling leaf** (`base_interpreter.py`,
+  `sync_interpreter.py`). `_enter_states` descended into a compound's `initial`
+  child unconditionally, *in addition* to walking the explicit entry path. A
+  transition targeting `B.b2` while `B.initial` was `b1` activated both — two
+  simultaneously active leaves in one non-parallel region, which SCXML forbids.
+  The phantom leaf then took part in the next selection pass, so a later event
+  fired the wrong transition and duplicated its actions. The default descent is
+  now skipped when the entry path already names a child of that state.
+- **External cancellation caused `stop()` to skip all cleanup**
+  (`interpreter.py`). The run loop forced `status = "stopped"` in a `finally`
+  clause, which also ran on the ordinary `CancelledError` path. Cancellation is
+  not always initiated by `stop()` — an enclosing `TaskGroup`, supervisor, or
+  timeout can cancel `_event_loop_task` directly. The premature status change
+  then made `stop()` hit its own idempotency guard and return early, never
+  cancelling invoked services or child actors, which kept running forever.
+  `stop()` again owns the status transition for orderly shutdown; the
+  `BaseException` handler still corrects the bookkeeping on a genuine crash.
 - **Stale doctests** (`exceptions.py`). The `NotSupportedError` example
   asserted an error message that exists nowhere in the codebase and claimed
   `after` transitions are unsupported by `SyncInterpreter` — they have been
@@ -127,9 +153,12 @@ existing.
 - **`StateNode.depth`** — the node's true tree depth, cached at construction.
 - **`models.spawn_service_key()` / `models.is_spawn_action()`** — the shared
   helpers that define how a `spawn_` action maps to a `services` key.
-- **`.plugins` element validation** — assigning a list containing a non-plugin
-  now raises `TypeError` at the assignment site, rather than surfacing later as
-  an `AttributeError` from deep inside event processing.
+- **`.plugins` element validation** — assigning a list containing an object
+  that does not implement the plugin hooks now raises `TypeError` at the
+  assignment site, rather than surfacing later as an `AttributeError` from deep
+  inside event processing. The check is structural rather than a strict
+  `isinstance`, so `use()` and `plugins = [...]` accept exactly the same
+  objects. The getter returns a copy, so `plugins.append(...)` cannot bypass it.
 - **`tests/test_scxml_correctness.py`** — 23 regression tests, one class per
   defect, each asserted against *both* the async and sync engines (the two
   interpreters implement the algorithm independently, so a one-sided fix is a

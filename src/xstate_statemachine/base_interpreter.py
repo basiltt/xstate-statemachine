@@ -205,10 +205,15 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
             interpreter.plugins = [LoggingInspector()]
 
+        📝 Returns a shallow copy. Mutating the returned list does not affect
+        the interpreter — use assignment or :meth:`use` to register plugins.
+        Returning the live list would let `interpreter.plugins.append(...)`
+        bypass the type validation performed by the setter.
+
         Returns:
-            List[PluginBase]: The currently registered plugins.
+            List[PluginBase]: A copy of the currently registered plugins.
         """
-        return self._plugins
+        return list(self._plugins)
 
     @plugins.setter
     def plugins(
@@ -220,21 +225,32 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             value (List[PluginBase]): The plugins to register.
 
         Raises:
-            TypeError: If `value` is not a list/tuple, or if any element is not
-                a `PluginBase` instance.
+            TypeError: If `value` is not a list/tuple, or if any element does
+                not implement the plugin hook interface.
         """
         if not isinstance(value, (list, tuple)):
             raise TypeError(
                 "❌ 'plugins' must be assigned a list of plugin instances."
             )
-        # 🛡️ Validate elements too. Without this the failure surfaces later as
-        #    an AttributeError from deep inside event processing, pointing at
+        # 🛡️ Validate elements. Without this the failure surfaces later as an
+        #    AttributeError from deep inside event processing, pointing at
         #    interpreter internals rather than the offending assignment.
+        #
+        # 🏛️ Architecture decision: the check is *structural* (does it provide
+        # the hooks?) rather than a strict `isinstance(PluginBase)`. `use()`
+        # has always accepted any duck-typed object exposing the hooks, and the
+        # two entry points into `_plugins` must not disagree — otherwise
+        # `interpreter.use(p)` would succeed where `interpreter.plugins = [p]`
+        # raises, for the very same object.
+        required_hooks = ("on_transition", "on_event_received")
         for item in value:
-            if not isinstance(item, PluginBase):
+            if not all(
+                callable(getattr(item, h, None)) for h in required_hooks
+            ):
                 raise TypeError(
-                    "❌ 'plugins' elements must be PluginBase instances, "
-                    f"got {type(item).__name__}."
+                    "❌ 'plugins' elements must implement the plugin hook "
+                    f"interface (e.g. subclass PluginBase); got "
+                    f"{type(item).__name__}."
                 )
         self._plugins = list(value)
 
@@ -755,11 +771,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         snapshot_before = self._active_state_nodes.copy()
         domain = self._find_transition_domain(transition, target_state)
 
-        states_to_exit = {
-            s
-            for s in self._active_state_nodes
-            if self._is_descendant(s, domain) and s is not domain
-        }
+        states_to_exit = self._compute_states_to_exit(domain, target_state)
 
         path_to_enter = self._get_path_to_state(target_state, stop_at=domain)
 
@@ -814,6 +826,23 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         """
         trigger_event = event or Event(type="___xstate_statemachine_init___")
 
+        # 🗺️ Index the remaining path so a compound state can tell whether the
+        #    caller already named which child to descend into.
+        #
+        # 🏛️ Architecture decision: `_enter_states` used to descend into a
+        # compound's `initial` child unconditionally, *in addition* to walking
+        # the explicit entry path. When the path already named a deeper sibling
+        # (e.g. an external transition targeting `B.b2` while `B.initial` is
+        # `b1`), both `b1` and `b2` ended up active — two simultaneously active
+        # leaves inside one non-parallel region, which SCXML forbids. The
+        # phantom leaf then participated in the next selection pass and could
+        # win, executing the wrong transition and duplicating its actions.
+        explicit_children = {
+            state.parent.id: state
+            for state in states_to_enter
+            if state.parent is not None
+        }
+
         for state in states_to_enter:
             self._active_state_nodes.add(state)
             logger.debug("➡️  Entering state: '%s'.", state.id)
@@ -828,6 +857,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
             # 🗺️ Handle automatic entry into child states.
             if state.type == "compound" and state.initial:
+                # ⏭️ Skip the default descent when the entry path already
+                #    specifies which child of this state to enter.
+                if state.id in explicit_children:
+                    continue
                 initial_child = state.states.get(state.initial)
                 if initial_child:
                     await self._enter_states([initial_child], trigger_event)
@@ -1195,6 +1228,54 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         selected.sort(key=lambda t: -t.source.depth)
         return selected
 
+    def _compute_states_to_exit(
+        self, domain: Optional[StateNode], target_state: StateNode
+    ) -> Set[StateNode]:
+        """Determines which active states an external transition must exit.
+
+        Normally every active descendant of the transition domain is exited.
+        When the domain is a `parallel` state, that would sweep up the *sibling*
+        regions as well — but only the branch containing the target is re-entered
+        by `_get_path_to_state`, so the siblings would be exited and never
+        restored, silently killing them.
+
+        🏛️ Architecture decision: this is why the exit set is scoped to the
+        domain's child that actually contains the target whenever the domain is
+        parallel. Orthogonal regions are independent by definition: a transition
+        inside one region must not disturb the others unless it exits the
+        parallel state itself (in which case the domain is an ancestor of the
+        parallel node, not the node itself, and the full sweep is correct).
+
+        Args:
+            domain (Optional[StateNode]): The transition domain (LCCA), or
+                `None` when the machine root is the domain.
+            target_state (StateNode): The resolved target of the transition.
+
+        Returns:
+            Set[StateNode]: The active states to exit, innermost-first ordering
+            applied by the caller.
+        """
+        candidates = {
+            s
+            for s in self._active_state_nodes
+            if self._is_descendant(s, domain) and s is not domain
+        }
+
+        # 🌐 Scope to one region when the domain is a parallel state, so
+        #    orthogonal siblings are left untouched.
+        if domain is not None and domain.type == "parallel":
+            branch: Optional[StateNode] = target_state
+            while branch is not None and branch.parent is not domain:
+                branch = branch.parent
+            if branch is not None:
+                candidates = {
+                    s
+                    for s in candidates
+                    if s is branch or self._is_descendant(s, branch)
+                }
+
+        return candidates
+
     def _find_transition_domain(
         self, transition: TransitionDefinition, target_state: StateNode
     ) -> Optional[StateNode]:
@@ -1227,13 +1308,22 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         target_ancestors = self._get_ancestors(target_state)
         common_ancestors = source_ancestors & target_ancestors
 
-        # 🎯 The domain must be a *proper* ancestor of the target, otherwise
-        # the target itself would be treated as already-entered and
-        # `_get_path_to_state` would return an empty path — leaving the
-        # machine on a non-atomic ancestor with no active leaf. This occurs
-        # whenever a descendant transitions up to one of its own ancestors
-        # (e.g. a child targeting its compound parent to restart it).
-        common_ancestors.discard(target_state)
+        # 🎯 When the target is an ancestor of the source, the LCCA *is* the
+        # target. Using it directly as the domain would make
+        # `_get_path_to_state(target, stop_at=domain)` return an empty path,
+        # so the machine would exit down to the target and never re-enter it —
+        # left on a non-atomic ancestor with no active leaf.
+        #
+        # 🏛️ Architecture decision: step up to the target's PARENT rather than
+        # discarding the target from the candidate set. Discarding re-ran
+        # `max()` over the remaining common ancestors, which for a region of a
+        # `parallel` state selected the parallel node itself — placing every
+        # *sibling* region in `states_to_exit` while the entry path only
+        # re-entered the targeted region. The siblings were exited and never
+        # restored, permanently killing them. The parent is the correct domain:
+        # it exits and re-enters exactly the target subtree.
+        if target_state in source_ancestors:
+            return target_state.parent or self.machine
 
         if not common_ancestors:
             # Fallback to parent (or machine root) if no commonality is found.

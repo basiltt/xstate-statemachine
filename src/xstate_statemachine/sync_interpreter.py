@@ -386,11 +386,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         # Determine the full path of states to exit and enter.
         path_to_enter = self._get_path_to_state(target_state, stop_at=domain)
-        states_to_exit: Set[StateNode] = {
-            s
-            for s in self._active_state_nodes
-            if self._is_descendant(s, domain) and s is not domain
-        }
+        states_to_exit: Set[StateNode] = self._compute_states_to_exit(
+            domain, target_state
+        )
 
         # Execute the transition sequence (Exit -> Actions -> Enter)
         #
@@ -466,6 +464,17 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 ordered from parent to child.
             event: The optional event that triggered the state entry.
         """
+        # 🗺️ Index the remaining path so a compound state can tell whether the
+        #    caller already named which child to descend into. See the matching
+        #    comment in `BaseInterpreter._enter_states`: descending into
+        #    `initial` unconditionally, in addition to walking the explicit
+        #    path, leaves two simultaneously active leaves in one region.
+        explicit_children = {
+            node.parent.id
+            for node in states_to_enter
+            if node.parent is not None
+        }
+
         for state in states_to_enter:
             logger.info("➡️ Entering state: '%s'", state.id)
             self._active_state_nodes.add(state)
@@ -481,6 +490,14 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
             # 🌳 For compound states, recursively enter their initial child state.
             if state.type == "compound" and state.initial:
+                # ⏭️ Skip the default descent when the entry path already
+                #    specifies which child of this state to enter.
+                if state.id in explicit_children:
+                    self._schedule_state_tasks(state)
+                    logger.debug(
+                        "✅ State '%s' entered successfully.", state.id
+                    )
+                    continue
                 initial_child = state.states.get(state.initial)
                 if initial_child:
                     logger.debug(
