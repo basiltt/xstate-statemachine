@@ -27,7 +27,7 @@ import logging
 import threading
 import time
 import unittest
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 from unittest.mock import MagicMock
 
 # -----------------------------------------------------------------------------
@@ -51,6 +51,121 @@ from src.xstate_statemachine import (
 # -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+
+# -----------------------------------------------------------------------------
+# ⏳ Deterministic Wait Helpers
+# -----------------------------------------------------------------------------
+# 🏛️ Architecture decision: actor spawning is genuinely concurrent — the child
+# runs on its own thread — so tests must wait for it. The original approach was
+# a fixed `time.sleep(0.05)`, which encodes an assumption that the OS will
+# schedule the thread, run it to completion, and reap it inside 50ms.
+#
+# That assumption is not a property of the code under test; it is a property of
+# how busy the machine happens to be. It held locally and on GitHub's Linux and
+# Windows runners, and failed on macOS — `test_spawn_actor_with_after_timer_
+# inside_child` was red on exactly one of twelve matrix cells.
+#
+# These helpers poll for the *actual condition* with a generous ceiling:
+#
+#   - Correctness is unchanged: the assertion after the wait is still exact.
+#   - Failures stay fast: the ceiling is only reached when the condition never
+#     becomes true, which is a real bug, and the assertion then reports it.
+#   - Passing runs get *faster*, not slower: polling returns as soon as the
+#     condition holds, typically in a millisecond or two rather than a
+#     hard-coded 50.
+#
+# Prefer these over `time.sleep()` in any new test that touches actors.
+# -----------------------------------------------------------------------------
+
+# ⏰ Ceiling for all condition waits. Deliberately far larger than any real
+#    wait: it exists to bound a hung test, not to pace a passing one.
+WAIT_TIMEOUT: float = 5.0
+
+# 🔁 Gap between polls. Small enough to be invisible in a passing run.
+POLL_INTERVAL: float = 0.005
+
+
+def wait_until(
+    condition: Callable[[], bool], timeout: float = WAIT_TIMEOUT
+) -> bool:
+    """Polls `condition` until it is true or `timeout` elapses.
+
+    Args:
+        condition (Callable[[], bool]): Predicate re-evaluated each poll.
+        timeout (float): Maximum seconds to wait before giving up.
+
+    Returns:
+        bool: `True` if the condition became true, `False` on timeout. The
+        caller is expected to follow up with a precise assertion, so a `False`
+        return surfaces as a normal assertion failure with a useful message
+        rather than an opaque timeout error.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(POLL_INTERVAL)
+    return condition()
+
+
+def actor_threads() -> List[threading.Thread]:
+    """Returns every live thread spawned as a state-machine actor.
+
+    Returns:
+        List[threading.Thread]: Threads whose name carries the `actor-` prefix.
+    """
+    return [t for t in threading.enumerate() if t.name.startswith("actor-")]
+
+
+def wait_for_actor_threads(
+    minimum: int = 1, timeout: float = WAIT_TIMEOUT
+) -> List[threading.Thread]:
+    """Waits until at least `minimum` actor threads are alive.
+
+    Args:
+        minimum (int): The number of actor threads to wait for.
+        timeout (float): Maximum seconds to wait.
+
+    Returns:
+        List[threading.Thread]: The actor threads observed after waiting.
+    """
+    wait_until(lambda: len(actor_threads()) >= minimum, timeout)
+    return actor_threads()
+
+
+def wait_for_no_actor_threads(timeout: float = WAIT_TIMEOUT) -> None:
+    """Waits until every actor thread has terminated.
+
+    Args:
+        timeout (float): Maximum seconds to wait.
+    """
+    wait_until(lambda: not actor_threads(), timeout)
+
+
+def wait_for_actors_drained(
+    interpreter: SyncInterpreter, timeout: float = WAIT_TIMEOUT
+) -> None:
+    """Waits until the interpreter's actor registry is empty.
+
+    Args:
+        interpreter (SyncInterpreter): The parent interpreter to observe.
+        timeout (float): Maximum seconds to wait.
+    """
+    wait_until(lambda: not interpreter._actors, timeout)
+
+
+def wait_for_actor_count(
+    interpreter: SyncInterpreter, count: int, timeout: float = WAIT_TIMEOUT
+) -> None:
+    """Waits until the interpreter's actor registry holds `count` entries.
+
+    Args:
+        interpreter (SyncInterpreter): The parent interpreter to observe.
+        count (int): The registry size to wait for.
+        timeout (float): Maximum seconds to wait.
+    """
+    wait_until(lambda: len(interpreter._actors) >= count, timeout)
 
 
 # -----------------------------------------------------------------------------
@@ -1311,6 +1426,14 @@ class TestSyncInterpreter(unittest.TestCase):
         )
 
         # ⏳ Wait for a duration less than the timer to confirm it's cancelled.
+        #
+        # 📝 This sleep is deliberate and must NOT be converted to a polling
+        #    helper. The assertion is *negative* — it proves the 1s timer never
+        #    fires — and there is no condition to poll for the absence of an
+        #    event. Sleeping a fraction of the timer window and re-asserting is
+        #    the correct shape here. It is also safe: the margin is 10x
+        #    (100ms elapsed vs a 1000ms timer), so runner slowness cannot make
+        #    it flaky in the direction of a false pass.
         time.sleep(0.1)
 
         # ✨ Assert: The state should remain 'cancelled', not 'timeout'.
@@ -1377,7 +1500,7 @@ class TestSyncInterpreter(unittest.TestCase):
 
         # ⚡ Act
         interp = SyncInterpreter(machine).start()
-        time.sleep(0.05)  # Allow thread to start
+        wait_for_actor_threads(1)
 
         # ✨ Assert
         self.assertTrue(
@@ -1403,13 +1526,10 @@ class TestSyncInterpreter(unittest.TestCase):
 
         # ⚡ Act
         interp = SyncInterpreter(machine).start()
-        time.sleep(0.05)
+        threads = wait_for_actor_threads(2)
 
         # ✨ Assert
-        actor_threads = [
-            t for t in threading.enumerate() if t.name.startswith("actor-")
-        ]
-        self.assertGreaterEqual(len(actor_threads), 2)
+        self.assertGreaterEqual(len(threads), 2)
         interp.stop()
 
     def test_actor_ids_are_unique_and_contain_uuid(self) -> None:
@@ -1430,13 +1550,10 @@ class TestSyncInterpreter(unittest.TestCase):
 
         # ⚡ Act
         interp = SyncInterpreter(machine).start()
-        time.sleep(0.05)
+        threads = wait_for_actor_threads(2)
 
         # ✨ Assert
-        actor_threads = [
-            t for t in threading.enumerate() if t.name.startswith("actor-")
-        ]
-        ids = {t.name.removeprefix("actor-") for t in actor_threads}
+        ids = {t.name.removeprefix("actor-") for t in threads}
         self.assertGreaterEqual(len(ids), 2)
         self.assertEqual(len(ids), len(set(ids)))  # All IDs are unique
         interp.stop()
@@ -1462,7 +1579,7 @@ class TestSyncInterpreter(unittest.TestCase):
 
         # ⚡ Act
         interpreter = SyncInterpreter(machine).start()
-        time.sleep(0.05)  # Allow actors to spawn and register
+        wait_for_actor_count(interpreter, 2)
 
         # ✨ Assert: There should be two unique actor IDs in the registry.
         actor_ids = list(interpreter._actors.keys())
@@ -1588,7 +1705,7 @@ class TestSyncInterpreter(unittest.TestCase):
 
         # ⚡ Act
         interp = SyncInterpreter(machine).start()
-        time.sleep(0.02)  # Allow time for child to finish and cleanup
+        wait_for_actors_drained(interp)
 
         # ✨ Assert
         self.assertEqual(len(interp._actors), 0)
@@ -1626,7 +1743,7 @@ class TestSyncInterpreter(unittest.TestCase):
 
         # ⚡ Act: Start the parent, which spawns the child.
         SyncInterpreter(machine).start()
-        time.sleep(0.02)  # Allow time for the non-blocking actor to run
+        wait_until(lambda: execution_flags.get("factory_called", False))
 
         # ✨ Assert: The factory should have been called.
         self.assertTrue(execution_flags.get("factory_called", False))
@@ -1699,7 +1816,7 @@ class TestSyncInterpreter(unittest.TestCase):
 
         # ⚡ Act
         interp = SyncInterpreter(machine).start()
-        time.sleep(0.05)  # Allow cascade to finish
+        wait_for_actors_drained(interp)
 
         # ✨ Assert: Should have no lingering actors after cascade finish.
         self.assertEqual(len(interp._actors), 0)
@@ -1726,14 +1843,11 @@ class TestSyncInterpreter(unittest.TestCase):
 
         # ⚡ Act
         interp = SyncInterpreter(machine).start()
-        time.sleep(0.05)
+        threads = wait_for_actor_threads(1)
 
         # ✨ Assert
-        actor_threads = [
-            t for t in threading.enumerate() if t.name.startswith("actor-")
-        ]
-        self.assertTrue(actor_threads, "No actor thread found")
-        self.assertTrue(all(t.daemon for t in actor_threads))
+        self.assertTrue(threads, "No actor thread found")
+        self.assertTrue(all(t.daemon for t in threads))
         interp.stop()
 
     def test_spawn_non_blocking_actor_thread_name_contains_actor_id(
@@ -1759,12 +1873,9 @@ class TestSyncInterpreter(unittest.TestCase):
 
         # ⚡ Act
         interpreter = SyncInterpreter(machine).start()
-        time.sleep(0.05)  # Allow thread to start
+        actor_threads = wait_for_actor_threads(1)
 
         # ✨ Assert
-        actor_threads = [
-            t for t in threading.enumerate() if t.name.startswith("actor-")
-        ]
         self.assertTrue(actor_threads, "No actor threads detected")
         # Check that the thread name follows the format 'actor-parent:child:uuid'
         for t in actor_threads:
@@ -1799,21 +1910,15 @@ class TestSyncInterpreter(unittest.TestCase):
             ),
         )
         interp = SyncInterpreter(machine).start()
-        time.sleep(0.05)
-        before_count = len(
-            [t for t in threading.enumerate() if t.name.startswith("actor-")]
-        )
+        before_count = len(wait_for_actor_threads(1))
         self.assertGreaterEqual(before_count, 1)
 
         # ⚡ Act
         interp.stop()
-        time.sleep(0.05)  # Allow time for threads to terminate
+        wait_for_no_actor_threads()
 
         # ✨ Assert
-        after_count = len(
-            [t for t in threading.enumerate() if t.name.startswith("actor-")]
-        )
-        self.assertEqual(after_count, 0)
+        self.assertEqual(len(actor_threads()), 0)
 
     def test_spawn_actor_service_can_be_machine_node_direct(self) -> None:
         """Tests a service can be a direct MachineNode, not a factory."""
@@ -1833,7 +1938,7 @@ class TestSyncInterpreter(unittest.TestCase):
 
         # ⚡ Act
         interp = SyncInterpreter(machine).start()
-        time.sleep(0.01)
+        wait_for_actors_drained(interp)
 
         # ✨ Assert: Actor finished instantly and was cleaned up.
         self.assertEqual(len(interp._actors), 0)
@@ -1859,7 +1964,7 @@ class TestSyncInterpreter(unittest.TestCase):
             ),
         )
         interp = SyncInterpreter(machine).start()
-        time.sleep(0.02)  # Wait for the child to complete
+        wait_for_actors_drained(interp)
 
         # ⚡ Act: Get the snapshot string from the interpreter.
         snapshot_json_string = interp.get_snapshot()
@@ -1894,20 +1999,8 @@ class TestSyncInterpreter(unittest.TestCase):
         # ⚡ Act
         interp = SyncInterpreter(machine).start()
 
-        # ⏳ Poll for the actor to finish and be reaped rather than sleeping a
-        #    fixed interval.
-        #
-        # 🏛️ A bare `time.sleep(0.05)` for a 20ms timer assumes the child
-        #    thread is scheduled, fires, and is cleaned up inside a 30ms
-        #    margin. That holds on an idle machine and fails on a loaded CI
-        #    runner — this test failed on macOS while all 11 other matrix cells
-        #    passed. Polling with a generous ceiling keeps the assertion exact
-        #    while making the wait insensitive to scheduling latency: it
-        #    returns as soon as the condition is true, so the fast path stays
-        #    fast.
-        deadline = time.monotonic() + 5.0
-        while interp._actors and time.monotonic() < deadline:
-            time.sleep(0.005)
+        # ⏳ Wait for the child's 20ms timer to fire and the actor to be reaped.
+        wait_for_actors_drained(interp)
 
         # ✨ Assert
         self.assertEqual(len(interp._actors), 0)
