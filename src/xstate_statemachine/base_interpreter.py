@@ -220,12 +220,22 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             value (List[PluginBase]): The plugins to register.
 
         Raises:
-            TypeError: If `value` is not a list or tuple of plugins.
+            TypeError: If `value` is not a list/tuple, or if any element is not
+                a `PluginBase` instance.
         """
         if not isinstance(value, (list, tuple)):
             raise TypeError(
                 "❌ 'plugins' must be assigned a list of plugin instances."
             )
+        # 🛡️ Validate elements too. Without this the failure surfaces later as
+        #    an AttributeError from deep inside event processing, pointing at
+        #    interpreter internals rather than the offending assignment.
+        for item in value:
+            if not isinstance(item, PluginBase):
+                raise TypeError(
+                    "❌ 'plugins' elements must be PluginBase instances, "
+                    f"got {type(item).__name__}."
+                )
         self._plugins = list(value)
 
     def use(
@@ -1032,6 +1042,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         self,
         state: StateNode,
         event: Union[Event, AfterEvent, DoneEvent],
+        guard_cache: Optional[Dict[int, bool]] = None,
     ) -> List[TransitionDefinition]:
         """Collects every eligible transition on one state's ancestor chain.
 
@@ -1043,12 +1054,37 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             state (StateNode): The active state to start the upward walk from.
             event (Union[Event, AfterEvent, DoneEvent]): The event being
                 processed.
+            guard_cache (Optional[Dict[int, bool]]): Memo of guard results for
+                the current selection pass, keyed by transition identity. When
+                several parallel regions share an ancestor, this ensures that
+                ancestor's guard is evaluated exactly once. Pass `None` to
+                disable memoisation.
 
         Returns:
             List[TransitionDefinition]: Eligible transitions, ordered from the
             deepest source state upward.
         """
         eligible: List[TransitionDefinition] = []
+
+        def _passes(transition: TransitionDefinition) -> bool:
+            """Evaluates a transition's guard, memoised per selection pass.
+
+            🏛️ Architecture decision: guards are documented as pure predicates,
+            but in practice users write ones with side effects (counters,
+            metrics, logging). Evaluating a shared ancestor's guard once per
+            region would multiply those side effects by the region count and
+            fire `on_guard_evaluated` plugin hooks N times for a single logical
+            decision. Memoising keeps evaluation count independent of the
+            machine's parallel width.
+            """
+            if guard_cache is None:
+                return self._is_guard_satisfied(transition.guard, event)
+            key = id(transition)
+            if key not in guard_cache:
+                guard_cache[key] = self._is_guard_satisfied(
+                    transition.guard, event
+                )
+            return guard_cache[key]
 
         # 🧭 Determine which transition flavours are in play for this event.
         is_transient_check = not event.type.startswith(
@@ -1061,27 +1097,25 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             # 📨 Standard `on` event transitions.
             if not is_explicit_transient_event and event.type in current.on:
                 for t in current.on[event.type]:
-                    if self._is_guard_satisfied(t.guard, event):
+                    if _passes(t):
                         eligible.append(t)
 
             # ⚡ Transient `""` ("always") transitions.
             if is_transient_check and "" in current.on:
                 for t in current.on[""]:
-                    if self._is_guard_satisfied(t.guard, event):
+                    if _passes(t):
                         eligible.append(t)
 
             # 🏁 `onDone` transitions for compound/parallel states.
             if current.on_done and current.on_done.event == event.type:
-                if self._is_guard_satisfied(current.on_done.guard, event):
+                if _passes(current.on_done):
                     eligible.append(current.on_done)
 
             # ⏰ `after` transitions for timed events.
             if isinstance(event, AfterEvent):
                 for transitions in current.after.values():
                     for t in transitions:
-                        if t.event == event.type and self._is_guard_satisfied(
-                            t.guard, event
-                        ):
+                        if t.event == event.type and _passes(t):
                             eligible.append(t)
 
             # 🤖 `onDone`/`onError` for invoked services.
@@ -1089,10 +1123,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 for inv in current.invoke:
                     if event.src == inv.id:
                         for t in inv.on_done + inv.on_error:
-                            if (
-                                t.event == event.type
-                                and self._is_guard_satisfied(t.guard, event)
-                            ):
+                            if t.event == event.type and _passes(t):
                                 eligible.append(t)
 
             current = current.parent
@@ -1139,10 +1170,15 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         selected: List[TransitionDefinition] = []
         seen: Set[int] = set()
+        # 🧠 Memo shared across all leaves in this pass, so a transition on an
+        #    ancestor common to several regions is guard-evaluated exactly once.
+        guard_cache: Dict[int, bool] = {}
 
         # 🔽 Deterministic ordering: deepest leaves first, then by id.
         for leaf in sorted(leaves, key=lambda s: (-s.depth, s.id)):
-            eligible = self._collect_eligible_transitions(leaf, event)
+            eligible = self._collect_eligible_transitions(
+                leaf, event, guard_cache
+            )
             if not eligible:
                 continue
 

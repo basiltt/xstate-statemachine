@@ -48,7 +48,12 @@ from typing import (
 # -----------------------------------------------------------------------------
 from .exceptions import ImplementationMissingError, InvalidConfigError
 from .machine_logic import MachineLogic
-from .models import MachineNode, StateNode
+from .models import (
+    MachineNode,
+    StateNode,
+    is_spawn_action,
+    spawn_service_key,
+)
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
@@ -213,10 +218,8 @@ class LogicLoader:
         # action type minus its `spawn_` / `spawn_blocking_` prefix.
         for action_def in all_actions:
             action_type = action_def.type
-            if action_type.startswith("spawn_blocking_"):
-                services.add(action_type[len("spawn_blocking_") :])
-            elif action_type.startswith("spawn_"):
-                services.add(action_type[len("spawn_") :])
+            if is_spawn_action(action_type):
+                services.add(spawn_service_key(action_type))
             else:
                 actions.add(action_type)
 

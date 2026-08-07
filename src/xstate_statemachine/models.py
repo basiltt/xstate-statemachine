@@ -69,6 +69,64 @@ TEvent = TypeVar("TEvent", bound=Dict[str, Any])
 # Define a specific type for state types for clarity and reuse.
 StateType = Literal["atomic", "compound", "parallel", "final"]
 
+# 👶 Prefixes marking an action as a built-in actor-spawning directive.
+#
+# ⚠️ Order matters: `spawn_blocking_` must be tested before `spawn_`, since the
+# latter is a prefix of the former.
+SPAWN_BLOCKING_PREFIX = "spawn_blocking_"
+SPAWN_PREFIX = "spawn_"
+
+
+def is_spawn_action(action_type: str) -> bool:
+    """Reports whether an action type is a built-in spawn directive.
+
+    Args:
+        action_type (str): The action's `type` string.
+
+    Returns:
+        bool: `True` for `spawn_*` and `spawn_blocking_*` action types.
+    """
+    return action_type.startswith(SPAWN_PREFIX)
+
+
+def spawn_service_key(action_type: str) -> str:
+    """Derives the `services` key that a spawn action refers to.
+
+    🏛️ Architecture decision: this is the single source of truth for spawn key
+    derivation, shared by `LogicLoader` (which decides what to *require*) and
+    by both interpreters (which decide what to *look up*). Previously the three
+    sites disagreed:
+
+    - `Interpreter` used `type.replace("spawn_", "")` — unanchored and global,
+      so `spawn_blocking_worker` became `blocking_worker` and
+      `spawn_respawn_handler` became `rehandler`.
+    - `SyncInterpreter` used `type.split("_", 2)[-1]`, so any multi-word key
+      lost everything but its last segment: `spawn_my_worker` became `worker`.
+
+    Both silently resolved the wrong service (or none at all). Deriving the key
+    in one place makes discovery and lookup agree by construction.
+
+    Args:
+        action_type (str): The action's `type` string, e.g. `spawn_my_worker`.
+
+    Returns:
+        str: The service key, e.g. `my_worker`. Returns the input unchanged if
+        it carries no spawn prefix.
+
+    Example:
+        >>> spawn_service_key("spawn_my_worker")
+        'my_worker'
+        >>> spawn_service_key("spawn_blocking_my_worker")
+        'my_worker'
+        >>> spawn_service_key("spawn_respawn_handler")
+        'respawn_handler'
+    """
+    if action_type.startswith(SPAWN_BLOCKING_PREFIX):
+        return action_type[len(SPAWN_BLOCKING_PREFIX) :]
+    if action_type.startswith(SPAWN_PREFIX):
+        return action_type[len(SPAWN_PREFIX) :]
+    return action_type
+
 
 # -----------------------------------------------------------------------------
 # 🎬 Action, Transition, and Invoke Models (Data Transfer Objects)

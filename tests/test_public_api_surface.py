@@ -38,6 +38,7 @@ from src.xstate_statemachine import (
     SyncInterpreter,
     create_machine,
 )
+from src.xstate_statemachine.models import is_spawn_action, spawn_service_key
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
@@ -149,6 +150,45 @@ class TestDocumentedAttributes(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(TypeError):
             interpreter.plugins = LoggingInspector()  # type: ignore[assignment]
 
+    def test_plugins_property_rejects_non_plugin_elements(self) -> None:
+        """Element types are validated at assignment, not mid-transition.
+
+        Without this the failure surfaces later as an `AttributeError` raised
+        from deep inside event processing, with a traceback pointing at
+        interpreter internals rather than the offending assignment.
+        """
+        # Arrange
+        interpreter = SyncInterpreter(
+            create_machine(SIMPLE_CONFIG, logic=MachineLogic())
+        )
+
+        # Act / Assert
+        with self.assertRaises(TypeError):
+            interpreter.plugins = [object()]  # type: ignore[list-item]
+
+    async def test_is_running_false_after_from_snapshot(self) -> None:
+        """A restored async interpreter has no run loop, so it is not running.
+
+        🐛 Regression guard: `from_snapshot` restores the persisted status
+        verbatim, yielding `status == "running"` with no `_event_loop_task`.
+        `is_running` must not claim such an instance can process events — it
+        would silently enqueue and drop every `send()`.
+        """
+        # Arrange
+        source = await Interpreter(
+            create_machine(SIMPLE_CONFIG, logic=MachineLogic())
+        ).start()
+        self.addAsyncCleanup(source.stop)
+        snapshot = source.get_snapshot()
+
+        # Act
+        restored = Interpreter.from_snapshot(
+            snapshot, create_machine(SIMPLE_CONFIG, logic=MachineLogic())
+        )
+
+        # Assert — status may say "running", but liveness must not.
+        self.assertFalse(restored.is_running)
+
     def test_use_and_plugins_property_agree(self) -> None:
         """`use()` registrations must be visible through `.plugins`."""
         # Arrange
@@ -256,6 +296,131 @@ class TestSpawnActionAutoDiscovery(unittest.TestCase):
 
         # Assert
         self.assertIn("do_thing", machine.logic.actions)
+
+
+# -----------------------------------------------------------------------------
+# 🔑 Spawn Service-Key Derivation
+# -----------------------------------------------------------------------------
+class TestSpawnServiceKeyDerivation(unittest.TestCase):
+    """Pins the single source of truth for spawn key derivation.
+
+    🐛 Regression: three sites derived the key differently. `Interpreter` used
+    `type.replace("spawn_", "")` (unanchored and global) and `SyncInterpreter`
+    used `type.split("_", 2)[-1]`, so multi-word and `spawn_blocking_` keys
+    resolved to the wrong service — or none at all.
+    """
+
+    def test_simple_key(self) -> None:
+        """A single-word key drops only its prefix."""
+        self.assertEqual("worker", spawn_service_key("spawn_worker"))
+
+    def test_multi_word_key_is_preserved(self) -> None:
+        """`split("_", 2)[-1]` used to truncate this to 'worker'."""
+        self.assertEqual("my_worker", spawn_service_key("spawn_my_worker"))
+
+    def test_blocking_prefix_fully_stripped(self) -> None:
+        """`replace("spawn_", "")` used to leave 'blocking_worker'."""
+        self.assertEqual("worker", spawn_service_key("spawn_blocking_worker"))
+
+    def test_inner_spawn_substring_is_not_stripped(self) -> None:
+        """`replace` used to mangle this to 'rehandler'."""
+        self.assertEqual(
+            "respawn_handler", spawn_service_key("spawn_respawn_handler")
+        )
+
+    def test_non_spawn_action_unchanged(self) -> None:
+        """A plain action type passes through untouched."""
+        self.assertEqual("do_thing", spawn_service_key("do_thing"))
+
+    def test_is_spawn_action_detection(self) -> None:
+        """Both spawn flavours are detected; plain actions are not."""
+        self.assertTrue(is_spawn_action("spawn_worker"))
+        self.assertTrue(is_spawn_action("spawn_blocking_worker"))
+        self.assertFalse(is_spawn_action("do_thing"))
+
+    def test_loader_and_interpreter_agree_on_multi_word_key(self) -> None:
+        """Discovery and lookup must derive the same key end-to-end."""
+        # Arrange
+        module = types.ModuleType("spawn_multiword_fixture")
+        child = create_machine(
+            {"id": "child", "initial": "i", "states": {"i": {}}},
+            logic=MachineLogic(),
+        )
+
+        def my_worker(_i: Any, _c: Any, _e: Any) -> Any:
+            """Returns the child machine to spawn."""
+            return child
+
+        module.my_worker = my_worker  # type: ignore[attr-defined]
+        config = {
+            "id": "m",
+            "initial": "a",
+            "context": {},
+            "states": {"a": {"entry": ["spawn_my_worker"]}},
+        }
+
+        # Act
+        machine = create_machine(config, logic_modules=[module])
+        interpreter = SyncInterpreter(machine).start()
+        # 🧹 Spawning starts a background actor thread; stop it so it cannot
+        #    leak into unrelated tests that count live `actor-` threads.
+        self.addCleanup(interpreter.stop)
+
+        # Assert — the actor actually spawned rather than raising.
+        self.assertIn("my_worker", machine.logic.services)
+        self.assertEqual({"m.a"}, interpreter.active_state_ids)
+
+
+# -----------------------------------------------------------------------------
+# 🧠 Guard Evaluation Is Not Multiplied By Parallel Width
+# -----------------------------------------------------------------------------
+class TestSharedGuardEvaluatedOnce(unittest.TestCase):
+    """Pins that a shared ancestor's guard runs once, not once per region.
+
+    🐛 Regression: `_select_transitions` walks up from every active leaf, so an
+    ancestor transition was guard-evaluated once per parallel region before
+    de-duplication discarded the duplicates. Guards are documented as pure, but
+    are commonly written with side effects (counters, metrics), and the
+    `on_guard_evaluated` plugin hook fired N times for one logical decision.
+    """
+
+    def test_ancestor_guard_evaluated_once_across_regions(self) -> None:
+        """Three regions must not trigger three guard evaluations."""
+        # Arrange
+        calls: list = []
+
+        def counting_guard(_ctx: Any, _event: Any) -> bool:
+            calls.append(1)
+            return True
+
+        config = {
+            "id": "m",
+            "initial": "par",
+            "states": {
+                "par": {
+                    "type": "parallel",
+                    "on": {"E": {"target": "#m.done", "guard": "g"}},
+                    "states": {
+                        "r1": {"initial": "s", "states": {"s": {}}},
+                        "r2": {"initial": "s", "states": {"s": {}}},
+                        "r3": {"initial": "s", "states": {"s": {}}},
+                    },
+                },
+                "done": {},
+            },
+        }
+        interpreter = SyncInterpreter(
+            create_machine(
+                config, logic=MachineLogic(guards={"g": counting_guard})
+            )
+        ).start()
+
+        # Act
+        interpreter.send("E")
+
+        # Assert
+        self.assertEqual(1, len(calls))
+        self.assertEqual({"m.done"}, interpreter.active_state_ids)
 
 
 if __name__ == "__main__":  # pragma: no cover

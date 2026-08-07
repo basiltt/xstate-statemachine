@@ -55,6 +55,7 @@ from .models import (
     TContext,
     TEvent,
     TransitionDefinition,
+    spawn_service_key,
 )
 from .resolver import resolve_target_state
 
@@ -639,7 +640,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         """
         # 🕵️ Determine mode (blocking vs. non-blocking) and service key
         blocking = action_def.type.startswith("spawn_blocking_")
-        key = action_def.type.split("_", 2)[-1]
+        key = spawn_service_key(action_def.type)
         logger.info("🎭 Spawning actor '%s' (Blocking: %s)", key, blocking)
 
         # 🏭 Get the actor's machine definition from the services registry

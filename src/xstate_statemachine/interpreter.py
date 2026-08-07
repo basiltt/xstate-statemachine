@@ -51,6 +51,7 @@ from .models import (
     StateNode,
     TContext,
     TEvent,
+    spawn_service_key,
 )
 from .task_manager import TaskManager
 
@@ -111,6 +112,28 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
     # -------------------------------------------------------------------------
     # ⏯️ Public Control API (Start, Stop, Send)
     # -------------------------------------------------------------------------
+
+    @property
+    def is_running(self) -> bool:
+        """Indicates whether this interpreter can actually process events.
+
+        🏛️ Architecture decision: the async interpreter needs a liveness check
+        stronger than `status == "running"`. `from_snapshot()` restores the
+        persisted status directly, producing an instance that reports
+        `"running"` while `_event_loop_task` is `None` — nothing is draining
+        the queue, so every `send()` would be silently enqueued and never
+        handled. Requiring a live loop task means `is_running` never claims a
+        machine is processing when it cannot.
+
+        Returns:
+            bool: `True` only when the status is `"running"` *and* the event
+            loop task exists and has not finished.
+        """
+        return (
+            self.status == "running"
+            and self._event_loop_task is not None
+            and not self._event_loop_task.done()
+        )
 
     async def start(self) -> "Interpreter[TContext, TEvent]":
         """Starts the interpreter and its main event-processing loop.
@@ -300,8 +323,17 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             # This is an expected, clean shutdown triggered by `stop()`.
             logger.debug("🛑 Event loop for '%s' was cancelled.", self.id)
             raise
-        except Exception as exc:
+        except BaseException as exc:
             # This indicates a critical, unexpected failure in the machine's logic.
+            #
+            # 🏛️ Architecture decision: this catches `BaseException`, not
+            # `Exception`. A `BaseException` subclass escaping the loop (or a
+            # re-raised `CancelledError` from a nested task) would otherwise
+            # terminate the loop *without* updating `status`, leaving the
+            # interpreter permanently reporting `status == "running"` and
+            # `is_running == True` while nothing drains the queue — every
+            # subsequent `send()` silently dropped. The exception is always
+            # re-raised, so this only corrects the bookkeeping.
             logger.critical(
                 "💥 Fatal error in event loop for '%s': %s",
                 self.id,
@@ -312,6 +344,10 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             self.status = "stopped"
             raise
         finally:
+            # 🛟 Belt-and-braces: never leave the loop exited while the
+            #    interpreter still advertises itself as running.
+            if self.status == "running":
+                self.status = "stopped"
             logger.debug("⚓ Event loop for '%s' has exited.", self.id)
 
     async def _process_event_and_transient_transitions(
@@ -434,7 +470,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 factory function that returns one.
         """
         logger.info("👶 Spawning actor for action: '%s'", action_def.type)
-        actor_machine_key = action_def.type.replace("spawn_", "")
+        actor_machine_key = spawn_service_key(action_def.type)
 
         actor_source = self.machine.logic.services.get(actor_machine_key)
         actor_machine: Optional[MachineNode] = None

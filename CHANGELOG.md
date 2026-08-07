@@ -56,6 +56,34 @@ existing.
   therefore raised `ImplementationMissingError` unless the caller bypassed
   discovery with an explicit `logic=`. Spawn keys now route to `services` with
   their prefix stripped.
+- **Spawn service keys were derived three different (and wrong) ways**
+  (`models.py`, `interpreter.py`, `sync_interpreter.py`). `Interpreter` used
+  `type.replace("spawn_", "")` — unanchored and global, so
+  `spawn_blocking_worker` resolved to `blocking_worker` and
+  `spawn_respawn_handler` to `rehandler`. `SyncInterpreter` used
+  `type.split("_", 2)[-1]`, truncating every multi-word key
+  (`spawn_my_worker` → `worker`). Both silently looked up the wrong service.
+  A single `spawn_service_key()` helper in `models.py` is now the sole source
+  of truth, shared by the loader and both interpreters so discovery and lookup
+  agree by construction.
+- **A dead async run loop could still report itself as running**
+  (`interpreter.py`). `_run_event_loop` only reset `status` inside
+  `except Exception`, so a `BaseException` escaping the loop left the
+  interpreter reporting `status == "running"` forever with nothing draining
+  the queue — every subsequent `send()` silently dropped. The handler now
+  catches `BaseException` (always re-raising) and a `finally` clause
+  guarantees the status can never outlive the loop.
+- **`is_running` lied after `from_snapshot()`** (`interpreter.py`).
+  Restoration assigns the persisted status verbatim, producing an async
+  interpreter with `status == "running"` and no event-loop task. `is_running`
+  now additionally requires a live loop task, so it never claims a machine can
+  process events when nothing is consuming its queue.
+- **A shared ancestor's guard was evaluated once per parallel region**
+  (`base_interpreter.py`). Because selection walks up from every active leaf,
+  a transition on a common ancestor was guard-evaluated N times for N regions
+  before de-duplication discarded the duplicates — multiplying any side effects
+  and firing `on_guard_evaluated` N times for one logical decision. Guard
+  results are now memoised per selection pass.
 - **Stale doctests** (`exceptions.py`). The `NotSupportedError` example
   asserted an error message that exists nowhere in the codebase and claimed
   `after` transitions are unsupported by `SyncInterpreter` — they have been
@@ -76,13 +104,19 @@ existing.
   list, supporting the documented `interpreter.plugins = [LoggingInspector()]`
   form. Assigning a non-list raises `TypeError`.
 - **`StateNode.depth`** — the node's true tree depth, cached at construction.
+- **`models.spawn_service_key()` / `models.is_spawn_action()`** — the shared
+  helpers that define how a `spawn_` action maps to a `services` key.
+- **`.plugins` element validation** — assigning a list containing a non-plugin
+  now raises `TypeError` at the assignment site, rather than surfacing later as
+  an `AttributeError` from deep inside event processing.
 - **`tests/test_scxml_correctness.py`** — 23 regression tests, one class per
   defect, each asserted against *both* the async and sync engines (the two
   interpreters implement the algorithm independently, so a one-sided fix is a
   latent bug).
-- **`tests/test_public_api_surface.py`** — 10 contract tests pinning the
-  documented public attributes and `spawn_` auto-discovery, so documentation
-  and implementation cannot silently diverge again.
+- **`tests/test_public_api_surface.py`** — 20 contract tests pinning the
+  documented public attributes, spawn key derivation, and `spawn_`
+  auto-discovery, so documentation and implementation cannot silently diverge
+  again.
 
 ### Changed
 - **Guards that raise are now treated as `False`** (`base_interpreter.py`).
