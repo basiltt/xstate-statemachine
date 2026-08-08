@@ -44,6 +44,7 @@ from .events import AfterEvent, DoneEvent, Event
 from .exceptions import (
     ActorSpawningError,
     ImplementationMissingError,
+    InvalidConfigError,
     NotSupportedError,
     StateNotFoundError,
 )
@@ -554,11 +555,21 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     )
                     self._enter_states([initial_child])
                 else:
-                    logger.error(
-                        "🐛 Initial state '%s' not found for compound state '%s'.",
-                        state.initial,
-                        state.id,
+                    raise InvalidConfigError(
+                        f"❌ Initial state '{state.initial}' not found in "
+                        f"compound state '{state.id}'."
                     )
+
+            elif state.type == "compound" and state.states:
+                # 🚨 A compound state with children but no resolvable
+                #    `initial` cannot produce an active leaf. Left unchecked
+                #    the machine starts "successfully" with an empty
+                #    configuration and silently drops every event.
+                raise InvalidConfigError(
+                    f"❌ Compound state '{state.id}' has no 'initial' state, "
+                    "so entering it yields no active leaf. Declare "
+                    "'initial' explicitly."
+                )
 
             # 🌐 For parallel states, recursively enter all child regions.
             elif state.type == "parallel":
