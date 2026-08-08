@@ -138,6 +138,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         # 🌳 State & Actor Management
         self._active_state_nodes: Set[StateNode] = set()
+        #: Remembered configurations for history pseudo-states, keyed by the
+        #: *parent* state id. Recorded on exit, replayed when a transition
+        #: targets a `type: "history"` child of that parent.
+        self._history: Dict[str, List[StateNode]] = {}
         self._actors: Dict[str, "BaseInterpreter[Any, Any]"] = {}
 
         # 🔗 Extensibility & Introspection
@@ -781,6 +785,19 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         path_to_enter = self._get_path_to_state(target_state, stop_at=domain)
 
+        # 🕰️ A history pseudo-state is never entered itself. Replace it with
+        #    the remembered configuration (or the default), computed *before*
+        #    exiting so the recorded history is the pre-transition one.
+        history_targets: List[StateNode] = []
+        if target_state.type == "history":
+            history_targets = self._resolve_history_target(target_state)
+            # Enter down to the history node's parent, then the remembered
+            # set. The parent is entered as part of each remembered node's own
+            # path, so entering it here as well would trigger its default
+            # `initial` descent and activate the wrong child alongside the
+            # restored one.
+            path_to_enter = []
+
         # 5. Execute the transition sequence in the correct SCXML order.
         #
         # 🏛️ Architecture decision: `_exit_states` and `_enter_states` are the
@@ -797,6 +814,15 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         )
         await self._execute_actions(transition.actions, event)
         await self._enter_states(path_to_enter, event)
+
+        # 🕰️ Restore the remembered configuration for a history target. Each
+        #    remembered node is entered along its own path from the history
+        #    node's parent, so ancestors are re-entered correctly.
+        if target_state.type == "history":
+            for node in history_targets:
+                await self._enter_states(
+                    self._get_path_to_state(node, stop_at=domain), event
+                )
 
         # 6. Notify plugins of the completed transition.
         for plug in self._plugins:
@@ -891,6 +917,125 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                     list(state.states.values()), trigger_event
                 )
 
+    def _record_history(self, states_to_exit: List[StateNode]) -> None:
+        """Remembers the active configuration of states being exited.
+
+        Called immediately before exit actions run. For every state that owns
+        at least one `type: "history"` child, the currently active descendants
+        are stored so a later transition targeting that history node can
+        restore them.
+
+        🏛️ Architecture decision: history is keyed by the *parent* id rather
+        than by the history node itself. A parent may declare both a shallow
+        and a deep history child, and both must see the same recorded
+        configuration — the shallow/deep distinction is applied at restore
+        time, not at record time.
+
+        Args:
+            states_to_exit (List[StateNode]): The states about to be exited.
+        """
+        exiting = set(states_to_exit)
+        # 🕰️ Candidates are the exiting states *and* their ancestors: a
+        #    transition out of a nested leaf exits the leaf and its parents,
+        #    and it is the history-owning ancestor whose configuration must be
+        #    remembered. Walking up from each exiting node covers both the
+        #    "parent is exiting too" and "only descendants are exiting" cases.
+        candidates: Set[StateNode] = set()
+        for node in exiting:
+            current: Optional[StateNode] = node
+            while current is not None:
+                candidates.add(current)
+                current = current.parent
+
+        for state in candidates:
+            # 🕰️ Only parents that actually declare a history child matter.
+            if not any(
+                child.type == "history" for child in state.states.values()
+            ):
+                continue
+            remembered = [
+                node
+                for node in self._active_state_nodes
+                if node is not state and self._is_descendant(node, state)
+            ]
+            if remembered:
+                self._history[state.id] = remembered
+                logger.debug(
+                    "🕰️ Recorded history for '%s': %s",
+                    state.id,
+                    [n.id for n in remembered],
+                )
+
+    def _resolve_history_target(
+        self, history_node: StateNode
+    ) -> List[StateNode]:
+        """Expands a history pseudo-state into the states to actually enter.
+
+        Args:
+            history_node (StateNode): A node whose `type` is `"history"`.
+
+        Returns:
+            List[StateNode]: The states to enter. Falls back to the parent's
+            default `initial` child when nothing has been recorded yet, which
+            matches XState and SCXML semantics for an unvisited history state.
+        """
+        parent = history_node.parent
+        if parent is None:  # pragma: no cover - a root history node is invalid
+            return []
+
+        remembered = self._history.get(parent.id)
+
+        if not remembered:
+            # 🌱 Never visited: fall back to the declared default target, or
+            #    the parent's initial child.
+            default_target = history_node.target_str
+            if default_target:
+                resolved = self._resolve_state_by_target(
+                    default_target, history_node
+                )
+                if resolved:
+                    return [resolved]
+            if parent.initial and parent.initial in parent.states:
+                return [parent.states[parent.initial]]
+            return []
+
+        if history_node.history == "deep":
+            # 🌊 Deep history restores the full nested configuration; entering
+            #    the deepest leaves re-enters their ancestors on the way.
+            leaves = [
+                node
+                for node in remembered
+                if node.is_atomic or node.is_final or not node.states
+            ]
+            return leaves or remembered
+
+        # 🏖️ Shallow history restores only the parent's immediate child; its
+        #    own `initial` chain then applies below that.
+        shallow = [node for node in remembered if node.parent is parent]
+        return shallow or remembered
+
+    def _resolve_state_by_target(
+        self, target: str, reference: StateNode
+    ) -> Optional[StateNode]:
+        """Resolves a target string relative to a reference node.
+
+        Args:
+            target (str): The target expression (e.g. `"#m.a.b"` or `"b"`).
+            reference (StateNode): The node the target is written relative to.
+
+        Returns:
+            Optional[StateNode]: The resolved node, or `None`.
+        """
+        try:
+            return resolve_target_state(target, reference)
+        except StateNotFoundError:
+            logger.warning(
+                "⚠️ Could not resolve history default target '%s' on '%s'.",
+                target,
+                reference.id,
+            )
+            return None
+
     async def _exit_states(
         self, states_to_exit: List[StateNode], event: Optional[Event] = None
     ) -> None:
@@ -908,6 +1053,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             event (Optional[Event]): The event that triggered the state exit.
         """
         trigger_event = event or Event(type="___xstate_statemachine_exit___")
+
+        # 🕰️ Record history *before* anything is removed, so the remembered
+        #    configuration reflects the state of the machine as it was.
+        self._record_history(states_to_exit)
 
         for state in states_to_exit:
             logger.debug("⬅️  Exiting state: '%s'.", state.id)

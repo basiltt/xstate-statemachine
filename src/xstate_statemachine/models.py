@@ -587,6 +587,8 @@ class StateNode(Generic[TContext, TEvent]):
                 )
                 history_kind = "shallow"
             self.history = history_kind
+        #: Default target used when a history state has nothing recorded yet.
+        self.target_str: Optional[str] = config.get("target")
 
         self.entry = self._parse_actions(config.get("entry"))
         self.exit = self._parse_actions(config.get("exit"))

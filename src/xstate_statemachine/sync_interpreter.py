@@ -390,6 +390,13 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             domain, target_state
         )
 
+        # 🕰️ A history pseudo-state is never entered itself; expand it to the
+        #    remembered configuration. Mirrors BaseInterpreter._execute_transition.
+        history_targets: List[StateNode] = []
+        if target_state.type == "history":
+            history_targets = self._resolve_history_target(target_state)
+            path_to_enter = []
+
         # Execute the transition sequence (Exit -> Actions -> Enter)
         #
         # 🏛️ Architecture decision: `_exit_states`/`_enter_states` own all
@@ -403,6 +410,13 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         )
         self._execute_actions(transition.actions, event)
         self._enter_states(path_to_enter, event)
+
+        # 🕰️ Restore the remembered configuration for a history target.
+        if target_state.type == "history":
+            for node in history_targets:
+                self._enter_states(
+                    self._get_path_to_state(node, stop_at=domain), event
+                )
 
         # Notify plugins of the completed transition.
         for plugin in self._plugins:
@@ -538,6 +552,10 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 ordered from child to parent.
             event: The optional event that triggered the state exit.
         """
+        # 🕰️ Record history *before* anything is removed, so the
+        #    remembered configuration reflects the pre-transition state.
+        self._record_history(states_to_exit)
+
         # 🧹 Cancel tasks BEFORE any other processing to prevent race conditions.
         for state in states_to_exit:
             self._cancel_state_tasks(state)
