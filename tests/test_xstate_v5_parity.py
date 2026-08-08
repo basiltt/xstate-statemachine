@@ -22,6 +22,7 @@ Parity tests for XState v5 features added in v0.6.0.
 import asyncio
 import json
 import logging
+import threading
 import time
 import unittest
 from typing import Any, Dict, List
@@ -2564,7 +2565,11 @@ class TestAsyncBuiltinActions(unittest.IsolatedAsyncioTestCase):
                                 }
                             ]
                         },
-                        "*": "caught",
+                        # 📝 Escalation arrives as an explicit
+                        #    `xstate.error.actor.<child id>` event. A wildcard
+                        #    deliberately does NOT catch internal events, so
+                        #    the handler is named exactly.
+                        "xstate.error.actor.p:k": "caught",
                     },
                 },
                 "caught": {},
@@ -2947,6 +2952,608 @@ class TestModelRepr(unittest.TestCase):
             GuardDefinition({"type": "stateIn", "params": {}}).is_builtin
         )
         self.assertFalse(GuardDefinition("plain").is_builtin)
+
+
+# -----------------------------------------------------------------------------
+# 🔒 Wildcards Must Not Swallow Internal Events
+# -----------------------------------------------------------------------------
+class TestWildcardExcludesInternalEvents(unittest.IsolatedAsyncioTestCase):
+    """Pins that `*` never intercepts engine-generated lifecycle events.
+
+    🐛 Regression: adding wildcard support made `on: {"*": ...}` match the
+    synthetic `done.invoke.*`, `done.state.*`, `error.platform.*` and
+    `after.*` events the engine raises to drive `onDone`, `onError` and
+    `after`. A single wildcard therefore silently broke every invoke and
+    delayed transition in that state.
+    """
+
+    def test_wildcard_does_not_hijack_invoke_on_done(self) -> None:
+        """An invoked service's result must reach `onDone`, not `*`."""
+        # Arrange
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "l",
+                "states": {
+                    "l": {
+                        "invoke": {"src": "s", "onDone": "ok"},
+                        "on": {"*": "wild"},
+                    },
+                    "ok": {},
+                    "wild": {},
+                },
+            },
+            services={"s": lambda i, c, e: {"v": 1}},
+        )
+
+        # Assert
+        self.assertEqual({"m.ok"}, interpreter.current_state_ids)
+
+    def test_wildcard_does_not_hijack_after_timer(self) -> None:
+        """A delayed transition must fire its own target, not `*`."""
+        # Arrange
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "a",
+                "states": {
+                    "a": {"after": {20: "timed"}, "on": {"*": "wild"}},
+                    "timed": {},
+                    "wild": {},
+                },
+            }
+        )
+        self.addCleanup(interpreter.stop)
+
+        # Act — poll rather than sleeping a fixed interval.
+        deadline = time.monotonic() + 5.0
+        while (
+            interpreter.current_state_ids == {"m.a"}
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.005)
+
+        # Assert
+        self.assertEqual({"m.timed"}, interpreter.current_state_ids)
+
+    def test_wildcard_does_not_hijack_compound_on_done(self) -> None:
+        """A compound's `onDone` must outrank an ancestor wildcard."""
+        # Arrange
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "p",
+                "on": {"*": "wild"},
+                "states": {
+                    "p": {
+                        "initial": "w",
+                        "onDone": "end",
+                        "states": {
+                            "w": {"on": {"E": "f"}},
+                            "f": {"type": "final"},
+                        },
+                    },
+                    "end": {},
+                    "wild": {},
+                },
+            }
+        )
+
+        # Act
+        interpreter.send("E")
+
+        # Assert
+        self.assertEqual({"m.end"}, interpreter.current_state_ids)
+
+    def test_wildcard_still_catches_ordinary_events(self) -> None:
+        """Control: `*` must still match a normal user event."""
+        # Arrange
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "a",
+                "states": {"a": {"on": {"*": "b"}}, "b": {}},
+            }
+        )
+
+        # Act
+        interpreter.send("SOMETHING")
+
+        # Assert
+        self.assertEqual({"m.b"}, interpreter.current_state_ids)
+
+    async def test_wildcard_does_not_hijack_on_error(self) -> None:
+        """A failing service must reach `onError`, not `*`."""
+
+        async def boom(_i: Any, _c: Any, _e: Any) -> None:
+            """A deliberately failing service."""
+            raise ValueError("kaboom")
+
+        # Arrange
+        interpreter = await Interpreter(
+            build(
+                {
+                    "id": "m",
+                    "initial": "l",
+                    "states": {
+                        "l": {
+                            "invoke": {"src": "b", "onError": "failed"},
+                            "on": {"*": "wild"},
+                        },
+                        "failed": {},
+                        "wild": {},
+                    },
+                },
+                services={"b": boom},
+            )
+        ).start()
+        self.addAsyncCleanup(interpreter.stop)
+
+        # Act
+        await asyncio.sleep(0.1)
+
+        # Assert
+        self.assertEqual({"m.failed"}, interpreter.current_state_ids)
+
+    def test_long_always_chain_completes(self) -> None:
+        """`max_iterations` must not truncate a legitimate long chain."""
+        # Arrange
+        states: Dict[str, Any] = {}
+        for index in range(50):
+            states["s%d" % index] = {"always": "s%d" % (index + 1)}
+        states["s50"] = {}
+
+        # Act
+        interpreter = start({"id": "m", "initial": "s0", "states": states})
+
+        # Assert
+        self.assertEqual({"m.s50"}, interpreter.current_state_ids)
+
+
+# -----------------------------------------------------------------------------
+# 🛡️ Adversarial-Review Regressions
+# -----------------------------------------------------------------------------
+class TestReviewRegressions(unittest.IsolatedAsyncioTestCase):
+    """Pins defects found by adversarial review of the v0.6.0 work itself."""
+
+    CHILD: Dict[str, Any] = {
+        "id": "kid",
+        "initial": "i",
+        "states": {"i": {"on": {"P": "done"}}, "done": {}},
+    }
+
+    def test_raise_during_initial_entry_is_deferred(self) -> None:
+        """An entry action's `raise` must not run mid-descent.
+
+        🐛 Regression: `send` processes the queue immediately, so an event
+        raised while the machine was still entering its initial states was
+        handled against a half-built configuration, leaving TWO active leaves.
+        """
+        # Arrange / Act
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "p",
+                "states": {
+                    "p": {
+                        "initial": "c1",
+                        "entry": [
+                            {"type": "raise", "params": {"event": "GO"}}
+                        ],
+                        "on": {"GO": "#m.other"},
+                        "states": {"c1": {}, "c2": {}},
+                    },
+                    "other": {},
+                },
+            }
+        )
+
+        # Assert — exactly one leaf, not the half-entered pair.
+        self.assertEqual({"m.other"}, interpreter.current_state_ids)
+
+    def test_transition_into_parallel_region_leaves_one_leaf(self) -> None:
+        """Targeting deep inside a parallel state must not double-enter.
+
+        🐛 Regression: the parallel branch re-entered EVERY region, including
+        the one already named by the entry path, so that region activated its
+        `initial` child alongside the real target.
+        """
+        # Arrange
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "A",
+                "states": {
+                    "A": {
+                        "initial": "a1",
+                        "states": {"a1": {"on": {"E": "#m.P.R2.y2"}}},
+                    },
+                    "P": {
+                        "type": "parallel",
+                        "states": {
+                            "R1": {
+                                "initial": "x1",
+                                "states": {"x1": {}, "x2": {}},
+                            },
+                            "R2": {
+                                "initial": "y1",
+                                "states": {"y1": {}, "y2": {}},
+                            },
+                        },
+                    },
+                },
+            }
+        )
+
+        # Act
+        interpreter.send("E")
+
+        # Assert
+        self.assertEqual(
+            {"m.P.R1.x1", "m.P.R2.y2"}, interpreter.current_state_ids
+        )
+
+    def test_history_child_of_parallel_is_not_a_region(self) -> None:
+        """A history pseudo-state must never be entered as a region."""
+        # Arrange / Act
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "P",
+                "states": {
+                    "P": {
+                        "type": "parallel",
+                        "states": {
+                            "R1": {"initial": "a", "states": {"a": {}}},
+                            "R2": {"initial": "b", "states": {"b": {}}},
+                            "h": {"type": "history"},
+                        },
+                    }
+                },
+            }
+        )
+
+        # Assert
+        self.assertEqual(
+            {"m.P.R1.a", "m.P.R2.b"}, interpreter.current_state_ids
+        )
+
+    def test_self_recursive_enqueue_actions_is_bounded(self) -> None:
+        """A callback that re-enqueues itself must not blow the stack."""
+
+        def recursive(args: Dict[str, Any]) -> None:
+            """Enqueues itself, forever, on purpose."""
+            args["enqueue"](
+                {
+                    "type": "enqueueActions",
+                    "params": {"callback": recursive},
+                }
+            )
+
+        # Arrange / Act — must terminate rather than raise RecursionError.
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "a",
+                "context": {},
+                "states": {
+                    "a": {
+                        "entry": [
+                            {
+                                "type": "enqueueActions",
+                                "params": {"callback": recursive},
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+
+        # Assert
+        self.assertEqual({"m.a"}, interpreter.current_state_ids)
+
+    def test_bare_service_key_addresses_auto_id_actor(self) -> None:
+        """`sendTo` must reach an actor spawned without an explicit id.
+
+        🐛 Regression: auto-generated ids end in a uuid, so a suffix-only
+        match never found them and the event was silently dropped.
+        """
+        # Arrange
+        interpreter = start(
+            {
+                "id": "p",
+                "initial": "a",
+                "context": {},
+                "states": {
+                    "a": {
+                        "entry": [
+                            {
+                                "type": "spawnChild",
+                                "params": {"src": "kid"},
+                            }
+                        ],
+                        "on": {
+                            "GO": {
+                                "actions": [
+                                    {
+                                        "type": "sendTo",
+                                        "params": {
+                                            "to": "kid",
+                                            "event": "P",
+                                        },
+                                    }
+                                ]
+                            }
+                        },
+                    }
+                },
+            },
+            services={"kid": lambda i, c, e: build(self.CHILD)},
+        )
+        self.addCleanup(interpreter.stop)
+
+        # Act
+        interpreter.send("GO")
+
+        # Assert
+        child = list(interpreter._actors.values())[0]
+        self.assertEqual({"kid.done"}, child.current_state_ids)
+
+    def test_stop_child_deregisters_from_actor_system(self) -> None:
+        """A stopped actor must no longer be addressable by `systemId`."""
+        # Arrange
+        interpreter = start(
+            {
+                "id": "p",
+                "initial": "a",
+                "context": {},
+                "states": {
+                    "a": {
+                        "entry": [
+                            {
+                                "type": "spawnChild",
+                                "params": {
+                                    "src": "kid",
+                                    "id": "w",
+                                    "systemId": "sys",
+                                },
+                            }
+                        ],
+                        "on": {
+                            "STOP": {
+                                "actions": [
+                                    {
+                                        "type": "stopChild",
+                                        "params": {"id": "w"},
+                                    }
+                                ]
+                            }
+                        },
+                    }
+                },
+            },
+            services={"kid": lambda i, c, e: build(self.CHILD)},
+        )
+        self.addCleanup(interpreter.stop)
+        self.assertIn("sys", interpreter.system)
+
+        # Act
+        interpreter.send("STOP")
+
+        # Assert
+        self.assertNotIn("sys", interpreter.system)
+
+    def test_duplicate_send_id_supersedes_earlier_timer(self) -> None:
+        """Reusing a send id must cancel the first, not orphan it."""
+        # Arrange
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "on": {
+                            "S": {
+                                "actions": [
+                                    {
+                                        "type": "raise",
+                                        "params": {
+                                            "event": "L",
+                                            "delay": 500,
+                                            "id": "x",
+                                        },
+                                    }
+                                ]
+                            },
+                            "L": "b",
+                        }
+                    },
+                    "b": {},
+                },
+            }
+        )
+        self.addCleanup(interpreter.stop)
+
+        # Act
+        interpreter.send("S")
+        interpreter.send("S")
+
+        # Assert — one registry entry, so `cancel("x")` can reach it.
+        self.assertEqual(1, len(interpreter._scheduled_sends))
+
+    def test_stop_releases_pending_delayed_send_threads(self) -> None:
+        """`stop()` must release waiting delayed-send threads."""
+        # Arrange
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "on": {
+                            "S": {
+                                "actions": [
+                                    {
+                                        "type": "raise",
+                                        "params": {
+                                            "event": "L",
+                                            "delay": 5000,
+                                            "id": "x",
+                                        },
+                                    }
+                                ]
+                            },
+                            "L": "b",
+                        }
+                    },
+                    "b": {},
+                },
+            }
+        )
+        interpreter.send("S")
+
+        # Act
+        interpreter.stop()
+
+        # Assert — poll for the waiter to exit.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            alive = [
+                thread
+                for thread in threading.enumerate()
+                if thread.name.startswith("send-")
+            ]
+            if not alive:
+                break
+            time.sleep(0.005)
+        self.assertEqual(
+            [],
+            [
+                thread
+                for thread in threading.enumerate()
+                if thread.name.startswith("send-")
+            ],
+        )
+
+    def test_old_format_snapshot_still_restores(self) -> None:
+        """Snapshots written before deep persistence must still load."""
+        # Arrange
+        config = {
+            "id": "m",
+            "initial": "a",
+            "context": {"n": 1},
+            "states": {"a": {"on": {"E": "b"}}, "b": {}},
+        }
+        legacy = json.dumps(
+            {"status": "running", "context": {"n": 9}, "state_ids": ["m.b"]}
+        )
+
+        # Act
+        restored = SyncInterpreter.from_snapshot(legacy, build(config))
+
+        # Assert
+        self.assertEqual({"m.b"}, restored.current_state_ids)
+        self.assertEqual(9, restored.context["n"])
+
+    def test_unrestorable_actor_is_preserved_not_dropped(self) -> None:
+        """An actor whose service is gone must be kept, not silently lost."""
+        # Arrange
+        parent = {
+            "id": "p",
+            "initial": "a",
+            "context": {},
+            "states": {
+                "a": {
+                    "entry": [
+                        {
+                            "type": "spawnChild",
+                            "params": {"src": "kid", "id": "w"},
+                        }
+                    ]
+                }
+            },
+        }
+        interpreter = start(
+            parent, services={"kid": lambda i, c, e: build(self.CHILD)}
+        )
+        snapshot = interpreter.get_snapshot()
+        interpreter.stop()
+
+        # Act — restore with NO services registered.
+        restored = SyncInterpreter.from_snapshot(snapshot, build(parent))
+
+        # Assert
+        self.assertIn("p:w", restored._pending_actor_snapshots)
+
+    def test_nested_grandchild_is_persisted(self) -> None:
+        """Persistence must recurse through the whole hierarchy."""
+        # Arrange
+        grandchild = {"id": "gc", "initial": "g", "states": {"g": {}}}
+        child = {
+            "id": "kid",
+            "initial": "i",
+            "context": {},
+            "states": {
+                "i": {
+                    "entry": [
+                        {
+                            "type": "spawnChild",
+                            "params": {"src": "gc", "id": "g"},
+                        }
+                    ]
+                }
+            },
+        }
+        parent = {
+            "id": "p",
+            "initial": "a",
+            "context": {},
+            "states": {
+                "a": {
+                    "entry": [
+                        {
+                            "type": "spawnChild",
+                            "params": {"src": "kid", "id": "w"},
+                        }
+                    ]
+                }
+            },
+        }
+        interpreter = start(
+            parent,
+            services={
+                "kid": lambda i, c, e: build(
+                    child,
+                    services={"gc": lambda a, b, d: build(grandchild)},
+                )
+            },
+        )
+        self.addCleanup(interpreter.stop)
+
+        # Act
+        data = json.loads(interpreter.get_snapshot())
+
+        # Assert
+        self.assertIn("p:w", data["actors"])
+        self.assertIn("p:w:g", data["actors"]["p:w"]["snapshot"]["actors"])
+
+    def test_existing_input_key_is_not_clobbered(self) -> None:
+        """A context that already has `input` must keep its own value."""
+        # Arrange / Act
+        interpreter = SyncInterpreter(
+            build(
+                {
+                    "id": "m",
+                    "initial": "a",
+                    "context": {"input": "MINE"},
+                    "states": {"a": {}},
+                }
+            ),
+            input={"n": 1},
+        ).start()
+
+        # Assert
+        self.assertEqual("MINE", interpreter.context["input"])
 
 
 if __name__ == "__main__":  # pragma: no cover

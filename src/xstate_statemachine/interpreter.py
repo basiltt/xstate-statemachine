@@ -526,9 +526,13 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             canonical, action_def, event
         )
         if followups:
-            await self._execute_actions(
-                [ActionDefinition(f) for f in followups], event
-            )
+            self._action_depth += 1
+            try:
+                await self._execute_actions(
+                    [ActionDefinition(f) for f in followups], event
+                )
+            finally:
+                self._action_depth -= 1
 
         params = self._resolve_params(action_def.params, event) or {}
 
@@ -654,7 +658,14 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         for actor_id, candidate in list(self._actors.items()):
             if candidate is actor:
                 del self._actors[actor_id]
+                self._actor_sources.pop(actor_id, None)
                 break
+        # 🌐 Also drop it from the actor-system registry, otherwise a stopped
+        #    actor stays addressable by systemId and silently swallows events.
+        registry = self._system_registry()
+        for system_id, candidate in list(registry.items()):
+            if candidate is actor:
+                del registry[system_id]
         result = actor.stop()
         if inspect.isawaitable(result):
             await result

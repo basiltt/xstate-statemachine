@@ -176,6 +176,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             otherwise `None`.
     """
 
+    #: Maximum depth of nested action expansion (`pure` / `choose` /
+    #: `enqueueActions` returning further actions). Guards against a callback
+    #: that re-enqueues itself.
+    MAX_ACTION_DEPTH: int = 50
+
     def __init__(
         self,
         machine: MachineNode[TContext, TEvent],
@@ -234,6 +239,8 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         #: Maps a spawned actor id to the `services` key it came from, so a
         #: snapshot can record enough to rebuild it.
         self._actor_sources: Dict[str, str] = {}
+        #: Current nesting depth of action expansion.
+        self._action_depth: int = 0
         self._actors: Dict[str, "BaseInterpreter[Any, Any]"] = {}
 
         # 🔗 Extensibility & Introspection
@@ -1194,12 +1201,29 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             return registry[spec]
         if spec in self._actors:
             return self._actors[spec]
-        for actor_id, actor in self._actors.items():
-            if (
-                actor_id.endswith(f":{spec}")
-                or actor_id.split(":")[-1] == spec
-            ):
-                return actor
+        # 🔑 Actor ids are namespaced as `parent:key` or `parent:key:uuid`, so
+        #    a bare service key must match the MIDDLE segment too. Matching
+        #    only the suffix silently missed every auto-id actor (the uuid is
+        #    the last segment), so `send_to("worker", ...)` dropped the event.
+        matches = [
+            actor
+            for actor_id, actor in self._actors.items()
+            if spec in actor_id.split(":")[1:]
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            logger.warning(
+                "⚠️ Actor key '%s' is ambiguous (%d matches). Use an explicit "
+                "`id` or `systemId` to disambiguate; event dropped.",
+                spec,
+                len(matches),
+            )
+            return None
+        # 🗺️ Fall back to the originating service key recorded at spawn time.
+        for actor_id, source_key in self._actor_sources.items():
+            if source_key == spec and actor_id in self._actors:
+                return self._actors[actor_id]
         if spec in ("parent", "#parent") and self.parent is not None:
             return self.parent
         return None
@@ -1240,10 +1264,13 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         if not system_id:
             return
         registry = self._system_registry()
-        if system_id in registry:
+        if system_id in registry and registry[system_id] is not actor:
             logger.warning(
-                "⚠️ systemId '%s' is already registered; overwriting.",
+                "⚠️ systemId '%s' is already registered to actor '%s'; the "
+                "new actor replaces it. systemIds must be unique within a "
+                "machine hierarchy.",
                 system_id,
+                registry[system_id].id,
             )
         registry[system_id] = actor
 
@@ -1366,6 +1393,24 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             List[Any]: Nested action definitions to execute next.
         """
         params = self._resolve_params(action_def.params, event) or {}
+
+        # 🛟 Bound nested action expansion. `pure`, `choose` and
+        #    `enqueueActions` all return further actions, so a callback that
+        #    (directly or indirectly) enqueues itself recurses until Python
+        #    raises RecursionError — which, being a BaseException subclass in
+        #    older versions and an Exception here, previously left the machine
+        #    in an indeterminate state. A depth counter turns an authoring
+        #    mistake into a clear, contained log message.
+        depth = getattr(self, "_action_depth", 0)
+        if depth > self.MAX_ACTION_DEPTH:
+            logger.error(
+                "🔁 Nested action expansion exceeded %d levels while handling "
+                "'%s'. Aborting this branch; check for an enqueueActions or "
+                "pure callback that re-enqueues itself.",
+                self.MAX_ACTION_DEPTH,
+                action_def.type,
+            )
+            return []
 
         if canonical == ASSIGN:
             self._apply_assign(params, event)
@@ -1614,6 +1659,9 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             for state in states_to_enter
             if state.parent is not None
         }
+        explicit_child_ids = {
+            state.id for state in states_to_enter if state.parent is not None
+        }
 
         for state in states_to_enter:
             self._active_state_nodes.add(state)
@@ -1653,9 +1701,19 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 )
             elif state.type == "parallel":
                 # For parallel states, enter all child regions simultaneously.
-                await self._enter_states(
-                    list(state.states.values()), trigger_event
-                )
+                # 🌐 Enter every region EXCEPT one already named by the entry
+                #    path (that region is walked explicitly, and entering
+                #    it again would trigger its default `initial` descent
+                #    and activate the wrong child alongside the target).
+                #    History pseudo-states are never entered as regions.
+                regions = [
+                    child
+                    for child in state.states.values()
+                    if child.type != "history"
+                    and child.id not in explicit_child_ids
+                ]
+                if regions:
+                    await self._enter_states(regions, trigger_event)
 
     def _record_history(self, states_to_exit: List[StateNode]) -> None:
         """Remembers the active configuration of states being exited.
@@ -2125,6 +2183,19 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         # 🎯 Exact match is always the most specific.
         if event_type in on_map:
             matches.append(event_type)
+
+        # 🔒 Internal lifecycle events are NEVER caught by a wildcard or a
+        #    partial descriptor.
+        #
+        # 🏛️ Architecture decision: `done.invoke.*`, `done.state.*`,
+        # `error.platform.*` and `after.*` are synthetic events the engine
+        # raises to drive `onDone`, `onError` and `after`. A user writing
+        # `on: {"*": ...}` means "any event I might receive", not "also
+        # swallow my own timers and service results". Without this guard a
+        # single wildcard silently breaks every invoke and delayed transition
+        # in that state — XState draws the same line.
+        if event_type.startswith(("done.", "error.", "after.", "xstate.")):
+            return matches
 
         # 🌓 Partial descriptors: "a.b.*" matches "a.b.c" and "a.b".
         partials: List[str] = []

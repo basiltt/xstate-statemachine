@@ -133,6 +133,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         self._is_processing: bool = False
         self._after_threads: Dict[str, threading.Thread] = {}
         self._after_events: Dict[str, threading.Event] = {}
+        #: Cancellation flags for pending delayed sends, released by `stop()`.
+        self._pending_send_cancels: Set[threading.Event] = set()
 
         logger.info("✅ Synchronous Interpreter '%s' initialized. 🎉", self.id)
 
@@ -183,7 +185,21 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         pre_states = set(self._active_state_nodes)
 
         # ➡️ Enter the machine's initial states.
-        self._enter_states([self.machine])
+        #
+        # 🏛️ Architecture decision: initial entry runs behind the re-entrancy
+        # guard. An entry action may `raise` an event, and `send` processes
+        # the queue immediately; without the guard that event would be handled
+        # *while the machine was still descending into its initial states*,
+        # transitioning away from a half-built configuration and leaving two
+        # active leaves. Guarding defers such events until entry has settled,
+        # after which the queue is drained normally.
+        self._is_processing = True
+        try:
+            self._enter_states([self.machine])
+        finally:
+            self._is_processing = False
+        # 📬 Drain anything an entry action raised during that descent.
+        self._process_event_queue()
         # 🔄 Process any immediate "always" transitions upon startup.
         self._process_transient_transitions()
 
@@ -230,6 +246,14 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             self._after_events[state_id].set()
         self._after_events.clear()
         self._after_threads.clear()
+
+        # 2️⃣.5 Release any waiting delayed-send threads. They are daemons, so
+        #      they never block process exit, but a long delay would otherwise
+        #      keep one alive for its full duration after shutdown.
+        for cancel_flag in list(self._pending_send_cancels):
+            cancel_flag.set()
+        self._pending_send_cancels.clear()
+        self._scheduled_sends.clear()
 
         # 3️⃣ Update status to prevent further operations
         self.status = "stopped"
@@ -522,6 +546,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             for node in states_to_enter
             if node.parent is not None
         }
+        explicit_child_ids = {
+            node.id for node in states_to_enter if node.parent is not None
+        }
 
         for state in states_to_enter:
             logger.info("➡️ Entering state: '%s'", state.id)
@@ -577,7 +604,19 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     "🌐 Entering all regions for parallel state '%s'.",
                     state.id,
                 )
-                self._enter_states(list(state.states.values()))
+                # 🌐 Enter every region EXCEPT one already named by the entry
+                #    path (that region is walked explicitly, and entering
+                #    it again would trigger its default `initial` descent
+                #    and activate the wrong child alongside the target).
+                #    History pseudo-states are never entered as regions.
+                regions = [
+                    child
+                    for child in state.states.values()
+                    if child.type != "history"
+                    and child.id not in explicit_child_ids
+                ]
+                if regions:
+                    self._enter_states(regions)
 
             # ⚙️ Schedule any tasks (invokes, timers).
             self._schedule_state_tasks(state)
@@ -750,9 +789,13 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             canonical, action_def, event
         )
         if followups:
-            self._execute_actions(
-                [ActionDefinition(f) for f in followups], event
-            )
+            self._action_depth += 1
+            try:
+                self._execute_actions(
+                    [ActionDefinition(f) for f in followups], event
+                )
+            finally:
+                self._action_depth -= 1
 
         params = self._resolve_params(action_def.params, event) or {}
 
@@ -823,7 +866,14 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             for actor_id, candidate in list(self._actors.items()):
                 if candidate is actor:
                     del self._actors[actor_id]
+                    self._actor_sources.pop(actor_id, None)
                     break
+            # 🌐 Also drop it from the actor-system registry, otherwise a
+            #    stopped actor stays addressable by systemId.
+            registry = self._system_registry()
+            for system_id, candidate in list(registry.items()):
+                if candidate is actor:
+                    del registry[system_id]
             actor.stop()
 
         elif canonical == SPAWN_CHILD:
@@ -872,6 +922,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 return
             if send_id:
                 self._scheduled_sends.pop(str(send_id), None)
+            self._pending_send_cancels.discard(cancel_flag)
             try:
                 actor.send(target_event)
             except Exception:  # pragma: no cover - defensive
@@ -879,11 +930,24 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     "🔥 Delayed send of '%s' failed.", target_event.type
                 )
 
+        # 🔁 Reusing a send id supersedes the earlier send. Without this the
+        #    first timer is orphaned: the registry entry is overwritten, so
+        #    `cancel(id)` can no longer reach it and it fires anyway.
+        if send_id:
+            previous = self._scheduled_sends.get(str(send_id))
+            if previous is not None:
+                previous()
+            self._scheduled_sends[str(send_id)] = cancel_flag.set
+
+        # 🧹 Track every pending waiter so `stop()` can release it. The
+        #    threads are daemons (they cannot block interpreter exit), but a
+        #    long delay would otherwise keep one alive for its full duration
+        #    after the machine has shut down.
+        self._pending_send_cancels.add(cancel_flag)
+
         timer = threading.Thread(
             target=_fire, name=f"send-{target_event.type}", daemon=True
         )
-        if send_id:
-            self._scheduled_sends[str(send_id)] = cancel_flag.set
         timer.start()
 
     def _spawn_actor(self, action_def: ActionDefinition, event: Event) -> None:
