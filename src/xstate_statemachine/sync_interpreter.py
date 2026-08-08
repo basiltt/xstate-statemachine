@@ -418,7 +418,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     self._get_path_to_state(node, stop_at=domain), event
                 )
 
-        # Notify plugins of the completed transition.
+        # Notify plugins and subscribers of the completed transition.
+        self._notify_subscribers()
         for plugin in self._plugins:
             plugin.on_transition(
                 self,
@@ -591,11 +592,22 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     ancestor.id,
                     done_event_type,
                 )
-                # 📬 Send the `done.state.*` event for the next processing cycle.
-                self.send(Event(type=done_event_type))
+                # 📬 Send the `done.state.*` event for the next processing
+                #    cycle, carrying the final state's `output` as done data.
+                self.send(
+                    DoneEvent(
+                        type=done_event_type,
+                        data=self._resolve_output(final_state),
+                        src=ancestor.id,
+                    )
+                )
                 return  # 🛑 Only fire the event for the nearest completed ancestor.
 
             ancestor = ancestor.parent
+
+        # 🏁 A top-level final state completes the machine itself.
+        if final_state.parent is self.machine or final_state.parent is None:
+            self._complete(self._resolve_output(final_state))
 
     # -------------------------------------------------------------------------
     # ⚡ Action & Service Execution (Private Overrides)

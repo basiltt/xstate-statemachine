@@ -142,6 +142,13 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         #: *parent* state id. Recorded on exit, replayed when a transition
         #: targets a `type: "history"` child of that parent.
         self._history: Dict[str, List[StateNode]] = {}
+        #: Listeners registered via :meth:`subscribe`.
+        self._subscribers: List[Callable[[Any], None]] = []
+        #: The machine's final output, set when a top-level final state is
+        #: reached. `None` until then.
+        self.output: Any = None
+        #: The error that put the machine into the "error" status, if any.
+        self.error: Optional[BaseException] = None
         self._actors: Dict[str, "BaseInterpreter[Any, Any]"] = {}
 
         # 🔗 Extensibility & Introspection
@@ -205,6 +212,159 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             bool: `True` between a successful `start()` and a `stop()`.
         """
         return self.status == "running"
+
+    # -------------------------------------------------------------------------
+    # 🔭 Observation & Introspection
+    # -------------------------------------------------------------------------
+
+    def matches(self, state_id: str) -> bool:
+        """Reports whether a state is part of the active configuration.
+
+        Accepts a fully-qualified id (``"machine.parent.child"``), the same id
+        with a leading ``#``, or a trailing partial path (``"parent.child"``).
+        Matching an ancestor returns `True` when any descendant is active,
+        mirroring XState's ``snapshot.matches()``.
+
+        Args:
+            state_id (str): The state to test for.
+
+        Returns:
+            bool: `True` if the state or one of its descendants is active.
+        """
+        if not state_id:
+            return False
+        target = state_id[1:] if state_id.startswith("#") else state_id
+        for node in self._active_state_nodes:
+            if node.id == target or node.id.endswith("." + target):
+                return True
+        return False
+
+    def has_tag(self, tag: str) -> bool:
+        """Reports whether any active state declares the given tag.
+
+        Args:
+            tag (str): The tag to look for.
+
+        Returns:
+            bool: `True` if an active state carries the tag.
+        """
+        return any(tag in node.tags for node in self._active_state_nodes)
+
+    @property
+    def tags(self) -> Set[str]:
+        """The union of tags across every active state.
+
+        Returns:
+            Set[str]: All tags currently in effect.
+        """
+        tags: Set[str] = set()
+        for node in self._active_state_nodes:
+            tags |= node.tags
+        return tags
+
+    def get_meta(self) -> Dict[str, Any]:
+        """Collects the `meta` of every active state, keyed by state id.
+
+        Returns:
+            Dict[str, Any]: Mapping of state id to that state's `meta`.
+        """
+        return {
+            node.id: node.meta
+            for node in self._active_state_nodes
+            if node.meta
+        }
+
+    def can(self, event: Union[str, Event, Dict[str, Any]]) -> bool:
+        """Reports whether an event would cause a transition right now.
+
+        Guards are evaluated, so this is an accurate prediction rather than a
+        purely structural check. It has no side effects on the configuration.
+
+        Args:
+            event (Union[str, Event, Dict[str, Any]]): The event to test.
+
+        Returns:
+            bool: `True` if at least one transition would be taken.
+        """
+        event_obj = self._coerce_event(event)
+        try:
+            return bool(self._select_transitions(event_obj))
+        except Exception:
+            logger.exception(
+                "🔥 can() failed while evaluating '%s'; reporting False.",
+                event_obj.type,
+            )
+            return False
+
+    @staticmethod
+    def _coerce_event(
+        event: Union[str, Event, Dict[str, Any], AfterEvent, DoneEvent],
+    ) -> Union[Event, AfterEvent, DoneEvent]:
+        """Normalises the accepted event spellings into an event object.
+
+        Args:
+            event: A type string, a mapping with a `type` key, or an event.
+
+        Returns:
+            Union[Event, AfterEvent, DoneEvent]: The normalised event.
+
+        Raises:
+            TypeError: If the value cannot be interpreted as an event.
+        """
+        if isinstance(event, (Event, AfterEvent, DoneEvent)):
+            return event
+        if isinstance(event, str):
+            return Event(type=event)
+        if isinstance(event, dict):
+            event_type = event.get("type")
+            if not isinstance(event_type, str):
+                raise TypeError(
+                    "❌ Event dict must contain a string 'type' key."
+                )
+            payload = {k: v for k, v in event.items() if k != "type"}
+            return Event(type=event_type, payload=payload)
+        raise TypeError(f"❌ Unsupported event type: {type(event).__name__}")
+
+    def subscribe(
+        self, listener: Callable[["BaseInterpreter[Any, Any]"], None]
+    ) -> Callable[[], None]:
+        """Registers a listener invoked after every settled change.
+
+        Mirrors XState's ``actor.subscribe()``. The listener receives this
+        interpreter, from which `current_state_ids`, `context` and `status`
+        can be read.
+
+        Args:
+            listener (Callable): Called after each transition and on
+                completion.
+
+        Returns:
+            Callable[[], None]: An unsubscribe function.
+        """
+        self._subscribers.append(listener)
+
+        def _unsubscribe() -> None:
+            """Removes the listener if it is still registered."""
+            if listener in self._subscribers:
+                self._subscribers.remove(listener)
+
+        return _unsubscribe
+
+    def _notify_subscribers(self) -> None:
+        """Invokes every subscriber, isolating listener failures.
+
+        📝 A listener raising must not corrupt the machine, so exceptions are
+        logged and swallowed — the same contract XState adopted in v5.20.2 for
+        emitted-event listeners.
+        """
+        for listener in list(self._subscribers):
+            try:
+                listener(self)
+            except Exception:
+                logger.exception(
+                    "🔥 Subscriber raised while observing '%s'; ignoring.",
+                    self.id,
+                )
 
     @property
     def plugins(self) -> List[PluginBase["BaseInterpreter[Any, Any]"]]:
@@ -824,7 +984,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                     self._get_path_to_state(node, stop_at=domain), event
                 )
 
-        # 6. Notify plugins of the completed transition.
+        # 6. Notify plugins and subscribers of the completed transition.
         for plug in self._plugins:
             plug.on_transition(
                 self,
@@ -832,6 +992,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 self._active_state_nodes.copy(),
                 transition,
             )
+        self._notify_subscribers()
 
     # -------------------------------------------------------------------------
     # ⏯️ State Management Sub-Routines
@@ -1142,12 +1303,73 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 logger.info(
                     "🎉 State '%s' is done, firing onDone event.", ancestor.id
                 )
-                # 📨 Create and send the synthetic `done.state.*` event.
-                done_event = Event(type=f"done.state.{ancestor.id}")
+                # 📨 Create and send the synthetic `done.state.*` event,
+                #    carrying the final state's `output` as done data.
+                done_event = DoneEvent(
+                    type=f"done.state.{ancestor.id}",
+                    data=self._resolve_output(final_state),
+                    src=ancestor.id,
+                )
                 await self.send(done_event)
                 # Per SCXML, only fire for the first completed ancestor.
                 return
             ancestor = ancestor.parent
+
+        # 🏁 A top-level final state completes the machine itself.
+        if final_state.parent is self.machine or final_state.parent is None:
+            self._complete(self._resolve_output(final_state))
+
+    def _resolve_output(self, final_state: StateNode) -> Any:
+        """Computes the done data contributed by a final state.
+
+        `output` may be a literal or a callable of ``{context, event}``,
+        matching XState's dynamic-output form.
+
+        Args:
+            final_state (StateNode): The final state that was entered.
+
+        Returns:
+            Any: The resolved output, or `None` when none is declared.
+        """
+        output = final_state.output
+        if output is None:
+            return None
+        if callable(output):
+            try:
+                return output({"context": self.context, "event": None})
+            except Exception:
+                logger.exception(
+                    "🔥 Output function on '%s' raised; using None.",
+                    final_state.id,
+                )
+                return None
+        return output
+
+    def _complete(self, output: Any) -> None:
+        """Marks the machine as finished and records its output.
+
+        🏛️ Architecture decision: `status` previously only ever moved between
+        `uninitialized`, `running` and `stopped`, so reaching a top-level final
+        state was **unobservable** from the public API. That blocked any
+        `to_promise()`-style "await completion" helper. A distinct `"done"`
+        status makes completion a first-class, checkable outcome.
+
+        Args:
+            output (Any): The machine's final output, if any.
+        """
+        if self.status != "running":
+            return
+        self.status = "done"
+        self.output = output
+        logger.info(
+            "🏁 Machine '%s' reached a top-level final state. Output: %r",
+            self.id,
+            output,
+        )
+        for plugin in self._plugins:
+            hook = getattr(plugin, "on_done", None)
+            if callable(hook):
+                hook(self, output)
 
     def _find_optimal_transition(
         self, event: Union[Event, AfterEvent, DoneEvent]
