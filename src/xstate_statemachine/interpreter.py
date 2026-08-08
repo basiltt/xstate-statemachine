@@ -44,6 +44,17 @@ from typing import (
 from .base_interpreter import BaseInterpreter
 from .events import AfterEvent, DoneEvent, Event
 from .exceptions import ActorSpawningError, ImplementationMissingError
+from .actions import (
+    ESCALATE,
+    FORWARD_TO,
+    RAISE,
+    SEND_PARENT,
+    SEND_TO,
+    SPAWN_CHILD,
+    STOP_CHILD,
+    is_builtin,
+    resolve_builtin,
+)
 from .models import (
     ActionDefinition,
     InvokeDefinition,
@@ -415,12 +426,26 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 plugin.on_action_execute(self, action_def)
 
             # 👶 Handle actor spawning as a special, built-in action type.
-            if action_def.type.startswith("spawn_"):
+            if action_def.type.startswith("spawn_") and not is_builtin(
+                action_def.type
+            ):
                 await self._spawn_actor(action_def, event)
                 continue
 
             # 🔎 Find the implementation for the named action.
             action_callable = self.machine.logic.actions.get(action_def.type)
+
+            # 🎬 Built-in action creators. Resolved only when the user has NOT
+            #    supplied an action of the same name, so a machine that
+            #    legitimately defines its own `log` or `assign` keeps working.
+            if action_callable is None:
+                canonical = resolve_builtin(action_def.type)
+                if canonical is not None:
+                    await self._execute_builtin_action(
+                        canonical, action_def, event
+                    )
+                    continue
+
             if not action_callable:
                 raise ImplementationMissingError(
                     f"Action '{action_def.type}' is not implemented."
@@ -457,6 +482,189 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
     # -------------------------------------------------------------------------
     # 🤖 Asynchronous Task Implementations (Actors, Timers, Services)
     # -------------------------------------------------------------------------
+
+    async def _execute_builtin_action(
+        self,
+        canonical: str,
+        action_def: ActionDefinition,
+        event: Event,
+    ) -> None:
+        """Executes a built-in action creator asynchronously.
+
+        Pure-state effects (`assign`, `log`, `emit`, `pure`, `choose`,
+        `enqueueActions`, `cancel`) are handled by the shared base
+        implementation. Delivery effects (`raise`, `sendTo`, `sendParent`,
+        `forwardTo`, `escalate`, `stopChild`, `spawnChild`) need the event
+        loop and are handled here.
+
+        Args:
+            canonical (str): The canonical built-in action name.
+            action_def (ActionDefinition): The action being executed.
+            event (Event): The triggering event.
+        """
+        # 🧮 Shared semantics first; may yield nested actions to run.
+        followups = self._collect_builtin_followups(
+            canonical, action_def, event
+        )
+        if followups:
+            await self._execute_actions(
+                [ActionDefinition(f) for f in followups], event
+            )
+
+        params = self._resolve_params(action_def.params, event) or {}
+
+        if canonical == RAISE:
+            target_event = self._resolve_event_spec(params.get("event"), event)
+            delay = self._resolve_delay(params.get("delay"), event)
+            await self._deliver(self, target_event, delay, params.get("id"))
+
+        elif canonical == SEND_TO:
+            actor = self._resolve_actor_target(params.get("to"), event)
+            if actor is None:
+                logger.warning(
+                    "⚠️ sendTo could not resolve target %r; event dropped.",
+                    params.get("to"),
+                )
+                return
+            target_event = self._resolve_event_spec(params.get("event"), event)
+            delay = self._resolve_delay(params.get("delay"), event)
+            await self._deliver(actor, target_event, delay, params.get("id"))
+
+        elif canonical == SEND_PARENT:
+            if self.parent is None:
+                logger.warning("⚠️ sendParent called with no parent actor.")
+                return
+            target_event = self._resolve_event_spec(params.get("event"), event)
+            delay = self._resolve_delay(params.get("delay"), event)
+            await self._deliver(
+                self.parent, target_event, delay, params.get("id")
+            )
+
+        elif canonical == FORWARD_TO:
+            actor = self._resolve_actor_target(params.get("to"), event)
+            if actor is None:
+                logger.warning(
+                    "⚠️ forwardTo could not resolve target %r.",
+                    params.get("to"),
+                )
+                return
+            await self._deliver(actor, event, None, None)
+
+        elif canonical == ESCALATE:
+            error_payload = params.get("error")
+            escalate_event = Event(
+                type=f"xstate.error.actor.{self.id}",
+                payload={"error": error_payload},
+            )
+            if self.parent is not None:
+                await self._deliver(self.parent, escalate_event, None, None)
+            else:
+                logger.error(
+                    "🔥 escalate() with no parent actor: %r", error_payload
+                )
+
+        elif canonical == STOP_CHILD:
+            await self._stop_child_actor(params.get("id"), event)
+
+        elif canonical == SPAWN_CHILD:
+            await self._spawn_child_action(params, event)
+
+    async def _deliver(
+        self,
+        actor: "BaseInterpreter[Any, Any]",
+        target_event: Event,
+        delay: Optional[float],
+        send_id: Optional[str],
+    ) -> None:
+        """Sends an event to an actor, honouring an optional delay.
+
+        Args:
+            actor (BaseInterpreter): The recipient.
+            target_event (Event): The event to deliver.
+            delay (Optional[float]): Delay in milliseconds, or `None`.
+            send_id (Optional[str]): Id allowing later cancellation.
+        """
+        if not delay:
+            await self._send_to_actor(actor, target_event)
+            return
+
+        async def _delayed() -> None:
+            """Waits out the delay, then delivers."""
+            try:
+                await asyncio.sleep(delay / 1000.0)
+                await self._send_to_actor(actor, target_event)
+            except asyncio.CancelledError:  # pragma: no cover - shutdown
+                raise
+            finally:
+                if send_id:
+                    self._scheduled_sends.pop(str(send_id), None)
+
+        task = asyncio.create_task(_delayed())
+        self.task_manager.add(self.id, task)
+        if send_id:
+            self._scheduled_sends[str(send_id)] = task.cancel
+
+    @staticmethod
+    async def _send_to_actor(
+        actor: "BaseInterpreter[Any, Any]", target_event: Event
+    ) -> None:
+        """Dispatches an event to an actor of either execution mode.
+
+        📝 A parent may spawn a `SyncInterpreter` child (blocking actors), so
+        the recipient's `send` is not guaranteed to be a coroutine.
+
+        Args:
+            actor (BaseInterpreter): The recipient.
+            target_event (Event): The event to deliver.
+        """
+        result = actor.send(target_event)
+        if inspect.isawaitable(result):
+            await result
+
+    async def _stop_child_actor(self, spec: Any, event: Event) -> None:
+        """Stops a spawned child actor by id.
+
+        Args:
+            spec (Any): The child's id, or a callable resolving one.
+            event (Event): The triggering event.
+        """
+        actor = self._resolve_actor_target(spec, event)
+        if actor is None:
+            logger.warning("⚠️ stopChild could not resolve %r.", spec)
+            return
+        for actor_id, candidate in list(self._actors.items()):
+            if candidate is actor:
+                del self._actors[actor_id]
+                break
+        result = actor.stop()
+        if inspect.isawaitable(result):
+            await result
+
+    async def _spawn_child_action(
+        self, params: Dict[str, Any], event: Event
+    ) -> None:
+        """Spawns an actor declaratively via the `spawnChild` action.
+
+        Args:
+            params (Dict[str, Any]): Params carrying `src`, `id`, `systemId`
+                and `input`.
+            event (Event): The triggering event.
+        """
+        src = params.get("src")
+        if not isinstance(src, str):
+            logger.warning("⚠️ spawnChild requires a string 'src'.")
+            return
+        synthetic = ActionDefinition(
+            {
+                "type": f"spawn_{src}",
+                "params": {
+                    "id": params.get("id"),
+                    "systemId": params.get("systemId"),
+                    "input": params.get("input"),
+                },
+            }
+        )
+        await self._spawn_actor(synthetic, event)
 
     async def _spawn_actor(
         self, action_def: ActionDefinition, event: Event
@@ -500,10 +708,24 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             )
 
         # 🧬 Create, configure, and start the new child interpreter.
-        actor_id = f"{self.id}:{actor_machine_key}:{uuid.uuid4()}"
+        spawn_params = action_def.params or {}
+        explicit_id = spawn_params.get("id")
+        actor_id = (
+            f"{self.id}:{explicit_id}"
+            if explicit_id
+            else f"{self.id}:{actor_machine_key}:{uuid.uuid4()}"
+        )
         child_interpreter = Interpreter(actor_machine)
         child_interpreter.parent = self
         child_interpreter.id = actor_id
+        # 📥 Seed the child's context with any declared input.
+        child_input = spawn_params.get("input")
+        if child_input is not None:
+            child_interpreter.context.setdefault("input", child_input)
+        # 🌐 Register under a systemId so siblings can address it.
+        self._register_in_system(
+            spawn_params.get("systemId"), child_interpreter
+        )
         await child_interpreter.start()
 
         self._actors[actor_id] = child_interpreter

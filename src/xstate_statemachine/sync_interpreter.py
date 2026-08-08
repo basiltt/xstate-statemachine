@@ -47,6 +47,17 @@ from .exceptions import (
     NotSupportedError,
     StateNotFoundError,
 )
+from .actions import (
+    ESCALATE,
+    FORWARD_TO,
+    RAISE,
+    SEND_PARENT,
+    SEND_TO,
+    SPAWN_CHILD,
+    STOP_CHILD,
+    is_builtin,
+    resolve_builtin,
+)
 from .models import (
     ActionDefinition,
     InvokeDefinition,
@@ -639,12 +650,24 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 plugin.on_action_execute(self, action_def)
 
             # 🎭 Handle actor spawning actions
-            if action_def.type.startswith(("spawn_", "spawn_blocking_")):
+            if action_def.type.startswith(
+                ("spawn_", "spawn_blocking_")
+            ) and not is_builtin(action_def.type):
                 self._spawn_actor(action_def, event)
                 continue
 
             # ⚙️ Handle normal actions
             action_impl = self.machine.logic.actions.get(action_def.type)
+
+            # 🎬 Built-in action creators, resolved only when the user has NOT
+            #    supplied an action of the same name so a machine defining its
+            #    own `log` or `assign` keeps working.
+            if action_impl is None:
+                canonical = resolve_builtin(action_def.type)
+                if canonical is not None:
+                    self._execute_builtin_action(canonical, action_def, event)
+                    continue
+
             if not action_impl:
                 raise ImplementationMissingError(
                     f"Action '{action_def.type}' not implemented."
@@ -673,6 +696,163 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     event.type,
                 )
                 return
+
+    def _execute_builtin_action(
+        self,
+        canonical: str,
+        action_def: ActionDefinition,
+        event: Event,
+    ) -> None:
+        """Executes a built-in action creator synchronously.
+
+        Mirrors `Interpreter._execute_builtin_action`. Delayed sends are
+        backed by `threading.Timer` rather than asyncio tasks, matching how
+        this engine already implements `after`.
+
+        Args:
+            canonical (str): The canonical built-in action name.
+            action_def (ActionDefinition): The action being executed.
+            event (Event): The triggering event.
+        """
+        followups = self._collect_builtin_followups(
+            canonical, action_def, event
+        )
+        if followups:
+            self._execute_actions(
+                [ActionDefinition(f) for f in followups], event
+            )
+
+        params = self._resolve_params(action_def.params, event) or {}
+
+        if canonical == RAISE:
+            self._deliver(
+                self,
+                self._resolve_event_spec(params.get("event"), event),
+                self._resolve_delay(params.get("delay"), event),
+                params.get("id"),
+            )
+
+        elif canonical == SEND_TO:
+            actor = self._resolve_actor_target(params.get("to"), event)
+            if actor is None:
+                logger.warning(
+                    "⚠️ sendTo could not resolve target %r; event dropped.",
+                    params.get("to"),
+                )
+                return
+            self._deliver(
+                actor,
+                self._resolve_event_spec(params.get("event"), event),
+                self._resolve_delay(params.get("delay"), event),
+                params.get("id"),
+            )
+
+        elif canonical == SEND_PARENT:
+            if self.parent is None:
+                logger.warning("⚠️ sendParent called with no parent actor.")
+                return
+            self._deliver(
+                self.parent,
+                self._resolve_event_spec(params.get("event"), event),
+                self._resolve_delay(params.get("delay"), event),
+                params.get("id"),
+            )
+
+        elif canonical == FORWARD_TO:
+            actor = self._resolve_actor_target(params.get("to"), event)
+            if actor is None:
+                logger.warning(
+                    "⚠️ forwardTo could not resolve target %r.",
+                    params.get("to"),
+                )
+                return
+            self._deliver(actor, event, None, None)
+
+        elif canonical == ESCALATE:
+            escalate_event = Event(
+                type=f"xstate.error.actor.{self.id}",
+                payload={"error": params.get("error")},
+            )
+            if self.parent is not None:
+                self._deliver(self.parent, escalate_event, None, None)
+            else:
+                logger.error(
+                    "🔥 escalate() with no parent actor: %r",
+                    params.get("error"),
+                )
+
+        elif canonical == STOP_CHILD:
+            actor = self._resolve_actor_target(params.get("id"), event)
+            if actor is None:
+                logger.warning(
+                    "⚠️ stopChild could not resolve %r.", params.get("id")
+                )
+                return
+            for actor_id, candidate in list(self._actors.items()):
+                if candidate is actor:
+                    del self._actors[actor_id]
+                    break
+            actor.stop()
+
+        elif canonical == SPAWN_CHILD:
+            src = params.get("src")
+            if not isinstance(src, str):
+                logger.warning("⚠️ spawnChild requires a string 'src'.")
+                return
+            self._spawn_actor(
+                ActionDefinition(
+                    {
+                        "type": f"spawn_{src}",
+                        "params": {
+                            "id": params.get("id"),
+                            "systemId": params.get("systemId"),
+                            "input": params.get("input"),
+                        },
+                    }
+                ),
+                event,
+            )
+
+    def _deliver(
+        self,
+        actor: Any,
+        target_event: Event,
+        delay: Optional[float],
+        send_id: Optional[str],
+    ) -> None:
+        """Sends an event to an actor, honouring an optional delay.
+
+        Args:
+            actor (Any): The recipient interpreter.
+            target_event (Event): The event to deliver.
+            delay (Optional[float]): Delay in milliseconds, or `None`.
+            send_id (Optional[str]): Id allowing later cancellation.
+        """
+        if not delay:
+            actor.send(target_event)
+            return
+
+        cancel_flag = threading.Event()
+
+        def _fire() -> None:
+            """Delivers the event unless cancelled while waiting."""
+            if cancel_flag.wait(delay / 1000.0):
+                return
+            if send_id:
+                self._scheduled_sends.pop(str(send_id), None)
+            try:
+                actor.send(target_event)
+            except Exception:  # pragma: no cover - defensive
+                logger.exception(
+                    "🔥 Delayed send of '%s' failed.", target_event.type
+                )
+
+        timer = threading.Thread(
+            target=_fire, name=f"send-{target_event.type}", daemon=True
+        )
+        if send_id:
+            self._scheduled_sends[str(send_id)] = cancel_flag.set
+        timer.start()
 
     def _spawn_actor(self, action_def: ActionDefinition, event: Event) -> None:
         """Spawns a child state machine actor in blocking or non-blocking mode.
@@ -704,11 +884,24 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 f"Cannot spawn '{key}'. Service not a MachineNode or factory."
             )
 
-        # 🆔 Create and register the child interpreter (actor)
-        actor_id = f"{self.id}:{key}:{uuid.uuid4()}"
+        # 🆔 Create and register the child interpreter (actor). An explicit
+        #    `id` in params wins so `stop_child("worker")` can address it.
+        spawn_params = action_def.params or {}
+        explicit_id = spawn_params.get("id")
+        actor_id = (
+            f"{self.id}:{explicit_id}"
+            if explicit_id
+            else f"{self.id}:{key}:{uuid.uuid4()}"
+        )
         child = SyncInterpreter(actor_machine)
         child.parent = self
         child.id = actor_id
+        # 📥 Seed the child's context with any declared input.
+        child_input = spawn_params.get("input")
+        if child_input is not None:
+            child.context.setdefault("input", child_input)
+        # 🌐 Register under a systemId so siblings can address it.
+        self._register_in_system(spawn_params.get("systemId"), child)
         self._actors[actor_id] = child
 
         # --- Blocking Execution Path ---

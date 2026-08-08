@@ -52,6 +52,24 @@ from .exceptions import (
     InvalidConfigError,
     StateNotFoundError,
 )
+from .actions import (
+    ASSIGN,
+    CANCEL,
+    CHOOSE,
+    EMIT,
+    ENQUEUE_ACTIONS,
+    ESCALATE,
+    FORWARD_TO,
+    LOG,
+    PURE,
+    RAISE,
+    SEND_PARENT,
+    SEND_TO,
+    SPAWN_CHILD,
+    STOP_CHILD,
+    ActionEnqueuer,
+    resolve_builtin,
+)
 from .models import (
     ActionDefinition,
     GuardDefinition,
@@ -79,6 +97,55 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # 🏛️ BaseInterpreter Class Definition
 # -----------------------------------------------------------------------------
+
+
+class ActorSystem:
+    """A read-only view over the actor registry of one machine hierarchy.
+
+    Mirrors XState's actor system: actors that declare a `systemId` can be
+    looked up by that name from anywhere in the hierarchy, which is what makes
+    sibling-to-sibling messaging possible.
+
+    Attributes:
+        _registry (Dict[str, BaseInterpreter]): The shared registry.
+    """
+
+    __slots__ = ("_registry",)
+
+    def __init__(self, registry: Dict[str, "BaseInterpreter[Any, Any]"]):
+        """Initializes the view.
+
+        Args:
+            registry: The root interpreter's live registry.
+        """
+        self._registry = registry
+
+    def get(self, system_id: str) -> Optional["BaseInterpreter[Any, Any]"]:
+        """Looks up an actor by its `systemId`.
+
+        Args:
+            system_id (str): The registered system id.
+
+        Returns:
+            Optional[BaseInterpreter]: The actor, or `None`.
+        """
+        return self._registry.get(system_id)
+
+    def get_all(self) -> Dict[str, "BaseInterpreter[Any, Any]"]:
+        """Returns every registered actor.
+
+        Returns:
+            Dict[str, BaseInterpreter]: A copy of the registry.
+        """
+        return dict(self._registry)
+
+    def __contains__(self, system_id: object) -> bool:
+        """Supports ``system_id in interpreter.system``."""
+        return system_id in self._registry
+
+    def __repr__(self) -> str:
+        """Provides a developer-friendly string representation."""
+        return f"ActorSystem(actors={sorted(self._registry)})"
 
 
 class BaseInterpreter(Generic[TContext, TEvent]):
@@ -149,6 +216,13 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         self.output: Any = None
         #: The error that put the machine into the "error" status, if any.
         self.error: Optional[BaseException] = None
+        #: Listeners registered via :meth:`on`, keyed by emitted event type.
+        self._emit_listeners: Dict[str, List[Callable[[Any], None]]] = {}
+        #: Cancellation callbacks for pending delayed sends, keyed by send id.
+        self._scheduled_sends: Dict[str, Callable[[], None]] = {}
+        #: Actor-system registry. Only the ROOT interpreter's copy is used;
+        #: children reach it by walking up `parent`.
+        self._system: Dict[str, "BaseInterpreter[Any, Any]"] = {}
         self._actors: Dict[str, "BaseInterpreter[Any, Any]"] = {}
 
         # 🔗 Extensibility & Introspection
@@ -884,6 +958,347 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 )
                 continue
             await self._execute_transition(transition, event)
+
+    # -------------------------------------------------------------------------
+    # 🎬 Built-in Action Support
+    # -------------------------------------------------------------------------
+
+    def _resolve_event_spec(
+        self, spec: Any, event: Union[Event, AfterEvent, DoneEvent]
+    ) -> Event:
+        """Turns an event specification from action params into an `Event`.
+
+        Accepts a plain type string, a mapping with a `type` key, an existing
+        event object, or a callable of `{context, event}` returning one of
+        those.
+
+        Args:
+            spec (Any): The declared event specification.
+            event (Union[Event, AfterEvent, DoneEvent]): The triggering event,
+                used to resolve callables.
+
+        Returns:
+            Event: The concrete event to dispatch.
+
+        Raises:
+            TypeError: If the specification cannot be interpreted.
+        """
+        if callable(spec):
+            spec = spec({"context": self.context, "event": event})
+        resolved = self._coerce_event(spec)
+        if isinstance(resolved, Event):
+            return resolved
+        # 🔁 Normalise AfterEvent/DoneEvent into a plain Event for re-sending.
+        return Event(
+            type=resolved.type, payload=getattr(resolved, "data", {}) or {}
+        )
+
+    def _resolve_actor_target(
+        self, spec: Any, event: Union[Event, AfterEvent, DoneEvent]
+    ) -> Optional["BaseInterpreter[Any, Any]"]:
+        """Resolves a `sendTo`/`forwardTo` target to a live interpreter.
+
+        Lookup order: the actor system registry (`system_id`), then this
+        interpreter's own children, then a suffix match on child ids — actor
+        ids are namespaced (`parent:key:uuid`), so users naturally refer to
+        the bare key.
+
+        Args:
+            spec (Any): The declared target: an id string, a callable
+                resolving one, or an interpreter instance.
+            event (Union[Event, AfterEvent, DoneEvent]): The triggering event.
+
+        Returns:
+            Optional[BaseInterpreter]: The resolved actor, or `None`.
+        """
+        if callable(spec) and not isinstance(spec, BaseInterpreter):
+            spec = spec(
+                {
+                    "context": self.context,
+                    "event": event,
+                    "system": self.system,
+                }
+            )
+        if isinstance(spec, BaseInterpreter):
+            return spec
+        if not isinstance(spec, str):
+            return None
+
+        # 🌐 Actor-system registration wins: it is the explicit, stable name.
+        registry = self._system_registry()
+        if spec in registry:
+            return registry[spec]
+        if spec in self._actors:
+            return self._actors[spec]
+        for actor_id, actor in self._actors.items():
+            if (
+                actor_id.endswith(f":{spec}")
+                or actor_id.split(":")[-1] == spec
+            ):
+                return actor
+        if spec in ("parent", "#parent") and self.parent is not None:
+            return self.parent
+        return None
+
+    def _system_registry(self) -> Dict[str, "BaseInterpreter[Any, Any]"]:
+        """Returns the actor-system registry shared by the whole hierarchy.
+
+        🏛️ Architecture decision: the registry lives on the *root* interpreter
+        so `system_id` is global to one machine hierarchy, exactly like
+        XState's actor system. Children reach it by walking up `parent`.
+
+        Returns:
+            Dict[str, BaseInterpreter]: Mapping of `system_id` to actor.
+        """
+        root: "BaseInterpreter[Any, Any]" = self
+        while root.parent is not None:
+            root = root.parent
+        return root._system
+
+    @property
+    def system(self) -> "ActorSystem":
+        """The actor system this interpreter belongs to.
+
+        Returns:
+            ActorSystem: A view exposing `get()` and `get_all()`.
+        """
+        return ActorSystem(self._system_registry())
+
+    def _register_in_system(
+        self, system_id: Optional[str], actor: "BaseInterpreter[Any, Any]"
+    ) -> None:
+        """Registers an actor under a `system_id`, if one was declared.
+
+        Args:
+            system_id (Optional[str]): The requested system id.
+            actor (BaseInterpreter): The actor to register.
+        """
+        if not system_id:
+            return
+        registry = self._system_registry()
+        if system_id in registry:
+            logger.warning(
+                "⚠️ systemId '%s' is already registered; overwriting.",
+                system_id,
+            )
+        registry[system_id] = actor
+
+    def _resolve_delay(self, spec: Any, event: Any) -> Optional[float]:
+        """Resolves a delay specification to milliseconds.
+
+        Accepts a number, a callable of `{context, event}`, or a named delay
+        resolved from `MachineLogic.delays`.
+
+        Args:
+            spec (Any): The declared delay.
+            event (Any): The triggering event.
+
+        Returns:
+            Optional[float]: The delay in milliseconds, or `None`.
+        """
+        if spec is None:
+            return None
+        if callable(spec):
+            spec = spec({"context": self.context, "event": event})
+        if isinstance(spec, (int, float)):
+            return float(spec)
+        if isinstance(spec, str):
+            named = self.machine.logic.delays.get(spec)
+            if named is None:
+                logger.warning(
+                    "⚠️ Named delay '%s' is not defined in MachineLogic."
+                    " Treating as no delay.",
+                    spec,
+                )
+                return None
+            if callable(named):
+                named = named(self.context, event)
+            return float(named) if named is not None else None
+        return None
+
+    def _emit(self, event: Event) -> None:
+        """Publishes an emitted event to registered listeners.
+
+        Args:
+            event (Event): The event to publish.
+        """
+        listeners = self._emit_listeners.get(event.type, [])
+        wildcard = self._emit_listeners.get("*", [])
+        for listener in list(listeners) + list(wildcard):
+            try:
+                listener(event)
+            except Exception:
+                # 📝 A listener failure must not disturb the machine — the
+                #    same contract XState adopted in v5.20.2.
+                logger.exception(
+                    "🔥 Emit listener for '%s' raised; ignoring.", event.type
+                )
+
+    def on(
+        self, event_type: str, listener: Callable[[Event], None]
+    ) -> Callable[[], None]:
+        """Registers a listener for events published via the `emit` action.
+
+        Args:
+            event_type (str): The emitted event type, or `"*"` for all.
+            listener (Callable[[Event], None]): The callback.
+
+        Returns:
+            Callable[[], None]: An unsubscribe function.
+        """
+        self._emit_listeners.setdefault(event_type, []).append(listener)
+
+        def _off() -> None:
+            """Removes the listener if still registered."""
+            bucket = self._emit_listeners.get(event_type, [])
+            if listener in bucket:
+                bucket.remove(listener)
+
+        return _off
+
+    def _apply_assign(
+        self, params: Any, event: Union[Event, AfterEvent, DoneEvent]
+    ) -> None:
+        """Applies an `assign` action to the machine context.
+
+        Args:
+            params (Any): The action's params, carrying `assignment`.
+            event (Union[Event, AfterEvent, DoneEvent]): The triggering event.
+        """
+        assignment = (
+            params.get("assignment") if isinstance(params, dict) else params
+        )
+        if assignment is None:
+            return
+        args = {"context": self.context, "event": event}
+        if callable(assignment):
+            produced = assignment(args)
+            if isinstance(produced, dict):
+                self.context.update(produced)
+            return
+        if isinstance(assignment, dict):
+            for key, value in assignment.items():
+                self.context[key] = value(args) if callable(value) else value
+
+    def _collect_builtin_followups(
+        self,
+        canonical: str,
+        action_def: ActionDefinition,
+        event: Union[Event, AfterEvent, DoneEvent],
+    ) -> List[Any]:
+        """Handles a built-in action, returning any actions it produced.
+
+        This is the engine-agnostic half of built-in action execution. Effects
+        that need to await (sending, spawning) are returned as follow-up work
+        for the concrete interpreter, so the sync and async engines share one
+        implementation of the semantics.
+
+        Args:
+            canonical (str): The canonical built-in action name.
+            action_def (ActionDefinition): The action being executed.
+            event (Union[Event, AfterEvent, DoneEvent]): The triggering event.
+
+        Returns:
+            List[Any]: Nested action definitions to execute next.
+        """
+        params = self._resolve_params(action_def.params, event) or {}
+
+        if canonical == ASSIGN:
+            self._apply_assign(params, event)
+            return []
+
+        if canonical == LOG:
+            expr = params.get("expr", "") if isinstance(params, dict) else ""
+            label = params.get("label") if isinstance(params, dict) else None
+            message = (
+                expr({"context": self.context, "event": event})
+                if callable(expr)
+                else expr
+            )
+            logger.info("📝 %s%s", f"[{label}] " if label else "", message)
+            return []
+
+        if canonical == EMIT:
+            self._emit(self._resolve_event_spec(params.get("event"), event))
+            return []
+
+        if canonical == PURE:
+            getter = params.get("get") if isinstance(params, dict) else None
+            if not callable(getter):
+                return []
+            produced = getter({"context": self.context, "event": event})
+            if produced is None:
+                return []
+            return produced if isinstance(produced, list) else [produced]
+
+        if canonical == CHOOSE:
+            conditions = (
+                params.get("conditions", [])
+                if isinstance(params, dict)
+                else []
+            )
+            for branch in conditions:
+                guard_cfg = branch.get("guard", branch.get("cond"))
+                if guard_cfg is None or self._is_guard_satisfied(
+                    GuardDefinition(guard_cfg), event
+                ):
+                    chosen = branch.get("actions", [])
+                    return chosen if isinstance(chosen, list) else [chosen]
+            return []
+
+        if canonical == ENQUEUE_ACTIONS:
+            callback = (
+                params.get("callback") if isinstance(params, dict) else None
+            )
+            if not callable(callback):
+                return []
+            enqueue = ActionEnqueuer(self, event)
+
+            def _check(guard_cfg: Any) -> bool:
+                """Evaluates a guard from inside the callback."""
+                return self._is_guard_satisfied(
+                    GuardDefinition(guard_cfg), event
+                )
+
+            callback(
+                {
+                    "context": self.context,
+                    "event": event,
+                    "enqueue": enqueue,
+                    "check": _check,
+                    "self": self,
+                    "system": self.system,
+                }
+            )
+            return enqueue.items
+
+        if canonical == CANCEL:
+            send_id = (
+                params.get("sendId") if isinstance(params, dict) else None
+            )
+            if send_id:
+                self._cancel_scheduled_send(str(send_id))
+            return []
+
+        # 📨 Remaining built-ins need interpreter-specific delivery and are
+        #    handled by the concrete engines.
+        return []
+
+    def _cancel_scheduled_send(self, send_id: str) -> None:
+        """Cancels a pending delayed send.
+
+        Args:
+            send_id (str): The identifier given to the original send.
+        """
+        canceller = self._scheduled_sends.pop(send_id, None)
+        if canceller is None:
+            logger.debug("🤷 No pending send with id '%s' to cancel.", send_id)
+            return
+        try:
+            canceller()
+            logger.info("🚫 Cancelled scheduled send '%s'.", send_id)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("🔥 Failed to cancel send '%s'.", send_id)
 
     async def _execute_transition(
         self,
