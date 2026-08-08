@@ -125,11 +125,18 @@ the only previous mechanism was a user function mutating context in place:
   back to `state_ids` when `configuration` is absent.
 
 ### Testing
-- New `tests/test_xstate_v5_parity.py`: **114 tests**, one class per feature
+- New `tests/test_xstate_v5_parity.py`: **132 tests**, one class per feature
   area, asserting observable behaviour. Where a gap previously failed
   silently, the test pins that the feature now takes effect — a test that
   only checked "no exception" would still pass against the broken version.
-- Suite: 2455 → **2569 passing**. Coverage **86%**.
+- Suite: 2455 → **2587 passing**. Coverage **86%**.
+- The implementation was then reviewed adversarially, which found two further
+  CRITICAL defects (a `raise` during initial entry corrupting the
+  configuration; transitions into a parallel region double-entering it) plus
+  six HIGH/MEDIUM issues. All are fixed and pinned by regression tests. Most
+  notably, wildcard descriptors were swallowing the engine's own
+  `done.*` / `error.*` / `after.*` events, which silently broke every invoke
+  and delayed transition in a state declaring `on: {"*": ...}`.
 
 ### Added
 - **Continuous Integration** (`.github/workflows/ci.yml`). The project had
