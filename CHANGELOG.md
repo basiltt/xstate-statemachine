@@ -7,6 +7,130 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-08
+
+**XState v5 feature parity.** Closes all 73 gaps catalogued in
+`docs/FEATURE_GAP_ANALYSIS.md` — every one verified by an executable probe.
+
+> ⚠️ **Read the *Fixed* section first.** Several defects caused valid XState
+> JSON to be accepted and then silently ignored, or to produce wrong
+> behaviour. If you relied on any of those accidents, your machine's
+> behaviour will change.
+
+### Fixed
+
+Silent-wrongness defects, in order of severity:
+
+- **`cond` guards fired unconditionally.** Only `guard` was read, so any
+  transition written with the XState v4 spelling ran **unguarded** — the
+  predicate was never called. This silently inverted safety logic in every
+  machine ported from v4 or copied from an older tutorial. `cond` is now a
+  first-class alias for `guard`.
+- **Object-form guards killed the async interpreter.** The standard v5 form
+  `{"type": ..., "params": ...}` was used directly as a dictionary key,
+  raising `TypeError: unhashable type: 'dict'` from inside the event loop.
+  In `SyncInterpreter` this surfaced; in the async `Interpreter` it destroyed
+  the run loop while `status` still read `"running"`, and every later `send()`
+  was dropped. Guards are now normalised into a hashable `GuardDefinition`.
+- **Child actors were dropped from snapshots.** A parent with live children
+  serialised to `{status, context, state_ids}` and restored with **zero
+  children** — unrecoverable data loss for anyone persisting a workflow.
+  Snapshots are now deep.
+- **History states stranded the machine.** `{"type": "history"}` parsed as a
+  plain atomic state, so targeting it parked the machine *in the history node
+  itself*.
+- **Compound states with no `initial` started empty.** The machine reported
+  success with an empty active configuration and silently dropped every
+  event. A single child is now inferred; an ambiguous one raises at start.
+- **Wildcard and partial event descriptors never matched.** `on: {"*": ...}`
+  and `on: {"mouse.*": ...}` were valid config that did nothing, because event
+  lookup was an exact dictionary test.
+- **Forbidden transitions did not block.** `on: {"E": None}` vanished at parse
+  time, so the ancestor's handler fired anyway.
+- **Callable `params` were passed through raw.** User code received a function
+  object where it expected a dict — silent corruption surfacing far from its
+  cause. The same applied to a callable `context`.
+- **Named delays crashed.** `after: {"TIMEOUT": ...}` raised a bare
+  `ValueError` from `int()` with no hint that named delays were the feature.
+- **Unhandled service failures were invisible.** A service that raised with no
+  `onError` logged a message and the machine carried on as though nothing had
+  happened.
+- **Transient loops could spin forever.** Two `always` transitions targeting
+  each other never terminated.
+
+### Added
+
+**Guards**
+- Higher-order composition: `and`, `or`, `not`, with short-circuit evaluation
+  and arbitrary nesting.
+- The built-in `stateIn` guard, answered from the live configuration.
+- Parameterised guards. Params reach the predicate as an optional third
+  argument, arity-checked so existing two-argument guards are unaffected.
+
+**Action creators** (`xstate_statemachine.actions`) — none of these existed;
+the only previous mechanism was a user function mutating context in place:
+- `raise`, `sendTo`, `sendParent`, `forwardTo`, `escalate`, `log`, `cancel`,
+  `stopChild`, `spawnChild`, `emit`, `assign`, `pure`, `choose`,
+  `enqueueActions`.
+- Both camelCase (JSON) and snake_case (Python) spellings, plus helper
+  functions so Python-authored machines need not hand-write params dicts.
+- Built-ins resolve **after** a lookup in `MachineLogic.actions`, so a machine
+  that defines its own `log` or `assign` keeps working.
+- Delayed sends with cancellation: `delay` accepts a number, a callable, or a
+  named delay; `cancel(send_id)` aborts a pending send.
+
+**Actor system**
+- `systemId` registration with `interpreter.system.get()` / `.get_all()`,
+  backed by a registry on the root interpreter so ids are global to one
+  hierarchy — which is what makes sibling-to-sibling messaging possible.
+- `spawn` honours explicit `id`, `systemId` and `input`.
+
+**Statechart primitives**
+- History states, shallow and deep, including persistence and SCXML-correct
+  fallback for an unvisited history state.
+- Top-level `always` (the v5 spelling); the v4 `on: {"": ...}` still works.
+- `tags` + `has_tag()` / `.tags`, `meta` + `get_meta()`, `description`.
+- Final-state `output` carried as done-data on `done.state.*`, and machine
+  completion via `status == "done"` with `interpreter.output`.
+
+**Observation & lifecycle**
+- `subscribe()` returning an unsubscribe callable; listener exceptions are
+  logged and contained.
+- `matches()`, `can()`, `has_tag()`, `get_meta()`.
+- `input` at creation plus `context` factories receiving `{input}`.
+- Error snapshots: `status == "error"` and `interpreter.error`.
+- `emit()` with `interpreter.on(type | "*", listener)`.
+
+**Pure API** (`xstate_statemachine.helpers`), mirroring XState v5.19.0:
+- `initial_transition()` / `pure_transition()` returning
+  `(snapshot, actions)` — genuinely side-effect free: a throwaway probe
+  records the actions a real run would execute and suppresses timers and
+  services. Exported as `pure_transition` so it does not shadow the Pythonic
+  DSL's `transition()`.
+- `get_initial_snapshot()` / `get_next_snapshot()`.
+- `wait_for()`, `wait_for_sync()`, `to_promise()`.
+
+**Safety**
+- `max_iterations` (default 1000, configurable via `maxIterations`) bounds the
+  microstep loop.
+- `MachineLogic(delays=...)` for symbolic delays.
+
+### Changed
+- `TransitionDefinition.guard` is now a read-only property returning the
+  guard's *type name*. Use the new `guard_def` for params and nested guards.
+- `StateNode.type` may be `"history"`.
+- `after` map keys may be `str` (a named delay) as well as `int`.
+- `get_snapshot()` output gained `configuration`, `output`, `error`,
+  `history` and `actors`. Older snapshots still restore — the loader falls
+  back to `state_ids` when `configuration` is absent.
+
+### Testing
+- New `tests/test_xstate_v5_parity.py`: **114 tests**, one class per feature
+  area, asserting observable behaviour. Where a gap previously failed
+  silently, the test pins that the feature now takes effect — a test that
+  only checked "no exception" would still pass against the broken version.
+- Suite: 2455 → **2569 passing**. Coverage **86%**.
+
 ### Added
 - **Continuous Integration** (`.github/workflows/ci.yml`). The project had
   issue and PR templates but no workflows, so nothing verified a push. Every

@@ -80,6 +80,35 @@ uses **threads** (`SyncInterpreter`) and **asyncio**, both of which have real
 platform-specific behaviour. `fail-fast: false` keeps one red cell from
 hiding whether a failure is isolated or systemic.
 
+
+### XState v5 Feature Surface (v0.6.0+)
+
+The library targets XState v5 semantics. When adding machine features, check
+these modules first:
+
+| Module | Responsibility |
+|:-------|:---------------|
+| `models.py` | Config parsing. `GuardDefinition` normalises every guard form; `StateNode` carries `tags`, `meta`, `description`, `output`, `history`, `depth`. |
+| `actions.py` | Built-in action creators (`raise`, `sendTo`, `assign`, `enqueueActions`, …). Both camelCase and snake_case spellings map to one canonical name. |
+| `helpers.py` | `wait_for` / `to_promise` and the pure `transition()` API. |
+| `base_interpreter.py` | Engine-agnostic semantics, including built-in action dispatch and the actor system. |
+
+**Conventions that matter:**
+
+- **Built-ins resolve *after* `MachineLogic.actions`.** A user may legitimately
+  name their own action `log` or `assign`; their implementation must win.
+- **`spawn_<serviceKey>` is reserved.** Never register `spawn_child` as an
+  alias for the `spawnChild` built-in — `spawn_child` already means "spawn the
+  service named `child`" and aliasing it silently breaks existing machines.
+- **Shared semantics live in `BaseInterpreter`.** Only *delivery* (asyncio
+  tasks vs daemon threads) may differ between engines. `SyncInterpreter`
+  overrides several base methods — when changing `_enter_states`,
+  `_exit_states`, `_execute_actions` or `_check_and_fire_on_done`, check
+  whether the sync engine has its own copy.
+- **Silent acceptance is a bug.** Config the library does not implement must
+  either work or fail loudly. Most of the v0.6.0 work was converting silently
+  ignored keys into real features.
+
 ### CLI Tool
 ```bash
 # Generate boilerplate from JSON

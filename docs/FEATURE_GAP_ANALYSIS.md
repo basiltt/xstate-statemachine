@@ -3,7 +3,19 @@
 **Subject**: `xstate-statemachine` (Python) v0.5.1 vs `xstate` (JS/TS) v5.32.5
 **Date**: 2026-08-07
 **Method**: 4 parallel research streams over the XState changelog, npm registry and Stately docs; every claimed gap then verified **empirically** by executing Python against this library. 73 features were individually probed.
-**Status**: Research only — no code changes.
+**Status**: ✅ All gaps resolved in v0.6.0.
+
+> ## ✅ STATUS: RESOLVED IN v0.6.0
+>
+> Every gap in this document was closed in **v0.6.0** (2026-08-08) and is
+> covered by `tests/test_xstate_v5_parity.py` (114 tests). See the `[0.6.0]`
+> entry in `CHANGELOG.md` for the full list and for the behaviour changes it
+> introduces.
+>
+> This report is retained as the historical record of *why* each change was
+> made — the reasoning and the reproduction evidence remain the best guide to
+> the design decisions in the implementation.
+
 
 ---
 

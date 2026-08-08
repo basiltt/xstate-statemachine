@@ -7,10 +7,10 @@
 <br>
 
 [![CI](https://github.com/basiltt/xstate-statemachine/actions/workflows/ci.yml/badge.svg)](https://github.com/basiltt/xstate-statemachine/actions/workflows/ci.yml)
-[![PyPI Version](https://img.shields.io/badge/PyPI-v0.5.1-blue?logo=pypi&logoColor=white&style=for-the-badge)](https://pypi.org/project/xstate-statemachine/)
+[![PyPI Version](https://img.shields.io/badge/PyPI-v0.6.0-blue?logo=pypi&logoColor=white&style=for-the-badge)](https://pypi.org/project/xstate-statemachine/)
 [![Python](https://img.shields.io/badge/Python-3.9%E2%80%933.14-3776AB?logo=python&logoColor=white&style=for-the-badge)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-2446%20Passing-brightgreen?logo=pytest&logoColor=white&style=for-the-badge)](tests/)
-[![Coverage](https://img.shields.io/badge/Coverage-87%25-brightgreen?logo=codecov&logoColor=white&style=for-the-badge)](.github/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/Tests-2569%20Passing-brightgreen?logo=pytest&logoColor=white&style=for-the-badge)](tests/)
+[![Coverage](https://img.shields.io/badge/Coverage-86%25-brightgreen?logo=codecov&logoColor=white&style=for-the-badge)](.github/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 [![Zero Dependencies](https://img.shields.io/badge/Deps-Zero-orange?style=for-the-badge)](pyproject.toml)
 
@@ -119,7 +119,7 @@ uv pip install -e . --group dev --group lint --group test
 ```bash
 # Verify installation
 xsm --version
-# ✅ Output: xsm 0.5.1
+# ✅ Output: xsm 0.6.0
 ```
 
 <br>
