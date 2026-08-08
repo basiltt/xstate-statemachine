@@ -180,6 +180,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         self,
         machine: MachineNode[TContext, TEvent],
         interpreter_class: Optional[Type["BaseInterpreter"]] = None,
+        input: Optional[Any] = None,
     ) -> None:
         """Initializes the BaseInterpreter instance.
 
@@ -198,7 +199,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         )
         # 🧍‍♂️ Core Properties
         self.machine: MachineNode[TContext, TEvent] = machine
-        self.context: TContext = copy.deepcopy(machine.initial_context)
+        #: Input supplied at creation, available to context factories and
+        #: readable afterwards as `interpreter.input`.
+        self.input: Optional[Any] = input
+        self.context: TContext = self._build_initial_context(machine, input)
         self.status: str = "uninitialized"
         self.id: str = machine.id
         self.parent: Optional["BaseInterpreter[Any, Any]"] = None
@@ -223,6 +227,13 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         #: Actor-system registry. Only the ROOT interpreter's copy is used;
         #: children reach it by walking up `parent`.
         self._system: Dict[str, "BaseInterpreter[Any, Any]"] = {}
+        #: Snapshots of child actors that could not be rebuilt on restore
+        #: (their service was not registered). Preserved rather than dropped
+        #: so no data is lost and the caller can recover them.
+        self._pending_actor_snapshots: Dict[str, Any] = {}
+        #: Maps a spawned actor id to the `services` key it came from, so a
+        #: snapshot can record enough to rebuild it.
+        self._actor_sources: Dict[str, str] = {}
         self._actors: Dict[str, "BaseInterpreter[Any, Any]"] = {}
 
         # 🔗 Extensibility & Introspection
@@ -236,6 +247,35 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             self.id,
             self.status,
         )
+
+    @staticmethod
+    def _build_initial_context(
+        machine: MachineNode[Any, Any], input: Optional[Any]
+    ) -> Any:
+        """Builds the starting context, resolving a factory if one is given.
+
+        🏛️ Architecture decision: XState allows `context` to be a function of
+        `{input}` so an actor can be parameterised at creation. Previously a
+        callable was stored verbatim, so the runtime context *was* the
+        function object — silent corruption that surfaced far from its cause
+        as a `TypeError` on first subscript.
+
+        Args:
+            machine (MachineNode): The machine definition.
+            input (Optional[Any]): Input supplied at creation.
+
+        Returns:
+            Any: A fresh, deep-copied context.
+        """
+        raw = machine.initial_context
+        if callable(raw):
+            produced = raw({"input": input})
+            return copy.deepcopy(produced) if produced is not None else {}
+        context = copy.deepcopy(raw)
+        # 📥 Expose input to the machine even without a context factory.
+        if input is not None and isinstance(context, dict):
+            context.setdefault("input", input)
+        return context
 
     # -------------------------------------------------------------------------
     # 🔍 Public Properties & Methods
@@ -540,17 +580,93 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             str: A JSON string representing the interpreter's current state.
         """
         logger.info("📸 Capturing snapshot for interpreter '%s'...", self.id)
-        snapshot = {
-            "status": self.status,
-            "context": self.context,
-            "state_ids": list(self.current_state_ids),
-        }
+        snapshot = self.get_persisted_snapshot()
         # Use a default handler to gracefully handle non-serializable types.
         json_snapshot = json.dumps(snapshot, indent=2, default=str)
         logger.debug(
             "🖼️ Snapshot for '%s' captured: %s", self.id, json_snapshot
         )
         return json_snapshot
+
+    def get_persisted_snapshot(self) -> Dict[str, Any]:
+        """Returns a deep, JSON-serialisable snapshot as a dictionary.
+
+        Mirrors XState's ``actor.getPersistedSnapshot()``. Unlike the earlier
+        shallow form, this captures the *whole* actor hierarchy.
+
+        🏛️ Architecture decision: child actors were previously omitted
+        entirely. A parent with live children serialised to just
+        ``{status, context, state_ids}`` and restoring produced an actor with
+        zero children — silent, unrecoverable data loss for anyone persisting
+        a workflow. Recording actors recursively (plus history and output)
+        makes a snapshot a faithful representation of the machine.
+
+        Returns:
+            Dict[str, Any]: The persisted snapshot.
+        """
+        return {
+            "status": self.status,
+            "context": self.context,
+            "state_ids": sorted(self.current_state_ids),
+            # 🌳 Full configuration, so ancestors are restored exactly rather
+            #    than re-derived from leaves.
+            "configuration": sorted(
+                node.id for node in self._active_state_nodes
+            ),
+            "output": self.output,
+            "error": str(self.error) if self.error is not None else None,
+            # 🕰️ Remembered history, so a restored machine can still honour a
+            #    later transition to a history state.
+            "history": {
+                parent_id: sorted(node.id for node in nodes)
+                for parent_id, nodes in self._history.items()
+            },
+            # 👶 Recursive child-actor snapshots, keyed by actor id.
+            "actors": {
+                actor_id: {
+                    "machine_id": actor.machine.id,
+                    # 🔑 Persist the originating service key. Deriving it from
+                    #    the actor id is unreliable: an explicit `id` param
+                    #    replaces the key segment entirely.
+                    "src": self._actor_sources.get(actor_id),
+                    "snapshot": actor.get_persisted_snapshot(),
+                }
+                for actor_id, actor in self._actors.items()
+            },
+        }
+
+    def _resolve_actor_machine(
+        self, service_key: Optional[str]
+    ) -> Optional[MachineNode[Any, Any]]:
+        """Finds the machine definition for a persisted child actor.
+
+        Args:
+            service_key (Optional[str]): The `services` key the actor was
+                originally spawned from.
+
+        Returns:
+            Optional[MachineNode]: The child's machine definition, or `None`
+            when the service is not registered on this interpreter.
+        """
+        source = self.machine.logic.services.get(service_key)
+        if source is None:
+            return None
+        if isinstance(source, MachineNode):
+            return source
+        if callable(source):
+            try:
+                produced = source(
+                    self, self.context, Event(type="__restore__")
+                )
+            except Exception:
+                logger.exception(
+                    "🔥 Actor factory for '%s' raised during restore.",
+                    service_key,
+                )
+                return None
+            if isinstance(produced, MachineNode):
+                return produced
+        return None
 
     @classmethod
     def from_snapshot(
@@ -601,12 +717,22 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         interpreter.context = snapshot["context"]
         interpreter.status = snapshot["status"]
 
-        # 🌳 Reconstruct the set of active state nodes from their IDs
+        # 🌳 Reconstruct the set of active state nodes from their IDs.
+        #    Prefer the full `configuration` when present (it includes
+        #    ancestors); fall back to leaf ids for snapshots written by
+        #    older versions.
         interpreter._active_state_nodes.clear()
-        for state_id in snapshot["state_ids"]:
+        restore_ids = snapshot.get("configuration") or snapshot["state_ids"]
+        for state_id in restore_ids:
             node = machine.get_state_by_id(state_id)
             if node:
                 interpreter._active_state_nodes.add(node)
+                # 🌲 Ancestors must be active too, otherwise the transition
+                #    algorithm cannot resolve domains correctly.
+                ancestor = node.parent
+                while ancestor is not None:
+                    interpreter._active_state_nodes.add(ancestor)
+                    ancestor = ancestor.parent
                 logger.debug("    ↳ Restored active state: '%s'", state_id)
             else:
                 logger.error(
@@ -615,6 +741,44 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                     machine.id,
                 )
                 raise StateNotFoundError(target=state_id)
+
+        # 🏁 Restore completion output and any recorded error.
+        interpreter.output = snapshot.get("output")
+
+        # 🕰️ Restore remembered history so a later transition to a history
+        #    state still resolves after a restart.
+        for parent_id, node_ids in (snapshot.get("history") or {}).items():
+            nodes = [
+                machine.get_state_by_id(nid)
+                for nid in node_ids
+                if machine.get_state_by_id(nid)
+            ]
+            if nodes:
+                interpreter._history[parent_id] = nodes
+
+        # 👶 Restore child actors. Their machine definitions are resolved from
+        #    the parent's `services` registry, which is the same source the
+        #    original spawn used.
+        for actor_id, record in (snapshot.get("actors") or {}).items():
+            child_machine = interpreter._resolve_actor_machine(
+                record.get("src")
+            )
+            if child_machine is None:
+                logger.warning(
+                    "⚠️ Could not restore actor '%s': no matching service. "
+                    "Its snapshot is preserved under _pending_actor_snapshots.",
+                    actor_id,
+                )
+                interpreter._pending_actor_snapshots[actor_id] = record
+                continue
+            child = cls.from_snapshot(
+                json.dumps(record["snapshot"], default=str), child_machine
+            )
+            child.parent = interpreter
+            child.id = actor_id
+            interpreter._actors[actor_id] = child
+            if record.get("src"):
+                interpreter._actor_sources[actor_id] = record["src"]
 
         logger.info(
             "✅ Interpreter '%s' restored. States: %s, Status: '%s'",
@@ -1760,6 +1924,50 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 return None
         return output
 
+    def _has_error_handler(self, invocation: Any) -> bool:
+        """Reports whether an invocation declares any `onError` handler.
+
+        🏛️ Architecture decision: this asks whether a handler was *declared*,
+        not whether one would currently fire. A guarded `onError` whose guard
+        happens to be false still means the author considered the failure and
+        chose to handle it conditionally — treating that as an unhandled crash
+        would be surprising and would break existing machines. Only a total
+        absence of `onError` counts as unhandled.
+
+        Args:
+            invocation (Any): The `InvokeDefinition` that failed.
+
+        Returns:
+            bool: `True` if any `onError` transition is declared.
+        """
+        return bool(getattr(invocation, "on_error", None))
+
+    def _fail(self, error: BaseException) -> None:
+        """Puts the machine into the terminal `error` status.
+
+        🏛️ Architecture decision: `status` previously only ever moved between
+        `uninitialized`, `running` and `stopped`. An invoked service that
+        failed with no `onError` handler logged a message and the machine kept
+        running as though nothing had happened — the failure was invisible to
+        any caller. XState models this as an error snapshot, so a distinct
+        `"error"` status plus `interpreter.error` makes it observable.
+
+        Args:
+            error (BaseException): The unhandled error.
+        """
+        if self.status not in ("running", "uninitialized"):
+            return
+        self.status = "error"
+        self.error = error
+        logger.error(
+            "🚨 Machine '%s' entered the error state: %r", self.id, error
+        )
+        for plugin in self._plugins:
+            hook = getattr(plugin, "on_error", None)
+            if callable(hook):
+                hook(self, error)
+        self._notify_subscribers()
+
     def _complete(self, output: Any) -> None:
         """Marks the machine as finished and records its output.
 
@@ -2299,8 +2507,18 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         """
         # 🕒 Schedule `after` timers.
         for delay_ms, transitions in state.after.items():
+            # 🏷️ Symbolic delays resolve through MachineLogic.delays.
+            resolved_ms = self._resolve_delay(delay_ms, None)
+            if resolved_ms is None:
+                logger.warning(
+                    "⚠️ Skipping 'after' transition on '%s': delay %r could "
+                    "not be resolved.",
+                    state.id,
+                    delay_ms,
+                )
+                continue
             for t_def in transitions:
-                delay_sec = float(delay_ms) / 1000.0
+                delay_sec = float(resolved_ms) / 1000.0
                 after_event = AfterEvent(type=t_def.event)
                 self._after_timer(delay_sec, after_event, owner_id=state.id)
                 logger.debug(

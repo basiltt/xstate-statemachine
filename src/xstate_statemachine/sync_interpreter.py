@@ -111,14 +111,20 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     # 🧙 Magic Methods & Initialization
     # -------------------------------------------------------------------------
 
-    def __init__(self, machine: MachineNode[TContext, TEvent]) -> None:
+    def __init__(
+        self,
+        machine: MachineNode[TContext, TEvent],
+        input: Optional[Any] = None,
+    ) -> None:
         """Initializes a new synchronous Interpreter instance.
 
         Args:
             machine: The state machine definition that this interpreter will run.
         """
         # 🤝 Initialize the base interpreter first
-        super().__init__(machine, interpreter_class=SyncInterpreter)
+        super().__init__(
+            machine, interpreter_class=SyncInterpreter, input=input
+        )
         logger.info("⛓️ Initializing Synchronous Interpreter... 🚀")
 
         # ⚙️ Initialize synchronous-specific attributes
@@ -449,7 +455,22 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         state configuration is stable.
         """
         logger.debug("🔍 Checking for transient ('always') transitions...")
+        # 🛟 Bound the microstep loop. A pair of `always` transitions that
+        #    target each other spins forever; XState added the same guard in
+        #    v5.31.0. `max_iterations` is configurable on the machine.
+        iterations = 0
+        limit = getattr(self.machine, "max_iterations", 1000)
         while True:
+            iterations += 1
+            if iterations > limit:
+                logger.error(
+                    "🔁 Exceeded %d microsteps while settling transient "
+                    "transitions in '%s'. Aborting to avoid an infinite "
+                    "loop; check for mutually-targeting 'always' transitions.",
+                    limit,
+                    self.id,
+                )
+                break
             # 👻 Use a dummy event for guard evaluation in "always" transitions.
             transient_event = Event(type="")  # Empty type signifies "always".
 
@@ -903,6 +924,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # 🌐 Register under a systemId so siblings can address it.
         self._register_in_system(spawn_params.get("systemId"), child)
         self._actors[actor_id] = child
+        self._actor_sources[actor_id] = key
 
         # --- Blocking Execution Path ---
         if blocking:
@@ -1110,9 +1132,14 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             error_event = DoneEvent(
                 f"error.platform.{invocation.id}", data=e, src=invocation.id
             )
+            # 🚨 Unhandled service failures must be observable, not just
+            #    logged. See BaseInterpreter._fail.
+            handled = self._has_error_handler(invocation)
             self.send(error_event)
             for plugin in self._plugins:
                 plugin.on_service_error(self, invocation, e)
+            if not handled:
+                self._fail(e)
 
     # -------------------------------------------------------------------------
     # 🛠️ Helper & Utility Methods (Private)

@@ -760,14 +760,26 @@ class StateNode(Generic[TContext, TEvent]):
 
     def _parse_after(
         self, config: Dict[str, Any]
-    ) -> Dict[int, List[TransitionDefinition]]:
-        """Parses all delayed transitions from the 'after' property."""
-        after_map: Dict[int, List[TransitionDefinition]] = {}
+    ) -> Dict[Union[int, str], List[TransitionDefinition]]:
+        """Parses all delayed transitions from the 'after' property.
+
+        📝 Keys may be a numeric duration in milliseconds *or* a symbolic
+        name resolved at runtime from `MachineLogic.delays`. Previously every
+        key was coerced with `int()`, so a named delay such as
+        ``after: {"TIMEOUT": ...}`` raised a bare `ValueError` at parse time
+        with no indication that named delays were the intended feature.
+        """
+        after_map: Dict[Union[int, str], List[TransitionDefinition]] = {}
         for delay, transitions_config in config.get("after", {}).items():
             normalized_configs = self._normalize_transitions(
                 transitions_config
             )
-            after_map[int(delay)] = [
+            try:
+                key: Union[int, str] = int(delay)
+            except (TypeError, ValueError):
+                # 🏷️ A symbolic delay name; resolved by the interpreter.
+                key = str(delay)
+            after_map[key] = [
                 self._create_transition(f"after.{delay}.{self.id}", t_config)
                 for t_config in normalized_configs
             ]
@@ -963,6 +975,12 @@ class MachineNode(StateNode[TContext, TEvent]):
             )
         self.logic = logic
         self.initial_context = config.get("context", {})
+        #: Upper bound on microsteps when settling transient ("always")
+        #: transitions, mirroring XState's `maxIterations` (v5.31.0).
+        self.max_iterations: int = int(config.get("maxIterations", 1000))
+        #: Machine-level output declaration, resolved when a top-level final
+        #: state is reached.
+        self.machine_output: Any = config.get("output")
 
         # 🚀 Call the parent constructor to build the entire state tree.
         super().__init__(self, config, config["id"])

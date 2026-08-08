@@ -97,7 +97,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             interpreter for services and timers.
     """
 
-    def __init__(self, machine: MachineNode[TContext, TEvent]) -> None:
+    def __init__(
+        self,
+        machine: MachineNode[TContext, TEvent],
+        input: Optional[Any] = None,
+    ) -> None:
         """Initializes a new asynchronous Interpreter instance.
 
         Args:
@@ -106,7 +110,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         """
         # 🏛️ Initialize the base class, passing our own class type so that
         # `from_snapshot` can create the correct `Interpreter` instance.
-        super().__init__(machine, interpreter_class=Interpreter)
+        super().__init__(machine, interpreter_class=Interpreter, input=input)
         logger.info(
             "🚀 Initializing Asynchronous Interpreter for '%s'...", self.id
         )
@@ -387,7 +391,22 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         # 2️⃣ Immediately loop to handle any event-less ("always") transitions.
         #    This continues until no more "always" transitions are available,
         #    at which point the machine state is considered stable.
+        # 🛟 Bound the microstep loop. A pair of `always` transitions that
+        #    target each other spins forever; XState added the same guard in
+        #    v5.31.0. `max_iterations` is configurable on the machine.
+        iterations = 0
+        limit = getattr(self.machine, "max_iterations", 1000)
         while True:
+            iterations += 1
+            if iterations > limit:
+                logger.error(
+                    "🔁 Exceeded %d microsteps while settling transient "
+                    "transitions in '%s'. Aborting to avoid an infinite "
+                    "loop; check for mutually-targeting 'always' transitions.",
+                    limit,
+                    self.id,
+                )
+                break
             transient_event = Event(type="")
             transition = self._find_optimal_transition(transient_event)
             if transition and transition.event == "":
@@ -729,6 +748,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         await child_interpreter.start()
 
         self._actors[actor_id] = child_interpreter
+        self._actor_sources[actor_id] = actor_machine_key
         logger.info(
             "✅ Actor '%s' (child of '%s') spawned and started successfully.",
             actor_id,
@@ -864,9 +884,14 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 data=e,
                 src=invocation.id,
             )
+            # 🚨 If nothing handles the error event, the failure is
+            #    unhandled and must be observable rather than merely logged.
+            handled = self._has_error_handler(invocation)
             await self.send(error_event)
             for plugin in self._plugins:
                 plugin.on_service_error(self, invocation, e)
+            if not handled:
+                self._fail(e)
 
     def _invoke_service(
         self,
