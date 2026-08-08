@@ -25,6 +25,7 @@ synchronous, blocking operations.
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import copy
+import inspect
 import json
 import logging
 from typing import (
@@ -46,9 +47,14 @@ from typing import (
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from .events import AfterEvent, DoneEvent, Event
-from .exceptions import ImplementationMissingError, StateNotFoundError
+from .exceptions import (
+    ImplementationMissingError,
+    InvalidConfigError,
+    StateNotFoundError,
+)
 from .models import (
     ActionDefinition,
+    GuardDefinition,
     InvokeDefinition,
     MachineNode,
     StateNode,
@@ -865,11 +871,20 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 if initial_child:
                     await self._enter_states([initial_child], trigger_event)
                 else:
-                    logger.error(
-                        "❌ Misconfiguration: Initial state '%s' not found in compound state '%s'.",
-                        state.initial,
-                        state.id,
+                    raise InvalidConfigError(
+                        f"❌ Initial state '{state.initial}' not found in "
+                        f"compound state '{state.id}'."
                     )
+            elif state.type == "compound" and state.states:
+                # 🚨 A compound state with children but no resolvable
+                #    `initial` cannot produce an active leaf. Left unchecked
+                #    the machine starts "successfully" with an empty
+                #    configuration and silently drops every event.
+                raise InvalidConfigError(
+                    f"❌ Compound state '{state.id}' has no 'initial' state, "
+                    "so entering it yields no active leaf. Declare "
+                    "'initial' explicitly."
+                )
             elif state.type == "parallel":
                 # For parallel states, enter all child regions simultaneously.
                 await self._enter_states(
@@ -1021,24 +1036,34 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         for state in sorted_nodes:
             current: Optional[StateNode] = state
             while current:
-                # Check standard `on` event transitions.
-                if (
-                    not is_explicit_transient_event
-                    and event.type in current.on
-                ):
-                    for t in current.on[event.type]:
-                        if self._is_guard_satisfied(t.guard, event):
-                            eligible_transitions.append(t)
+                # Check standard `on` event transitions (incl. descriptors).
+                if not is_explicit_transient_event:
+                    blocked = False
+                    for key in self._matching_descriptors(
+                        current.on, event.type
+                    ):
+                        for t in current.on[key]:
+                            if t.forbidden:
+                                blocked = True
+                                break
+                            if self._is_guard_satisfied(t.guard_def, event):
+                                eligible_transitions.append(t)
+                        if blocked:
+                            break
+                    if blocked:
+                        break
 
                 # Check transient `""` (always) transitions.
                 if is_transient_check and "" in current.on:
                     for t in current.on[""]:
-                        if self._is_guard_satisfied(t.guard, event):
+                        if self._is_guard_satisfied(t.guard_def, event):
                             eligible_transitions.append(t)
 
                 # Check `onDone` transitions for compound/parallel states.
                 if current.on_done and current.on_done.event == event.type:
-                    if self._is_guard_satisfied(current.on_done.guard, event):
+                    if self._is_guard_satisfied(
+                        current.on_done.guard_def, event
+                    ):
                         eligible_transitions.append(current.on_done)
 
                 # Check `after` transitions for timed events.
@@ -1047,7 +1072,9 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                         for t in transitions:
                             if (
                                 t.event == event.type
-                                and self._is_guard_satisfied(t.guard, event)
+                                and self._is_guard_satisfied(
+                                    t.guard_def, event
+                                )
                             ):
                                 eligible_transitions.append(t)
 
@@ -1059,7 +1086,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                                 if (
                                     t.event == event.type
                                     and self._is_guard_satisfied(
-                                        t.guard, event
+                                        t.guard_def, event
                                     )
                                 ):
                                     eligible_transitions.append(t)
@@ -1070,6 +1097,58 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         # 🏆 The winning transition is the one defined on the deepest state.
         return max(eligible_transitions, key=lambda t: t.source.depth)  # noqa
+
+    @staticmethod
+    def _matching_descriptors(
+        on_map: Dict[str, List[TransitionDefinition]], event_type: str
+    ) -> List[str]:
+        """Finds the `on` keys that match an event type, most specific first.
+
+        Implements XState's event-descriptor matching:
+
+        - an exact key (``"mouse.click"``) wins outright;
+        - partial descriptors match by dot-segment prefix, longest first
+          (``"mouse.click.*"`` beats ``"mouse.*"``);
+        - the bare wildcard ``"*"`` matches anything and is always last.
+
+        🏛️ Architecture decision: previously the lookup was a single exact
+        dict test, so ``"*"`` and ``"mouse.*"`` keys never matched anything —
+        a valid XState config that silently did nothing. Ordering matters:
+        SCXML and XState both require the most specific descriptor to win, and
+        the fallback ordering was itself a bug fixed upstream in v5.32.2.
+
+        Args:
+            on_map (Dict[str, List[TransitionDefinition]]): A state's `on` map.
+            event_type (str): The event type being dispatched.
+
+        Returns:
+            List[str]: Matching keys ordered most-specific first.
+        """
+        if not on_map or not event_type:
+            return []
+
+        matches: List[str] = []
+        # 🎯 Exact match is always the most specific.
+        if event_type in on_map:
+            matches.append(event_type)
+
+        # 🌓 Partial descriptors: "a.b.*" matches "a.b.c" and "a.b".
+        partials: List[str] = []
+        for key in on_map:
+            if key == "*" or not key.endswith(".*"):
+                continue
+            prefix = key[:-2]
+            if event_type == prefix or event_type.startswith(prefix + "."):
+                partials.append(key)
+        # 🔽 Longest prefix wins.
+        partials.sort(key=len, reverse=True)
+        matches.extend(partials)
+
+        # 🃏 The bare wildcard is the last resort.
+        if "*" in on_map:
+            matches.append("*")
+
+        return matches
 
     def _collect_eligible_transitions(
         self,
@@ -1111,11 +1190,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             machine's parallel width.
             """
             if guard_cache is None:
-                return self._is_guard_satisfied(transition.guard, event)
+                return self._is_guard_satisfied(transition.guard_def, event)
             key = id(transition)
             if key not in guard_cache:
                 guard_cache[key] = self._is_guard_satisfied(
-                    transition.guard, event
+                    transition.guard_def, event
                 )
             return guard_cache[key]
 
@@ -1127,11 +1206,29 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         current: Optional[StateNode] = state
         while current:
-            # 📨 Standard `on` event transitions.
-            if not is_explicit_transient_event and event.type in current.on:
-                for t in current.on[event.type]:
-                    if _passes(t):
-                        eligible.append(t)
+            # 📨 Standard `on` event transitions, including wildcard and
+            #    partial descriptors, most specific first.
+            if not is_explicit_transient_event:
+                blocked = False
+                for key in self._matching_descriptors(current.on, event.type):
+                    for t in current.on[key]:
+                        # 🚫 A forbidden transition consumes the event here so
+                        #    no ancestor handler can see it.
+                        if t.forbidden:
+                            blocked = True
+                            break
+                        if _passes(t):
+                            eligible.append(t)
+                    if blocked:
+                        break
+                if blocked:
+                    logger.debug(
+                        "🚫 Event '%s' forbidden at '%s'; stopping upward "
+                        "search.",
+                        event.type,
+                        current.id,
+                    )
+                    break
 
             # ⚡ Transient `""` ("always") transitions.
             if is_transient_check and "" in current.on:
@@ -1448,38 +1545,68 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
     def _is_guard_satisfied(
         self,
-        guard_name: Optional[str],
+        guard: Optional[Union[str, "GuardDefinition"]],
         event: Union[Event, AfterEvent, DoneEvent],
     ) -> bool:
-        """Checks if a guard condition (a synchronous, pure function) is met.
+        """Evaluates a transition guard in any of its supported forms.
 
-        Guard functions receive the current context and event, and must return
-        `True` (allow transition) or `False` (block transition).
+        Handles the four shapes XState accepts:
+
+        - a named predicate (``"isReady"``),
+        - a parameterised predicate (``{"type": ..., "params": ...}``),
+        - a higher-order composition (``and`` / ``or`` / ``not``),
+        - the built-in ``stateIn`` guard.
 
         Args:
-            guard_name (Optional[str]): The name of the guard function to
-                execute. If `None`, the guard is considered to have passed.
-            event (Union[Event, AfterEvent, DoneEvent]): The current event
-                being processed, which is passed to the guard function.
+            guard (Optional[Union[str, GuardDefinition]]): The guard to
+                evaluate. `None` means the transition is unguarded.
+            event (Union[Event, AfterEvent, DoneEvent]): The current event,
+                passed to user predicates.
 
         Returns:
-            bool: `True` if the guard passes or if there is no guard, `False`
-            otherwise. A guard that raises is treated as `False`.
+            bool: `True` if the guard passes or there is no guard. A guard
+            that raises is treated as `False`.
 
         Raises:
-            ImplementationMissingError: If a `guard_name` is provided but no
-                corresponding function is found in the machine's logic.
+            ImplementationMissingError: If a named guard has no implementation
+                in the machine's logic.
         """
         # ✅ A transition without a guard is always allowed.
-        if not guard_name:
+        if guard is None:
             return True
 
+        # 🔁 Accept a bare string for backward compatibility with callers that
+        #    still pass `transition.guard`.
+        if isinstance(guard, str):
+            guard = GuardDefinition(guard)
+
+        # 🌳 Composite guards recurse and short-circuit, exactly like XState's
+        #    `and()` / `or()` / `not()` helpers.
+        if guard.is_composite:
+            if guard.type == "and":
+                return all(
+                    self._is_guard_satisfied(child, event)
+                    for child in guard.children
+                )
+            if guard.type == "or":
+                return any(
+                    self._is_guard_satisfied(child, event)
+                    for child in guard.children
+                )
+            # `not` is validated at parse time to have exactly one child.
+            return not self._is_guard_satisfied(guard.children[0], event)
+
+        # 📍 The built-in `stateIn` guard is answered from the active
+        #    configuration; it needs no user implementation.
+        if guard.is_state_in:
+            return self._is_state_in(guard, event)
+
         # 🔍 Find the guard function in the machine's logic.
-        guard_callable = self.machine.logic.guards.get(guard_name)
+        guard_callable = self.machine.logic.guards.get(guard.type)
         if not guard_callable:
             # FIX: Reverted error message to match test suite expectations.
             raise ImplementationMissingError(
-                f"Guard '{guard_name}' not implemented."
+                f"Guard '{guard.type}' not implemented."
             )
 
         # 🏃 Execute the guard function.
@@ -1493,24 +1620,138 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         # A *missing* guard still raises above — that is a configuration
         # error, not a runtime condition, and must fail loudly.
         try:
-            result = bool(guard_callable(self.context, event))
+            params = self._resolve_params(guard.params, event)
+            result = bool(
+                self._call_with_optional_params(
+                    guard_callable, self.context, event, params
+                )
+            )
         except Exception:
             logger.exception(
                 "🔥 Guard '%s' raised an exception while evaluating event "
                 "'%s'; treating it as False.",
-                guard_name,
+                guard.type,
                 event.type,
             )
             result = False
 
         logger.info(
             "🛡️  Evaluating guard '%s': %s",
-            guard_name,
+            guard.type,
             "✅ Passed" if result else "❌ Failed",
         )
 
         # 🔔 Notify any registered plugins about the evaluation.
         for plugin in self._plugins:
-            plugin.on_guard_evaluated(self, guard_name, event, result)
+            plugin.on_guard_evaluated(self, guard.type, event, result)
 
         return result
+
+    def _is_state_in(
+        self,
+        guard: "GuardDefinition",
+        event: Union[Event, AfterEvent, DoneEvent],
+    ) -> bool:
+        """Evaluates the built-in ``stateIn`` guard.
+
+        Satisfied when the named state is part of the active configuration —
+        either as an active leaf or as an ancestor of one.
+
+        Args:
+            guard (GuardDefinition): The `stateIn` guard, whose params carry
+                the state id under `state` (or `value`).
+            event (Union[Event, AfterEvent, DoneEvent]): The current event,
+                used only to resolve callable params.
+
+        Returns:
+            bool: `True` when the named state is active.
+        """
+        params = self._resolve_params(guard.params, event)
+        target = None
+        if isinstance(params, dict):
+            target = params.get("state", params.get("value"))
+        elif isinstance(params, str):
+            target = params
+        if not isinstance(target, str) or not target:
+            logger.warning(
+                "⚠️ 'stateIn' guard has no state id in its params; "
+                "treating as False."
+            )
+            return False
+
+        # 🎯 Accept both '#machine.a.b' and 'machine.a.b' spellings.
+        normalised = target[1:] if target.startswith("#") else target
+        for node in self._active_state_nodes:
+            if node.id == normalised or node.id.endswith("." + normalised):
+                return True
+        return False
+
+    def _resolve_params(
+        self, params: Any, event: Union[Event, AfterEvent, DoneEvent]
+    ) -> Any:
+        """Resolves action/guard params, invoking them if they are callable.
+
+        🏛️ Architecture decision: XState v5 allows `params` to be a function of
+        `{context, event}`, evaluated fresh on every use. Previously a callable
+        was passed through verbatim, so user code received a raw function
+        object where it expected a dict — silent corruption that surfaced far
+        from its cause.
+
+        Args:
+            params (Any): The declared params, possibly a callable.
+            event (Union[Event, AfterEvent, DoneEvent]): The triggering event.
+
+        Returns:
+            Any: The resolved params.
+        """
+        if callable(params):
+            return params({"context": self.context, "event": event})
+        return params
+
+    @staticmethod
+    def _call_with_optional_params(
+        fn: Callable[..., Any],
+        context: Any,
+        event: Union[Event, AfterEvent, DoneEvent],
+        params: Any,
+    ) -> Any:
+        """Calls a guard, passing `params` only if it accepts a third argument.
+
+        📝 Guards have always been `(context, event)`. Parameterised guards
+        need a third argument, but existing two-argument guards must keep
+        working unchanged, so the arity is inspected once per call.
+
+        Args:
+            fn (Callable[..., Any]): The guard implementation.
+            context (Any): The interpreter's context.
+            event (Union[Event, AfterEvent, DoneEvent]): The current event.
+            params (Any): Resolved params, or `None`.
+
+        Returns:
+            Any: Whatever the guard returns.
+        """
+        if params is None:
+            return fn(context, event)
+        try:
+            signature = inspect.signature(fn)
+            accepts = len(
+                [
+                    p
+                    for p in signature.parameters.values()
+                    if p.kind
+                    in (
+                        inspect.Parameter.POSITIONAL_ONLY,
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    )
+                ]
+            )
+            has_varargs = any(
+                p.kind is inspect.Parameter.VAR_POSITIONAL
+                for p in signature.parameters.values()
+            )
+        except (TypeError, ValueError):  # pragma: no cover - builtins
+            return fn(context, event)
+
+        if has_varargs or accepts >= 3:
+            return fn(context, event, params)
+        return fn(context, event)

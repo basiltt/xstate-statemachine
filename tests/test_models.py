@@ -118,14 +118,20 @@ class TestModels(unittest.TestCase):
         self.assertIs(machine, node_a1.machine)
 
     def test_machine_without_initial_state(self) -> None:
-        """Should create a machine successfully if 'initial' is missing."""
+        """Should infer the only child when 'initial' is omitted.
+
+        🏛️ Behaviour change (v0.6.0): a compound state with exactly one child
+        and no `initial` now infers that child. Previously `initial` stayed
+        `None`, the machine started with an **empty** active configuration,
+        and every event was silently dropped — a dead machine with no error.
+        """
         logger.info(
             "🧪 Testing machine creation without a defined initial state."
         )
         # 🚀 Act: Create a machine where the 'initial' key is omitted.
         machine = create_machine({"id": "m", "states": {"a": {}}})
-        # ✅ Assert: The machine's `initial` attribute should be None.
-        self.assertIsNone(machine.initial)
+        # ✅ Assert: The single child is inferred as the initial state.
+        self.assertEqual("a", machine.initial)
 
     # -------------------------------------------------------------------------
     # 🧭 State Types, Navigation, and Relationships

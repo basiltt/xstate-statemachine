@@ -67,7 +67,7 @@ TContext = TypeVar("TContext", bound=Dict[str, Any])
 TEvent = TypeVar("TEvent", bound=Dict[str, Any])
 
 # Define a specific type for state types for clarity and reuse.
-StateType = Literal["atomic", "compound", "parallel", "final"]
+StateType = Literal["atomic", "compound", "parallel", "final", "history"]
 
 # 👶 Prefixes marking an action as a built-in actor-spawning directive.
 #
@@ -189,6 +189,139 @@ class ActionDefinition:
         return f"Action(type='{self.type}')"
 
 
+# -----------------------------------------------------------------------------
+# 🛡️ Guard Definition
+# -----------------------------------------------------------------------------
+# 🏛️ Architecture decision: guards are normalised into a dedicated object
+# rather than kept as the raw config value. Three problems motivated this:
+#
+#   1. The XState object form `{"type": "g", "params": {...}}` was stored raw
+#      and then used as a dictionary key, raising
+#      `TypeError: unhashable type: 'dict'` from inside the event loop.
+#   2. Higher-order guards (`and` / `or` / `not`) need a recursive structure.
+#   3. The v4 spelling `cond` was ignored entirely, so guarded transitions
+#      written that way fired unconditionally.
+#
+# A `GuardDefinition` is hashable, recursive, and carries its params.
+# -----------------------------------------------------------------------------
+
+#: Guard `type` values handled natively by the interpreter rather than looked
+#: up in `MachineLogic.guards`.
+COMPOSITE_GUARD_TYPES = frozenset({"and", "or", "not"})
+STATE_IN_GUARD_TYPE = "stateIn"
+
+
+class GuardDefinition:
+    """A normalised, hashable representation of a transition guard.
+
+    Supports every guard form XState accepts:
+
+    - ``"isReady"`` — a named predicate resolved from ``MachineLogic.guards``.
+    - ``{"type": "isReady", "params": {...}}`` — a parameterised predicate.
+    - ``{"type": "and", "children": [...]}`` — higher-order composition
+      (``and`` / ``or`` / ``not``).
+    - ``{"type": "stateIn", "params": {"state": "#m.a.b"}}`` — a built-in
+      guard satisfied when the given state is active.
+
+    Attributes:
+        type (str): The guard's type name.
+        params (Optional[Any]): Parameters for the guard. May be a callable,
+            which is resolved against ``(context, event)`` at evaluation time.
+        children (List[GuardDefinition]): Nested guards for composite types.
+        is_composite (bool): `True` for `and` / `or` / `not`.
+        is_state_in (bool): `True` for the built-in `stateIn` guard.
+    """
+
+    __slots__ = ("type", "params", "children", "is_composite", "is_state_in")
+
+    def __init__(self, config: Union[str, Dict[str, Any], "GuardDefinition"]):
+        """Normalises any supported guard configuration.
+
+        Args:
+            config: The raw guard value from the machine definition.
+
+        Raises:
+            InvalidConfigError: If the configuration shape is not supported,
+                or a composite guard declares no children.
+        """
+        if isinstance(config, GuardDefinition):
+            # 🔁 Idempotent: re-wrapping an already-normalised guard is a no-op.
+            self.type = config.type
+            self.params = config.params
+            self.children = config.children
+            self.is_composite = config.is_composite
+            self.is_state_in = config.is_state_in
+            return
+
+        children_cfg: List[Any] = []
+        if isinstance(config, str):
+            self.type = config
+            self.params = None
+        elif isinstance(config, dict):
+            guard_type = config.get("type")
+            if not isinstance(guard_type, str) or not guard_type:
+                raise InvalidConfigError(
+                    "❌ Guard object must have a non-empty string 'type', "
+                    f"got: {config!r}"
+                )
+            self.type = guard_type
+            self.params = config.get("params")
+            # 🌳 Composite guards accept their operands under `children`, or
+            #    (as XState's helpers emit) inside `params`.
+            children_cfg = config.get("children") or []
+            if not children_cfg and isinstance(self.params, dict):
+                children_cfg = (
+                    self.params.get("guards")
+                    or self.params.get("children")
+                    or []
+                )
+            if not children_cfg and self.type in COMPOSITE_GUARD_TYPES:
+                # `not` is commonly written {"type": "not", "params": {...}}
+                # with a single nested guard.
+                nested = (
+                    self.params.get("guard")
+                    if isinstance(self.params, dict)
+                    else None
+                )
+                if nested is not None:
+                    children_cfg = [nested]
+        else:
+            raise InvalidConfigError(
+                "❌ Guard must be a string or a dictionary, "
+                f"got {type(config).__name__}"
+            )
+
+        self.is_composite = self.type in COMPOSITE_GUARD_TYPES
+        self.is_state_in = self.type == STATE_IN_GUARD_TYPE
+        self.children = [GuardDefinition(c) for c in children_cfg]
+
+        if self.is_composite and not self.children:
+            raise InvalidConfigError(
+                f"❌ Composite guard '{self.type}' requires at least one "
+                "nested guard (via 'children', or 'params.guards')."
+            )
+        if self.type == "not" and len(self.children) != 1:
+            raise InvalidConfigError(
+                "❌ Guard 'not' requires exactly one nested guard, got "
+                f"{len(self.children)}."
+            )
+
+    @property
+    def is_builtin(self) -> bool:
+        """Whether the interpreter evaluates this guard without user logic.
+
+        Returns:
+            bool: `True` for composite and `stateIn` guards.
+        """
+        return self.is_composite or self.is_state_in
+
+    def __repr__(self) -> str:
+        """Provides a developer-friendly string representation."""
+        if self.is_composite:
+            return f"Guard({self.type}, children={self.children!r})"
+        return f"Guard(type='{self.type}')"
+
+
 class TransitionDefinition:
     """Represents a potential transition between states for a given event.
 
@@ -230,8 +363,44 @@ class TransitionDefinition:
         self.source: "StateNode" = source
         self.target_str: Optional[str] = config.get("target")
         self.actions: List[ActionDefinition] = actions or []
-        self.guard: Optional[str] = config.get("guard")
+
+        # 🛡️ Guard resolution.
+        #
+        # 🏛️ Architecture decision: the guard is normalised here into a
+        # `GuardDefinition` rather than stored raw. Previously the raw value was
+        # used directly as a dict key, so the standard XState object form
+        # (`{"type": ..., "params": ...}`) and every higher-order guard raised
+        # `TypeError: unhashable type: 'dict'` from deep inside the event loop.
+        #
+        # `cond` is accepted as an alias for `guard`. It is the XState v4
+        # spelling and still appears throughout older configs and tutorials.
+        # Previously only `guard` was read, so a transition written with `cond`
+        # silently ran **unguarded** — the predicate was never called and the
+        # transition always fired. That is the most dangerous class of defect
+        # a statechart library can have, so the alias is supported rather than
+        # rejected.
+        raw_guard = config.get("guard", config.get("cond"))
+        self.guard_def: Optional[GuardDefinition] = (
+            GuardDefinition(raw_guard) if raw_guard is not None else None
+        )
         self.reenter: bool = config.get("reenter", False)
+        #: Marks an explicitly forbidden transition (``on: {"E": None}``).
+        #: Selecting it consumes the event without changing state, which stops
+        #: the upward walk from reaching an ancestor's handler.
+        self.forbidden: bool = bool(config.get("__forbidden__", False))
+
+    @property
+    def guard(self) -> Optional[str]:
+        """The guard's type name, or `None` when the transition is unguarded.
+
+        📝 Retained for backward compatibility: `transition.guard` was a plain
+        string before guards gained object and composite forms. Code needing
+        params or nested guards should use :attr:`guard_def`.
+
+        Returns:
+            Optional[str]: The guard type name.
+        """
+        return self.guard_def.type if self.guard_def else None
 
         logger.debug(
             "✅ Created TransitionDefinition: event='%s', target='%s', actions=%d, guard='%s', reenter=%s",
@@ -388,6 +557,37 @@ class StateNode(Generic[TContext, TEvent]):
         # ⚙️ Parse all properties from the configuration dictionary.
         # This encapsulates the parsing logic within the model itself.
         self.initial = self._parse_initial(config)
+
+        # 🏷️ Metadata keys. Previously all three were dropped at parse time,
+        #    so `tags` (UI-state modelling) and `meta` (arbitrary annotation)
+        #    were silently unavailable to users who had declared them.
+        raw_tags = config.get("tags", [])
+        if isinstance(raw_tags, str):
+            raw_tags = [raw_tags]
+        self.tags: Set[str] = set(raw_tags)
+        self.meta: Dict[str, Any] = config.get("meta") or {}
+        self.description: Optional[str] = config.get("description")
+
+        # 🏁 Final states may declare `output` (a.k.a. "done data"), which is
+        #    surfaced on the `done.state.*` / `done.invoke.*` event.
+        self.output: Any = config.get("output")
+
+        # 🕰️ History configuration. `history` is "shallow" (restore the
+        #    immediate child) or "deep" (restore the full nested
+        #    configuration). XState defaults to shallow.
+        self.history: Optional[str] = None
+        if self.type == "history":
+            history_kind = config.get("history", "shallow")
+            if history_kind not in ("shallow", "deep"):
+                logger.warning(
+                    "⚠️ Invalid 'history' value '%s' on state '%s'. "
+                    "Defaulting to 'shallow'.",
+                    history_kind,
+                    self.id,
+                )
+                history_kind = "shallow"
+            self.history = history_kind
+
         self.entry = self._parse_actions(config.get("entry"))
         self.exit = self._parse_actions(config.get("exit"))
         self.on = self._parse_on(config)
@@ -425,17 +625,74 @@ class StateNode(Generic[TContext, TEvent]):
                 return "compound"
         elif config.get("type") == "final":
             return "final"
+        elif config.get("type") == "history":
+            # 🕰️ A history pseudo-state. It has no children and is never
+            #    "entered" in the ordinary sense — targeting it restores the
+            #    remembered configuration of its parent instead.
+            return "history"
         else:
             return "atomic"
 
     def _parse_initial(self, config: Dict[str, Any]) -> Optional[str]:
-        """Parses the initial state key from the config."""
+        """Parses the initial state key, inferring it where unambiguous.
+
+        🏛️ Architecture decision: a compound state with no `initial` used to
+        emit a warning and then start with an **empty** active configuration —
+        `current_state_ids` was `set()` and every event was silently dropped, a
+        dead machine with no error. That silence is the real defect, not the
+        missing key.
+
+        Rather than hard-failing (which would break the long-standing and
+        reasonable "single child needs no `initial`" shorthand), resolution is:
+
+        1. exactly one non-history child → infer it, and say so at DEBUG;
+        2. several children → raise, because there is no safe guess;
+        3. no children at all → leave `None`; the state is effectively atomic.
+
+        Returns:
+            Optional[str]: The initial child key, explicit or inferred.
+
+        Raises:
+            InvalidConfigError: If a compound state has several children and
+                no way to choose between them.
+        """
         initial = config.get("initial")
-        if self.type == "compound" and not initial:
-            logger.warning(
-                "⚠️ Compound state '%s' is missing an 'initial' state.",
+        if self.type != "compound" or initial:
+            return initial
+
+        # 🕰️ History pseudo-states are never a valid initial target.
+        candidates = [
+            key
+            for key, child in config.get("states", {}).items()
+            if not (isinstance(child, dict) and child.get("type") == "history")
+        ]
+
+        if len(candidates) == 1:
+            inferred = candidates[0]
+            logger.debug(
+                "🧭 Compound state '%s' has no 'initial'; inferring its only "
+                "child '%s'.",
                 self.id,
+                inferred,
             )
+            return inferred
+
+        if len(candidates) > 1:
+            # ⚠️ Warn rather than raise. `create_machine` is also used purely
+            #    to *inspect* a configuration (diagram export, CLI codegen,
+            #    tests), where never starting an interpreter is legitimate.
+            #    The failure is therefore reported when the machine is
+            #    actually started — see `BaseInterpreter._enter_states`, which
+            #    raises if a compound state resolves to no child.
+            logger.warning(
+                "⚠️ Compound state '%s' is missing an 'initial' state and has "
+                "%d children (%s), so one cannot be inferred. Starting this "
+                "machine will fail.",
+                self.id,
+                len(candidates),
+                ", ".join(sorted(candidates)),
+            )
+
         return initial
 
     def _parse_actions(self, config: Optional[Any]) -> List[ActionDefinition]:
@@ -447,7 +704,15 @@ class StateNode(Generic[TContext, TEvent]):
     def _parse_on(
         self, config: Dict[str, Any]
     ) -> Dict[str, List[TransitionDefinition]]:
-        """Parses all event transitions from the 'on' property."""
+        """Parses all event transitions from the 'on' property.
+
+        Also folds in the top-level ``always`` key. XState v5 spells eventless
+        (transient) transitions as a sibling of ``on``; this library models
+        them internally as the empty-string event, which is the v4 spelling
+        (``on: {"": ...}``). Both are accepted and merged here — previously
+        ``always`` was dropped entirely, so a v5 config's transient
+        transitions silently never fired.
+        """
         on_map: Dict[str, List[TransitionDefinition]] = {}
         for event, transitions_config in config.get("on", {}).items():
             normalized_configs = self._normalize_transitions(
@@ -457,6 +722,16 @@ class StateNode(Generic[TContext, TEvent]):
                 self._create_transition(event, t_config)
                 for t_config in normalized_configs
             ]
+
+        # ⚡ Merge `always` into the transient ("") bucket.
+        always_config = config.get("always")
+        if always_config is not None:
+            always_transitions = [
+                self._create_transition("", t_config)
+                for t_config in self._normalize_transitions(always_config)
+            ]
+            on_map.setdefault("", []).extend(always_transitions)
+
         return on_map
 
     def _parse_on_done(
@@ -548,7 +823,15 @@ class StateNode(Generic[TContext, TEvent]):
         """Ensures transition configs are always a list of dictionaries.
 
         This handles XState's various shorthands for defining transitions.
+
+        📝 `None` denotes a *forbidden* transition (``on: {"E": None}``) — the
+        event is explicitly consumed at this level so no ancestor handler
+        runs. It is normalised to a single targetless, action-less transition
+        carrying the `forbidden` marker. Previously it produced an empty list,
+        so the key disappeared and the ancestor's handler fired anyway.
         """
+        if config is None:
+            return [{"__forbidden__": True}]
         if isinstance(config, str):
             # Shorthand: "on": { "EVENT": "target_state" }
             return [{"target": config}]
