@@ -24,6 +24,7 @@ import json
 import logging
 import threading
 import time
+import types
 import unittest
 from typing import Any, Dict, List
 
@@ -3344,7 +3345,17 @@ class TestReviewRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("sys", interpreter.system)
 
     def test_duplicate_send_id_supersedes_earlier_timer(self) -> None:
-        """Reusing a send id must cancel the first, not orphan it."""
+        """Reusing a send id must cancel the first, not orphan it.
+
+        🐛 Regression: the registry entry was overwritten without cancelling
+        the earlier timer, so `cancel(id)` could only reach the newest send
+        and the orphaned one fired anyway.
+
+        📝 This asserts the OBSERVABLE outcome (the machine never transitions)
+        rather than the registry size. Registry size is 1 either way by plain
+        dict semantics, so asserting on it passes even with the fix reverted —
+        verified by mutation testing.
+        """
         # Arrange
         interpreter = start(
             {
@@ -3353,15 +3364,38 @@ class TestReviewRegressions(unittest.IsolatedAsyncioTestCase):
                 "states": {
                     "a": {
                         "on": {
-                            "S": {
+                            # 📝 Distinct delays matter: the superseded send
+                            #    must be the LONGER one, so an orphan would
+                            #    outlive the cancel and still fire.
+                            "S1": {
                                 "actions": [
                                     {
                                         "type": "raise",
                                         "params": {
                                             "event": "L",
-                                            "delay": 500,
+                                            "delay": 120,
                                             "id": "x",
                                         },
+                                    }
+                                ]
+                            },
+                            "S2": {
+                                "actions": [
+                                    {
+                                        "type": "raise",
+                                        "params": {
+                                            "event": "L",
+                                            "delay": 30,
+                                            "id": "x",
+                                        },
+                                    }
+                                ]
+                            },
+                            "C": {
+                                "actions": [
+                                    {
+                                        "type": "cancel",
+                                        "params": {"sendId": "x"},
                                     }
                                 ]
                             },
@@ -3374,12 +3408,14 @@ class TestReviewRegressions(unittest.IsolatedAsyncioTestCase):
         )
         self.addCleanup(interpreter.stop)
 
-        # Act
-        interpreter.send("S")
-        interpreter.send("S")
+        # Act — schedule twice under one id, then cancel that id once.
+        interpreter.send("S1")
+        interpreter.send("S2")
+        interpreter.send("C")
+        time.sleep(0.3)
 
-        # Assert — one registry entry, so `cancel("x")` can reach it.
-        self.assertEqual(1, len(interpreter._scheduled_sends))
+        # Assert — BOTH sends were cancelled, so no transition occurred.
+        self.assertEqual({"m.a"}, interpreter.current_state_ids)
 
     def test_stop_releases_pending_delayed_send_threads(self) -> None:
         """`stop()` must release waiting delayed-send threads."""
@@ -3794,6 +3830,198 @@ class TestLifecycleAndPersistenceRegressions(unittest.IsolatedAsyncioTestCase):
 
         # Assert
         self.assertEqual("stopped", interpreter.status)
+
+
+# -----------------------------------------------------------------------------
+# 🔎 PR #21 Review Regressions
+# -----------------------------------------------------------------------------
+class TestPr21ReviewRegressions(unittest.IsolatedAsyncioTestCase):
+    """Pins defects found by the code review of the parity work itself."""
+
+    @staticmethod
+    def _logic_module() -> Any:
+        """Builds an in-memory logic module with two leaf guards.
+
+        Returns:
+            Any: A module exposing `g1` and `g2`.
+        """
+        module = types.ModuleType("pr21_logic_fixture")
+
+        def g1(_ctx: Any, _evt: Any) -> bool:
+            """A leaf guard that always passes."""
+            return True
+
+        def g2(_ctx: Any, _evt: Any) -> bool:
+            """A second leaf guard that always passes."""
+            return True
+
+        module.g1 = g1  # type: ignore[attr-defined]
+        module.g2 = g2  # type: ignore[attr-defined]
+        return module
+
+    def test_auto_discovery_accepts_builtin_actions(self) -> None:
+        """`LogicLoader` must not demand an implementation for a built-in.
+
+        🐛 Regression: built-in creators were registered as required actions,
+        so any machine using the new declarative vocabulary was rejected by
+        auto-discovery unless the caller bypassed it with an explicit
+        `logic=`.
+        """
+        # Arrange / Act
+        machine = create_machine(
+            {
+                "id": "m",
+                "initial": "a",
+                "context": {},
+                "states": {
+                    "a": {
+                        "entry": [
+                            {
+                                "type": "assign",
+                                "params": {"assignment": {"n": 1}},
+                            }
+                        ]
+                    }
+                },
+            },
+            logic_modules=[self._logic_module()],
+        )
+        interpreter = SyncInterpreter(machine).start()
+
+        # Assert — discovery succeeded AND the built-in still ran.
+        self.assertEqual(1, interpreter.context["n"])
+
+    def test_auto_discovery_accepts_composite_guards(self) -> None:
+        """Composite guards must only require their leaf predicates.
+
+        🐛 Regression: `and`/`or`/`not`/`stateIn` were treated as user guards,
+        so auto-discovery rejected every machine using higher-order guards.
+        """
+        # Arrange / Act
+        machine = create_machine(
+            {
+                "id": "m",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "on": {
+                            "E": {
+                                "target": "b",
+                                "guard": {
+                                    "type": "and",
+                                    "children": ["g1", "g2"],
+                                },
+                            }
+                        }
+                    },
+                    "b": {},
+                },
+            },
+            logic_modules=[self._logic_module()],
+        )
+        interpreter = SyncInterpreter(machine).start()
+
+        # Act
+        interpreter.send("E")
+
+        # Assert
+        self.assertEqual({"m.b"}, interpreter.current_state_ids)
+
+    def test_auto_discovery_still_rejects_missing_leaf_guard(self) -> None:
+        """A genuinely missing leaf predicate must still fail loudly."""
+        # Act / Assert
+        with self.assertRaises(ImplementationMissingError):
+            create_machine(
+                {
+                    "id": "m",
+                    "initial": "a",
+                    "states": {
+                        "a": {
+                            "on": {
+                                "E": {
+                                    "target": "b",
+                                    "guard": {
+                                        "type": "and",
+                                        "children": ["g1", "ghost"],
+                                    },
+                                }
+                            }
+                        },
+                        "b": {},
+                    },
+                },
+                logic_modules=[self._logic_module()],
+            )
+
+    async def test_async_duplicate_send_id_supersedes(self) -> None:
+        """The async engine must cancel a superseded delayed send.
+
+        🐛 Regression: the registry entry was overwritten without cancelling
+        the earlier task, so `cancel(id)` reached only the newest send and the
+        orphaned one fired anyway. The sync engine was fixed earlier; the
+        async engine had the same defect plus a `finally` that popped the
+        *new* registration when an old task was cancelled.
+        """
+        # Arrange — the superseded send is the LONGER one, so an orphan would
+        #           outlive the cancel and still fire.
+        interpreter = await Interpreter(
+            build(
+                {
+                    "id": "m",
+                    "initial": "a",
+                    "states": {
+                        "a": {
+                            "on": {
+                                "S1": {
+                                    "actions": [
+                                        {
+                                            "type": "raise",
+                                            "params": {
+                                                "event": "L",
+                                                "delay": 200,
+                                                "id": "x",
+                                            },
+                                        }
+                                    ]
+                                },
+                                "S2": {
+                                    "actions": [
+                                        {
+                                            "type": "raise",
+                                            "params": {
+                                                "event": "L",
+                                                "delay": 40,
+                                                "id": "x",
+                                            },
+                                        }
+                                    ]
+                                },
+                                "C": {
+                                    "actions": [
+                                        {
+                                            "type": "cancel",
+                                            "params": {"sendId": "x"},
+                                        }
+                                    ]
+                                },
+                                "L": "b",
+                            }
+                        },
+                        "b": {},
+                    },
+                }
+            )
+        ).start()
+        self.addAsyncCleanup(interpreter.stop)
+
+        # Act
+        await interpreter.send("S1")
+        await interpreter.send("S2")
+        await interpreter.send("C")
+        await asyncio.sleep(0.4)
+
+        # Assert — BOTH sends were cancelled.
+        self.assertEqual({"m.a"}, interpreter.current_state_ids)
 
 
 if __name__ == "__main__":  # pragma: no cover

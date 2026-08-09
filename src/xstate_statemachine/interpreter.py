@@ -639,6 +639,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             await self._send_to_actor(actor, target_event)
             return
 
+        key = str(send_id) if send_id else None
+
         async def _delayed() -> None:
             """Waits out the delay, then delivers."""
             try:
@@ -647,13 +649,32 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             except asyncio.CancelledError:  # pragma: no cover - shutdown
                 raise
             finally:
-                if send_id:
-                    self._scheduled_sends.pop(str(send_id), None)
+                # 🧹 Only clear the registry if it still points at THIS task.
+                #    A later send reusing the same id replaces the entry, and
+                #    popping unconditionally would drop the live registration
+                #    and leave the newer send uncancellable.
+                if (
+                    key is not None
+                    and self._scheduled_sends.get(key) is _cancel
+                ):
+                    self._scheduled_sends.pop(key, None)
 
         task = asyncio.create_task(_delayed())
         self.task_manager.add(self.id, task)
-        if send_id:
-            self._scheduled_sends[str(send_id)] = task.cancel
+
+        def _cancel() -> None:
+            """Cancels this specific delayed send."""
+            task.cancel()
+
+        if key is not None:
+            # 🔁 Reusing a send id supersedes the earlier send. Without this
+            #    the first task is orphaned: the registry entry is
+            #    overwritten, so `cancel(id)` can no longer reach it and it
+            #    fires anyway. Mirrors the sync engine.
+            previous = self._scheduled_sends.get(key)
+            if previous is not None:
+                previous()
+            self._scheduled_sends[key] = _cancel
 
     @staticmethod
     async def _send_to_actor(
