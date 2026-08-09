@@ -62,6 +62,7 @@ from src.xstate_statemachine import (
     wait_for_sync,
 )
 from src.xstate_statemachine.actions import is_builtin, resolve_builtin
+from src.xstate_statemachine.cli.extractor import extract_logic_names
 from src.xstate_statemachine.models import GuardDefinition
 
 # -----------------------------------------------------------------------------
@@ -4185,6 +4186,130 @@ class TestMachineOutputAndGuardNaming(unittest.IsolatedAsyncioTestCase):
 
         # Assert — composition still evaluated, so the transition is blocked.
         self.assertEqual({"m.a"}, interpreter.current_state_ids)
+
+
+# -----------------------------------------------------------------------------
+# 🖥️ CLI Extraction & Delay Robustness
+# -----------------------------------------------------------------------------
+class TestCliExtractionAndDelays(unittest.TestCase):
+    """Pins the CLI's logic extraction against the new v5 vocabulary."""
+
+    def test_builtin_actions_are_not_extracted_as_user_logic(self) -> None:
+        """Built-in creators must not be emitted as stubs.
+
+        🐛 Regression: the extractor collected every action `type`, so
+        codegen emitted `def assign(...)` / `def log(...)` stubs. The
+        interpreter resolves user actions BEFORE built-ins, so those stubs
+        silently shadowed the real behaviour and turned a working machine
+        into a no-op with no error.
+        """
+        # Arrange
+        config = {
+            "id": "cg",
+            "initial": "a",
+            "states": {
+                "a": {
+                    "entry": [
+                        {
+                            "type": "assign",
+                            "params": {"assignment": {"n": 1}},
+                        }
+                    ],
+                    "on": {
+                        "E": {
+                            "target": "b",
+                            "actions": [
+                                {"type": "log", "params": {"expr": "hi"}}
+                            ],
+                        }
+                    },
+                },
+                "b": {},
+            },
+        }
+
+        # Act
+        actions, _guards, _services = extract_logic_names(config)
+
+        # Assert
+        self.assertNotIn("assign", actions)
+        self.assertNotIn("log", actions)
+
+    def test_spawn_actions_are_not_extracted_as_user_actions(self) -> None:
+        """`spawn_<key>` resolves from services, so it must not be a stub."""
+        # Arrange
+        config = {
+            "id": "cg",
+            "initial": "a",
+            "states": {"a": {"entry": ["spawn_worker"]}},
+        }
+
+        # Act
+        actions, _guards, _services = extract_logic_names(config)
+
+        # Assert
+        self.assertNotIn("spawn_worker", actions)
+
+    def test_always_transitions_contribute_guards(self) -> None:
+        """A guard used only by `always` must still be extracted.
+
+        🐛 Regression: `always` was not traversed, so codegen omitted the
+        guard and the generated machine could not be built.
+        """
+        # Arrange
+        config = {
+            "id": "aw",
+            "initial": "a",
+            "states": {
+                "a": {"always": {"target": "b", "guard": "isReady"}},
+                "b": {},
+            },
+        }
+
+        # Act
+        _actions, guards, _services = extract_logic_names(config)
+
+        # Assert
+        self.assertIn("isReady", guards)
+
+    def test_ordinary_actions_are_still_extracted(self) -> None:
+        """Control: user actions must continue to be collected."""
+        # Arrange
+        config = {
+            "id": "cg",
+            "initial": "a",
+            "states": {"a": {"entry": ["myOwnAction"]}},
+        }
+
+        # Act
+        actions, _guards, _services = extract_logic_names(config)
+
+        # Assert
+        self.assertIn("myOwnAction", actions)
+
+    def test_unusable_named_delay_does_not_crash_start(self) -> None:
+        """A non-numeric named delay must disable one timer, not the machine.
+
+        🐛 Regression: `float()` on a string or dict raised inside
+        `_schedule_state_tasks` during entry, taking the whole interpreter
+        down at `start()`.
+        """
+        # Arrange / Act / Assert
+        for bad in ("fast", {"a": 1}, [1]):
+            interpreter = start(
+                {
+                    "id": "m",
+                    "initial": "a",
+                    "states": {"a": {"after": {"D": "b"}}, "b": {}},
+                },
+                delays={"D": bad},
+            )
+            self.addCleanup(interpreter.stop)
+            self.assertEqual(
+                {"m.a"},
+                interpreter.current_state_ids,
+                f"delay value {bad!r} broke startup",
+            )
 
 
 if __name__ == "__main__":  # pragma: no cover

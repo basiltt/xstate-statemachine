@@ -20,6 +20,11 @@ import logging
 from typing import Any, Dict, List, Set, Tuple
 
 # -----------------------------------------------------------------------------
+# 📥 Project-Specific Imports
+# -----------------------------------------------------------------------------
+from ..actions import is_builtin as _is_builtin_action
+
+# -----------------------------------------------------------------------------
 # 🪵 Module-level Logger
 # -----------------------------------------------------------------------------
 logger = logging.getLogger(__name__)
@@ -43,14 +48,27 @@ def _extract_actions(data: Any, actions: Set[str]) -> None:
     """
     action_list = data if isinstance(data, list) else [data]
     for action in action_list:
+        name = None
         if isinstance(action, str):
-            actions.add(action)
+            name = action
         elif (
             isinstance(action, dict)
             and "type" in action
             and isinstance(action["type"], str)
         ):
-            actions.add(action["type"])
+            name = action["type"]
+        if name is None:
+            continue
+        # 🎬 Never stub a built-in action creator.
+        #
+        # 🏛️ Architecture decision: the interpreter resolves user actions
+        # BEFORE built-ins, so generating a `def assign(...)` stub would
+        # silently shadow the real `assign` and turn a working machine into a
+        # no-op with no error. `spawn_<key>` is likewise interpreter-handled
+        # and resolved from `services`, not `actions`.
+        if _is_builtin_action(name) or name.startswith("spawn_"):
+            continue
+        actions.add(name)
 
 
 def _extract_from_transition(
@@ -123,6 +141,12 @@ def _traverse_and_extract(
                 for key in ("onDone", "onError"):
                     if key in invoke:
                         _extract_from_transition(invoke[key], actions, guards)
+
+    # ⚡ Process eventless ("always") transitions. Previously skipped, so a
+    #    guard used only by `always` was never emitted and the generated
+    #    machine failed to build with ImplementationMissingError.
+    if "always" in node:
+        _extract_from_transition(node["always"], actions, guards)
 
     # ⏳ Process delayed "after" transitions
     if "after" in node and isinstance(node["after"], dict):

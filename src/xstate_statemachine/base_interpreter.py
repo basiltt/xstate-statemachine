@@ -1342,7 +1342,21 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 return None
             if callable(named):
                 named = named(self.context, event)
-            return float(named) if named is not None else None
+            # 🛡️ A misconfigured delay must not crash the machine at start.
+            #    `float()` on a string or dict raises, and this runs inside
+            #    `_schedule_state_tasks` during entry, so an unusable value
+            #    took the whole interpreter down instead of disabling one
+            #    timer.
+            try:
+                return float(named) if named is not None else None
+            except (TypeError, ValueError):
+                logger.error(
+                    "🔥 Named delay '%s' resolved to %r, which is not a "
+                    "number of milliseconds. Ignoring this timer.",
+                    spec,
+                    named,
+                )
+                return None
         return None
 
     def _emit(self, event: Event) -> None:
