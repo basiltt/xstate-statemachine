@@ -226,15 +226,25 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         and sets the interpreter's status to 'stopped', preventing further
         event processing. It's idempotent.
         """
-        # 🚦 Idempotency check
-        if self.status != "running":
+        # 🚦 Idempotency check.
+        #
+        # 🏛️ `done` and `error` are terminal but NOT torn down: reaching a
+        # top-level final state must still release child actors and timers.
+        # Guarding on `!= "running"` made `stop()` a silent no-op for every
+        # machine that completed, leaking actors and their timer threads.
+        if self.status in ("uninitialized", "stopped"):
             return
 
         logger.info(
             "🛑 Stopping sync interpreter '%s' and its actors…", self.id
         )
 
-        # 1️⃣ Stop every child actor (blocking & non-blocking)
+        # 1️⃣ Stop every child actor (blocking & non-blocking).
+        #
+        # 📝 Status is set to "stopped" FIRST so a cyclic actor graph
+        #    terminates: the child's own `stop()` re-enters this one, which
+        #    now hits the idempotency guard instead of recursing forever.
+        self.status = "stopped"
         for actor_id, actor in list(self._actors.items()):
             try:
                 actor.stop()
@@ -1160,6 +1170,27 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         Raises:
             NotSupportedError: If the provided service is an `async def` function.
         """
+        # 🤖 A `MachineNode` used as `src` means "run this machine as a child
+        #    actor", not "call this object". Without this branch it fell
+        #    through to `service(...)` and raised
+        #    `TypeError: 'MachineNode' object is not callable`.
+        if isinstance(service, MachineNode):
+            logger.info(
+                "🤖 Invoking machine '%s' as a child actor (id: '%s').",
+                invocation.src,
+                invocation.id,
+            )
+            self._spawn_actor(
+                ActionDefinition(
+                    {
+                        "type": f"spawn_{invocation.src}",
+                        "params": {"id": invocation.id},
+                    }
+                ),
+                Event(type=f"invoke.{invocation.id}"),
+            )
+            return
+
         # 🧐 Validate that the service is not an async function.
         if self._is_async_callable(service):
             logger.error(

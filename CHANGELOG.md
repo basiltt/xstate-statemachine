@@ -125,18 +125,39 @@ the only previous mechanism was a user function mutating context in place:
   back to `state_ids` when `configuration` is absent.
 
 ### Testing
-- New `tests/test_xstate_v5_parity.py`: **132 tests**, one class per feature
+- New `tests/test_xstate_v5_parity.py`: **140 tests**, one class per feature
   area, asserting observable behaviour. Where a gap previously failed
   silently, the test pins that the feature now takes effect — a test that
   only checked "no exception" would still pass against the broken version.
-- Suite: 2455 → **2587 passing**. Coverage **86%**.
-- The implementation was then reviewed adversarially, which found two further
-  CRITICAL defects (a `raise` during initial entry corrupting the
-  configuration; transitions into a parallel region double-entering it) plus
-  six HIGH/MEDIUM issues. All are fixed and pinned by regression tests. Most
-  notably, wildcard descriptors were swallowing the engine's own
-  `done.*` / `error.*` / `after.*` events, which silently broke every invoke
-  and delayed transition in a state declaring `on: {"*": ...}`.
+- Suite: 2455 → **2595 passing**. Coverage **86%**.
+- The implementation was then reviewed adversarially. **15 defects were
+  confirmed and all 15 are fixed**, each pinned by a regression test. The
+  most serious:
+  - A `raise` during initial entry corrupted the configuration, and a
+    transition into a parallel region double-entered it — both left two
+    active leaves in one non-parallel region.
+  - Wildcard descriptors swallowed the engine's own `done.*` / `error.*` /
+    `after.*` events, silently breaking every invoke and delayed transition
+    in a state declaring `on: {"*": ...}`.
+  - A `MachineNode` used as an `invoke` `src` raised `TypeError` which, via
+    the new unhandled-error path, put the machine into a permanent `error`
+    status — a **regression** against a configuration that previously worked.
+  - `stop()` guarded on `status != "running"`, so the newly-routine `done`
+    and `error` statuses made teardown a silent no-op, leaking child actors
+    and their timers.
+  - Actors parked in `_pending_actor_snapshots` were never re-serialised, so
+    the "preserved" child vanished on the next save — the same data loss deep
+    persistence exists to prevent, one round-trip later.
+  - `get_persisted_snapshot()` returned the live context by reference, so
+    later execution retroactively rewrote an already-taken snapshot.
+  - A restored async interpreter was frozen: `status == "running"` with no
+    event-loop task, and `start()` refused to create one. `start()` now
+    resumes a restored actor and its children.
+  - Snapshot `error` was written but never read back; `stopChild` left actors
+    in the system registry; nested `enqueueActions` could recurse until
+    `RecursionError`; `sendTo` could not address auto-id actors; a reused
+    send id orphaned the first timer; and both `get_persisted_snapshot()` and
+    `stop()` recursed forever on an actor cycle.
 
 ### Added
 - **Continuous Integration** (`.github/workflows/ci.yml`). The project had

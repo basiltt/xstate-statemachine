@@ -3556,5 +3556,245 @@ class TestReviewRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("MINE", interpreter.context["input"])
 
 
+# -----------------------------------------------------------------------------
+# 🛡️ Second-Round Review Regressions
+# -----------------------------------------------------------------------------
+class TestLifecycleAndPersistenceRegressions(unittest.IsolatedAsyncioTestCase):
+    """Pins defects found by the full adversarial review of v0.6.0."""
+
+    CHILD: Dict[str, Any] = {
+        "id": "kid",
+        "initial": "i",
+        "states": {"i": {}},
+    }
+
+    def test_machine_node_as_invoke_src_spawns_an_actor(self) -> None:
+        """A `MachineNode` used as `src` must run as a child actor.
+
+        🐛 Regression: it fell through to `service(...)` and raised
+        `TypeError: 'MachineNode' object is not callable`. Combined with the
+        new unhandled-error path that set `status = "error"` permanently, a
+        previously-working configuration bricked the machine.
+        """
+        # Arrange / Act
+        interpreter = start(
+            {
+                "id": "parent",
+                "initial": "p1",
+                "states": {
+                    "p1": {"invoke": {"src": "kid"}, "on": {"T": "p2"}},
+                    "p2": {},
+                },
+            },
+            services={"kid": build(self.CHILD)},
+        )
+        self.addCleanup(interpreter.stop)
+
+        # Assert — healthy, and still responsive.
+        self.assertEqual("running", interpreter.status)
+        self.assertIsNone(interpreter.error)
+        interpreter.send("T")
+        self.assertEqual({"parent.p2"}, interpreter.current_state_ids)
+
+    def test_stop_tears_down_after_reaching_done(self) -> None:
+        """`stop()` must still run teardown from a terminal status.
+
+        🐛 Regression: the guard was `status != "running"`, and the branch
+        introduced `done`/`error` as routine terminal statuses. Any machine
+        that completed therefore made `stop()` a silent no-op, leaking child
+        actors and their timer threads.
+        """
+        # Arrange
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "a",
+                "context": {},
+                "states": {
+                    "a": {
+                        "entry": [
+                            {
+                                "type": "spawnChild",
+                                "params": {"src": "kid", "id": "w"},
+                            }
+                        ],
+                        "on": {"E": "f"},
+                    },
+                    "f": {"type": "final"},
+                },
+            },
+            services={"kid": lambda i, c, e: build(self.CHILD)},
+        )
+        interpreter.send("E")
+        self.assertEqual("done", interpreter.status)
+        self.assertEqual(1, len(interpreter._actors))
+
+        # Act
+        interpreter.stop()
+
+        # Assert
+        self.assertEqual("stopped", interpreter.status)
+        self.assertEqual(0, len(interpreter._actors))
+
+    def test_persisted_snapshot_deep_copies_context(self) -> None:
+        """A snapshot must be a point-in-time capture, not a live view."""
+        # Arrange
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "a",
+                "context": {"v": 0},
+                "states": {"a": {}},
+            }
+        )
+
+        # Act
+        snapshot = interpreter.get_persisted_snapshot()
+        interpreter.context["v"] = 999
+
+        # Assert
+        self.assertIsNot(snapshot["context"], interpreter.context)
+        self.assertEqual(0, snapshot["context"]["v"])
+
+    def test_unrestorable_actor_survives_repeated_round_trips(self) -> None:
+        """A parked actor must be re-emitted, not dropped on the next save.
+
+        🐛 Regression: `_pending_actor_snapshots` was write-only, so the
+        "preserved" child vanished on the very next save — reintroducing the
+        data loss deep persistence exists to prevent, one round-trip later.
+        """
+        # Arrange
+        parent = {
+            "id": "parent",
+            "initial": "a",
+            "context": {},
+            "states": {
+                "a": {
+                    "entry": [
+                        {
+                            "type": "spawnChild",
+                            "params": {"src": "kid", "id": "w"},
+                        }
+                    ]
+                }
+            },
+        }
+        original = start(
+            parent, services={"kid": lambda i, c, e: build(self.CHILD)}
+        )
+        first_save = original.get_snapshot()
+        original.stop()
+
+        # Act — restore with NO services, then re-save.
+        restored = SyncInterpreter.from_snapshot(first_save, build(parent))
+        second_save = json.loads(restored.get_snapshot())
+
+        # Assert — the child is still present after the second round trip.
+        self.assertIn("parent:w", restored._pending_actor_snapshots)
+        self.assertIn("parent:w", second_save["actors"])
+
+    def test_restored_error_is_recoverable(self) -> None:
+        """A machine restored in `error` status must expose its cause.
+
+        🐛 Regression: `error` was serialised but never read back, so the
+        restored actor sat in a terminal error state with `error is None`.
+        """
+
+        def boom(_i: Any, _c: Any, _e: Any) -> None:
+            """A deliberately failing service."""
+            raise ValueError("nope")
+
+        # Arrange
+        config = {
+            "id": "m",
+            "initial": "l",
+            "states": {"l": {"invoke": {"src": "b"}}},
+        }
+        failed = start(config, services={"b": boom})
+        self.assertEqual("error", failed.status)
+
+        # Act
+        restored = SyncInterpreter.from_snapshot(
+            failed.get_snapshot(), build(config, services={"b": boom})
+        )
+
+        # Assert
+        self.assertEqual("error", restored.status)
+        self.assertIsNotNone(restored.error)
+        self.assertIn("nope", str(restored.error))
+
+    def test_persisted_snapshot_survives_an_actor_cycle(self) -> None:
+        """A cycle in the actor graph must not blow the stack."""
+        # Arrange
+        config = {"id": "m", "initial": "a", "states": {"a": {}}}
+        first = start(config)
+        second = start(config)
+        self.addCleanup(first.stop)
+        self.addCleanup(second.stop)
+        first._actors["second"] = second
+        second._actors["first"] = first
+
+        # Act — must return rather than raising RecursionError.
+        snapshot = first.get_persisted_snapshot()
+
+        # Assert
+        self.assertIn("second", snapshot["actors"])
+
+    async def test_restored_async_interpreter_can_be_resumed(self) -> None:
+        """`start()` must revive a snapshot-restored async interpreter.
+
+        🐛 Regression: `from_snapshot` restored `status == "running"` with no
+        event-loop task, and `start()`'s idempotency check then refused to
+        create one. The machine looked alive, queued every event and
+        processed none.
+        """
+        # Arrange
+        config = {
+            "id": "m",
+            "initial": "a",
+            "context": {"v": 0},
+            "states": {"a": {"on": {"T": "b"}}, "b": {}},
+        }
+        original = await Interpreter(build(config)).start()
+        snapshot = original.get_snapshot()
+        await original.stop()
+
+        # Act
+        restored = Interpreter.from_snapshot(snapshot, build(config))
+        self.assertFalse(restored.is_running)
+        await restored.start()
+        self.addAsyncCleanup(restored.stop)
+        await settle(restored, "T")
+
+        # Assert — the resumed machine actually processes events.
+        self.assertTrue(restored.is_running)
+        self.assertEqual({"m.b"}, restored.current_state_ids)
+
+    async def test_async_stop_tears_down_after_done(self) -> None:
+        """The async engine must also tear down from a terminal status."""
+        # Arrange
+        interpreter = await Interpreter(
+            build(
+                {
+                    "id": "m",
+                    "initial": "a",
+                    "states": {
+                        "a": {"on": {"E": "f"}},
+                        "f": {"type": "final"},
+                    },
+                }
+            )
+        ).start()
+        await settle(interpreter, "E")
+        await asyncio.sleep(0.05)
+        self.assertEqual("done", interpreter.status)
+
+        # Act
+        await interpreter.stop()
+
+        # Assert
+        self.assertEqual("stopped", interpreter.status)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

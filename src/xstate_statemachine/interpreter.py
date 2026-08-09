@@ -168,6 +168,31 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 state entry, ensuring a clean failure state if the machine
                 cannot start correctly.
         """
+        # ♻️ Resume a snapshot-restored interpreter.
+        #
+        # 🏛️ Architecture decision: `from_snapshot` restores the persisted
+        # status verbatim, so a restored actor reads `"running"` with no
+        # `_event_loop_task`. The idempotency check below then refused to
+        # start it, leaving a machine that looked alive, queued every event
+        # and processed none. Detecting that shape and attaching a loop makes
+        # `start()` the documented way to resume a restored actor.
+        if (
+            self.status in ("running", "done", "error")
+            and self._event_loop_task is None
+        ):
+            logger.info("♻️ Resuming restored interpreter '%s'...", self.id)
+            if self.status == "running":
+                self._event_loop_task = asyncio.create_task(
+                    self._run_event_loop()
+                )
+            # 👶 Resume restored child actors too, so a whole hierarchy comes
+            #    back alive rather than just its root.
+            for actor in list(self._actors.values()):
+                resumed = actor.start()
+                if inspect.isawaitable(resumed):
+                    await resumed
+            return self
+
         # 🛡️ Idempotency check: Don't start if already running or stopped.
         if self.status != "uninitialized":
             logger.warning(
@@ -217,8 +242,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         background tasks (timers, services), and recursively stops any child
         actors that were spawned by this interpreter. It is idempotent.
         """
-        # 🛡️ Idempotency check: Don't stop if not currently running.
-        if self.status != "running":
+        # 🛡️ Idempotency check.
+        #
+        # 🏛️ `done` and `error` are terminal but NOT torn down: reaching a
+        # top-level final state must still release child actors and tasks.
+        if self.status in ("uninitialized", "stopped"):
             logger.warning(
                 "⚠️ Interpreter '%s' is not running. Skipping stop.", self.id
             )

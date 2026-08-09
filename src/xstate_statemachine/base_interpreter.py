@@ -50,6 +50,7 @@ from .events import AfterEvent, DoneEvent, Event
 from .exceptions import (
     ImplementationMissingError,
     InvalidConfigError,
+    RestoredError,
     StateNotFoundError,
 )
 from .actions import (
@@ -595,7 +596,9 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         )
         return json_snapshot
 
-    def get_persisted_snapshot(self) -> Dict[str, Any]:
+    def get_persisted_snapshot(
+        self, _seen: Optional[Set[int]] = None
+    ) -> Dict[str, Any]:
         """Returns a deep, JSON-serialisable snapshot as a dictionary.
 
         Mirrors XState's ``actor.getPersistedSnapshot()``. Unlike the earlier
@@ -611,9 +614,20 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         Returns:
             Dict[str, Any]: The persisted snapshot.
         """
+        # 🔁 Guard against an actor cycle. The registry makes a cycle
+        #    constructible, and unbounded recursion would blow the stack
+        #    instead of failing cleanly.
+        seen = _seen if _seen is not None else set()
+        if id(self) in seen:
+            return {"ref": self.id, "cycle": True}
+        seen = seen | {id(self)}
+
         return {
             "status": self.status,
-            "context": self.context,
+            # 🧊 Deep-copy so the snapshot is a true point-in-time capture.
+            #    Returning the live dict made later execution retroactively
+            #    rewrite an already-taken snapshot.
+            "context": copy.deepcopy(self.context),
             "state_ids": sorted(self.current_state_ids),
             # 🌳 Full configuration, so ancestors are restored exactly rather
             #    than re-derived from leaves.
@@ -629,18 +643,42 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 for parent_id, nodes in self._history.items()
             },
             # 👶 Recursive child-actor snapshots, keyed by actor id.
-            "actors": {
-                actor_id: {
-                    "machine_id": actor.machine.id,
-                    # 🔑 Persist the originating service key. Deriving it from
-                    #    the actor id is unreliable: an explicit `id` param
-                    #    replaces the key segment entirely.
-                    "src": self._actor_sources.get(actor_id),
-                    "snapshot": actor.get_persisted_snapshot(),
-                }
-                for actor_id, actor in self._actors.items()
-            },
+            "actors": self._persist_actors(seen),
         }
+
+    def _persist_actors(self, seen: Set[int]) -> Dict[str, Any]:
+        """Serialises child actors, including any that could not be restored.
+
+        🏛️ Architecture decision: actors parked in `_pending_actor_snapshots`
+        (their service was absent when this interpreter was restored) are
+        re-emitted verbatim. Without this the "preserved" snapshot was
+        write-only: the next save silently dropped the child, its context, its
+        own grandchildren and its history — reintroducing exactly the data
+        loss deep persistence was written to prevent, one round-trip later.
+
+        Args:
+            seen (Set[int]): Interpreter ids already visited, for cycle
+                detection.
+
+        Returns:
+            Dict[str, Any]: Persisted records keyed by actor id.
+        """
+        records: Dict[str, Any] = {
+            actor_id: {
+                "machine_id": actor.machine.id,
+                # 🔑 Persist the originating service key. Deriving it from the
+                #    actor id is unreliable: an explicit `id` param replaces
+                #    the key segment entirely.
+                "src": self._actor_sources.get(actor_id),
+                "snapshot": actor.get_persisted_snapshot(seen),
+            }
+            for actor_id, actor in self._actors.items()
+        }
+        # ♻️ Carry forward actors we could not rebuild, so they survive
+        #    an arbitrary number of save/restore cycles.
+        for actor_id, record in self._pending_actor_snapshots.items():
+            records.setdefault(actor_id, record)
+        return records
 
     def _resolve_actor_machine(
         self, service_key: Optional[str]
@@ -751,6 +789,14 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         # 🏁 Restore completion output and any recorded error.
         interpreter.output = snapshot.get("output")
+        recorded_error = snapshot.get("error")
+        if recorded_error:
+            # 📝 The original exception type cannot survive JSON, so the
+            #    message is preserved in a dedicated wrapper. Without this a
+            #    restored machine sat in `error` status with `error is None`,
+            #    so no caller could discover what went wrong — the exact
+            #    observability the error-snapshot feature exists to provide.
+            interpreter.error = RestoredError(str(recorded_error))
 
         # 🕰️ Restore remembered history so a later transition to a history
         #    state still resolves after a restart.
