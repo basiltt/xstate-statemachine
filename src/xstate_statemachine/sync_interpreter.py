@@ -699,7 +699,13 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         # 🏁 A top-level final state completes the machine itself.
         if final_state.parent is self.machine or final_state.parent is None:
-            self._complete(self._resolve_output(final_state))
+            # 📝 A machine-level `output` wins over the final state's own,
+            #    matching XState. See BaseInterpreter._check_and_fire_on_done.
+            machine_output = getattr(self.machine, "machine_output", None)
+            if machine_output is not None:
+                self._complete(self._resolve_output_value(machine_output))
+            else:
+                self._complete(self._resolve_output(final_state))
 
     # -------------------------------------------------------------------------
     # ⚡ Action & Service Execution (Private Overrides)

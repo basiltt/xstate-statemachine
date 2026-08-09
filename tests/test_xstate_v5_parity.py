@@ -4024,5 +4024,168 @@ class TestPr21ReviewRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({"m.a"}, interpreter.current_state_ids)
 
 
+# -----------------------------------------------------------------------------
+# 🧾 Machine-Level Output & Guard Naming
+# -----------------------------------------------------------------------------
+class TestMachineOutputAndGuardNaming(unittest.IsolatedAsyncioTestCase):
+    """Pins machine-level `output` and user guards named like built-ins."""
+
+    def test_machine_level_output_is_used(self) -> None:
+        """A machine-level `output` must be reported on completion.
+
+        🐛 Regression: only the final *state's* `output` was read, so a
+        machine declaring a top-level `output` completed with
+        `interpreter.output is None`.
+        """
+        # Arrange
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "a",
+                "output": {"top": 1},
+                "states": {
+                    "a": {"on": {"E": "f"}},
+                    "f": {"type": "final"},
+                },
+            }
+        )
+
+        # Act
+        interpreter.send("E")
+
+        # Assert
+        self.assertEqual("done", interpreter.status)
+        self.assertEqual({"top": 1}, interpreter.output)
+
+    def test_machine_output_wins_over_final_state_output(self) -> None:
+        """The machine describes what the ACTOR produces, so it wins."""
+        # Arrange
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "a",
+                "output": {"from": "machine"},
+                "states": {
+                    "a": {"on": {"E": "f"}},
+                    "f": {"type": "final", "output": {"from": "state"}},
+                },
+            }
+        )
+
+        # Act
+        interpreter.send("E")
+
+        # Assert
+        self.assertEqual({"from": "machine"}, interpreter.output)
+
+    def test_callable_machine_output_is_resolved(self) -> None:
+        """A machine-level `output` may be a callable of `{context, event}`."""
+        # Arrange
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "a",
+                "context": {"n": 4},
+                "output": lambda args: args["context"]["n"] * 3,
+                "states": {
+                    "a": {"on": {"E": "f"}},
+                    "f": {"type": "final"},
+                },
+            }
+        )
+
+        # Act
+        interpreter.send("E")
+
+        # Assert
+        self.assertEqual(12, interpreter.output)
+
+    async def test_machine_output_in_async_engine(self) -> None:
+        """The async engine must resolve machine-level output too."""
+        # Arrange
+        interpreter = await Interpreter(
+            build(
+                {
+                    "id": "m",
+                    "initial": "a",
+                    "output": {"top": 2},
+                    "states": {
+                        "a": {"on": {"E": "f"}},
+                        "f": {"type": "final"},
+                    },
+                }
+            )
+        ).start()
+        self.addAsyncCleanup(interpreter.stop)
+
+        # Act
+        await settle(interpreter, "E")
+        await asyncio.sleep(0.05)
+
+        # Assert
+        self.assertEqual({"top": 2}, interpreter.output)
+
+    def test_user_guard_may_be_named_like_a_composite(self) -> None:
+        """A bare string guard is always a user predicate, never composite.
+
+        🐛 Regression: any guard *named* `and`, `or` or `not` was parsed as a
+        composite and rejected for having no children, so the name was
+        unusable even with a registered implementation.
+        """
+        # Arrange / Act / Assert
+        for name in ("and", "or", "not"):
+            interpreter = start(
+                {
+                    "id": "m",
+                    "initial": "a",
+                    "states": {
+                        "a": {"on": {"E": {"target": "b", "guard": name}}},
+                        "b": {},
+                    },
+                },
+                guards={name: lambda c, e: True},
+            )
+            interpreter.send("E")
+            self.assertEqual(
+                {"m.b"},
+                interpreter.current_state_ids,
+                f"user guard named {name!r} was not honoured",
+            )
+
+    def test_object_form_still_builds_a_composite(self) -> None:
+        """The object form must still compose, not become a lookup."""
+        # Arrange
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "on": {
+                            "E": {
+                                "target": "b",
+                                "guard": {
+                                    "type": "and",
+                                    "children": ["yes", "no"],
+                                },
+                            }
+                        }
+                    },
+                    "b": {},
+                },
+            },
+            guards={
+                "yes": lambda c, e: True,
+                "no": lambda c, e: False,
+            },
+        )
+
+        # Act
+        interpreter.send("E")
+
+        # Assert — composition still evaluated, so the transition is blocked.
+        self.assertEqual({"m.a"}, interpreter.current_state_ids)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

@@ -59,17 +59,9 @@ from .actions import (
     CHOOSE,
     EMIT,
     ENQUEUE_ACTIONS,
-    ESCALATE,
-    FORWARD_TO,
     LOG,
     PURE,
-    RAISE,
-    SEND_PARENT,
-    SEND_TO,
-    SPAWN_CHILD,
-    STOP_CHILD,
     ActionEnqueuer,
-    resolve_builtin,
 )
 from .models import (
     ActionDefinition,
@@ -1999,8 +1991,37 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             ancestor = ancestor.parent
 
         # 🏁 A top-level final state completes the machine itself.
+        #
+        # 📝 A machine-level `output` declaration wins over the final state's
+        #    own, matching XState: the machine describes what the *actor*
+        #    produces, the final state only contributes done-data upward.
         if final_state.parent is self.machine or final_state.parent is None:
-            self._complete(self._resolve_output(final_state))
+            machine_output = getattr(self.machine, "machine_output", None)
+            if machine_output is not None:
+                self._complete(self._resolve_output_value(machine_output))
+            else:
+                self._complete(self._resolve_output(final_state))
+
+    def _resolve_output_value(self, output: Any) -> Any:
+        """Resolves an `output` declaration to a concrete value.
+
+        Args:
+            output (Any): A literal, or a callable of `{context, event}`.
+
+        Returns:
+            Any: The resolved output, or `None` if a callable raised.
+        """
+        if output is None:
+            return None
+        if callable(output):
+            try:
+                return output({"context": self.context, "event": None})
+            except Exception:
+                logger.exception(
+                    "🔥 Machine-level output function raised; using None."
+                )
+                return None
+        return output
 
     def _resolve_output(self, final_state: StateNode) -> Any:
         """Computes the done data contributed by a final state.

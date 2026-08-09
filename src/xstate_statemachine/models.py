@@ -291,7 +291,14 @@ class GuardDefinition:
                 f"got {type(config).__name__}"
             )
 
-        self.is_composite = self.type in COMPOSITE_GUARD_TYPES
+        # 🏛️ Architecture decision: a *bare string* guard is always a user
+        # predicate, never a composite. Only the object form
+        # (`{"type": "and", ...}`) declares composition. Without this a user
+        # who legitimately names a guard `and`, `or` or `not` could not use
+        # it at all — the parser demanded nested children it would never have.
+        self.is_composite = (
+            self.type in COMPOSITE_GUARD_TYPES and not isinstance(config, str)
+        )
         self.is_state_in = self.type == STATE_IN_GUARD_TYPE
         self.children = [GuardDefinition(c) for c in children_cfg]
 
@@ -300,7 +307,11 @@ class GuardDefinition:
                 f"❌ Composite guard '{self.type}' requires at least one "
                 "nested guard (via 'children', or 'params.guards')."
             )
-        if self.type == "not" and len(self.children) != 1:
+        if (
+            self.is_composite
+            and self.type == "not"
+            and len(self.children) != 1
+        ):
             raise InvalidConfigError(
                 "❌ Guard 'not' requires exactly one nested guard, got "
                 f"{len(self.children)}."
