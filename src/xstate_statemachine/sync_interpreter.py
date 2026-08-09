@@ -509,15 +509,15 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             # 👻 Use a dummy event for guard evaluation in "always" transitions.
             transient_event = Event(type="")  # Empty type signifies "always".
 
-            # 🎯 Find the most specific transient transition available.
-            transition = self._find_optimal_transition(transient_event)
+            # 🎯 Find transient transitions via the memoised selection path,
+            #    so a guard on a shared ancestor is evaluated once rather than
+            #    once per active leaf.
+            selected = self._select_transitions(transient_event)
 
             # ⚡ An event-less transition is one with an empty event string ("").
-            if transition and transition.event == "":
+            if selected and any(t.event == "" for t in selected):
                 logger.info(
-                    "🚀 Processing transient transition from '%s' to target '%s'",
-                    transition.source.id,
-                    transition.target_str or "self (internal)",
+                    "🚀 Processing transient transition(s) in '%s'", self.id
                 )
                 # 🔄 Directly process the *found* transition, which is more efficient.
                 self._process_event(transient_event)

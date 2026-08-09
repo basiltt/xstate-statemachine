@@ -436,8 +436,12 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 )
                 break
             transient_event = Event(type="")
-            transition = self._find_optimal_transition(transient_event)
-            if transition and transition.event == "":
+            # 🧠 Use the memoised selection path so a transient transition on
+            #    a shared ancestor evaluates its guard ONCE, not once per
+            #    active leaf. The legacy single-winner scan re-evaluated it
+            #    per region, multiplying any guard side effects.
+            selected = self._select_transitions(transient_event)
+            if selected and any(t.event == "" for t in selected):
                 logger.info(
                     "⚡ Processing transient (event-less) transition in '%s'.",
                     self.id,
