@@ -347,6 +347,20 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             **payload: Keyword arguments that become the event's payload if
                 `event_or_type` is a string.
         """
+        # 🚪 Refuse events once the machine is no longer processing. Nothing
+        #    drains the queue after `stop()`, so every `send()` accumulated
+        #    forever — a slow memory leak in any long-lived process that keeps
+        #    a reference to a finished machine. Dropping with a warning also
+        #    surfaces the mistake instead of hiding it.
+        if self.status in ("stopped", "done"):
+            logger.warning(
+                "⚠️ Interpreter '%s' is %s; dropping event. Nothing drains "
+                "the queue after shutdown, so queuing here would leak.",
+                self.id,
+                self.status,
+            )
+            return
+
         # 📦 Use the centralized helper from the base class to normalize the input.
         event_obj = self._prepare_event(event_or_type, **payload)
 
@@ -365,6 +379,15 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             events: A list of events to send. Each event can be a string,
                 a dictionary, or an `Event` object.
         """
+        if self.status in ("stopped", "done"):
+            logger.warning(
+                "⚠️ Interpreter '%s' is %s; dropping %d event(s).",
+                self.id,
+                self.status,
+                len(events),
+            )
+            return
+
         for event in events:
             event_obj = self._prepare_event(event)
             await self._event_queue.put(event_obj)

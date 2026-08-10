@@ -552,3 +552,181 @@ class TestInvokedChildMachine(unittest.IsolatedAsyncioTestCase):
 
             time.sleep(0.01)
         self.assertEqual({"p.done"}, interpreter.current_state_ids)
+
+
+# -----------------------------------------------------------------------------
+# 🧯 Robustness Fixes From The Battle Test
+# -----------------------------------------------------------------------------
+class TestRobustnessFixes(unittest.IsolatedAsyncioTestCase):
+    """Non-blocking defects found by the v0.6.0 battle test."""
+
+    SIMPLE: Dict[str, Any] = {
+        "id": "m",
+        "initial": "a",
+        "context": {},
+        "states": {"a": {"on": {"G": "b"}}, "b": {"on": {"N": "c"}}, "c": {}},
+    }
+
+    def test_restart_after_stop_raises_instead_of_no_op(self) -> None:
+        """A stopped interpreter must not pretend it restarted.
+
+        🐛 Regression: `start()` returned `self`, so state ids still read as
+        live while `status` stayed "stopped" and every event was dropped.
+        """
+        # Arrange
+        interpreter = SyncInterpreter(build(self.SIMPLE)).start()
+        interpreter.stop()
+
+        # Act / Assert
+        with self.assertRaises(XStateMachineError):
+            interpreter.start()
+
+    async def test_async_restart_after_stop_raises(self) -> None:
+        """The async engine must refuse a restart too."""
+        # Arrange
+        interpreter = await Interpreter(build(self.SIMPLE)).start()
+        await interpreter.stop()
+
+        # Act / Assert
+        with self.assertRaises(XStateMachineError):
+            await interpreter.start()
+
+    async def test_send_to_a_stopped_machine_does_not_queue(self) -> None:
+        """Events sent after `stop()` must be dropped, not accumulated.
+
+        🐛 Regression: nothing drains the queue after shutdown, so every
+        `send()` accumulated forever — a slow leak in any process holding a
+        reference to a finished machine.
+        """
+        # Arrange
+        interpreter = await Interpreter(build(self.SIMPLE)).start()
+        await interpreter.stop()
+
+        # Act
+        for _ in range(200):
+            await interpreter.send("G")
+
+        # Assert
+        self.assertEqual(0, interpreter._event_queue.qsize())
+
+    def test_a_failing_plugin_cannot_break_the_interpreter(self) -> None:
+        """Observability must not break the thing it observes.
+
+        🐛 Regression: plugin hook exceptions propagated out of `send()` on
+        the sync engine and killed the run loop on the async engine, even
+        though actions and subscribers were already contained.
+        """
+
+        class ExplodingPlugin:
+            """A plugin whose hooks always fail."""
+
+            def on_transition(self, *_a: Any, **_k: Any) -> None:
+                """Always raises."""
+                raise ValueError("metrics exporter is down")
+
+            def on_event_received(self, *_a: Any, **_k: Any) -> None:
+                """No-op."""
+
+        # Arrange
+        interpreter = SyncInterpreter(build(self.SIMPLE))
+        interpreter.use(ExplodingPlugin())
+        interpreter.start()
+
+        # Act
+        interpreter.send("G")
+        interpreter.send("N")
+
+        # Assert — transitions still happened.
+        self.assertEqual({"m.c"}, interpreter.current_state_ids)
+
+    def test_registered_plugin_identity_is_preserved(self) -> None:
+        """Containment must not break `plugin in interpreter.plugins`."""
+        # Arrange
+        from src.xstate_statemachine import LoggingInspector
+
+        inspector = LoggingInspector()
+        interpreter = SyncInterpreter(build(self.SIMPLE))
+
+        # Act
+        interpreter.use(inspector)
+
+        # Assert
+        self.assertIn(inspector, interpreter.plugins)
+
+    def test_corrupt_snapshot_raises_a_library_error(self) -> None:
+        """A bad snapshot must be catchable via `XStateMachineError`.
+
+        🐛 Regression: `json.JSONDecodeError` leaked, so the documented way
+        to catch this library's failures silently missed corrupt snapshots
+        arriving from Redis, disk or a queue.
+        """
+        # Arrange
+        machine = build(self.SIMPLE)
+
+        # Act / Assert
+        for corrupt in ("not-json", "", "[1,2,3]"):
+            with self.assertRaises(XStateMachineError):
+                SyncInterpreter.from_snapshot(corrupt, machine)
+
+    def test_dotted_state_keys_are_rejected(self) -> None:
+        """A '.' in a state key collides with the id separator.
+
+        🐛 Regression: a flat state `"x.y"` and a nested `x > y` produced the
+        SAME id, so `matches()`, snapshots and target resolution could not
+        tell them apart — targeting `"x.y"` silently entered the nested
+        state and ran the wrong entry actions.
+        """
+        # Act / Assert
+        with self.assertRaises(XStateMachineError):
+            build(
+                {
+                    "id": "m",
+                    "initial": "x.y",
+                    "context": {},
+                    "states": {
+                        "x.y": {},
+                        "x": {"initial": "y", "states": {"y": {}}},
+                    },
+                }
+            )
+
+    def test_custom_state_id_resolves_a_hash_target(self) -> None:
+        """`#myId` must find a state that declared `id`.
+
+        🐛 Regression: `StateNode` never read `config["id"]`, so this core
+        XState cross-branch idiom — used by 37 of the 104 bundled Stately
+        machines — always raised `StateNotFoundError`.
+        """
+        # Arrange
+        config = {
+            "id": "m",
+            "initial": "a",
+            "context": {},
+            "states": {
+                "a": {"on": {"GO": "#tgt"}},
+                "br": {"initial": "in", "states": {"in": {"id": "tgt"}}},
+            },
+        }
+        interpreter = SyncInterpreter(build(config)).start()
+
+        # Act
+        interpreter.send("GO")
+
+        # Assert
+        self.assertEqual({"m.br.in"}, interpreter.current_state_ids)
+
+    def test_duplicate_custom_ids_are_rejected(self) -> None:
+        """Two states may not claim the same custom id."""
+        # Act / Assert
+        with self.assertRaises(XStateMachineError):
+            build(
+                {
+                    "id": "m",
+                    "initial": "a",
+                    "context": {},
+                    "states": {
+                        "a": {"id": "dup"},
+                        "b": {"id": "dup"},
+                    },
+                }
+            )

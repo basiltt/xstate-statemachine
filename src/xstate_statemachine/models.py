@@ -543,6 +543,19 @@ class StateNode(Generic[TContext, TEvent]):
             parent.id if parent else "ROOT",
         )
         # 🧍‍♂️ Core Properties
+        #
+        # 🚫 A '.' in a state key collides with the id separator. A flat state
+        #    named "x.y" and a nested x > y produce the SAME fully-qualified
+        #    id, so `matches()`, snapshots and target resolution cannot tell
+        #    them apart — targeting "x.y" silently entered the nested state
+        #    and ran the wrong entry actions. Reject at parse time rather than
+        #    let two distinct nodes share an identity.
+        if parent is not None and "." in key:
+            raise InvalidConfigError(
+                f"State key '{key}' in '{parent.id}' contains '.', which is "
+                f"reserved as the state-id separator. Rename the state (for "
+                f"example '{key.replace('.', '_')}') or nest it explicitly."
+            )
         self.key = key
         self.parent = parent
         self.machine = machine

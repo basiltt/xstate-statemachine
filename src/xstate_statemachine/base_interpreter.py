@@ -24,6 +24,7 @@ synchronous, blocking operations.
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
+import functools
 import copy
 import inspect
 import json
@@ -139,6 +140,96 @@ class ActorSystem:
     def __repr__(self) -> str:
         """Provides a developer-friendly string representation."""
         return f"ActorSystem(actors={sorted(self._registry)})"
+
+
+# -----------------------------------------------------------------------------
+# 🛡️ Plugin Error Containment
+# -----------------------------------------------------------------------------
+class _SafePlugin:
+    """Wraps a plugin so a failing hook cannot break the interpreter.
+
+    🏛️ Architecture decision: containment lives at the registration boundary
+    rather than at each of the ~27 hook dispatch sites. Wrapping once keeps
+    every call site free of defensive noise and makes it impossible to add a
+    new dispatch that forgets to guard.
+
+    Observability must never be able to break the thing it observes. An
+    exception from a metrics exporter or an audit logger previously
+    propagated out of `send()` on the sync engine and killed the run loop on
+    the async engine — a monitoring bug taking down the state machine.
+    Actions and subscribers were already contained; plugins were the
+    outlier.
+
+    Attributes:
+        _plugin: The wrapped plugin instance.
+    """
+
+    __slots__ = ("_plugin",)
+
+    def __init__(self, plugin: Any) -> None:
+        """Stores the plugin being wrapped.
+
+        Args:
+            plugin (Any): Any object exposing the plugin hooks.
+        """
+        object.__setattr__(self, "_plugin", plugin)
+
+    @property
+    def wrapped(self) -> Any:
+        """Returns the underlying plugin instance."""
+        return object.__getattribute__(self, "_plugin")
+
+    def __getattr__(self, name: str) -> Any:
+        """Returns a hook wrapped in error containment.
+
+        Args:
+            name (str): The attribute being accessed.
+
+        Returns:
+            Any: A guarded callable, or the raw attribute if not callable.
+        """
+        plugin = object.__getattribute__(self, "_plugin")
+        # 🦆 Duck-typed plugins only need the hooks they care about. Letting
+        #    the AttributeError escape would make a partial plugin crash the
+        #    interpreter at the first hook it omitted — the very failure mode
+        #    this wrapper exists to prevent.
+        attribute = getattr(plugin, name, None)
+        if attribute is None:
+            return lambda *_a, **_k: None
+        if not callable(attribute):
+            return attribute
+
+        @functools.wraps(attribute)
+        def _guarded(*args: Any, **kwargs: Any) -> Any:
+            """Invokes the hook, logging and swallowing any failure."""
+            try:
+                return attribute(*args, **kwargs)
+            except Exception:
+                logger.error(
+                    "🔌 Plugin '%s' raised in '%s'; ignoring so the "
+                    "interpreter keeps running.",
+                    type(plugin).__name__,
+                    name,
+                    exc_info=True,
+                )
+                return None
+
+        return _guarded
+
+    def __eq__(self, other: Any) -> bool:
+        """Compares against the wrapped plugin so `in` checks work."""
+        target = object.__getattribute__(self, "_plugin")
+        if isinstance(other, _SafePlugin):
+            return bool(target == other.wrapped)
+        return bool(target == other)
+
+    def __hash__(self) -> int:
+        """Hashes as the wrapped plugin."""
+        return hash(object.__getattribute__(self, "_plugin"))
+
+    def __repr__(self) -> str:
+        """Mirrors the wrapped plugin's repr."""
+        return repr(object.__getattribute__(self, "_plugin"))
 
 
 class BaseInterpreter(Generic[TContext, TEvent]):
@@ -536,7 +627,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                     f"interface (e.g. subclass PluginBase); got "
                     f"{type(item).__name__}."
                 )
-        self._plugins = list(value)
+        self._plugins = [_SafePlugin(item) for item in value]
 
     def use(
         self: TInterpreter, plugin: PluginBase["BaseInterpreter[Any, Any]"]
@@ -555,7 +646,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             The interpreter instance (`self`) with the correct subclass type
             to allow for convenient and type-safe method chaining.
         """
-        self._plugins.append(plugin)
+        self._plugins.append(_SafePlugin(plugin))
         logger.info(
             "🔌 Plugin '%s' registered with interpreter '%s'.",
             type(plugin).__name__,
@@ -744,17 +835,29 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         Raises:
             StateNotFoundError: If a state ID from the snapshot cannot be found
                 in the provided machine definition.
-            json.JSONDecodeError: If the snapshot string is not valid JSON.
+            InvalidConfigError: If the snapshot string is not valid JSON, or
+                does not decode to a JSON object.
         """
         logger.info(
             "🔄 Restoring interpreter for machine '%s' from snapshot...",
             machine.id,
         )
+        # 🧯 Wrap the decode error. Snapshots come back from Redis, disk or a
+        #    queue, so corruption is an ordinary runtime condition callers are
+        #    expected to handle. Leaking `json.JSONDecodeError` meant
+        #    `except XStateMachineError` — the documented way to catch this
+        #    library's failures — silently missed it.
         try:
             snapshot = json.loads(snapshot_str)
         except json.JSONDecodeError as e:
             logger.error("❌ Invalid JSON in snapshot string: %s", e)
-            raise
+            raise InvalidConfigError(f"Snapshot is not valid JSON: {e}") from e
+
+        if not isinstance(snapshot, dict):
+            raise InvalidConfigError(
+                f"Snapshot must decode to a JSON object, got "
+                f"{type(snapshot).__name__}."
+            )
 
         # 🧪 Create a new instance of the correct interpreter class (sync/async)
         interpreter = cls(machine)
