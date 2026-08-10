@@ -55,6 +55,7 @@ from .models import (
     TContext,
     TEvent,
     TransitionDefinition,
+    spawn_service_key,
 )
 from .resolver import resolve_target_state
 
@@ -293,23 +294,48 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     def _process_event(
         self, event: Union[Event, DoneEvent, AfterEvent]
     ) -> None:
-        """Finds and executes the optimal transition for a given event.
+        """Finds and executes the optimal transition set for a given event.
 
-        This method acts as the entry point for processing a single event,
-        finding the appropriate transition, and delegating to the processing helper.
+        Mirrors the asynchronous `BaseInterpreter._process_event`: one
+        transition is selected per orthogonal region and each is executed in
+        turn.
 
         Args:
             event: The event object to process.
         """
-        # 1. Select the winning transition based on event, guards, and state depth.
-        transition = self._find_optimal_transition(event)
-        if not transition:
+        # 1. Select every transition this event triggers (one per region).
+        transitions = self._select_transitions(event)
+        if not transitions:
             logger.debug(
                 "🤷 No valid transition found for event '%s'.", event.type
             )
             return
 
-        # 2. A "targetless" transition only executes actions without changing state.
+        # 2. Execute each in turn, skipping any invalidated by an earlier one.
+        for transition in transitions:
+            if (
+                len(transitions) > 1
+                and transition.source not in self._active_state_nodes
+            ):
+                logger.debug(
+                    "⏭️  Skipping stale transition from '%s'.",
+                    transition.source.id,
+                )
+                continue
+            self._execute_transition_sync(transition, event)
+
+    def _execute_transition_sync(
+        self,
+        transition: TransitionDefinition,
+        event: Union[Event, DoneEvent, AfterEvent],
+    ) -> None:
+        """Executes one selected transition synchronously.
+
+        Args:
+            transition: The transition to execute.
+            event: The event that triggered this transition.
+        """
+        # 1. A "targetless" transition only executes actions without changing state.
         if not transition.target_str:
             logger.info("🔄 Executing internal transition actions.")
             self._execute_actions(transition.actions, event)
@@ -322,10 +348,10 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 )
             return
 
-        # 3. Resolve the target state node.
+        # 2. Resolve the target state node.
         target_state = self._resolve_target_state_robustly(transition)
 
-        # 4. A self-transition without `reenter: True` is also internal.
+        # 3. A self-transition without `reenter: True` is also internal.
         if target_state == transition.source and not transition.reenter:
             logger.info("🔄 Executing internal transition actions.")
             self._execute_actions(transition.actions, event)
@@ -338,7 +364,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 )
             return
 
-        # 5. All other transitions are external; process the state change.
+        # 4. All other transitions are external; process the state change.
         self._process_single_transition(transition, event, target_state)
 
     def _process_single_transition(
@@ -360,25 +386,25 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         # Determine the full path of states to exit and enter.
         path_to_enter = self._get_path_to_state(target_state, stop_at=domain)
-        states_to_exit: Set[StateNode] = {
-            s
-            for s in self._active_state_nodes
-            if self._is_descendant(s, domain) and s is not domain
-        }
+        states_to_exit: Set[StateNode] = self._compute_states_to_exit(
+            domain, target_state
+        )
 
         # Execute the transition sequence (Exit -> Actions -> Enter)
+        #
+        # 🏛️ Architecture decision: `_exit_states`/`_enter_states` own all
+        # mutation of `_active_state_nodes`. A previous implementation also ran
+        # `difference_update(states_to_exit)` after entry, which deleted the
+        # initial children just entered by the recursive descent and left the
+        # machine with no active leaf. See `BaseInterpreter._execute_transition`.
         self._exit_states(
-            sorted(
-                list(states_to_exit), key=lambda s: len(s.id), reverse=True
-            ),
+            sorted(list(states_to_exit), key=lambda s: s.depth, reverse=True),
             event,
         )
         self._execute_actions(transition.actions, event)
         self._enter_states(path_to_enter, event)
 
-        # Finalize the state change and notify plugins.
-        self._active_state_nodes.difference_update(states_to_exit)
-        self._active_state_nodes.update(path_to_enter)
+        # Notify plugins of the completed transition.
         for plugin in self._plugins:
             plugin.on_transition(
                 self,
@@ -438,6 +464,17 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 ordered from parent to child.
             event: The optional event that triggered the state entry.
         """
+        # 🗺️ Index the remaining path so a compound state can tell whether the
+        #    caller already named which child to descend into. See the matching
+        #    comment in `BaseInterpreter._enter_states`: descending into
+        #    `initial` unconditionally, in addition to walking the explicit
+        #    path, leaves two simultaneously active leaves in one region.
+        explicit_children = {
+            node.parent.id
+            for node in states_to_enter
+            if node.parent is not None
+        }
+
         for state in states_to_enter:
             logger.info("➡️ Entering state: '%s'", state.id)
             self._active_state_nodes.add(state)
@@ -453,6 +490,14 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
             # 🌳 For compound states, recursively enter their initial child state.
             if state.type == "compound" and state.initial:
+                # ⏭️ Skip the default descent when the entry path already
+                #    specifies which child of this state to enter.
+                if state.id in explicit_children:
+                    self._schedule_state_tasks(state)
+                    logger.debug(
+                        "✅ State '%s' entered successfully.", state.id
+                    )
+                    continue
                 initial_child = state.states.get(state.initial)
                 if initial_child:
                     logger.debug(
@@ -579,8 +624,25 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 raise NotSupportedError(
                     f"Async action '{action_def.type}' not supported by SyncInterpreter."
                 )
-            # ▶️ Execute the synchronous action
-            action_impl(self, self.context, event, action_def)
+            # ▶️ Execute the synchronous action.
+            #
+            # 🏛️ Architecture decision: an exception raised *inside* a
+            # user-supplied action is contained. Per the documented contract
+            # the error is logged, the remaining actions in this list are
+            # skipped, and the state change still completes — a buggy side
+            # effect must not corrupt the configuration or kill the machine.
+            # Configuration errors (missing/async action) are raised above and
+            # deliberately remain fatal.
+            try:
+                action_impl(self, self.context, event, action_def)
+            except Exception:
+                logger.exception(
+                    "🔥 Action '%s' raised while handling event '%s'; "
+                    "skipping remaining actions in this list.",
+                    action_def.type,
+                    event.type,
+                )
+                return
 
     def _spawn_actor(self, action_def: ActionDefinition, event: Event) -> None:
         """Spawns a child state machine actor in blocking or non-blocking mode.
@@ -595,7 +657,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         """
         # 🕵️ Determine mode (blocking vs. non-blocking) and service key
         blocking = action_def.type.startswith("spawn_blocking_")
-        key = action_def.type.split("_", 2)[-1]
+        key = spawn_service_key(action_def.type)
         logger.info("🎭 Spawning actor '%s' (Blocking: %s)", key, blocking)
 
         # 🏭 Get the actor's machine definition from the services registry

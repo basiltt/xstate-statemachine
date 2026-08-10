@@ -7,6 +7,189 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Continuous Integration** (`.github/workflows/ci.yml`). The project had
+  issue and PR templates but no workflows, so nothing verified a push. Every
+  defect fixed in 0.5.1 — including a permanently deadlocked machine and a
+  README whose headline example raised `AttributeError` — was reachable
+  precisely because no automated gate existed. Four independent jobs:
+  - **lint** — `black --check` plus `flake8`, using the same flags and pinned
+    tool versions as `.pre-commit-config.yaml` so a local `pre-commit run` and
+    CI cannot disagree.
+  - **test** — the full suite across Python 3.9–3.14 on Linux, plus Windows
+    3.9/3.14 and macOS 3.14 spot-checks. The matrix mirrors the versions
+    advertised in `pyproject.toml`; a support claim that CI does not exercise
+    is only a hope. Also executes the `doctest` examples, which had rotted
+    silently across releases because nothing ran them.
+  - **coverage** — one authoritative measurement gated at `--cov-fail-under=86`.
+  - **build** — `python -m build` and `twine check`, then installs the built
+    *wheel* into a clean virtualenv and smoke-tests the public API and the
+    `xsm` console entry point. This validates the packaged artifact rather than
+    the source tree, catching a module that exists on disk but was never
+    included in the distribution.
+
+## [0.5.1] - 2026-08-07
+
+This is a **correctness release**. It repairs a family of defects in the core
+SCXML transition algorithm, aligns the runtime's error handling with the
+contract documented in `AGENTS.md`, and implements the public interpreter
+attributes that the README and guides had been documenting without them
+existing.
+
+> ⚠️ **Behavioural changes.** Exceptions raised inside user-supplied guards and
+> actions are now contained rather than propagated. If your code relied on a
+> failing action tearing down the interpreter, see *Changed* below.
+
+### Fixed
+- **Compound re-entry left the machine dead** (`base_interpreter.py`,
+  `sync_interpreter.py`). `_process_event` finalised the active configuration
+  with `difference_update(states_to_exit)` *after* `_enter_states` had already
+  inserted the recursively-entered initial children. Because those children
+  were themselves members of `states_to_exit`, the finalisation step deleted
+  the states that had just been entered. The machine was left holding only
+  non-atomic ancestors, so `current_state_ids` returned an empty set and no
+  further leaf-level event could ever match — a permanent deadlock. This broke
+  the `reenter: True` feature shipped in 0.4.2 and the standard "restart a
+  submachine" idiom (a child targeting its own compound parent). `_exit_states`
+  and `_enter_states` are now the sole authorities on active-set membership.
+- **Transitions up to an ancestor entered nothing** (`base_interpreter.py`).
+  `_find_transition_domain` could return the target state itself as the
+  transition domain when the target was an ancestor of the source, making
+  `_get_path_to_state` return an empty path. The domain is now always a
+  *proper* ancestor of the target.
+- **Transition selection ranked states by name length** (`base_interpreter.py`,
+  `models.py`). Depth was approximated with `len(state.id)`, so a shallow state
+  with a verbose name outranked a genuinely deeper state with a terse one and
+  the wrong transition was taken. `StateNode` now carries a cached integer
+  `depth`, computed once at construction, which is both correct and cheaper
+  than repeated string work on the hot path.
+- **Parallel regions took only one transition per event** (`base_interpreter.py`,
+  `sync_interpreter.py`). Selection returned a single `max(...)` winner across
+  the whole configuration, so an event handled by two orthogonal regions
+  advanced only one of them — contrary to SCXML, which requires one transition
+  per region. The new `_select_transitions` picks the deepest eligible
+  transition for each active leaf and de-duplicates by identity, so a
+  transition defined on a shared ancestor still fires exactly once.
+- **Actor spawning was incompatible with logic auto-discovery**
+  (`logic_loader.py`). `spawn_<key>` / `spawn_blocking_<key>` are built-in
+  action types resolved from `logic.services` at execution time, but the
+  extractor registered them as required *actions*. Any machine using `spawn_`
+  therefore raised `ImplementationMissingError` unless the caller bypassed
+  discovery with an explicit `logic=`. Spawn keys now route to `services` with
+  their prefix stripped.
+- **Spawn service keys were derived three different (and wrong) ways**
+  (`models.py`, `interpreter.py`, `sync_interpreter.py`). `Interpreter` used
+  `type.replace("spawn_", "")` — unanchored and global, so
+  `spawn_blocking_worker` resolved to `blocking_worker` and
+  `spawn_respawn_handler` to `rehandler`. `SyncInterpreter` used
+  `type.split("_", 2)[-1]`, truncating every multi-word key
+  (`spawn_my_worker` → `worker`). Both silently looked up the wrong service.
+  A single `spawn_service_key()` helper in `models.py` is now the sole source
+  of truth, shared by the loader and both interpreters so discovery and lookup
+  agree by construction.
+- **A dead async run loop could still report itself as running**
+  (`interpreter.py`). `_run_event_loop` only reset `status` inside
+  `except Exception`, so a `BaseException` escaping the loop left the
+  interpreter reporting `status == "running"` forever with nothing draining
+  the queue — every subsequent `send()` silently dropped. The handler now
+  catches `BaseException` (always re-raising) and a `finally` clause
+  guarantees the status can never outlive the loop.
+- **`is_running` lied after `from_snapshot()`** (`interpreter.py`).
+  Restoration assigns the persisted status verbatim, producing an async
+  interpreter with `status == "running"` and no event-loop task. `is_running`
+  now additionally requires a live loop task, so it never claims a machine can
+  process events when nothing is consuming its queue.
+- **A shared ancestor's guard was evaluated once per parallel region**
+  (`base_interpreter.py`). Because selection walks up from every active leaf,
+  a transition on a common ancestor was guard-evaluated N times for N regions
+  before de-duplication discarded the duplicates — multiplying any side effects
+  and firing `on_guard_evaluated` N times for one logical decision. Guard
+  results are now memoised per selection pass.
+- **Sibling parallel regions were annihilated by an in-region transition**
+  (`base_interpreter.py`, `sync_interpreter.py`). When a descendant targeted
+  one of its own ancestors and that ancestor was a region of a `parallel`
+  state, the transition domain became the parallel node itself. `states_to_exit`
+  then swept up every *sibling* region while the entry path re-entered only the
+  targeted branch, so the siblings were exited and never restored — permanently
+  dead and unable to answer any further event. The exit set is now scoped to
+  the branch actually being re-entered whenever the domain is parallel, via the
+  shared `_compute_states_to_exit()` helper.
+- **Deep entry left a phantom sibling leaf** (`base_interpreter.py`,
+  `sync_interpreter.py`). `_enter_states` descended into a compound's `initial`
+  child unconditionally, *in addition* to walking the explicit entry path. A
+  transition targeting `B.b2` while `B.initial` was `b1` activated both — two
+  simultaneously active leaves in one non-parallel region, which SCXML forbids.
+  The phantom leaf then took part in the next selection pass, so a later event
+  fired the wrong transition and duplicated its actions. The default descent is
+  now skipped when the entry path already names a child of that state.
+- **External cancellation caused `stop()` to skip all cleanup**
+  (`interpreter.py`). The run loop forced `status = "stopped"` in a `finally`
+  clause, which also ran on the ordinary `CancelledError` path. Cancellation is
+  not always initiated by `stop()` — an enclosing `TaskGroup`, supervisor, or
+  timeout can cancel `_event_loop_task` directly. The premature status change
+  then made `stop()` hit its own idempotency guard and return early, never
+  cancelling invoked services or child actors, which kept running forever.
+  `stop()` again owns the status transition for orderly shutdown; the
+  `BaseException` handler still corrects the bookkeeping on a genuine crash.
+- **Stale doctests** (`exceptions.py`). The `NotSupportedError` example
+  asserted an error message that exists nowhere in the codebase and claimed
+  `after` transitions are unsupported by `SyncInterpreter` — they have been
+  supported (via background threads) since v0.4.1. The `InvalidConfigError`
+  example asserted a stale message. Both now pass under `doctest`.
+- **Documentation claimed ASCII diagram export.** Only `to_mermaid()` and
+  `to_plantuml()` exist; the README, guides, and CLI banner no longer advertise
+  an ASCII exporter.
+
+### Added
+- **`Interpreter.active_state_ids` / `SyncInterpreter.active_state_ids`** — an
+  alias of `current_state_ids`. This name appears in ~130 places across the
+  README and `docs/` guides (including the headline quickstart) but was never
+  implemented, so every published example raised `AttributeError` on contact.
+- **`.is_running`** — a boolean convenience wrapper over `.status`, as
+  documented in the API reference tables.
+- **`.plugins`** — a readable/assignable property over the registered plugin
+  list, supporting the documented `interpreter.plugins = [LoggingInspector()]`
+  form. Assigning a non-list raises `TypeError`.
+- **`StateNode.depth`** — the node's true tree depth, cached at construction.
+- **`models.spawn_service_key()` / `models.is_spawn_action()`** — the shared
+  helpers that define how a `spawn_` action maps to a `services` key.
+- **`.plugins` element validation** — assigning a list containing an object
+  that does not implement the plugin hooks now raises `TypeError` at the
+  assignment site, rather than surfacing later as an `AttributeError` from deep
+  inside event processing. The check is structural rather than a strict
+  `isinstance`, so `use()` and `plugins = [...]` accept exactly the same
+  objects. The getter returns a copy, so `plugins.append(...)` cannot bypass it.
+- **`tests/test_scxml_correctness.py`** — 23 regression tests, one class per
+  defect, each asserted against *both* the async and sync engines (the two
+  interpreters implement the algorithm independently, so a one-sided fix is a
+  latent bug).
+- **`tests/test_public_api_surface.py`** — 20 contract tests pinning the
+  documented public attributes, spawn key derivation, and `spawn_`
+  auto-discovery, so documentation and implementation cannot silently diverge
+  again.
+
+### Changed
+- **Guards that raise are now treated as `False`** (`base_interpreter.py`).
+  Previously the exception propagated out of `send()` and, in async mode, tore
+  down the run loop. A guard is a user-supplied predicate, so a defect in it
+  blocks its transition and lets lower-priority alternatives (e.g. an unguarded
+  fallback in the same `on` array) be considered, while leaving the machine
+  responsive. This matches the contract documented in `AGENTS.md`.
+  A *missing* guard still raises `ImplementationMissingError` — that is a
+  configuration error, not a runtime condition.
+- **Actions that raise are now contained** (`interpreter.py`,
+  `sync_interpreter.py`). The error is logged with a traceback, the remaining
+  actions in that list are skipped, and the state change still completes. This
+  was the most damaging gap: because `Interpreter.send()` is fire-and-forget,
+  an escaping exception killed `_run_event_loop` while callers still observed
+  `status == "running"` — a silently dead machine. `asyncio.CancelledError`
+  still propagates so cooperative cancellation on `stop()` is unaffected, and
+  `ImplementationMissingError` / `NotSupportedError` remain fatal.
+  - *Migration*: if you depended on an action's exception surfacing, raise it
+    from an `invoke`d service instead — service failures still trigger
+    `onError` transitions — or attach a plugin and inspect the logs.
+
+
 ## [0.5.0] - 2026-03-23
 
 ### Added

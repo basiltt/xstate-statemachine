@@ -48,7 +48,12 @@ from typing import (
 # -----------------------------------------------------------------------------
 from .exceptions import ImplementationMissingError, InvalidConfigError
 from .machine_logic import MachineLogic
-from .models import MachineNode, StateNode
+from .models import (
+    MachineNode,
+    StateNode,
+    is_spawn_action,
+    spawn_service_key,
+)
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
@@ -201,9 +206,22 @@ class LogicLoader:
             if transition.guard:
                 guards.add(transition.guard)
 
-        # Categorize actions (no special treatment for spawn_)
+        # 🎭 Categorize actions, routing `spawn_` actions to services.
+        #
+        # 🏛️ Architecture decision: `spawn_<key>` / `spawn_blocking_<key>` are
+        # built-in action types intercepted by the interpreters at execution
+        # time and resolved from `logic.services`, never from `logic.actions`.
+        # Registering them as required *actions* made auto-discovery
+        # structurally incompatible with the actor model: a machine using
+        # `spawn_` always raised `ImplementationMissingError` unless the caller
+        # bypassed discovery with an explicit `logic=`. The service key is the
+        # action type minus its `spawn_` / `spawn_blocking_` prefix.
         for action_def in all_actions:
-            actions.add(action_def.type)
+            action_type = action_def.type
+            if is_spawn_action(action_type):
+                services.add(spawn_service_key(action_type))
+            else:
+                actions.add(action_type)
 
         # Logic from `invoke` definitions
         for invoke_def in node.invoke:

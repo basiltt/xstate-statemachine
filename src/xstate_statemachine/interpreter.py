@@ -51,6 +51,7 @@ from .models import (
     StateNode,
     TContext,
     TEvent,
+    spawn_service_key,
 )
 from .task_manager import TaskManager
 
@@ -111,6 +112,28 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
     # -------------------------------------------------------------------------
     # ⏯️ Public Control API (Start, Stop, Send)
     # -------------------------------------------------------------------------
+
+    @property
+    def is_running(self) -> bool:
+        """Indicates whether this interpreter can actually process events.
+
+        🏛️ Architecture decision: the async interpreter needs a liveness check
+        stronger than `status == "running"`. `from_snapshot()` restores the
+        persisted status directly, producing an instance that reports
+        `"running"` while `_event_loop_task` is `None` — nothing is draining
+        the queue, so every `send()` would be silently enqueued and never
+        handled. Requiring a live loop task means `is_running` never claims a
+        machine is processing when it cannot.
+
+        Returns:
+            bool: `True` only when the status is `"running"` *and* the event
+            loop task exists and has not finished.
+        """
+        return (
+            self.status == "running"
+            and self._event_loop_task is not None
+            and not self._event_loop_task.done()
+        )
 
     async def start(self) -> "Interpreter[TContext, TEvent]":
         """Starts the interpreter and its main event-processing loop.
@@ -298,10 +321,30 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
         except asyncio.CancelledError:
             # This is an expected, clean shutdown triggered by `stop()`.
+            #
+            # 🏛️ Architecture decision: deliberately do NOT touch `status`
+            # here, and do not use a `finally` clause to force it to
+            # "stopped". Cancellation is not always initiated by `stop()` —
+            # an enclosing TaskGroup, a supervisor, or a timeout around the
+            # owning task can cancel `_event_loop_task` directly. If this path
+            # set `status = "stopped"`, a subsequent `stop()` would hit its own
+            # idempotency guard, return early, and skip actor teardown and
+            # `task_manager.cancel_all()` — leaking invoked services and child
+            # actors that keep running forever. `stop()` owns the status
+            # transition for every orderly shutdown.
             logger.debug("🛑 Event loop for '%s' was cancelled.", self.id)
             raise
-        except Exception as exc:
+        except BaseException as exc:
             # This indicates a critical, unexpected failure in the machine's logic.
+            #
+            # 🏛️ Architecture decision: this catches `BaseException`, not
+            # `Exception`. A `BaseException` subclass escaping the loop would
+            # otherwise terminate it *without* updating `status`, leaving the
+            # interpreter permanently reporting `status == "running"` and
+            # nothing draining the queue — every subsequent `send()` silently
+            # dropped. The exception is always re-raised, so this only
+            # corrects the bookkeeping. `CancelledError` is handled above and
+            # never reaches here.
             logger.critical(
                 "💥 Fatal error in event loop for '%s': %s",
                 self.id,
@@ -384,10 +427,32 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 )
 
             # 🏃‍♂️ Execute the action, awaiting if it's an async function.
-            if inspect.iscoroutinefunction(action_callable):
-                await action_callable(self, self.context, event, action_def)
-            else:
-                action_callable(self, self.context, event, action_def)
+            #
+            # 🏛️ Architecture decision: exceptions from user-supplied actions
+            # are contained here. `send()` is fire-and-forget, so an escaping
+            # exception would tear down `_run_event_loop` while callers still
+            # observed `status == "running"` — a silently dead machine. Per
+            # the documented contract the error is logged, the remaining
+            # actions are skipped, and the run loop survives. Configuration
+            # errors (missing action) are raised above and remain fatal.
+            try:
+                if inspect.iscoroutinefunction(action_callable):
+                    await action_callable(
+                        self, self.context, event, action_def
+                    )
+                else:
+                    action_callable(self, self.context, event, action_def)
+            except asyncio.CancelledError:
+                # 🛑 Cooperative cancellation must always propagate.
+                raise
+            except Exception:
+                logger.exception(
+                    "🔥 Action '%s' raised while handling event '%s'; "
+                    "skipping remaining actions in this list.",
+                    action_def.type,
+                    event.type,
+                )
+                return
 
     # -------------------------------------------------------------------------
     # 🤖 Asynchronous Task Implementations (Actors, Timers, Services)
@@ -412,7 +477,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 factory function that returns one.
         """
         logger.info("👶 Spawning actor for action: '%s'", action_def.type)
-        actor_machine_key = action_def.type.replace("spawn_", "")
+        actor_machine_key = spawn_service_key(action_def.type)
 
         actor_source = self.machine.logic.services.get(actor_machine_key)
         actor_machine: Optional[MachineNode] = None

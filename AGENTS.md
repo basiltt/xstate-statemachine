@@ -59,6 +59,27 @@ uv run flake8 src/ tests/
 uv run flake8 src/xstate_statemachine/interpreter.py
 ```
 
+### Continuous Integration
+
+`.github/workflows/ci.yml` runs on every push and PR to `main`. Four
+independent jobs, so a red build tells you *what kind* of thing broke:
+
+| Job | Gate |
+|:----|:-----|
+| **lint** | `black --check` (line length 79) + `flake8` — same flags and pinned versions as `.pre-commit-config.yaml` |
+| **test** | Full suite on Python 3.9–3.14 (Linux) plus Windows 3.9/3.14 and macOS 3.14 spot-checks; also runs the `doctest` examples |
+| **coverage** | Full suite with `--cov-fail-under=86` (a ratchet — raise it, never lower it) |
+| **build** | `python -m build`, `twine check`, then installs the built **wheel** into a clean venv and smoke-tests the public API and the `xsm` entry point |
+
+To reproduce a CI failure locally, run the exact command from the failing
+step — they are plain `pytest`/`black`/`flake8` invocations with no CI-only
+wrappers.
+
+📝 The Windows and macOS cells exist because the library is pure Python but
+uses **threads** (`SyncInterpreter`) and **asyncio**, both of which have real
+platform-specific behaviour. `fail-fast: false` keeps one red cell from
+hiding whether a failure is isolated or systemic.
+
 ### CLI Tool
 ```bash
 # Generate boilerplate from JSON
@@ -124,10 +145,26 @@ from .events import Event
 - Use `-> None` for functions that don't return
 
 ### Error Handling
-- **Guards**: Must return `bool`. If guard raises exception, it's treated as `False`
-- **Actions**: Log errors, skip remaining actions in list, continue processing
-- **Services**: Raise exceptions to trigger `onError` transition
+- **Guards**: Must return `bool`. If a guard raises an exception it is logged
+  and treated as `False`, blocking that transition while leaving lower-priority
+  alternatives eligible. A guard that is *declared but not implemented* raises
+  `ImplementationMissingError` (configuration error — fails loudly).
+- **Actions**: If an action raises, the error is logged, the remaining actions
+  in that list are skipped, and the state change still completes. The
+  interpreter — including the async run loop — stays alive. A *missing* action
+  raises `ImplementationMissingError`; an `async` action under `SyncInterpreter`
+  raises `NotSupportedError`. `asyncio.CancelledError` always propagates so
+  `stop()` remains cooperative.
+- **Services**: Raise exceptions to trigger `onError` transitions. This is the
+  supported way to make a failure observable and model its recovery path.
 - **Exceptions**: Use custom exception hierarchy (all inherit from `XStateMachineError`)
+
+> 🏛️ Rationale: guards and actions are *user-supplied callables*. A defect in
+> one is not a machine-level failure and must not corrupt the active
+> configuration. Because `Interpreter.send()` is fire-and-forget, an escaping
+> exception would kill the run loop while callers still observed
+> `status == "running"` — a silently dead machine. Configuration errors are
+> deliberately excluded from this containment.
 
 ```python
 # Guard example - pure function, returns bool

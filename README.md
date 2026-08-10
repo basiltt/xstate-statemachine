@@ -6,9 +6,11 @@
 
 <br>
 
-[![PyPI Version](https://img.shields.io/badge/PyPI-v0.5.0-blue?logo=pypi&logoColor=white&style=for-the-badge)](https://pypi.org/project/xstate-statemachine/)
+[![CI](https://github.com/basiltt/xstate-statemachine/actions/workflows/ci.yml/badge.svg)](https://github.com/basiltt/xstate-statemachine/actions/workflows/ci.yml)
+[![PyPI Version](https://img.shields.io/badge/PyPI-v0.5.1-blue?logo=pypi&logoColor=white&style=for-the-badge)](https://pypi.org/project/xstate-statemachine/)
 [![Python](https://img.shields.io/badge/Python-3.9%E2%80%933.14-3776AB?logo=python&logoColor=white&style=for-the-badge)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-2403%20Passing-brightgreen?logo=pytest&logoColor=white&style=for-the-badge)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-2446%20Passing-brightgreen?logo=pytest&logoColor=white&style=for-the-badge)](tests/)
+[![Coverage](https://img.shields.io/badge/Coverage-87%25-brightgreen?logo=codecov&logoColor=white&style=for-the-badge)](.github/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 [![Zero Dependencies](https://img.shields.io/badge/Deps-Zero-orange?style=for-the-badge)](pyproject.toml)
 
@@ -72,7 +74,7 @@ State machines make **every valid state explicit** and **every transition delibe
 | ⏱️ | **Delayed Transitions** | Timer-based auto-transitions with `after` |
 | 🤖 | **Actor Model** | Spawn isolated child machines with independent lifecycles |
 | 🔧 | **CLI Code Generator** | 5 templates → production Python from XState JSON |
-| 📊 | **Diagram Export** | Generate Mermaid, PlantUML, or ASCII diagrams |
+| 📊 | **Diagram Export** | Generate Mermaid or PlantUML diagrams |
 | 🔌 | **Plugin System** | Observable hooks for logging, metrics, and debugging |
 | 💾 | **Snapshots** | Save/restore machine state for persistence and testing |
 | 📦 | **Zero Dependencies** | Pure Python standard library — works everywhere |
@@ -117,7 +119,7 @@ uv pip install -e . --group dev --group lint --group test
 ```bash
 # Verify installation
 xsm --version
-# ✅ Output: xsm 0.5.0
+# ✅ Output: xsm 0.5.1
 ```
 
 <br>
@@ -626,6 +628,7 @@ interp.stop()
 | `.send(event)` | method | Send an event (string, dict, or `Event`) |
 | `.send_events([...])` | method | Send multiple events in sequence |
 | `.active_state_ids` | `set[str]` | Currently active state IDs |
+| `.current_state_ids` | `set[str]` | Canonical spelling of `.active_state_ids` |
 | `.context` | `dict` | Current machine context (mutable) |
 | `.is_running` | `bool` | Whether the interpreter is active |
 
@@ -738,6 +741,17 @@ class AgeGate(StateMachine):
 > [!NOTE]
 > Guard functions receive `(context, event)` — **not** `(interpreter, context, event, action_def)`. They must return a `bool` and must be **synchronous**.
 
+> [!IMPORTANT]
+> **If a guard raises an exception it is treated as `False`** (since v0.5.1). The
+> error is logged with a traceback, the guarded transition is blocked, and any
+> lower-priority alternative — such as the unguarded fallback above — is still
+> considered. Your machine stays responsive instead of dying on a buggy
+> predicate.
+>
+> A guard that is *declared but not implemented* still raises
+> `ImplementationMissingError`. That is a configuration error, not a runtime
+> condition, and fails loudly by design.
+
 <br>
 
 ---
@@ -793,6 +807,33 @@ class FormMachine(StateMachine):
 ```
 
 </details>
+
+> [!IMPORTANT]
+> **If an action raises an exception it is contained** (since v0.5.1). The error
+> is logged with a traceback, the **remaining actions in that same list are
+> skipped**, and the state change still completes — a buggy side effect cannot
+> corrupt the machine's configuration or silently kill it.
+>
+> This matters most in async mode: `Interpreter.send()` is fire-and-forget, so
+> before v0.5.1 an escaping exception tore down the internal run loop while
+> callers still saw `status == "running"`.
+>
+> **Need failures to be observable?** Raise from an `invoke`d service instead —
+> service errors trigger `onError` transitions, so you can model the failure
+> path declaratively:
+>
+> ```python
+> "loading": {
+>     "invoke": {
+>         "src": "fetchUser",
+>         "onDone":  {"target": "success"},
+>         "onError": {"target": "failure"}   # ✅ errors are first-class here
+>     }
+> }
+> ```
+>
+> An action that is *declared but not implemented* still raises
+> `ImplementationMissingError`.
 
 <br>
 

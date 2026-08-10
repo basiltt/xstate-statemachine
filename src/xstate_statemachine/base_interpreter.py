@@ -167,6 +167,93 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             s.id for s in self._active_state_nodes if s.is_atomic or s.is_final
         }
 
+    @property
+    def active_state_ids(self) -> Set[str]:
+        """Alias of :attr:`current_state_ids`.
+
+        🏛️ Architecture decision: this name is used throughout the README and
+        the `docs/` guides, but was never implemented — every documented
+        example raised `AttributeError`. Rather than rewrite ~130 published
+        snippets (and break anyone who copied them), the documented name is
+        provided as a first-class alias. `current_state_ids` remains the
+        canonical spelling used internally.
+
+        Returns:
+            Set[str]: A set of unique string identifiers for the active atomic
+            or final leaf states.
+        """
+        return self.current_state_ids
+
+    @property
+    def is_running(self) -> bool:
+        """Indicates whether the interpreter is currently running.
+
+        Convenience wrapper over :attr:`status`, matching the documented
+        public API.
+
+        Returns:
+            bool: `True` between a successful `start()` and a `stop()`.
+        """
+        return self.status == "running"
+
+    @property
+    def plugins(self) -> List[PluginBase["BaseInterpreter[Any, Any]"]]:
+        """The list of plugin instances attached to this interpreter.
+
+        Assigning to this property replaces the whole set of plugins, which is
+        the form used in the documentation::
+
+            interpreter.plugins = [LoggingInspector()]
+
+        📝 Returns a shallow copy. Mutating the returned list does not affect
+        the interpreter — use assignment or :meth:`use` to register plugins.
+        Returning the live list would let `interpreter.plugins.append(...)`
+        bypass the type validation performed by the setter.
+
+        Returns:
+            List[PluginBase]: A copy of the currently registered plugins.
+        """
+        return list(self._plugins)
+
+    @plugins.setter
+    def plugins(
+        self, value: List[PluginBase["BaseInterpreter[Any, Any]"]]
+    ) -> None:
+        """Replaces the registered plugins.
+
+        Args:
+            value (List[PluginBase]): The plugins to register.
+
+        Raises:
+            TypeError: If `value` is not a list/tuple, or if any element does
+                not implement the plugin hook interface.
+        """
+        if not isinstance(value, (list, tuple)):
+            raise TypeError(
+                "❌ 'plugins' must be assigned a list of plugin instances."
+            )
+        # 🛡️ Validate elements. Without this the failure surfaces later as an
+        #    AttributeError from deep inside event processing, pointing at
+        #    interpreter internals rather than the offending assignment.
+        #
+        # 🏛️ Architecture decision: the check is *structural* (does it provide
+        # the hooks?) rather than a strict `isinstance(PluginBase)`. `use()`
+        # has always accepted any duck-typed object exposing the hooks, and the
+        # two entry points into `_plugins` must not disagree — otherwise
+        # `interpreter.use(p)` would succeed where `interpreter.plugins = [p]`
+        # raises, for the very same object.
+        required_hooks = ("on_transition", "on_event_received")
+        for item in value:
+            if not all(
+                callable(getattr(item, h, None)) for h in required_hooks
+            ):
+                raise TypeError(
+                    "❌ 'plugins' elements must implement the plugin hook "
+                    f"interface (e.g. subclass PluginBase); got "
+                    f"{type(item).__name__}."
+                )
+        self._plugins = list(value)
+
     def use(
         self: TInterpreter, plugin: PluginBase["BaseInterpreter[Any, Any]"]
     ) -> TInterpreter:
@@ -599,14 +686,50 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     async def _process_event(
         self, event: Union[Event, DoneEvent, AfterEvent]
     ) -> None:
-        """Executes a single, complete "step" of the SCXML algorithm."""
-        # 1. Find the optimal transition for the event.
-        transition = self._find_optimal_transition(event)
-        if not transition:
+        """Executes a single, complete "step" of the SCXML algorithm.
+
+        Selects the optimal transition set for `event` — one transition per
+        orthogonal region — and executes each in turn.
+
+        Args:
+            event (Union[Event, DoneEvent, AfterEvent]): The event to process.
+        """
+        # 1. Select every transition this event triggers (one per region).
+        transitions = self._select_transitions(event)
+        if not transitions:
             logger.debug("🍃 No transition found for event '%s'.", event.type)
             return
 
-        # 2. A "targetless" transition only executes actions without changing state.
+        # 2. Execute each selected transition in isolation. A transition may
+        #    be invalidated by an earlier one in the same macrostep (its source
+        #    is no longer active), so re-check liveness before executing.
+        for transition in transitions:
+            if (
+                len(transitions) > 1
+                and transition.source not in self._active_state_nodes
+            ):
+                logger.debug(
+                    "⏭️  Skipping stale transition from '%s'.",
+                    transition.source.id,
+                )
+                continue
+            await self._execute_transition(transition, event)
+
+    async def _execute_transition(
+        self,
+        transition: TransitionDefinition,
+        event: Union[Event, DoneEvent, AfterEvent],
+    ) -> None:
+        """Executes one selected transition, mutating the active configuration.
+
+        Args:
+            transition (TransitionDefinition): The transition to execute.
+            event (Union[Event, DoneEvent, AfterEvent]): The triggering event.
+
+        Raises:
+            StateNotFoundError: If the transition's target cannot be resolved.
+        """
+        # 1. A "targetless" transition only executes actions without changing state.
         if not transition.target_str:
             logger.debug(
                 "🎬 Executing targetless transition for event '%s'.",
@@ -622,12 +745,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 )
             return
 
-        # 3. Resolve the target state node using a multi-stage process.
+        # 2. Resolve the target state node using a multi-stage process.
         target_state = self._resolve_target_state_node(transition)
         if target_state is None:
             raise StateNotFoundError(transition.target_str, self.machine.id)
 
-        # 4. A self-transition without `reenter: True` is an "internal" transition.
+        # 3. A self-transition without `reenter: True` is an "internal" transition.
         # It executes actions but does not exit or re-enter the source state.
         if target_state == transition.source and not transition.reenter:
             logger.debug(
@@ -644,31 +767,32 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 )
             return
 
-        # 5. All other transitions are "external" and will cause a state change.
+        # 4. All other transitions are "external" and will cause a state change.
         snapshot_before = self._active_state_nodes.copy()
         domain = self._find_transition_domain(transition, target_state)
 
-        states_to_exit = {
-            s
-            for s in self._active_state_nodes
-            if self._is_descendant(s, domain) and s is not domain
-        }
+        states_to_exit = self._compute_states_to_exit(domain, target_state)
 
         path_to_enter = self._get_path_to_state(target_state, stop_at=domain)
 
-        # 6. Execute the transition sequence in the correct SCXML order.
+        # 5. Execute the transition sequence in the correct SCXML order.
+        #
+        # 🏛️ Architecture decision: `_exit_states` and `_enter_states` are the
+        # sole authorities on `_active_state_nodes` membership — they discard
+        # and add as they go. A previous implementation additionally applied
+        # `difference_update(states_to_exit)` *after* entry, which removed the
+        # initial children that `_enter_states` had just recursively entered
+        # (those children were themselves members of `states_to_exit`). The
+        # machine was left on a non-atomic ancestor with no active leaf,
+        # rendering it permanently unresponsive. Do not reintroduce that step.
         await self._exit_states(
-            sorted(
-                list(states_to_exit), key=lambda s: len(s.id), reverse=True
-            ),
+            sorted(list(states_to_exit), key=lambda s: s.depth, reverse=True),
             event,
         )
         await self._execute_actions(transition.actions, event)
         await self._enter_states(path_to_enter, event)
 
-        # 7. Finalize the new state configuration and notify plugins.
-        self._active_state_nodes.difference_update(states_to_exit)
-        self._active_state_nodes.update(path_to_enter)
+        # 6. Notify plugins of the completed transition.
         for plug in self._plugins:
             plug.on_transition(
                 self,
@@ -702,6 +826,23 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         """
         trigger_event = event or Event(type="___xstate_statemachine_init___")
 
+        # 🗺️ Index the remaining path so a compound state can tell whether the
+        #    caller already named which child to descend into.
+        #
+        # 🏛️ Architecture decision: `_enter_states` used to descend into a
+        # compound's `initial` child unconditionally, *in addition* to walking
+        # the explicit entry path. When the path already named a deeper sibling
+        # (e.g. an external transition targeting `B.b2` while `B.initial` is
+        # `b1`), both `b1` and `b2` ended up active — two simultaneously active
+        # leaves inside one non-parallel region, which SCXML forbids. The
+        # phantom leaf then participated in the next selection pass and could
+        # win, executing the wrong transition and duplicating its actions.
+        explicit_children = {
+            state.parent.id: state
+            for state in states_to_enter
+            if state.parent is not None
+        }
+
         for state in states_to_enter:
             self._active_state_nodes.add(state)
             logger.debug("➡️  Entering state: '%s'.", state.id)
@@ -716,6 +857,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
             # 🗺️ Handle automatic entry into child states.
             if state.type == "compound" and state.initial:
+                # ⏭️ Skip the default descent when the entry path already
+                #    specifies which child of this state to enter.
+                if state.id in explicit_children:
+                    continue
                 initial_child = state.states.get(state.initial)
                 if initial_child:
                     await self._enter_states([initial_child], trigger_event)
@@ -859,10 +1004,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         """
         eligible_transitions: List[TransitionDefinition] = []
 
-        # 1️⃣ Sort active states by depth (most specific first).
+        # 1️⃣ Sort active states by true tree depth (most specific first).
         sorted_nodes = sorted(
             list(self._active_state_nodes),
-            key=lambda s: len(s.id),
+            key=lambda s: s.depth,
             reverse=True,
         )
 
@@ -924,9 +1069,212 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             return None
 
         # 🏆 The winning transition is the one defined on the deepest state.
-        return max(
-            eligible_transitions, key=lambda t: len(t.source.id)  # noqa
-        )  # noqa
+        return max(eligible_transitions, key=lambda t: t.source.depth)  # noqa
+
+    def _collect_eligible_transitions(
+        self,
+        state: StateNode,
+        event: Union[Event, AfterEvent, DoneEvent],
+        guard_cache: Optional[Dict[int, bool]] = None,
+    ) -> List[TransitionDefinition]:
+        """Collects every eligible transition on one state's ancestor chain.
+
+        Walks from `state` up to the machine root, gathering transitions that
+        match `event` and whose guard is satisfied. This is the per-leaf half
+        of transition selection; callers decide how to rank the results.
+
+        Args:
+            state (StateNode): The active state to start the upward walk from.
+            event (Union[Event, AfterEvent, DoneEvent]): The event being
+                processed.
+            guard_cache (Optional[Dict[int, bool]]): Memo of guard results for
+                the current selection pass, keyed by transition identity. When
+                several parallel regions share an ancestor, this ensures that
+                ancestor's guard is evaluated exactly once. Pass `None` to
+                disable memoisation.
+
+        Returns:
+            List[TransitionDefinition]: Eligible transitions, ordered from the
+            deepest source state upward.
+        """
+        eligible: List[TransitionDefinition] = []
+
+        def _passes(transition: TransitionDefinition) -> bool:
+            """Evaluates a transition's guard, memoised per selection pass.
+
+            🏛️ Architecture decision: guards are documented as pure predicates,
+            but in practice users write ones with side effects (counters,
+            metrics, logging). Evaluating a shared ancestor's guard once per
+            region would multiply those side effects by the region count and
+            fire `on_guard_evaluated` plugin hooks N times for a single logical
+            decision. Memoising keeps evaluation count independent of the
+            machine's parallel width.
+            """
+            if guard_cache is None:
+                return self._is_guard_satisfied(transition.guard, event)
+            key = id(transition)
+            if key not in guard_cache:
+                guard_cache[key] = self._is_guard_satisfied(
+                    transition.guard, event
+                )
+            return guard_cache[key]
+
+        # 🧭 Determine which transition flavours are in play for this event.
+        is_transient_check = not event.type.startswith(
+            ("done.", "error.", "after.")
+        )
+        is_explicit_transient_event = event.type == ""
+
+        current: Optional[StateNode] = state
+        while current:
+            # 📨 Standard `on` event transitions.
+            if not is_explicit_transient_event and event.type in current.on:
+                for t in current.on[event.type]:
+                    if _passes(t):
+                        eligible.append(t)
+
+            # ⚡ Transient `""` ("always") transitions.
+            if is_transient_check and "" in current.on:
+                for t in current.on[""]:
+                    if _passes(t):
+                        eligible.append(t)
+
+            # 🏁 `onDone` transitions for compound/parallel states.
+            if current.on_done and current.on_done.event == event.type:
+                if _passes(current.on_done):
+                    eligible.append(current.on_done)
+
+            # ⏰ `after` transitions for timed events.
+            if isinstance(event, AfterEvent):
+                for transitions in current.after.values():
+                    for t in transitions:
+                        if t.event == event.type and _passes(t):
+                            eligible.append(t)
+
+            # 🤖 `onDone`/`onError` for invoked services.
+            if isinstance(event, DoneEvent):
+                for inv in current.invoke:
+                    if event.src == inv.id:
+                        for t in inv.on_done + inv.on_error:
+                            if t.event == event.type and _passes(t):
+                                eligible.append(t)
+
+            current = current.parent
+
+        return eligible
+
+    def _select_transitions(
+        self, event: Union[Event, AfterEvent, DoneEvent]
+    ) -> List[TransitionDefinition]:
+        """Selects the optimal transition set for an event, one per region.
+
+        Implements the SCXML `selectTransitions` rule. For each active atomic
+        state, the most deeply nested eligible transition is chosen. Because
+        orthogonal (parallel) regions each contribute their own active leaf,
+        this naturally yields one transition *per region* rather than a single
+        winner for the whole machine.
+
+        🏛️ Architecture decision: a previous implementation returned a single
+        `max(...)` across the entire configuration, so an event handled by two
+        parallel regions advanced only one of them. Selecting per leaf and then
+        de-duplicating fixes that while preserving the single-fire behaviour
+        for a transition defined on a shared ancestor — the same object is
+        selected by several leaves but executed only once.
+
+        Args:
+            event (Union[Event, AfterEvent, DoneEvent]): The event being
+                processed.
+
+        Returns:
+            List[TransitionDefinition]: The transitions to execute, ordered
+            deepest-source-first and free of duplicates.
+        """
+        # 🍃 Only atomic/final leaves seed selection; ancestors are reached by
+        #    the upward walk inside `_collect_eligible_transitions`.
+        leaves = [
+            s
+            for s in self._active_state_nodes
+            if s.is_atomic or s.is_final or not s.states
+        ]
+        # 🛟 Fallback: if the configuration has no leaf (defensive), consider
+        #    every active node so behaviour degrades gracefully.
+        if not leaves:
+            leaves = list(self._active_state_nodes)
+
+        selected: List[TransitionDefinition] = []
+        seen: Set[int] = set()
+        # 🧠 Memo shared across all leaves in this pass, so a transition on an
+        #    ancestor common to several regions is guard-evaluated exactly once.
+        guard_cache: Dict[int, bool] = {}
+
+        # 🔽 Deterministic ordering: deepest leaves first, then by id.
+        for leaf in sorted(leaves, key=lambda s: (-s.depth, s.id)):
+            eligible = self._collect_eligible_transitions(
+                leaf, event, guard_cache
+            )
+            if not eligible:
+                continue
+
+            # 🏆 This leaf's winner is the transition on its deepest ancestor.
+            winner = max(eligible, key=lambda t: t.source.depth)
+
+            # 🧹 De-duplicate by identity so an ancestor transition shared by
+            #    several regions fires exactly once.
+            if id(winner) not in seen:
+                seen.add(id(winner))
+                selected.append(winner)
+
+        # 🔽 Execute deepest-source-first for predictable action ordering.
+        selected.sort(key=lambda t: -t.source.depth)
+        return selected
+
+    def _compute_states_to_exit(
+        self, domain: Optional[StateNode], target_state: StateNode
+    ) -> Set[StateNode]:
+        """Determines which active states an external transition must exit.
+
+        Normally every active descendant of the transition domain is exited.
+        When the domain is a `parallel` state, that would sweep up the *sibling*
+        regions as well — but only the branch containing the target is re-entered
+        by `_get_path_to_state`, so the siblings would be exited and never
+        restored, silently killing them.
+
+        🏛️ Architecture decision: this is why the exit set is scoped to the
+        domain's child that actually contains the target whenever the domain is
+        parallel. Orthogonal regions are independent by definition: a transition
+        inside one region must not disturb the others unless it exits the
+        parallel state itself (in which case the domain is an ancestor of the
+        parallel node, not the node itself, and the full sweep is correct).
+
+        Args:
+            domain (Optional[StateNode]): The transition domain (LCCA), or
+                `None` when the machine root is the domain.
+            target_state (StateNode): The resolved target of the transition.
+
+        Returns:
+            Set[StateNode]: The active states to exit, innermost-first ordering
+            applied by the caller.
+        """
+        candidates = {
+            s
+            for s in self._active_state_nodes
+            if self._is_descendant(s, domain) and s is not domain
+        }
+
+        # 🌐 Scope to one region when the domain is a parallel state, so
+        #    orthogonal siblings are left untouched.
+        if domain is not None and domain.type == "parallel":
+            branch: Optional[StateNode] = target_state
+            while branch is not None and branch.parent is not domain:
+                branch = branch.parent
+            if branch is not None:
+                candidates = {
+                    s
+                    for s in candidates
+                    if s is branch or self._is_descendant(s, branch)
+                }
+
+        return candidates
 
     def _find_transition_domain(
         self, transition: TransitionDefinition, target_state: StateNode
@@ -960,12 +1308,29 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         target_ancestors = self._get_ancestors(target_state)
         common_ancestors = source_ancestors & target_ancestors
 
+        # 🎯 When the target is an ancestor of the source, the LCCA *is* the
+        # target. Using it directly as the domain would make
+        # `_get_path_to_state(target, stop_at=domain)` return an empty path,
+        # so the machine would exit down to the target and never re-enter it —
+        # left on a non-atomic ancestor with no active leaf.
+        #
+        # 🏛️ Architecture decision: step up to the target's PARENT rather than
+        # discarding the target from the candidate set. Discarding re-ran
+        # `max()` over the remaining common ancestors, which for a region of a
+        # `parallel` state selected the parallel node itself — placing every
+        # *sibling* region in `states_to_exit` while the entry path only
+        # re-entered the targeted region. The siblings were exited and never
+        # restored, permanently killing them. The parent is the correct domain:
+        # it exits and re-enters exactly the target subtree.
+        if target_state in source_ancestors:
+            return target_state.parent or self.machine
+
         if not common_ancestors:
             # Fallback to parent (or machine root) if no commonality is found.
             return parent
 
-        # The LCCA is the common ancestor with the longest (deepest) ID.
-        return max(common_ancestors, key=lambda n: len(n.id))
+        # The LCCA is the deepest common ancestor.
+        return max(common_ancestors, key=lambda n: n.depth)
 
     @staticmethod
     def _get_path_to_state(
@@ -1099,7 +1464,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         Returns:
             bool: `True` if the guard passes or if there is no guard, `False`
-            otherwise.
+            otherwise. A guard that raises is treated as `False`.
 
         Raises:
             ImplementationMissingError: If a `guard_name` is provided but no
@@ -1118,7 +1483,26 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             )
 
         # 🏃 Execute the guard function.
-        result = guard_callable(self.context, event)
+        #
+        # 🏛️ Architecture decision: a guard is a *predicate supplied by the
+        # user*, so a raised exception is a defect in that predicate rather
+        # than a machine-level failure. Per the documented contract it
+        # evaluates to `False`, blocking this transition while leaving the
+        # machine responsive and allowing any lower-priority transition (e.g.
+        # an unguarded fallback in the same `on` array) to be considered.
+        # A *missing* guard still raises above — that is a configuration
+        # error, not a runtime condition, and must fail loudly.
+        try:
+            result = bool(guard_callable(self.context, event))
+        except Exception:
+            logger.exception(
+                "🔥 Guard '%s' raised an exception while evaluating event "
+                "'%s'; treating it as False.",
+                guard_name,
+                event.type,
+            )
+            result = False
+
         logger.info(
             "🛡️  Evaluating guard '%s': %s",
             guard_name,
