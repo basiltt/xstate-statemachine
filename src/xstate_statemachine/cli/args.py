@@ -327,9 +327,12 @@ def resolve_template(
                 f"Unknown --style value: {style}. " f"Use --template instead."
             )
         warnings.warn(
-            f"--style is deprecated, use --template "
-            f"{resolved} instead. "
-            f"Will be removed in v0.6.0",
+            f"--style is deprecated, use --template " f"{resolved} instead. "
+            # 📝 v0.6.0 shipped without removing it: `--style` is still
+            #    honoured, so the notice must name a FUTURE release rather
+            #    than the current one, which would be a promise already
+            #    broken at the moment the user reads it.
+            f"Will be removed in v0.7.0",
             DeprecationWarning,
             stacklevel=2,
         )

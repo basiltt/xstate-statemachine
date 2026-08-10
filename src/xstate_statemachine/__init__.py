@@ -116,11 +116,54 @@ from .pythonic import (
 )
 
 # -----------------------------------------------------------------------------
+# 🎬 Built-in Action Creators
+# -----------------------------------------------------------------------------
+# 🏛️ Architecture decision: `raise_` keeps its trailing underscore because
+# `raise` is a Python keyword, and `assign_`/`log_` are aliased alongside the
+# plain names so a user who has shadowed them locally still has an escape
+# hatch.
+from .actions import (
+    ActionEnqueuer,
+    assign,
+    cancel,
+    choose,
+    emit,
+    enqueue_actions,
+    escalate,
+    forward_to,
+    log,
+    pure,
+    raise_,
+    send_parent,
+    send_to,
+    spawn_child,
+    stop_child,
+)
+
+# -----------------------------------------------------------------------------
+# 🧰 Helpers & Pure Transition API
+# -----------------------------------------------------------------------------
+# 📝 `transition` is already exported by the Pythonic DSL (it builds a
+# transition definition). The pure reducer is therefore exported under its
+# XState-adjacent aliases plus an explicit `pure_transition` name, so neither
+# meaning shadows the other.
+from .helpers import (
+    PureSnapshot,
+    get_initial_snapshot,
+    get_next_snapshot,
+    initial_transition,
+    to_promise,
+    wait_for,
+    wait_for_sync,
+)
+from .helpers import transition as pure_transition
+
+# -----------------------------------------------------------------------------
 # 📦 Version Information
 # -----------------------------------------------------------------------------
 
 # 📦 The official version number for the library.
-__version__ = "0.5.1"
+__version__ = "0.6.0"
 
 # -----------------------------------------------------------------------------
 # 🌐 Public API Definition
@@ -160,5 +203,30 @@ __all__ = [
     "action",
     "guard",
     "service",
+    # 🎬 Built-in Action Creators
+    "ActionEnqueuer",
+    "assign",
+    "cancel",
+    "choose",
+    "emit",
+    "enqueue_actions",
+    "escalate",
+    "forward_to",
+    "log",
+    "pure",
+    "raise_",
+    "send_parent",
+    "send_to",
+    "spawn_child",
+    "stop_child",
+    # 🧰 Helpers & Pure Transition API
+    "PureSnapshot",
+    "get_initial_snapshot",
+    "get_next_snapshot",
+    "initial_transition",
+    "pure_transition",
+    "to_promise",
+    "wait_for",
+    "wait_for_sync",
     "__version__",
 ]

@@ -44,8 +44,20 @@ from .events import AfterEvent, DoneEvent, Event
 from .exceptions import (
     ActorSpawningError,
     ImplementationMissingError,
+    InvalidConfigError,
     NotSupportedError,
     StateNotFoundError,
+)
+from .actions import (
+    ESCALATE,
+    FORWARD_TO,
+    RAISE,
+    SEND_PARENT,
+    SEND_TO,
+    SPAWN_CHILD,
+    STOP_CHILD,
+    is_builtin,
+    resolve_builtin,
 )
 from .models import (
     ActionDefinition,
@@ -100,14 +112,20 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     # 🧙 Magic Methods & Initialization
     # -------------------------------------------------------------------------
 
-    def __init__(self, machine: MachineNode[TContext, TEvent]) -> None:
+    def __init__(
+        self,
+        machine: MachineNode[TContext, TEvent],
+        input: Optional[Any] = None,
+    ) -> None:
         """Initializes a new synchronous Interpreter instance.
 
         Args:
             machine: The state machine definition that this interpreter will run.
         """
         # 🤝 Initialize the base interpreter first
-        super().__init__(machine, interpreter_class=SyncInterpreter)
+        super().__init__(
+            machine, interpreter_class=SyncInterpreter, input=input
+        )
         logger.info("⛓️ Initializing Synchronous Interpreter... 🚀")
 
         # ⚙️ Initialize synchronous-specific attributes
@@ -115,6 +133,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         self._is_processing: bool = False
         self._after_threads: Dict[str, threading.Thread] = {}
         self._after_events: Dict[str, threading.Event] = {}
+        #: Cancellation flags for pending delayed sends, released by `stop()`.
+        self._pending_send_cancels: Set[threading.Event] = set()
 
         logger.info("✅ Synchronous Interpreter '%s' initialized. 🎉", self.id)
 
@@ -165,7 +185,21 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         pre_states = set(self._active_state_nodes)
 
         # ➡️ Enter the machine's initial states.
-        self._enter_states([self.machine])
+        #
+        # 🏛️ Architecture decision: initial entry runs behind the re-entrancy
+        # guard. An entry action may `raise` an event, and `send` processes
+        # the queue immediately; without the guard that event would be handled
+        # *while the machine was still descending into its initial states*,
+        # transitioning away from a half-built configuration and leaving two
+        # active leaves. Guarding defers such events until entry has settled,
+        # after which the queue is drained normally.
+        self._is_processing = True
+        try:
+            self._enter_states([self.machine])
+        finally:
+            self._is_processing = False
+        # 📬 Drain anything an entry action raised during that descent.
+        self._process_event_queue()
         # 🔄 Process any immediate "always" transitions upon startup.
         self._process_transient_transitions()
 
@@ -192,15 +226,25 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         and sets the interpreter's status to 'stopped', preventing further
         event processing. It's idempotent.
         """
-        # 🚦 Idempotency check
-        if self.status != "running":
+        # 🚦 Idempotency check.
+        #
+        # 🏛️ `done` and `error` are terminal but NOT torn down: reaching a
+        # top-level final state must still release child actors and timers.
+        # Guarding on `!= "running"` made `stop()` a silent no-op for every
+        # machine that completed, leaking actors and their timer threads.
+        if self.status in ("uninitialized", "stopped"):
             return
 
         logger.info(
             "🛑 Stopping sync interpreter '%s' and its actors…", self.id
         )
 
-        # 1️⃣ Stop every child actor (blocking & non-blocking)
+        # 1️⃣ Stop every child actor (blocking & non-blocking).
+        #
+        # 📝 Status is set to "stopped" FIRST so a cyclic actor graph
+        #    terminates: the child's own `stop()` re-enters this one, which
+        #    now hits the idempotency guard instead of recursing forever.
+        self.status = "stopped"
         for actor_id, actor in list(self._actors.items()):
             try:
                 actor.stop()
@@ -212,6 +256,14 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             self._after_events[state_id].set()
         self._after_events.clear()
         self._after_threads.clear()
+
+        # 2️⃣.5 Release any waiting delayed-send threads. They are daemons, so
+        #      they never block process exit, but a long delay would otherwise
+        #      keep one alive for its full duration after shutdown.
+        for cancel_flag in list(self._pending_send_cancels):
+            cancel_flag.set()
+        self._pending_send_cancels.clear()
+        self._scheduled_sends.clear()
 
         # 3️⃣ Update status to prevent further operations
         self.status = "stopped"
@@ -390,6 +442,13 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             domain, target_state
         )
 
+        # 🕰️ A history pseudo-state is never entered itself; expand it to the
+        #    remembered configuration. Mirrors BaseInterpreter._execute_transition.
+        history_targets: List[StateNode] = []
+        if target_state.type == "history":
+            history_targets = self._resolve_history_target(target_state)
+            path_to_enter = []
+
         # Execute the transition sequence (Exit -> Actions -> Enter)
         #
         # 🏛️ Architecture decision: `_exit_states`/`_enter_states` own all
@@ -404,7 +463,15 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         self._execute_actions(transition.actions, event)
         self._enter_states(path_to_enter, event)
 
-        # Notify plugins of the completed transition.
+        # 🕰️ Restore the remembered configuration for a history target.
+        if target_state.type == "history":
+            for node in history_targets:
+                self._enter_states(
+                    self._get_path_to_state(node, stop_at=domain), event
+                )
+
+        # Notify plugins and subscribers of the completed transition.
+        self._notify_subscribers()
         for plugin in self._plugins:
             plugin.on_transition(
                 self,
@@ -423,19 +490,34 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         state configuration is stable.
         """
         logger.debug("🔍 Checking for transient ('always') transitions...")
+        # 🛟 Bound the microstep loop. A pair of `always` transitions that
+        #    target each other spins forever; XState added the same guard in
+        #    v5.31.0. `max_iterations` is configurable on the machine.
+        iterations = 0
+        limit = getattr(self.machine, "max_iterations", 1000)
         while True:
+            iterations += 1
+            if iterations > limit:
+                logger.error(
+                    "🔁 Exceeded %d microsteps while settling transient "
+                    "transitions in '%s'. Aborting to avoid an infinite "
+                    "loop; check for mutually-targeting 'always' transitions.",
+                    limit,
+                    self.id,
+                )
+                break
             # 👻 Use a dummy event for guard evaluation in "always" transitions.
             transient_event = Event(type="")  # Empty type signifies "always".
 
-            # 🎯 Find the most specific transient transition available.
-            transition = self._find_optimal_transition(transient_event)
+            # 🎯 Find transient transitions via the memoised selection path,
+            #    so a guard on a shared ancestor is evaluated once rather than
+            #    once per active leaf.
+            selected = self._select_transitions(transient_event)
 
             # ⚡ An event-less transition is one with an empty event string ("").
-            if transition and transition.event == "":
+            if selected and any(t.event == "" for t in selected):
                 logger.info(
-                    "🚀 Processing transient transition from '%s' to target '%s'",
-                    transition.source.id,
-                    transition.target_str or "self (internal)",
+                    "🚀 Processing transient transition(s) in '%s'", self.id
                 )
                 # 🔄 Directly process the *found* transition, which is more efficient.
                 self._process_event(transient_event)
@@ -474,6 +556,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             for node in states_to_enter
             if node.parent is not None
         }
+        explicit_child_ids = {
+            node.id for node in states_to_enter if node.parent is not None
+        }
 
         for state in states_to_enter:
             logger.info("➡️ Entering state: '%s'", state.id)
@@ -507,11 +592,21 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     )
                     self._enter_states([initial_child])
                 else:
-                    logger.error(
-                        "🐛 Initial state '%s' not found for compound state '%s'.",
-                        state.initial,
-                        state.id,
+                    raise InvalidConfigError(
+                        f"❌ Initial state '{state.initial}' not found in "
+                        f"compound state '{state.id}'."
                     )
+
+            elif state.type == "compound" and state.states:
+                # 🚨 A compound state with children but no resolvable
+                #    `initial` cannot produce an active leaf. Left unchecked
+                #    the machine starts "successfully" with an empty
+                #    configuration and silently drops every event.
+                raise InvalidConfigError(
+                    f"❌ Compound state '{state.id}' has no 'initial' state, "
+                    "so entering it yields no active leaf. Declare "
+                    "'initial' explicitly."
+                )
 
             # 🌐 For parallel states, recursively enter all child regions.
             elif state.type == "parallel":
@@ -519,7 +614,19 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     "🌐 Entering all regions for parallel state '%s'.",
                     state.id,
                 )
-                self._enter_states(list(state.states.values()))
+                # 🌐 Enter every region EXCEPT one already named by the entry
+                #    path (that region is walked explicitly, and entering
+                #    it again would trigger its default `initial` descent
+                #    and activate the wrong child alongside the target).
+                #    History pseudo-states are never entered as regions.
+                regions = [
+                    child
+                    for child in state.states.values()
+                    if child.type != "history"
+                    and child.id not in explicit_child_ids
+                ]
+                if regions:
+                    self._enter_states(regions)
 
             # ⚙️ Schedule any tasks (invokes, timers).
             self._schedule_state_tasks(state)
@@ -538,6 +645,10 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 ordered from child to parent.
             event: The optional event that triggered the state exit.
         """
+        # 🕰️ Record history *before* anything is removed, so the
+        #    remembered configuration reflects the pre-transition state.
+        self._record_history(states_to_exit)
+
         # 🧹 Cancel tasks BEFORE any other processing to prevent race conditions.
         for state in states_to_exit:
             self._cancel_state_tasks(state)
@@ -573,11 +684,28 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     ancestor.id,
                     done_event_type,
                 )
-                # 📬 Send the `done.state.*` event for the next processing cycle.
-                self.send(Event(type=done_event_type))
+                # 📬 Send the `done.state.*` event for the next processing
+                #    cycle, carrying the final state's `output` as done data.
+                self.send(
+                    DoneEvent(
+                        type=done_event_type,
+                        data=self._resolve_output(final_state),
+                        src=ancestor.id,
+                    )
+                )
                 return  # 🛑 Only fire the event for the nearest completed ancestor.
 
             ancestor = ancestor.parent
+
+        # 🏁 A top-level final state completes the machine itself.
+        if final_state.parent is self.machine or final_state.parent is None:
+            # 📝 A machine-level `output` wins over the final state's own,
+            #    matching XState. See BaseInterpreter._check_and_fire_on_done.
+            machine_output = getattr(self.machine, "machine_output", None)
+            if machine_output is not None:
+                self._complete(self._resolve_output_value(machine_output))
+            else:
+                self._complete(self._resolve_output(final_state))
 
     # -------------------------------------------------------------------------
     # ⚡ Action & Service Execution (Private Overrides)
@@ -609,12 +737,24 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 plugin.on_action_execute(self, action_def)
 
             # 🎭 Handle actor spawning actions
-            if action_def.type.startswith(("spawn_", "spawn_blocking_")):
+            if action_def.type.startswith(
+                ("spawn_", "spawn_blocking_")
+            ) and not is_builtin(action_def.type):
                 self._spawn_actor(action_def, event)
                 continue
 
             # ⚙️ Handle normal actions
             action_impl = self.machine.logic.actions.get(action_def.type)
+
+            # 🎬 Built-in action creators, resolved only when the user has NOT
+            #    supplied an action of the same name so a machine defining its
+            #    own `log` or `assign` keeps working.
+            if action_impl is None:
+                canonical = resolve_builtin(action_def.type)
+                if canonical is not None:
+                    self._execute_builtin_action(canonical, action_def, event)
+                    continue
+
             if not action_impl:
                 raise ImplementationMissingError(
                     f"Action '{action_def.type}' not implemented."
@@ -643,6 +783,197 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     event.type,
                 )
                 return
+
+    def _execute_builtin_action(
+        self,
+        canonical: str,
+        action_def: ActionDefinition,
+        event: Event,
+    ) -> None:
+        """Executes a built-in action creator synchronously.
+
+        Mirrors `Interpreter._execute_builtin_action`. Delayed sends are
+        backed by `threading.Timer` rather than asyncio tasks, matching how
+        this engine already implements `after`.
+
+        Args:
+            canonical (str): The canonical built-in action name.
+            action_def (ActionDefinition): The action being executed.
+            event (Event): The triggering event.
+        """
+        followups = self._collect_builtin_followups(
+            canonical, action_def, event
+        )
+        if followups:
+            self._action_depth += 1
+            try:
+                self._execute_actions(
+                    [ActionDefinition(f) for f in followups], event
+                )
+            finally:
+                self._action_depth -= 1
+
+        params = self._resolve_params(action_def.params, event) or {}
+
+        if canonical == RAISE:
+            self._deliver(
+                self,
+                self._resolve_event_spec(params.get("event"), event),
+                self._resolve_delay(params.get("delay"), event),
+                params.get("id"),
+            )
+
+        elif canonical == SEND_TO:
+            actor = self._resolve_actor_target(params.get("to"), event)
+            if actor is None:
+                logger.warning(
+                    "⚠️ sendTo could not resolve target %r; event dropped.",
+                    params.get("to"),
+                )
+                return
+            self._deliver(
+                actor,
+                self._resolve_event_spec(params.get("event"), event),
+                self._resolve_delay(params.get("delay"), event),
+                params.get("id"),
+            )
+
+        elif canonical == SEND_PARENT:
+            if self.parent is None:
+                logger.warning("⚠️ sendParent called with no parent actor.")
+                return
+            self._deliver(
+                self.parent,
+                self._resolve_event_spec(params.get("event"), event),
+                self._resolve_delay(params.get("delay"), event),
+                params.get("id"),
+            )
+
+        elif canonical == FORWARD_TO:
+            actor = self._resolve_actor_target(params.get("to"), event)
+            if actor is None:
+                logger.warning(
+                    "⚠️ forwardTo could not resolve target %r.",
+                    params.get("to"),
+                )
+                return
+            self._deliver(actor, event, None, None)
+
+        elif canonical == ESCALATE:
+            escalate_event = Event(
+                type=f"xstate.error.actor.{self.id}",
+                payload={"error": params.get("error")},
+            )
+            if self.parent is not None:
+                self._deliver(self.parent, escalate_event, None, None)
+            else:
+                logger.error(
+                    "🔥 escalate() with no parent actor: %r",
+                    params.get("error"),
+                )
+
+        elif canonical == STOP_CHILD:
+            actor = self._resolve_actor_target(params.get("id"), event)
+            if actor is None:
+                logger.warning(
+                    "⚠️ stopChild could not resolve %r.", params.get("id")
+                )
+                return
+            for actor_id, candidate in list(self._actors.items()):
+                if candidate is actor:
+                    del self._actors[actor_id]
+                    self._actor_sources.pop(actor_id, None)
+                    break
+            # 🌐 Also drop it from the actor-system registry, otherwise a
+            #    stopped actor stays addressable by systemId.
+            registry = self._system_registry()
+            for system_id, candidate in list(registry.items()):
+                if candidate is actor:
+                    del registry[system_id]
+            actor.stop()
+
+        elif canonical == SPAWN_CHILD:
+            src = params.get("src")
+            if not isinstance(src, str):
+                logger.warning("⚠️ spawnChild requires a string 'src'.")
+                return
+            self._spawn_actor(
+                ActionDefinition(
+                    {
+                        "type": f"spawn_{src}",
+                        "params": {
+                            "id": params.get("id"),
+                            "systemId": params.get("systemId"),
+                            "input": params.get("input"),
+                        },
+                    }
+                ),
+                event,
+            )
+
+    def _deliver(
+        self,
+        actor: Any,
+        target_event: Event,
+        delay: Optional[float],
+        send_id: Optional[str],
+    ) -> None:
+        """Sends an event to an actor, honouring an optional delay.
+
+        Args:
+            actor (Any): The recipient interpreter.
+            target_event (Event): The event to deliver.
+            delay (Optional[float]): Delay in milliseconds, or `None`.
+            send_id (Optional[str]): Id allowing later cancellation.
+        """
+        if not delay:
+            actor.send(target_event)
+            return
+
+        cancel_flag = threading.Event()
+
+        def _fire() -> None:
+            """Delivers the event unless cancelled while waiting."""
+            if cancel_flag.wait(delay / 1000.0):
+                return
+            if send_id:
+                self._scheduled_sends.pop(str(send_id), None)
+            self._pending_send_cancels.discard(cancel_flag)
+            try:
+                actor.send(target_event)
+            except Exception:  # pragma: no cover - defensive
+                logger.exception(
+                    "🔥 Delayed send of '%s' failed.", target_event.type
+                )
+
+        # 🔁 Reusing a send id supersedes the earlier send. Without this the
+        #    first timer is orphaned: the registry entry is overwritten, so
+        #    `cancel(id)` can no longer reach it and it fires anyway.
+        def _cancel() -> None:
+            """Cancels this send and releases its waiter immediately."""
+            cancel_flag.set()
+            # 🧹 Drop the flag now rather than waiting for the thread to wake
+            #    up. A long-delayed send that is cancelled would otherwise
+            #    keep its Event referenced in `_pending_send_cancels` for the
+            #    full original duration.
+            self._pending_send_cancels.discard(cancel_flag)
+
+        if send_id:
+            previous = self._scheduled_sends.get(str(send_id))
+            if previous is not None:
+                previous()
+            self._scheduled_sends[str(send_id)] = _cancel
+
+        # 🧹 Track every pending waiter so `stop()` can release it. The
+        #    threads are daemons (they cannot block interpreter exit), but a
+        #    long delay would otherwise keep one alive for its full duration
+        #    after the machine has shut down.
+        self._pending_send_cancels.add(cancel_flag)
+
+        timer = threading.Thread(
+            target=_fire, name=f"send-{target_event.type}", daemon=True
+        )
+        timer.start()
 
     def _spawn_actor(self, action_def: ActionDefinition, event: Event) -> None:
         """Spawns a child state machine actor in blocking or non-blocking mode.
@@ -674,12 +1005,26 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 f"Cannot spawn '{key}'. Service not a MachineNode or factory."
             )
 
-        # 🆔 Create and register the child interpreter (actor)
-        actor_id = f"{self.id}:{key}:{uuid.uuid4()}"
+        # 🆔 Create and register the child interpreter (actor). An explicit
+        #    `id` in params wins so `stop_child("worker")` can address it.
+        spawn_params = action_def.params or {}
+        explicit_id = spawn_params.get("id")
+        actor_id = (
+            f"{self.id}:{explicit_id}"
+            if explicit_id
+            else f"{self.id}:{key}:{uuid.uuid4()}"
+        )
         child = SyncInterpreter(actor_machine)
         child.parent = self
         child.id = actor_id
+        # 📥 Seed the child's context with any declared input.
+        child_input = spawn_params.get("input")
+        if child_input is not None:
+            child.context.setdefault("input", child_input)
+        # 🌐 Register under a systemId so siblings can address it.
+        self._register_in_system(spawn_params.get("systemId"), child)
         self._actors[actor_id] = child
+        self._actor_sources[actor_id] = key
 
         # --- Blocking Execution Path ---
         if blocking:
@@ -840,6 +1185,27 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         Raises:
             NotSupportedError: If the provided service is an `async def` function.
         """
+        # 🤖 A `MachineNode` used as `src` means "run this machine as a child
+        #    actor", not "call this object". Without this branch it fell
+        #    through to `service(...)` and raised
+        #    `TypeError: 'MachineNode' object is not callable`.
+        if isinstance(service, MachineNode):
+            logger.info(
+                "🤖 Invoking machine '%s' as a child actor (id: '%s').",
+                invocation.src,
+                invocation.id,
+            )
+            self._spawn_actor(
+                ActionDefinition(
+                    {
+                        "type": f"spawn_{invocation.src}",
+                        "params": {"id": invocation.id},
+                    }
+                ),
+                Event(type=f"invoke.{invocation.id}"),
+            )
+            return
+
         # 🧐 Validate that the service is not an async function.
         if self._is_async_callable(service):
             logger.error(
@@ -887,9 +1253,14 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             error_event = DoneEvent(
                 f"error.platform.{invocation.id}", data=e, src=invocation.id
             )
+            # 🚨 Unhandled service failures must be observable, not just
+            #    logged. See BaseInterpreter._fail.
+            handled = self._has_error_handler(invocation)
             self.send(error_event)
             for plugin in self._plugins:
                 plugin.on_service_error(self, invocation, e)
+            if not handled:
+                self._fail(e)
 
     # -------------------------------------------------------------------------
     # 🛠️ Helper & Utility Methods (Private)

@@ -44,6 +44,17 @@ from typing import (
 from .base_interpreter import BaseInterpreter
 from .events import AfterEvent, DoneEvent, Event
 from .exceptions import ActorSpawningError, ImplementationMissingError
+from .actions import (
+    ESCALATE,
+    FORWARD_TO,
+    RAISE,
+    SEND_PARENT,
+    SEND_TO,
+    SPAWN_CHILD,
+    STOP_CHILD,
+    is_builtin,
+    resolve_builtin,
+)
 from .models import (
     ActionDefinition,
     InvokeDefinition,
@@ -86,7 +97,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             interpreter for services and timers.
     """
 
-    def __init__(self, machine: MachineNode[TContext, TEvent]) -> None:
+    def __init__(
+        self,
+        machine: MachineNode[TContext, TEvent],
+        input: Optional[Any] = None,
+    ) -> None:
         """Initializes a new asynchronous Interpreter instance.
 
         Args:
@@ -95,7 +110,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         """
         # 🏛️ Initialize the base class, passing our own class type so that
         # `from_snapshot` can create the correct `Interpreter` instance.
-        super().__init__(machine, interpreter_class=Interpreter)
+        super().__init__(machine, interpreter_class=Interpreter, input=input)
         logger.info(
             "🚀 Initializing Asynchronous Interpreter for '%s'...", self.id
         )
@@ -153,6 +168,31 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 state entry, ensuring a clean failure state if the machine
                 cannot start correctly.
         """
+        # ♻️ Resume a snapshot-restored interpreter.
+        #
+        # 🏛️ Architecture decision: `from_snapshot` restores the persisted
+        # status verbatim, so a restored actor reads `"running"` with no
+        # `_event_loop_task`. The idempotency check below then refused to
+        # start it, leaving a machine that looked alive, queued every event
+        # and processed none. Detecting that shape and attaching a loop makes
+        # `start()` the documented way to resume a restored actor.
+        if (
+            self.status in ("running", "done", "error")
+            and self._event_loop_task is None
+        ):
+            logger.info("♻️ Resuming restored interpreter '%s'...", self.id)
+            if self.status == "running":
+                self._event_loop_task = asyncio.create_task(
+                    self._run_event_loop()
+                )
+            # 👶 Resume restored child actors too, so a whole hierarchy comes
+            #    back alive rather than just its root.
+            for actor in list(self._actors.values()):
+                resumed = actor.start()
+                if inspect.isawaitable(resumed):
+                    await resumed
+            return self
+
         # 🛡️ Idempotency check: Don't start if already running or stopped.
         if self.status != "uninitialized":
             logger.warning(
@@ -202,8 +242,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         background tasks (timers, services), and recursively stops any child
         actors that were spawned by this interpreter. It is idempotent.
         """
-        # 🛡️ Idempotency check: Don't stop if not currently running.
-        if self.status != "running":
+        # 🛡️ Idempotency check.
+        #
+        # 🏛️ `done` and `error` are terminal but NOT torn down: reaching a
+        # top-level final state must still release child actors and tasks.
+        if self.status in ("uninitialized", "stopped"):
             logger.warning(
                 "⚠️ Interpreter '%s' is not running. Skipping stop.", self.id
             )
@@ -376,10 +419,29 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         # 2️⃣ Immediately loop to handle any event-less ("always") transitions.
         #    This continues until no more "always" transitions are available,
         #    at which point the machine state is considered stable.
+        # 🛟 Bound the microstep loop. A pair of `always` transitions that
+        #    target each other spins forever; XState added the same guard in
+        #    v5.31.0. `max_iterations` is configurable on the machine.
+        iterations = 0
+        limit = getattr(self.machine, "max_iterations", 1000)
         while True:
+            iterations += 1
+            if iterations > limit:
+                logger.error(
+                    "🔁 Exceeded %d microsteps while settling transient "
+                    "transitions in '%s'. Aborting to avoid an infinite "
+                    "loop; check for mutually-targeting 'always' transitions.",
+                    limit,
+                    self.id,
+                )
+                break
             transient_event = Event(type="")
-            transition = self._find_optimal_transition(transient_event)
-            if transition and transition.event == "":
+            # 🧠 Use the memoised selection path so a transient transition on
+            #    a shared ancestor evaluates its guard ONCE, not once per
+            #    active leaf. The legacy single-winner scan re-evaluated it
+            #    per region, multiplying any guard side effects.
+            selected = self._select_transitions(transient_event)
+            if selected and any(t.event == "" for t in selected):
                 logger.info(
                     "⚡ Processing transient (event-less) transition in '%s'.",
                     self.id,
@@ -415,12 +477,26 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 plugin.on_action_execute(self, action_def)
 
             # 👶 Handle actor spawning as a special, built-in action type.
-            if action_def.type.startswith("spawn_"):
+            if action_def.type.startswith("spawn_") and not is_builtin(
+                action_def.type
+            ):
                 await self._spawn_actor(action_def, event)
                 continue
 
             # 🔎 Find the implementation for the named action.
             action_callable = self.machine.logic.actions.get(action_def.type)
+
+            # 🎬 Built-in action creators. Resolved only when the user has NOT
+            #    supplied an action of the same name, so a machine that
+            #    legitimately defines its own `log` or `assign` keeps working.
+            if action_callable is None:
+                canonical = resolve_builtin(action_def.type)
+                if canonical is not None:
+                    await self._execute_builtin_action(
+                        canonical, action_def, event
+                    )
+                    continue
+
             if not action_callable:
                 raise ImplementationMissingError(
                     f"Action '{action_def.type}' is not implemented."
@@ -457,6 +533,221 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
     # -------------------------------------------------------------------------
     # 🤖 Asynchronous Task Implementations (Actors, Timers, Services)
     # -------------------------------------------------------------------------
+
+    async def _execute_builtin_action(
+        self,
+        canonical: str,
+        action_def: ActionDefinition,
+        event: Event,
+    ) -> None:
+        """Executes a built-in action creator asynchronously.
+
+        Pure-state effects (`assign`, `log`, `emit`, `pure`, `choose`,
+        `enqueueActions`, `cancel`) are handled by the shared base
+        implementation. Delivery effects (`raise`, `sendTo`, `sendParent`,
+        `forwardTo`, `escalate`, `stopChild`, `spawnChild`) need the event
+        loop and are handled here.
+
+        Args:
+            canonical (str): The canonical built-in action name.
+            action_def (ActionDefinition): The action being executed.
+            event (Event): The triggering event.
+        """
+        # 🧮 Shared semantics first; may yield nested actions to run.
+        followups = self._collect_builtin_followups(
+            canonical, action_def, event
+        )
+        if followups:
+            self._action_depth += 1
+            try:
+                await self._execute_actions(
+                    [ActionDefinition(f) for f in followups], event
+                )
+            finally:
+                self._action_depth -= 1
+
+        params = self._resolve_params(action_def.params, event) or {}
+
+        if canonical == RAISE:
+            target_event = self._resolve_event_spec(params.get("event"), event)
+            delay = self._resolve_delay(params.get("delay"), event)
+            await self._deliver(self, target_event, delay, params.get("id"))
+
+        elif canonical == SEND_TO:
+            actor = self._resolve_actor_target(params.get("to"), event)
+            if actor is None:
+                logger.warning(
+                    "⚠️ sendTo could not resolve target %r; event dropped.",
+                    params.get("to"),
+                )
+                return
+            target_event = self._resolve_event_spec(params.get("event"), event)
+            delay = self._resolve_delay(params.get("delay"), event)
+            await self._deliver(actor, target_event, delay, params.get("id"))
+
+        elif canonical == SEND_PARENT:
+            if self.parent is None:
+                logger.warning("⚠️ sendParent called with no parent actor.")
+                return
+            target_event = self._resolve_event_spec(params.get("event"), event)
+            delay = self._resolve_delay(params.get("delay"), event)
+            await self._deliver(
+                self.parent, target_event, delay, params.get("id")
+            )
+
+        elif canonical == FORWARD_TO:
+            actor = self._resolve_actor_target(params.get("to"), event)
+            if actor is None:
+                logger.warning(
+                    "⚠️ forwardTo could not resolve target %r.",
+                    params.get("to"),
+                )
+                return
+            await self._deliver(actor, event, None, None)
+
+        elif canonical == ESCALATE:
+            error_payload = params.get("error")
+            escalate_event = Event(
+                type=f"xstate.error.actor.{self.id}",
+                payload={"error": error_payload},
+            )
+            if self.parent is not None:
+                await self._deliver(self.parent, escalate_event, None, None)
+            else:
+                logger.error(
+                    "🔥 escalate() with no parent actor: %r", error_payload
+                )
+
+        elif canonical == STOP_CHILD:
+            await self._stop_child_actor(params.get("id"), event)
+
+        elif canonical == SPAWN_CHILD:
+            await self._spawn_child_action(params, event)
+
+    async def _deliver(
+        self,
+        actor: "BaseInterpreter[Any, Any]",
+        target_event: Event,
+        delay: Optional[float],
+        send_id: Optional[str],
+    ) -> None:
+        """Sends an event to an actor, honouring an optional delay.
+
+        Args:
+            actor (BaseInterpreter): The recipient.
+            target_event (Event): The event to deliver.
+            delay (Optional[float]): Delay in milliseconds, or `None`.
+            send_id (Optional[str]): Id allowing later cancellation.
+        """
+        if not delay:
+            await self._send_to_actor(actor, target_event)
+            return
+
+        key = str(send_id) if send_id else None
+
+        async def _delayed() -> None:
+            """Waits out the delay, then delivers."""
+            try:
+                await asyncio.sleep(delay / 1000.0)
+                await self._send_to_actor(actor, target_event)
+            except asyncio.CancelledError:  # pragma: no cover - shutdown
+                raise
+            finally:
+                # 🧹 Only clear the registry if it still points at THIS task.
+                #    A later send reusing the same id replaces the entry, and
+                #    popping unconditionally would drop the live registration
+                #    and leave the newer send uncancellable.
+                if (
+                    key is not None
+                    and self._scheduled_sends.get(key) is _cancel
+                ):
+                    self._scheduled_sends.pop(key, None)
+
+        task = asyncio.create_task(_delayed())
+        self.task_manager.add(self.id, task)
+
+        def _cancel() -> None:
+            """Cancels this specific delayed send."""
+            task.cancel()
+
+        if key is not None:
+            # 🔁 Reusing a send id supersedes the earlier send. Without this
+            #    the first task is orphaned: the registry entry is
+            #    overwritten, so `cancel(id)` can no longer reach it and it
+            #    fires anyway. Mirrors the sync engine.
+            previous = self._scheduled_sends.get(key)
+            if previous is not None:
+                previous()
+            self._scheduled_sends[key] = _cancel
+
+    @staticmethod
+    async def _send_to_actor(
+        actor: "BaseInterpreter[Any, Any]", target_event: Event
+    ) -> None:
+        """Dispatches an event to an actor of either execution mode.
+
+        📝 A parent may spawn a `SyncInterpreter` child (blocking actors), so
+        the recipient's `send` is not guaranteed to be a coroutine.
+
+        Args:
+            actor (BaseInterpreter): The recipient.
+            target_event (Event): The event to deliver.
+        """
+        result = actor.send(target_event)
+        if inspect.isawaitable(result):
+            await result
+
+    async def _stop_child_actor(self, spec: Any, event: Event) -> None:
+        """Stops a spawned child actor by id.
+
+        Args:
+            spec (Any): The child's id, or a callable resolving one.
+            event (Event): The triggering event.
+        """
+        actor = self._resolve_actor_target(spec, event)
+        if actor is None:
+            logger.warning("⚠️ stopChild could not resolve %r.", spec)
+            return
+        for actor_id, candidate in list(self._actors.items()):
+            if candidate is actor:
+                del self._actors[actor_id]
+                self._actor_sources.pop(actor_id, None)
+                break
+        # 🌐 Also drop it from the actor-system registry, otherwise a stopped
+        #    actor stays addressable by systemId and silently swallows events.
+        registry = self._system_registry()
+        for system_id, candidate in list(registry.items()):
+            if candidate is actor:
+                del registry[system_id]
+        result = actor.stop()
+        if inspect.isawaitable(result):
+            await result
+
+    async def _spawn_child_action(
+        self, params: Dict[str, Any], event: Event
+    ) -> None:
+        """Spawns an actor declaratively via the `spawnChild` action.
+
+        Args:
+            params (Dict[str, Any]): Params carrying `src`, `id`, `systemId`
+                and `input`.
+            event (Event): The triggering event.
+        """
+        src = params.get("src")
+        if not isinstance(src, str):
+            logger.warning("⚠️ spawnChild requires a string 'src'.")
+            return
+        synthetic = ActionDefinition(
+            {
+                "type": f"spawn_{src}",
+                "params": {
+                    "id": params.get("id"),
+                    "systemId": params.get("systemId"),
+                    "input": params.get("input"),
+                },
+            }
+        )
+        await self._spawn_actor(synthetic, event)
 
     async def _spawn_actor(
         self, action_def: ActionDefinition, event: Event
@@ -500,13 +791,28 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             )
 
         # 🧬 Create, configure, and start the new child interpreter.
-        actor_id = f"{self.id}:{actor_machine_key}:{uuid.uuid4()}"
+        spawn_params = action_def.params or {}
+        explicit_id = spawn_params.get("id")
+        actor_id = (
+            f"{self.id}:{explicit_id}"
+            if explicit_id
+            else f"{self.id}:{actor_machine_key}:{uuid.uuid4()}"
+        )
         child_interpreter = Interpreter(actor_machine)
         child_interpreter.parent = self
         child_interpreter.id = actor_id
+        # 📥 Seed the child's context with any declared input.
+        child_input = spawn_params.get("input")
+        if child_input is not None:
+            child_interpreter.context.setdefault("input", child_input)
+        # 🌐 Register under a systemId so siblings can address it.
+        self._register_in_system(
+            spawn_params.get("systemId"), child_interpreter
+        )
         await child_interpreter.start()
 
         self._actors[actor_id] = child_interpreter
+        self._actor_sources[actor_id] = actor_machine_key
         logger.info(
             "✅ Actor '%s' (child of '%s') spawned and started successfully.",
             actor_id,
@@ -642,9 +948,14 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 data=e,
                 src=invocation.id,
             )
+            # 🚨 If nothing handles the error event, the failure is
+            #    unhandled and must be observable rather than merely logged.
+            handled = self._has_error_handler(invocation)
             await self.send(error_event)
             for plugin in self._plugins:
                 plugin.on_service_error(self, invocation, e)
+            if not handled:
+                self._fail(e)
 
     def _invoke_service(
         self,

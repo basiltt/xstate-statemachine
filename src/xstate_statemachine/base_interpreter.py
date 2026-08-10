@@ -25,6 +25,7 @@ synchronous, blocking operations.
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import copy
+import inspect
 import json
 import logging
 from typing import (
@@ -46,9 +47,25 @@ from typing import (
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from .events import AfterEvent, DoneEvent, Event
-from .exceptions import ImplementationMissingError, StateNotFoundError
+from .exceptions import (
+    ImplementationMissingError,
+    InvalidConfigError,
+    RestoredError,
+    StateNotFoundError,
+)
+from .actions import (
+    ASSIGN,
+    CANCEL,
+    CHOOSE,
+    EMIT,
+    ENQUEUE_ACTIONS,
+    LOG,
+    PURE,
+    ActionEnqueuer,
+)
 from .models import (
     ActionDefinition,
+    GuardDefinition,
     InvokeDefinition,
     MachineNode,
     StateNode,
@@ -73,6 +90,55 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # 🏛️ BaseInterpreter Class Definition
 # -----------------------------------------------------------------------------
+
+
+class ActorSystem:
+    """A read-only view over the actor registry of one machine hierarchy.
+
+    Mirrors XState's actor system: actors that declare a `systemId` can be
+    looked up by that name from anywhere in the hierarchy, which is what makes
+    sibling-to-sibling messaging possible.
+
+    Attributes:
+        _registry (Dict[str, BaseInterpreter]): The shared registry.
+    """
+
+    __slots__ = ("_registry",)
+
+    def __init__(self, registry: Dict[str, "BaseInterpreter[Any, Any]"]):
+        """Initializes the view.
+
+        Args:
+            registry: The root interpreter's live registry.
+        """
+        self._registry = registry
+
+    def get(self, system_id: str) -> Optional["BaseInterpreter[Any, Any]"]:
+        """Looks up an actor by its `systemId`.
+
+        Args:
+            system_id (str): The registered system id.
+
+        Returns:
+            Optional[BaseInterpreter]: The actor, or `None`.
+        """
+        return self._registry.get(system_id)
+
+    def get_all(self) -> Dict[str, "BaseInterpreter[Any, Any]"]:
+        """Returns every registered actor.
+
+        Returns:
+            Dict[str, BaseInterpreter]: A copy of the registry.
+        """
+        return dict(self._registry)
+
+    def __contains__(self, system_id: object) -> bool:
+        """Supports ``system_id in interpreter.system``."""
+        return system_id in self._registry
+
+    def __repr__(self) -> str:
+        """Provides a developer-friendly string representation."""
+        return f"ActorSystem(actors={sorted(self._registry)})"
 
 
 class BaseInterpreter(Generic[TContext, TEvent]):
@@ -103,10 +169,16 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             otherwise `None`.
     """
 
+    #: Maximum depth of nested action expansion (`pure` / `choose` /
+    #: `enqueueActions` returning further actions). Guards against a callback
+    #: that re-enqueues itself.
+    MAX_ACTION_DEPTH: int = 50
+
     def __init__(
         self,
         machine: MachineNode[TContext, TEvent],
         interpreter_class: Optional[Type["BaseInterpreter"]] = None,
+        input: Optional[Any] = None,
     ) -> None:
         """Initializes the BaseInterpreter instance.
 
@@ -125,13 +197,43 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         )
         # 🧍‍♂️ Core Properties
         self.machine: MachineNode[TContext, TEvent] = machine
-        self.context: TContext = copy.deepcopy(machine.initial_context)
+        #: Input supplied at creation, available to context factories and
+        #: readable afterwards as `interpreter.input`.
+        self.input: Optional[Any] = input
+        self.context: TContext = self._build_initial_context(machine, input)
         self.status: str = "uninitialized"
         self.id: str = machine.id
         self.parent: Optional["BaseInterpreter[Any, Any]"] = None
 
         # 🌳 State & Actor Management
         self._active_state_nodes: Set[StateNode] = set()
+        #: Remembered configurations for history pseudo-states, keyed by the
+        #: *parent* state id. Recorded on exit, replayed when a transition
+        #: targets a `type: "history"` child of that parent.
+        self._history: Dict[str, List[StateNode]] = {}
+        #: Listeners registered via :meth:`subscribe`.
+        self._subscribers: List[Callable[[Any], None]] = []
+        #: The machine's final output, set when a top-level final state is
+        #: reached. `None` until then.
+        self.output: Any = None
+        #: The error that put the machine into the "error" status, if any.
+        self.error: Optional[BaseException] = None
+        #: Listeners registered via :meth:`on`, keyed by emitted event type.
+        self._emit_listeners: Dict[str, List[Callable[[Any], None]]] = {}
+        #: Cancellation callbacks for pending delayed sends, keyed by send id.
+        self._scheduled_sends: Dict[str, Callable[[], None]] = {}
+        #: Actor-system registry. Only the ROOT interpreter's copy is used;
+        #: children reach it by walking up `parent`.
+        self._system: Dict[str, "BaseInterpreter[Any, Any]"] = {}
+        #: Snapshots of child actors that could not be rebuilt on restore
+        #: (their service was not registered). Preserved rather than dropped
+        #: so no data is lost and the caller can recover them.
+        self._pending_actor_snapshots: Dict[str, Any] = {}
+        #: Maps a spawned actor id to the `services` key it came from, so a
+        #: snapshot can record enough to rebuild it.
+        self._actor_sources: Dict[str, str] = {}
+        #: Current nesting depth of action expansion.
+        self._action_depth: int = 0
         self._actors: Dict[str, "BaseInterpreter[Any, Any]"] = {}
 
         # 🔗 Extensibility & Introspection
@@ -145,6 +247,35 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             self.id,
             self.status,
         )
+
+    @staticmethod
+    def _build_initial_context(
+        machine: MachineNode[Any, Any], input: Optional[Any]
+    ) -> Any:
+        """Builds the starting context, resolving a factory if one is given.
+
+        🏛️ Architecture decision: XState allows `context` to be a function of
+        `{input}` so an actor can be parameterised at creation. Previously a
+        callable was stored verbatim, so the runtime context *was* the
+        function object — silent corruption that surfaced far from its cause
+        as a `TypeError` on first subscript.
+
+        Args:
+            machine (MachineNode): The machine definition.
+            input (Optional[Any]): Input supplied at creation.
+
+        Returns:
+            Any: A fresh, deep-copied context.
+        """
+        raw = machine.initial_context
+        if callable(raw):
+            produced = raw({"input": input})
+            return copy.deepcopy(produced) if produced is not None else {}
+        context = copy.deepcopy(raw)
+        # 📥 Expose input to the machine even without a context factory.
+        if input is not None and isinstance(context, dict):
+            context.setdefault("input", input)
+        return context
 
     # -------------------------------------------------------------------------
     # 🔍 Public Properties & Methods
@@ -195,6 +326,159 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             bool: `True` between a successful `start()` and a `stop()`.
         """
         return self.status == "running"
+
+    # -------------------------------------------------------------------------
+    # 🔭 Observation & Introspection
+    # -------------------------------------------------------------------------
+
+    def matches(self, state_id: str) -> bool:
+        """Reports whether a state is part of the active configuration.
+
+        Accepts a fully-qualified id (``"machine.parent.child"``), the same id
+        with a leading ``#``, or a trailing partial path (``"parent.child"``).
+        Matching an ancestor returns `True` when any descendant is active,
+        mirroring XState's ``snapshot.matches()``.
+
+        Args:
+            state_id (str): The state to test for.
+
+        Returns:
+            bool: `True` if the state or one of its descendants is active.
+        """
+        if not state_id:
+            return False
+        target = state_id[1:] if state_id.startswith("#") else state_id
+        for node in self._active_state_nodes:
+            if node.id == target or node.id.endswith("." + target):
+                return True
+        return False
+
+    def has_tag(self, tag: str) -> bool:
+        """Reports whether any active state declares the given tag.
+
+        Args:
+            tag (str): The tag to look for.
+
+        Returns:
+            bool: `True` if an active state carries the tag.
+        """
+        return any(tag in node.tags for node in self._active_state_nodes)
+
+    @property
+    def tags(self) -> Set[str]:
+        """The union of tags across every active state.
+
+        Returns:
+            Set[str]: All tags currently in effect.
+        """
+        tags: Set[str] = set()
+        for node in self._active_state_nodes:
+            tags |= node.tags
+        return tags
+
+    def get_meta(self) -> Dict[str, Any]:
+        """Collects the `meta` of every active state, keyed by state id.
+
+        Returns:
+            Dict[str, Any]: Mapping of state id to that state's `meta`.
+        """
+        return {
+            node.id: node.meta
+            for node in self._active_state_nodes
+            if node.meta
+        }
+
+    def can(self, event: Union[str, Event, Dict[str, Any]]) -> bool:
+        """Reports whether an event would cause a transition right now.
+
+        Guards are evaluated, so this is an accurate prediction rather than a
+        purely structural check. It has no side effects on the configuration.
+
+        Args:
+            event (Union[str, Event, Dict[str, Any]]): The event to test.
+
+        Returns:
+            bool: `True` if at least one transition would be taken.
+        """
+        event_obj = self._coerce_event(event)
+        try:
+            return bool(self._select_transitions(event_obj))
+        except Exception:
+            logger.exception(
+                "🔥 can() failed while evaluating '%s'; reporting False.",
+                event_obj.type,
+            )
+            return False
+
+    @staticmethod
+    def _coerce_event(
+        event: Union[str, Event, Dict[str, Any], AfterEvent, DoneEvent],
+    ) -> Union[Event, AfterEvent, DoneEvent]:
+        """Normalises the accepted event spellings into an event object.
+
+        Args:
+            event: A type string, a mapping with a `type` key, or an event.
+
+        Returns:
+            Union[Event, AfterEvent, DoneEvent]: The normalised event.
+
+        Raises:
+            TypeError: If the value cannot be interpreted as an event.
+        """
+        if isinstance(event, (Event, AfterEvent, DoneEvent)):
+            return event
+        if isinstance(event, str):
+            return Event(type=event)
+        if isinstance(event, dict):
+            event_type = event.get("type")
+            if not isinstance(event_type, str):
+                raise TypeError(
+                    "❌ Event dict must contain a string 'type' key."
+                )
+            payload = {k: v for k, v in event.items() if k != "type"}
+            return Event(type=event_type, payload=payload)
+        raise TypeError(f"❌ Unsupported event type: {type(event).__name__}")
+
+    def subscribe(
+        self, listener: Callable[["BaseInterpreter[Any, Any]"], None]
+    ) -> Callable[[], None]:
+        """Registers a listener invoked after every settled change.
+
+        Mirrors XState's ``actor.subscribe()``. The listener receives this
+        interpreter, from which `current_state_ids`, `context` and `status`
+        can be read.
+
+        Args:
+            listener (Callable): Called after each transition and on
+                completion.
+
+        Returns:
+            Callable[[], None]: An unsubscribe function.
+        """
+        self._subscribers.append(listener)
+
+        def _unsubscribe() -> None:
+            """Removes the listener if it is still registered."""
+            if listener in self._subscribers:
+                self._subscribers.remove(listener)
+
+        return _unsubscribe
+
+    def _notify_subscribers(self) -> None:
+        """Invokes every subscriber, isolating listener failures.
+
+        📝 A listener raising must not corrupt the machine, so exceptions are
+        logged and swallowed — the same contract XState adopted in v5.20.2 for
+        emitted-event listeners.
+        """
+        for listener in list(self._subscribers):
+            try:
+                listener(self)
+            except Exception:
+                logger.exception(
+                    "🔥 Subscriber raised while observing '%s'; ignoring.",
+                    self.id,
+                )
 
     @property
     def plugins(self) -> List[PluginBase["BaseInterpreter[Any, Any]"]]:
@@ -296,17 +580,130 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             str: A JSON string representing the interpreter's current state.
         """
         logger.info("📸 Capturing snapshot for interpreter '%s'...", self.id)
-        snapshot = {
-            "status": self.status,
-            "context": self.context,
-            "state_ids": list(self.current_state_ids),
-        }
+        snapshot = self.get_persisted_snapshot()
         # Use a default handler to gracefully handle non-serializable types.
         json_snapshot = json.dumps(snapshot, indent=2, default=str)
         logger.debug(
             "🖼️ Snapshot for '%s' captured: %s", self.id, json_snapshot
         )
         return json_snapshot
+
+    def get_persisted_snapshot(
+        self, _seen: Optional[Set[int]] = None
+    ) -> Dict[str, Any]:
+        """Returns a deep, JSON-serialisable snapshot as a dictionary.
+
+        Mirrors XState's ``actor.getPersistedSnapshot()``. Unlike the earlier
+        shallow form, this captures the *whole* actor hierarchy.
+
+        🏛️ Architecture decision: child actors were previously omitted
+        entirely. A parent with live children serialised to just
+        ``{status, context, state_ids}`` and restoring produced an actor with
+        zero children — silent, unrecoverable data loss for anyone persisting
+        a workflow. Recording actors recursively (plus history and output)
+        makes a snapshot a faithful representation of the machine.
+
+        Returns:
+            Dict[str, Any]: The persisted snapshot.
+        """
+        # 🔁 Guard against an actor cycle. The registry makes a cycle
+        #    constructible, and unbounded recursion would blow the stack
+        #    instead of failing cleanly.
+        seen = _seen if _seen is not None else set()
+        if id(self) in seen:
+            return {"ref": self.id, "cycle": True}
+        seen = seen | {id(self)}
+
+        return {
+            "status": self.status,
+            # 🧊 Deep-copy so the snapshot is a true point-in-time capture.
+            #    Returning the live dict made later execution retroactively
+            #    rewrite an already-taken snapshot.
+            "context": copy.deepcopy(self.context),
+            "state_ids": sorted(self.current_state_ids),
+            # 🌳 Full configuration, so ancestors are restored exactly rather
+            #    than re-derived from leaves.
+            "configuration": sorted(
+                node.id for node in self._active_state_nodes
+            ),
+            "output": self.output,
+            "error": str(self.error) if self.error is not None else None,
+            # 🕰️ Remembered history, so a restored machine can still honour a
+            #    later transition to a history state.
+            "history": {
+                parent_id: sorted(node.id for node in nodes)
+                for parent_id, nodes in self._history.items()
+            },
+            # 👶 Recursive child-actor snapshots, keyed by actor id.
+            "actors": self._persist_actors(seen),
+        }
+
+    def _persist_actors(self, seen: Set[int]) -> Dict[str, Any]:
+        """Serialises child actors, including any that could not be restored.
+
+        🏛️ Architecture decision: actors parked in `_pending_actor_snapshots`
+        (their service was absent when this interpreter was restored) are
+        re-emitted verbatim. Without this the "preserved" snapshot was
+        write-only: the next save silently dropped the child, its context, its
+        own grandchildren and its history — reintroducing exactly the data
+        loss deep persistence was written to prevent, one round-trip later.
+
+        Args:
+            seen (Set[int]): Interpreter ids already visited, for cycle
+                detection.
+
+        Returns:
+            Dict[str, Any]: Persisted records keyed by actor id.
+        """
+        records: Dict[str, Any] = {
+            actor_id: {
+                "machine_id": actor.machine.id,
+                # 🔑 Persist the originating service key. Deriving it from the
+                #    actor id is unreliable: an explicit `id` param replaces
+                #    the key segment entirely.
+                "src": self._actor_sources.get(actor_id),
+                "snapshot": actor.get_persisted_snapshot(seen),
+            }
+            for actor_id, actor in self._actors.items()
+        }
+        # ♻️ Carry forward actors we could not rebuild, so they survive
+        #    an arbitrary number of save/restore cycles.
+        for actor_id, record in self._pending_actor_snapshots.items():
+            records.setdefault(actor_id, record)
+        return records
+
+    def _resolve_actor_machine(
+        self, service_key: Optional[str]
+    ) -> Optional[MachineNode[Any, Any]]:
+        """Finds the machine definition for a persisted child actor.
+
+        Args:
+            service_key (Optional[str]): The `services` key the actor was
+                originally spawned from.
+
+        Returns:
+            Optional[MachineNode]: The child's machine definition, or `None`
+            when the service is not registered on this interpreter.
+        """
+        source = self.machine.logic.services.get(service_key)
+        if source is None:
+            return None
+        if isinstance(source, MachineNode):
+            return source
+        if callable(source):
+            try:
+                produced = source(
+                    self, self.context, Event(type="__restore__")
+                )
+            except Exception:
+                logger.exception(
+                    "🔥 Actor factory for '%s' raised during restore.",
+                    service_key,
+                )
+                return None
+            if isinstance(produced, MachineNode):
+                return produced
+        return None
 
     @classmethod
     def from_snapshot(
@@ -357,12 +754,22 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         interpreter.context = snapshot["context"]
         interpreter.status = snapshot["status"]
 
-        # 🌳 Reconstruct the set of active state nodes from their IDs
+        # 🌳 Reconstruct the set of active state nodes from their IDs.
+        #    Prefer the full `configuration` when present (it includes
+        #    ancestors); fall back to leaf ids for snapshots written by
+        #    older versions.
         interpreter._active_state_nodes.clear()
-        for state_id in snapshot["state_ids"]:
+        restore_ids = snapshot.get("configuration") or snapshot["state_ids"]
+        for state_id in restore_ids:
             node = machine.get_state_by_id(state_id)
             if node:
                 interpreter._active_state_nodes.add(node)
+                # 🌲 Ancestors must be active too, otherwise the transition
+                #    algorithm cannot resolve domains correctly.
+                ancestor = node.parent
+                while ancestor is not None:
+                    interpreter._active_state_nodes.add(ancestor)
+                    ancestor = ancestor.parent
                 logger.debug("    ↳ Restored active state: '%s'", state_id)
             else:
                 logger.error(
@@ -371,6 +778,52 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                     machine.id,
                 )
                 raise StateNotFoundError(target=state_id)
+
+        # 🏁 Restore completion output and any recorded error.
+        interpreter.output = snapshot.get("output")
+        recorded_error = snapshot.get("error")
+        if recorded_error:
+            # 📝 The original exception type cannot survive JSON, so the
+            #    message is preserved in a dedicated wrapper. Without this a
+            #    restored machine sat in `error` status with `error is None`,
+            #    so no caller could discover what went wrong — the exact
+            #    observability the error-snapshot feature exists to provide.
+            interpreter.error = RestoredError(str(recorded_error))
+
+        # 🕰️ Restore remembered history so a later transition to a history
+        #    state still resolves after a restart.
+        for parent_id, node_ids in (snapshot.get("history") or {}).items():
+            nodes = [
+                machine.get_state_by_id(nid)
+                for nid in node_ids
+                if machine.get_state_by_id(nid)
+            ]
+            if nodes:
+                interpreter._history[parent_id] = nodes
+
+        # 👶 Restore child actors. Their machine definitions are resolved from
+        #    the parent's `services` registry, which is the same source the
+        #    original spawn used.
+        for actor_id, record in (snapshot.get("actors") or {}).items():
+            child_machine = interpreter._resolve_actor_machine(
+                record.get("src")
+            )
+            if child_machine is None:
+                logger.warning(
+                    "⚠️ Could not restore actor '%s': no matching service. "
+                    "Its snapshot is preserved under _pending_actor_snapshots.",
+                    actor_id,
+                )
+                interpreter._pending_actor_snapshots[actor_id] = record
+                continue
+            child = cls.from_snapshot(
+                json.dumps(record["snapshot"], default=str), child_machine
+            )
+            child.parent = interpreter
+            child.id = actor_id
+            interpreter._actors[actor_id] = child
+            if record.get("src"):
+                interpreter._actor_sources[actor_id] = record["src"]
 
         logger.info(
             "✅ Interpreter '%s' restored. States: %s, Status: '%s'",
@@ -715,6 +1168,443 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 continue
             await self._execute_transition(transition, event)
 
+    # -------------------------------------------------------------------------
+    # 🎬 Built-in Action Support
+    # -------------------------------------------------------------------------
+
+    def _resolve_event_spec(
+        self, spec: Any, event: Union[Event, AfterEvent, DoneEvent]
+    ) -> Event:
+        """Turns an event specification from action params into an `Event`.
+
+        Accepts a plain type string, a mapping with a `type` key, an existing
+        event object, or a callable of `{context, event}` returning one of
+        those.
+
+        Args:
+            spec (Any): The declared event specification.
+            event (Union[Event, AfterEvent, DoneEvent]): The triggering event,
+                used to resolve callables.
+
+        Returns:
+            Event: The concrete event to dispatch.
+
+        Raises:
+            TypeError: If the specification cannot be interpreted.
+        """
+        if callable(spec):
+            spec = spec({"context": self.context, "event": event})
+        resolved = self._coerce_event(spec)
+        if isinstance(resolved, Event):
+            return resolved
+        # 🔁 Normalise AfterEvent/DoneEvent into a plain Event for re-sending.
+        return Event(
+            type=resolved.type, payload=getattr(resolved, "data", {}) or {}
+        )
+
+    def _resolve_actor_target(
+        self, spec: Any, event: Union[Event, AfterEvent, DoneEvent]
+    ) -> Optional["BaseInterpreter[Any, Any]"]:
+        """Resolves a `sendTo`/`forwardTo` target to a live interpreter.
+
+        Lookup order: the actor system registry (`system_id`), then this
+        interpreter's own children, then a suffix match on child ids — actor
+        ids are namespaced (`parent:key:uuid`), so users naturally refer to
+        the bare key.
+
+        Args:
+            spec (Any): The declared target: an id string, a callable
+                resolving one, or an interpreter instance.
+            event (Union[Event, AfterEvent, DoneEvent]): The triggering event.
+
+        Returns:
+            Optional[BaseInterpreter]: The resolved actor, or `None`.
+        """
+        if callable(spec) and not isinstance(spec, BaseInterpreter):
+            spec = spec(
+                {
+                    "context": self.context,
+                    "event": event,
+                    "system": self.system,
+                }
+            )
+        if isinstance(spec, BaseInterpreter):
+            return spec
+        if not isinstance(spec, str):
+            return None
+
+        # 🌐 Actor-system registration wins: it is the explicit, stable name.
+        registry = self._system_registry()
+        if spec in registry:
+            return registry[spec]
+        if spec in self._actors:
+            return self._actors[spec]
+        # 🔑 Actor ids are namespaced as `parent:key` or `parent:key:uuid`, so
+        #    a bare service key must match the MIDDLE segment too. Matching
+        #    only the suffix silently missed every auto-id actor (the uuid is
+        #    the last segment), so `send_to("worker", ...)` dropped the event.
+        matches = [
+            actor
+            for actor_id, actor in self._actors.items()
+            if spec in actor_id.split(":")[1:]
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            logger.warning(
+                "⚠️ Actor key '%s' is ambiguous (%d matches). Use an explicit "
+                "`id` or `systemId` to disambiguate; event dropped.",
+                spec,
+                len(matches),
+            )
+            return None
+        # 🗺️ Fall back to the originating service key recorded at spawn time.
+        for actor_id, source_key in self._actor_sources.items():
+            if source_key == spec and actor_id in self._actors:
+                return self._actors[actor_id]
+        if spec in ("parent", "#parent") and self.parent is not None:
+            return self.parent
+        return None
+
+    def _system_registry(self) -> Dict[str, "BaseInterpreter[Any, Any]"]:
+        """Returns the actor-system registry shared by the whole hierarchy.
+
+        🏛️ Architecture decision: the registry lives on the *root* interpreter
+        so `system_id` is global to one machine hierarchy, exactly like
+        XState's actor system. Children reach it by walking up `parent`.
+
+        Returns:
+            Dict[str, BaseInterpreter]: Mapping of `system_id` to actor.
+        """
+        root: "BaseInterpreter[Any, Any]" = self
+        while root.parent is not None:
+            root = root.parent
+        return root._system
+
+    @property
+    def system(self) -> "ActorSystem":
+        """The actor system this interpreter belongs to.
+
+        Returns:
+            ActorSystem: A view exposing `get()` and `get_all()`.
+        """
+        return ActorSystem(self._system_registry())
+
+    def _register_in_system(
+        self, system_id: Optional[str], actor: "BaseInterpreter[Any, Any]"
+    ) -> None:
+        """Registers an actor under a `system_id`, if one was declared.
+
+        Args:
+            system_id (Optional[str]): The requested system id.
+            actor (BaseInterpreter): The actor to register.
+        """
+        if not system_id:
+            return
+        registry = self._system_registry()
+        if system_id in registry and registry[system_id] is not actor:
+            logger.warning(
+                "⚠️ systemId '%s' is already registered to actor '%s'; the "
+                "new actor replaces it. systemIds must be unique within a "
+                "machine hierarchy.",
+                system_id,
+                registry[system_id].id,
+            )
+        registry[system_id] = actor
+
+    def _resolve_delay(self, spec: Any, event: Any) -> Optional[float]:
+        """Resolves a delay specification to milliseconds.
+
+        Accepts a number, a callable of `{context, event}`, or a named delay
+        resolved from `MachineLogic.delays`.
+
+        Args:
+            spec (Any): The declared delay.
+            event (Any): The triggering event.
+
+        Returns:
+            Optional[float]: The delay in milliseconds, or `None`.
+        """
+        if spec is None:
+            return None
+        if callable(spec):
+            spec = spec({"context": self.context, "event": event})
+        if isinstance(spec, (int, float)):
+            return float(spec)
+        if isinstance(spec, str):
+            named = self.machine.logic.delays.get(spec)
+            if named is None:
+                logger.warning(
+                    "⚠️ Named delay '%s' is not defined in MachineLogic."
+                    " Treating as no delay.",
+                    spec,
+                )
+                return None
+            if callable(named):
+                # 🔀 Accept BOTH calling conventions. Everything else in this
+                #    release (action/guard `params`, `output`, inline `delay`)
+                #    passes a single `{context, event}` mapping, so a named
+                #    delay written that way must not be a hard TypeError at
+                #    startup. The legacy `(context, event)` form still works.
+                named = self._call_delay_callable(named, event)
+            # 🛡️ A misconfigured delay must not crash the machine at start.
+            #    `float()` on a string or dict raises, and this runs inside
+            #    `_schedule_state_tasks` during entry, so an unusable value
+            #    took the whole interpreter down instead of disabling one
+            #    timer.
+            try:
+                return float(named) if named is not None else None
+            except (TypeError, ValueError):
+                logger.error(
+                    "🔥 Named delay '%s' resolved to %r, which is not a "
+                    "number of milliseconds. Ignoring this timer.",
+                    spec,
+                    named,
+                )
+                return None
+        return None
+
+    def _call_delay_callable(self, fn: Callable[..., Any], event: Any) -> Any:
+        """Invokes a named-delay callable under either calling convention.
+
+        Args:
+            fn (Callable[..., Any]): The delay implementation.
+            event (Any): The triggering event.
+
+        Returns:
+            Any: Whatever the callable returns, or `None` if it raised.
+        """
+        args = {"context": self.context, "event": event}
+        try:
+            signature = inspect.signature(fn)
+            positional = [
+                p
+                for p in signature.parameters.values()
+                if p.kind
+                in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                )
+            ]
+            takes_varargs = any(
+                p.kind is inspect.Parameter.VAR_POSITIONAL
+                for p in signature.parameters.values()
+            )
+        except (TypeError, ValueError):  # pragma: no cover - builtins
+            positional, takes_varargs = [], False
+
+        try:
+            if not takes_varargs and len(positional) == 1:
+                return fn(args)
+            return fn(self.context, event)
+        except Exception:
+            logger.exception(
+                "🔥 Named delay callable raised; ignoring this timer."
+            )
+            return None
+
+    def _emit(self, event: Event) -> None:
+        """Publishes an emitted event to registered listeners.
+
+        Args:
+            event (Event): The event to publish.
+        """
+        listeners = self._emit_listeners.get(event.type, [])
+        wildcard = self._emit_listeners.get("*", [])
+        for listener in list(listeners) + list(wildcard):
+            try:
+                listener(event)
+            except Exception:
+                # 📝 A listener failure must not disturb the machine — the
+                #    same contract XState adopted in v5.20.2.
+                logger.exception(
+                    "🔥 Emit listener for '%s' raised; ignoring.", event.type
+                )
+
+    def on(
+        self, event_type: str, listener: Callable[[Event], None]
+    ) -> Callable[[], None]:
+        """Registers a listener for events published via the `emit` action.
+
+        Args:
+            event_type (str): The emitted event type, or `"*"` for all.
+            listener (Callable[[Event], None]): The callback.
+
+        Returns:
+            Callable[[], None]: An unsubscribe function.
+        """
+        self._emit_listeners.setdefault(event_type, []).append(listener)
+
+        def _off() -> None:
+            """Removes the listener if still registered."""
+            bucket = self._emit_listeners.get(event_type, [])
+            if listener in bucket:
+                bucket.remove(listener)
+
+        return _off
+
+    def _apply_assign(
+        self, params: Any, event: Union[Event, AfterEvent, DoneEvent]
+    ) -> None:
+        """Applies an `assign` action to the machine context.
+
+        Args:
+            params (Any): The action's params, carrying `assignment`.
+            event (Union[Event, AfterEvent, DoneEvent]): The triggering event.
+        """
+        assignment = (
+            params.get("assignment") if isinstance(params, dict) else params
+        )
+        if assignment is None:
+            return
+        args = {"context": self.context, "event": event}
+        if callable(assignment):
+            produced = assignment(args)
+            if isinstance(produced, dict):
+                self.context.update(produced)
+            return
+        if isinstance(assignment, dict):
+            for key, value in assignment.items():
+                self.context[key] = value(args) if callable(value) else value
+
+    def _collect_builtin_followups(
+        self,
+        canonical: str,
+        action_def: ActionDefinition,
+        event: Union[Event, AfterEvent, DoneEvent],
+    ) -> List[Any]:
+        """Handles a built-in action, returning any actions it produced.
+
+        This is the engine-agnostic half of built-in action execution. Effects
+        that need to await (sending, spawning) are returned as follow-up work
+        for the concrete interpreter, so the sync and async engines share one
+        implementation of the semantics.
+
+        Args:
+            canonical (str): The canonical built-in action name.
+            action_def (ActionDefinition): The action being executed.
+            event (Union[Event, AfterEvent, DoneEvent]): The triggering event.
+
+        Returns:
+            List[Any]: Nested action definitions to execute next.
+        """
+        params = self._resolve_params(action_def.params, event) or {}
+
+        # 🛟 Bound nested action expansion. `pure`, `choose` and
+        #    `enqueueActions` all return further actions, so a callback that
+        #    (directly or indirectly) enqueues itself recurses until Python
+        #    raises RecursionError — which, being a BaseException subclass in
+        #    older versions and an Exception here, previously left the machine
+        #    in an indeterminate state. A depth counter turns an authoring
+        #    mistake into a clear, contained log message.
+        depth = getattr(self, "_action_depth", 0)
+        if depth > self.MAX_ACTION_DEPTH:
+            logger.error(
+                "🔁 Nested action expansion exceeded %d levels while handling "
+                "'%s'. Aborting this branch; check for an enqueueActions or "
+                "pure callback that re-enqueues itself.",
+                self.MAX_ACTION_DEPTH,
+                action_def.type,
+            )
+            return []
+
+        if canonical == ASSIGN:
+            self._apply_assign(params, event)
+            return []
+
+        if canonical == LOG:
+            expr = params.get("expr", "") if isinstance(params, dict) else ""
+            label = params.get("label") if isinstance(params, dict) else None
+            message = (
+                expr({"context": self.context, "event": event})
+                if callable(expr)
+                else expr
+            )
+            logger.info("📝 %s%s", f"[{label}] " if label else "", message)
+            return []
+
+        if canonical == EMIT:
+            self._emit(self._resolve_event_spec(params.get("event"), event))
+            return []
+
+        if canonical == PURE:
+            getter = params.get("get") if isinstance(params, dict) else None
+            if not callable(getter):
+                return []
+            produced = getter({"context": self.context, "event": event})
+            if produced is None:
+                return []
+            return produced if isinstance(produced, list) else [produced]
+
+        if canonical == CHOOSE:
+            conditions = (
+                params.get("conditions", [])
+                if isinstance(params, dict)
+                else []
+            )
+            for branch in conditions:
+                guard_cfg = branch.get("guard", branch.get("cond"))
+                if guard_cfg is None or self._is_guard_satisfied(
+                    GuardDefinition(guard_cfg), event
+                ):
+                    chosen = branch.get("actions", [])
+                    return chosen if isinstance(chosen, list) else [chosen]
+            return []
+
+        if canonical == ENQUEUE_ACTIONS:
+            callback = (
+                params.get("callback") if isinstance(params, dict) else None
+            )
+            if not callable(callback):
+                return []
+            enqueue = ActionEnqueuer(self, event)
+
+            def _check(guard_cfg: Any) -> bool:
+                """Evaluates a guard from inside the callback."""
+                return self._is_guard_satisfied(
+                    GuardDefinition(guard_cfg), event
+                )
+
+            callback(
+                {
+                    "context": self.context,
+                    "event": event,
+                    "enqueue": enqueue,
+                    "check": _check,
+                    "self": self,
+                    "system": self.system,
+                }
+            )
+            return enqueue.items
+
+        if canonical == CANCEL:
+            send_id = (
+                params.get("sendId") if isinstance(params, dict) else None
+            )
+            if send_id:
+                self._cancel_scheduled_send(str(send_id))
+            return []
+
+        # 📨 Remaining built-ins need interpreter-specific delivery and are
+        #    handled by the concrete engines.
+        return []
+
+    def _cancel_scheduled_send(self, send_id: str) -> None:
+        """Cancels a pending delayed send.
+
+        Args:
+            send_id (str): The identifier given to the original send.
+        """
+        canceller = self._scheduled_sends.pop(send_id, None)
+        if canceller is None:
+            logger.debug("🤷 No pending send with id '%s' to cancel.", send_id)
+            return
+        try:
+            canceller()
+            logger.info("🚫 Cancelled scheduled send '%s'.", send_id)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("🔥 Failed to cancel send '%s'.", send_id)
+
     async def _execute_transition(
         self,
         transition: TransitionDefinition,
@@ -775,6 +1665,19 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         path_to_enter = self._get_path_to_state(target_state, stop_at=domain)
 
+        # 🕰️ A history pseudo-state is never entered itself. Replace it with
+        #    the remembered configuration (or the default), computed *before*
+        #    exiting so the recorded history is the pre-transition one.
+        history_targets: List[StateNode] = []
+        if target_state.type == "history":
+            history_targets = self._resolve_history_target(target_state)
+            # Enter down to the history node's parent, then the remembered
+            # set. The parent is entered as part of each remembered node's own
+            # path, so entering it here as well would trigger its default
+            # `initial` descent and activate the wrong child alongside the
+            # restored one.
+            path_to_enter = []
+
         # 5. Execute the transition sequence in the correct SCXML order.
         #
         # 🏛️ Architecture decision: `_exit_states` and `_enter_states` are the
@@ -792,7 +1695,16 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         await self._execute_actions(transition.actions, event)
         await self._enter_states(path_to_enter, event)
 
-        # 6. Notify plugins of the completed transition.
+        # 🕰️ Restore the remembered configuration for a history target. Each
+        #    remembered node is entered along its own path from the history
+        #    node's parent, so ancestors are re-entered correctly.
+        if target_state.type == "history":
+            for node in history_targets:
+                await self._enter_states(
+                    self._get_path_to_state(node, stop_at=domain), event
+                )
+
+        # 6. Notify plugins and subscribers of the completed transition.
         for plug in self._plugins:
             plug.on_transition(
                 self,
@@ -800,6 +1712,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 self._active_state_nodes.copy(),
                 transition,
             )
+        self._notify_subscribers()
 
     # -------------------------------------------------------------------------
     # ⏯️ State Management Sub-Routines
@@ -842,6 +1755,9 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             for state in states_to_enter
             if state.parent is not None
         }
+        explicit_child_ids = {
+            state.id for state in states_to_enter if state.parent is not None
+        }
 
         for state in states_to_enter:
             self._active_state_nodes.add(state)
@@ -865,16 +1781,154 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 if initial_child:
                     await self._enter_states([initial_child], trigger_event)
                 else:
-                    logger.error(
-                        "❌ Misconfiguration: Initial state '%s' not found in compound state '%s'.",
-                        state.initial,
-                        state.id,
+                    raise InvalidConfigError(
+                        f"❌ Initial state '{state.initial}' not found in "
+                        f"compound state '{state.id}'."
                     )
+            elif state.type == "compound" and state.states:
+                # 🚨 A compound state with children but no resolvable
+                #    `initial` cannot produce an active leaf. Left unchecked
+                #    the machine starts "successfully" with an empty
+                #    configuration and silently drops every event.
+                raise InvalidConfigError(
+                    f"❌ Compound state '{state.id}' has no 'initial' state, "
+                    "so entering it yields no active leaf. Declare "
+                    "'initial' explicitly."
+                )
             elif state.type == "parallel":
                 # For parallel states, enter all child regions simultaneously.
-                await self._enter_states(
-                    list(state.states.values()), trigger_event
+                # 🌐 Enter every region EXCEPT one already named by the entry
+                #    path (that region is walked explicitly, and entering
+                #    it again would trigger its default `initial` descent
+                #    and activate the wrong child alongside the target).
+                #    History pseudo-states are never entered as regions.
+                regions = [
+                    child
+                    for child in state.states.values()
+                    if child.type != "history"
+                    and child.id not in explicit_child_ids
+                ]
+                if regions:
+                    await self._enter_states(regions, trigger_event)
+
+    def _record_history(self, states_to_exit: List[StateNode]) -> None:
+        """Remembers the active configuration of states being exited.
+
+        Called immediately before exit actions run. For every state that owns
+        at least one `type: "history"` child, the currently active descendants
+        are stored so a later transition targeting that history node can
+        restore them.
+
+        🏛️ Architecture decision: history is keyed by the *parent* id rather
+        than by the history node itself. A parent may declare both a shallow
+        and a deep history child, and both must see the same recorded
+        configuration — the shallow/deep distinction is applied at restore
+        time, not at record time.
+
+        Args:
+            states_to_exit (List[StateNode]): The states about to be exited.
+        """
+        exiting = set(states_to_exit)
+        # 🕰️ Candidates are the exiting states *and* their ancestors: a
+        #    transition out of a nested leaf exits the leaf and its parents,
+        #    and it is the history-owning ancestor whose configuration must be
+        #    remembered. Walking up from each exiting node covers both the
+        #    "parent is exiting too" and "only descendants are exiting" cases.
+        candidates: Set[StateNode] = set()
+        for node in exiting:
+            current: Optional[StateNode] = node
+            while current is not None:
+                candidates.add(current)
+                current = current.parent
+
+        for state in candidates:
+            # 🕰️ Only parents that actually declare a history child matter.
+            if not any(
+                child.type == "history" for child in state.states.values()
+            ):
+                continue
+            remembered = [
+                node
+                for node in self._active_state_nodes
+                if node is not state and self._is_descendant(node, state)
+            ]
+            if remembered:
+                self._history[state.id] = remembered
+                logger.debug(
+                    "🕰️ Recorded history for '%s': %s",
+                    state.id,
+                    [n.id for n in remembered],
                 )
+
+    def _resolve_history_target(
+        self, history_node: StateNode
+    ) -> List[StateNode]:
+        """Expands a history pseudo-state into the states to actually enter.
+
+        Args:
+            history_node (StateNode): A node whose `type` is `"history"`.
+
+        Returns:
+            List[StateNode]: The states to enter. Falls back to the parent's
+            default `initial` child when nothing has been recorded yet, which
+            matches XState and SCXML semantics for an unvisited history state.
+        """
+        parent = history_node.parent
+        if parent is None:  # pragma: no cover - a root history node is invalid
+            return []
+
+        remembered = self._history.get(parent.id)
+
+        if not remembered:
+            # 🌱 Never visited: fall back to the declared default target, or
+            #    the parent's initial child.
+            default_target = history_node.target_str
+            if default_target:
+                resolved = self._resolve_state_by_target(
+                    default_target, history_node
+                )
+                if resolved:
+                    return [resolved]
+            if parent.initial and parent.initial in parent.states:
+                return [parent.states[parent.initial]]
+            return []
+
+        if history_node.history == "deep":
+            # 🌊 Deep history restores the full nested configuration; entering
+            #    the deepest leaves re-enters their ancestors on the way.
+            leaves = [
+                node
+                for node in remembered
+                if node.is_atomic or node.is_final or not node.states
+            ]
+            return leaves or remembered
+
+        # 🏖️ Shallow history restores only the parent's immediate child; its
+        #    own `initial` chain then applies below that.
+        shallow = [node for node in remembered if node.parent is parent]
+        return shallow or remembered
+
+    def _resolve_state_by_target(
+        self, target: str, reference: StateNode
+    ) -> Optional[StateNode]:
+        """Resolves a target string relative to a reference node.
+
+        Args:
+            target (str): The target expression (e.g. `"#m.a.b"` or `"b"`).
+            reference (StateNode): The node the target is written relative to.
+
+        Returns:
+            Optional[StateNode]: The resolved node, or `None`.
+        """
+        try:
+            return resolve_target_state(target, reference)
+        except StateNotFoundError:
+            logger.warning(
+                "⚠️ Could not resolve history default target '%s' on '%s'.",
+                target,
+                reference.id,
+            )
+            return None
 
     async def _exit_states(
         self, states_to_exit: List[StateNode], event: Optional[Event] = None
@@ -893,6 +1947,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             event (Optional[Event]): The event that triggered the state exit.
         """
         trigger_event = event or Event(type="___xstate_statemachine_exit___")
+
+        # 🕰️ Record history *before* anything is removed, so the remembered
+        #    configuration reflects the state of the machine as it was.
+        self._record_history(states_to_exit)
 
         for state in states_to_exit:
             logger.debug("⬅️  Exiting state: '%s'.", state.id)
@@ -978,98 +2036,211 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 logger.info(
                     "🎉 State '%s' is done, firing onDone event.", ancestor.id
                 )
-                # 📨 Create and send the synthetic `done.state.*` event.
-                done_event = Event(type=f"done.state.{ancestor.id}")
+                # 📨 Create and send the synthetic `done.state.*` event,
+                #    carrying the final state's `output` as done data.
+                done_event = DoneEvent(
+                    type=f"done.state.{ancestor.id}",
+                    data=self._resolve_output(final_state),
+                    src=ancestor.id,
+                )
                 await self.send(done_event)
                 # Per SCXML, only fire for the first completed ancestor.
                 return
             ancestor = ancestor.parent
 
-    def _find_optimal_transition(
-        self, event: Union[Event, AfterEvent, DoneEvent]
-    ) -> Optional[TransitionDefinition]:
-        """Finds the most specific, eligible transition for an event.
+        # 🏁 A top-level final state completes the machine itself.
+        #
+        # 📝 A machine-level `output` declaration wins over the final state's
+        #    own, matching XState: the machine describes what the *actor*
+        #    produces, the final state only contributes done-data upward.
+        if final_state.parent is self.machine or final_state.parent is None:
+            machine_output = getattr(self.machine, "machine_output", None)
+            if machine_output is not None:
+                self._complete(self._resolve_output_value(machine_output))
+            else:
+                self._complete(self._resolve_output(final_state))
 
-        This implements the SCXML rule for transition selection: choose the
-        transition defined on the most deeply nested active state that matches
-        the event and satisfies its guard condition. This ensures that child
-        states can override the behavior of their parents.
+    def _resolve_output_value(self, output: Any) -> Any:
+        """Resolves an `output` declaration to a concrete value.
 
         Args:
-            event (Union[Event, AfterEvent, DoneEvent]): The event being processed.
+            output (Any): A literal, or a callable of `{context, event}`.
 
         Returns:
-            Optional[TransitionDefinition]: The highest-priority transition
-            that should be taken, or `None` if no eligible transition is found.
+            Any: The resolved output, or `None` if a callable raised.
         """
-        eligible_transitions: List[TransitionDefinition] = []
-
-        # 1️⃣ Sort active states by true tree depth (most specific first).
-        sorted_nodes = sorted(
-            list(self._active_state_nodes),
-            key=lambda s: s.depth,
-            reverse=True,
-        )
-
-        # 2️⃣ Determine if we should check for transient ("always") transitions.
-        is_transient_check = not event.type.startswith(
-            ("done.", "error.", "after.")
-        )
-        is_explicit_transient_event = event.type == ""
-
-        # 3️⃣ Traverse up the tree from each active leaf node.
-        for state in sorted_nodes:
-            current: Optional[StateNode] = state
-            while current:
-                # Check standard `on` event transitions.
-                if (
-                    not is_explicit_transient_event
-                    and event.type in current.on
-                ):
-                    for t in current.on[event.type]:
-                        if self._is_guard_satisfied(t.guard, event):
-                            eligible_transitions.append(t)
-
-                # Check transient `""` (always) transitions.
-                if is_transient_check and "" in current.on:
-                    for t in current.on[""]:
-                        if self._is_guard_satisfied(t.guard, event):
-                            eligible_transitions.append(t)
-
-                # Check `onDone` transitions for compound/parallel states.
-                if current.on_done and current.on_done.event == event.type:
-                    if self._is_guard_satisfied(current.on_done.guard, event):
-                        eligible_transitions.append(current.on_done)
-
-                # Check `after` transitions for timed events.
-                if isinstance(event, AfterEvent):
-                    for transitions in current.after.values():
-                        for t in transitions:
-                            if (
-                                t.event == event.type
-                                and self._is_guard_satisfied(t.guard, event)
-                            ):
-                                eligible_transitions.append(t)
-
-                # Check `onDone`/`onError` for invoked services.
-                if isinstance(event, DoneEvent):
-                    for inv in current.invoke:
-                        if event.src == inv.id:
-                            for t in inv.on_done + inv.on_error:
-                                if (
-                                    t.event == event.type
-                                    and self._is_guard_satisfied(
-                                        t.guard, event
-                                    )
-                                ):
-                                    eligible_transitions.append(t)
-                current = current.parent
-
-        if not eligible_transitions:
+        if output is None:
             return None
+        if callable(output):
+            try:
+                return output({"context": self.context, "event": None})
+            except Exception:
+                logger.exception(
+                    "🔥 Machine-level output function raised; using None."
+                )
+                return None
+        return output
 
-        # 🏆 The winning transition is the one defined on the deepest state.
-        return max(eligible_transitions, key=lambda t: t.source.depth)  # noqa
+    def _resolve_output(self, final_state: StateNode) -> Any:
+        """Computes the done data contributed by a final state.
+
+        `output` may be a literal or a callable of ``{context, event}``,
+        matching XState's dynamic-output form.
+
+        Args:
+            final_state (StateNode): The final state that was entered.
+
+        Returns:
+            Any: The resolved output, or `None` when none is declared.
+        """
+        output = final_state.output
+        if output is None:
+            return None
+        if callable(output):
+            try:
+                return output({"context": self.context, "event": None})
+            except Exception:
+                logger.exception(
+                    "🔥 Output function on '%s' raised; using None.",
+                    final_state.id,
+                )
+                return None
+        return output
+
+    def _has_error_handler(self, invocation: Any) -> bool:
+        """Reports whether an invocation declares any `onError` handler.
+
+        🏛️ Architecture decision: this asks whether a handler was *declared*,
+        not whether one would currently fire. A guarded `onError` whose guard
+        happens to be false still means the author considered the failure and
+        chose to handle it conditionally — treating that as an unhandled crash
+        would be surprising and would break existing machines. Only a total
+        absence of `onError` counts as unhandled.
+
+        Args:
+            invocation (Any): The `InvokeDefinition` that failed.
+
+        Returns:
+            bool: `True` if any `onError` transition is declared.
+        """
+        return bool(getattr(invocation, "on_error", None))
+
+    def _fail(self, error: BaseException) -> None:
+        """Puts the machine into the terminal `error` status.
+
+        🏛️ Architecture decision: `status` previously only ever moved between
+        `uninitialized`, `running` and `stopped`. An invoked service that
+        failed with no `onError` handler logged a message and the machine kept
+        running as though nothing had happened — the failure was invisible to
+        any caller. XState models this as an error snapshot, so a distinct
+        `"error"` status plus `interpreter.error` makes it observable.
+
+        Args:
+            error (BaseException): The unhandled error.
+        """
+        if self.status not in ("running", "uninitialized"):
+            return
+        self.status = "error"
+        self.error = error
+        logger.error(
+            "🚨 Machine '%s' entered the error state: %r", self.id, error
+        )
+        for plugin in self._plugins:
+            hook = getattr(plugin, "on_error", None)
+            if callable(hook):
+                hook(self, error)
+        self._notify_subscribers()
+
+    def _complete(self, output: Any) -> None:
+        """Marks the machine as finished and records its output.
+
+        🏛️ Architecture decision: `status` previously only ever moved between
+        `uninitialized`, `running` and `stopped`, so reaching a top-level final
+        state was **unobservable** from the public API. That blocked any
+        `to_promise()`-style "await completion" helper. A distinct `"done"`
+        status makes completion a first-class, checkable outcome.
+
+        Args:
+            output (Any): The machine's final output, if any.
+        """
+        if self.status != "running":
+            return
+        self.status = "done"
+        self.output = output
+        logger.info(
+            "🏁 Machine '%s' reached a top-level final state. Output: %r",
+            self.id,
+            output,
+        )
+        for plugin in self._plugins:
+            hook = getattr(plugin, "on_done", None)
+            if callable(hook):
+                hook(self, output)
+
+    @staticmethod
+    def _matching_descriptors(
+        on_map: Dict[str, List[TransitionDefinition]], event_type: str
+    ) -> List[str]:
+        """Finds the `on` keys that match an event type, most specific first.
+
+        Implements XState's event-descriptor matching:
+
+        - an exact key (``"mouse.click"``) wins outright;
+        - partial descriptors match by dot-segment prefix, longest first
+          (``"mouse.click.*"`` beats ``"mouse.*"``);
+        - the bare wildcard ``"*"`` matches anything and is always last.
+
+        🏛️ Architecture decision: previously the lookup was a single exact
+        dict test, so ``"*"`` and ``"mouse.*"`` keys never matched anything —
+        a valid XState config that silently did nothing. Ordering matters:
+        SCXML and XState both require the most specific descriptor to win, and
+        the fallback ordering was itself a bug fixed upstream in v5.32.2.
+
+        Args:
+            on_map (Dict[str, List[TransitionDefinition]]): A state's `on` map.
+            event_type (str): The event type being dispatched.
+
+        Returns:
+            List[str]: Matching keys ordered most-specific first.
+        """
+        if not on_map or not event_type:
+            return []
+
+        matches: List[str] = []
+        # 🎯 Exact match is always the most specific.
+        if event_type in on_map:
+            matches.append(event_type)
+
+        # 🔒 Internal lifecycle events are NEVER caught by a wildcard or a
+        #    partial descriptor.
+        #
+        # 🏛️ Architecture decision: `done.invoke.*`, `done.state.*`,
+        # `error.platform.*` and `after.*` are synthetic events the engine
+        # raises to drive `onDone`, `onError` and `after`. A user writing
+        # `on: {"*": ...}` means "any event I might receive", not "also
+        # swallow my own timers and service results". Without this guard a
+        # single wildcard silently breaks every invoke and delayed transition
+        # in that state — XState draws the same line.
+        if event_type.startswith(("done.", "error.", "after.", "xstate.")):
+            return matches
+
+        # 🌓 Partial descriptors: "a.b.*" matches "a.b.c" and "a.b".
+        partials: List[str] = []
+        for key in on_map:
+            if key == "*" or not key.endswith(".*"):
+                continue
+            prefix = key[:-2]
+            if event_type == prefix or event_type.startswith(prefix + "."):
+                partials.append(key)
+        # 🔽 Longest prefix wins.
+        partials.sort(key=len, reverse=True)
+        matches.extend(partials)
+
+        # 🃏 The bare wildcard is the last resort.
+        if "*" in on_map:
+            matches.append("*")
+
+        return matches
 
     def _collect_eligible_transitions(
         self,
@@ -1111,11 +2282,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             machine's parallel width.
             """
             if guard_cache is None:
-                return self._is_guard_satisfied(transition.guard, event)
+                return self._is_guard_satisfied(transition.guard_def, event)
             key = id(transition)
             if key not in guard_cache:
                 guard_cache[key] = self._is_guard_satisfied(
-                    transition.guard, event
+                    transition.guard_def, event
                 )
             return guard_cache[key]
 
@@ -1127,11 +2298,29 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         current: Optional[StateNode] = state
         while current:
-            # 📨 Standard `on` event transitions.
-            if not is_explicit_transient_event and event.type in current.on:
-                for t in current.on[event.type]:
-                    if _passes(t):
-                        eligible.append(t)
+            # 📨 Standard `on` event transitions, including wildcard and
+            #    partial descriptors, most specific first.
+            if not is_explicit_transient_event:
+                blocked = False
+                for key in self._matching_descriptors(current.on, event.type):
+                    for t in current.on[key]:
+                        # 🚫 A forbidden transition consumes the event here so
+                        #    no ancestor handler can see it.
+                        if t.forbidden:
+                            blocked = True
+                            break
+                        if _passes(t):
+                            eligible.append(t)
+                    if blocked:
+                        break
+                if blocked:
+                    logger.debug(
+                        "🚫 Event '%s' forbidden at '%s'; stopping upward "
+                        "search.",
+                        event.type,
+                        current.id,
+                    )
+                    break
 
             # ⚡ Transient `""` ("always") transitions.
             if is_transient_check and "" in current.on:
@@ -1416,8 +2605,18 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         """
         # 🕒 Schedule `after` timers.
         for delay_ms, transitions in state.after.items():
+            # 🏷️ Symbolic delays resolve through MachineLogic.delays.
+            resolved_ms = self._resolve_delay(delay_ms, None)
+            if resolved_ms is None:
+                logger.warning(
+                    "⚠️ Skipping 'after' transition on '%s': delay %r could "
+                    "not be resolved.",
+                    state.id,
+                    delay_ms,
+                )
+                continue
             for t_def in transitions:
-                delay_sec = float(delay_ms) / 1000.0
+                delay_sec = float(resolved_ms) / 1000.0
                 after_event = AfterEvent(type=t_def.event)
                 self._after_timer(delay_sec, after_event, owner_id=state.id)
                 logger.debug(
@@ -1448,38 +2647,74 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
     def _is_guard_satisfied(
         self,
-        guard_name: Optional[str],
+        guard: Optional[Union[str, "GuardDefinition"]],
         event: Union[Event, AfterEvent, DoneEvent],
     ) -> bool:
-        """Checks if a guard condition (a synchronous, pure function) is met.
+        """Evaluates a transition guard in any of its supported forms.
 
-        Guard functions receive the current context and event, and must return
-        `True` (allow transition) or `False` (block transition).
+        Handles the four shapes XState accepts:
+
+        - a named predicate (``"isReady"``),
+        - a parameterised predicate (``{"type": ..., "params": ...}``),
+        - a higher-order composition (``and`` / ``or`` / ``not``),
+        - the built-in ``stateIn`` guard.
 
         Args:
-            guard_name (Optional[str]): The name of the guard function to
-                execute. If `None`, the guard is considered to have passed.
-            event (Union[Event, AfterEvent, DoneEvent]): The current event
-                being processed, which is passed to the guard function.
+            guard (Optional[Union[str, GuardDefinition]]): The guard to
+                evaluate. `None` means the transition is unguarded.
+            event (Union[Event, AfterEvent, DoneEvent]): The current event,
+                passed to user predicates.
 
         Returns:
-            bool: `True` if the guard passes or if there is no guard, `False`
-            otherwise. A guard that raises is treated as `False`.
+            bool: `True` if the guard passes or there is no guard. A guard
+            that raises is treated as `False`.
 
         Raises:
-            ImplementationMissingError: If a `guard_name` is provided but no
-                corresponding function is found in the machine's logic.
+            ImplementationMissingError: If a named guard has no implementation
+                in the machine's logic.
         """
         # ✅ A transition without a guard is always allowed.
-        if not guard_name:
+        if guard is None:
             return True
 
+        # 🔁 Accept a bare string for backward compatibility with callers that
+        #    still pass `transition.guard`.
+        if isinstance(guard, str):
+            guard = GuardDefinition(guard)
+
+        # 🌳 Composite guards recurse and short-circuit, exactly like XState's
+        #    `and()` / `or()` / `not()` helpers.
+        if guard.is_composite:
+            if guard.type == "and":
+                return all(
+                    self._is_guard_satisfied(child, event)
+                    for child in guard.children
+                )
+            if guard.type == "or":
+                return any(
+                    self._is_guard_satisfied(child, event)
+                    for child in guard.children
+                )
+            # `not` is validated at parse time to have exactly one child.
+            return not self._is_guard_satisfied(guard.children[0], event)
+
+        # 📍 The built-in `stateIn` guard is answered from the active
+        #    configuration; it needs no user implementation.
+        #
+        # 🏛️ Architecture decision: a USER implementation wins, mirroring the
+        # documented resolution order for actions (`actions.is_builtin`).
+        # Without this a guard the user registered as `stateIn` was never
+        # called and the transition was silently decided by the built-in
+        # state test instead — a silent behaviour swap, the worst kind.
+        if guard.is_state_in and guard.type not in self.machine.logic.guards:
+            return self._is_state_in(guard, event)
+
         # 🔍 Find the guard function in the machine's logic.
-        guard_callable = self.machine.logic.guards.get(guard_name)
+        guard_callable = self.machine.logic.guards.get(guard.type)
         if not guard_callable:
             # FIX: Reverted error message to match test suite expectations.
             raise ImplementationMissingError(
-                f"Guard '{guard_name}' not implemented."
+                f"Guard '{guard.type}' not implemented."
             )
 
         # 🏃 Execute the guard function.
@@ -1493,24 +2728,138 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         # A *missing* guard still raises above — that is a configuration
         # error, not a runtime condition, and must fail loudly.
         try:
-            result = bool(guard_callable(self.context, event))
+            params = self._resolve_params(guard.params, event)
+            result = bool(
+                self._call_with_optional_params(
+                    guard_callable, self.context, event, params
+                )
+            )
         except Exception:
             logger.exception(
                 "🔥 Guard '%s' raised an exception while evaluating event "
                 "'%s'; treating it as False.",
-                guard_name,
+                guard.type,
                 event.type,
             )
             result = False
 
         logger.info(
             "🛡️  Evaluating guard '%s': %s",
-            guard_name,
+            guard.type,
             "✅ Passed" if result else "❌ Failed",
         )
 
         # 🔔 Notify any registered plugins about the evaluation.
         for plugin in self._plugins:
-            plugin.on_guard_evaluated(self, guard_name, event, result)
+            plugin.on_guard_evaluated(self, guard.type, event, result)
 
         return result
+
+    def _is_state_in(
+        self,
+        guard: "GuardDefinition",
+        event: Union[Event, AfterEvent, DoneEvent],
+    ) -> bool:
+        """Evaluates the built-in ``stateIn`` guard.
+
+        Satisfied when the named state is part of the active configuration —
+        either as an active leaf or as an ancestor of one.
+
+        Args:
+            guard (GuardDefinition): The `stateIn` guard, whose params carry
+                the state id under `state` (or `value`).
+            event (Union[Event, AfterEvent, DoneEvent]): The current event,
+                used only to resolve callable params.
+
+        Returns:
+            bool: `True` when the named state is active.
+        """
+        params = self._resolve_params(guard.params, event)
+        target = None
+        if isinstance(params, dict):
+            target = params.get("state", params.get("value"))
+        elif isinstance(params, str):
+            target = params
+        if not isinstance(target, str) or not target:
+            logger.warning(
+                "⚠️ 'stateIn' guard has no state id in its params; "
+                "treating as False."
+            )
+            return False
+
+        # 🎯 Accept both '#machine.a.b' and 'machine.a.b' spellings.
+        normalised = target[1:] if target.startswith("#") else target
+        for node in self._active_state_nodes:
+            if node.id == normalised or node.id.endswith("." + normalised):
+                return True
+        return False
+
+    def _resolve_params(
+        self, params: Any, event: Union[Event, AfterEvent, DoneEvent]
+    ) -> Any:
+        """Resolves action/guard params, invoking them if they are callable.
+
+        🏛️ Architecture decision: XState v5 allows `params` to be a function of
+        `{context, event}`, evaluated fresh on every use. Previously a callable
+        was passed through verbatim, so user code received a raw function
+        object where it expected a dict — silent corruption that surfaced far
+        from its cause.
+
+        Args:
+            params (Any): The declared params, possibly a callable.
+            event (Union[Event, AfterEvent, DoneEvent]): The triggering event.
+
+        Returns:
+            Any: The resolved params.
+        """
+        if callable(params):
+            return params({"context": self.context, "event": event})
+        return params
+
+    @staticmethod
+    def _call_with_optional_params(
+        fn: Callable[..., Any],
+        context: Any,
+        event: Union[Event, AfterEvent, DoneEvent],
+        params: Any,
+    ) -> Any:
+        """Calls a guard, passing `params` only if it accepts a third argument.
+
+        📝 Guards have always been `(context, event)`. Parameterised guards
+        need a third argument, but existing two-argument guards must keep
+        working unchanged, so the arity is inspected once per call.
+
+        Args:
+            fn (Callable[..., Any]): The guard implementation.
+            context (Any): The interpreter's context.
+            event (Union[Event, AfterEvent, DoneEvent]): The current event.
+            params (Any): Resolved params, or `None`.
+
+        Returns:
+            Any: Whatever the guard returns.
+        """
+        if params is None:
+            return fn(context, event)
+        try:
+            signature = inspect.signature(fn)
+            accepts = len(
+                [
+                    p
+                    for p in signature.parameters.values()
+                    if p.kind
+                    in (
+                        inspect.Parameter.POSITIONAL_ONLY,
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    )
+                ]
+            )
+            has_varargs = any(
+                p.kind is inspect.Parameter.VAR_POSITIONAL
+                for p in signature.parameters.values()
+            )
+        except (TypeError, ValueError):  # pragma: no cover - builtins
+            return fn(context, event)
+
+        if has_varargs or accepts >= 3:
+            return fn(context, event, params)
+        return fn(context, event)

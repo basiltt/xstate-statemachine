@@ -207,3 +207,15 @@ class NotSupportedError(XStateMachineError):
     """
 
     pass
+
+
+class RestoredError(XStateMachineError):
+    """Carries an error message recovered from a persisted snapshot.
+
+    The original exception type cannot survive JSON serialisation, so
+    :meth:`BaseInterpreter.from_snapshot` wraps the recorded message in this
+    class. It preserves *what went wrong* for a machine restored in the
+    `error` status, which would otherwise expose `error is None`.
+    """
+
+    pass

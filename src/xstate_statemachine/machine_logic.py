@@ -118,6 +118,9 @@ class MachineLogic(Generic[TContext, TEvent]):
         services: Optional[
             Dict[str, Union[Callable[..., Any], "MachineNode"]]  # noqa: F821
         ] = None,
+        delays: Optional[
+            Dict[str, Union[int, float, Callable[..., Any]]]
+        ] = None,
     ) -> None:
         """Initializes the MachineLogic instance.
 
@@ -136,6 +139,11 @@ class MachineLogic(Generic[TContext, TEvent]):
             services: A dictionary mapping service names (str) to their
                 Python function or `MachineNode` implementations. Defaults
                 to an empty dict.
+            delays: A dictionary mapping named delays (str) to a duration in
+                milliseconds, or a callable of `(context, event)` returning
+                one. This is what lets `after: {"TIMEOUT": ...}` and
+                `send_to(..., delay="TIMEOUT")` resolve a symbolic delay
+                instead of raising.
         """
         logger.info("🧠 Initializing MachineLogic container...")
 
@@ -147,6 +155,9 @@ class MachineLogic(Generic[TContext, TEvent]):
             str, Union[Callable[..., Any], "MachineNode"]  # noqa
         ] = (  # noqa
             services or {}
+        )
+        self.delays: Dict[str, Union[int, float, Callable[..., Any]]] = (
+            delays or {}
         )
 
         logger.info(

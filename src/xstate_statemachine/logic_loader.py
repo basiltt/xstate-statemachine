@@ -48,6 +48,7 @@ from typing import (
 # -----------------------------------------------------------------------------
 from .exceptions import ImplementationMissingError, InvalidConfigError
 from .machine_logic import MachineLogic
+from .actions import is_builtin as is_builtin_action
 from .models import (
     MachineNode,
     StateNode,
@@ -203,8 +204,7 @@ class LogicLoader:
 
         for transition in all_transitions:
             all_actions.extend(transition.actions)
-            if transition.guard:
-                guards.add(transition.guard)
+            LogicLoader._collect_guard_names(transition.guard_def, guards)
 
         # 🎭 Categorize actions, routing `spawn_` actions to services.
         #
@@ -220,6 +220,12 @@ class LogicLoader:
             action_type = action_def.type
             if is_spawn_action(action_type):
                 services.add(spawn_service_key(action_type))
+            elif is_builtin_action(action_type):
+                # 🎬 Built-in creators (`assign`, `raise`, `sendTo`, …) are
+                #    implemented by the interpreter, so requiring a user
+                #    implementation would make auto-discovery reject every
+                #    machine that uses the declarative action vocabulary.
+                continue
             else:
                 actions.add(action_type)
 
@@ -230,15 +236,37 @@ class LogicLoader:
             # Also check for logic within the `onDone` and `onError` transitions
             for transition in invoke_def.on_done + invoke_def.on_error:
                 for action_def in transition.actions:
-                    actions.add(action_def.type)
-                if transition.guard:
-                    guards.add(transition.guard)
+                    if not is_builtin_action(action_def.type):
+                        actions.add(action_def.type)
+                LogicLoader._collect_guard_names(transition.guard_def, guards)
 
         # 🌳 Recurse into child states
         for child_node in node.states.values():
             LogicLoader._extract_logic_from_node(
                 child_node, actions, guards, services
             )
+
+    @staticmethod
+    def _collect_guard_names(guard_def: Any, guards: Set[str]) -> None:
+        """Collects the user-implemented guard names a guard depends on.
+
+        🏛️ Architecture decision: composite guards (`and` / `or` / `not`) and
+        the built-in `stateIn` are evaluated by the interpreter itself, so
+        requiring implementations for them made auto-discovery reject every
+        machine using higher-order guards. Only the leaf predicates a user
+        must actually supply are collected, recursing through nesting.
+
+        Args:
+            guard_def (Any): A `GuardDefinition`, or `None`.
+            guards (Set[str]): Accumulator for required guard names.
+        """
+        if guard_def is None:
+            return
+        if getattr(guard_def, "is_builtin", False):
+            for child in getattr(guard_def, "children", []):
+                LogicLoader._collect_guard_names(child, guards)
+            return
+        guards.add(guard_def.type)
 
     def discover_and_build_logic(
         self,
