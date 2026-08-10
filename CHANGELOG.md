@@ -7,10 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+## [0.6.0] - 2026-08-10
 
-Defects found by an adversarial battle test of v0.6.0 before release. None
-reached PyPI. Six were release blockers.
+**XState v5 feature parity, plus a full correctness pass.** This entry covers
+everything shipping in 0.6.0. Neither 0.5.1 nor the earlier 0.6.0 development
+builds were ever published to PyPI, so for anyone upgrading from **0.5.0** this
+is the single relevant changelog entry.
+
+### Fixed — pre-release hardening
+
+Defects found by an adversarial battle test run against the merged release
+branch. None reached PyPI. Six were release blockers.
 
 **Transition atomicity.** `exit -> actions -> enter` had no rollback, so a
 raising action left the source exited and the target never entered:
@@ -117,10 +124,10 @@ release. None of these ever reached PyPI.
 - `CHANGELOG.md` gained the link reference definitions its `[x.y.z]` headings
   had always assumed, and records that 0.5.1 was never published to PyPI.
 
-## [0.6.0] - 2026-08-08
+### XState v5 feature parity
 
-**XState v5 feature parity.** Closes all 73 gaps catalogued in
-`docs/FEATURE_GAP_ANALYSIS.md` — every one verified by an executable probe.
+Closes all 73 gaps catalogued in `docs/FEATURE_GAP_ANALYSIS.md` — every one
+verified by an executable probe.
 
 > ⚠️ **Read the *Fixed* section first.** Several defects caused valid XState
 > JSON to be accepted and then silently ignored, or to produce wrong

@@ -11,7 +11,7 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ---
 
-## [0.6.0] — unreleased *(Current)*
+## [0.6.0] — 2026-08-10 *(Current Release)*
 
 ### Added
 
