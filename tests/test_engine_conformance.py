@@ -39,6 +39,7 @@ from typing import Any, Dict, List
 # -----------------------------------------------------------------------------
 from src.xstate_statemachine import (
     ImplementationMissingError,
+    PluginBase,
     assign,
     Interpreter,
     MachineLogic,
@@ -747,6 +748,70 @@ class TestRobustnessFixes(unittest.IsolatedAsyncioTestCase):
 
         # Assert
         self.assertIn(inspector, interpreter.plugins)
+
+    async def test_on_action_error_hook_fires_on_both_engines(self) -> None:
+        """Contained action failures must be observable programmatically.
+
+        🐛 Gap: action errors are contained so a buggy side effect cannot kill
+        a long-lived machine — but that made the failure invisible. The
+        transition completes as though the action succeeded, so a checkout
+        machine could report `paid` when the charge actually raised. A log
+        line is not something an application can act on, and `on_service_error`
+        covered services only. `on_action_error` is the supported hook.
+        """
+
+        class Reporter(PluginBase):
+            """Captures contained action failures."""
+
+            def __init__(self) -> None:
+                """Initialises the capture log."""
+                self.caught: List[Any] = []
+
+            def on_action_error(
+                self, _i: Any, action: Any, error: BaseException
+            ) -> None:
+                """Records the failing action and its error."""
+                self.caught.append((action.type, str(error)))
+
+        def explode(_i: Any, _c: Any, _e: Any, _a: Any) -> None:
+            """An action that always fails."""
+            raise ValueError("gateway timeout")
+
+        config = {
+            "id": "co",
+            "initial": "review",
+            "context": {},
+            "states": {
+                "review": {
+                    "on": {"PAY": {"target": "paid", "actions": ["charge"]}}
+                },
+                "paid": {},
+            },
+        }
+
+        # Act — sync engine.
+        sync_reporter = Reporter()
+        sync_interp = SyncInterpreter(
+            build(config, actions={"charge": explode})
+        )
+        sync_interp.use(sync_reporter)
+        sync_interp.start()
+        sync_interp.send("PAY")
+
+        # Act — async engine.
+        async_reporter = Reporter()
+        async_interp = Interpreter(build(config, actions={"charge": explode}))
+        async_interp.use(async_reporter)
+        await async_interp.start()
+        self.addAsyncCleanup(async_interp.stop)
+        await drain(async_interp, "PAY")
+
+        # Assert — both surfaced the failure, and both still transitioned.
+        expected = [("charge", "gateway timeout")]
+        self.assertEqual(expected, sync_reporter.caught)
+        self.assertEqual(expected, async_reporter.caught)
+        self.assertEqual({"co.paid"}, sync_interp.current_state_ids)
+        self.assertEqual({"co.paid"}, async_interp.current_state_ids)
 
     def test_plugins_getter_returns_user_objects_not_wrappers(self) -> None:
         """Error containment must not leak its wrapper to user code.

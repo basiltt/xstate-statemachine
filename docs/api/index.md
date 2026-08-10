@@ -1479,6 +1479,7 @@ All hooks have empty default implementations -- override only those you need.
 | `on_guard_evaluated` | `(self, interpreter: TInterpreter, guard_name: str, event: Event, result: bool) -> None` | After a guard condition is evaluated. |
 | `on_service_start` | `(self, interpreter: TInterpreter, invocation: InvokeDefinition) -> None` | An invoked service is about to start. |
 | `on_service_done` | `(self, interpreter: TInterpreter, invocation: InvokeDefinition, result: Any) -> None` | A service completes successfully. |
+| `on_action_error` | A user action or built-in action creator raised; the error was contained |
 | `on_service_error` | `(self, interpreter: TInterpreter, invocation: InvokeDefinition, error: Exception) -> None` | A service fails with an error. |
 
 #### Custom plugin example

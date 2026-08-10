@@ -638,13 +638,15 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                         )
                     except asyncio.CancelledError:
                         raise
-                    except Exception:
+                    except Exception as exc:
                         logger.exception(
                             "🔥 Built-in action '%s' raised while handling "
                             "'%s'; skipping remaining actions.",
                             action_def.type,
                             event.type,
                         )
+                        for plugin in self._plugins:
+                            plugin.on_action_error(self, action_def, exc)
                         return
                     continue
 
@@ -672,13 +674,18 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             except asyncio.CancelledError:
                 # 🛑 Cooperative cancellation must always propagate.
                 raise
-            except Exception:
+            except Exception as exc:
                 logger.exception(
                     "🔥 Action '%s' raised while handling event '%s'; "
                     "skipping remaining actions in this list.",
                     action_def.type,
                     event.type,
                 )
+                # 🔔 Surface the failure programmatically — containment keeps
+                #    the machine alive but makes the error invisible, since
+                #    the transition completes as though the action succeeded.
+                for plugin in self._plugins:
+                    plugin.on_action_error(self, action_def, exc)
                 return
 
     # -------------------------------------------------------------------------

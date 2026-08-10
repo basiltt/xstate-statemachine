@@ -565,10 +565,27 @@ class Logic(MachineLogic):
 }
 ```
 
-> **Note:** Because action errors are contained, an uncaught exception is
-> *invisible to your machine* — it is logged, but the flow carries on as if the
-> action succeeded. Always record failures on `context` when the machine needs
-> to react to them.
+### Observing contained failures
+
+Because errors are contained, an uncaught exception is *invisible to your
+machine* — it is logged, but the flow carries on as if the action succeeded.
+When you need to know, register a plugin:
+
+```python
+from xstate_statemachine import PluginBase
+
+class ActionErrorReporter(PluginBase):
+    def on_action_error(self, interpreter, action, error):
+        sentry_sdk.capture_exception(error)      # or a metric, or a DLQ
+
+interp.use(ActionErrorReporter())
+```
+
+`on_action_error` fires on both engines, for user actions and built-in action
+creators alike.
+
+> **Note:** Always record failures on `context` as well when the *machine*
+> needs to react to them — a plugin observes, but it cannot change the flow.
 >
 > Invoked **services** behave differently: their failures *are* routed back into
 > the machine as `onError`, which is the idiomatic way to model expected errors.

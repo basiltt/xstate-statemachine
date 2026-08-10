@@ -164,6 +164,36 @@ class PluginBase(Generic[TInterpreter]):
         """
         pass  # pragma: no cover
 
+    def on_action_error(
+        self,
+        interpreter: TInterpreter,
+        action: "ActionDefinition",
+        error: BaseException,
+    ) -> None:
+        """Called when a user-supplied action raises.
+
+        Action errors are **contained**: the exception is logged, the
+        remaining actions in that list are skipped, and the transition still
+        completes, so a buggy side effect cannot corrupt the configuration or
+        kill a long-lived interpreter.
+
+        The trade-off is that the failure is otherwise invisible to your
+        program — the machine advances as though the action succeeded. This
+        hook is the supported way to observe it: route failures to Sentry, a
+        metrics counter, or a dead-letter queue.
+
+        Args:
+            interpreter: The interpreter instance.
+            action: The `ActionDefinition` whose implementation raised.
+            error: The exception that was raised and contained.
+
+        Example:
+            >>> class ActionErrorReporter(PluginBase):
+            ...     def on_action_error(self, interpreter, action, error):
+            ...         sentry_sdk.capture_exception(error)  # noqa
+        """
+        pass  # pragma: no cover
+
     def on_guard_evaluated(
         self,
         interpreter: TInterpreter,

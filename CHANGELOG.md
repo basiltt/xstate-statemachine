@@ -14,6 +14,17 @@ everything shipping in 0.6.0. Neither 0.5.1 nor the earlier 0.6.0 development
 builds were ever published to PyPI, so for anyone upgrading from **0.5.0** this
 is the single relevant changelog entry.
 
+### Added — observability for contained action errors
+
+- **`PluginBase.on_action_error`** — action failures are contained so a buggy
+  side effect cannot kill a long-lived machine, but that also made them
+  invisible: the transition completes as though the action succeeded. This
+  hook fires on both engines, for user actions and built-in creators, so a
+  failure can be routed to Sentry, a metric, or a dead-letter queue.
+
+  > Upgrading from 0.5.0 and relying on `send()` re-raising? See the
+  > [migration notes](https://basiltt.github.io/xstate-statemachine/guide/getting-started/#upgrading-from-older-versions).
+
 ### Fixed — pre-release hardening
 
 Defects found by an adversarial battle test run against the merged release

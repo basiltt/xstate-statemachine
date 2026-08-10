@@ -881,13 +881,21 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             # deliberately remain fatal.
             try:
                 action_impl(self, self.context, event, action_def)
-            except Exception:
+            except Exception as exc:
                 logger.exception(
                     "🔥 Action '%s' raised while handling event '%s'; "
                     "skipping remaining actions in this list.",
                     action_def.type,
                     event.type,
                 )
+                # 🔔 Surface the failure programmatically. Containment keeps
+                #    the machine alive, but it also makes the error invisible:
+                #    the transition completes as though the action succeeded.
+                #    A log line is not something an application can act on, so
+                #    this hook is the supported way to route the failure to
+                #    Sentry, a metric, or a dead-letter queue.
+                for plugin in self._plugins:
+                    plugin.on_action_error(self, action_def, exc)
                 return
 
     def _execute_builtin_action(

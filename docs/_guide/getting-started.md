@@ -328,8 +328,20 @@ working — but three **behavioural** changes are worth knowing:
 
 - **Action errors are contained.** If an action raises, the error is logged, the
   transition still completes, and the interpreter keeps running. `.send()` no
-  longer re-raises. To react to a failure, record it on `context` and guard on
-  it. See [Actions](../actions/#error-handling-in-actions).
+  longer re-raises.
+
+  > ⚠️ **If you wrapped `send()` in `try/except`, that handler will no longer
+  > fire.** The machine advances as though the action succeeded — so a checkout
+  > machine can report `paid` when the charge actually raised. Two supported
+  > replacements: catch the error *inside* the action and record it on
+  > `context` (then guard on it), or register a plugin implementing
+  > `on_action_error` to route failures to Sentry or a metric.
+  >
+  > In 0.5.0 the exception did propagate, but it also left the machine with an
+  > **empty state configuration** — permanently dead while still reporting
+  > `running`. The old handler was catching an already-corrupted machine.
+
+  See [Actions](../actions/#error-handling-in-actions).
 - **A stopped interpreter cannot be restarted.** `start()` after `stop()` now
   raises instead of silently returning a dead instance. Build a new interpreter,
   or restore one with `from_snapshot()`.
