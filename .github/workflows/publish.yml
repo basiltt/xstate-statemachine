@@ -1,0 +1,125 @@
+# /.github/workflows/publish.yml
+# -----------------------------------------------------------------------------
+# 🚀 Publish to PyPI
+# -----------------------------------------------------------------------------
+# Runs when a GitHub Release is published, and can be dispatched manually to
+# target TestPyPI first.
+#
+# 🏛️ Architecture decision: this uses PyPI **Trusted Publishing** (OIDC) rather
+# than a stored API token. There is no long-lived secret to leak, rotate, or
+# accidentally print in a log — GitHub mints a short-lived identity token that
+# PyPI verifies against a publisher this repository has been registered for.
+#
+# The artifacts are REBUILT here rather than downloaded from the release, so
+# what reaches PyPI is provably the tagged source. Every gate the CI workflow
+# applies is re-applied before upload, because a PyPI upload is irreversible:
+# a filename can never be reused, even after deletion.
+# -----------------------------------------------------------------------------
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Where to publish"
+        required: true
+        default: testpypi
+        type: choice
+        options:
+          - testpypi
+          - pypi
+
+jobs:
+  build:
+    name: Build & verify distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: 📦 Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+
+      - name: 🏗️ Build sdist and wheel
+        run: python -m build
+
+      - name: ✅ Validate package metadata
+        run: twine check dist/*
+
+      - name: 🔍 Verify the version matches the tag
+        # 🛡️ A tag that disagrees with pyproject.toml would publish the wrong
+        #    version under the right name — unfixable once uploaded.
+        if: github.event_name == 'release'
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(python -c "import tomllib,pathlib;print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          echo "tag=$TAG  pyproject=$PKG"
+          test "$TAG" = "$PKG" || { echo "::error::Tag $TAG does not match project version $PKG"; exit 1; }
+
+      - name: 🚬 Smoke-test the built wheel
+        # 🏛️ Installing into a clean venv verifies the PACKAGED artifact, not
+        #    the source tree — this is what catches a module that exists on
+        #    disk but never made it into the wheel.
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/python -m pip install --upgrade pip --quiet
+          /tmp/smoke/bin/python -m pip install dist/*.whl --quiet
+          /tmp/smoke/bin/python -c "
+          import xstate_statemachine as x
+          from xstate_statemachine import create_machine, MachineLogic, SyncInterpreter
+          print('version:', x.__version__)
+          assert len(x.__all__) == 48, len(x.__all__)
+          m = create_machine(
+              {'id': 'ci', 'initial': 'a', 'states': {'a': {'on': {'GO': 'b'}}, 'b': {}}},
+              logic=MachineLogic(),
+          )
+          i = SyncInterpreter(m).start()
+          i.send('GO')
+          assert i.current_state_ids == {'ci.b'}, i.current_state_ids
+          print('smoke test: OK')
+          "
+          /tmp/smoke/bin/xsm --version
+
+      - name: 📤 Upload distribution artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to ${{ github.event_name == 'release' && 'PyPI' || inputs.target }}
+    needs: build
+    runs-on: ubuntu-latest
+    # 🔐 An environment lets you require a manual approval before the upload
+    #    step runs. Configure reviewers under Settings → Environments.
+    environment:
+      name: ${{ github.event_name == 'release' && 'pypi' || inputs.target }}
+      url: https://pypi.org/project/xstate-statemachine/
+    permissions:
+      # 🎫 Required for Trusted Publishing: lets the job mint an OIDC token.
+      id-token: write
+    steps:
+      - name: 📥 Download distribution artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: dist
+          path: dist/
+
+      - name: 🧪 Publish to TestPyPI
+        if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: 🚀 Publish to PyPI
+        if: github.event_name == 'release' || inputs.target == 'pypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
