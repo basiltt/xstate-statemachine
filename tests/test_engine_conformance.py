@@ -39,6 +39,7 @@ from typing import Any, Dict, List
 # -----------------------------------------------------------------------------
 from src.xstate_statemachine import (
     ImplementationMissingError,
+    assign,
     Interpreter,
     MachineLogic,
     StateNotFoundError,
@@ -322,6 +323,47 @@ class TestRaiseStormIsBounded(unittest.IsolatedAsyncioTestCase):
             }
         },
     }
+
+    async def test_high_throughput_events_are_never_dropped(self) -> None:
+        """A busy producer must not be mistaken for a runaway `raise`.
+
+        🐛 Regression guard: the first bound counted events processed while
+        the queue was non-empty, which cannot distinguish a self-feeding
+        `raise` from a merely busy producer. 5,000 concurrent legitimate
+        `send()` calls lost 3,999 of them — silent data loss far worse than
+        the hang it was meant to prevent. The bound now measures the RAISE
+        CHAIN, so external traffic of any volume is never throttled.
+        """
+        # Arrange — a counter driven purely by external events.
+        config = {
+            "id": "m",
+            "initial": "a",
+            "context": {"n": 0},
+            "states": {
+                "a": {
+                    "on": {
+                        "TICK": {
+                            "actions": assign(
+                                {"n": lambda a: a["context"]["n"] + 1}
+                            )
+                        }
+                    }
+                }
+            },
+        }
+        interpreter = await Interpreter(build(config)).start()
+        self.addAsyncCleanup(interpreter.stop)
+
+        # Act — well above the default 1000 microstep ceiling.
+        total = 3000
+        await asyncio.gather(*[interpreter.send("TICK") for _ in range(total)])
+        for _ in range(400):
+            if interpreter.context["n"] >= total:
+                break
+            await asyncio.sleep(0.01)
+
+        # Assert — every single event was processed.
+        self.assertEqual(total, interpreter.context["n"])
 
     def test_sync_send_returns_instead_of_hanging(self) -> None:
         """`send()` must return once the microstep bound is hit."""

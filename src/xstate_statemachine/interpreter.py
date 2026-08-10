@@ -130,6 +130,13 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             Union[Event, AfterEvent, DoneEvent]
         ] = asyncio.Queue()
         self._event_loop_task: Optional[asyncio.Task[None]] = None
+        #: Length of the current self-raised event chain. Incremented when an
+        #: action enqueues onto our own queue *during* processing, reset when
+        #: a macrostep completes without having done so. Bounds a runaway
+        #: `raise` without ever throttling external `send()` traffic.
+        self._raise_depth: int = 0
+        #: True while `_run_event_loop` is inside `_process_event...`.
+        self._processing: bool = False
 
         logger.info("✅ Asynchronous Interpreter '%s' initialized.", self.id)
 
@@ -399,36 +406,36 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
     async def _run_event_loop(self) -> None:
         """The main asynchronous event-processing loop for the interpreter."""
         logger.debug("🔄 Event loop started for interpreter '%s'.", self.id)
-        # 🛟 Track a self-feeding burst. The `raise` built-in enqueues onto this
-        #    same queue, and `Queue.put()` on an unbounded queue never actually
-        #    suspends, so an action that raises its own trigger event spins
-        #    here forever WITHOUT yielding — starving the entire asyncio loop.
-        #    A heartbeat scheduled every 50 ms was measured running zero times
-        #    in four seconds, freezing every other coroutine in the process.
-        #    Counting events processed without the queue draining bounds the
-        #    burst; reaching the ceiling drops the backlog rather than wedging
-        #    the application.
-        burst = 0
+        # 🛟 Bound a SELF-FEEDING chain. The `raise` built-in enqueues onto
+        #    this same queue and `Queue.put()` on an unbounded queue never
+        #    suspends, so an action raising its own trigger event spins here
+        #    forever WITHOUT yielding — starving the entire asyncio loop (a
+        #    heartbeat scheduled every 50 ms was measured running zero times
+        #    in four seconds).
+        #
+        # 🏛️ Architecture decision: measure the RAISE CHAIN, not queue depth.
+        #    An earlier version incremented whenever the queue was non-empty
+        #    after processing, which cannot tell a runaway `raise` from a
+        #    merely busy producer — 5,000 legitimate concurrent `send()` calls
+        #    lost 3,999 of them. `_raise_depth` counts only events this loop
+        #    enqueued *while processing another event*, so external traffic of
+        #    any volume is never throttled.
         limit = getattr(self.machine, "max_iterations", 1000)
         try:
             while self.status == "running":
                 # 📬 Wait indefinitely for the next event from the queue.
                 event = await self._event_queue.get()
 
-                if burst > limit:
+                if self._raise_depth > limit:
                     logger.error(
-                        "🛑 Exceeded %d chained events in a single burst "
-                        "on '%s'. This usually means an action raises the "
-                        "event that triggers it. Dropping %d pending "
-                        "event(s).",
+                        "🛑 Exceeded %d chained self-raised events on '%s'. "
+                        "This means an action raises the event that triggers "
+                        "it. Breaking the chain; externally queued events are "
+                        "unaffected.",
                         limit,
                         self.id,
-                        self._event_queue.qsize(),
                     )
-                    while not self._event_queue.empty():
-                        self._event_queue.get_nowait()
-                        self._event_queue.task_done()
-                    burst = 0
+                    self._raise_depth = 0
                     self._event_queue.task_done()
                     continue
 
@@ -461,7 +468,12 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 #    `_execute_transition`), so the configuration is intact
                 #    here; we log and carry on with the next event.
                 try:
+                    self._processing = True
+                    depth_before = self._raise_depth
                     await self._process_event_and_transient_transitions(event)
+                    # ✅ A macrostep that raised nothing ends the chain.
+                    if self._raise_depth == depth_before:
+                        self._raise_depth = 0
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -473,15 +485,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                         exc,
                         exc_info=True,
                     )
-
-                # 🛟 Measure the self-feed AFTER processing: a `raise` enqueues
-                #    during the transition, so checking before would always see
-                #    an empty queue and never trip. A queue still non-empty here
-                #    means this event generated more work.
-                if self._event_queue.empty():
-                    burst = 0
-                else:
-                    burst += 1
+                finally:
+                    self._processing = False
 
                 self._event_queue.task_done()
 
@@ -786,6 +791,12 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             send_id (Optional[str]): Id allowing later cancellation.
         """
         if not delay:
+            # 🔁 A zero-delay delivery to OURSELVES during processing is the
+            #    self-feeding shape that can spin the loop. Count it so
+            #    `_run_event_loop` can break the chain; external `send()`
+            #    calls never pass through here.
+            if actor is self and self._processing:
+                self._raise_depth += 1
             await self._send_to_actor(actor, target_event)
             return
 
