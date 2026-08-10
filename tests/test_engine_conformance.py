@@ -360,3 +360,195 @@ class TestRaiseStormIsBounded(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(
             beats["n"], 0, "asyncio event loop was starved by a raise storm"
         )
+
+
+# -----------------------------------------------------------------------------
+# 🕰️ Deep History Into A Parallel State
+# -----------------------------------------------------------------------------
+class TestDeepHistoryParallel(unittest.IsolatedAsyncioTestCase):
+    """Restoring deep history must yield exactly one leaf per region.
+
+    🐛 Regression: each remembered leaf was entered in its OWN
+    `_enter_states` call. The explicit-child guard is computed per call, so
+    restoring `r1.y` walked through `r1`, which could not see that `y` was
+    explicitly targeted and therefore ALSO ran its default `initial` descent
+    into `r1.x`. Deep history into a parallel state activated TWO leaves in
+    one region — forbidden by SCXML, and a direct violation of the
+    one-state-per-region invariant the library is built on.
+    """
+
+    CONFIG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "par",
+        "context": {},
+        "states": {
+            "par": {
+                "type": "parallel",
+                "on": {"OUT": "away"},
+                "states": {
+                    "r1": {
+                        "initial": "x",
+                        "states": {"x": {"on": {"T": "y"}}, "y": {}},
+                    },
+                    "r2": {"initial": "p", "states": {"p": {}}},
+                    "hist": {"type": "history", "history": "deep"},
+                },
+            },
+            "away": {"on": {"BACK": "par.hist"}},
+        },
+    }
+
+    @staticmethod
+    def _leaves(ids: Any, region: str) -> List[str]:
+        """Returns the active leaf ids belonging to one region."""
+        return sorted(i for i in ids if f".{region}." in i)
+
+    def test_sync_restores_exactly_one_leaf_per_region(self) -> None:
+        """Only the remembered leaf may be active after a restore."""
+        # Arrange — move r1 to 'y', then leave the parallel state entirely.
+        interpreter = SyncInterpreter(build(self.CONFIG)).start()
+        interpreter.send("T")
+        self.assertEqual(
+            ["m.par.r1.y"], self._leaves(interpreter.current_state_ids, "r1")
+        )
+        interpreter.send("OUT")
+
+        # Act
+        interpreter.send("BACK")
+
+        # Assert — 'y' restored, and 'x' NOT resurrected alongside it.
+        self.assertEqual(
+            ["m.par.r1.y"],
+            self._leaves(interpreter.current_state_ids, "r1"),
+            "two leaves active in a single region",
+        )
+        self.assertEqual(
+            ["m.par.r2.p"], self._leaves(interpreter.current_state_ids, "r2")
+        )
+
+    async def test_async_restores_exactly_one_leaf_per_region(self) -> None:
+        """The async engine must uphold the same invariant."""
+        # Arrange
+        interpreter = await Interpreter(build(self.CONFIG)).start()
+        self.addAsyncCleanup(interpreter.stop)
+        await drain(interpreter, "T", "OUT")
+
+        # Act
+        await drain(interpreter, "BACK")
+
+        # Assert
+        self.assertEqual(
+            ["m.par.r1.y"],
+            self._leaves(interpreter.current_state_ids, "r1"),
+            "two leaves active in a single region",
+        )
+
+
+# -----------------------------------------------------------------------------
+# 🤖 Invoking A Child MACHINE
+# -----------------------------------------------------------------------------
+class TestInvokedChildMachine(unittest.IsolatedAsyncioTestCase):
+    """`invoke` of a `MachineNode` must complete correctly and leak nothing.
+
+    🐛 Regression (async): `await child.start()` returns once the child's
+    INITIAL state is entered, not when it finishes, so `onDone` fired
+    immediately with the child's initial context. The managing task was then
+    cancelled and the `finally` deleted the registry entry WITHOUT stopping
+    the child — orphaning its run loop and every timer. Measured at +2
+    permanently live tasks per invocation, surviving the parent's `stop()`.
+
+    🐛 Regression (sync): `onDone` was never fired at all, so a parent waited
+    forever even when the child finished immediately.
+    """
+
+    SLOW_CHILD: Dict[str, Any] = {
+        "id": "c",
+        "initial": "w",
+        "context": {},
+        "states": {"w": {"after": {600000: "d"}}, "d": {"type": "final"}},
+    }
+    FAST_CHILD: Dict[str, Any] = {
+        "id": "c",
+        "initial": "w",
+        "context": {"v": 1},
+        "states": {"w": {"always": "d"}, "d": {"type": "final"}},
+    }
+    PARENT: Dict[str, Any] = {
+        "id": "p",
+        "initial": "a",
+        "context": {},
+        "states": {
+            "a": {"invoke": {"src": "child", "id": "ch", "onDone": "done"}},
+            "done": {},
+        },
+    }
+
+    def _parent_for(self, child_config: Dict[str, Any]) -> Any:
+        """Builds the parent machine wired to a given child."""
+        return build(
+            self.PARENT,
+            services={"child": build(child_config)},
+        )
+
+    async def test_async_does_not_fire_on_done_early(self) -> None:
+        """A child that has not finished must not satisfy `onDone`."""
+        # Arrange / Act
+        interpreter = await Interpreter(
+            self._parent_for(self.SLOW_CHILD)
+        ).start()
+        self.addAsyncCleanup(interpreter.stop)
+        await asyncio.sleep(0.2)
+
+        # Assert — still waiting on the child.
+        self.assertEqual({"p.a"}, interpreter.current_state_ids)
+
+    async def test_async_fires_on_done_when_the_child_completes(self) -> None:
+        """A child reaching a final state must satisfy `onDone`."""
+        # Arrange / Act
+        interpreter = await Interpreter(
+            self._parent_for(self.FAST_CHILD)
+        ).start()
+        self.addAsyncCleanup(interpreter.stop)
+        await asyncio.sleep(0.2)
+
+        # Assert
+        self.assertEqual({"p.done"}, interpreter.current_state_ids)
+
+    async def test_async_does_not_orphan_the_child(self) -> None:
+        """`stop()` must tear down the invoked child machine."""
+        # Arrange — measure the live task count across repeated invocations.
+        baseline = len([t for t in asyncio.all_tasks() if not t.done()])
+
+        # Act
+        for _ in range(20):
+            interpreter = await Interpreter(
+                self._parent_for(self.SLOW_CHILD)
+            ).start()
+            await asyncio.sleep(0)
+            await interpreter.stop()
+        await asyncio.sleep(0.2)
+
+        # Assert — no monotonic climb.
+        alive = len([t for t in asyncio.all_tasks() if not t.done()])
+        self.assertLessEqual(
+            alive,
+            baseline,
+            f"orphaned tasks: {alive} live vs {baseline} baseline",
+        )
+
+    def test_sync_fires_on_done_when_the_child_completes(self) -> None:
+        """The sync engine must report child completion too."""
+        # Arrange / Act
+        interpreter = SyncInterpreter(
+            self._parent_for(self.FAST_CHILD)
+        ).start()
+        self.addCleanup(interpreter.stop)
+
+        # Assert — poll briefly; the child runs on its own thread.
+        for _ in range(200):
+            if interpreter.current_state_ids == {"p.done"}:
+                break
+            import time
+
+            time.sleep(0.01)
+        self.assertEqual({"p.done"}, interpreter.current_state_ids)

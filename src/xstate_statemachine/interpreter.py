@@ -71,6 +71,11 @@ from .task_manager import TaskManager
 # -----------------------------------------------------------------------------
 logger = logging.getLogger(__name__)
 
+# ⏱️ How often `_spawn_and_manage_actor` checks whether an invoked child
+#    machine has reached a final state. Small enough that `onDone` feels
+#    immediate, large enough not to busy-wait a core.
+_ACTOR_POLL_INTERVAL = 0.005
+
 
 # -----------------------------------------------------------------------------
 # 🚀 Interpreter Class Definition
@@ -270,7 +275,12 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             plugin.on_interpreter_stop(self)
 
         # 🛑 Stop all child actors recursively.
-        for actor in self._actors.values():
+        #
+        # 🧵 Iterate over a SNAPSHOT. Stopping a child yields to the event
+        #    loop, which lets that child's own managing task run its `finally`
+        #    and pop itself from `self._actors` — mutating the dict mid-loop
+        #    and raising "dictionary changed size during iteration".
+        for actor in list(self._actors.values()):
             await actor.stop()
         self._actors.clear()
 
@@ -1134,8 +1144,19 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 actor_id,
                 self.id,
             )
-            # This will run the child interpreter's event loop until it stops.
+            # 🚀 Start the child. NOTE: `start()` returns as soon as the
+            #    child's INITIAL state is entered — it does NOT block until the
+            #    machine finishes. Treating it as "run to completion" fired
+            #    `onDone` immediately with the child's initial context, so a
+            #    parent transitioned onward while the child was still working.
             await child_interpreter.start()
+
+            # ⏳ Now actually wait for the child to reach a top-level final
+            #    state. `status` flips to "done" when the machine completes;
+            #    polling the child's own lifecycle is what makes `onDone` mean
+            #    what XState says it means.
+            while child_interpreter.status == "running":
+                await asyncio.sleep(_ACTOR_POLL_INTERVAL)
 
             # ✅ Child finished cleanly (reached a top-level final state).
             done_event = DoneEvent(
@@ -1176,5 +1197,14 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             for plugin in self._plugins:
                 plugin.on_service_error(self, invocation, e)
         finally:
-            if child_interpreter and child_interpreter.id in self._actors:
-                del self._actors[child_interpreter.id]
+            # 🧹 ALWAYS tear the child down. Deleting the registry entry
+            #    without stopping the interpreter orphaned it: its run loop and every
+            #    `after` timer survived the parent's own `stop()` forever,
+            #    because `stop()` iterates `self._actors` and the entry was
+            #    already gone. Measured at +2 permanently live asyncio tasks
+            #    per invocation — an unbounded leak for any server that
+            #    invokes a child machine per request.
+            if child_interpreter is not None:
+                self._actors.pop(child_interpreter.id, None)
+                if child_interpreter.status == "running":
+                    await child_interpreter.stop()

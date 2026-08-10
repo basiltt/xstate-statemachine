@@ -1720,13 +1720,25 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             await self._enter_states(path_to_enter, event)
 
             # 🕰️ Restore the remembered configuration for a history target.
-            #    Each remembered node is entered along its own path from the
-            #    history node's parent, so ancestors are re-entered correctly.
+            #
+            # 🏛️ Architecture decision: build ONE combined entry path and make
+            #    a SINGLE `_enter_states` call. The explicit-child guard inside
+            #    `_enter_states` is computed per call, so entering each
+            #    remembered leaf separately meant each call saw only its own
+            #    path: restoring `r1.y` walked through `r1`, which could not
+            #    tell that `y` was explicitly targeted and so ALSO ran its
+            #    default `initial` descent into `r1.x`. Deep history into a
+            #    parallel state therefore activated TWO leaves in one region —
+            #    a configuration SCXML forbids and that breaks the
+            #    one-state-per-region invariant the whole library rests on.
             if target_state.type == "history":
+                combined_path: List[StateNode] = []
                 for node in history_targets:
-                    await self._enter_states(
-                        self._get_path_to_state(node, stop_at=domain), event
-                    )
+                    for step in self._get_path_to_state(node, stop_at=domain):
+                        if step not in combined_path:
+                            combined_path.append(step)
+                if combined_path:
+                    await self._enter_states(combined_path, event)
         except Exception:
             logger.error(
                 "💥 Transition on '%s' failed; rolling back to the "

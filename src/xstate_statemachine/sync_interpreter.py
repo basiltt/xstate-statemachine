@@ -498,11 +498,18 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             self._enter_states(path_to_enter, event)
 
             # 🕰️ Restore the remembered configuration for a history target.
+            #    ONE combined call — see `BaseInterpreter._execute_transition`.
+            #    Entering each remembered leaf separately let every ancestor
+            #    run its default `initial` descent as well, activating two
+            #    leaves in one region.
             if target_state.type == "history":
+                combined_path: List[StateNode] = []
                 for node in history_targets:
-                    self._enter_states(
-                        self._get_path_to_state(node, stop_at=domain), event
-                    )
+                    for step in self._get_path_to_state(node, stop_at=domain):
+                        if step not in combined_path:
+                            combined_path.append(step)
+                if combined_path:
+                    self._enter_states(combined_path, event)
         except Exception:
             logger.error(
                 "💥 Transition on '%s' failed; rolling back to the "
@@ -1046,12 +1053,23 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         )
         timer.start()
 
-    def _spawn_actor(self, action_def: ActionDefinition, event: Event) -> None:
+    def _spawn_actor(
+        self,
+        action_def: ActionDefinition,
+        event: Event,
+        on_complete: Optional[str] = None,
+    ) -> None:
         """Spawns a child state machine actor in blocking or non-blocking mode.
 
         Args:
             action_def: The action definition for spawning the actor.
             event: The event that triggered the spawn action.
+            on_complete: When set, the invoke id to report completion under.
+                Reaching a top-level final state queues
+                `done.invoke.<id>` so an `invoke` of a child MACHINE fires
+                `onDone`. Spawning alone never signalled completion, so a
+                parent waited forever even when the child finished
+                immediately.
 
         Raises:
             ActorSpawningError: If the specified service is not a valid
@@ -1100,6 +1118,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # --- Blocking Execution Path ---
         if blocking:
             child.start()
+            if on_complete is not None:
+                self._queue_actor_done(child, on_complete)
             return
 
         # --- Non-Blocking Execution Path (via a background thread) ---
@@ -1119,6 +1139,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     time.sleep(0.01)  # 🤏 Yield to prevent busy-waiting.
             finally:
                 # 🧹 Ensure cleanup happens whether the child finishes or is stopped.
+                if on_complete is not None:
+                    self._queue_actor_done(child, on_complete)
                 child.stop()
                 self._actors.pop(actor_id, None)
                 logger.info("🧹 Actor thread for '%s' cleaned up.", actor_id)
@@ -1127,6 +1149,38 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         threading.Thread(
             target=_runner, daemon=True, name=f"actor-{actor_id}"
         ).start()
+
+    def _queue_actor_done(
+        self, child: "SyncInterpreter", invoke_id: str
+    ) -> None:
+        """Queues `done.invoke.<id>` for a completed child machine.
+
+        Only fires when the child actually reached a top-level final state —
+        a child that was stopped early (because the parent left the invoking
+        state) must NOT report success.
+
+        Args:
+            child: The spawned child interpreter.
+            invoke_id: The `invoke` id to report completion under.
+        """
+        reached_final = any(
+            node.is_final and node.parent is child.machine
+            for node in child._active_state_nodes
+        )
+        if not reached_final:
+            logger.debug(
+                "🚫 Child '%s' did not reach a final state; no onDone.",
+                child.id,
+            )
+            return
+
+        done_event = DoneEvent(
+            type=f"done.invoke.{invoke_id}",
+            data=child.context,
+            src=invoke_id,
+        )
+        logger.info("🏁 Child actor '%s' completed; firing onDone.", child.id)
+        self.send(done_event)
 
     def _cancel_state_tasks(self, state: StateNode) -> None:
         """Cancel all pending **after** timers that belong to a state.
@@ -1274,6 +1328,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     }
                 ),
                 Event(type=f"invoke.{invocation.id}"),
+                on_complete=invocation.id,
             )
             return
 
