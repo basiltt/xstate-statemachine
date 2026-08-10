@@ -43,7 +43,11 @@ from typing import (
 # -----------------------------------------------------------------------------
 from .base_interpreter import BaseInterpreter
 from .events import AfterEvent, DoneEvent, Event
-from .exceptions import ActorSpawningError, ImplementationMissingError
+from .exceptions import (
+    ActorSpawningError,
+    ImplementationMissingError,
+    InvalidConfigError,
+)
 from .actions import (
     ESCALATE,
     FORWARD_TO,
@@ -199,9 +203,20 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             return self
 
         # 🛡️ Idempotency check: Don't start if already running or stopped.
+        #
+        # 🛑 A STOPPED interpreter cannot be revived. Returning `self` made
+        #    restart appear to succeed — state ids still read as live while
+        #    `status` stayed "stopped" and every `send()` was silently
+        #    dropped. Fail loudly instead of returning a corpse.
+        if self.status == "stopped":
+            raise InvalidConfigError(
+                f"Interpreter '{self.id}' has been stopped and cannot be "
+                f"restarted. Create a new interpreter, or restore one with "
+                f"`Interpreter.from_snapshot(...)`."
+            )
         if self.status != "uninitialized":
             logger.warning(
-                "⚠️ Interpreter '%s' already running or stopped. Skipping start.",
+                "⚠️ Interpreter '%s' already running. Skipping start.",
                 self.id,
             )
             return self

@@ -160,9 +160,22 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             'running'
         """
         # 🚦 Idempotency check: only start if uninitialized.
+        #
+        # 🛑 A STOPPED interpreter is a different case from an already-running
+        #    one. Silently returning `self` made restart look like it worked:
+        #    the state ids still read as live, but `status` stayed "stopped"
+        #    and every subsequent `send()` was dropped. Interpreters are not
+        #    restartable — build a fresh one (optionally from a snapshot) —
+        #    so say so loudly instead of handing back a corpse.
+        if self.status == "stopped":
+            raise InvalidConfigError(
+                f"Interpreter '{self.id}' has been stopped and cannot be "
+                f"restarted. Create a new interpreter, or restore one with "
+                f"`SyncInterpreter.from_snapshot(...)`."
+            )
         if self.status != "uninitialized":
             logger.info(
-                "🚧 Interpreter '%s' already running or stopped. Skipping start.",
+                "🚧 Interpreter '%s' already running. Skipping start.",
                 self.id,
             )
             return self

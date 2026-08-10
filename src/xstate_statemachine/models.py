@@ -548,6 +548,36 @@ class StateNode(Generic[TContext, TEvent]):
         self.machine = machine
         self.id = f"{parent.id}.{key}" if parent else key
 
+        # 🏷️ Custom `id`. XState lets a state declare its own id so distant
+        #    branches can target it as `#myId` without spelling out a path —
+        #    a core cross-branch idiom used by 37 of the 104 real-world
+        #    Stately machines in the test corpus. The key was previously read
+        #    only on the machine ROOT, so every such target raised
+        #    `StateNotFoundError`. The structural `self.id` stays the
+        #    canonical path (snapshots and `matches()` depend on it); the
+        #    custom name is recorded separately and registered on the machine
+        #    for `#` lookups.
+        self.custom_id: Optional[str] = None
+        if parent is not None:
+            declared_id = config.get("id")
+            if declared_id is not None:
+                if not isinstance(declared_id, str) or not declared_id:
+                    raise InvalidConfigError(
+                        f"State '{self.id}' has an invalid 'id'. Expected a "
+                        f"non-empty string, got {declared_id!r}."
+                    )
+                self.custom_id = declared_id
+                registry = getattr(machine, "_custom_ids", None)
+                if registry is not None:
+                    existing = registry.get(declared_id)
+                    if existing is not None:
+                        raise InvalidConfigError(
+                            f"Duplicate state id '{declared_id}' declared by "
+                            f"both '{existing.id}' and '{self.id}'. Custom "
+                            f"ids must be unique within a machine."
+                        )
+                    registry[declared_id] = self
+
         # 📏 Tree depth, cached at construction time.
         #
         # 🏛️ Architecture decision: depth is stored as an integer rather than
@@ -1019,6 +1049,11 @@ class MachineNode(StateNode[TContext, TEvent]):
         #: Machine-level output declaration, resolved when a top-level final
         #: state is reached.
         self.machine_output: Any = config.get("output")
+
+        #: Custom `id` → node registry, populated by `StateNode.__init__` as
+        #: the tree is built. Must exist BEFORE `super().__init__` recurses
+        #: into the children that register themselves here.
+        self._custom_ids: Dict[str, StateNode] = {}
 
         # 🚀 Call the parent constructor to build the entire state tree.
         super().__init__(self, config, config["id"])

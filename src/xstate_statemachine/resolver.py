@@ -154,6 +154,22 @@ def resolve_target_state(
         logger.debug("  -> Attempting absolute path resolution...")
         segments = target[1:].split(".")
         _validate_segments(segments, target, reference_state.id)
+
+        # 🏷️ A custom `id` declared on a state wins over a path walk. XState
+        #    lets any state name itself so distant branches can target it as
+        #    `#myId`; without this the lookup demanded that the first segment
+        #    be the MACHINE key, so every custom-id target raised
+        #    `StateNotFoundError`. Supports `#myId` and `#myId.child.leaf`.
+        custom_ids = getattr(machine, "_custom_ids", None)
+        if custom_ids:
+            anchor = custom_ids.get(segments[0])
+            if anchor is not None:
+                return (
+                    anchor
+                    if len(segments) == 1
+                    else _find_descendant(anchor, segments[1:])
+                )
+
         if segments[0] != machine.key:
             raise StateNotFoundError(target, reference_state.id)
 
