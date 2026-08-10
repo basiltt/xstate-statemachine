@@ -544,18 +544,6 @@ class StateNode(Generic[TContext, TEvent]):
         )
         # 🧍‍♂️ Core Properties
         #
-        # 🚫 A '.' in a state key collides with the id separator. A flat state
-        #    named "x.y" and a nested x > y produce the SAME fully-qualified
-        #    id, so `matches()`, snapshots and target resolution cannot tell
-        #    them apart — targeting "x.y" silently entered the nested state
-        #    and ran the wrong entry actions. Reject at parse time rather than
-        #    let two distinct nodes share an identity.
-        if parent is not None and "." in key:
-            raise InvalidConfigError(
-                f"State key '{key}' in '{parent.id}' contains '.', which is "
-                f"reserved as the state-id separator. Rename the state (for "
-                f"example '{key.replace('.', '_')}') or nest it explicitly."
-            )
         self.key = key
         self.parent = parent
         self.machine = machine
@@ -697,6 +685,36 @@ class StateNode(Generic[TContext, TEvent]):
                 raise InvalidConfigError(
                     f"State '{self.id}.{state_key}' must be an object/dict, "
                     f"got '{type(state_config).__name__}'."
+                )
+
+            # 🚫 A '.' in a state key collides with the id separator: a flat
+            #    state "x.y" and a nested x > y build the SAME fully-qualified
+            #    id, so `matches()`, snapshots and target resolution cannot
+            #    tell them apart — targeting "x.y" silently entered the nested
+            #    state and ran the wrong entry actions.
+            #
+            # 🏛️ Architecture decision: reject only the AMBIGUOUS case, where
+            #    the key's first segment is also a real sibling. Rejecting
+            #    every dot would break configs that work correctly today — a
+            #    key like "v1.0" or "api.v2" is unambiguous unless a sibling
+            #    is named "v1"/"api" — which is too aggressive for a patch
+            #    release. The rest warn, so the latent hazard stays visible.
+            if "." in state_key:
+                head = state_key.split(".", 1)[0]
+                if head in raw_states:
+                    raise InvalidConfigError(
+                        f"State key '{state_key}' in '{self.id}' is "
+                        f"ambiguous: its first segment '{head}' is also a "
+                        f"sibling state, so both resolve to the id "
+                        f"'{self.id}.{state_key}'. Rename one (for example "
+                        f"'{state_key.replace('.', '_')}')."
+                    )
+                logger.warning(
+                    "⚠️ State key '%s' in '%s' contains '.', the state-id "
+                    "separator. Accepted because no sibling shadows it, but "
+                    "renaming avoids ambiguity.",
+                    state_key,
+                    self.id,
                 )
 
         self.states = {

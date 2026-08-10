@@ -359,7 +359,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         #    forever — a slow memory leak in any long-lived process that keeps
         #    a reference to a finished machine. Dropping with a warning also
         #    surfaces the mistake instead of hiding it.
-        if self.status in ("stopped", "done"):
+        if self.status in ("stopped", "done", "error"):
             logger.warning(
                 "⚠️ Interpreter '%s' is %s; dropping event. Nothing drains "
                 "the queue after shutdown, so queuing here would leak.",
@@ -386,7 +386,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             events: A list of events to send. Each event can be a string,
                 a dictionary, or an `Event` object.
         """
-        if self.status in ("stopped", "done"):
+        if self.status in ("stopped", "done", "error"):
             logger.warning(
                 "⚠️ Interpreter '%s' is %s; dropping %d event(s).",
                 self.id,

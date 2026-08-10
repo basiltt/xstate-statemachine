@@ -891,13 +891,13 @@ class TestRobustnessFixes(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(XStateMachineError):
                 SyncInterpreter.from_snapshot(corrupt, machine)
 
-    def test_dotted_state_keys_are_rejected(self) -> None:
-        """A '.' in a state key collides with the id separator.
+    def test_ambiguous_dotted_state_key_is_rejected(self) -> None:
+        """A dotted key shadowed by a sibling is genuinely ambiguous.
 
         🐛 Regression: a flat state `"x.y"` and a nested `x > y` produced the
         SAME id, so `matches()`, snapshots and target resolution could not
-        tell them apart — targeting `"x.y"` silently entered the nested
-        state and ran the wrong entry actions.
+        tell them apart — targeting `"x.y"` silently entered the nested state
+        and ran the wrong entry actions.
         """
         # Act / Assert
         with self.assertRaises(XStateMachineError):
@@ -912,6 +912,29 @@ class TestRobustnessFixes(unittest.IsolatedAsyncioTestCase):
                     },
                 }
             )
+
+    def test_unambiguous_dotted_state_key_still_works(self) -> None:
+        """Rejecting every dot would break configs that work today.
+
+        A key like `"v1.0"` is unambiguous unless a sibling is named `"v1"`.
+        Blanket rejection would be a gratuitous breaking change for users
+        upgrading from 0.5.0.
+        """
+        # Arrange / Act
+        interpreter = SyncInterpreter(
+            build(
+                {
+                    "id": "m",
+                    "initial": "v1.0",
+                    "context": {},
+                    "states": {"v1.0": {"on": {"G": "v2.0"}}, "v2.0": {}},
+                }
+            )
+        ).start()
+        interpreter.send("G")
+
+        # Assert
+        self.assertEqual({"m.v2.0"}, interpreter.current_state_ids)
 
     def test_custom_state_id_resolves_a_hash_target(self) -> None:
         """`#myId` must find a state that declared `id`.
