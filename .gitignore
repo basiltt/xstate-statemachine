@@ -689,6 +689,13 @@ backend/alembic/versions/*
 *.session-journal
 *.env
 
+# 📐 Internal planning artifacts.
+# Implementation plans and design specs kept for provenance, not for users.
+# Already excluded from the docs site build (docs/_config.yml) and from the
+# sdist allowlist (pyproject.toml), so ignoring them here keeps all three
+# surfaces consistent.
+docs/superpowers/
+
 # 🤖 Agent working directory.
 # Local tooling state and internal review notes — not part of the library and
 # not something users should receive. Excluded from the sdist too (see

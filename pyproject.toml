@@ -79,6 +79,14 @@ include = [
     "/pyproject.toml",
 ]
 
+# 📐 `/docs` is included wholesale above, so carve out the internal planning
+#    artifacts explicitly. Relying on the .gitignore entry alone would make
+#    packaging correctness depend on hatchling's VCS-ignore behaviour; stating
+#    it here keeps the tarball's contents readable from this file alone.
+exclude = [
+    "/docs/superpowers",
+]
+
 # 📦 PEP 561: ship the marker so type checkers actually consume the inline
 #    annotations. The `Typing :: Typed` classifier promised this already, so
 #    without the file the claim was false and every hint was invisible to mypy.
