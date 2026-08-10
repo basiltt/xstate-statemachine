@@ -421,7 +421,7 @@ Example output:
 
 ```
 xstate-statemachine info
-  Version:     0.5.0
+  Version:     0.6.0
   Python:      3.12.0
   Platform:    Windows-11
   Install:     C:\...\xstate_statemachine

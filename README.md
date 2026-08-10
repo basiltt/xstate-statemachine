@@ -618,8 +618,12 @@ print(resumed.current_state_ids)   # {'job.step2'}   ← exactly where it left o
 resumed.send("NEXT")
 ```
 
-State, context, active timers and `systemId` registrations all round-trip.
+State, context and `systemId` registrations all round-trip.
 `get_persisted_snapshot()` gives you the dict form if you'd rather store structured data.
+
+> **Note** — pending `after` timers are **not** resumed by a restore. A machine saved while
+> waiting on a 30-minute timeout will wait indefinitely after restore. If a deadline must
+> survive a restart, store it in context and re-arm it yourself on resume.
 
 ---
 

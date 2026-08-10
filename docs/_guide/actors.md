@@ -170,6 +170,99 @@ interp.stop()
 
 > **Tip:** Use `spawn_blocking_` when you need the child to complete before the parent processes the next event. Use `spawn_` (non-blocking) when the child should run concurrently in a background thread.
 
+## Built-in Actor Actions (v0.6.0)
+
+Alongside the `spawn_` naming convention above, XState v5's built-in action
+creators are supported. These are declared as objects in the config, so they
+work from plain JSON with no Python naming convention required.
+
+### `spawnChild` and `systemId`
+
+`spawnChild` starts a child machine. Registering it under a `systemId` gives it
+a stable, machine-wide name that **any** actor in the system can address:
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
+
+worker = {
+    "id": "worker",
+    "initial": "idle",
+    "context": {"jobs": 0},
+    "states": {"idle": {"on": {"JOB": {"target": "idle", "actions": ["count"]}}}},
+}
+worker_logic = MachineLogic(actions={
+    "count": lambda i, ctx, e, a: ctx.__setitem__("jobs", ctx["jobs"] + 1),
+})
+
+parent = {
+    "id": "super",
+    "initial": "up",
+    "context": {},
+    "states": {
+        "up": {
+            "entry": [{"type": "spawnChild",
+                       "params": {"src": "worker", "id": "w1",
+                                  "systemId": "pool"}}],
+            "on": {"DISPATCH": {"actions": [
+                {"type": "sendTo",
+                 "params": {"to": "pool", "event": {"type": "JOB"}}}
+            ]}},
+        }
+    },
+}
+
+logic = MachineLogic(services={
+    "worker": lambda i, ctx, e: create_machine(worker, logic=worker_logic),
+})
+
+sup = SyncInterpreter(create_machine(parent, logic=logic)).start()
+print(list(sup.system.get_all()))              # ['pool']
+
+sup.send("DISPATCH")
+sup.send("DISPATCH")
+print(sup.system.get("pool").context["jobs"])  # 2
+sup.stop()
+```
+
+The `system` registry is reachable from any interpreter in the tree:
+
+| Call | Returns |
+|:--|:--|
+| `interp.system.get("pool")` | The actor registered under that `systemId`, or `None` |
+| `interp.system.get_all()` | A mapping of every registered `systemId` |
+
+`systemId` registrations survive a snapshot round-trip, so `sendTo("pool", ...)`
+still resolves after `from_snapshot()`.
+
+### `sendTo`, `sendParent`, `stopChild`
+
+| Action | Purpose |
+|:--|:--|
+| `sendTo` | Send an event to another actor, by `id` or `systemId` |
+| `sendParent` | Send an event to the machine that spawned this one |
+| `stopChild` | Stop a spawned child by id |
+| `forwardTo` | Forward the *current* event to another actor |
+| `escalate` | Raise an error to the parent |
+
+```python
+# child -> parent
+{"type": "sendParent", "params": {"event": {"type": "WORK_DONE"}}}
+
+# parent -> named child, after a delay
+{"type": "sendTo", "params": {"to": "pool",
+                              "event": {"type": "JOB"},
+                              "delay": 500, "id": "job-1"}}
+
+# cancel that delayed send before it fires
+{"type": "cancel", "params": {"sendId": "job-1"}}
+```
+
+> **Note:** A child invoked with `invoke` fires the parent's `onDone` only when
+> it reaches a **top-level final state**, and `onError` if it ends in an error.
+> Stopping a child early does not fire either.
+
+---
+
 ## Actor Communication
 
 Actors and parents communicate through events. After spawning, the parent can interact with the child through actions that reference the child via the interpreter's actor management:

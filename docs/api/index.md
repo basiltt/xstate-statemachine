@@ -1639,5 +1639,5 @@ The library defines several callable type aliases for documentation purposes:
 
 ```python
 from xstate_statemachine import __version__
-print(__version__)  # "0.5.0"
+print(__version__)  # "0.6.0"
 ```

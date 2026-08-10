@@ -11,7 +11,54 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ---
 
-## [0.5.0] — 2026-03-23 *(Current Release)*
+## [0.6.0] — unreleased *(Current)*
+
+### Added
+
+- **XState v5 feature parity** — every gap in `docs/FEATURE_GAP_ANALYSIS.md` closed.
+- **Built-in action creators** — `assign`, `log`, `raise_`, `send_to`,
+  `send_parent`, `choose`, `pure`, `enqueue_actions`, `spawn_child`,
+  `stop_child`, `cancel`, `emit`, `escalate`, `forward_to`.
+  See [Actions](../actions/#built-in-action-creators-v060).
+- **Actor system** — `spawnChild`, `sendTo`, `systemId` registry addressable
+  from any actor, and `systemId` persistence across snapshots.
+  See [Actor Model](../actors/#built-in-actor-actions-v060).
+- **Pure API** — `initial_transition`, `pure_transition`, `get_next_snapshot`
+  and `PureSnapshot` compute transitions with no side effects.
+- **Waiting helpers** — `wait_for`, `wait_for_sync`, `to_promise`.
+  See [Testing & The Pure API](../testing-and-pure-api/).
+- **Composite guards** — `and` / `or` / `not` and `stateIn`.
+- **Named delays**, state `tags`, `meta`, and machine `output`.
+- **PEP 561** — `py.typed` is now shipped, so inline annotations reach mypy.
+
+### Fixed
+
+Repairs to the SCXML transition algorithm and a family of correctness defects
+found by an adversarial battle test. Highlights:
+
+- **Transitions are atomic.** A raising action previously left the machine with
+  *zero* active states while still reporting `running`.
+- **The async run loop survives per-event errors** instead of dying silently and
+  dropping every later event.
+- **Deep history into a parallel state** no longer activates two leaves in one
+  region.
+- **Invoked child machines** fire `onDone` only on a real top-level final state,
+  `onError` on failure, and are always torn down (previously leaked).
+- **Runaway `raise` chains are bounded** on both engines.
+- **Entry/exit actions receive the real triggering event** on `SyncInterpreter`
+  (previously a synthetic event with an empty payload).
+- Custom state `id` now resolves `#myId` targets; plugin errors are contained;
+  malformed configs raise actionable `InvalidConfigError`.
+
+### Changed *(behavioural — see the [migration notes](../getting-started/#upgrading-from-older-versions))*
+
+- Action errors are **contained**; `.send()` no longer re-raises them.
+- `start()` on a **stopped** interpreter raises instead of silently no-opping.
+- A state key containing `.` whose first segment is also a sibling is rejected.
+
+---
+
+## [0.5.0] — 2026-03-23
 
 ### Added
 

@@ -154,11 +154,38 @@ def resolve_target_state(
         logger.debug("  -> Attempting absolute path resolution...")
         segments = target[1:].split(".")
         _validate_segments(segments, target, reference_state.id)
-        if segments[0] != machine.key:
-            raise StateNotFoundError(target, reference_state.id)
 
-        # ✅ Traverse from the absolute root of the machine.
-        return _find_descendant(machine, segments[1:])
+        # 🏛️ Resolution order matters. The MACHINE key is checked first: a
+        #    nested state is free to declare `id: "m"` while the machine is
+        #    also called "m", and letting the custom-id registry win there
+        #    silently redirected every existing `#m.child` target into that
+        #    unrelated branch. The machine root is the more established
+        #    meaning, so it keeps priority.
+        if segments[0] == machine.key:
+            try:
+                return _find_descendant(machine, segments[1:])
+            except StateNotFoundError:
+                # ⤵️ Fall through: a custom id may still match, which keeps
+                #    `#name.child` working when `name` shadows the machine key
+                #    but the path only exists under the custom-id anchor.
+                pass
+
+        # 🏷️ A custom `id` declared on a state. XState lets any state name
+        #    itself so distant branches can target it as `#myId`; without this
+        #    the lookup demanded that the first segment be the MACHINE key, so
+        #    every custom-id target raised `StateNotFoundError`. Supports
+        #    `#myId` and `#myId.child.leaf`.
+        custom_ids = getattr(machine, "_custom_ids", None)
+        if custom_ids:
+            anchor = custom_ids.get(segments[0])
+            if anchor is not None:
+                return (
+                    anchor
+                    if len(segments) == 1
+                    else _find_descendant(anchor, segments[1:])
+                )
+
+        raise StateNotFoundError(target, reference_state.id)
 
     # -------------------------------------------------------------------------
     # 🏛️ Strategy 2: Parent state resolution ('.')

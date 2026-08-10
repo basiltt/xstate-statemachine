@@ -24,6 +24,7 @@ synchronous, blocking operations.
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
+import functools
 import copy
 import inspect
 import json
@@ -139,6 +140,96 @@ class ActorSystem:
     def __repr__(self) -> str:
         """Provides a developer-friendly string representation."""
         return f"ActorSystem(actors={sorted(self._registry)})"
+
+
+# -----------------------------------------------------------------------------
+# 🛡️ Plugin Error Containment
+# -----------------------------------------------------------------------------
+class _SafePlugin:
+    """Wraps a plugin so a failing hook cannot break the interpreter.
+
+    🏛️ Architecture decision: containment lives at the registration boundary
+    rather than at each of the ~27 hook dispatch sites. Wrapping once keeps
+    every call site free of defensive noise and makes it impossible to add a
+    new dispatch that forgets to guard.
+
+    Observability must never be able to break the thing it observes. An
+    exception from a metrics exporter or an audit logger previously
+    propagated out of `send()` on the sync engine and killed the run loop on
+    the async engine — a monitoring bug taking down the state machine.
+    Actions and subscribers were already contained; plugins were the
+    outlier.
+
+    Attributes:
+        _plugin: The wrapped plugin instance.
+    """
+
+    __slots__ = ("_plugin",)
+
+    def __init__(self, plugin: Any) -> None:
+        """Stores the plugin being wrapped.
+
+        Args:
+            plugin (Any): Any object exposing the plugin hooks.
+        """
+        object.__setattr__(self, "_plugin", plugin)
+
+    @property
+    def wrapped(self) -> Any:
+        """Returns the underlying plugin instance."""
+        return object.__getattribute__(self, "_plugin")
+
+    def __getattr__(self, name: str) -> Any:
+        """Returns a hook wrapped in error containment.
+
+        Args:
+            name (str): The attribute being accessed.
+
+        Returns:
+            Any: A guarded callable, or the raw attribute if not callable.
+        """
+        plugin = object.__getattribute__(self, "_plugin")
+        # 🦆 Duck-typed plugins only need the hooks they care about. Letting
+        #    the AttributeError escape would make a partial plugin crash the
+        #    interpreter at the first hook it omitted — the very failure mode
+        #    this wrapper exists to prevent.
+        attribute = getattr(plugin, name, None)
+        if attribute is None:
+            return lambda *_a, **_k: None
+        if not callable(attribute):
+            return attribute
+
+        @functools.wraps(attribute)
+        def _guarded(*args: Any, **kwargs: Any) -> Any:
+            """Invokes the hook, logging and swallowing any failure."""
+            try:
+                return attribute(*args, **kwargs)
+            except Exception:
+                logger.error(
+                    "🔌 Plugin '%s' raised in '%s'; ignoring so the "
+                    "interpreter keeps running.",
+                    type(plugin).__name__,
+                    name,
+                    exc_info=True,
+                )
+                return None
+
+        return _guarded
+
+    def __eq__(self, other: Any) -> bool:
+        """Compares against the wrapped plugin so `in` checks work."""
+        target = object.__getattribute__(self, "_plugin")
+        if isinstance(other, _SafePlugin):
+            return bool(target == other.wrapped)
+        return bool(target == other)
+
+    def __hash__(self) -> int:
+        """Hashes as the wrapped plugin."""
+        return hash(object.__getattribute__(self, "_plugin"))
+
+    def __repr__(self) -> str:
+        """Mirrors the wrapped plugin's repr."""
+        return repr(object.__getattribute__(self, "_plugin"))
 
 
 class BaseInterpreter(Generic[TContext, TEvent]):
@@ -494,10 +585,18 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         Returning the live list would let `interpreter.plugins.append(...)`
         bypass the type validation performed by the setter.
 
+        📝 Returns the plugin objects the caller registered, NOT the internal
+        error-containment wrappers. Leaking wrappers would break `is`
+        comparisons, `isinstance(p, PluginBase)`, and attribute access on the
+        user's own plugin object.
+
         Returns:
             List[PluginBase]: A copy of the currently registered plugins.
         """
-        return list(self._plugins)
+        return [
+            item.wrapped if isinstance(item, _SafePlugin) else item
+            for item in self._plugins
+        ]
 
     @plugins.setter
     def plugins(
@@ -536,7 +635,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                     f"interface (e.g. subclass PluginBase); got "
                     f"{type(item).__name__}."
                 )
-        self._plugins = list(value)
+        self._plugins = [_SafePlugin(item) for item in value]
 
     def use(
         self: TInterpreter, plugin: PluginBase["BaseInterpreter[Any, Any]"]
@@ -555,7 +654,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             The interpreter instance (`self`) with the correct subclass type
             to allow for convenient and type-safe method chaining.
         """
-        self._plugins.append(plugin)
+        self._plugins.append(_SafePlugin(plugin))
         logger.info(
             "🔌 Plugin '%s' registered with interpreter '%s'.",
             type(plugin).__name__,
@@ -744,17 +843,29 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         Raises:
             StateNotFoundError: If a state ID from the snapshot cannot be found
                 in the provided machine definition.
-            json.JSONDecodeError: If the snapshot string is not valid JSON.
+            InvalidConfigError: If the snapshot string is not valid JSON, or
+                does not decode to a JSON object.
         """
         logger.info(
             "🔄 Restoring interpreter for machine '%s' from snapshot...",
             machine.id,
         )
+        # 🧯 Wrap the decode error. Snapshots come back from Redis, disk or a
+        #    queue, so corruption is an ordinary runtime condition callers are
+        #    expected to handle. Leaking `json.JSONDecodeError` meant
+        #    `except XStateMachineError` — the documented way to catch this
+        #    library's failures — silently missed it.
         try:
             snapshot = json.loads(snapshot_str)
         except json.JSONDecodeError as e:
             logger.error("❌ Invalid JSON in snapshot string: %s", e)
-            raise
+            raise InvalidConfigError(f"Snapshot is not valid JSON: {e}") from e
+
+        if not isinstance(snapshot, dict):
+            raise InvalidConfigError(
+                f"Snapshot must decode to a JSON object, got "
+                f"{type(snapshot).__name__}."
+            )
 
         # 🧪 Create a new instance of the correct interpreter class (sync/async)
         interpreter = cls(machine)
@@ -1701,21 +1812,72 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         # (those children were themselves members of `states_to_exit`). The
         # machine was left on a non-atomic ancestor with no active leaf,
         # rendering it permanently unresponsive. Do not reintroduce that step.
-        await self._exit_states(
-            sorted(list(states_to_exit), key=lambda s: s.depth, reverse=True),
-            event,
-        )
-        await self._execute_actions(transition.actions, event)
-        await self._enter_states(path_to_enter, event)
+        #
+        # ⚛️ ATOMICITY: exit → actions → enter is ONE transaction. If a user
+        #    action raises in the middle, the source has been left and the
+        #    target never reached, so the configuration would be EMPTY while
+        #    `status` still read "running" — permanently dead and reporting
+        #    itself healthy. Rolling back to the pre-transition configuration
+        #    keeps the machine in a state that genuinely exists; the exception
+        #    still propagates so the caller learns the transition failed.
+        try:
+            await self._exit_states(
+                sorted(
+                    list(states_to_exit),
+                    # 🔀 Depth alone leaves ties between sibling parallel
+                    #    regions, so set iteration order decided which exited
+                    #    first — the same machine and event could emit exit
+                    #    actions in a different order between runs, which is
+                    #    untestable and makes cleanup logic subtly unreliable.
+                    #    `id` is a stable secondary key.
+                    key=lambda s: (s.depth, s.id),
+                    reverse=True,
+                ),
+                event,
+            )
+            await self._execute_actions(transition.actions, event)
+            await self._enter_states(path_to_enter, event)
 
-        # 🕰️ Restore the remembered configuration for a history target. Each
-        #    remembered node is entered along its own path from the history
-        #    node's parent, so ancestors are re-entered correctly.
-        if target_state.type == "history":
-            for node in history_targets:
-                await self._enter_states(
-                    self._get_path_to_state(node, stop_at=domain), event
-                )
+            # 🕰️ Restore the remembered configuration for a history target.
+            #
+            # 🏛️ Architecture decision: build ONE combined entry path and make
+            #    a SINGLE `_enter_states` call. The explicit-child guard inside
+            #    `_enter_states` is computed per call, so entering each
+            #    remembered leaf separately meant each call saw only its own
+            #    path: restoring `r1.y` walked through `r1`, which could not
+            #    tell that `y` was explicitly targeted and so ALSO ran its
+            #    default `initial` descent into `r1.x`. Deep history into a
+            #    parallel state therefore activated TWO leaves in one region —
+            #    a configuration SCXML forbids and that breaks the
+            #    one-state-per-region invariant the whole library rests on.
+            if target_state.type == "history":
+                combined_path: List[StateNode] = []
+                for node in history_targets:
+                    for step in self._get_path_to_state(node, stop_at=domain):
+                        if step not in combined_path:
+                            combined_path.append(step)
+                if combined_path:
+                    await self._enter_states(combined_path, event)
+        except Exception:
+            logger.error(
+                "💥 Transition on '%s' failed; rolling back to the "
+                "pre-transition configuration.",
+                transition.source.id,
+                exc_info=True,
+            )
+            self._active_state_nodes.clear()
+            self._active_state_nodes.update(snapshot_before)
+
+            # ⏱️ Re-arm what exiting tore down. `_exit_states` cancels each
+            #    exited state's `after` timers and invoked services, so a
+            #    configuration restored without them looks right but is inert:
+            #    a rolled-back state with `after: {250: "timeout"}` would never
+            #    time out again. Re-scheduling makes the rollback a true
+            #    restore rather than a cosmetic one.
+            for node in snapshot_before:
+                if node in states_to_exit:
+                    self._schedule_state_tasks(node)
+            raise
 
         # 6. Notify plugins and subscribers of the completed transition.
         for plug in self._plugins:

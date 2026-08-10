@@ -160,9 +160,22 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             'running'
         """
         # 🚦 Idempotency check: only start if uninitialized.
+        #
+        # 🛑 A STOPPED interpreter is a different case from an already-running
+        #    one. Silently returning `self` made restart look like it worked:
+        #    the state ids still read as live, but `status` stayed "stopped"
+        #    and every subsequent `send()` was dropped. Interpreters are not
+        #    restartable — build a fresh one (optionally from a snapshot) —
+        #    so say so loudly instead of handing back a corpse.
+        if self.status == "stopped":
+            raise InvalidConfigError(
+                f"Interpreter '{self.id}' has been stopped and cannot be "
+                f"restarted. Create a new interpreter, or restore one with "
+                f"`SyncInterpreter.from_snapshot(...)`."
+            )
         if self.status != "uninitialized":
             logger.info(
-                "🚧 Interpreter '%s' already running or stopped. Skipping start.",
+                "🚧 Interpreter '%s' already running. Skipping start.",
                 self.id,
             )
             return self
@@ -325,8 +338,29 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             return
 
         self._is_processing = True
+        # 🛟 Bound the macrostep. The `raise` built-in re-enters this queue, so
+        #    an action that raises its own trigger event feeds itself forever.
+        #    `max_iterations` previously guarded only the eventless (`always`)
+        #    path, leaving this loop unbounded: `send()` never returned, with
+        #    no timeout and no way to interrupt it. The same ceiling now
+        #    applies to both paths.
+        processed = 0
+        limit = getattr(self.machine, "max_iterations", 1000)
         try:
             while self._event_queue:
+                processed += 1
+                if processed > limit:
+                    logger.error(
+                        "🛑 Exceeded %d queued events in a single macrostep on "
+                        "'%s'. This usually means an action raises the event "
+                        "that triggers it. Discarding %d pending event(s).",
+                        limit,
+                        self.id,
+                        len(self._event_queue),
+                    )
+                    self._event_queue.clear()
+                    break
+
                 current_event = self._event_queue.popleft()
                 logger.info("⚙️ Processing event: '%s'", current_event.type)
 
@@ -456,19 +490,64 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # `difference_update(states_to_exit)` after entry, which deleted the
         # initial children just entered by the recursive descent and left the
         # machine with no active leaf. See `BaseInterpreter._execute_transition`.
-        self._exit_states(
-            sorted(list(states_to_exit), key=lambda s: s.depth, reverse=True),
-            event,
-        )
-        self._execute_actions(transition.actions, event)
-        self._enter_states(path_to_enter, event)
+        #
+        # ⚛️ ATOMICITY: the three steps below are one transaction. If a user
+        #    action raises between exit and enter, the source has already been
+        #    left and the target was never reached, so the machine would be
+        #    holding an EMPTY configuration while still reporting "running" —
+        #    permanently dead and advertising itself as healthy. Restoring the
+        #    pre-transition configuration keeps the interpreter in a state that
+        #    actually exists, then re-raises so the caller still learns of the
+        #    failure. A torn configuration is strictly worse than a rolled-back
+        #    one: it is unrecoverable and silently swallows every later event.
+        try:
+            self._exit_states(
+                sorted(
+                    list(states_to_exit),
+                    # 🔀 Depth alone leaves ties between sibling parallel
+                    #    regions, so set iteration order decided which exited
+                    #    first — the same machine and event could emit exit
+                    #    actions in a different order between runs, which is
+                    #    untestable and makes cleanup logic subtly unreliable.
+                    #    `id` is a stable secondary key.
+                    key=lambda s: (s.depth, s.id),
+                    reverse=True,
+                ),
+                event,
+            )
+            self._execute_actions(transition.actions, event)
+            self._enter_states(path_to_enter, event)
 
-        # 🕰️ Restore the remembered configuration for a history target.
-        if target_state.type == "history":
-            for node in history_targets:
-                self._enter_states(
-                    self._get_path_to_state(node, stop_at=domain), event
-                )
+            # 🕰️ Restore the remembered configuration for a history target.
+            #    ONE combined call — see `BaseInterpreter._execute_transition`.
+            #    Entering each remembered leaf separately let every ancestor
+            #    run its default `initial` descent as well, activating two
+            #    leaves in one region.
+            if target_state.type == "history":
+                combined_path: List[StateNode] = []
+                for node in history_targets:
+                    for step in self._get_path_to_state(node, stop_at=domain):
+                        if step not in combined_path:
+                            combined_path.append(step)
+                if combined_path:
+                    self._enter_states(combined_path, event)
+        except Exception:
+            logger.error(
+                "💥 Transition on '%s' failed; rolling back to the "
+                "pre-transition configuration.",
+                transition.source.id,
+                exc_info=True,
+            )
+            self._active_state_nodes.clear()
+            self._active_state_nodes.update(snapshot_before_transition)
+
+            # ⏱️ Re-arm cancelled timers/services — see the matching comment
+            #    in `BaseInterpreter._execute_transition`. Without this the
+            #    restored configuration is inert.
+            for node in snapshot_before_transition:
+                if node in states_to_exit:
+                    self._schedule_state_tasks(node)
+            raise
 
         # Notify plugins and subscribers of the completed transition.
         self._notify_subscribers()
@@ -563,7 +642,17 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         for state in states_to_enter:
             logger.info("➡️ Entering state: '%s'", state.id)
             self._active_state_nodes.add(state)
-            self._execute_actions(state.entry, Event(f"entry.{state.id}"))
+            # 📨 Pass the REAL triggering event through. Synthesising an
+            #    `entry.<id>` event here discarded the payload, so an entry
+            #    action reading `event.payload` — the normal way to seed state
+            #    from an event — silently received nothing. The async engine
+            #    always forwarded the real event, so this also made the two
+            #    engines disagree. `event` may be None during initial entry,
+            #    which is why the fallback is retained.
+            self._execute_actions(
+                state.entry,
+                event if event is not None else Event(f"entry.{state.id}"),
+            )
 
             # 🏁 Handle final state logic by firing a `done` event if applicable.
             if state.type == "final":
@@ -656,7 +745,11 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # 🏃‍♂️ Then proceed with normal exit processing.
         for state in states_to_exit:
             logger.info("⬅️ Exiting state: '%s'", state.id)
-            self._execute_actions(state.exit, Event(f"exit.{state.id}"))
+            # 📨 Forward the real triggering event; see `_enter_states`.
+            self._execute_actions(
+                state.exit,
+                event if event is not None else Event(f"exit.{state.id}"),
+            )
             self._active_state_nodes.discard(state)
             logger.debug("✅ State '%s' exited successfully.", state.id)
 
@@ -988,12 +1081,23 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         )
         timer.start()
 
-    def _spawn_actor(self, action_def: ActionDefinition, event: Event) -> None:
+    def _spawn_actor(
+        self,
+        action_def: ActionDefinition,
+        event: Event,
+        on_complete: Optional[str] = None,
+    ) -> None:
         """Spawns a child state machine actor in blocking or non-blocking mode.
 
         Args:
             action_def: The action definition for spawning the actor.
             event: The event that triggered the spawn action.
+            on_complete: When set, the invoke id to report completion under.
+                Reaching a top-level final state queues
+                `done.invoke.<id>` so an `invoke` of a child MACHINE fires
+                `onDone`. Spawning alone never signalled completion, so a
+                parent waited forever even when the child finished
+                immediately.
 
         Raises:
             ActorSpawningError: If the specified service is not a valid
@@ -1042,6 +1146,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # --- Blocking Execution Path ---
         if blocking:
             child.start()
+            if on_complete is not None:
+                self._queue_actor_done(child, on_complete)
             return
 
         # --- Non-Blocking Execution Path (via a background thread) ---
@@ -1061,6 +1167,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     time.sleep(0.01)  # 🤏 Yield to prevent busy-waiting.
             finally:
                 # 🧹 Ensure cleanup happens whether the child finishes or is stopped.
+                if on_complete is not None:
+                    self._queue_actor_done(child, on_complete)
                 child.stop()
                 self._actors.pop(actor_id, None)
                 logger.info("🧹 Actor thread for '%s' cleaned up.", actor_id)
@@ -1069,6 +1177,38 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         threading.Thread(
             target=_runner, daemon=True, name=f"actor-{actor_id}"
         ).start()
+
+    def _queue_actor_done(
+        self, child: "SyncInterpreter", invoke_id: str
+    ) -> None:
+        """Queues `done.invoke.<id>` for a completed child machine.
+
+        Only fires when the child actually reached a top-level final state —
+        a child that was stopped early (because the parent left the invoking
+        state) must NOT report success.
+
+        Args:
+            child: The spawned child interpreter.
+            invoke_id: The `invoke` id to report completion under.
+        """
+        reached_final = any(
+            node.is_final and node.parent is child.machine
+            for node in child._active_state_nodes
+        )
+        if not reached_final:
+            logger.debug(
+                "🚫 Child '%s' did not reach a final state; no onDone.",
+                child.id,
+            )
+            return
+
+        done_event = DoneEvent(
+            type=f"done.invoke.{invoke_id}",
+            data=child.context,
+            src=invoke_id,
+        )
+        logger.info("🏁 Child actor '%s' completed; firing onDone.", child.id)
+        self.send(done_event)
 
     def _cancel_state_tasks(self, state: StateNode) -> None:
         """Cancel all pending **after** timers that belong to a state.
@@ -1216,6 +1356,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     }
                 ),
                 Event(type=f"invoke.{invocation.id}"),
+                on_complete=invocation.id,
             )
             return
 

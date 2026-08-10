@@ -27,7 +27,7 @@ poetry add xstate-statemachine
 
 ```bash
 xsm --version
-# Output: xsm 0.5.0
+# Output: xsm 0.6.0
 ```
 
 You can also verify the CLI tool is available:
@@ -319,6 +319,29 @@ xstate-statemachine/
 ```bash
 pip install --upgrade xstate-statemachine
 ```
+
+**From v0.5.x to v0.6.0:**
+
+v0.6.0 closes the remaining XState v5 feature gaps and repairs a family of
+correctness defects. Existing JSON configs and `MachineLogic` patterns keep
+working — but three **behavioural** changes are worth knowing:
+
+- **Action errors are contained.** If an action raises, the error is logged, the
+  transition still completes, and the interpreter keeps running. `.send()` no
+  longer re-raises. To react to a failure, record it on `context` and guard on
+  it. See [Actions](../actions/#error-handling-in-actions).
+- **A stopped interpreter cannot be restarted.** `start()` after `stop()` now
+  raises instead of silently returning a dead instance. Build a new interpreter,
+  or restore one with `from_snapshot()`.
+- **Ambiguous state keys are rejected.** A key containing `.` whose first
+  segment is also a sibling state (e.g. `"x.y"` next to `"x"`) now raises at
+  parse time, because both resolved to the same id. Unambiguous dotted keys such
+  as `"v1.0"` still work.
+
+New in this release: built-in [action creators](../actions/#built-in-action-creators-v060)
+(`assign`, `choose`, `enqueue_actions`, `sendTo`, …), the
+[actor system](../actors/#built-in-actor-actions-v060) with `systemId`, and the
+[pure API and waiting helpers](../testing-and-pure-api/).
 
 **From v0.4.x to v0.5.0:**
 

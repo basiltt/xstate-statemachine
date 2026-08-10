@@ -543,10 +543,41 @@ class StateNode(Generic[TContext, TEvent]):
             parent.id if parent else "ROOT",
         )
         # 🧍‍♂️ Core Properties
+        #
         self.key = key
         self.parent = parent
         self.machine = machine
         self.id = f"{parent.id}.{key}" if parent else key
+
+        # 🏷️ Custom `id`. XState lets a state declare its own id so distant
+        #    branches can target it as `#myId` without spelling out a path —
+        #    a core cross-branch idiom used by 37 of the 104 real-world
+        #    Stately machines in the test corpus. The key was previously read
+        #    only on the machine ROOT, so every such target raised
+        #    `StateNotFoundError`. The structural `self.id` stays the
+        #    canonical path (snapshots and `matches()` depend on it); the
+        #    custom name is recorded separately and registered on the machine
+        #    for `#` lookups.
+        self.custom_id: Optional[str] = None
+        if parent is not None:
+            declared_id = config.get("id")
+            if declared_id is not None:
+                if not isinstance(declared_id, str) or not declared_id:
+                    raise InvalidConfigError(
+                        f"State '{self.id}' has an invalid 'id'. Expected a "
+                        f"non-empty string, got {declared_id!r}."
+                    )
+                self.custom_id = declared_id
+                registry = getattr(machine, "_custom_ids", None)
+                if registry is not None:
+                    existing = registry.get(declared_id)
+                    if existing is not None:
+                        raise InvalidConfigError(
+                            f"Duplicate state id '{declared_id}' declared by "
+                            f"both '{existing.id}' and '{self.id}'. Custom "
+                            f"ids must be unique within a machine."
+                        )
+                    registry[declared_id] = self
 
         # 📏 Tree depth, cached at construction time.
         #
@@ -636,9 +667,59 @@ class StateNode(Generic[TContext, TEvent]):
         self.invoke = self._parse_invoke(config)
 
         # 🌳 Recursively build child states, forming the Composite pattern.
+        #
+        # 🛡️ Validate shapes before traversing. Handing a non-mapping straight
+        #    to `.items()` / `.get()` surfaced as a raw
+        #    "'str' object has no attribute 'items'" from library internals,
+        #    naming neither the offending state nor the offending key — the
+        #    user had no way to locate a typo in a large config.
+        raw_states = config.get("states", {})
+        if not isinstance(raw_states, dict):
+            raise InvalidConfigError(
+                f"State '{self.id}' has an invalid 'states' value of type "
+                f"'{type(raw_states).__name__}'. Expected an object/dict "
+                f"mapping state names to definitions."
+            )
+        for state_key, state_config in raw_states.items():
+            if not isinstance(state_config, dict):
+                raise InvalidConfigError(
+                    f"State '{self.id}.{state_key}' must be an object/dict, "
+                    f"got '{type(state_config).__name__}'."
+                )
+
+            # 🚫 A '.' in a state key collides with the id separator: a flat
+            #    state "x.y" and a nested x > y build the SAME fully-qualified
+            #    id, so `matches()`, snapshots and target resolution cannot
+            #    tell them apart — targeting "x.y" silently entered the nested
+            #    state and ran the wrong entry actions.
+            #
+            # 🏛️ Architecture decision: reject only the AMBIGUOUS case, where
+            #    the key's first segment is also a real sibling. Rejecting
+            #    every dot would break configs that work correctly today — a
+            #    key like "v1.0" or "api.v2" is unambiguous unless a sibling
+            #    is named "v1"/"api" — which is too aggressive for a patch
+            #    release. The rest warn, so the latent hazard stays visible.
+            if "." in state_key:
+                head = state_key.split(".", 1)[0]
+                if head in raw_states:
+                    raise InvalidConfigError(
+                        f"State key '{state_key}' in '{self.id}' is "
+                        f"ambiguous: its first segment '{head}' is also a "
+                        f"sibling state, so both resolve to the id "
+                        f"'{self.id}.{state_key}'. Rename one (for example "
+                        f"'{state_key.replace('.', '_')}')."
+                    )
+                logger.warning(
+                    "⚠️ State key '%s' in '%s' contains '.', the state-id "
+                    "separator. Accepted because no sibling shadows it, but "
+                    "renaming avoids ambiguity.",
+                    state_key,
+                    self.id,
+                )
+
         self.states = {
             state_key: StateNode(machine, state_config, state_key, self)
-            for state_key, state_config in config.get("states", {}).items()
+            for state_key, state_config in raw_states.items()
         }
         logger.debug(
             "✅ StateNode '%s' and its children initialized.", self.id
@@ -697,6 +778,15 @@ class StateNode(Generic[TContext, TEvent]):
                 no way to choose between them.
         """
         initial = config.get("initial")
+        # 🛡️ `initial` names a child state, so it must be a string. A non-string
+        #    was accepted and then never matched any child, producing a machine
+        #    that started with an empty configuration and dropped every event.
+        if initial is not None and not isinstance(initial, str):
+            raise InvalidConfigError(
+                f"State '{self.id}' has an invalid 'initial' value of type "
+                f"'{type(initial).__name__}'. Expected the name of a child "
+                f"state as a string."
+            )
         if self.type != "compound" or initial:
             return initial
 
@@ -754,7 +844,14 @@ class StateNode(Generic[TContext, TEvent]):
         transitions silently never fired.
         """
         on_map: Dict[str, List[TransitionDefinition]] = {}
-        for event, transitions_config in config.get("on", {}).items():
+        raw_on = config.get("on", {})
+        if not isinstance(raw_on, dict):
+            raise InvalidConfigError(
+                f"State '{self.id}' has an invalid 'on' value of type "
+                f"'{type(raw_on).__name__}'. Expected an object/dict mapping "
+                f"event names to transitions."
+            )
+        for event, transitions_config in raw_on.items():
             normalized_configs = self._normalize_transitions(
                 transitions_config
             )
@@ -808,7 +905,14 @@ class StateNode(Generic[TContext, TEvent]):
         with no indication that named delays were the intended feature.
         """
         after_map: Dict[Union[int, str], List[TransitionDefinition]] = {}
-        for delay, transitions_config in config.get("after", {}).items():
+        raw_after = config.get("after", {})
+        if not isinstance(raw_after, dict):
+            raise InvalidConfigError(
+                f"State '{self.id}' has an invalid 'after' value of type "
+                f"'{type(raw_after).__name__}'. Expected an object/dict "
+                f"mapping delays to transitions."
+            )
+        for delay, transitions_config in raw_after.items():
             normalized_configs = self._normalize_transitions(
                 transitions_config
             )
@@ -828,8 +932,15 @@ class StateNode(Generic[TContext, TEvent]):
         invoke_configs = self._ensure_list(config.get("invoke", []))
         invokes: List[InvokeDefinition] = []
         for i_config in invoke_configs:
+            # 🛡️ Reject rather than skip. Silently ignoring a malformed
+            #    `invoke` produced a state that simply never called its
+            #    service — no error, no log, just a machine that hangs.
             if not isinstance(i_config, dict):
-                continue
+                raise InvalidConfigError(
+                    f"State '{self.id}' has an invalid 'invoke' entry of "
+                    f"type '{type(i_config).__name__}'. Expected an "
+                    f"object/dict (or a list of them)."
+                )
 
             # The invoke ID defaults to the state's ID if not provided.
             invoke_id = i_config.get("id", self.id)
@@ -1012,13 +1123,45 @@ class MachineNode(StateNode[TContext, TEvent]):
                 "❌ Machine configuration must have a root 'id'."
             )
         self.logic = logic
-        self.initial_context = config.get("context", {})
+        raw_context = config.get("context", {})
+        # 🛡️ Context is a mapping by contract — `assign` and every action
+        #    subscript it by key. A list or scalar failed much later with an
+        #    opaque TypeError from inside a user action.
+        #    A CALLABLE is also valid: XState v5 allows a context factory,
+        #    resolved per-interpreter with the machine `input`.
+        #
+        # 🧩 Real Stately.ai exports ship an unresolved template placeholder
+        #    such as `"context": "{{initialContext}}"`. Nine machines in the
+        #    bundled corpus do exactly this. Hard-failing would break the
+        #    library's headline promise — running XState JSON unmodified — so
+        #    a string is downgraded to a warning and treated as empty context.
+        if isinstance(raw_context, str):
+            logger.warning(
+                "⚠️ Machine '%s' declares a string 'context' (%r), which is "
+                "usually an unresolved template placeholder. Starting with an "
+                "empty context.",
+                config["id"],
+                raw_context[:40],
+            )
+            raw_context = {}
+        elif not isinstance(raw_context, dict) and not callable(raw_context):
+            raise InvalidConfigError(
+                f"Machine '{config['id']}' has an invalid 'context' of type "
+                f"'{type(raw_context).__name__}'. Expected an object/dict, "
+                f"or a callable returning one."
+            )
+        self.initial_context = raw_context
         #: Upper bound on microsteps when settling transient ("always")
         #: transitions, mirroring XState's `maxIterations` (v5.31.0).
         self.max_iterations: int = int(config.get("maxIterations", 1000))
         #: Machine-level output declaration, resolved when a top-level final
         #: state is reached.
         self.machine_output: Any = config.get("output")
+
+        #: Custom `id` → node registry, populated by `StateNode.__init__` as
+        #: the tree is built. Must exist BEFORE `super().__init__` recurses
+        #: into the children that register themselves here.
+        self._custom_ids: Dict[str, StateNode] = {}
 
         # 🚀 Call the parent constructor to build the entire state tree.
         super().__init__(self, config, config["id"])

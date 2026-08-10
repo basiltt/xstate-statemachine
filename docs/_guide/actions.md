@@ -426,9 +426,112 @@ class Logic(MachineLogic):
         print(f"[{level.upper()}] {msg}")
 ```
 
+## Built-in Action Creators (v0.6.0)
+
+You rarely need to hand-write these. Import them and use them directly in a
+config — each returns a plain action definition, so they also work as raw JSON.
+
+| Creator | Does |
+|:--|:--|
+| `assign` | Update context |
+| `log` | Emit a structured log line |
+| `raise_` | Send an event to *this* machine |
+| `send_to` | Send to another actor by id or `systemId` |
+| `send_parent` | Send to the machine that spawned this one |
+| `choose` | Run the first action list whose guard passes |
+| `pure` | Compute actions from context at runtime |
+| `enqueue_actions` | Queue actions imperatively in a callback |
+| `spawn_child` / `stop_child` | Start / stop a child actor |
+| `cancel` | Cancel a delayed `send_to` |
+| `emit` | Emit an event to external subscribers |
+| `escalate` | Raise an error to the parent |
+| `forward_to` | Forward the current event to another actor |
+
+### `choose` — branch on guards
+
+```python
+from xstate_statemachine import (
+    create_machine, SyncInterpreter, MachineLogic, assign, choose,
+)
+
+config = {
+    "id": "m",
+    "initial": "a",
+    "context": {"vip": True, "tier": ""},
+    "states": {
+        "a": {"on": {"CLASSIFY": {"actions": choose([
+            {"guard": "isVip", "actions": assign({"tier": lambda x: "gold"})},
+            {"actions": assign({"tier": lambda x: "standard"})},
+        ])}}}
+    },
+}
+
+logic = MachineLogic(guards={"isVip": lambda ctx, e: ctx["vip"]})
+interp = SyncInterpreter(create_machine(config, logic=logic)).start()
+
+interp.send("CLASSIFY")
+print(interp.context["tier"])      # gold
+```
+
+### `enqueue_actions` — imperative queueing
+
+The most flexible creator: it subsumes both `pure` and `choose`. Your callback
+receives **one mapping** with `context`, `event`, `enqueue`, `check` and `self`:
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter, enqueue_actions
+
+def build_queue(args):
+    enqueue = args["enqueue"]
+    enqueue.assign({"n": lambda x: x["context"]["n"] + 10})
+    if args["context"]["n"] == 0:
+        enqueue.raise_({"type": "NEXT"})
+
+config = {
+    "id": "m",
+    "initial": "a",
+    "context": {"n": 0},
+    "states": {
+        "a": {"on": {"E": {"actions": enqueue_actions(build_queue)},
+                     "NEXT": "b"}},
+        "b": {},
+    },
+}
+
+interp = SyncInterpreter(create_machine(config)).start()
+interp.send("E")
+print(interp.context, interp.current_state_ids)   # {'n': 10} {'m.b'}
+```
+
+The `enqueue` object exposes `assign`, `raise_`, `send_to`, `send_parent`,
+`spawn_child`, `stop_child`, `emit`, `log` and `cancel`.
+
+> **Note:** the callback takes a **single** argument (the mapping), not
+> separate positional parameters.
+
+---
+
 ## Error Handling in Actions
 
-Actions can raise exceptions. Use `try/except` to handle errors gracefully without crashing the interpreter:
+If an action raises, the interpreter **contains** the error: it is logged, the
+transition still completes, and the machine keeps running. A single buggy side
+effect cannot take down a long-lived interpreter or its run loop.
+
+This means `.send()` does **not** re-raise your action's exception:
+
+```python
+class Logic(MachineLogic):
+    def riskyAction(self, interpreter, context, event, action_def):
+        raise ValueError("Something went wrong!")
+
+interp.send("GO")
+print(interp.current_state_ids)   # the transition completed anyway
+print(interp.status)              # "running"
+```
+
+Because the exception never reaches your caller, the way to *react* to a failure
+is to catch it inside the action and record it on `context`, then branch on that
+with a guard:
 
 ```python
 class Logic(MachineLogic):
@@ -447,7 +550,29 @@ class Logic(MachineLogic):
             print(f"Save failed: {e}")
 ```
 
-> **Warning:** Unhandled exceptions in actions will propagate up to the `send()` call. In production, always wrap risky operations in `try/except` and store error information in context for the machine to react to.
+```python
+class Logic(MachineLogic):
+    def hasError(self, context, event):
+        return context.get("saveStatus") == "error"
+```
+
+```python
+"saving": {
+    "on": {"DONE": [
+        {"target": "failed", "guard": "hasError"},
+        {"target": "saved"},
+    ]}
+}
+```
+
+> **Note:** Because action errors are contained, an uncaught exception is
+> *invisible to your machine* — it is logged, but the flow carries on as if the
+> action succeeded. Always record failures on `context` when the machine needs
+> to react to them.
+>
+> Invoked **services** behave differently: their failures *are* routed back into
+> the machine as `onError`, which is the idiomatic way to model expected errors.
+> See [Services & Invoke](../services/).
 
 ## Best Practices
 

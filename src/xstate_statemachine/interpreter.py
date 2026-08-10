@@ -43,7 +43,11 @@ from typing import (
 # -----------------------------------------------------------------------------
 from .base_interpreter import BaseInterpreter
 from .events import AfterEvent, DoneEvent, Event
-from .exceptions import ActorSpawningError, ImplementationMissingError
+from .exceptions import (
+    ActorSpawningError,
+    ImplementationMissingError,
+    InvalidConfigError,
+)
 from .actions import (
     ESCALATE,
     FORWARD_TO,
@@ -70,6 +74,11 @@ from .task_manager import TaskManager
 # 🪵 Logger Configuration
 # -----------------------------------------------------------------------------
 logger = logging.getLogger(__name__)
+
+# ⏱️ How often `_spawn_and_manage_actor` checks whether an invoked child
+#    machine has reached a final state. Small enough that `onDone` feels
+#    immediate, large enough not to busy-wait a core.
+_ACTOR_POLL_INTERVAL = 0.005
 
 
 # -----------------------------------------------------------------------------
@@ -121,6 +130,13 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             Union[Event, AfterEvent, DoneEvent]
         ] = asyncio.Queue()
         self._event_loop_task: Optional[asyncio.Task[None]] = None
+        #: Length of the current self-raised event chain. Incremented when an
+        #: action enqueues onto our own queue *during* processing, reset when
+        #: a macrostep completes without having done so. Bounds a runaway
+        #: `raise` without ever throttling external `send()` traffic.
+        self._raise_depth: int = 0
+        #: True while `_run_event_loop` is inside `_process_event...`.
+        self._processing: bool = False
 
         logger.info("✅ Asynchronous Interpreter '%s' initialized.", self.id)
 
@@ -194,9 +210,20 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             return self
 
         # 🛡️ Idempotency check: Don't start if already running or stopped.
+        #
+        # 🛑 A STOPPED interpreter cannot be revived. Returning `self` made
+        #    restart appear to succeed — state ids still read as live while
+        #    `status` stayed "stopped" and every `send()` was silently
+        #    dropped. Fail loudly instead of returning a corpse.
+        if self.status == "stopped":
+            raise InvalidConfigError(
+                f"Interpreter '{self.id}' has been stopped and cannot be "
+                f"restarted. Create a new interpreter, or restore one with "
+                f"`Interpreter.from_snapshot(...)`."
+            )
         if self.status != "uninitialized":
             logger.warning(
-                "⚠️ Interpreter '%s' already running or stopped. Skipping start.",
+                "⚠️ Interpreter '%s' already running. Skipping start.",
                 self.id,
             )
             return self
@@ -270,7 +297,12 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             plugin.on_interpreter_stop(self)
 
         # 🛑 Stop all child actors recursively.
-        for actor in self._actors.values():
+        #
+        # 🧵 Iterate over a SNAPSHOT. Stopping a child yields to the event
+        #    loop, which lets that child's own managing task run its `finally`
+        #    and pop itself from `self._actors` — mutating the dict mid-loop
+        #    and raising "dictionary changed size during iteration".
+        for actor in list(self._actors.values()):
             await actor.stop()
         self._actors.clear()
 
@@ -322,6 +354,20 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             **payload: Keyword arguments that become the event's payload if
                 `event_or_type` is a string.
         """
+        # 🚪 Refuse events once the machine is no longer processing. Nothing
+        #    drains the queue after `stop()`, so every `send()` accumulated
+        #    forever — a slow memory leak in any long-lived process that keeps
+        #    a reference to a finished machine. Dropping with a warning also
+        #    surfaces the mistake instead of hiding it.
+        if self.status in ("stopped", "done", "error"):
+            logger.warning(
+                "⚠️ Interpreter '%s' is %s; dropping event. Nothing drains "
+                "the queue after shutdown, so queuing here would leak.",
+                self.id,
+                self.status,
+            )
+            return
+
         # 📦 Use the centralized helper from the base class to normalize the input.
         event_obj = self._prepare_event(event_or_type, **payload)
 
@@ -340,6 +386,15 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             events: A list of events to send. Each event can be a string,
                 a dictionary, or an `Event` object.
         """
+        if self.status in ("stopped", "done", "error"):
+            logger.warning(
+                "⚠️ Interpreter '%s' is %s; dropping %d event(s).",
+                self.id,
+                self.status,
+                len(events),
+            )
+            return
+
         for event in events:
             event_obj = self._prepare_event(event)
             await self._event_queue.put(event_obj)
@@ -351,10 +406,39 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
     async def _run_event_loop(self) -> None:
         """The main asynchronous event-processing loop for the interpreter."""
         logger.debug("🔄 Event loop started for interpreter '%s'.", self.id)
+        # 🛟 Bound a SELF-FEEDING chain. The `raise` built-in enqueues onto
+        #    this same queue and `Queue.put()` on an unbounded queue never
+        #    suspends, so an action raising its own trigger event spins here
+        #    forever WITHOUT yielding — starving the entire asyncio loop (a
+        #    heartbeat scheduled every 50 ms was measured running zero times
+        #    in four seconds).
+        #
+        # 🏛️ Architecture decision: measure the RAISE CHAIN, not queue depth.
+        #    An earlier version incremented whenever the queue was non-empty
+        #    after processing, which cannot tell a runaway `raise` from a
+        #    merely busy producer — 5,000 legitimate concurrent `send()` calls
+        #    lost 3,999 of them. `_raise_depth` counts only events this loop
+        #    enqueued *while processing another event*, so external traffic of
+        #    any volume is never throttled.
+        limit = getattr(self.machine, "max_iterations", 1000)
         try:
             while self.status == "running":
                 # 📬 Wait indefinitely for the next event from the queue.
                 event = await self._event_queue.get()
+
+                if self._raise_depth > limit:
+                    logger.error(
+                        "🛑 Exceeded %d chained self-raised events on '%s'. "
+                        "This means an action raises the event that triggers "
+                        "it. Breaking the chain; externally queued events are "
+                        "unaffected.",
+                        limit,
+                        self.id,
+                    )
+                    self._raise_depth = 0
+                    self._event_queue.task_done()
+                    continue
+
                 logger.debug(
                     "🔥 Event '%s' dequeued for processing in '%s'.",
                     event.type,
@@ -368,7 +452,41 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 # 🧠 Process the event using the core algorithm from BaseInterpreter.
                 # This single step will handle the event and any subsequent
                 # "always" transitions until the machine is in a stable state.
-                await self._process_event_and_transient_transitions(event)
+                #
+                # 🛡️ Architecture decision: a failure while processing ONE
+                #    event must not terminate the run loop. Previously any
+                #    escaping error — an unresolvable target, a missing action,
+                #    a raising guard — killed the loop and flipped `status` to
+                #    "stopped". Because `send()` is fire-and-forget, the caller
+                #    was never told: the machine went silently dead and dropped
+                #    every subsequent event. `SyncInterpreter` raises to the
+                #    caller and keeps running, so the two engines disagreed on
+                #    a basic error path, and the async one failed in the more
+                #    dangerous direction.
+                #
+                #    The transition itself is already atomic (see
+                #    `_execute_transition`), so the configuration is intact
+                #    here; we log and carry on with the next event.
+                try:
+                    self._processing = True
+                    depth_before = self._raise_depth
+                    await self._process_event_and_transient_transitions(event)
+                    # ✅ A macrostep that raised nothing ends the chain.
+                    if self._raise_depth == depth_before:
+                        self._raise_depth = 0
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.error(
+                        "💥 Error processing event '%s' on '%s'; the "
+                        "interpreter remains running. %s",
+                        event.type,
+                        self.id,
+                        exc,
+                        exc_info=True,
+                    )
+                finally:
+                    self._processing = False
 
                 self._event_queue.task_done()
 
@@ -673,6 +791,12 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             send_id (Optional[str]): Id allowing later cancellation.
         """
         if not delay:
+            # 🔁 A zero-delay delivery to OURSELVES during processing is the
+            #    self-feeding shape that can spin the loop. Count it so
+            #    `_run_event_loop` can break the chain; external `send()`
+            #    calls never pass through here.
+            if actor is self and self._processing:
+                self._raise_depth += 1
             await self._send_to_actor(actor, target_event)
             return
 
@@ -1069,8 +1193,45 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 actor_id,
                 self.id,
             )
-            # This will run the child interpreter's event loop until it stops.
+            # 🚀 Start the child. NOTE: `start()` returns as soon as the
+            #    child's INITIAL state is entered — it does NOT block until the
+            #    machine finishes. Treating it as "run to completion" fired
+            #    `onDone` immediately with the child's initial context, so a
+            #    parent transitioned onward while the child was still working.
             await child_interpreter.start()
+
+            # ⏳ Now actually wait for the child to finish. `status` flips to
+            #    "done" on completion, or "error" if the machine failed;
+            #    polling the child's own lifecycle is what makes `onDone` mean
+            #    what XState says it means.
+            while child_interpreter.status == "running":
+                await asyncio.sleep(_ACTOR_POLL_INTERVAL)
+
+            # 💥 A child that FAILED must satisfy `onError`, not `onDone`.
+            #    Treating any non-running status as success reported a crashed
+            #    child as a clean completion, so a parent modelling failure
+            #    with `onError` silently took the happy path.
+            if child_interpreter.status == "error":
+                failure = getattr(
+                    child_interpreter,
+                    "error",
+                    None,
+                ) or RuntimeError(
+                    f"Invoked machine '{invocation.src}' failed."
+                )
+                logger.warning(
+                    "💥 Invoked machine '%s' ended in error; firing onError.",
+                    invocation.src,
+                )
+                error_event = DoneEvent(
+                    type=f"error.platform.{invocation.id}",
+                    data=failure,
+                    src=invocation.id,
+                )
+                await self.send(error_event)
+                for plugin in self._plugins:
+                    plugin.on_service_error(self, invocation, failure)
+                return
 
             # ✅ Child finished cleanly (reached a top-level final state).
             done_event = DoneEvent(
@@ -1111,5 +1272,14 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             for plugin in self._plugins:
                 plugin.on_service_error(self, invocation, e)
         finally:
-            if child_interpreter and child_interpreter.id in self._actors:
-                del self._actors[child_interpreter.id]
+            # 🧹 ALWAYS tear the child down. Deleting the registry entry
+            #    without stopping the interpreter orphaned it: its run loop and every
+            #    `after` timer survived the parent's own `stop()` forever,
+            #    because `stop()` iterates `self._actors` and the entry was
+            #    already gone. Measured at +2 permanently live asyncio tasks
+            #    per invocation — an unbounded leak for any server that
+            #    invokes a child machine per request.
+            if child_interpreter is not None:
+                self._actors.pop(child_interpreter.id, None)
+                if child_interpreter.status == "running":
+                    await child_interpreter.stop()
