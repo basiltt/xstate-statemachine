@@ -23,6 +23,7 @@
 import argparse
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 
@@ -44,8 +45,25 @@ from .utils import camel_to_snake, normalize_bool
 # 🪵 Logger Configuration
 # -----------------------------------------------------------------------------
 # A single logger instance for consistent logging across the module.
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+#
+# 🏛️ Architecture decision: `basicConfig` is NOT called at import time. This
+# module is importable as part of the package, and configuring the ROOT logger
+# on import hijacks logging for the whole host application — a library must
+# never do that. Configuration happens in `main()`, i.e. only when this is
+# actually run as the `xsm` command-line tool.
 logger = logging.getLogger(__name__)
+
+
+def _configure_cli_logging() -> None:
+    """Configures console logging for the CLI entry point only.
+
+    📝 No-op when the root logger already has handlers, so an embedding
+    application's configuration is never overridden.
+    """
+    if not logging.root.handlers:
+        logging.basicConfig(
+            level=logging.INFO, format="[%(levelname)s] %(message)s"
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -144,15 +162,41 @@ def _determine_output_paths(
 
 
 def _safe_print(msg: str) -> None:
-    """Print a message safely, handling encoding errors on Windows.
+    """Print a message, degrading gracefully on non-UTF-8 consoles.
 
-    On Windows with non-UTF-8 console encodings (e.g. cp1252), emoji
-    characters cause UnicodeEncodeError.  This helper falls back to
-    ASCII-safe output when that happens.
+    The CLI's status output is emoji-rich. On a Windows console using a
+    legacy code page (cp1252, cp437, ...) those characters are not
+    representable, and what happens next depends entirely on the error
+    handler the stream was constructed with:
+
+    * ``errors="strict"``  → raises ``UnicodeEncodeError``.
+    * ``errors="backslashreplace"`` → never raises, but prints a literal
+      ``\\u2705`` into the user's terminal.
+
+    🏛️ Architecture decision: check *encodability up front* rather than
+    catching the exception. A ``try/except`` only covers the strict case —
+    it is structurally blind to the silent one, which is the default under
+    ``PYTHONIOENCODING=cp1252:backslashreplace`` and several CI runners. It
+    also avoids a torn line: ``print`` can flush part of the string before
+    the encoder reaches the offending character, so the fallback would
+    duplicate the prefix already on screen.
+
+    Args:
+        msg: The message to write to stdout.
     """
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+
+    try:
+        msg.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        # 🔤 Reduce to characters this console can actually represent.
+        msg = msg.encode(encoding, errors="replace").decode(
+            encoding, errors="replace"
+        )
+
     try:
         print(msg)
-    except UnicodeEncodeError:
+    except UnicodeEncodeError:  # pragma: no cover - belt-and-braces
         print(msg.encode("ascii", errors="replace").decode("ascii"))
 
 
@@ -821,6 +865,9 @@ def run_info() -> None:
 
 def main() -> None:
     """Parses CLI arguments and orchestrates the code generation workflow."""
+    # 🪵 Configure console logging only when run as a CLI.
+    _configure_cli_logging()
+
     parser = get_parser()
     args = parser.parse_args()
     validate_args(

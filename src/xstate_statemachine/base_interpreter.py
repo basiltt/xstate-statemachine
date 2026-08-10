@@ -636,6 +636,13 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             },
             # 👶 Recursive child-actor snapshots, keyed by actor id.
             "actors": self._persist_actors(seen),
+            # 🌐 Persist systemId -> actor-id so `sendTo("sys", ...)` still
+            #    resolves after a restore. Without this the registry came back
+            #    empty and every systemId-addressed event was silently dropped.
+            "system": {
+                system_id: actor.id
+                for system_id, actor in self._system.items()
+            },
         }
 
     def _persist_actors(self, seen: Set[int]) -> Dict[str, Any]:
@@ -824,6 +831,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             interpreter._actors[actor_id] = child
             if record.get("src"):
                 interpreter._actor_sources[actor_id] = record["src"]
+
+        # 🌐 Re-register restored actors under their original systemIds.
+        for system_id, actor_id in (snapshot.get("system") or {}).items():
+            restored_actor = interpreter._actors.get(actor_id)
+            if restored_actor is not None:
+                interpreter._system[system_id] = restored_actor
 
         logger.info(
             "✅ Interpreter '%s' restored. States: %s, Status: '%s'",
@@ -2002,6 +2015,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         # 🌐 Parallel state: All child regions must be independently "done".
         if state_node.type == "parallel":
             for region in state_node.states.values():
+                # 🕰️ A history child is a pseudo-state, not a region. It is
+                #    never entered, so demanding that it be "done" made a
+                #    parallel state with a history child NEVER complete —
+                #    `onDone` silently never fired.
+                if region.type == "history":
+                    continue
                 active_in_region = [
                     d
                     for d in self._active_state_nodes

@@ -752,7 +752,20 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             if action_impl is None:
                 canonical = resolve_builtin(action_def.type)
                 if canonical is not None:
-                    self._execute_builtin_action(canonical, action_def, event)
+                    # 🛡️ See Interpreter._execute_actions: built-ins resolve
+                    #    user callables and can raise like any user action.
+                    try:
+                        self._execute_builtin_action(
+                            canonical, action_def, event
+                        )
+                    except Exception:
+                        logger.exception(
+                            "🔥 Built-in action '%s' raised while handling "
+                            "'%s'; skipping remaining actions.",
+                            action_def.type,
+                            event.type,
+                        )
+                        return
                     continue
 
             if not action_impl:

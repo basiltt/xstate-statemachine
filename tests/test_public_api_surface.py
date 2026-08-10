@@ -24,7 +24,9 @@ Contract tests for the documented public interpreter API.
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import asyncio
+import io
 import logging
+import sys
 import types
 import unittest
 from typing import Any, Dict
@@ -33,12 +35,14 @@ from typing import Any, Dict
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from src.xstate_statemachine import (
+    InvalidConfigError,
     Interpreter,
     LoggingInspector,
     MachineLogic,
     SyncInterpreter,
     create_machine,
 )
+from src.xstate_statemachine.cli.__main__ import _safe_print
 from src.xstate_statemachine.models import is_spawn_action, spawn_service_key
 
 # -----------------------------------------------------------------------------
@@ -468,6 +472,267 @@ class TestSharedGuardEvaluatedOnce(unittest.TestCase):
         # Assert
         self.assertEqual(1, len(calls))
         self.assertEqual({"m.done"}, interpreter.active_state_ids)
+
+
+# -----------------------------------------------------------------------------
+# 🧬 Documented `MachineLogic` Subclass Authoring Style
+# -----------------------------------------------------------------------------
+class TestMachineLogicSubclassStyle(unittest.TestCase):
+    """Pins the subclass authoring style shown throughout the guides.
+
+    🐛 Regression: `docs/_guide/actions.md`, `guards.md`, `context.md` and
+    `docs/api/index.md` all document defining logic as methods on a
+    `MachineLogic` subclass. Nothing ever collected those methods, so every
+    one of those published examples raised `ImplementationMissingError` on
+    the first transition that used them.
+    """
+
+    def test_subclass_action_and_guard_are_registered(self) -> None:
+        """Methods must resolve without any explicit dict wiring."""
+
+        # Arrange
+        class Logic(MachineLogic):
+            """Logic authored in the documented subclass style."""
+
+            def bump(self, _i: Any, ctx: Any, _e: Any, _a: Any) -> None:
+                """A 4-arity method: an action."""
+                ctx["n"] = ctx.get("n", 0) + 1
+
+            def always_true(self, _c: Any, _e: Any) -> bool:
+                """A 2-arity method: a guard."""
+                return True
+
+        config = {
+            "id": "m",
+            "initial": "a",
+            "context": {},
+            "states": {
+                "a": {
+                    "on": {
+                        "E": {
+                            "target": "b",
+                            "guard": "always_true",
+                            "actions": ["bump"],
+                        }
+                    }
+                },
+                "b": {},
+            },
+        }
+
+        # Act
+        interpreter = SyncInterpreter(
+            create_machine(config, logic=Logic())
+        ).start()
+        interpreter.send("E")
+
+        # Assert — the guard passed AND the action ran.
+        self.assertEqual({"m.b"}, interpreter.active_state_ids)
+        self.assertEqual(1, interpreter.context["n"])
+
+    def test_subclass_service_is_registered(self) -> None:
+        """A 3-arity method must register as an invokable service."""
+
+        # Arrange
+        class Logic(MachineLogic):
+            """Logic exposing a service method."""
+
+            def fetch(self, _i: Any, _c: Any, _e: Any) -> Dict[str, int]:
+                """A 3-arity method: a service."""
+                return {"v": 7}
+
+        config = {
+            "id": "m",
+            "initial": "l",
+            "states": {
+                "l": {"invoke": {"src": "fetch", "onDone": "d"}},
+                "d": {},
+            },
+        }
+
+        # Act
+        interpreter = SyncInterpreter(
+            create_machine(config, logic=Logic())
+        ).start()
+
+        # Assert
+        self.assertEqual({"m.d"}, interpreter.active_state_ids)
+
+    def test_explicit_dict_wins_over_subclass_method(self) -> None:
+        """Explicit wiring must remain the escape hatch.
+
+        Arity-based classification cannot be right for every conceivable
+        signature, so a constructor argument must always be able to override
+        it rather than be silently replaced.
+        """
+
+        # Arrange
+        class Logic(MachineLogic):
+            """A subclass whose guard is deliberately overridden."""
+
+            def gate(self, _c: Any, _e: Any) -> bool:
+                """Returns False; the explicit binding returns True."""
+                return False
+
+        # Act
+        logic = Logic(guards={"gate": lambda _c, _e: True})
+
+        # Assert
+        self.assertTrue(logic.guards["gate"](None, None))
+
+    def test_private_methods_are_not_registered(self) -> None:
+        """Underscore-prefixed helpers are implementation, not logic."""
+
+        # Arrange
+        class Logic(MachineLogic):
+            """A subclass with a private helper of guard-like arity."""
+
+            def _helper(self, _c: Any, _e: Any) -> bool:
+                """A private helper that must stay unregistered."""
+                return True
+
+        # Act
+        logic = Logic()
+
+        # Assert
+        self.assertNotIn("_helper", logic.guards)
+
+    def test_plain_machine_logic_registers_nothing(self) -> None:
+        """The base class must keep its empty-registry contract."""
+        # Arrange / Act
+        logic = MachineLogic()
+
+        # Assert
+        self.assertEqual({}, logic.actions)
+        self.assertEqual({}, logic.guards)
+        self.assertEqual({}, logic.services)
+
+
+# -----------------------------------------------------------------------------
+# 🛡️ Config Validation Reaches The User, Not A Raw TypeError
+# -----------------------------------------------------------------------------
+class TestMetadataConfigValidation(unittest.TestCase):
+    """Pins actionable errors for malformed `tags` / `meta`.
+
+    🐛 Regression: `set(raw_tags)` decided the outcome. `tags: 123` surfaced
+    as "'int' object is not iterable" with no indication of WHICH state was
+    wrong, and `tags: {"a": 1}` was silently accepted as the tag set `{"a"}`
+    by iterating the mapping's keys — a typo that produced working-looking
+    nonsense.
+    """
+
+    @staticmethod
+    def _config(key: str, value: Any) -> Dict[str, Any]:
+        """Builds a one-state machine carrying a metadata key."""
+        return {
+            "id": "m",
+            "initial": "a",
+            "states": {"a": {key: value}},
+        }
+
+    def test_non_iterable_tags_names_the_offending_state(self) -> None:
+        """The message must identify the state and the expected shape."""
+        # Act / Assert
+        with self.assertRaises(InvalidConfigError) as caught:
+            create_machine(self._config("tags", 123), logic=MachineLogic())
+
+        self.assertIn("m.a", str(caught.exception))
+        self.assertIn("tags", str(caught.exception))
+
+    def test_dict_tags_are_rejected_not_silently_keyed(self) -> None:
+        """A mapping must not be reinterpreted as its key set."""
+        # Act / Assert
+        with self.assertRaises(InvalidConfigError):
+            create_machine(
+                self._config("tags", {"a": 1}), logic=MachineLogic()
+            )
+
+    def test_non_string_tag_elements_are_rejected(self) -> None:
+        """Every element must be a string."""
+        # Act / Assert
+        with self.assertRaises(InvalidConfigError) as caught:
+            create_machine(
+                self._config("tags", ["ok", 5]), logic=MachineLogic()
+            )
+
+        self.assertIn("5", str(caught.exception))
+
+    def test_non_dict_meta_is_rejected(self) -> None:
+        """`meta` must be an object, not a scalar."""
+        # Act / Assert
+        with self.assertRaises(InvalidConfigError):
+            create_machine(self._config("meta", "nope"), logic=MachineLogic())
+
+    def test_valid_tag_shapes_still_parse(self) -> None:
+        """A bare string and a list must both keep working."""
+        # Act
+        single = create_machine(
+            self._config("tags", "one"), logic=MachineLogic()
+        )
+        many = create_machine(
+            self._config("tags", ["a", "b"]), logic=MachineLogic()
+        )
+
+        # Assert
+        self.assertEqual({"one"}, single.states["a"].tags)
+        self.assertEqual({"a", "b"}, many.states["a"].tags)
+
+
+# -----------------------------------------------------------------------------
+# 🔤 CLI Output On Legacy Consoles
+# -----------------------------------------------------------------------------
+class TestCliSafePrint(unittest.TestCase):
+    """Pins that emoji-rich CLI output degrades instead of leaking escapes.
+
+    🐛 Regression: `_safe_print` only caught `UnicodeEncodeError`, so it was
+    structurally blind to a stream built with `errors="backslashreplace"` —
+    which never raises and instead prints a literal `✅` to the user's
+    terminal.
+    """
+
+    def _capture(self, errors: str) -> bytes:
+        """Runs `_safe_print` against a cp1252 stream with `errors`."""
+        # Arrange
+        buffer = io.BytesIO()
+        stream = io.TextIOWrapper(buffer, encoding="cp1252", errors=errors)
+        original = sys.stdout
+        sys.stdout = stream
+        try:
+            _safe_print("OK ✅ DONE")
+            stream.flush()
+        finally:
+            sys.stdout = original
+        return buffer.getvalue()
+
+    def test_strict_stream_does_not_raise(self) -> None:
+        """The historic failure mode stays fixed."""
+        self.assertIn(b"OK ", self._capture("strict"))
+
+    def test_backslashreplace_stream_emits_no_literal_escape(self) -> None:
+        """The silent failure mode must not print `✅`."""
+        # Act
+        written = self._capture("backslashreplace")
+
+        # Assert
+        self.assertNotIn(rb"\u2705", written)
+        self.assertIn(b"OK ", written)
+        self.assertIn(b"DONE", written)
+
+    def test_utf8_stream_preserves_the_emoji(self) -> None:
+        """A capable console must still get the real character."""
+        # Arrange
+        buffer = io.BytesIO()
+        stream = io.TextIOWrapper(buffer, encoding="utf-8")
+        original = sys.stdout
+        sys.stdout = stream
+        try:
+            _safe_print("OK ✅")
+            stream.flush()
+        finally:
+            sys.stdout = original
+
+        # Assert
+        self.assertIn("✅".encode("utf-8"), buffer.getvalue())
 
 
 if __name__ == "__main__":  # pragma: no cover

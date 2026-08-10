@@ -217,6 +217,16 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             init_event = Event(type="___xstate_statemachine_init___")
             await self._enter_states([self.machine], init_event)
 
+            # ⚡ Settle eventless ("always") transitions before returning.
+            #
+            # 🏛️ Architecture decision: `SyncInterpreter.start()` already does
+            # this, so without it the two engines disagreed on the very first
+            # observable state — a machine whose initial state declares
+            # `always` sat in that state under the async engine until some
+            # unrelated event happened to nudge it. `start()` must return a
+            # settled configuration in BOTH engines.
+            await self._settle_transient_transitions()
+
             logger.info(
                 "✅ Interpreter '%s' started successfully. Current states: %s",
                 self.id,
@@ -416,9 +426,16 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         # 1️⃣ Process the initial event that was dequeued.
         await self._process_event(event)
 
-        # 2️⃣ Immediately loop to handle any event-less ("always") transitions.
-        #    This continues until no more "always" transitions are available,
-        #    at which point the machine state is considered stable.
+        # 2️⃣ Immediately settle any event-less ("always") transitions.
+        await self._settle_transient_transitions()
+
+    async def _settle_transient_transitions(self) -> None:
+        """Runs eventless ("always") transitions until the state is stable.
+
+        Extracted so `start()` can settle the initial configuration too — the
+        sync engine already did this, so leaving it inline made the two
+        engines disagree on the very first observable state.
+        """
         # 🛟 Bound the microstep loop. A pair of `always` transitions that
         #    target each other spins forever; XState added the same guard in
         #    v5.31.0. `max_iterations` is configurable on the machine.
@@ -492,9 +509,25 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             if action_callable is None:
                 canonical = resolve_builtin(action_def.type)
                 if canonical is not None:
-                    await self._execute_builtin_action(
-                        canonical, action_def, event
-                    )
+                    # 🛡️ Built-ins resolve user-supplied params/callables, so
+                    #    they can raise for exactly the same reasons a user
+                    #    action can. Containing them here keeps the documented
+                    #    contract - and stops an escaping error from killing
+                    #    the fire-and-forget run loop.
+                    try:
+                        await self._execute_builtin_action(
+                            canonical, action_def, event
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception(
+                            "🔥 Built-in action '%s' raised while handling "
+                            "'%s'; skipping remaining actions.",
+                            action_def.type,
+                            event.type,
+                        )
+                        return
                     continue
 
             if not action_callable:
@@ -907,7 +940,18 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 payload={"input": invocation.input or {}},
             )
             # 🏃‍♂️ Await the actual service coroutine.
-            result = await service(self, self.context, invoke_event)
+            # 🔀 Accept both plain and coroutine services.
+            #
+            # 🏛️ Architecture decision: a synchronous `src` used to be
+            # `await`ed unconditionally, which raised TypeError inside the
+            # service task and left the machine sitting in the invoking state
+            # forever — silently, since the task exception was never
+            # retrieved. `SyncInterpreter` accepted the same service happily,
+            # so the two engines disagreed on identical config.
+            produced = service(self, self.context, invoke_event)
+            result = (
+                await produced if inspect.isawaitable(produced) else produced
+            )
 
             # ✅ Service completed, send a 'done' event with the result data.
             done_event = DoneEvent(

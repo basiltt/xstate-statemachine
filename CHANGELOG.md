@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+Defects found by the end-to-end review of merged `main` prior to the 0.6.0
+release. None of these ever reached PyPI.
+
+- **`py.typed` is now shipped.** `pyproject.toml` declared the
+  `Typing :: Typed` classifier, but no PEP 561 marker was packaged, so every
+  inline annotation was invisible to downstream type checkers and the
+  classifier was simply untrue.
+- **Built-in action failures are contained.** User-supplied actions were
+  wrapped in error containment; built-in action creators (`assign`,
+  `spawnChild`, `raise`, ...) were not — despite resolving user callables and
+  raising for the same reasons. An escaping error killed the async run loop
+  while callers still observed `status == "running"`.
+- **The async engine accepts synchronous services.** `invoke` awaited the
+  service result unconditionally, so a plain function raised `TypeError`
+  inside a task whose exception was never retrieved; the machine sat in the
+  invoking state forever. `SyncInterpreter` accepted the identical config.
+- **`systemId` survives a snapshot round-trip.** The registry came back empty
+  after a restore, so every `sendTo("sys", ...)` silently dropped its event.
+- **The `MachineLogic` subclass style now works.** Defining actions, guards,
+  and services as methods on a subclass is documented throughout the guides,
+  but nothing collected those methods, so every such example raised
+  `ImplementationMissingError`. Methods are classified by arity; explicitly
+  supplied dictionaries always take precedence.
+- **Importing the CLI no longer configures root logging.** `cli/__main__.py`
+  called `logging.basicConfig()` at module import, attaching a handler to the
+  host application's root logger.
+- **CLI output degrades instead of leaking escapes.** `_safe_print` only
+  caught `UnicodeEncodeError`, leaving it blind to a stream built with
+  `errors="backslashreplace"` — which never raises and printed a literal
+  `✅` to legacy Windows consoles.
+- **Malformed `tags` / `meta` raise an actionable error.** `tags: 123`
+  surfaced as `'int' object is not iterable` with no indication of which state
+  was at fault, and `tags: {"a": 1}` was silently accepted as the tag set
+  `{"a"}` by iterating the mapping's keys.
+
+### Documentation
+
+- `docs/_guide/interpreters.md` claimed that a raising action propagates out
+  of `.send()`. Actions have been contained since 0.5.1; the section now
+  documents the real behaviour and shows how to model a failure on `context`.
+- `CHANGELOG.md` gained the link reference definitions its `[x.y.z]` headings
+  had always assumed, and records that 0.5.1 was never published to PyPI.
+
 ## [0.6.0] - 2026-08-08
 
 **XState v5 feature parity.** Closes all 73 gaps catalogued in
@@ -181,6 +226,10 @@ the only previous mechanism was a user function mutating context in place:
     included in the distribution.
 
 ## [0.5.1] - 2026-08-07
+
+> **Note:** 0.5.1 was never published to PyPI. Its changes ship as part
+> of [0.6.0](#060---2026-08-08); this section is retained so the
+> provenance of each fix stays traceable.
 
 This is a **correctness release**. It repairs a family of defects in the core
 SCXML transition algorithm, aligns the runtime's error handling with the
@@ -583,3 +632,24 @@ existing.
 ---
 
 ## [0.1.0] - 2025‑07‑07 — _Initial release_
+
+<!-- ---------------------------------------------------------------- -->
+<!-- 🔗 Link reference definitions                                     -->
+<!-- Every `## [x.y.z]` heading above is a Markdown reference link.    -->
+<!-- Without these definitions they render as literal bracketed text.  -->
+<!-- ---------------------------------------------------------------- -->
+
+[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.5.1...v0.6.0
+[0.5.1]: https://github.com/basiltt/xstate-statemachine/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.4.3...v0.5.0
+[0.4.3]: https://github.com/basiltt/xstate-statemachine/compare/v0.4.2...v0.4.3
+[0.4.2]: https://github.com/basiltt/xstate-statemachine/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/basiltt/xstate-statemachine/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/basiltt/xstate-statemachine/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.2.3...v0.3.0
+[0.2.3]: https://github.com/basiltt/xstate-statemachine/compare/v0.2.2...v0.2.3
+[0.2.2]: https://github.com/basiltt/xstate-statemachine/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/basiltt/xstate-statemachine/compare/v0.1.0...v0.2.1
+[0.1.0]: https://github.com/basiltt/xstate-statemachine/releases/tag/v0.1.0
