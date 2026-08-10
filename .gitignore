@@ -688,3 +688,10 @@ backend/alembic/versions/*
 *.session
 *.session-journal
 *.env
+
+# 🤖 Agent working directory.
+# Local tooling state and internal review notes — not part of the library and
+# not something users should receive. Excluded from the sdist too (see
+# [tool.hatch.build.targets.sdist] in pyproject.toml), since anything tracked
+# here would otherwise be packaged into the tarball published to PyPI.
+.claude/

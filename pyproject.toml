@@ -56,6 +56,29 @@ test = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/xstate_statemachine"]
 
+# 📦 Source distribution contents.
+#
+# 🏛️ Architecture decision: allowlist, not denylist. Hatchling's default sdist
+#    inclusion is broad, so internal working files land in the tarball unless
+#    something stops them — `.claude/` review notes were being published to
+#    PyPI this way. A denylist only excludes what we thought to name; naming
+#    what SHIPS means a new stray directory is excluded by default rather than
+#    silently packaged into an immutable release artifact.
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/docs",
+    "/examples",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/CONTRIBUTING.md",
+    "/CODE_OF_CONDUCT.md",
+    "/AGENTS.md",
+    "/pyproject.toml",
+]
+
 # 📦 PEP 561: ship the marker so type checkers actually consume the inline
 #    annotations. The `Typing :: Typed` classifier promised this already, so
 #    without the file the claim was false and every hint was invisible to mypy.
