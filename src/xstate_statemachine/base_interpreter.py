@@ -2002,6 +2002,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         # 🌐 Parallel state: All child regions must be independently "done".
         if state_node.type == "parallel":
             for region in state_node.states.values():
+                # 🕰️ A history child is a pseudo-state, not a region. It is
+                #    never entered, so demanding that it be "done" made a
+                #    parallel state with a history child NEVER complete —
+                #    `onDone` silently never fired.
+                if region.type == "history":
+                    continue
                 active_in_region = [
                     d
                     for d in self._active_state_nodes

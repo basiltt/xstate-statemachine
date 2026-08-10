@@ -4732,5 +4732,106 @@ class TestSpawnInputAndRegistryCleanup(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0, len(interpreter._pending_send_cancels))
 
 
+# -----------------------------------------------------------------------------
+# 🕰️ History Pseudo-States Are Not Regions
+# -----------------------------------------------------------------------------
+class TestHistoryIsNotARegion(unittest.IsolatedAsyncioTestCase):
+    """Pins that a history child never counts as a parallel region.
+
+    🐛 Regression: `_is_state_done` iterated every child of a parallel state
+    and required each to be "done". A history child is a pseudo-state that is
+    never entered, so it could never be done — meaning a parallel state
+    declaring a history child NEVER completed and its `onDone` silently never
+    fired. Found by combining two features that had only been tested apart.
+    """
+
+    CONFIG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "P",
+        "states": {
+            "P": {
+                "type": "parallel",
+                "onDone": "end",
+                "states": {
+                    "R1": {
+                        "initial": "a",
+                        "states": {
+                            "a": {"on": {"E": "f"}},
+                            "f": {"type": "final"},
+                        },
+                    },
+                    "R2": {
+                        "initial": "x",
+                        "states": {
+                            "x": {"on": {"E": "f"}},
+                            "f": {"type": "final"},
+                        },
+                    },
+                    "h": {"type": "history"},
+                },
+            },
+            "end": {},
+        },
+    }
+
+    def test_parallel_on_done_fires_with_a_history_child(self) -> None:
+        """A history child must not block the parallel state's completion."""
+        # Arrange
+        interpreter = start(self.CONFIG)
+
+        # Act
+        interpreter.send("E")
+
+        # Assert
+        self.assertEqual({"m.end"}, interpreter.current_state_ids)
+
+    async def test_parallel_on_done_with_history_child_async(self) -> None:
+        """The async engine must complete identically."""
+        # Arrange
+        interpreter = await Interpreter(build(self.CONFIG)).start()
+        self.addAsyncCleanup(interpreter.stop)
+
+        # Act
+        await settle(interpreter, "E")
+        await asyncio.sleep(0.05)
+
+        # Assert
+        self.assertEqual({"m.end"}, interpreter.current_state_ids)
+
+    def test_incomplete_parallel_still_blocks_on_done(self) -> None:
+        """Control: a genuinely unfinished region must still block."""
+        # Arrange — only R1 can reach a final state.
+        config = {
+            "id": "m",
+            "initial": "P",
+            "states": {
+                "P": {
+                    "type": "parallel",
+                    "onDone": "end",
+                    "states": {
+                        "R1": {
+                            "initial": "a",
+                            "states": {
+                                "a": {"on": {"E": "f"}},
+                                "f": {"type": "final"},
+                            },
+                        },
+                        "R2": {"initial": "x", "states": {"x": {}}},
+                        "h": {"type": "history"},
+                    },
+                },
+                "end": {},
+            },
+        }
+        interpreter = start(config)
+
+        # Act
+        interpreter.send("E")
+
+        # Assert — R2 never finished, so onDone must NOT fire.
+        self.assertIn("m.P.R2.x", interpreter.current_state_ids)
+        self.assertNotIn("m.end", interpreter.current_state_ids)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
