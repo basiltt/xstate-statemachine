@@ -22,6 +22,9 @@ Parity tests for XState v5 features added in v0.6.0.
 import asyncio
 import json
 import logging
+import os
+import subprocess
+import sys
 import threading
 import time
 import types
@@ -4906,6 +4909,234 @@ class TestStartupParity(unittest.IsolatedAsyncioTestCase):
 
         # Assert
         self.assertEqual({"m.a"}, interpreter.current_state_ids)
+
+
+# -----------------------------------------------------------------------------
+# 🚢 Release-Readiness Regressions
+# -----------------------------------------------------------------------------
+class TestReleaseReadiness(unittest.IsolatedAsyncioTestCase):
+    """Pins defects found by the end-to-end review of merged main."""
+
+    CHILD: Dict[str, Any] = {
+        "id": "k",
+        "initial": "i",
+        "states": {"i": {}},
+    }
+
+    def test_py_typed_marker_is_present(self) -> None:
+        """PEP 561 marker must exist, since the classifier promises it.
+
+        🐛 Regression: `pyproject.toml` declared `Typing :: Typed` but no
+        `py.typed` shipped, so every inline annotation was invisible to mypy
+        and the classifier was simply false.
+        """
+        # Arrange
+        import src.xstate_statemachine as package
+
+        marker = os.path.join(os.path.dirname(package.__file__), "py.typed")
+
+        # Assert
+        self.assertTrue(os.path.exists(marker), "py.typed marker is missing")
+
+    async def test_builtin_action_failure_is_contained_async(self) -> None:
+        """A raising built-in must not tear down the async run loop.
+
+        🐛 Regression: user actions were contained but BUILT-IN actions were
+        not, even though they resolve user-supplied callables and can raise
+        for exactly the same reasons. An escaping error killed the
+        fire-and-forget run loop while callers still saw `status == running`.
+        """
+
+        def boom(_args: Any) -> Any:
+            """A deliberately faulty assignment callable."""
+            raise ValueError("in-builtin")
+
+        # Arrange
+        interpreter = await Interpreter(
+            build(
+                {
+                    "id": "m",
+                    "initial": "a",
+                    "context": {},
+                    "states": {
+                        "a": {
+                            "on": {
+                                "E": {
+                                    "target": "b",
+                                    "actions": [
+                                        {
+                                            "type": "assign",
+                                            "params": {
+                                                "assignment": {"n": boom}
+                                            },
+                                        }
+                                    ],
+                                }
+                            }
+                        },
+                        "b": {"on": {"N": "c"}},
+                        "c": {},
+                    },
+                }
+            )
+        ).start()
+        self.addAsyncCleanup(interpreter.stop)
+
+        # Act
+        await settle(interpreter, "E")
+        await settle(interpreter, "N")
+        await asyncio.sleep(0.05)
+
+        # Assert — the loop survived and kept processing.
+        self.assertEqual("running", interpreter.status)
+        self.assertEqual({"m.c"}, interpreter.current_state_ids)
+
+    def test_builtin_action_failure_is_contained_sync(self) -> None:
+        """The sync engine must contain a raising built-in too."""
+
+        def boom(_args: Any) -> Any:
+            """A deliberately faulty assignment callable."""
+            raise ValueError("in-builtin")
+
+        # Arrange
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "a",
+                "context": {},
+                "states": {
+                    "a": {
+                        "on": {
+                            "E": {
+                                "target": "b",
+                                "actions": [
+                                    {
+                                        "type": "assign",
+                                        "params": {"assignment": {"n": boom}},
+                                    }
+                                ],
+                            }
+                        }
+                    },
+                    "b": {},
+                },
+            }
+        )
+
+        # Act
+        interpreter.send("E")
+
+        # Assert — the state change still completed.
+        self.assertEqual({"m.b"}, interpreter.current_state_ids)
+
+    async def test_async_engine_accepts_a_synchronous_service(self) -> None:
+        """A plain function `src` must work on BOTH engines.
+
+        🐛 Regression: the async engine `await`ed the result unconditionally,
+        raising `TypeError` inside the service task. Because the task
+        exception was never retrieved, the machine sat in the invoking state
+        forever — silently — while `SyncInterpreter` accepted the identical
+        config.
+        """
+        # Arrange
+        config = {
+            "id": "m",
+            "initial": "l",
+            "states": {"l": {"invoke": {"src": "s", "onDone": "d"}}, "d": {}},
+        }
+
+        def sync_service(_i: Any, _c: Any, _e: Any) -> Dict[str, int]:
+            """A deliberately non-async service."""
+            return {"v": 1}
+
+        interpreter = await Interpreter(
+            build(config, services={"s": sync_service})
+        ).start()
+        self.addAsyncCleanup(interpreter.stop)
+
+        # Act
+        await asyncio.sleep(0.15)
+
+        # Assert
+        self.assertEqual({"m.d"}, interpreter.current_state_ids)
+
+        # Assert — and the sync engine agrees.
+        sync_interpreter = start(config, services={"s": sync_service})
+        self.assertEqual({"m.d"}, sync_interpreter.current_state_ids)
+
+    def test_system_id_survives_a_snapshot_round_trip(self) -> None:
+        """`systemId` registrations must be persisted and restored.
+
+        🐛 Regression: the registry came back empty after a restore, so every
+        `sendTo("sys", ...)` silently dropped its event.
+        """
+        # Arrange
+        parent = {
+            "id": "p",
+            "initial": "a",
+            "context": {},
+            "states": {
+                "a": {
+                    "entry": [
+                        {
+                            "type": "spawnChild",
+                            "params": {
+                                "src": "kid",
+                                "id": "w",
+                                "systemId": "sys",
+                            },
+                        }
+                    ]
+                }
+            },
+        }
+
+        def logic() -> MachineLogic:
+            """Fresh logic exposing the child machine."""
+            return MachineLogic(
+                services={"kid": lambda i, c, e: build(self.CHILD)}
+            )
+
+        original = SyncInterpreter(
+            create_machine(parent, logic=logic())
+        ).start()
+        self.assertIn("sys", original.system)
+        snapshot = original.get_snapshot()
+        original.stop()
+
+        # Act
+        restored = SyncInterpreter.from_snapshot(
+            snapshot, create_machine(parent, logic=logic())
+        )
+
+        # Assert
+        self.assertIn("sys", restored.system)
+        self.assertIsNotNone(restored.system.get("sys"))
+
+    def test_importing_the_cli_does_not_configure_root_logging(self) -> None:
+        """A library must never hijack the host application's root logger.
+
+        🐛 Regression: `cli/__main__.py` called `logging.basicConfig()` at
+        module import, so merely importing the package's CLI module attached
+        a handler to the ROOT logger.
+        """
+        # Arrange / Act — run in a subprocess so this test's own logging
+        #                 configuration cannot mask the result.
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import logging;"
+                "before=len(logging.root.handlers);"
+                "import xstate_statemachine.cli.__main__;"
+                "print(before, len(logging.root.handlers))",
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        # Assert
+        self.assertEqual("0 0", result.stdout.strip())
 
 
 if __name__ == "__main__":  # pragma: no cover

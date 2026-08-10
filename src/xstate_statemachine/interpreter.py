@@ -509,9 +509,25 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             if action_callable is None:
                 canonical = resolve_builtin(action_def.type)
                 if canonical is not None:
-                    await self._execute_builtin_action(
-                        canonical, action_def, event
-                    )
+                    # 🛡️ Built-ins resolve user-supplied params/callables, so
+                    #    they can raise for exactly the same reasons a user
+                    #    action can. Containing them here keeps the documented
+                    #    contract - and stops an escaping error from killing
+                    #    the fire-and-forget run loop.
+                    try:
+                        await self._execute_builtin_action(
+                            canonical, action_def, event
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception(
+                            "🔥 Built-in action '%s' raised while handling "
+                            "'%s'; skipping remaining actions.",
+                            action_def.type,
+                            event.type,
+                        )
+                        return
                     continue
 
             if not action_callable:
@@ -924,7 +940,18 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 payload={"input": invocation.input or {}},
             )
             # 🏃‍♂️ Await the actual service coroutine.
-            result = await service(self, self.context, invoke_event)
+            # 🔀 Accept both plain and coroutine services.
+            #
+            # 🏛️ Architecture decision: a synchronous `src` used to be
+            # `await`ed unconditionally, which raised TypeError inside the
+            # service task and left the machine sitting in the invoking state
+            # forever — silently, since the task exception was never
+            # retrieved. `SyncInterpreter` accepted the same service happily,
+            # so the two engines disagreed on identical config.
+            produced = service(self, self.context, invoke_event)
+            result = (
+                await produced if inspect.isawaitable(produced) else produced
+            )
 
             # ✅ Service completed, send a 'done' event with the result data.
             done_event = DoneEvent(

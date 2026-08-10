@@ -44,8 +44,25 @@ from .utils import camel_to_snake, normalize_bool
 # 🪵 Logger Configuration
 # -----------------------------------------------------------------------------
 # A single logger instance for consistent logging across the module.
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+#
+# 🏛️ Architecture decision: `basicConfig` is NOT called at import time. This
+# module is importable as part of the package, and configuring the ROOT logger
+# on import hijacks logging for the whole host application — a library must
+# never do that. Configuration happens in `main()`, i.e. only when this is
+# actually run as the `xsm` command-line tool.
 logger = logging.getLogger(__name__)
+
+
+def _configure_cli_logging() -> None:
+    """Configures console logging for the CLI entry point only.
+
+    📝 No-op when the root logger already has handlers, so an embedding
+    application's configuration is never overridden.
+    """
+    if not logging.root.handlers:
+        logging.basicConfig(
+            level=logging.INFO, format="[%(levelname)s] %(message)s"
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -821,6 +838,9 @@ def run_info() -> None:
 
 def main() -> None:
     """Parses CLI arguments and orchestrates the code generation workflow."""
+    # 🪵 Configure console logging only when run as a CLI.
+    _configure_cli_logging()
+
     parser = get_parser()
     args = parser.parse_args()
     validate_args(
