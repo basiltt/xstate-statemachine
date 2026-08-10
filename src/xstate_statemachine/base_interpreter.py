@@ -1341,7 +1341,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 )
                 return None
             if callable(named):
-                named = named(self.context, event)
+                # 🔀 Accept BOTH calling conventions. Everything else in this
+                #    release (action/guard `params`, `output`, inline `delay`)
+                #    passes a single `{context, event}` mapping, so a named
+                #    delay written that way must not be a hard TypeError at
+                #    startup. The legacy `(context, event)` form still works.
+                named = self._call_delay_callable(named, event)
             # 🛡️ A misconfigured delay must not crash the machine at start.
             #    `float()` on a string or dict raises, and this runs inside
             #    `_schedule_state_tasks` during entry, so an unusable value
@@ -1358,6 +1363,45 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 )
                 return None
         return None
+
+    def _call_delay_callable(self, fn: Callable[..., Any], event: Any) -> Any:
+        """Invokes a named-delay callable under either calling convention.
+
+        Args:
+            fn (Callable[..., Any]): The delay implementation.
+            event (Any): The triggering event.
+
+        Returns:
+            Any: Whatever the callable returns, or `None` if it raised.
+        """
+        args = {"context": self.context, "event": event}
+        try:
+            signature = inspect.signature(fn)
+            positional = [
+                p
+                for p in signature.parameters.values()
+                if p.kind
+                in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                )
+            ]
+            takes_varargs = any(
+                p.kind is inspect.Parameter.VAR_POSITIONAL
+                for p in signature.parameters.values()
+            )
+        except (TypeError, ValueError):  # pragma: no cover - builtins
+            positional, takes_varargs = [], False
+
+        try:
+            if not takes_varargs and len(positional) == 1:
+                return fn(args)
+            return fn(self.context, event)
+        except Exception:
+            logger.exception(
+                "🔥 Named delay callable raised; ignoring this timer."
+            )
+            return None
 
     def _emit(self, event: Event) -> None:
         """Publishes an emitted event to registered listeners.
@@ -2656,7 +2700,13 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         # 📍 The built-in `stateIn` guard is answered from the active
         #    configuration; it needs no user implementation.
-        if guard.is_state_in:
+        #
+        # 🏛️ Architecture decision: a USER implementation wins, mirroring the
+        # documented resolution order for actions (`actions.is_builtin`).
+        # Without this a guard the user registered as `stateIn` was never
+        # called and the transition was silently decided by the built-in
+        # state test instead — a silent behaviour swap, the worst kind.
+        if guard.is_state_in and guard.type not in self.machine.logic.guards:
             return self._is_state_in(guard, event)
 
         # 🔍 Find the guard function in the machine's logic.

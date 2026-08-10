@@ -790,6 +790,58 @@ class TestAlwaysTransitions(unittest.TestCase):
         # Assert — it settled rather than spinning forever.
         self.assertTrue(interpreter.current_state_ids)
 
+    def test_max_iterations_config_is_honoured(self) -> None:
+        """The configured bound must be used, not a hardcoded default.
+
+        📝 Asserting only that the loop terminates passes even if the limit
+        is hardcoded, because the default also terminates. Counting guard
+        evaluations pins that the CONFIGURED value drives the bound —
+        verified by mutation testing.
+        """
+        # Arrange
+        calls: List[int] = []
+
+        def counting_guard(_ctx: Any, _evt: Any) -> bool:
+            """Always passes, and records each evaluation."""
+            calls.append(1)
+            return True
+
+        # Act — a tight always-loop bounded at 5 microsteps.
+        start(
+            {
+                "id": "m",
+                "initial": "a",
+                "maxIterations": 5,
+                "states": {
+                    "a": {"always": {"target": "b", "guard": "g"}},
+                    "b": {"always": {"target": "a", "guard": "g"}},
+                },
+            },
+            guards={"g": counting_guard},
+        )
+
+        # Assert — far below the 1000 default, proving config was read.
+        self.assertLess(
+            len(calls),
+            50,
+            f"guard ran {len(calls)}x; maxIterations=5 was not honoured",
+        )
+
+    def test_machine_exposes_max_iterations(self) -> None:
+        """`maxIterations` must be parsed onto the machine node."""
+        # Arrange / Act
+        machine = build(
+            {
+                "id": "m",
+                "initial": "a",
+                "maxIterations": 7,
+                "states": {"a": {}},
+            }
+        )
+
+        # Assert
+        self.assertEqual(7, machine.max_iterations)
+
 
 # -----------------------------------------------------------------------------
 # 🎬 Built-in Action Creators
@@ -4373,6 +4425,311 @@ class TestTransientGuardMemoisation(unittest.TestCase):
             "_find_optimal_transition was reintroduced; transient selection "
             "must use the memoised _select_transitions path",
         )
+
+
+# -----------------------------------------------------------------------------
+# 🌱 Spawn Input, Registry Cleanup & Delay Conventions
+# -----------------------------------------------------------------------------
+class TestSpawnInputAndRegistryCleanup(unittest.IsolatedAsyncioTestCase):
+    """Closes the mutation-survivor gaps found by the PR #21 review.
+
+    📝 Several of these features worked, but nothing pinned them: reverting
+    the fix left the whole suite green. These tests assert the observable
+    effect rather than an internal detail.
+    """
+
+    CHILD: Dict[str, Any] = {
+        "id": "kid",
+        "initial": "i",
+        "context": {},
+        "states": {"i": {}},
+    }
+
+    def test_spawn_child_input_reaches_child_context_sync(self) -> None:
+        """`spawnChild` `input` must be seeded into the child's context."""
+        # Arrange / Act
+        interpreter = start(
+            {
+                "id": "p",
+                "initial": "a",
+                "context": {},
+                "states": {
+                    "a": {
+                        "entry": [
+                            {
+                                "type": "spawnChild",
+                                "params": {
+                                    "src": "kid",
+                                    "id": "w",
+                                    "input": {"seed": 42},
+                                },
+                            }
+                        ]
+                    }
+                },
+            },
+            services={"kid": lambda i, c, e: build(self.CHILD)},
+        )
+        self.addCleanup(interpreter.stop)
+
+        # Assert
+        child = interpreter._actors["p:w"]
+        self.assertEqual({"seed": 42}, child.context.get("input"))
+
+    async def test_spawn_child_input_reaches_child_context_async(
+        self,
+    ) -> None:
+        """The async engine must seed `input` identically."""
+        # Arrange
+        interpreter = await Interpreter(
+            create_machine(
+                {
+                    "id": "p",
+                    "initial": "a",
+                    "context": {},
+                    "states": {
+                        "a": {
+                            "entry": [
+                                {
+                                    "type": "spawnChild",
+                                    "params": {
+                                        "src": "kid",
+                                        "id": "w",
+                                        "input": {"seed": 7},
+                                    },
+                                }
+                            ]
+                        }
+                    },
+                },
+                logic=MachineLogic(
+                    services={"kid": lambda i, c, e: build(self.CHILD)}
+                ),
+            )
+        ).start()
+        self.addAsyncCleanup(interpreter.stop)
+        await asyncio.sleep(0.03)
+
+        # Assert
+        child = interpreter._actors["p:w"]
+        self.assertEqual({"seed": 7}, child.context.get("input"))
+
+    async def test_async_stop_child_deregisters_from_system(self) -> None:
+        """The async `stopChild` must clear the actor-system registry.
+
+        🐛 A stopped actor left registered stays addressable by `systemId`
+        and silently swallows every event sent to it.
+        """
+        # Arrange
+        interpreter = await Interpreter(
+            create_machine(
+                {
+                    "id": "p",
+                    "initial": "a",
+                    "context": {},
+                    "states": {
+                        "a": {
+                            "entry": [
+                                {
+                                    "type": "spawnChild",
+                                    "params": {
+                                        "src": "kid",
+                                        "id": "w",
+                                        "systemId": "sys",
+                                    },
+                                }
+                            ],
+                            "on": {
+                                "STOP": {
+                                    "actions": [
+                                        {
+                                            "type": "stopChild",
+                                            "params": {"id": "w"},
+                                        }
+                                    ]
+                                }
+                            },
+                        }
+                    },
+                },
+                logic=MachineLogic(
+                    services={"kid": lambda i, c, e: build(self.CHILD)}
+                ),
+            )
+        ).start()
+        self.addAsyncCleanup(interpreter.stop)
+        await asyncio.sleep(0.03)
+        self.assertIn("sys", interpreter.system)
+
+        # Act
+        await settle(interpreter, "STOP")
+        await asyncio.sleep(0.05)
+
+        # Assert
+        self.assertNotIn("sys", interpreter.system)
+        self.assertEqual(0, len(interpreter._actors))
+
+    def test_named_delay_callable_accepts_single_dict_form(self) -> None:
+        """A delay callable may take `{context, event}`, like everything else.
+
+        🐛 Regression: named-delay callables were invoked as
+        `fn(context, event)` only, so the single-mapping convention used by
+        `params`, `output` and inline `delay` raised `TypeError` and killed
+        startup.
+        """
+        # Arrange / Act / Assert — both conventions must start cleanly.
+        cases = (
+            ("single-dict", lambda args: 20),
+            ("two-arg", lambda ctx, evt: 20),
+        )
+        for name, fn in cases:
+            interpreter = start(
+                {
+                    "id": "m",
+                    "initial": "a",
+                    "states": {"a": {"after": {"D": "b"}}, "b": {}},
+                },
+                delays={"D": fn},
+            )
+            self.addCleanup(interpreter.stop)
+            self.assertEqual(
+                {"m.a"},
+                interpreter.current_state_ids,
+                f"{name} delay callable broke startup",
+            )
+
+    def test_user_guard_overrides_builtin_state_in(self) -> None:
+        """A registered `stateIn` implementation must win over the built-in.
+
+        🐛 Regression: the built-in was consulted unconditionally, so a user
+        guard named `stateIn` was never called and the transition was decided
+        by the built-in state test instead — a silent behaviour swap.
+        """
+        # Arrange
+        called: List[int] = []
+
+        def user_state_in(_ctx: Any, _evt: Any, _params: Any = None) -> bool:
+            """Records the call and allows the transition."""
+            called.append(1)
+            return True
+
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "on": {
+                            "E": {
+                                "target": "b",
+                                "guard": {
+                                    "type": "stateIn",
+                                    "params": {"x": 1},
+                                },
+                            }
+                        }
+                    },
+                    "b": {},
+                },
+            },
+            guards={"stateIn": user_state_in},
+        )
+
+        # Act
+        interpreter.send("E")
+
+        # Assert
+        self.assertTrue(called, "user stateIn implementation was bypassed")
+        self.assertEqual({"m.b"}, interpreter.current_state_ids)
+
+    def test_builtin_state_in_still_used_without_an_override(self) -> None:
+        """Control: the built-in must remain the default."""
+        # Arrange
+        interpreter = start(
+            {
+                "id": "p",
+                "type": "parallel",
+                "states": {
+                    "A": {
+                        "initial": "a1",
+                        "states": {"a1": {"on": {"T": "a2"}}, "a2": {}},
+                    },
+                    "B": {
+                        "initial": "b1",
+                        "states": {
+                            "b1": {
+                                "on": {
+                                    "TRY": {
+                                        "target": "b2",
+                                        "guard": {
+                                            "type": "stateIn",
+                                            "params": {"state": "#p.A.a2"},
+                                        },
+                                    }
+                                }
+                            },
+                            "b2": {},
+                        },
+                    },
+                },
+            }
+        )
+
+        # Act / Assert — blocked, because A is still in a1.
+        interpreter.send("TRY")
+        self.assertIn("p.B.b1", interpreter.current_state_ids)
+
+    def test_cancelled_send_releases_its_waiter(self) -> None:
+        """Cancelling a delayed send must drop its bookkeeping immediately.
+
+        🐛 Regression: the cancellation flag stayed in
+        `_pending_send_cancels` until the original (possibly very long) delay
+        elapsed, so repeated schedule/cancel cycles accumulated Events.
+        """
+        # Arrange
+        interpreter = start(
+            {
+                "id": "m",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "on": {
+                            "S": {
+                                "actions": [
+                                    {
+                                        "type": "raise",
+                                        "params": {
+                                            "event": "L",
+                                            "delay": 5000,
+                                            "id": "x",
+                                        },
+                                    }
+                                ]
+                            },
+                            "C": {
+                                "actions": [
+                                    {
+                                        "type": "cancel",
+                                        "params": {"sendId": "x"},
+                                    }
+                                ]
+                            },
+                            "L": "b",
+                        }
+                    },
+                    "b": {},
+                },
+            }
+        )
+        self.addCleanup(interpreter.stop)
+
+        # Act
+        for _ in range(20):
+            interpreter.send("S")
+            interpreter.send("C")
+
+        # Assert — nothing accumulates across cancel cycles.
+        self.assertEqual(0, len(interpreter._pending_send_cancels))
 
 
 if __name__ == "__main__":  # pragma: no cover

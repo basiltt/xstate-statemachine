@@ -949,11 +949,20 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # 🔁 Reusing a send id supersedes the earlier send. Without this the
         #    first timer is orphaned: the registry entry is overwritten, so
         #    `cancel(id)` can no longer reach it and it fires anyway.
+        def _cancel() -> None:
+            """Cancels this send and releases its waiter immediately."""
+            cancel_flag.set()
+            # 🧹 Drop the flag now rather than waiting for the thread to wake
+            #    up. A long-delayed send that is cancelled would otherwise
+            #    keep its Event referenced in `_pending_send_cancels` for the
+            #    full original duration.
+            self._pending_send_cancels.discard(cancel_flag)
+
         if send_id:
             previous = self._scheduled_sends.get(str(send_id))
             if previous is not None:
                 previous()
-            self._scheduled_sends[str(send_id)] = cancel_flag.set
+            self._scheduled_sends[str(send_id)] = _cancel
 
         # 🧹 Track every pending waiter so `stop()` can release it. The
         #    threads are daemons (they cannot block interpreter exit), but a
