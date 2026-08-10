@@ -578,6 +578,59 @@ class TestInvokedChildMachine(unittest.IsolatedAsyncioTestCase):
             f"orphaned tasks: {alive} live vs {baseline} baseline",
         )
 
+    async def test_failed_child_machine_fires_on_error(self) -> None:
+        """A crashed child must satisfy `onError`, not `onDone`.
+
+        🐛 Regression guard: the poll loop treated ANY non-running status as
+        success, so a child that ended in `status == "error"` was reported as
+        a clean completion and a parent modelling failure with `onError`
+        silently took the happy path.
+        """
+
+        async def explode(_i: Any, _c: Any, _e: Any) -> None:
+            """A service that always fails."""
+            await asyncio.sleep(0.01)
+            raise ValueError("child failed")
+
+        # Arrange
+        failing_child = build(
+            {
+                "id": "c",
+                "initial": "w",
+                "context": {},
+                "states": {"w": {"invoke": {"src": "boom"}}},
+            },
+            services={"boom": explode},
+        )
+        parent = build(
+            {
+                "id": "p",
+                "initial": "a",
+                "context": {},
+                "states": {
+                    "a": {
+                        "invoke": {
+                            "src": "child",
+                            "id": "k",
+                            "onDone": "done",
+                            "onError": "failed",
+                        }
+                    },
+                    "done": {},
+                    "failed": {},
+                },
+            },
+            services={"child": failing_child},
+        )
+        interpreter = await Interpreter(parent).start()
+        self.addAsyncCleanup(interpreter.stop)
+
+        # Act
+        await asyncio.sleep(0.4)
+
+        # Assert
+        self.assertEqual({"p.failed"}, interpreter.current_state_ids)
+
     def test_sync_fires_on_done_when_the_child_completes(self) -> None:
         """The sync engine must report child completion too."""
         # Arrange / Act
@@ -749,6 +802,79 @@ class TestRobustnessFixes(unittest.IsolatedAsyncioTestCase):
 
         # Assert
         self.assertIs(interpreter.plugins[0], inspector)
+
+    def test_machine_key_wins_over_a_shadowing_custom_id(self) -> None:
+        """A nested `id` must not hijack `#machineId` targets.
+
+        🐛 Regression guard: the custom-id registry was consulted BEFORE the
+        machine key, so a nested state declaring `id: "m"` on a machine also
+        called "m" silently redirected every existing `#m.child` target into
+        that unrelated branch.
+        """
+        # Arrange
+        config = {
+            "id": "m",
+            "initial": "a",
+            "context": {},
+            "states": {
+                "a": {"on": {"G": "#m.b"}},
+                "b": {},
+                "shadow": {
+                    "id": "m",
+                    "initial": "z",
+                    "states": {"z": {}, "b": {}},
+                },
+            },
+        }
+        interpreter = SyncInterpreter(build(config)).start()
+
+        # Act
+        interpreter.send("G")
+
+        # Assert — the machine root wins, not the shadowing branch.
+        self.assertEqual({"m.b"}, interpreter.current_state_ids)
+
+    def test_rollback_rearms_the_source_states_timers(self) -> None:
+        """A rolled-back state must not lose its `after` timer.
+
+        🐛 Regression guard: exiting cancels each exited state's timers and
+        services. Restoring only the state NODES produced a configuration
+        that looked correct but was inert — a rolled-back state with
+        `after: {250: ...}` would never time out again.
+        """
+        # Arrange
+        fired: List[str] = []
+        config = {
+            "id": "m",
+            "initial": "a",
+            "context": {},
+            "states": {
+                "a": {
+                    "after": {250: "timeout"},
+                    "on": {"G": {"target": "b", "actions": ["missing"]}},
+                },
+                "b": {},
+                "timeout": {"entry": ["mark"]},
+            },
+        }
+        interpreter = SyncInterpreter(
+            build(config, actions={"mark": lambda *_a: fired.append("T")})
+        ).start()
+        self.addCleanup(interpreter.stop)
+
+        # Act — a failing transition rolls back to 'a'.
+        with self.assertRaises(ImplementationMissingError):
+            interpreter.send("G")
+        self.assertEqual({"m.a"}, interpreter.current_state_ids)
+
+        # Assert — the timer still fires.
+        import time
+
+        for _ in range(100):
+            if fired:
+                break
+            time.sleep(0.01)
+        self.assertEqual(["T"], fired)
 
     def test_corrupt_snapshot_raises_a_library_error(self) -> None:
         """A bad snapshot must be catchable via `XStateMachineError`.

@@ -540,6 +540,13 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             )
             self._active_state_nodes.clear()
             self._active_state_nodes.update(snapshot_before_transition)
+
+            # ⏱️ Re-arm cancelled timers/services — see the matching comment
+            #    in `BaseInterpreter._execute_transition`. Without this the
+            #    restored configuration is inert.
+            for node in snapshot_before_transition:
+                if node in states_to_exit:
+                    self._schedule_state_tasks(node)
             raise
 
         # Notify plugins and subscribers of the completed transition.

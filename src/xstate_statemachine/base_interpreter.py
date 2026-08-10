@@ -1867,6 +1867,16 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             )
             self._active_state_nodes.clear()
             self._active_state_nodes.update(snapshot_before)
+
+            # ⏱️ Re-arm what exiting tore down. `_exit_states` cancels each
+            #    exited state's `after` timers and invoked services, so a
+            #    configuration restored without them looks right but is inert:
+            #    a rolled-back state with `after: {250: "timeout"}` would never
+            #    time out again. Re-scheduling makes the rollback a true
+            #    restore rather than a cosmetic one.
+            for node in snapshot_before:
+                if node in states_to_exit:
+                    self._schedule_state_tasks(node)
             raise
 
         # 6. Notify plugins and subscribers of the completed transition.

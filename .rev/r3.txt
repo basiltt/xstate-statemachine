@@ -1,0 +1,70 @@
+I reviewed the committed PR head (`174bc47`), verifying every claim with executable reproducers against both engines and against the `main` baseline. Note: the working tree also has **uncommitted** edits to `interpreter.py` (a `_raise_depth` rewrite) that are not part of the reviewed commits — finding #1 below is present in the committed branch and appears to be what those edits were attempting to address.
+
+```json
+{
+  "findings": [
+    {
+      "title": "Async burst limiter silently DROPS legitimate external events — 3999/5000 lost (regression vs main)",
+      "severity": "CRITICAL",
+      "category": "regression / data loss",
+      "file": "src/xstate_statemachine/interpreter.py (_run_event_loop, burst counter)",
+      "repro": "import asyncio, logging\nlogging.disable(logging.CRITICAL)\nfrom xstate_statemachine import create_machine, Interpreter, MachineLogic\ncfg={\"id\":\"m\",\"initial\":\"a\",\"context\":{\"n\":0},\"states\":{\"a\":{\"on\":{\"TICK\":{\"actions\":[\"inc\"]}}}}}\ndef inc(i,c,e,a): c[\"n\"]+=1\nasync def main():\n    i = await Interpreter(create_machine(cfg, logic=MachineLogic(actions={\"inc\":inc}))).start()\n    for _ in range(5000): await i.send(\"TICK\")\n    await asyncio.sleep(2.0)\n    print(\"processed:\", i.context[\"n\"], \"DROPPED:\", 5000-i.context[\"n\"])\n    await i.stop()\nasyncio.run(main())",
+      "actual": "PR-HEAD: processed 1001, DROPPED 3999. main: processed 5000, DROPPED 0. SyncInterpreter: processed 5000. With machine.max_iterations=25, 100 sends -> 26 processed.",
+      "expected": "All 5000 externally-sent events processed. The guard is meant to catch a self-feeding `raise` chain, not ordinary producer traffic.",
+      "why_it_matters": "The counter increments whenever the queue is non-empty after processing an event, which cannot distinguish a runaway `raise` from a fast external producer. Any caller that enqueues faster than the loop drains (batch ingest, web handler fan-in, `send_batch`) silently loses ~80% of its events, then the limiter clears the entire backlog with `get_nowait()`. This is a brand-new data-loss path introduced by this PR, it is absent from the sync engine (engine divergence), and the 2675-test suite does not cover it."
+    },
+    {
+      "title": "Rollback restores state nodes but never re-schedules the `after` timers cancelled during the failed exit — state is active but permanently dead",
+      "severity": "HIGH",
+      "category": "incomplete fix / correctness",
+      "file": "src/xstate_statemachine/base_interpreter.py (_execute_transition rollback), sync_interpreter.py (_process_single_transition)",
+      "repro": "import time, logging\nlogging.disable(logging.CRITICAL)\nfrom xstate_statemachine import create_machine, SyncInterpreter, MachineLogic\ncfg={\"id\":\"m\",\"initial\":\"a\",\"states\":{\n  \"a\":{\"after\":{\"100\":{\"target\":\"timeout\"}},\"on\":{\"BAD\":\"b\"}},\n  \"b\":{\"entry\":[\"missing_impl\"]},\"timeout\":{}}}\ni = SyncInterpreter(create_machine(cfg, logic=MachineLogic())).start()\ntry: i.send(\"BAD\")\nexcept Exception as ex: print(\"raised:\", type(ex).__name__)\nprint(\"rolled back to:\", i.current_state_ids)\ntime.sleep(0.5)\nprint(\"after 500ms EXPECT m.timeout, GOT:\", i.current_state_ids)",
+      "actual": "rolled back to {'m.a'}; after 500ms still {'m.a'} — the timer never fires, on BOTH engines. Control (no failure) correctly reaches {'m.timeout'}.",
+      "expected": "After rolling back into `a`, `a`'s `after:100` timer should still fire and move to `m.timeout`, exactly as if the failed transition had never been attempted.",
+      "why_it_matters": "`_exit_states` calls `_cancel_state_tasks(state)` before running exit actions. The rollback only does `_active_state_nodes.clear(); update(snapshot_before)` — it restores membership but not the scheduled work that membership implies. The machine reports a healthy, correct-looking configuration whose timeouts/watchdogs are silently dead forever. This is precisely the class of 'looks alive but isn't' failure the atomicity fix was written to prevent, so the fix masks the symptom (empty config) while leaving an equally dangerous inconsistency."
+    },
+    {
+      "title": "Rolled-back transition leaks the target state's invoked service — orphaned task per attempt, unbounded",
+      "severity": "HIGH",
+      "category": "resource leak",
+      "file": "src/xstate_statemachine/base_interpreter.py (_execute_transition rollback)",
+      "repro": "import asyncio, logging\nlogging.disable(logging.CRITICAL)\nfrom xstate_statemachine import create_machine, Interpreter, MachineLogic\nasync def svc(i,c,e):\n    while True: await asyncio.sleep(0.05)\ncfg={\"id\":\"m\",\"initial\":\"a\",\"states\":{\n  \"a\":{\"on\":{\"GO\":\"b\"}},\n  \"b\":{\"initial\":\"b1\",\"invoke\":{\"id\":\"s\",\"src\":\"svc\"},\n       \"states\":{\"b1\":{\"entry\":[\"missing_impl\"]}}}}}\nasync def main():\n    i = await Interpreter(create_machine(cfg, logic=MachineLogic(services={\"svc\":svc}))).start()\n    base=len(asyncio.all_tasks())\n    for _ in range(10):\n        await i.send(\"GO\"); await asyncio.sleep(0.05)\n    await asyncio.sleep(0.2)\n    print(\"state:\", i.current_state_ids, \"tasks:\", len(asyncio.all_tasks()), \"baseline\", base)\n    print(\"registered actors:\", list(i._actors))\nasyncio.run(main())",
+      "actual": "state {'m.a'}, live asyncio tasks 12 vs baseline 2, `_actors` empty. Each failed transition adds one permanently-running service invisible to the registry. A separate probe shows the tick rate doubling after a second failed attempt.",
+      "expected": "Rolling back out of `b` should cancel the `invoke` that `_enter_states` started on `b` before the failure, leaving zero orphaned tasks.",
+      "why_it_matters": "`_enter_states` adds the node, runs entry actions, then calls `_schedule_state_tasks` (which starts `invoke`). If the descent into `b1` then fails, the rollback removes `b` from the configuration but never cancels the service it started — and because the node is no longer active, no later exit will ever cancel it either. The service keeps mutating context and emitting events on behalf of a state the machine says it is not in. A retry loop around a failing transition leaks one live task per attempt indefinitely. Note the sync engine is clean here (blocking invoke), so this is also an engine inconsistency."
+    },
+    {
+      "title": "Async error containment gives users no programmatic way to observe a failed event",
+      "severity": "MEDIUM",
+      "category": "observability / behavioural regression",
+      "file": "src/xstate_statemachine/interpreter.py (_run_event_loop try/except)",
+      "repro": "import asyncio, logging\nlogging.disable(logging.CRITICAL)\nfrom xstate_statemachine import create_machine, Interpreter, MachineLogic\nfrom xstate_statemachine.plugins import PluginBase\nevents=[]\nclass P(PluginBase):\n    def on_transition(self,i,f,t,tr): events.append(\"transition\")\n    def on_event_received(self,i,e): events.append((\"event\",e.type))\ncfg={\"id\":\"m\",\"initial\":\"a\",\"states\":{\"a\":{\"on\":{\"GO\":\"b\"}},\"b\":{\"entry\":[\"missing_impl\"]}}}\nasync def main():\n    i = Interpreter(create_machine(cfg, logic=MachineLogic())).use(P())\n    await i.start()\n    seen=[]\n    i.subscribe(lambda s: seen.append(s))\n    await i.send(\"GO\"); await asyncio.sleep(0.05)\n    print(\"status:\", i.status, \"error attr:\", i.error, \"subscribers:\", seen, \"plugin:\", events)\n    await i.stop()\nasyncio.run(main())",
+      "actual": "status 'running', `i.error` is None, zero subscriber notifications, plugin sees only ('event','GO') and no failure hook. The exception exists only in a log record.",
+      "expected": "Some observable signal — an `on_error`/`on_transition_failed` plugin hook, or population of the existing `interpreter.error` field — so a supervisor can react.",
+      "why_it_matters": "The PR deliberately removed the old behaviour where an escaping error killed the loop and flipped status to 'stopped'. Containment is the right call, but it was made without adding a replacement signal. Users who previously supervised the machine by watching `_event_loop_task` complete, or by polling `status != 'running'`, now have no detection mechanism at all: a machine that fails on every single event looks perfectly healthy forever. The codebase already has the right primitive — `_fail()` / the `error` status used for unhandled invoke failures — so the asymmetry is unnecessary."
+    },
+    {
+      "title": "Rollback does not restore `_history`; a failed transition records history from a configuration the machine never actually left",
+      "severity": "LOW",
+      "category": "correctness",
+      "file": "src/xstate_statemachine/base_interpreter.py (_exit_states/_record_history vs rollback)",
+      "repro": "import logging\nlogging.disable(logging.CRITICAL)\nfrom xstate_statemachine import create_machine, SyncInterpreter, MachineLogic\ncfg={\"id\":\"m\",\"initial\":\"work\",\"states\":{\n \"work\":{\"initial\":\"step1\",\"on\":{\"PAUSE\":\"paused\",\"BAD\":\"broken\"},\"states\":{\n    \"step1\":{\"on\":{\"NEXT\":\"step2\"}},\"step2\":{},\n    \"hist\":{\"type\":\"history\",\"history\":\"deep\"}}},\n \"paused\":{\"on\":{\"RESUME\":\"work.hist\"}},\n \"broken\":{\"entry\":[\"missing_impl\"]}}}\ni = SyncInterpreter(create_machine(cfg, logic=MachineLogic())).start()\nprint(\"history:\", i._history)\ntry: i.send(\"BAD\")\nexcept Exception: pass\nprint(\"rolled back to:\", i.current_state_ids)\nprint(\"history after FAILED transition:\", {k:[n.id for n in v] for k,v in i._history.items()})",
+      "actual": "`_history` is empty before, and after the failed/rolled-back transition contains {'m.work': ['m.work.step1']} — history written by a transition that was undone.",
+      "expected": "A rolled-back transition should leave `_history` exactly as it found it, since `snapshot_before` is restored for `_active_state_nodes`.",
+      "why_it_matters": "`_exit_states` calls `_record_history` first thing, before any action can fail, but the rollback only restores `_active_state_nodes`. Severity is LOW because in the common case the recorded value equals the current configuration (so it is redundant rather than wrong) and any subsequent successful exit overwrites it correctly — I confirmed a later PAUSE/RESUME round-trip still restores the right leaf. It becomes observably wrong only if the failure happens partway through a multi-region exit, where history captures a half-exited configuration. Worth fixing for the same reason the node snapshot was added: the rollback claims to be a transaction and should be one."
+    }
+  ]
+}
+```
+
+**What's correct.** Several of the fixes hold up well under attack, and it's worth saying so:
+
+- **Rollback is applied consistently to both engines** — `base_interpreter._execute_transition` and `sync_interpreter._process_single_transition` snapshot and restore identically; differential probes agreed on every configuration I tested.
+- **Plugin `on_transition` is correctly suppressed on a failed transition** (it sits after the `try` block), so observers never see a phantom transition.
+- **Transient-settling interaction is sane**: when `a→b` succeeds and `b`'s `always→c` fails, the machine correctly lands on `b`, not `a` — per-transition snapshots are the right granularity.
+- **`_SafePlugin` containment is sound**, including the duck-typed missing-hook path and the `__eq__`/`__hash__` work needed to keep `in` checks and `list(plugins)` behaving.
+- **The `CancelledError` re-raise ordering is correct** in both `_run_event_loop` and `_execute_actions`; `stop()` still owns the status transition, and the reasoning in the comment about not setting status in the cancellation path (to avoid skipping actor teardown) is right.
+- **The rollback itself cannot realistically raise** — `set.clear()`/`set.update()` on an existing set are non-throwing.
+- **All 2675 tests pass.**
+
+The two things I'd block the v0.6.0 release on are finding #1 (a straight data-loss regression against `main` on the most common code path in the library) and #3 (an unbounded task leak). Findings #2 and #3 share a root cause worth fixing together: the rollback restores *membership* but not the *scheduled work* that membership entails, so a correct fix needs to re-schedule tasks for restored nodes and cancel tasks for rolled-back ones, not just swap the set.

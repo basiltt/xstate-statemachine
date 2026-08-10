@@ -1200,12 +1200,38 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             #    parent transitioned onward while the child was still working.
             await child_interpreter.start()
 
-            # ⏳ Now actually wait for the child to reach a top-level final
-            #    state. `status` flips to "done" when the machine completes;
+            # ⏳ Now actually wait for the child to finish. `status` flips to
+            #    "done" on completion, or "error" if the machine failed;
             #    polling the child's own lifecycle is what makes `onDone` mean
             #    what XState says it means.
             while child_interpreter.status == "running":
                 await asyncio.sleep(_ACTOR_POLL_INTERVAL)
+
+            # 💥 A child that FAILED must satisfy `onError`, not `onDone`.
+            #    Treating any non-running status as success reported a crashed
+            #    child as a clean completion, so a parent modelling failure
+            #    with `onError` silently took the happy path.
+            if child_interpreter.status == "error":
+                failure = getattr(
+                    child_interpreter,
+                    "error",
+                    None,
+                ) or RuntimeError(
+                    f"Invoked machine '{invocation.src}' failed."
+                )
+                logger.warning(
+                    "💥 Invoked machine '%s' ended in error; firing onError.",
+                    invocation.src,
+                )
+                error_event = DoneEvent(
+                    type=f"error.platform.{invocation.id}",
+                    data=failure,
+                    src=invocation.id,
+                )
+                await self.send(error_event)
+                for plugin in self._plugins:
+                    plugin.on_service_error(self, invocation, failure)
+                return
 
             # ✅ Child finished cleanly (reached a top-level final state).
             done_event = DoneEvent(
