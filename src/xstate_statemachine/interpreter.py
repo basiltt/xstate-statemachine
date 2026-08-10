@@ -217,6 +217,16 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             init_event = Event(type="___xstate_statemachine_init___")
             await self._enter_states([self.machine], init_event)
 
+            # ⚡ Settle eventless ("always") transitions before returning.
+            #
+            # 🏛️ Architecture decision: `SyncInterpreter.start()` already does
+            # this, so without it the two engines disagreed on the very first
+            # observable state — a machine whose initial state declares
+            # `always` sat in that state under the async engine until some
+            # unrelated event happened to nudge it. `start()` must return a
+            # settled configuration in BOTH engines.
+            await self._settle_transient_transitions()
+
             logger.info(
                 "✅ Interpreter '%s' started successfully. Current states: %s",
                 self.id,
@@ -416,9 +426,16 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         # 1️⃣ Process the initial event that was dequeued.
         await self._process_event(event)
 
-        # 2️⃣ Immediately loop to handle any event-less ("always") transitions.
-        #    This continues until no more "always" transitions are available,
-        #    at which point the machine state is considered stable.
+        # 2️⃣ Immediately settle any event-less ("always") transitions.
+        await self._settle_transient_transitions()
+
+    async def _settle_transient_transitions(self) -> None:
+        """Runs eventless ("always") transitions until the state is stable.
+
+        Extracted so `start()` can settle the initial configuration too — the
+        sync engine already did this, so leaving it inline made the two
+        engines disagree on the very first observable state.
+        """
         # 🛟 Bound the microstep loop. A pair of `always` transitions that
         #    target each other spins forever; XState added the same guard in
         #    v5.31.0. `max_iterations` is configurable on the machine.

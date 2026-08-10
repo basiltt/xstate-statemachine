@@ -4833,5 +4833,80 @@ class TestHistoryIsNotARegion(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("m.end", interpreter.current_state_ids)
 
 
+# -----------------------------------------------------------------------------
+# ⚖️ Engine Parity On Startup
+# -----------------------------------------------------------------------------
+class TestStartupParity(unittest.IsolatedAsyncioTestCase):
+    """Pins that both engines return a SETTLED configuration from `start()`.
+
+    🐛 Regression: `SyncInterpreter.start()` settled eventless transitions but
+    `Interpreter.start()` did not, so a machine whose initial state declares
+    `always` sat in that state under the async engine until some unrelated
+    event happened to nudge it. The two engines disagreed on the very first
+    observable state.
+    """
+
+    ALWAYS_CONFIG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "a",
+        "states": {"a": {"always": "b"}, "b": {}},
+    }
+
+    async def test_async_start_settles_always_transitions(self) -> None:
+        """`start()` must return with transient transitions already taken."""
+        # Arrange / Act
+        interpreter = await Interpreter(build(self.ALWAYS_CONFIG)).start()
+        self.addAsyncCleanup(interpreter.stop)
+
+        # Assert — settled immediately, with no event sent.
+        self.assertEqual({"m.b"}, interpreter.current_state_ids)
+
+    def test_sync_start_settles_always_transitions(self) -> None:
+        """The sync engine must behave identically."""
+        # Arrange / Act
+        interpreter = start(self.ALWAYS_CONFIG)
+
+        # Assert
+        self.assertEqual({"m.b"}, interpreter.current_state_ids)
+
+    async def test_async_start_settles_a_chain(self) -> None:
+        """A multi-step transient chain must fully settle at startup."""
+        # Arrange
+        states: Dict[str, Any] = {}
+        for index in range(5):
+            states["s%d" % index] = {"always": "s%d" % (index + 1)}
+        states["s5"] = {}
+
+        # Act
+        interpreter = await Interpreter(
+            build({"id": "m", "initial": "s0", "states": states})
+        ).start()
+        self.addAsyncCleanup(interpreter.stop)
+
+        # Assert
+        self.assertEqual({"m.s5"}, interpreter.current_state_ids)
+
+    async def test_async_start_respects_transient_guards(self) -> None:
+        """A blocked `always` must leave the machine in its initial state."""
+        # Arrange / Act
+        interpreter = await Interpreter(
+            build(
+                {
+                    "id": "m",
+                    "initial": "a",
+                    "states": {
+                        "a": {"always": {"target": "b", "guard": "no"}},
+                        "b": {},
+                    },
+                },
+                guards={"no": lambda c, e: False},
+            )
+        ).start()
+        self.addAsyncCleanup(interpreter.stop)
+
+        # Assert
+        self.assertEqual({"m.a"}, interpreter.current_state_ids)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
