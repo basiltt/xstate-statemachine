@@ -1111,7 +1111,22 @@ class MachineNode(StateNode[TContext, TEvent]):
         #    opaque TypeError from inside a user action.
         #    A CALLABLE is also valid: XState v5 allows a context factory,
         #    resolved per-interpreter with the machine `input`.
-        if not isinstance(raw_context, dict) and not callable(raw_context):
+        #
+        # 🧩 Real Stately.ai exports ship an unresolved template placeholder
+        #    such as `"context": "{{initialContext}}"`. Nine machines in the
+        #    bundled corpus do exactly this. Hard-failing would break the
+        #    library's headline promise — running XState JSON unmodified — so
+        #    a string is downgraded to a warning and treated as empty context.
+        if isinstance(raw_context, str):
+            logger.warning(
+                "⚠️ Machine '%s' declares a string 'context' (%r), which is "
+                "usually an unresolved template placeholder. Starting with an "
+                "empty context.",
+                config["id"],
+                raw_context[:40],
+            )
+            raw_context = {}
+        elif not isinstance(raw_context, dict) and not callable(raw_context):
             raise InvalidConfigError(
                 f"Machine '{config['id']}' has an invalid 'context' of type "
                 f"'{type(raw_context).__name__}'. Expected an object/dict, "

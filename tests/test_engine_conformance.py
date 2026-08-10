@@ -846,6 +846,30 @@ class TestDeterminismAndValidation(unittest.TestCase):
                 with self.assertRaises(XStateMachineError):
                     build(config)
 
+    def test_stately_template_placeholder_context_is_tolerated(self) -> None:
+        """Real Stately exports ship `"context": "{{initialContext}}"`.
+
+        🐛 Regression guard: tightening context validation initially rejected
+        NINE machines in the bundled Stately corpus, dropping it from 103/104
+        to 95/104 — silently breaking the library's headline promise of
+        running XState JSON unmodified. A string context is downgraded to a
+        warning and treated as empty.
+        """
+        # Arrange / Act
+        machine = build(
+            {
+                "id": "m",
+                "initial": "a",
+                "context": "{{initialContext}}",
+                "states": {"a": {}},
+            }
+        )
+        interpreter = SyncInterpreter(machine).start()
+
+        # Assert
+        self.assertEqual({}, interpreter.context)
+        self.assertEqual({"m.a"}, interpreter.current_state_ids)
+
     def test_a_context_factory_is_still_accepted(self) -> None:
         """Validation must not break the documented callable context."""
         # Arrange / Act
