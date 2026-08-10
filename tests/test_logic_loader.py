@@ -654,10 +654,15 @@ class TestLogicLoader(unittest.TestCase):
             create_machine({})
 
     def test_config_with_non_dict_states_raises_error(self) -> None:
-        """Should raise an error if the 'states' value is not a dictionary."""
+        """Should raise an actionable error for a non-dictionary 'states'.
+
+        🐛 Regression: this asserted a raw `AttributeError` leaking from
+        library internals. Malformed config is a user error and must name
+        what is wrong.
+        """
         logger.info("🧪 Testing error for a non-dictionary `states` property.")
         config = {"id": "test", "initial": "a", "states": "not_a_dict"}
-        with self.assertRaises(AttributeError):
+        with self.assertRaises(InvalidConfigError):
             create_machine(config)
 
     def test_logic_loader_with_no_sources(self) -> None:

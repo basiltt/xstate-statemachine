@@ -473,18 +473,24 @@ class TestFactory(unittest.TestCase):
             create_machine(config)
 
     def test_error_for_non_dict_states(self) -> None:
-        """Should raise an error if 'states' is not a dictionary."""
+        """Should raise an actionable error if 'states' is not a dictionary.
+
+        🐛 Regression: this previously asserted a raw `AttributeError`
+        ("'list' object has no attribute 'items'") leaking from library
+        internals, naming neither the offending state nor the offending key.
+        A malformed config is a user error and must be reported as one.
+        """
         logger.info("🧪 Testing error for non-dictionary 'states' value.")
         invalid_config = {
             "id": "test",
             "initial": "idle",
             "states": ["idle"],  # This should be a dict
         }
-        # 💥 Act & Assert: The internal parser fails with an AttributeError when trying
-        # to call `.items()` on a list.
-        # ✅ FIX: The test now correctly expects an AttributeError, as seen in the traceback.
-        with self.assertRaises(AttributeError):
+        # 💥 Act & Assert
+        with self.assertRaises(InvalidConfigError) as caught:
             create_machine(invalid_config)
+
+        self.assertIn("states", str(caught.exception))
 
     def test_create_with_empty_logic_modules_list(self) -> None:
         """Should create successfully with an empty logic_modules list."""

@@ -679,9 +679,29 @@ class StateNode(Generic[TContext, TEvent]):
         self.invoke = self._parse_invoke(config)
 
         # 🌳 Recursively build child states, forming the Composite pattern.
+        #
+        # 🛡️ Validate shapes before traversing. Handing a non-mapping straight
+        #    to `.items()` / `.get()` surfaced as a raw
+        #    "'str' object has no attribute 'items'" from library internals,
+        #    naming neither the offending state nor the offending key — the
+        #    user had no way to locate a typo in a large config.
+        raw_states = config.get("states", {})
+        if not isinstance(raw_states, dict):
+            raise InvalidConfigError(
+                f"State '{self.id}' has an invalid 'states' value of type "
+                f"'{type(raw_states).__name__}'. Expected an object/dict "
+                f"mapping state names to definitions."
+            )
+        for state_key, state_config in raw_states.items():
+            if not isinstance(state_config, dict):
+                raise InvalidConfigError(
+                    f"State '{self.id}.{state_key}' must be an object/dict, "
+                    f"got '{type(state_config).__name__}'."
+                )
+
         self.states = {
             state_key: StateNode(machine, state_config, state_key, self)
-            for state_key, state_config in config.get("states", {}).items()
+            for state_key, state_config in raw_states.items()
         }
         logger.debug(
             "✅ StateNode '%s' and its children initialized.", self.id
@@ -740,6 +760,15 @@ class StateNode(Generic[TContext, TEvent]):
                 no way to choose between them.
         """
         initial = config.get("initial")
+        # 🛡️ `initial` names a child state, so it must be a string. A non-string
+        #    was accepted and then never matched any child, producing a machine
+        #    that started with an empty configuration and dropped every event.
+        if initial is not None and not isinstance(initial, str):
+            raise InvalidConfigError(
+                f"State '{self.id}' has an invalid 'initial' value of type "
+                f"'{type(initial).__name__}'. Expected the name of a child "
+                f"state as a string."
+            )
         if self.type != "compound" or initial:
             return initial
 
@@ -797,7 +826,14 @@ class StateNode(Generic[TContext, TEvent]):
         transitions silently never fired.
         """
         on_map: Dict[str, List[TransitionDefinition]] = {}
-        for event, transitions_config in config.get("on", {}).items():
+        raw_on = config.get("on", {})
+        if not isinstance(raw_on, dict):
+            raise InvalidConfigError(
+                f"State '{self.id}' has an invalid 'on' value of type "
+                f"'{type(raw_on).__name__}'. Expected an object/dict mapping "
+                f"event names to transitions."
+            )
+        for event, transitions_config in raw_on.items():
             normalized_configs = self._normalize_transitions(
                 transitions_config
             )
@@ -851,7 +887,14 @@ class StateNode(Generic[TContext, TEvent]):
         with no indication that named delays were the intended feature.
         """
         after_map: Dict[Union[int, str], List[TransitionDefinition]] = {}
-        for delay, transitions_config in config.get("after", {}).items():
+        raw_after = config.get("after", {})
+        if not isinstance(raw_after, dict):
+            raise InvalidConfigError(
+                f"State '{self.id}' has an invalid 'after' value of type "
+                f"'{type(raw_after).__name__}'. Expected an object/dict "
+                f"mapping delays to transitions."
+            )
+        for delay, transitions_config in raw_after.items():
             normalized_configs = self._normalize_transitions(
                 transitions_config
             )
@@ -871,8 +914,15 @@ class StateNode(Generic[TContext, TEvent]):
         invoke_configs = self._ensure_list(config.get("invoke", []))
         invokes: List[InvokeDefinition] = []
         for i_config in invoke_configs:
+            # 🛡️ Reject rather than skip. Silently ignoring a malformed
+            #    `invoke` produced a state that simply never called its
+            #    service — no error, no log, just a machine that hangs.
             if not isinstance(i_config, dict):
-                continue
+                raise InvalidConfigError(
+                    f"State '{self.id}' has an invalid 'invoke' entry of "
+                    f"type '{type(i_config).__name__}'. Expected an "
+                    f"object/dict (or a list of them)."
+                )
 
             # The invoke ID defaults to the state's ID if not provided.
             invoke_id = i_config.get("id", self.id)
@@ -1055,7 +1105,19 @@ class MachineNode(StateNode[TContext, TEvent]):
                 "❌ Machine configuration must have a root 'id'."
             )
         self.logic = logic
-        self.initial_context = config.get("context", {})
+        raw_context = config.get("context", {})
+        # 🛡️ Context is a mapping by contract — `assign` and every action
+        #    subscript it by key. A list or scalar failed much later with an
+        #    opaque TypeError from inside a user action.
+        #    A CALLABLE is also valid: XState v5 allows a context factory,
+        #    resolved per-interpreter with the machine `input`.
+        if not isinstance(raw_context, dict) and not callable(raw_context):
+            raise InvalidConfigError(
+                f"Machine '{config['id']}' has an invalid 'context' of type "
+                f"'{type(raw_context).__name__}'. Expected an object/dict, "
+                f"or a callable returning one."
+            )
+        self.initial_context = raw_context
         #: Upper bound on microsteps when settling transient ("always")
         #: transitions, mirroring XState's `maxIterations` (v5.31.0).
         self.max_iterations: int = int(config.get("maxIterations", 1000))

@@ -1815,7 +1815,15 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         try:
             await self._exit_states(
                 sorted(
-                    list(states_to_exit), key=lambda s: s.depth, reverse=True
+                    list(states_to_exit),
+                    # 🔀 Depth alone leaves ties between sibling parallel
+                    #    regions, so set iteration order decided which exited
+                    #    first — the same machine and event could emit exit
+                    #    actions in a different order between runs, which is
+                    #    untestable and makes cleanup logic subtly unreliable.
+                    #    `id` is a stable secondary key.
+                    key=lambda s: (s.depth, s.id),
+                    reverse=True,
                 ),
                 event,
             )

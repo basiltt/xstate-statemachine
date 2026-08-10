@@ -730,3 +730,134 @@ class TestRobustnessFixes(unittest.IsolatedAsyncioTestCase):
                     },
                 }
             )
+
+
+# -----------------------------------------------------------------------------
+# 🔀 Deterministic Exit Order & Config Validation
+# -----------------------------------------------------------------------------
+class TestDeterminismAndValidation(unittest.TestCase):
+    """Ordering must be reproducible and bad config must be actionable."""
+
+    def test_parallel_exit_order_is_deterministic(self) -> None:
+        """The same machine and event must always exit in the same order.
+
+        🐛 Regression: states were sorted by depth alone, so ties between
+        sibling parallel regions were broken by set iteration order. The same
+        machine could emit exit actions in a different order between runs —
+        untestable, and it makes cleanup logic subtly unreliable.
+        """
+        # Arrange
+        config = {
+            "id": "m",
+            "initial": "p",
+            "context": {},
+            "states": {
+                "p": {
+                    "type": "parallel",
+                    "on": {"OUT": "done"},
+                    "states": {
+                        "r1": {
+                            "initial": "a",
+                            "states": {"a": {"exit": ["x1"]}},
+                        },
+                        "r2": {
+                            "initial": "b",
+                            "states": {"b": {"exit": ["x2"]}},
+                        },
+                        "r3": {
+                            "initial": "c",
+                            "states": {"c": {"exit": ["x3"]}},
+                        },
+                    },
+                },
+                "done": {},
+            },
+        }
+
+        # Act — repeat enough times that a hash-order flake would surface.
+        observed = set()
+        for _ in range(25):
+            order: List[str] = []
+            actions = {
+                name: (lambda _i, _c, _e, _a, n=name: order.append(n))
+                for name in ("x1", "x2", "x3")
+            }
+            interpreter = SyncInterpreter(
+                build(config, actions=actions)
+            ).start()
+            interpreter.send("OUT")
+            observed.add(tuple(order))
+
+        # Assert
+        self.assertEqual(1, len(observed), f"non-deterministic: {observed}")
+
+    def test_malformed_config_raises_actionable_errors(self) -> None:
+        """Bad config must never surface as a raw TypeError/AttributeError.
+
+        🐛 Regression: several shapes reached `.items()` / `.get()` directly,
+        producing "'str' object has no attribute 'items'" from library
+        internals — naming neither the offending state nor the key, so a typo
+        in a large config was untraceable. Others were accepted silently and
+        produced a machine that hung or dropped every event.
+        """
+        # Arrange
+        malformed = {
+            "states not a dict": {
+                "id": "m",
+                "initial": "a",
+                "states": "nope",
+            },
+            "state not a dict": {
+                "id": "m",
+                "initial": "a",
+                "states": {"a": "nope"},
+            },
+            "on not a dict": {
+                "id": "m",
+                "initial": "a",
+                "states": {"a": {"on": "nope"}},
+            },
+            "after not a dict": {
+                "id": "m",
+                "initial": "a",
+                "states": {"a": {"after": "nope"}},
+            },
+            "invoke not a dict": {
+                "id": "m",
+                "initial": "a",
+                "states": {"a": {"invoke": 7}},
+            },
+            "initial not a string": {
+                "id": "m",
+                "initial": 5,
+                "states": {"a": {}},
+            },
+            "context not a mapping": {
+                "id": "m",
+                "initial": "a",
+                "context": [],
+                "states": {"a": {}},
+            },
+        }
+
+        # Act / Assert
+        for label, config in malformed.items():
+            with self.subTest(config=label):
+                with self.assertRaises(XStateMachineError):
+                    build(config)
+
+    def test_a_context_factory_is_still_accepted(self) -> None:
+        """Validation must not break the documented callable context."""
+        # Arrange / Act
+        machine = build(
+            {
+                "id": "m",
+                "initial": "a",
+                "context": lambda _input: {"seeded": True},
+                "states": {"a": {}},
+            }
+        )
+        interpreter = SyncInterpreter(machine).start()
+
+        # Assert
+        self.assertTrue(interpreter.context["seeded"])

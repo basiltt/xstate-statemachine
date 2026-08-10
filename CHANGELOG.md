@@ -9,6 +9,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+Defects found by an adversarial battle test of v0.6.0 before release. None
+reached PyPI. Six were release blockers.
+
+**Transition atomicity.** `exit -> actions -> enter` had no rollback, so a
+raising action left the source exited and the target never entered:
+`current_state_ids == set()` while `status` still read `"running"`. The machine
+was permanently dead *and* reporting itself healthy, so a supervisor watching
+`is_running` would never restart it. Both engines now roll back and re-raise.
+
+**Async run loop no longer dies silently.** Any per-event error — an
+unresolvable target, a missing action, a raising guard — killed the loop and
+flipped `status` to `"stopped"`. Because `send()` is fire-and-forget the caller
+was never told, so the machine silently dropped every later event, while
+`SyncInterpreter` raised and kept running. Per-event errors are now contained.
+
+**Runaway `raise` storms are bounded.** `maxIterations` guarded only the
+eventless (`always`) path, so an action raising its own trigger event hung
+forever. On the async engine the whole `asyncio` loop starved — a task
+scheduled every 50 ms ran zero times in four seconds, freezing every other
+coroutine in the process.
+
+**Deep history into a parallel state.** Restoring activated *two* leaves in one
+region, which SCXML forbids and which breaks the one-state-per-region invariant
+the library rests on.
+
+**Invoked child machines.** On the async engine `onDone` fired immediately with
+the child's *initial* context, because `await child.start()` returns once the
+child's initial state is entered, not when it finishes; the child was then
+orphaned, leaking its run loop and timers past the parent's own `stop()`
+(measured +2 permanently live tasks per invocation). On the sync engine
+`onDone` never fired at all.
+
+**Entry/exit actions receive the real event.** `SyncInterpreter` synthesised
+`entry.<id>` / `exit.<id>`, so an action reading `event.payload` — the normal
+way to seed state from an event — silently received nothing.
+
+Also fixed:
+
+- Custom `id` on a state was ignored, so `#myId` cross-branch targets always
+  raised `StateNotFoundError`. 37 of the 104 bundled Stately machines use them.
+- A `.` in a state key collided with the id separator: a flat `"x.y"` and a
+  nested `x > y` produced the same id, and targeting `"x.y"` silently entered
+  the nested state. Now rejected at parse time.
+- `start()` on a stopped interpreter silently no-opped, leaving a machine that
+  looked live and dropped every event. Now raises.
+- Plugin hook exceptions escaped to `send()` (sync) or killed the run loop
+  (async), although actions and subscribers were already contained.
+- `send()` to a stopped async interpreter queued unboundedly.
+- `from_snapshot` leaked `json.JSONDecodeError`, so `except XStateMachineError`
+  missed corrupt snapshots from Redis or disk.
+- Exit-action order across parallel regions was non-deterministic.
+- Malformed `states` / `on` / `after` / `invoke` / `initial` / `context`
+  surfaced as raw `TypeError`/`AttributeError` from internals, or were silently
+  accepted and produced a machine that hung.
+
+### Added
+
+- `tests/test_engine_conformance.py` — a cross-engine conformance suite that
+  drives one config through **both** engines and asserts identical observable
+  behaviour, including error paths. Each engine was previously pinned
+  separately, which is exactly how these divergences survived 2,647 passing
+  tests.
+
+### Fixed
+
 Defects found by the end-to-end review of merged `main` prior to the 0.6.0
 release. None of these ever reached PyPI.
 
