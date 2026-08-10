@@ -585,10 +585,18 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         Returning the live list would let `interpreter.plugins.append(...)`
         bypass the type validation performed by the setter.
 
+        📝 Returns the plugin objects the caller registered, NOT the internal
+        error-containment wrappers. Leaking wrappers would break `is`
+        comparisons, `isinstance(p, PluginBase)`, and attribute access on the
+        user's own plugin object.
+
         Returns:
             List[PluginBase]: A copy of the currently registered plugins.
         """
-        return list(self._plugins)
+        return [
+            item.wrapped if isinstance(item, _SafePlugin) else item
+            for item in self._plugins
+        ]
 
     @plugins.setter
     def plugins(

@@ -695,6 +695,61 @@ class TestRobustnessFixes(unittest.IsolatedAsyncioTestCase):
         # Assert
         self.assertIn(inspector, interpreter.plugins)
 
+    def test_plugins_getter_returns_user_objects_not_wrappers(self) -> None:
+        """Error containment must not leak its wrapper to user code.
+
+        🐛 Regression guard: plugins are wrapped in an internal containment
+        proxy at registration. Returning the proxy from the getter broke `is`
+        comparisons, `isinstance(p, PluginBase)`, and attribute access on the
+        caller's own object — so a plugin that keeps state became unusable
+        through the public API.
+        """
+        # Arrange
+        from src.xstate_statemachine import PluginBase
+
+        class StatefulPlugin(PluginBase):
+            """A plugin that records what it observed."""
+
+            def __init__(self) -> None:
+                """Initialises the observation log."""
+                self.seen: List[str] = []
+
+            def on_transition(
+                self, _i: Any, _f: Any, _t: Any, tr: Any
+            ) -> None:
+                """Records the event that caused the transition."""
+                self.seen.append(tr.event)
+
+            def on_event_received(self, _i: Any, _e: Any) -> None:
+                """No-op."""
+
+        plugin = StatefulPlugin()
+        interpreter = SyncInterpreter(build(self.SIMPLE))
+        interpreter.use(plugin)
+        interpreter.start()
+        interpreter.send("G")
+
+        # Assert — the public API hands back the caller's own object.
+        returned = interpreter.plugins[0]
+        self.assertIs(returned, plugin)
+        self.assertIsInstance(returned, PluginBase)
+        self.assertIn(plugin, interpreter.plugins)
+        self.assertIn("G", plugin.seen)
+
+    def test_plugins_setter_round_trips_identity(self) -> None:
+        """`interpreter.plugins = [p]` then reading back must yield `p`."""
+        # Arrange
+        from src.xstate_statemachine import LoggingInspector
+
+        inspector = LoggingInspector()
+        interpreter = SyncInterpreter(build(self.SIMPLE))
+
+        # Act
+        interpreter.plugins = [inspector]
+
+        # Assert
+        self.assertIs(interpreter.plugins[0], inspector)
+
     def test_corrupt_snapshot_raises_a_library_error(self) -> None:
         """A bad snapshot must be catchable via `XStateMachineError`.
 
