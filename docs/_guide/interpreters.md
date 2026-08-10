@@ -566,7 +566,13 @@ interp.stop()
 
 ## Error Handling During Event Processing
 
-If an action raises an exception, the interpreter propagates it. Wrap `.send()` calls in try/except for graceful error handling:
+If an action raises an exception, the interpreter **contains** it: the error is
+logged, the transition completes, and the machine keeps running. A single buggy
+side effect cannot take down a long-lived interpreter or its run loop.
+
+This means `.send()` does **not** re-raise the action's exception. To react to a
+failed action, model the failure in the machine itself — set an error flag on
+`context` and branch on it:
 
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
@@ -589,17 +595,31 @@ class RiskyLogic(MachineLogic):
 machine = create_machine(config, logic=RiskyLogic())
 interp = SyncInterpreter(machine).start()
 
-try:
-    interp.send("GO")
-except ValueError as e:
-    print(f"Caught error: {e}")
-    # Handle the error — the machine state depends on
-    # when the error occurred during transition processing
+interp.send("GO")
+
+# The exception was logged and swallowed; the transition still completed.
+print(interp.current_state_ids)  # {"risky.processing"}
+print(interp.status)             # "running"
 
 interp.stop()
 ```
 
-> **Tip:** For expected errors (like network failures), use `invoke`/`onError` instead of try/except. The `onError` transition is the idiomatic way to handle service errors in state machines.
+To surface the failure to the rest of the machine, catch it inside the action
+and record it on `context`, then guard a transition on that flag:
+
+```python
+class SafeLogic(MachineLogic):
+    def riskyAction(self, interpreter, context, event, action_def):
+        try:
+            do_the_risky_thing()
+        except ValueError as exc:
+            context["error"] = str(exc)
+
+    def hasError(self, context, event):
+        return context.get("error") is not None
+```
+
+> **Tip:** For expected errors (like network failures), use `invoke`/`onError`. The `onError` transition is the idiomatic way to handle service errors in state machines — unlike an action, an invoked service's failure *is* routed back into the machine as a transition.
 
 ---
 

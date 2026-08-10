@@ -27,6 +27,7 @@ from __future__ import (
     annotations,
 )  # Enables postponed evaluation of type annotations
 
+import inspect
 import logging
 from typing import (
     Any,
@@ -160,9 +161,95 @@ class MachineLogic(Generic[TContext, TEvent]):
             delays or {}
         )
 
+        # 🧬 Subclass auto-registration.
+        #
+        # 🏛️ Architecture decision: the "subclass and define methods" pattern
+        #    is documented throughout the guides, but nothing ever collected
+        #    those methods, so every such example died with
+        #    `ImplementationMissingError`. Registering them here — rather than
+        #    teaching each interpreter to fall back to `getattr(logic, name)`
+        #    — keeps the resolution path single-sourced: after `__init__`,
+        #    `logic.actions` / `.guards` / `.services` are still the ONLY
+        #    truth, no matter which authoring style produced them.
+        self._register_subclass_methods()
+
         logger.info(
             "✅ MachineLogic initialized with %d actions, %d guards, and %d services.",
             len(self.actions),
             len(self.guards),
             len(self.services),
         )
+
+    # -------------------------------------------------------------------------
+    # 🧬 Subclass Method Discovery
+    # -------------------------------------------------------------------------
+    def _register_subclass_methods(self) -> None:
+        """Registers methods defined on a `MachineLogic` subclass.
+
+        The guides document an alternative authoring style in which logic is
+        written as methods on a subclass rather than passed as dictionaries::
+
+            class AgeLogic(MachineLogic):
+                def isAdult(self, context, event):
+                    return context.get("age", 0) >= 18
+
+        Those methods are classified by their *arity*, which is unambiguous
+        because the three callable contracts have distinct signatures:
+
+        =======  ==========================================  ============
+        Params   Signature                                   Registered as
+        =======  ==========================================  ============
+        2        ``(context, event)``                        guard
+        3        ``(interpreter, context, event)``           service
+        4        ``(interpreter, context, event, action)``   action
+        =======  ==========================================  ============
+
+        ⚠️ Explicitly supplied dictionaries always win. A subclass method is
+        only registered when its name is not already bound, so the two styles
+        can be mixed and the explicit form remains an escape hatch for any
+        method whose arity would otherwise be misread.
+
+        Methods with a leading underscore are treated as private helpers and
+        are never registered.
+        """
+        # 🛑 A plain `MachineLogic()` has nothing to discover; skip the walk.
+        if type(self) is MachineLogic:
+            return
+
+        # 🗺️ Arity → the registry that contract belongs to.
+        registries: Dict[int, Dict[str, Any]] = {
+            2: self.guards,
+            3: self.services,
+            4: self.actions,
+        }
+
+        for name, member in inspect.getmembers(
+            type(self), predicate=inspect.isfunction
+        ):
+            # 🚫 Skip dunders, private helpers, and our own machinery.
+            if name.startswith("_"):
+                continue
+
+            bound = getattr(self, name)
+
+            try:
+                arity = len(inspect.signature(bound).parameters)
+            except (TypeError, ValueError):  # pragma: no cover
+                # 🤷 Un-introspectable callables cannot be classified.
+                continue
+
+            registry = registries.get(arity)
+            if registry is None:
+                logger.debug(
+                    "⏭️ Skipping '%s': arity %d matches no logic contract.",
+                    name,
+                    arity,
+                )
+                continue
+
+            # ✅ Never clobber an explicitly provided implementation.
+            if name in registry:
+                continue
+
+            registry[name] = bound
+            logger.debug("🧬 Auto-registered subclass method '%s'.", name)

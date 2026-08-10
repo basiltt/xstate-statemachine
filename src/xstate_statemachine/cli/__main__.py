@@ -23,6 +23,7 @@
 import argparse
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 
@@ -161,15 +162,41 @@ def _determine_output_paths(
 
 
 def _safe_print(msg: str) -> None:
-    """Print a message safely, handling encoding errors on Windows.
+    """Print a message, degrading gracefully on non-UTF-8 consoles.
 
-    On Windows with non-UTF-8 console encodings (e.g. cp1252), emoji
-    characters cause UnicodeEncodeError.  This helper falls back to
-    ASCII-safe output when that happens.
+    The CLI's status output is emoji-rich. On a Windows console using a
+    legacy code page (cp1252, cp437, ...) those characters are not
+    representable, and what happens next depends entirely on the error
+    handler the stream was constructed with:
+
+    * ``errors="strict"``  → raises ``UnicodeEncodeError``.
+    * ``errors="backslashreplace"`` → never raises, but prints a literal
+      ``\\u2705`` into the user's terminal.
+
+    🏛️ Architecture decision: check *encodability up front* rather than
+    catching the exception. A ``try/except`` only covers the strict case —
+    it is structurally blind to the silent one, which is the default under
+    ``PYTHONIOENCODING=cp1252:backslashreplace`` and several CI runners. It
+    also avoids a torn line: ``print`` can flush part of the string before
+    the encoder reaches the offending character, so the fallback would
+    duplicate the prefix already on screen.
+
+    Args:
+        msg: The message to write to stdout.
     """
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+
+    try:
+        msg.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        # 🔤 Reduce to characters this console can actually represent.
+        msg = msg.encode(encoding, errors="replace").decode(
+            encoding, errors="replace"
+        )
+
     try:
         print(msg)
-    except UnicodeEncodeError:
+    except UnicodeEncodeError:  # pragma: no cover - belt-and-braces
         print(msg.encode("ascii", errors="replace").decode("ascii"))
 
 

@@ -575,8 +575,35 @@ class StateNode(Generic[TContext, TEvent]):
         raw_tags = config.get("tags", [])
         if isinstance(raw_tags, str):
             raw_tags = [raw_tags]
+        # ⚠️ Validate rather than let `set()` decide. A bare `set(raw_tags)`
+        #    turned `tags: 123` into an opaque "'int' object is not iterable"
+        #    with no hint as to WHICH state was malformed, and silently
+        #    accepted `tags: {"a": 1}` as the tag set {"a"} by iterating the
+        #    mapping's keys — a config typo that produced working-looking
+        #    nonsense.
+        if isinstance(raw_tags, (dict, bytes)) or not isinstance(
+            raw_tags, (list, tuple, set, frozenset)
+        ):
+            raise InvalidConfigError(
+                f"State '{self.id}' has an invalid 'tags' value of type "
+                f"'{type(raw_tags).__name__}'. Expected a string or a list "
+                f"of strings."
+            )
+        non_strings = [tag for tag in raw_tags if not isinstance(tag, str)]
+        if non_strings:
+            raise InvalidConfigError(
+                f"State '{self.id}' has non-string tag(s): {non_strings!r}. "
+                f"Every tag must be a string."
+            )
         self.tags: Set[str] = set(raw_tags)
-        self.meta: Dict[str, Any] = config.get("meta") or {}
+
+        raw_meta = config.get("meta") or {}
+        if not isinstance(raw_meta, dict):
+            raise InvalidConfigError(
+                f"State '{self.id}' has an invalid 'meta' value of type "
+                f"'{type(raw_meta).__name__}'. Expected an object/dict."
+            )
+        self.meta: Dict[str, Any] = raw_meta
         self.description: Optional[str] = config.get("description")
 
         # 🏁 Final states may declare `output` (a.k.a. "done data"), which is
