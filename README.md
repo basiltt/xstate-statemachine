@@ -1,1943 +1,1165 @@
 <div align="center">
 
-# ⚙️ XState-StateMachine for Python
+# ⚙️ XState-StateMachine
 
-### Production-Grade State Machine Runtime — XState-Compatible, Zero Dependencies
-
-<br>
-
-[![CI](https://github.com/basiltt/xstate-statemachine/actions/workflows/ci.yml/badge.svg)](https://github.com/basiltt/xstate-statemachine/actions/workflows/ci.yml)
-[![PyPI Version](https://img.shields.io/badge/PyPI-v0.6.0-blue?logo=pypi&logoColor=white&style=for-the-badge)](https://pypi.org/project/xstate-statemachine/)
-[![Python](https://img.shields.io/badge/Python-3.9%E2%80%933.14-3776AB?logo=python&logoColor=white&style=for-the-badge)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-2647%20Passing-brightgreen?logo=pytest&logoColor=white&style=for-the-badge)](tests/)
-[![Coverage](https://img.shields.io/badge/Coverage-86%25-brightgreen?logo=codecov&logoColor=white&style=for-the-badge)](.github/workflows/ci.yml)
-[![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
-[![Zero Dependencies](https://img.shields.io/badge/Deps-Zero-orange?style=for-the-badge)](pyproject.toml)
+### Statecharts for Python. Run your XState JSON — unmodified.
 
 <br>
 
-**Define** state machines in JSON or pure Python · **Run** them with async or sync interpreters · **Generate** production boilerplate with one CLI command
+[![PyPI](https://img.shields.io/pypi/v/xstate-statemachine?style=flat-square&logo=pypi&logoColor=white&color=3775A9)](https://pypi.org/project/xstate-statemachine/)
+[![Python](https://img.shields.io/pypi/pyversions/xstate-statemachine?style=flat-square&logo=python&logoColor=white&color=3776AB)](https://pypi.org/project/xstate-statemachine/)
+[![CI](https://img.shields.io/github/actions/workflow/status/basiltt/xstate-statemachine/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/basiltt/xstate-statemachine/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-2647_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-87%25-3fb950?style=flat-square&logo=codecov&logoColor=white)](.github/workflows/ci.yml)
+[![Dependencies](https://img.shields.io/badge/dependencies-0-ff8c00?style=flat-square)](pyproject.toml)
+[![License](https://img.shields.io/pypi/l/xstate-statemachine?style=flat-square&color=yellow)](LICENSE)
 
 <br>
 
-[📦 Installation](#-installation) · [🚀 Quick Start](#-quick-start) · [🐍 Pythonic API](#-pythonic-api) · [⚡ CLI Generator](#-cli-code-generator) · [📖 Full Docs](https://basiltt.github.io/xstate-statemachine/)
+**The only Python library that runs [XState](https://stately.ai/) / Stately.ai machine definitions as-is.**
+
+Design a flow once in the visual editor — ship the *same JSON* to your React frontend
+and your Python backend. Async **and** sync interpreters. Zero dependencies.
+
+<br>
+
+[**Install**](#install) · [**60-Second Start**](#the-60-second-start) · [**Why**](#why-a-statechart) · [**Cookbook**](#cookbook) · [**Compare**](#how-it-compares) · [**API**](#api-reference) · [**Docs**](https://basiltt.github.io/xstate-statemachine/)
 
 </div>
 
-<br>
-
 ---
 
-<br>
-
-## ✨ Why XState-StateMachine?
-
-<table>
-<tr>
-<td width="50%">
-
-### 🎯 The Problem
-```
-isLoading = True
-isError = True       ← impossible!
-isAuthenticated = True
-```
-Managing state with boolean flags leads to **impossible states**, **forgotten edge cases**, and **spaghetti logic** that's impossible to debug.
-
-</td>
-<td width="50%">
-
-### ✅ The Solution
-```
-[idle] → FETCH → [loading] → SUCCESS → [done]
-                            → ERROR   → [error]
-```
-State machines make **every valid state explicit** and **every transition deliberate**. No impossible states. No forgotten edges.
-
-</td>
-</tr>
-</table>
-
-<br>
-
-## 🏆 Key Features
-
-| | Feature | Description |
-|:---:|---------|-------------|
-| 🐍 | **Pure Python API** | Define machines as classes, builders, or functions — no JSON needed |
-| 📋 | **XState JSON Compatible** | Import machines from [Stately.ai](https://stately.ai) visual editor |
-| ⚡ | **Dual Interpreters** | Async (`Interpreter`) + Sync (`SyncInterpreter`) engines |
-| 🏗️ | **Hierarchical States** | Nested parent/child states with automatic event bubbling |
-| 🔀 | **Parallel States** | Concurrent regions operating independently |
-| 🛡️ | **Guards & Actions** | Conditional transitions + side effects with full type hints |
-| 🔌 | **Services & Invoke** | Async/sync service calls with `onDone`/`onError` handling |
-| ⏱️ | **Delayed Transitions** | Timer-based auto-transitions with `after` |
-| 🤖 | **Actor Model** | Spawn isolated child machines with independent lifecycles |
-| 🔧 | **CLI Code Generator** | 5 templates → production Python from XState JSON |
-| 📊 | **Diagram Export** | Generate Mermaid or PlantUML diagrams |
-| 🔌 | **Plugin System** | Observable hooks for logging, metrics, and debugging |
-| 💾 | **Snapshots** | Save/restore machine state for persistence and testing |
-| 📦 | **Zero Dependencies** | Pure Python standard library — works everywhere |
-
-<br>
-
----
-
-<br>
-
-## 📦 Installation
+## 🚀 Install
 
 ```bash
 pip install xstate-statemachine
 ```
 
+That's the whole story. **Zero runtime dependencies** — pure standard library, Python 3.9 → 3.14.
+
+```bash
+xsm info          # verify the install
+```
+
 <details>
-<summary>📋 <b>Other package managers</b></summary>
+<summary><b>uv · poetry · pipx</b></summary>
 
 <br>
 
 ```bash
-# With uv (fast)
-uv pip install xstate-statemachine
-
-# With Poetry
+uv add xstate-statemachine
 poetry add xstate-statemachine
-
-# Development install
-git clone https://github.com/basiltt/xstate-statemachine.git
-cd xstate-statemachine
-uv pip install -e . --group dev --group lint --group test
+pipx install xstate-statemachine     # if you only want the `xsm` CLI
 ```
 
 </details>
 
-<br>
-
-> [!NOTE]
-> **Requirements:** Python 3.9+ · No external dependencies · Works on Windows, macOS, Linux
-
-```bash
-# Verify installation
-xsm --version
-# ✅ Output: xsm 0.6.0
-```
-
-<br>
-
 ---
 
-<br>
+## ⚡ The 60-Second Start
 
-## 🚀 Quick Start
-
-> **Build your first state machine in 60 seconds.**
-
-Choose your preferred style — all three produce identical runtime behavior:
-
-<br>
-
-<table>
-<tr>
-<td width="33%" align="center"><b>🏛️ Class-Based</b><br><sub>OOP teams, large machines</sub></td>
-<td width="33%" align="center"><b>⛓️ Builder</b><br><sub>Fluent API, dynamic assembly</sub></td>
-<td width="33%" align="center"><b>🧩 Functional</b><br><sub>Simple scripts, explicit</sub></td>
-</tr>
-</table>
-
-<br>
-
-### 🏛️ Option A: Pure Python (Recommended)
-
-```python
-from xstate_statemachine import State, build_machine, SyncInterpreter, action
-
-# 1️⃣ Define states
-off = State("off", initial=True)
-on  = State("on")
-
-# 2️⃣ Define transitions
-off.to(on,  event="TOGGLE")
-on.to(off, event="TOGGLE")
-
-# 3️⃣ Define actions
-@action
-def log_toggle(interpreter, context, event, action_def):
-    print(f"💡 Light is now: {interpreter.active_state_ids}")
-
-# 4️⃣ Build and run
-machine = build_machine(id="lightSwitch", states=[off, on], actions=[log_toggle])
-
-interpreter = SyncInterpreter(machine).start()
-interpreter.send("TOGGLE")  # off → on
-interpreter.send("TOGGLE")  # on → off
-interpreter.stop()
-```
-
-### 📋 Option B: JSON Configuration (XState Compatible)
+Copy, paste, run. No async, no setup, no config files.
 
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 
-config = {
-    "id": "lightSwitch",
-    "initial": "off",
+machine = create_machine({
+    "id": "toggle",
+    "initial": "inactive",
     "states": {
-        "off": {"on": {"TOGGLE": "on"}},
-        "on":  {"on": {"TOGGLE": "off"}}
-    }
-}
+        "inactive": {"on": {"TOGGLE": "active"}},
+        "active":   {"on": {"TOGGLE": "inactive"}},
+    },
+})
 
-machine = create_machine(config)
-interpreter = SyncInterpreter(machine).start()
+light = SyncInterpreter(machine).start()
 
-interpreter.send("TOGGLE")  # off → on ✅
-interpreter.send("TOGGLE")  # on → off ✅
-interpreter.stop()
+print(light.current_state_ids)      # {'toggle.inactive'}
+light.send("TOGGLE")
+print(light.current_state_ids)      # {'toggle.active'}
+light.send("BANANA")                # not a legal event here
+print(light.current_state_ids)      # {'toggle.active'}  ← ignored, not crashed
 ```
 
-### ⚡ Option C: Generate with CLI
+You just declared the **complete** set of legal states and the **only** legal moves between
+them. `TOGGLE` advances the machine. `BANANA` is ignored — not raised, not silently
+mishandled. Ignored, because the current state does not accept it.
 
-```bash
-# 🪄 Generate production-ready Python from any XState JSON
-xsm generate-template light_switch.json --template pythonic-class --force
-# ✅ Creates: light_switch_logic.py + light_switch_runner.py
-```
-
-<br>
+That single property is what kills a whole category of bug.
 
 ---
 
-<br>
+## 🧠 Why a Statechart?
 
-## 🧠 Core Concepts
-
-```
-                    ┌─────────────────────────────────────────┐
-                    │            STATE MACHINE                │
-                    │                                         │
-                    │   ┌─────────┐   TOGGLE   ┌─────────┐   │
-                    │   │         │ ─────────► │         │   │
-                    │   │   off   │             │   on    │   │
-                    │   │ (init)  │ ◄───────── │         │   │
-                    │   └─────────┘   TOGGLE   └─────────┘   │
-                    │                                         │
-                    │   context: { flips: 0 }                 │
-                    └─────────────────────────────────────────┘
-```
-
-| Concept | What It Is | Example |
-|:--------|:-----------|:--------|
-| 🔵 **State** | A distinct mode the system can be in | `"off"`, `"loading"`, `"error"` |
-| ⚡ **Event** | Something that happens from outside | `"TOGGLE"`, `"SUBMIT"`, `"TIMEOUT"` |
-| ➡️ **Transition** | _"When event X happens in state A, go to state B"_ | `off ─TOGGLE→ on` |
-| 🛡️ **Guard** | Boolean condition on a transition | `"isAuthenticated"` — only transition if `True` |
-| 🎬 **Action** | Side effect that runs during a transition | `"logToggle"` — runs code when transitioning |
-| 💾 **Context** | Mutable data the machine carries | `{ "retries": 0, "user": null }` |
-| 🔌 **Service** | Async operation invoked by a state | `"fetchUserData"` — API call, DB query |
-| 🏁 **Final State** | Terminal state — the machine is done | `"success"`, `"completed"` |
-
-> [!IMPORTANT]
-> **The Golden Rule:** A state machine can only be in **ONE state** at a time (unless using parallel states). It transitions **ONLY** when it receives a matching event. This eliminates impossible states entirely.
-
-<br>
-
----
-
-<br>
-
-## 📋 JSON Configuration Reference
-
-> **XState JSON is the universal format.** Design machines visually at [stately.ai](https://stately.ai), export JSON, run them directly.
-
-<details>
-<summary>📖 <b>Complete JSON Structure (click to expand)</b></summary>
-
-<br>
-
-```json
-{
-  "id": "myMachine",
-  "initial": "idle",
-  "context": {
-    "retries": 0,
-    "data": null
-  },
-  "states": {
-    "idle": {
-      "on": {
-        "FETCH": {
-          "target": "loading",
-          "actions": "startLoading",
-          "guard": "canFetch"
-        }
-      },
-      "entry": "resetForm",
-      "exit": "clearErrors"
-    },
-    "loading": {
-      "invoke": {
-        "src": "fetchData",
-        "onDone": {
-          "target": "success",
-          "actions": "storeData"
-        },
-        "onError": {
-          "target": "error",
-          "actions": "storeError"
-        }
-      },
-      "after": {
-        "5000": "error"
-      }
-    },
-    "success": {
-      "type": "final"
-    },
-    "error": {
-      "on": {
-        "RETRY": {
-          "target": "loading",
-          "guard": "hasRetriesLeft",
-          "actions": "incrementRetry"
-        }
-      }
-    }
-  }
-}
-```
-
-</details>
-
-### 📝 Field-by-Field Reference
-
-<details>
-<summary>🔧 <b>Top-Level Fields</b></summary>
-
-| Field | Type | Required | Description |
-|:------|:-----|:---------|:------------|
-| `id` | `string` | ✅ **Yes** | Unique machine identifier |
-| `initial` | `string` | ✅ **Yes** | Name of the starting state |
-| `context` | `object` | ❌ No | Initial mutable data |
-| `states` | `object` | ✅ **Yes** | Map of state name → state config |
-
-</details>
-
-<details>
-<summary>🔧 <b>State Fields</b></summary>
-
-| Field | Type | Description |
-|:------|:-----|:------------|
-| `on` | `object` | Map of event name → transition(s) |
-| `entry` | `string \| array` | Action(s) to run when entering this state |
-| `exit` | `string \| array` | Action(s) to run when leaving this state |
-| `invoke` | `object \| array` | Service(s) to start when entering |
-| `after` | `object` | Delayed transitions: `{ milliseconds: target }` |
-| `type` | `string` | `"atomic"`, `"compound"`, `"parallel"`, or `"final"` |
-| `initial` | `string` | Initial child state (compound states) |
-| `states` | `object` | Nested child states |
-| `onDone` | `object` | Transition when all child regions complete |
-| `always` | `object \| array` | Eventless transitions, evaluated immediately |
-
-</details>
-
-<details>
-<summary>🔧 <b>Transition Formats</b></summary>
-
-```jsonc
-// 🔹 Simple: just a target state name
-"CLICK": "active"
-
-// 🔹 With options
-"CLICK": {
-  "target": "active",
-  "guard": "isEnabled",
-  "actions": "logClick"
-}
-
-// 🔹 Multiple transitions (first matching guard wins)
-"SUBMIT": [
-  { "target": "success", "guard": "isValid" },
-  { "target": "error" }
-]
-
-// 🔹 Multiple actions
-"SAVE": {
-  "target": "saved",
-  "actions": ["validate", "persist", "notify"]
-}
-```
-
-</details>
-
-<details>
-<summary>🔧 <b>Eventless Transitions (<code>always</code>)</b></summary>
-
-Eventless transitions fire **immediately** when a state is entered — no event needed:
-
-```json
-{
-  "id": "router",
-  "initial": "checking",
-  "context": {"role": "admin"},
-  "states": {
-    "checking": {
-      "always": [
-        {"target": "adminPanel",  "guard": "isAdmin"},
-        {"target": "userDashboard", "guard": "isUser"},
-        {"target": "login"}
-      ]
-    },
-    "adminPanel":    {},
-    "userDashboard": {},
-    "login":         {}
-  }
-}
-```
-
-When the machine enters `checking`, it evaluates the `always` transitions and moves to the first matching target automatically.
-
-</details>
-
-<br>
-
----
-
-<br>
-
-## 🐍 Pythonic API
-
-> **New in v0.5.0** — Define state machines in pure Python. No JSON needed.
+Every non-trivial flow starts as a few booleans. Then it grows.
 
 <table>
 <tr>
-<td align="center">🏛️</td>
-<td><b>Class-Based</b></td>
-<td>OOP teams, large machines</td>
-<td><code>class MyMachine(StateMachine)</code></td>
-</tr>
-<tr>
-<td align="center">⛓️</td>
-<td><b>Builder</b></td>
-<td>Fluent/chained construction</td>
-<td><code>MachineBuilder("id").state(...).build()</code></td>
-</tr>
-<tr>
-<td align="center">🧩</td>
-<td><b>Functional</b></td>
-<td>Simple, explicit assembly</td>
-<td><code>build_machine(id=..., states=[...])</code></td>
-</tr>
-</table>
+<td width="50%" valign="top">
 
-> [!TIP]
-> All three styles compile to the same internal `MachineNode` and work with both `Interpreter` and `SyncInterpreter`.
-
-<br>
-
-### 🏛️ Style 1: Class-Based (`StateMachine`)
+**😖 Boolean soup**
 
 ```python
-from xstate_statemachine import (
-    State, StateMachine, SyncInterpreter,
-    action, guard, service
-)
-
-class TrafficLight(StateMachine):
-    machine_id = "trafficLight"
-
-    # 🔵 States
-    green  = State("green",  initial=True)
-    yellow = State("yellow")
-    red    = State("red")
-
-    # ➡️ Transitions
-    slow_down = green.to(yellow, event="TIMER")
-    stop      = yellow.to(red,   event="TIMER")
-    go        = red.to(green,    event="TIMER")
-
-    # 🎬 Actions
-    @action
-    def log_change(self, interpreter, context, event, action_def):
-        print(f"🚦 Light changed to: {interpreter.active_state_ids}")
-
-    # 🛡️ Guards
-    @guard
-    def is_rush_hour(self, context, event):
-        return context.get("hour", 12) in range(7, 10)
-
-# ▶️ Run it
-machine = TrafficLight.create_machine()
-interp = SyncInterpreter(machine).start()
-interp.send("TIMER")  # 🟢 → 🟡
-interp.send("TIMER")  # 🟡 → 🔴
-interp.send("TIMER")  # 🔴 → 🟢
-interp.stop()
+if is_loading and not is_error:
+    ...
+elif is_error and retry_count < 3:
+    ...
+elif is_authenticated and not is_loading:
+    ...
 ```
 
-<details>
-<summary>⛓️ <b>Style 2: Builder (<code>MachineBuilder</code>)</b></summary>
+Four booleans = **16 combinations**. You handled maybe six.
+The other ten are *reachable* — and one of them is
+`is_loading=True, is_error=True, is_success=True`.
 
-```python
-from xstate_statemachine import MachineBuilder, SyncInterpreter, action
-
-@action
-def log_change(interpreter, context, event, action_def):
-    print(f"Now: {interpreter.active_state_ids}")
-
-machine = (
-    MachineBuilder("trafficLight")
-    .state("green",  initial=True)
-    .state("yellow")
-    .state("red")
-    .transition("green",  "TIMER", "yellow")
-    .transition("yellow", "TIMER", "red")
-    .transition("red",    "TIMER", "green")
-    .action("logChange", log_change)
-    .build()
-)
-
-interp = SyncInterpreter(machine).start()
-interp.send("TIMER")
-interp.send("TIMER")
-interp.stop()
-```
-
-</details>
-
-<details>
-<summary>🧩 <b>Style 3: Functional (<code>build_machine</code>)</b></summary>
-
-```python
-from xstate_statemachine import State, build_machine, SyncInterpreter, action
-
-green  = State("green",  initial=True)
-yellow = State("yellow")
-red    = State("red")
-
-green.to(yellow, event="TIMER")
-yellow.to(red,   event="TIMER")
-red.to(green,    event="TIMER")
-
-@action
-def log_change(interpreter, context, event, action_def):
-    print(f"Now: {interpreter.active_state_ids}")
-
-machine = build_machine(
-    id="trafficLight",
-    states=[green, yellow, red],
-    actions=[log_change],
-)
-
-interp = SyncInterpreter(machine).start()
-interp.send("TIMER")
-interp.send("TIMER")
-interp.stop()
-```
-
-</details>
-
-<details>
-<summary>🏷️ <b>Decorator Details</b></summary>
-
-```python
-# 🔹 Auto-naming: snake_case → camelCase
-@action
-def increment_counter(interpreter, context, event, action_def):
-    context["count"] += 1
-# → Registered as "incrementCounter"
-
-# 🔹 Explicit naming
-@action("myCustomName")
-def some_function(interpreter, context, event, action_def):
-    pass
-# → Registered as "myCustomName"
-
-# 🔹 Guard signature (no interpreter, returns bool)
-@guard
-def is_valid(context, event):
-    return context.get("value", 0) > 0
-
-# 🔹 Service signature (returns dict)
-@service
-def fetch_data(interpreter, context, event):
-    return {"result": "some_data"}
-```
-
-</details>
-
-<br>
-
----
-
-<br>
-
-## ⚙️ Interpreters
-
-> Interpreters **execute** a machine — they process events, evaluate guards, run actions, and manage transitions.
-
-<table>
-<tr>
-<td width="50%">
-
-### 🔄 Async Interpreter
-**For:** `asyncio` apps, web servers, real-time
-
-```python
-import asyncio
-from xstate_statemachine import create_machine, Interpreter
-
-async def main():
-    machine = create_machine(config)
-    interp = await Interpreter(machine).start()
-
-    await interp.send("FETCH")
-    await interp.send("SUCCESS")
-    await interp.stop()
-
-asyncio.run(main())
-```
+Nothing stops it. Nothing warns you. It just happens in
+production at 3am.
 
 </td>
-<td width="50%">
+<td width="50%" valign="top">
 
-### ⚡ Sync Interpreter
-**For:** Scripts, CLI tools, Django, testing
+**😌 A statechart**
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter
-
-machine = create_machine(config)
-interp = SyncInterpreter(machine).start()
-
-interp.send("ACTIVATE")
-interp.send("DEACTIVATE")
-interp.stop()
+"states": {
+    "idle":    {"on": {"FETCH": "loading"}},
+    "loading": {"on": {"OK": "done",
+                       "ERR": "failed"}},
+    "failed":  {"on": {"RETRY": "loading"}},
+    "done":    {"type": "final"},
+}
 ```
+
+Four states = **exactly four possibilities**. The impossible
+ones cannot be constructed, because you never wrote a path
+to them.
+
+Illegal events in the current state are simply ignored.
 
 </td>
 </tr>
 </table>
 
-<details>
-<summary>📋 <b>Interpreter Properties & Methods</b></summary>
+### The three bugs this eliminates
 
-| Property / Method | Type | Description |
-|:------------------|:-----|:------------|
-| `.start()` | method | Initialize and enter the initial state |
-| `.stop()` | method | Exit all states and shut down |
-| `.send(event)` | method | Send an event (string, dict, or `Event`) |
-| `.send_events([...])` | method | Send multiple events in sequence |
-| `.active_state_ids` | `set[str]` | Currently active state IDs |
-| `.current_state_ids` | `set[str]` | Canonical spelling of `.active_state_ids` |
-| `.context` | `dict` | Current machine context (mutable) |
-| `.is_running` | `bool` | Whether the interpreter is active |
+| Bug | How booleans cause it | How a statechart prevents it |
+|:--|:--|:--|
+| 🕳️ **Impossible states** | `is_loading` *and* `is_error` both true | The machine is in exactly one state per region |
+| 👻 **Zombie callbacks** | A late API response fires after the user cancelled | The event isn't handled in `cancelled`, so it's discarded |
+| 🔁 **Double submission** | A second click before the first finishes | `submitting` has no `SUBMIT` handler — the click does nothing |
 
-</details>
-
-<details>
-<summary>📨 <b>Sending Events — All Formats</b></summary>
-
-```python
-# 🔹 String shorthand
-interpreter.send("CLICK")
-
-# 🔹 With payload data
-interpreter.send("LOGIN", username="alice", password="secret")
-
-# 🔹 Event object
-from xstate_statemachine import Event
-interpreter.send(Event(type="LOGIN", payload={"username": "alice"}))
-
-# 🔹 Dict form
-interpreter.send({"type": "LOGIN", "username": "alice"})
-
-# 🔹 Multiple events at once
-interpreter.send_events(["STEP_1", "STEP_2", "STEP_3"])
-```
-
-</details>
-
-<br>
+> **The rule** — a machine is in **exactly one state per region**. Parallel states have
+> multiple regions, so multiple states are active at once, which is why
+> `current_state_ids` returns a *set*.
 
 ---
 
+## 🔗 The Part No Other Python Library Does
+
+Your frontend team models a checkout flow in [Stately.ai](https://stately.ai/). They export
+`checkout.json` and wire it into React with XState.
+
+You take **that exact file** — unedited — and run it in Python:
+
+```python
+import json
+from xstate_statemachine import create_machine, MachineLogic, SyncInterpreter
+
+with open("checkout.json") as f:          # ← straight from the frontend repo
+    config = json.load(f)
+
+machine = create_machine(config, logic=MachineLogic(
+    actions={"chargeCard": charge_card},   # you supply the Python side
+    guards={"hasStock": has_stock},
+))
+
+checkout = SyncInterpreter(machine).start()
+```
+
+One definition. Two runtimes. **The UI cannot render a step your backend considers illegal**,
+because there is only one source of truth for what the steps *are*.
+
+<details>
+<summary><b>How compatible is "compatible"? (real numbers)</b></summary>
+
 <br>
+
+The test suite includes **104 real-world machines exported from Stately.ai**. 103 of them parse
+structurally unmodified. The single exception has no top-level `states` key at all — it isn't a
+well-formed machine.
+
+Both XState **v4** (`cond`) and **v5** (`guard`) transition spellings are accepted, so machines
+from either generation work.
+
+What is *not* supported: JS/TS action implementations embedded in the JSON. Those are code, not
+data — you supply the Python equivalents via `MachineLogic`, which is the whole point of the
+separation.
+
+</details>
+
+> **Note** — this library implements the **SCXML** transition-selection algorithm (the W3C
+> standard XState itself follows). That is what makes nested and parallel-region behaviour
+> match XState rather than merely resemble it. It does *not* import or export `.scxml` files.
+
+---
+
+## 🧩 The Mental Model
+
+Six concepts. That's the entire library.
+
+| Concept | What it is | In JSON |
+|:--|:--|:--|
+| **State** | A named mode the machine can be in | `"states": {"idle": {}}` |
+| **Event** | A message you send in | `interp.send("FETCH")` |
+| **Transition** | "In state X, event E moves to Y" | `"on": {"FETCH": "loading"}` |
+| **Context** | Everything that isn't a state — the data | `"context": {"retries": 0}` |
+| **Guard** | A condition that must hold for a transition | `{"target": "x", "guard": "isReady"}` |
+| **Action** | A side effect that fires during a transition | `{"target": "x", "actions": ["save"]}` |
+
+The split that matters: **state** is *where you are*, **context** is *what you know*.
+`retries` is context. `retrying` is a state. Getting that boundary right is 90% of good
+statechart design.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> idle
+    idle --> loading: FETCH
+    loading --> done: onDone
+    loading --> failed: onError
+    failed --> loading: RETRY
+    done --> [*]
+```
+
+---
 
 ## 💾 Context — The Machine's Memory
 
-> Context is a **mutable dictionary** that travels with the machine. Use it to track data across transitions.
+Context is a plain dict. Update it declaratively with `assign`:
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter, assign
+
+cart = SyncInterpreter(create_machine({
+    "id": "cart",
+    "initial": "shopping",
+    "context": {"items": 0, "total": 0.0},
+    "states": {
+        "shopping": {
+            "on": {
+                "ADD_ITEM": {"actions": assign({
+                    "items": lambda a: a["context"]["items"] + 1,
+                    "total": lambda a: a["context"]["total"] + a["event"].payload["price"],
+                })},
+                "CLEAR": {"actions": assign(lambda a: {"items": 0, "total": 0.0})},
+            }
+        }
+    },
+})).start()
+
+cart.send("ADD_ITEM", price=9.99)
+cart.send("ADD_ITEM", price=5.01)
+print(cart.context)          # {'items': 2, 'total': 15.0}
+```
+
+`assign` takes either a **dict of per-key updaters** or a **single callable** returning a
+partial dict. Each updater receives one mapping with `"context"` and `"event"` keys.
+
+> **Tip** — keyword arguments to `send()` land in `event.payload`.
+> `send("ADD_ITEM", price=9.99)` → `a["event"].payload["price"]`.
+
+---
+
+## 🛡️ Guards — Conditional Transitions
+
+A guard is a pure function returning `bool`. List transitions in priority order; the **first**
+whose guard passes wins.
 
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 
 config = {
-    "id": "counter",
-    "initial": "counting",
-    "context": {"count": 0, "history": []},
+    "id": "atm",
+    "initial": "idle",
+    "context": {"balance": 100, "frozen": False},
     "states": {
-        "counting": {
+        "idle": {
             "on": {
-                "INCREMENT": {"actions": "addOne"},
-                "DECREMENT": {"actions": "subtractOne"}
+                "WITHDRAW": [
+                    {"target": "approved", "guard": {
+                        "type": "and",
+                        "params": {"guards": [
+                            "hasFunds",
+                            {"type": "not", "params": {"guards": ["isFrozen"]}},
+                        ]},
+                    }},
+                    {"target": "denied"},          # fallback — no guard
+                ]
             }
-        }
-    }
+        },
+        "approved": {}, "denied": {},
+    },
 }
 
-class CounterLogic(MachineLogic):
-    def addOne(self, interpreter, context, event, action_def):
-        context["count"] += 1
-        context["history"].append(f"+1 → {context['count']}")
+logic = MachineLogic(guards={
+    "hasFunds": lambda ctx, e: ctx["balance"] >= e.payload.get("amount", 0),
+    "isFrozen": lambda ctx, e: ctx["frozen"],
+})
 
-    def subtractOne(self, interpreter, context, event, action_def):
-        context["count"] -= 1
-        context["history"].append(f"-1 → {context['count']}")
-
-machine = create_machine(config, logic=CounterLogic())
-interp = SyncInterpreter(machine).start()
-
-interp.send("INCREMENT")   # count: 1
-interp.send("INCREMENT")   # count: 2
-interp.send("DECREMENT")   # count: 1
-
-print(interp.context)
-#> {"count": 1, "history": ["+1 → 1", "+1 → 2", "-1 → 1"]}
-
-interp.stop()
+atm = SyncInterpreter(create_machine(config, logic=logic)).start()
+atm.send("WITHDRAW", amount=50)
+print(atm.current_state_ids)      # {'atm.approved'}
 ```
 
-<br>
-
----
-
-<br>
-
-## 🛡️ Guards
-
-> Guards are **boolean functions** that control whether a transition is allowed. If a guard returns `False`, the transition is **blocked**.
+**Composite guards** — `and`, `or`, `not` nest arbitrarily via `params.guards`. There's also
+`stateIn` for "only if some other region is in state X":
 
 ```python
-from xstate_statemachine import State, StateMachine, guard
-
-class AgeGate(StateMachine):
-    machine_id = "ageGate"
-    initial_context = {"age": 16}
-
-    checking = State("checking", initial=True)
-    allowed  = State("allowed")
-    rejected = State("rejected")
-
-    # ⚡ Multiple guarded transitions — first match wins
-    verify = (
-        checking.to(allowed,  event="VERIFY", guard="isAdult")
-        | checking.to(rejected, event="VERIFY")  # fallback
-    )
-
-    @guard
-    def is_adult(self, context, event):
-        return context.get("age", 0) >= 18
+{"guard": {"type": "stateIn", "params": {"state": "auth.loggedIn"}}}
 ```
 
-> [!NOTE]
-> Guard functions receive `(context, event)` — **not** `(interpreter, context, event, action_def)`. They must return a `bool` and must be **synchronous**.
-
-> [!IMPORTANT]
-> **If a guard raises an exception it is treated as `False`** (since v0.5.1). The
-> error is logged with a traceback, the guarded transition is blocked, and any
-> lower-priority alternative — such as the unguarded fallback above — is still
-> considered. Your machine stays responsive instead of dying on a buggy
-> predicate.
->
-> A guard that is *declared but not implemented* still raises
-> `ImplementationMissingError`. That is a configuration error, not a runtime
-> condition, and fails loudly by design.
-
-<br>
-
----
-
-<br>
-
-## 🎬 Actions
-
-> Actions are **side effects** that execute at specific moments. They don't control flow — they _do_ things.
-
-| Trigger | ⏰ When It Fires |
-|:--------|:------------------|
-| 🔵 **Entry actions** | When a state is **entered** |
-| 🔴 **Exit actions** | When a state is **exited** |
-| ➡️ **Transition actions** | **During** a transition (between exit and entry) |
-
-```json
-{
-  "editing": {
-    "entry": "loadDraft",
-    "exit":  "saveDraft",
-    "on": {
-      "SUBMIT": {
-        "target": "submitting",
-        "actions": ["validate", "clearErrors"]
-      }
-    }
-  }
-}
-```
-
-**Execution order for `SUBMIT`:** `saveDraft` → `validate` → `clearErrors` → `showSpinner`
+> **Note** — guards must be **pure**. They can be evaluated more than once, and a guard with
+> side effects will surprise you. Put side effects in actions.
 
 <details>
-<summary>🏷️ <b>Pythonic Entry/Exit Actions</b></summary>
+<summary><b>XState v4 compatibility</b></summary>
 
-```python
-class FormMachine(StateMachine):
-    machine_id = "form"
+<br>
 
-    editing    = State("editing", initial=True)
-    submitting = State("submitting")
-
-    submit = editing.to(submitting, event="SUBMIT")
-
-    @editing.enter
-    def on_enter_editing(self, interpreter, context, event, action_def):
-        print("📝 Entered editing mode")
-
-    @editing.exit
-    def on_exit_editing(self, interpreter, context, event, action_def):
-        print("💾 Auto-saving draft...")
-```
+`cond` (v4) and `guard` (v5) are both accepted, so machines from either XState generation work
+without editing.
 
 </details>
 
-> [!IMPORTANT]
-> **If an action raises an exception it is contained** (since v0.5.1). The error
-> is logged with a traceback, the **remaining actions in that same list are
-> skipped**, and the state change still completes — a buggy side effect cannot
-> corrupt the machine's configuration or silently kill it.
->
-> This matters most in async mode: `Interpreter.send()` is fire-and-forget, so
-> before v0.5.1 an escaping exception tore down the internal run loop while
-> callers still saw `status == "running"`.
->
-> **Need failures to be observable?** Raise from an `invoke`d service instead —
-> service errors trigger `onError` transitions, so you can model the failure
-> path declaratively:
->
-> ```python
-> "loading": {
->     "invoke": {
->         "src": "fetchUser",
->         "onDone":  {"target": "success"},
->         "onError": {"target": "failure"}   # ✅ errors are first-class here
->     }
-> }
-> ```
->
-> An action that is *declared but not implemented* still raises
-> `ImplementationMissingError`.
-
-<br>
-
 ---
 
-<br>
+## 🎬 Actions — Side Effects
+
+Actions fire **during** a transition, or on entering/leaving a state.
+
+```python
+"states": {
+    "loading": {
+        "entry": ["showSpinner"],          # on the way in
+        "exit":  ["hideSpinner"],          # on the way out
+        "on": {"CANCEL": {"target": "idle", "actions": ["logCancel"]}},
+    }
+}
+```
+
+Order is guaranteed: **exit actions → transition actions → entry actions**.
+
+### Built-in action creators
+
+You rarely need to hand-write these — import them and go:
+
+| Creator | Does |
+|:--|:--|
+| `assign` | Update context |
+| `log` | Structured log line |
+| `raise_` | Send an event to *this* machine |
+| `send_to` | Send to another actor by id or `systemId` |
+| `send_parent` | Send to the machine that spawned you |
+| `choose` | Run the first action list whose guard passes |
+| `pure` | Compute actions from context at runtime |
+| `enqueue_actions` | Imperatively queue actions in a callback |
+| `spawn_child` / `stop_child` | Start / stop a child actor |
+| `cancel` | Cancel a delayed `send_to` |
+| `emit` | Emit an event to external subscribers |
+| `escalate` | Raise an error to the parent |
+| `forward_to` | Forward the current event to another actor |
+
+> **Note** — if an action raises, the error is **logged and contained**. The transition still
+> completes and the interpreter keeps running; one buggy side effect can't take down a
+> long-lived machine. To react to a failure, record it on context and guard on it.
+
+---
 
 ## 🔌 Services & Invoke
 
-> Services represent **async operations** — API calls, database queries, file reads. A state can `invoke` a service and transition based on the result.
+`invoke` runs an async or sync callable when a state is entered, and routes its result back
+into the machine as `onDone` / `onError`. This is how you do I/O.
 
 ```python
-class UserLogic(MachineLogic):
-    async def fetchUser(self, interpreter, context, event):
-        # 🌐 Call your API
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            resp = await session.get("https://api.example.com/user/1")
-            return await resp.json()
+import asyncio
+from xstate_statemachine import (
+    create_machine, Interpreter, MachineLogic, assign, wait_for,
+)
 
-    def storeUser(self, interpreter, context, event, action_def):
-        context["user"] = event.data  # ✅ onDone event carries the return value
-
-    def storeError(self, interpreter, context, event, action_def):
-        context["error"] = str(event.data)  # ❌ onError event carries the exception
-```
-
-<details>
-<summary>📋 <b>JSON Invoke Configuration</b></summary>
-
-```json
-{
-  "loading": {
-    "invoke": {
-      "src": "fetchUser",
-      "onDone": {
-        "target": "loaded",
-        "actions": "storeUser"
-      },
-      "onError": {
-        "target": "error",
-        "actions": "storeError"
-      }
-    }
-  }
-}
-```
-
-</details>
-
-<br>
-
----
-
-<br>
-
-## ⏱️ Delayed Transitions (`after`)
-
-> States can **automatically transition** after a time delay — perfect for timeouts, polling, and auto-progression.
-
-```json
-{
-  "id": "sessionTimeout",
-  "initial": "active",
-  "states": {
-    "active": {
-      "after": { "300000": "warning" },
-      "on": { "ACTIVITY": "active" }
-    },
-    "warning": {
-      "after": { "30000": "expired" },
-      "on": { "EXTEND": "active" }
-    },
-    "expired": { "type": "final" }
-  }
-}
-```
-
-```
-⏱️ 5 min inactivity → ⚠️ 30 sec warning → ❌ expired
-                        ↑ EXTEND → back to active
-```
-
-<br>
-
----
-
-<br>
-
-## 🏗️ Hierarchical (Nested) States
-
-> Compound states contain child states, creating a **tree structure**. Parent transitions apply to all children automatically.
-
-```
-           ┌──────────────── loggedIn ────────────────┐
-           │                                          │
-  LOGIN    │   ┌───────────┐   VIEW    ┌────────┐    │
-  ──────►  │   │ dashboard │ ───────► │ profile│    │
-           │   │  (init)   │ ◄─────── │        │    │
-           │   └───────────┘   BACK   └────────┘    │
-           │        │                                │
-           │   VIEW_SETTINGS                         │
-           │        ▼                                │
-           │   ┌──────────┐                          │
-           │   │ settings │                          │
-           │   └──────────┘                          │
-           │                                         │
-           └──────── LOGOUT ─────────────────────────┘
-                      │
-                      ▼
-           ┌──────────────┐
-           │  loggedOut   │
-           └──────────────┘
-```
-
-```python
-class AuthMachine(StateMachine):
-    machine_id = "auth"
-
-    logged_out = State("loggedOut", initial=True)
-    logged_in  = State("loggedIn", states=[
-        State("dashboard", initial=True),
-        State("profile"),
-        State("settings"),
-    ])
-
-    login  = logged_out.to(logged_in,  event="LOGIN")
-    logout = logged_in.to(logged_out, event="LOGOUT")  # 🔑 Catches from ANY child
-```
-
-> [!TIP]
-> The `LOGOUT` event on the parent `loggedIn` catches the event **no matter which child state is active**. This is the power of hierarchy.
-
-<br>
-
----
-
-<br>
-
-## 🔀 Parallel States
-
-> Parallel states represent **concurrent** activity — multiple regions operating independently.
-
-```json
-{
-  "playing": {
-    "type": "parallel",
+config = {
+    "id": "fetch",
+    "initial": "idle",
+    "context": {"user": None, "error": None},
     "states": {
-      "video":    { "initial": "loading",  "states": { "loading": {}, "showing": {} } },
-      "audio":    { "initial": "muted",    "states": { "muted": {},   "playing": {} } },
-      "controls": { "initial": "visible",  "states": { "visible": {}, "hidden": {}  } }
-    }
-  }
+        "idle": {"on": {"FETCH": "loading"}},
+        "loading": {
+            "invoke": {
+                "src": "fetchUser",
+                "onDone": {"target": "success",
+                           "actions": assign({"user": lambda a: a["event"].data})},
+                "onError": {"target": "failure",
+                            "actions": assign({"error": lambda a: str(a["event"].data)})},
+            }
+        },
+        "success": {"type": "final"},
+        "failure": {"on": {"RETRY": "loading"}},
+    },
+}
+
+async def fetch_user(interpreter, ctx, event):
+    await asyncio.sleep(0.01)
+    return {"id": 1, "name": "Ada"}
+
+async def main():
+    machine = create_machine(config, logic=MachineLogic(services={"fetchUser": fetch_user}))
+    svc = await Interpreter(machine).start()
+
+    await svc.send("FETCH")
+    await wait_for(svc, lambda s: s.matches("fetch.success"), timeout=2)
+
+    print(svc.context["user"])        # {'id': 1, 'name': 'Ada'}
+    await svc.stop()
+
+asyncio.run(main())
+```
+
+- **Success** → `onDone`, with the return value on `event.data`
+- **Failure** → `onError`, with the *exception object* on `event.data`
+- Leaving the state **cancels** the service automatically — no zombie tasks
+
+> **Tip** — use `wait_for` (async) or `wait_for_sync` rather than `asyncio.sleep()` guesses.
+> It polls a predicate with a real timeout, so tests stay fast and never flake.
+
+---
+
+## ⏱️ Timers & Delayed Transitions
+
+`after` fires a transition if the machine is *still* in that state when the timer elapses.
+Leave early and the timer is cancelled for you.
+
+```python
+"connecting": {
+    "after": {5000: "timedOut"},          # 5000 ms
+    "on": {"OPEN": "online"},             # ...unless we connect first
 }
 ```
 
-All three regions (`video` 🎬, `audio` 🔊, `controls` 🎛️) are active **simultaneously**.
-
-<br>
-
----
-
-<br>
-
-## 🏁 Final States
-
-> A final state signals **completion**. No outgoing transitions allowed.
+Name your delays to keep magic numbers out of the config — and to compute them at runtime,
+which is exactly how you express **exponential backoff**:
 
 ```python
-confirmed = State("confirmation", final=True)
+logic = MachineLogic(delays={
+    "TIMEOUT": 60_000,
+    "BACKOFF": lambda ctx, e: 2 ** ctx["attempt"] * 1000,   # 1s, 2s, 4s, 8s…
+})
 ```
 
-When entered inside a compound state, triggers a `done.state.*` event on the parent.
-
-<br>
+```python
+"retrying": {"after": {"BACKOFF": "loading"}}
+```
 
 ---
 
-<br>
+## 🌳 Nested & Parallel States
 
-## 🤖 Actor Model
+### Nested (compound) states
 
-> Spawn **isolated child machines** — each actor has its own state, context, and lifecycle.
+Group related substates so shared transitions live in one place:
 
 ```python
-class ParentLogic(MachineLogic):
-    def spawn_child(self, interpreter, context, event, action_def):
-        """🤖 Spawn a child actor (suffix after 'spawn_' = actor key)"""
-        child_config = {
-            "id": "childMachine",
-            "initial": "idle",
+"states": {
+    "authenticated": {
+        "initial": "browsing",
+        "on": {"LOGOUT": "loggedOut"},     # ← applies to EVERY substate
+        "states": {
+            "browsing":  {"on": {"CHECKOUT": "paying"}},
+            "paying":    {"on": {"DONE": "confirmed"}},
+            "confirmed": {},
+        },
+    },
+    "loggedOut": {},
+}
+```
+
+`LOGOUT` works from `browsing`, `paying`, *and* `confirmed`. Write it once.
+
+### Parallel states — concurrent regions
+
+Regions run independently. `onDone` fires **exactly once**, when *all* of them reach a final
+state — fan-out and fan-in with no bookkeeping:
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter
+
+ci = SyncInterpreter(create_machine({
+    "id": "ci",
+    "initial": "running",
+    "states": {
+        "running": {
+            "type": "parallel",
+            "onDone": "deployed",
             "states": {
-                "idle":    {"on": {"DO_WORK": "working"}},
-                "working": {"on": {"DONE": "idle"}}
-            }
+                "build": {"initial": "b", "states": {
+                    "b": {"on": {"BUILD_OK": "done"}}, "done": {"type": "final"}}},
+                "lint":  {"initial": "l", "states": {
+                    "l": {"on": {"LINT_OK": "done"}},  "done": {"type": "final"}}},
+            },
+        },
+        "deployed": {},
+    },
+})).start()
+
+print(sorted(ci.current_state_ids))   # ['ci.running.build.b', 'ci.running.lint.l']
+ci.send("BUILD_OK")
+print(sorted(ci.current_state_ids))   # ['ci.running.build.done', 'ci.running.lint.l']
+ci.send("LINT_OK")
+print(sorted(ci.current_state_ids))   # ['ci.deployed']   ← fan-in fired
+```
+
+This is where `current_state_ids` returning a **set** finally makes sense.
+
+---
+
+## 🕰️ History & Final States
+
+**History** remembers where you were, so an interruption doesn't lose progress — the classic
+"resume the wizard where the user left off":
+
+```python
+"states": {
+    "wizard": {
+        "initial": "step1",
+        "states": {
+            "step1": {}, "step2": {}, "step3": {},
+            "hist": {"type": "history", "history": "shallow"},   # or "deep"
+        },
+    },
+    "helpModal": {"on": {"CLOSE": "wizard.hist"}},    # ← back to the exact step
+}
+```
+
+**Final states** mark completion. A final state in a compound state fires its parent's
+`onDone`; a top-level final state stops the machine and can produce `output`.
+
+---
+
+## 🤖 The Actor Model
+
+Machines can spawn other machines. Each child gets its own state, context and lifecycle —
+a supervision tree, not a callback pile. Register a child under a `systemId` and any machine
+in the system can address it by name.
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
+
+# The child machine — an independent actor with its own context.
+worker = {
+    "id": "worker",
+    "initial": "idle",
+    "context": {"jobs": 0},
+    "states": {"idle": {"on": {"JOB": {"target": "idle", "actions": ["count"]}}}},
+}
+worker_logic = MachineLogic(actions={
+    "count": lambda i, ctx, e, a: ctx.__setitem__("jobs", ctx["jobs"] + 1),
+})
+
+parent = {
+    "id": "super",
+    "initial": "up",
+    "context": {},
+    "states": {
+        "up": {
+            "entry": [{"type": "spawnChild",
+                       "params": {"src": "worker", "id": "w1", "systemId": "pool"}}],
+            "on": {"DISPATCH": {"actions": [
+                {"type": "sendTo", "params": {"to": "pool", "event": {"type": "JOB"}}}
+            ]}},
         }
-        return create_machine(child_config)
+    },
+}
+
+logic = MachineLogic(services={
+    "worker": lambda i, ctx, e: create_machine(worker, logic=worker_logic),
+})
+
+sup = SyncInterpreter(create_machine(parent, logic=logic)).start()
+print(list(sup.system.get_all()))          # ['pool']
+
+sup.send("DISPATCH")
+sup.send("DISPATCH")
+print(sup.system.get("pool").context["jobs"])   # 2
 ```
 
-> [!TIP]
-> Use `spawn_blocking_` prefix for actors that **wait** for the child to reach a final state before continuing.
+Children talk back with `send_parent`, escalate failures with `escalate`, and are torn down
+with `stop_child` — or automatically when the parent stops.
 
-<br>
+**Good fit for:** LLM agent orchestration (each tool call a supervised child), connection
+pools, per-user session machines, job workers.
 
 ---
 
-<br>
+## 💾 Persistence — Snapshots
 
-## 🔌 Plugins & Observability
-
-> Plugins **observe** machine execution without modifying behavior. Perfect for logging, metrics, and debugging.
-
-### 📋 Built-in: `LoggingInspector`
+Serialize a running machine to JSON, store it anywhere, rebuild it later. Long-running flows
+survive deploys and restarts.
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, LoggingInspector
+from xstate_statemachine import create_machine, SyncInterpreter
 
-interp = SyncInterpreter(machine)
-interp.plugins = [LoggingInspector()]  # 🔌 Attach plugin
+job = SyncInterpreter(create_machine(config)).start()
+job.send("NEXT")
 
-interp.start()
-interp.send("GO")
-# 🕵️ [INSPECT] Transition: ['demo.a'] → ['demo.b'] on Event 'GO'
-# 🕵️ [INSPECT] New Context: {}
+snapshot = job.get_snapshot()      # a JSON string → Redis, Postgres, a file…
+job.stop()
+
+# …new process, hours later…
+resumed = SyncInterpreter.from_snapshot(snapshot, create_machine(config))
+print(resumed.current_state_ids)   # {'job.step2'}   ← exactly where it left off
+resumed.send("NEXT")
 ```
 
-<details>
-<summary>🔧 <b>Custom Plugin Example</b></summary>
-
-```python
-from xstate_statemachine import PluginBase
-
-class MetricsPlugin(PluginBase):
-    def __init__(self):
-        self.transition_count = 0
-
-    def on_transition(self, interpreter, from_states, to_states, transition):
-        self.transition_count += 1
-        print(f"📊 Transition #{self.transition_count}")
-
-    def on_event_received(self, interpreter, event):
-        print(f"📨 Event: {event.type}")
-
-    def on_action_execute(self, interpreter, action):
-        print(f"🎬 Action: {action.type}")
-
-    def on_guard_evaluated(self, interpreter, guard_name, event, result):
-        emoji = "✅" if result else "❌"
-        print(f"🛡️ Guard '{guard_name}' → {emoji}")
-```
-
-</details>
-
-<details>
-<summary>📋 <b>All Plugin Hooks</b></summary>
-
-| Hook | When It Fires |
-|:-----|:-------------|
-| `on_interpreter_start` | Machine starts |
-| `on_interpreter_stop` | Machine stops |
-| `on_event_received` | Event received |
-| `on_transition` | State transition occurs |
-| `on_action_execute` | Action about to execute |
-| `on_guard_evaluated` | Guard checked |
-| `on_service_start` | Service begins |
-| `on_service_done` | Service completes |
-| `on_service_error` | Service throws |
-
-</details>
-
-<br>
+State, context, active timers and `systemId` registrations all round-trip.
+`get_persisted_snapshot()` gives you the dict form if you'd rather store structured data.
 
 ---
 
-<br>
+## 🧪 The Pure API — No Interpreter
 
-## 💾 Snapshots & State Restoration
-
-> **Save** and **restore** machine state — perfect for persistence, crash recovery, and testing.
-
-```python
-# 📸 Capture current state
-snapshot_json = interp.get_snapshot()
-#> {"status": "started", "context": {"progress": 50}, "state_ids": ["workflow.step2"]}
-
-# 💾 Save to file
-from pathlib import Path
-Path("machine_state.json").write_text(snapshot_json)
-
-# 🔄 Restore later (even in a different process)
-saved = Path("machine_state.json").read_text()
-restored = SyncInterpreter.from_snapshot(saved, machine)
-
-print(restored.active_state_ids)  # {'workflow.step2'} ✅
-print(restored.context)           # {'progress': 50}   ✅
-restored.send("NEXT")             # Continue from where we left off!
-```
-
-> [!WARNING]
-> `from_snapshot()` performs a **static restoration**. It does NOT re-run entry actions, restart services, or resume `after` timers.
-
-<br>
-
----
-
-<br>
-
-## 📊 Diagram Export
-
-> Generate visual diagrams from any machine definition.
+Sometimes you want to ask *"what would happen if…"* without running anything. The pure API is
+a set of side-effect-free functions over immutable snapshots — ideal for tests, planning, and
+"preview the next step" UI.
 
 ```python
+from xstate_statemachine import create_machine, initial_transition, pure_transition
+
 machine = create_machine(config)
 
-print(machine.to_mermaid())    # 📊 Works in GitHub README
-print(machine.to_plantuml())   # 📊 For documentation
+snapshot, entry_actions = initial_transition(machine)
+next_snapshot, actions = pure_transition(machine, snapshot, "FETCH")
+
+print(snapshot.state_ids)         # {'fetch.idle'}
+print(next_snapshot.state_ids)    # {'fetch.loading'}
+print([a.type for a in actions])  # the actions that WOULD have run
 ```
 
-```mermaid
-stateDiagram-v2
-    [*] --> off
-    off --> on : TOGGLE
-    on --> off : TOGGLE
-```
+Both functions return `(snapshot, actions)`. If you only want the next state,
+`get_next_snapshot(machine, snapshot, "FETCH")` returns the snapshot alone.
 
-<br>
+A `PureSnapshot` exposes `state_ids`, `context`, `status`, `output`, `configuration`
+and `matches()`. No timers start. No services fire. Nothing mutates.
 
 ---
 
-<br>
+## 🔍 Introspection & Plugins
 
-## ⚡ CLI Code Generator
+Every interpreter answers questions about itself:
 
-> The `xsm` CLI generates **production-ready Python** from XState JSON configs — complete with type hints, docstrings, error handling, and logging.
-
-### 🛠️ Available Commands
-
-```
-xsm [-h] [-v]
-    {generate-template, gt, list-templates, lt, validate, val, info} ...
-```
-
-| Command | Alias | Description |
-|:--------|:------|:------------|
-| 🔧 `generate-template` | `gt` | Generate Python code from XState JSON |
-| 📋 `list-templates` | `lt` | List all available code generation templates |
-| ✅ `validate` | `val` | Validate an XState JSON config file |
-| ℹ️ `info` | — | Show library version and feature summary |
-
-### 📋 Quick Reference
-
-```bash
-# 🔧 Generate code from JSON
-xsm gt my_machine.json                        # default template
-xsm gt my_machine.json -t pythonic-class       # choose template
-
-# 📋 List available templates
-xsm lt
-
-# ✅ Validate JSON config
-xsm val my_machine.json auth.json
-
-# ℹ️ Show library info
-xsm info
+```python
+interp.matches("checkout.paying")     # bool — supports nested paths
+interp.can("SUBMIT")                  # would this event do anything right now?
+interp.has_tag("busy")                # state tags, great for UI binding
+interp.get_meta()                     # merged `meta` from active states
+interp.subscribe(lambda snap: ...)    # observe every transition
 ```
 
-### 🎨 Template Selection
+Plugins hook the whole lifecycle — one line gives you a complete transition audit trail:
 
-| Template | Style | Best For |
-|:---------|:------|:---------|
-| ⭐ `pythonic-class` | Class-based OOP | New Python-native projects |
-| ⛓️ `pythonic-builder` | Fluent builder | Dynamic assembly |
-| 🧩 `pythonic-functional` | Functional | Simple scripts |
-| 📋 `class-json` | Class + JSON | Existing JSON workflows |
-| 📄 `function-json` | Functions + JSON | Lightweight prototyping |
+```python
+from xstate_statemachine import LoggingInspector
 
-<details>
-<summary>⚙️ <b>All CLI Options</b></summary>
-
-```
-xsm generate-template [JSON_FILES...] [OPTIONS]
-
-Input Options:
-  json_files                One or more XState JSON config files
-  -j,  --json FILE          Additional JSON input (repeatable)
-  -jp, --json-parent FILE   Designate parent machine for hierarchy
-  -jc, --json-child FILE    Designate child machine(s) (repeatable)
-
-Template Options:
-  -t,  --template TEMPLATE  Code generation template
-  -s,  --style STYLE        DEPRECATED: use --template instead
-
-Output Options:
-  -o,  --output DIR         Output directory (default: same as JSON)
-  -fc, --file-count {1,2}   1 = merged, 2 = separate (default)
-  -f,  --force              Overwrite existing files
-
-Behavior Options:
-  -am, --async-mode BOOL    Async (yes) or sync (no) interpreter
-  -l,  --loader BOOL        Use LogicLoader auto-discovery (default: yes)
-  --log BOOL                Include logging statements (default: yes)
-  --sleep BOOL              Add sleep between events (default: yes)
-  --sleep-time SECONDS      Sleep duration (default: 2)
+interp.use(LoggingInspector())
 ```
 
-</details>
-
-<details>
-<summary>🍳 <b>Common Recipes</b></summary>
-
-```bash
-# ⚡ Sync mode (for scripts/CLI tools)
-xsm gt machine.json -t pythonic-class --async-mode no
-
-# 📄 Single merged file
-xsm gt machine.json -t pythonic-functional --file-count 1
-
-# 🧹 Clean output (no logging, no sleep)
-xsm gt machine.json -t pythonic-class --log no --sleep no
-
-# 📁 Custom output directory + force overwrite
-xsm gt machine.json -o ./generated/ --force
-
-# 📦 Multiple JSON files
-xsm gt auth.json profile.json settings.json
-```
-
-</details>
-
-<br>
+Subclass `PluginBase` for metrics, tracing, or persistence-on-every-transition.
 
 ---
 
-<br>
+## ⚖️ How It Compares
 
-## 🎨 CLI Templates Deep Dive
+Python has good state machine libraries. Here's an honest read on when to pick which.
 
-> Given a checkout machine JSON, here's what each template produces:
+| | **xstate-statemachine** | **transitions** | **python-statemachine** |
+|:--|:--:|:--:|:--:|
+| XState / Stately JSON | ✅ **runs unmodified** | ❌ | ❌ |
+| Compound (nested) states | ✅ | ✅ | ✅ |
+| Parallel regions | ✅ | ✅ | ✅ |
+| History states | ✅ | ✅ | ✅ |
+| `invoke` services + `onDone`/`onError` | ✅ built-in | ⚙️ DIY | ⚙️ DIY |
+| Delayed transitions (`after`) | ✅ built-in | ⚙️ DIY | ⚙️ DIY |
+| Actor model / spawning | ✅ | ❌ | ❌ |
+| Snapshot persistence | ✅ | ⚙️ DIY | ⚙️ DIY |
+| Sync **and** async runtimes | ✅ two engines | ✅ | ✅ |
+| Diagram export | ✅ no binaries | ⚙️ needs graphviz | ✅ |
+| CLI code generator | ✅ | ❌ | ❌ |
+| Runtime dependencies | **0** | 0 (core) | few |
 
-<details>
-<summary>⭐ <b><code>pythonic-class</code> — StateMachine subclass with decorators</b></summary>
+**Pick `transitions`** if you want the most battle-tested option and a simple FSM bolted onto
+an existing class. It's mature, widely deployed, and excellent at that job.
 
-```python
-class CheckoutMachine(StateMachine):
-    """Checkout state machine."""
-    machine_id = "checkout"
-    initial_context = {"total": 0}
+**Pick `python-statemachine`** if you want a beautiful, pythonic declarative API and don't
+need JS interop. It genuinely supports compound, parallel and history states too — this is a
+real alternative, not a strawman.
 
-    # 🔵 States
-    cart      = State("cart", initial=True)
-    payment   = State("payment", invoke={...})
-    confirmed = State("confirmed")
+**Pick this library** when you want XState/Stately JSON to run in Python unchanged, or you
+want `invoke`, `after`, actors and snapshots as first-class primitives instead of patterns
+you assemble yourself.
 
-    # ➡️ Transitions
-    checkout_event = cart.to(payment, event="CHECKOUT",
-                             guard="hasItems", actions="calculateTotal")
+### When *not* to use this
 
-    # 🎬 Actions
-    @action
-    def calculate_total(self, interpreter, context, event, action_def) -> None:
-        """Execute the ``calculateTotal`` action."""
-        # TODO: implement action logic
-        pass
-
-    # 🛡️ Guards
-    @guard
-    def has_items(self, context, event) -> bool:
-        """Evaluate the ``hasItems`` guard."""
-        return True  # TODO: implement
-
-    # 🔌 Services
-    @service
-    def process_payment(self, interpreter, context, event) -> dict:
-        """Run the ``processPayment`` service."""
-        return {"result": "done"}  # TODO: implement
-```
-
-</details>
-
-<details>
-<summary>⛓️ <b><code>pythonic-builder</code> — MachineBuilder fluent chain</b></summary>
-
-```python
-@action
-def calculate_total(interpreter, context, event, action_def): ...
-
-@guard
-def has_items(context, event): return True
-
-@service
-def process_payment(interpreter, context, event): return {"result": "done"}
-
-def build():
-    return (
-        MachineBuilder("checkout")
-        .context({"total": 0})
-        .state("cart", initial=True)
-        .state("payment", invoke={...})
-        .state("confirmed")
-        .transition("cart", "CHECKOUT", "payment",
-                     guard="hasItems", actions="calculateTotal")
-        .build()
-    )
-```
-
-</details>
-
-<details>
-<summary>🧩 <b><code>pythonic-functional</code> — build_machine() with State objects</b></summary>
-
-```python
-@action
-def calculate_total(interpreter, context, event, action_def): ...
-
-@guard
-def has_items(context, event): return True
-
-def build():
-    cart      = State("cart", initial=True)
-    payment   = State("payment", invoke={...})
-    confirmed = State("confirmed")
-    cart.to(payment, event="CHECKOUT", guard="hasItems", actions="calculateTotal")
-    return build_machine(id="checkout", states=[cart, payment, confirmed])
-```
-
-</details>
-
-<details>
-<summary>📋 <b><code>class-json</code> — Class with JSON at runtime</b></summary>
-
-```python
-class CheckoutLogic:
-    def calculateTotal(self, interpreter, context, event, action_def): ...
-    def hasItems(self, context, event): return True
-    def processPayment(self, interpreter, context, event): return {"result": "done"}
-```
-
-</details>
-
-<details>
-<summary>📄 <b><code>function-json</code> — Module-level functions with JSON</b></summary>
-
-```python
-def calculateTotal(interpreter, context, event, action_def): ...
-def hasItems(context, event): return True
-def processPayment(interpreter, context, event): return {"result": "done"}
-```
-
-</details>
-
-<details>
-<summary>📊 <b>Template Comparison Table</b></summary>
-
-| Feature | `pythonic-class` | `pythonic-builder` | `pythonic-functional` | `class-json` | `function-json` |
-|:--------|:---:|:---:|:---:|:---:|:---:|
-| JSON at runtime | ❌ | ❌ | ❌ | ✅ | ✅ |
-| Logic in class | ✅ | ❌ | ❌ | ✅ | ❌ |
-| Type hints | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Decorators | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Default mode | sync | sync | sync | async | async |
-
-</details>
-
-<br>
+For a three-state toggle with no I/O, a plain `enum` and an `if` is less machinery and easier
+to read. Statecharts start paying for themselves when you have **concurrency, timeouts,
+cancellation, or more than ~5 states** — and they pay enormously at 20.
 
 ---
 
-<br>
+## 📚 Cookbook
 
-## 🏢 Hierarchical Machine Generation
+Real problems, small solutions.
 
-> Generate code for **parent-child machine** architectures.
-
-```bash
-# 🔗 Explicit hierarchy
-xsm gt --json-parent parent.json --json-child child_a.json --json-child child_b.json
-
-# 🤖 Auto-detect hierarchy
-xsm gt parent.json child_a.json child_b.json
-```
+<details open>
+<summary><b>🔁 Retry with exponential backoff and a give-up limit</b></summary>
 
 <br>
 
----
+The pattern that turns into unreadable nested loops when hand-written:
 
-<br>
-
-## 🧪 Advanced Patterns
-
-<details>
-<summary>🔄 <b>Pattern 1: Retry with Exponential Backoff</b></summary>
-
-```json
-{
-  "id": "retryMachine",
-  "initial": "idle",
-  "context": {"retries": 0, "maxRetries": 3},
-  "states": {
-    "idle": { "on": {"START": "attempting"} },
-    "attempting": {
-      "invoke": {
-        "src": "apiCall",
-        "onDone": "success",
-        "onError": [
-          {"target": "waiting", "guard": "canRetry", "actions": "incrementRetry"},
-          {"target": "failed"}
-        ]
-      }
+```python
+config = {
+    "id": "api",
+    "initial": "idle",
+    "context": {"attempt": 0},
+    "states": {
+        "idle": {"on": {"CALL": "loading"}},
+        "loading": {
+            "invoke": {
+                "src": "callApi",
+                "onDone": "success",
+                "onError": [
+                    {"target": "waiting", "guard": "canRetry"},
+                    {"target": "failed"},               # out of retries
+                ],
+            }
+        },
+        "waiting": {
+            "entry": assign({"attempt": lambda a: a["context"]["attempt"] + 1}),
+            "after": {"BACKOFF": "loading"},
+        },
+        "success": {"type": "final"},
+        "failed":  {"type": "final"},
     },
-    "waiting": { "after": {"1000": "attempting"} },
-    "success": { "type": "final" },
-    "failed":  { "type": "final" }
-  }
 }
-```
 
-```python
-class RetryLogic(MachineLogic):
-    def canRetry(self, context, event):
-        return context["retries"] < context["maxRetries"]
-
-    def incrementRetry(self, interpreter, context, event, action_def):
-        context["retries"] += 1
-
-    def apiCall(self, interpreter, context, event):
-        import requests
-        resp = requests.get("https://api.example.com/data")
-        resp.raise_for_status()
-        return resp.json()
-```
-
-</details>
-
-<details>
-<summary>📝 <b>Pattern 2: Form Wizard with Validation</b></summary>
-
-```python
-class FormWizard(StateMachine):
-    machine_id = "wizard"
-    initial_context = {"step1_data": {}, "step2_data": {}, "errors": []}
-
-    step1     = State("step1", initial=True)
-    step2     = State("step2")
-    step3     = State("step3")
-    review    = State("review")
-    submitted = State("submitted", final=True)
-
-    # ➡️ Forward (guarded)
-    next_1 = step1.to(step2, event="NEXT", guard="isStep1Valid")
-    next_2 = step2.to(step3, event="NEXT", guard="isStep2Valid")
-    next_3 = step3.to(review, event="NEXT")
-    submit = review.to(submitted, event="SUBMIT")
-
-    # ⬅️ Back (always allowed)
-    back_2 = step2.to(step1, event="BACK")
-    back_3 = step3.to(step2, event="BACK")
-    back_r = review.to(step3, event="BACK")
-
-    @guard
-    def is_step1_valid(self, context, event):
-        return bool(context["step1_data"].get("name"))
-
-    @guard
-    def is_step2_valid(self, context, event):
-        return bool(context["step2_data"].get("email"))
-```
-
-</details>
-
-<details>
-<summary>🛒 <b>Pattern 3: E-Commerce Checkout (Nested + Services + Guards)</b></summary>
-
-```json
-{
-  "id": "ecommerce",
-  "initial": "browsing",
-  "context": {"cart": [], "total": 0},
-  "states": {
-    "browsing": {
-      "on": {
-        "ADD_TO_CART": {"actions": "addItem"},
-        "CHECKOUT": {"target": "checkout", "guard": "cartNotEmpty"}
-      }
-    },
-    "checkout": {
-      "initial": "shipping",
-      "states": {
-        "shipping": {
-          "on": {"SUBMIT_ADDRESS": {"target": "payment", "actions": "saveAddress"}}
-        },
-        "payment": {
-          "on": {"SUBMIT_PAYMENT": "processing"}
-        },
-        "processing": {
-          "invoke": {
-            "src": "chargeCard",
-            "onDone": {"target": "confirmation", "actions": "saveReceipt"},
-            "onError": {"target": "payment", "actions": "showPaymentError"}
-          }
-        },
-        "confirmation": {"type": "final"}
-      },
-      "on": {"CANCEL": "browsing"},
-      "onDone": "orderComplete"
-    },
-    "orderComplete": {"type": "final"}
-  }
-}
-```
-
-</details>
-
-<br>
-
----
-
-<br>
-
-## 🔧 Troubleshooting
-
-<details>
-<summary>❌ <b>Common Errors</b></summary>
-
-| Error | Cause | Fix |
-|:------|:------|:----|
-| `InvalidConfigError: Missing 'id'` | No `"id"` in JSON | Add `"id": "myMachine"` |
-| `InvalidConfigError: Missing 'states'` | No `"states"` in JSON | Add at least one state |
-| `StateNotFoundError` | Target state doesn't exist | Check state name spelling |
-| `ImplementationMissingError` | Logic not implemented | Add function to `MachineLogic` |
-| `NotSupportedError: async guard` | Guard is `async def` | Guards must be synchronous |
-| `ActorSpawningError` | Invalid actor source | `spawn_*` must return `MachineNode` |
-
-</details>
-
-<details>
-<summary>⚡ <b>CLI Troubleshooting</b></summary>
-
-| Issue | Fix |
-|:------|:----|
-| `xsm: command not found` | `pip install xstate-statemachine` or `python -m xstate_statemachine.cli` |
-| Files not generated | Check `--output` path; use `--force` to overwrite |
-| Wrong template | Use `--template pythonic-class` (not `--style class`) |
-
-</details>
-
-<details>
-<summary>🐛 <b>Debugging Tips</b></summary>
-
-```python
-# 1️⃣ Attach LoggingInspector to see everything
-interp.plugins = [LoggingInspector()]
-
-# 2️⃣ Check active states after each event
-print(interp.active_state_ids)
-
-# 3️⃣ Inspect context to verify data flow
-print(interp.context)
-
-# 4️⃣ Export diagrams to visualize the machine
-print(machine.to_mermaid())
-```
-
-</details>
-
-<br>
-
----
-
-<br>
-
-## 📖 API Reference
-
-<details>
-<summary>🏭 <b>Factory Functions</b></summary>
-
-#### `create_machine(config, *, logic=None, logic_modules=None, logic_providers=None)`
-
-Create a machine from XState JSON config.
-
-| Parameter | Type | Description |
-|:----------|:-----|:------------|
-| `config` | `Dict[str, Any]` | XState JSON config |
-| `logic` | `MachineLogic` | Explicit logic provider |
-| `logic_modules` | `List[Module]` | Python modules with logic functions |
-| `logic_providers` | `List[object]` | Objects with action/guard/service methods |
-
-**Returns:** `MachineNode`
-
-#### `build_machine(*, id, states, transitions=None, actions=None, guards=None, services=None, context=None)`
-
-Build a machine from Pythonic API objects.
-
-| Parameter | Type | Description |
-|:----------|:-----|:------------|
-| `id` | `str` | Machine identifier |
-| `states` | `List[State]` | List of `State` objects |
-| `actions` | `List[Callable]` | Decorated action functions |
-| `guards` | `List[Callable]` | Decorated guard functions |
-| `services` | `List[Callable]` | Decorated service functions |
-| `context` | `Dict` | Initial context |
-
-**Returns:** `MachineNode`
-
-</details>
-
-<details>
-<summary>🔵 <b>State</b></summary>
-
-#### `State(name, *, initial=False, final=False, parallel=False, ...)`
-
-| Parameter | Type | Default | Description |
-|:----------|:-----|:--------|:------------|
-| `name` | `str` | `""` | State name |
-| `initial` | `bool` | `False` | Initial state? |
-| `final` | `bool` | `False` | Terminal state? |
-| `parallel` | `bool` | `False` | Parallel state? |
-| `on` | `Dict` | `None` | Event → transition map |
-| `entry` / `exit` | `List[str]` | `None` | Entry/exit actions |
-| `after` | `Dict[int, Any]` | `None` | Delayed transitions |
-| `invoke` | `Dict/List` | `None` | Service invocations |
-| `states` | `List[State]` | `None` | Child states |
-
-**Key Methods:**
-- `state.to(target, *, event, guard=None, actions=None)` → `Transition`
-- `state.internal(event, *, guard=None, actions=None)` → `Transition`
-- `@state.enter` / `@state.exit` — entry/exit decorators
-
-</details>
-
-<details>
-<summary>🏛️ <b>StateMachine</b></summary>
-
-| Attribute | Type | Description |
-|:----------|:-----|:------------|
-| `machine_id` | `str` | Machine identifier |
-| `initial_context` | `Dict` | Initial context data |
-
-**Class Method:** `StateMachine.create_machine(context=None)` → `MachineNode`
-
-</details>
-
-<details>
-<summary>⛓️ <b>MachineBuilder</b></summary>
-
-| Method | Returns | Description |
-|:-------|:--------|:------------|
-| `.context(ctx)` | `self` | Set initial context |
-| `.state(name, **kwargs)` | `self` | Add a state |
-| `.transition(src, event, tgt)` | `self` | Add a transition |
-| `.child_states(parent, ...)` | `self` | Add nested states |
-| `.action(name, fn)` | `self` | Register action |
-| `.guard(name, fn)` | `self` | Register guard |
-| `.service(name, fn)` | `self` | Register service |
-| `.build()` | `MachineNode` | Build the machine |
-
-</details>
-
-<details>
-<summary>➡️ <b>Transitions</b></summary>
-
-```python
-# Single transition
-t = idle.to(active, event="START")
-
-# Combined transitions (first matching guard wins)
-t = (
-    idle.to(premium, event="SIGNUP", guard="isPremium")
-    | idle.to(basic, event="SIGNUP")  # fallback
-)
-
-# Internal transition (no exit/entry, stays in state)
-t = counting.internal("INCREMENT", actions=["addOne"])
-
-# Forced re-entry (exit → transition → entry, even for self-transitions)
-t = active.to(active, event="REFRESH", reenter=True)
-
-# Standalone function alternative
-from xstate_statemachine import transition
-t = transition(idle, "START", active, guard="isReady")
-```
-
-</details>
-
-<details>
-<summary>⚙️ <b>Interpreters</b></summary>
-
-#### `Interpreter(machine)` — Async
-
-| Method | Description |
-|:-------|:------------|
-| `await .start()` | Start the machine |
-| `await .stop()` | Stop and clean up |
-| `await .send(event)` | Send an event |
-
-#### `SyncInterpreter(machine)` — Sync
-
-| Method | Description |
-|:-------|:------------|
-| `.start()` | Start the machine |
-| `.stop()` | Stop and clean up |
-| `.send(event)` | Send an event |
-
-**Shared:** `.active_state_ids`, `.context`, `.is_running`, `.plugins`
-
-**Snapshots:** `.get_snapshot()` → `str` · `Cls.from_snapshot(json, machine)` → instance
-
-</details>
-
-<details>
-<summary>📨 <b>Events & Data Classes</b></summary>
-
-#### `Event(type, payload={})`
-
-| Field | Type | Description |
-|:------|:-----|:------------|
-| `type` | `str` | Event type identifier |
-| `payload` | `Dict` | Event data |
-| `.data` | property | Alias for `payload` |
-
-#### `DoneEvent(type, data, src)` — Service/state completion events
-
-#### `AfterEvent(type)` — Delayed transition timer events
-
-</details>
-
-<details>
-<summary>🏷️ <b>Decorators</b></summary>
-
-| Decorator | Signature | Description |
-|:----------|:----------|:------------|
-| `@action` | `(interp, ctx, event, action_def) → None` | Side effect |
-| `@guard` | `(ctx, event) → bool` | Conditional gate |
-| `@service` | `(interp, ctx, event) → Any` | Service call |
-
-All support `@decorator` or `@decorator("customName")` syntax.
-
-</details>
-
-<details>
-<summary>🔗 <b>Logic Binding</b></summary>
-
-#### `MachineLogic` — Container/Registry
-
-```python
-# Option 1: Dict-based
 logic = MachineLogic(
-    actions={"increment": my_action},
-    guards={"belowLimit": my_guard},
+    services={"callApi": call_api},
+    guards={"canRetry": lambda ctx, e: ctx["attempt"] < 5},
+    delays={"BACKOFF": lambda ctx, e: 2 ** ctx["attempt"] * 1000},
 )
-
-# Option 2: Subclass (method names = action/guard names)
-class MyLogic(MachineLogic):
-    def increment(self, interpreter, context, event, action_def): ...
-    def belowLimit(self, context, event): return True
 ```
 
-#### `LogicLoader` — Auto-Discovery
-
-```python
-# Module-based discovery
-machine = create_machine(config, logic_modules=[my_logic_module])
-
-# Provider-based discovery
-machine = create_machine(config, logic_providers=[MyProvider()])
-```
+Attempt counting, backoff math, and the give-up condition are each in exactly one place.
 
 </details>
 
 <details>
-<summary>🔌 <b>Plugins</b></summary>
-
-| Class | Description |
-|:------|:------------|
-| `PluginBase` | Abstract base — override hooks as needed |
-| `LoggingInspector` | Built-in `🕵️ [INSPECT]` logger |
-
-```python
-class PluginBase:
-    def on_interpreter_start(self, interpreter): ...
-    def on_interpreter_stop(self, interpreter): ...
-    def on_event_received(self, interpreter, event): ...
-    def on_transition(self, interpreter, from_states, to_states, transition): ...
-    def on_action_execute(self, interpreter, action): ...
-    def on_guard_evaluated(self, interpreter, guard_name, event, result): ...
-    def on_service_start(self, interpreter, invocation): ...
-    def on_service_done(self, interpreter, invocation, result): ...
-    def on_service_error(self, interpreter, invocation, error): ...
-```
-
-</details>
-
-<details>
-<summary>🔍 <b>Machine Inspection</b></summary>
-
-```python
-# Find a state by ID
-state = machine.get_state_by_id("myMachine.loading")
-
-# Preview transition targets (no side effects)
-targets = machine.get_next_state("myMachine.idle", Event(type="START"))
-#> {'myMachine.active'}
-```
-
-</details>
-
-<details>
-<summary>💥 <b>Exceptions</b></summary>
-
-| Exception | When Raised |
-|:----------|:------------|
-| `XStateMachineError` | Base for all library exceptions |
-| `InvalidConfigError` | Invalid JSON config or API usage |
-| `StateNotFoundError` | Target state doesn't exist |
-| `ImplementationMissingError` | Logic not implemented |
-| `ActorSpawningError` | Invalid actor source |
-| `NotSupportedError` | Unsupported operation |
-
-</details>
+<summary><b>🛒 Checkout that can't double-charge</b></summary>
 
 <br>
+
+```python
+"states": {
+    "reviewing":  {"on": {"SUBMIT": "charging"}},
+    "charging":   {                                  # ← no SUBMIT handler here
+        "invoke": {"src": "chargeCard",
+                   "onDone": "confirmed", "onError": "declined"},
+    },
+    "confirmed":  {"type": "final"},
+    "declined":   {"on": {"SUBMIT": "charging"}},
+}
+```
+
+The second click while `charging` does nothing. Not because you remembered to disable the
+button — because the state has no handler for it. The bug is *unrepresentable*.
+
+</details>
+
+<details>
+<summary><b>🔌 Connection lifecycle with heartbeat</b></summary>
+
+<br>
+
+```python
+"states": {
+    "disconnected": {"on": {"CONNECT": "connecting"}},
+    "connecting": {
+        "invoke": {"src": "openSocket", "onDone": "connected", "onError": "backoff"},
+        "after": {"CONNECT_TIMEOUT": "backoff"},
+    },
+    "connected": {
+        "on": {"PONG": "connected", "CLOSE": "disconnected"},   # self-transition resets timer
+        "after": {"HEARTBEAT": "reconnecting"},
+    },
+    "backoff": {"after": {"RETRY_DELAY": "connecting"}},
+    "reconnecting": {"on": {"CONNECT": "connecting"}},
+}
+```
+
+A late `onDone` from a cancelled connection attempt is discarded — `disconnected` doesn't
+handle it. That's the zombie-callback class of bug, gone structurally.
+
+</details>
+
+<details>
+<summary><b>🤖 LLM agent loop with supervised tool calls</b></summary>
+
+<br>
+
+```python
+"states": {
+    "planning": {"invoke": {"src": "askModel",
+                            "onDone": [{"target": "callingTool", "guard": "wantsTool"},
+                                       {"target": "answering"}]}},
+    "callingTool": {
+        "entry": [{"type": "spawnChild",
+                   "params": {"src": "toolRunner", "id": "tool", "systemId": "tool"}}],
+        "on": {"TOOL_RESULT": "reflecting", "TOOL_FAILED": "recovering"},
+        "after": {"TOOL_TIMEOUT": "recovering"},
+    },
+    "reflecting": {"always": [{"target": "planning", "guard": "needsMoreWork"},
+                              {"target": "answering"}]},
+    "recovering": {"always": [{"target": "planning", "guard": "canRetry"},
+                              {"target": "givingUp"}]},
+    "answering": {"type": "final"},
+    "givingUp":  {"type": "final"},
+}
+```
+
+The agent's control flow is **data you can inspect, diagram and test** — not a `while` loop
+with flags. Add `LoggingInspector` and you get a full audit trail of every decision.
+
+</details>
+
+<details>
+<summary><b>🧪 Testing a machine without mocks</b></summary>
+
+<br>
+
+`SyncInterpreter` needs no event loop, so tests stay plain:
+
+```python
+def test_declined_card_allows_retry():
+    checkout = SyncInterpreter(create_machine(config, logic=test_logic)).start()
+
+    checkout.send("SUBMIT")
+    assert checkout.matches("checkout.charging")
+
+    checkout.send("SUBMIT")                       # double click
+    assert checkout.matches("checkout.charging")  # …ignored
+```
+
+Or skip the interpreter entirely with the [pure API](#the-pure-api-no-interpreter).
+
+</details>
 
 ---
 
+## 🐍 Prefer Pure Python? Three More Ways to Define a Machine
+
+JSON is the interop format, not an obligation. If you're not sharing definitions with a
+frontend, define machines in Python instead.
+
+### Class-based — declarative and readable
+
+```python
+from xstate_statemachine import State, StateMachine, SyncInterpreter, action
+
+class Checkout(StateMachine):
+    machine_id = "checkout"
+    initial_context = {"attempts": 0}
+
+    reviewing = State(initial=True)
+    charging  = State()
+    confirmed = State()
+
+    submit = reviewing.to(charging, event="SUBMIT", actions=["recordAttempt"])
+    ok     = charging.to(confirmed, event="PAID")
+
+    @action
+    def record_attempt(self, interpreter, ctx, evt, action_def):
+        ctx["attempts"] += 1
+
+c = SyncInterpreter(Checkout.create_machine()).start()
+c.send("SUBMIT")
+print(c.current_state_ids, c.context)   # {'checkout.charging'} {'attempts': 1}
+c.send("SUBMIT")                        # double click → ignored
+print(c.context)                        # {'attempts': 1}
+```
+
+> **Watch out** — `@action`, `@guard` and `@service` convert `snake_case` method names to
+> `camelCase` keys. The method `record_attempt` is referenced as `"recordAttempt"`.
+
+Compose multiple transitions for one event with `|`:
+
+```python
+flip = off.to(on, event="TOGGLE") | on.to(off, event="TOGGLE")
+```
+
+### Builder — fluent
+
+```python
+from xstate_statemachine import MachineBuilder
+
+machine = (MachineBuilder("toggle")
+           .state("off", initial=True)
+           .state("on")
+           .transition("off", "TOGGLE", "on")
+           .transition("on", "TOGGLE", "off")
+           .build())
+```
+
+`transition()` takes `(source, event, target)`, so states and transitions can be declared
+in any order — handy when you're generating a machine from data.
+
+### Functional — `build_machine()`
+
+For programmatic construction where a dict is the natural shape.
+
+---
+
+## 🛠️ CLI Code Generator
+
+Point `xsm` at an XState JSON file and get runnable, typed Python scaffolding — every action,
+guard and service stubbed with the right signature.
+
+```bash
+xsm generate-template checkout.json --template pythonic-class -o ./app
+```
+
+| Command | Alias | Does |
+|:--|:--|:--|
+| `generate-template` | `gt` | Generate Python from a machine JSON |
+| `list-templates` | `lt` | Show the 5 available templates |
+| `validate` | `val` | Check a JSON machine for structural errors |
+| `info` | | Version and feature summary |
+
+Templates: `class-json`, `function-json`, `pythonic-class`, `pythonic-builder`,
+`pythonic-functional`.
+
+<details>
+<summary><b>Why generate instead of hand-write?</b></summary>
+
 <br>
+
+Because the machine already declares every logic name it needs. The generator reads them and
+emits a stub for each — so a typo in a guard name becomes a missing-function error at
+generation time rather than an `ImplementationMissingError` in production.
+
+</details>
+
+---
+
+## 📘 API Reference
+
+<details open>
+<summary><b>Core — building and running</b></summary>
+
+<br>
+
+| Name | Purpose |
+|:--|:--|
+| `create_machine(config, logic=..., logic_modules=[...])` | Build a machine from a dict/JSON config |
+| `MachineLogic(actions=, guards=, services=, delays=)` | Bind names in the config to Python callables |
+| `Interpreter(machine)` | **Async** engine — `await .start()`, `.send()`, `.stop()` |
+| `SyncInterpreter(machine)` | **Sync** engine — no event loop anywhere |
+| `LogicLoader` | Auto-discover logic by name from modules |
+| `MachineNode` | The parsed machine; has `.to_mermaid()` / `.to_plantuml()` |
+
+You can also subclass `MachineLogic` and define actions, guards and services as methods —
+they're registered automatically by arity: `(ctx, event)` is a guard,
+`(interpreter, ctx, event)` a service, `(interpreter, ctx, event, action)` an action.
+
+</details>
+
+<details>
+<summary><b>Interpreter surface</b></summary>
+
+<br>
+
+| Member | Purpose |
+|:--|:--|
+| `.start()` / `.stop()` | Lifecycle (await both on `Interpreter`) |
+| `.send(event, **payload)` | Send an event; kwargs become `event.payload` |
+| `.current_state_ids` / `.active_state_ids` | Set of active leaf state ids |
+| `.context` | The live context dict |
+| `.status` / `.is_running` | `"running"` / `"stopped"`, and a liveness check |
+| `.matches(id)` | Is this state active? Supports nested paths |
+| `.can(event)` | Would this event cause anything? |
+| `.has_tag(tag)` / `.get_meta()` | Tags and merged `meta` of active states |
+| `.subscribe(fn)` | Observe every transition |
+| `.use(plugin)` / `.plugins` | Register plugins |
+| `.system` | Actor registry — `.get(system_id)`, `.get_all()` |
+| `.get_snapshot()` / `.get_persisted_snapshot()` | Serialize (JSON string / dict) |
+| `.from_snapshot(snap, machine)` | Restore (classmethod) |
+
+</details>
+
+<details>
+<summary><b>Action creators</b></summary>
+
+<br>
+
+`assign` · `log` · `raise_` · `send_to` · `send_parent` · `choose` · `pure` ·
+`enqueue_actions` · `ActionEnqueuer` · `spawn_child` · `stop_child` · `cancel` · `emit` ·
+`escalate` · `forward_to`
+
+</details>
+
+<details>
+<summary><b>Pure API & helpers</b></summary>
+
+<br>
+
+| Name | Purpose |
+|:--|:--|
+| `initial_transition(machine)` | → `(PureSnapshot, actions)` for the initial state |
+| `pure_transition(machine, snap, event)` | → `(PureSnapshot, actions)` — no side effects |
+| `get_next_snapshot(machine, snap, event)` | → next `PureSnapshot` only |
+| `get_initial_snapshot(machine)` | → initial `PureSnapshot` |
+| `PureSnapshot` | `.state_ids` `.context` `.status` `.output` `.matches()` |
+| `wait_for(interp, pred, timeout=)` | Await a predicate (async) |
+| `wait_for_sync(interp, pred, timeout=)` | Block on a predicate (sync) |
+| `to_promise(interp)` | Await a machine reaching a final state |
+
+</details>
+
+<details>
+<summary><b>Plugins & exceptions</b></summary>
+
+<br>
+
+**Plugins:** `PluginBase`, `LoggingInspector`
+
+**Exceptions:** `XStateMachineError` (base) · `InvalidConfigError` ·
+`StateNotFoundError` · `ImplementationMissingError` · `ActorSpawningError` ·
+`NotSupportedError`
+
+</details>
+
+---
 
 ## ❓ FAQ
 
 <details>
-<summary><b>Is this compatible with XState v5?</b></summary>
-
-Yes! This library supports most XState v4/v5 JSON features including hierarchical states, parallel states, invoke, guards, actions, `after`, and `always`.
-
-</details>
-
-<details>
-<summary><b>Can I use this without JSON?</b></summary>
-
-Absolutely! The Pythonic API (v0.5.0+) lets you define machines entirely in Python — class-based, builder, or functional style.
-
-</details>
-
-<details>
-<summary><b>Which interpreter should I use?</b></summary>
-
-Use `Interpreter` (async) for web servers, async frameworks, or `invoke` with async services. Use `SyncInterpreter` for scripts, CLI tools, Django, or testing.
-
-</details>
-
-<details>
-<summary><b>Can I use the CLI with Stately.ai machines?</b></summary>
-
-Yes! Export JSON from [stately.ai](https://stately.ai), then run `xsm gt your_machine.json --template pythonic-class`. Stress-tested against 104 real-world Stately machines.
-
-</details>
-
-<details>
-<summary><b>How do I test state machines?</b></summary>
-
-```python
-def test_toggle():
-    machine = create_machine(config)
-    interp = SyncInterpreter(machine).start()
-
-    assert "myMachine.off" in interp.active_state_ids
-    interp.send("TOGGLE")
-    assert "myMachine.on" in interp.active_state_ids
-    interp.stop()
-```
-
-</details>
-
-<details>
-<summary><b>What Python versions are supported?</b></summary>
-
-Python 3.9 through 3.14, with full test coverage across all versions.
-
-</details>
+<summary><b>Do I have to use JSON?</b></summary>
 
 <br>
+
+No. JSON is what makes frontend interop possible, but the class-based, builder and functional
+APIs are all first-class. Use JSON when you're sharing a definition; use Python when you're not.
+
+</details>
+
+<details>
+<summary><b>Async or sync — which interpreter?</b></summary>
+
+<br>
+
+`SyncInterpreter` if your code isn't already async: Django/WSGI views, Celery tasks, CLI
+tools, scripts, tests. It is genuinely synchronous — there is no hidden event loop, and it
+raises `NotSupportedError` rather than silently starting one if you hand it async logic.
+
+`Interpreter` for asyncio applications, and whenever you need concurrent services or timers
+that don't block.
+
+Both share one correctness core, so a machine behaves identically on either.
+
+</details>
+
+<details>
+<summary><b>Can I really run an unmodified Stately.ai export?</b></summary>
+
+<br>
+
+Structurally, yes — 103 of the 104 real-world exports in the test suite parse unchanged, and
+both v4 `cond` and v5 `guard` spellings are accepted.
+
+What doesn't transfer is JS/TS action *implementations*, because those are code rather than
+data. You supply Python equivalents through `MachineLogic`. That separation is the point:
+the shape of the flow is shared, the side effects are native to each platform.
+
+</details>
+
+<details>
+<summary><b>What happens if an action raises?</b></summary>
+
+<br>
+
+It's logged and contained. The transition completes and the interpreter keeps running, so one
+bad side effect can't kill a long-lived machine. To react to a failure, catch it in the action
+and record it on context, then guard a transition on that flag.
+
+Invoked **services** are different — their failures *are* routed back into the machine as
+`onError`, which is the idiomatic way to model expected errors.
+
+</details>
+
+<details>
+<summary><b>Is this production ready?</b></summary>
+
+<br>
+
+2,647 tests, 87% coverage, CI across Python 3.9–3.14 on Linux, macOS and Windows. The engine
+implements the SCXML transition-selection algorithm and there's a dedicated test suite pinning
+that behaviour, plus one pinning XState v5 parity.
+
+Zero runtime dependencies means nothing to audit, no version conflicts, and it works in slim
+containers and locked-down environments.
+
+</details>
+
+<details>
+<summary><b>Does it support SCXML files?</b></summary>
+
+<br>
+
+No. The engine *implements the SCXML algorithm* — which is why nested and parallel behaviour
+matches XState rather than approximating it — but it does not read or write `.scxml` documents.
+
+</details>
 
 ---
 
-<br>
+## 🗺️ Diagrams
+
+Every machine can draw itself, with no graphviz install:
+
+```python
+print(machine.to_mermaid())      # paste into GitHub, Notion, Obsidian…
+print(machine.to_plantuml())
+```
+
+---
 
 <div align="center">
 
-### 🏆 Built with precision. Tested with rigor.
+## 📖 Full Documentation
 
-**2,403** unit tests · **401** integration scenarios · **104** real-world Stately machines
+**[basiltt.github.io/xstate-statemachine](https://basiltt.github.io/xstate-statemachine/)**
 
-<br>
-
-[![GitHub Stars](https://img.shields.io/github/stars/basiltt/xstate-statemachine?style=social)](https://github.com/basiltt/xstate-statemachine)
+Guides · API reference · Migration notes · More examples
 
 <br>
 
-[📖 Documentation](https://basiltt.github.io/xstate-statemachine/) · [📦 PyPI](https://pypi.org/project/xstate-statemachine/) · [📝 Changelog](CHANGELOG.md) · [⚖️ MIT License](LICENSE)
+### Contributing
+
+Issues and PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Every PR runs the full matrix: lint, 2,647 tests, coverage gate, and a packaging check.
 
 <br>
 
-<a href="https://github.com/basiltt/xstate-statemachine/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=basiltt/xstate-statemachine" />
-</a>
+**[MIT Licensed](LICENSE)** · Built with precision. Tested with rigour.
 
-<sub>Made with ❤️ for the Python community</sub>
+<br>
+
+If this saved you from a 3am impossible-state bug, consider starring the repo ⭐
 
 </div>
