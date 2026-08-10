@@ -1701,21 +1701,42 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         # (those children were themselves members of `states_to_exit`). The
         # machine was left on a non-atomic ancestor with no active leaf,
         # rendering it permanently unresponsive. Do not reintroduce that step.
-        await self._exit_states(
-            sorted(list(states_to_exit), key=lambda s: s.depth, reverse=True),
-            event,
-        )
-        await self._execute_actions(transition.actions, event)
-        await self._enter_states(path_to_enter, event)
+        #
+        # ⚛️ ATOMICITY: exit → actions → enter is ONE transaction. If a user
+        #    action raises in the middle, the source has been left and the
+        #    target never reached, so the configuration would be EMPTY while
+        #    `status` still read "running" — permanently dead and reporting
+        #    itself healthy. Rolling back to the pre-transition configuration
+        #    keeps the machine in a state that genuinely exists; the exception
+        #    still propagates so the caller learns the transition failed.
+        try:
+            await self._exit_states(
+                sorted(
+                    list(states_to_exit), key=lambda s: s.depth, reverse=True
+                ),
+                event,
+            )
+            await self._execute_actions(transition.actions, event)
+            await self._enter_states(path_to_enter, event)
 
-        # 🕰️ Restore the remembered configuration for a history target. Each
-        #    remembered node is entered along its own path from the history
-        #    node's parent, so ancestors are re-entered correctly.
-        if target_state.type == "history":
-            for node in history_targets:
-                await self._enter_states(
-                    self._get_path_to_state(node, stop_at=domain), event
-                )
+            # 🕰️ Restore the remembered configuration for a history target.
+            #    Each remembered node is entered along its own path from the
+            #    history node's parent, so ancestors are re-entered correctly.
+            if target_state.type == "history":
+                for node in history_targets:
+                    await self._enter_states(
+                        self._get_path_to_state(node, stop_at=domain), event
+                    )
+        except Exception:
+            logger.error(
+                "💥 Transition on '%s' failed; rolling back to the "
+                "pre-transition configuration.",
+                transition.source.id,
+                exc_info=True,
+            )
+            self._active_state_nodes.clear()
+            self._active_state_nodes.update(snapshot_before)
+            raise
 
         # 6. Notify plugins and subscribers of the completed transition.
         for plug in self._plugins:

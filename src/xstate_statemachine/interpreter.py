@@ -351,10 +351,39 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
     async def _run_event_loop(self) -> None:
         """The main asynchronous event-processing loop for the interpreter."""
         logger.debug("🔄 Event loop started for interpreter '%s'.", self.id)
+        # 🛟 Track a self-feeding burst. The `raise` built-in enqueues onto this
+        #    same queue, and `Queue.put()` on an unbounded queue never actually
+        #    suspends, so an action that raises its own trigger event spins
+        #    here forever WITHOUT yielding — starving the entire asyncio loop.
+        #    A heartbeat scheduled every 50 ms was measured running zero times
+        #    in four seconds, freezing every other coroutine in the process.
+        #    Counting events processed without the queue draining bounds the
+        #    burst; reaching the ceiling drops the backlog rather than wedging
+        #    the application.
+        burst = 0
+        limit = getattr(self.machine, "max_iterations", 1000)
         try:
             while self.status == "running":
                 # 📬 Wait indefinitely for the next event from the queue.
                 event = await self._event_queue.get()
+
+                if burst > limit:
+                    logger.error(
+                        "🛑 Exceeded %d chained events in a single burst "
+                        "on '%s'. This usually means an action raises the "
+                        "event that triggers it. Dropping %d pending "
+                        "event(s).",
+                        limit,
+                        self.id,
+                        self._event_queue.qsize(),
+                    )
+                    while not self._event_queue.empty():
+                        self._event_queue.get_nowait()
+                        self._event_queue.task_done()
+                    burst = 0
+                    self._event_queue.task_done()
+                    continue
+
                 logger.debug(
                     "🔥 Event '%s' dequeued for processing in '%s'.",
                     event.type,
@@ -368,7 +397,43 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 # 🧠 Process the event using the core algorithm from BaseInterpreter.
                 # This single step will handle the event and any subsequent
                 # "always" transitions until the machine is in a stable state.
-                await self._process_event_and_transient_transitions(event)
+                #
+                # 🛡️ Architecture decision: a failure while processing ONE
+                #    event must not terminate the run loop. Previously any
+                #    escaping error — an unresolvable target, a missing action,
+                #    a raising guard — killed the loop and flipped `status` to
+                #    "stopped". Because `send()` is fire-and-forget, the caller
+                #    was never told: the machine went silently dead and dropped
+                #    every subsequent event. `SyncInterpreter` raises to the
+                #    caller and keeps running, so the two engines disagreed on
+                #    a basic error path, and the async one failed in the more
+                #    dangerous direction.
+                #
+                #    The transition itself is already atomic (see
+                #    `_execute_transition`), so the configuration is intact
+                #    here; we log and carry on with the next event.
+                try:
+                    await self._process_event_and_transient_transitions(event)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.error(
+                        "💥 Error processing event '%s' on '%s'; the "
+                        "interpreter remains running. %s",
+                        event.type,
+                        self.id,
+                        exc,
+                        exc_info=True,
+                    )
+
+                # 🛟 Measure the self-feed AFTER processing: a `raise` enqueues
+                #    during the transition, so checking before would always see
+                #    an empty queue and never trip. A queue still non-empty here
+                #    means this event generated more work.
+                if self._event_queue.empty():
+                    burst = 0
+                else:
+                    burst += 1
 
                 self._event_queue.task_done()
 

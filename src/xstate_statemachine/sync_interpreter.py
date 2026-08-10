@@ -325,8 +325,29 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             return
 
         self._is_processing = True
+        # 🛟 Bound the macrostep. The `raise` built-in re-enters this queue, so
+        #    an action that raises its own trigger event feeds itself forever.
+        #    `max_iterations` previously guarded only the eventless (`always`)
+        #    path, leaving this loop unbounded: `send()` never returned, with
+        #    no timeout and no way to interrupt it. The same ceiling now
+        #    applies to both paths.
+        processed = 0
+        limit = getattr(self.machine, "max_iterations", 1000)
         try:
             while self._event_queue:
+                processed += 1
+                if processed > limit:
+                    logger.error(
+                        "🛑 Exceeded %d queued events in a single macrostep on "
+                        "'%s'. This usually means an action raises the event "
+                        "that triggers it. Discarding %d pending event(s).",
+                        limit,
+                        self.id,
+                        len(self._event_queue),
+                    )
+                    self._event_queue.clear()
+                    break
+
                 current_event = self._event_queue.popleft()
                 logger.info("⚙️ Processing event: '%s'", current_event.type)
 
@@ -456,19 +477,42 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # `difference_update(states_to_exit)` after entry, which deleted the
         # initial children just entered by the recursive descent and left the
         # machine with no active leaf. See `BaseInterpreter._execute_transition`.
-        self._exit_states(
-            sorted(list(states_to_exit), key=lambda s: s.depth, reverse=True),
-            event,
-        )
-        self._execute_actions(transition.actions, event)
-        self._enter_states(path_to_enter, event)
+        #
+        # ⚛️ ATOMICITY: the three steps below are one transaction. If a user
+        #    action raises between exit and enter, the source has already been
+        #    left and the target was never reached, so the machine would be
+        #    holding an EMPTY configuration while still reporting "running" —
+        #    permanently dead and advertising itself as healthy. Restoring the
+        #    pre-transition configuration keeps the interpreter in a state that
+        #    actually exists, then re-raises so the caller still learns of the
+        #    failure. A torn configuration is strictly worse than a rolled-back
+        #    one: it is unrecoverable and silently swallows every later event.
+        try:
+            self._exit_states(
+                sorted(
+                    list(states_to_exit), key=lambda s: s.depth, reverse=True
+                ),
+                event,
+            )
+            self._execute_actions(transition.actions, event)
+            self._enter_states(path_to_enter, event)
 
-        # 🕰️ Restore the remembered configuration for a history target.
-        if target_state.type == "history":
-            for node in history_targets:
-                self._enter_states(
-                    self._get_path_to_state(node, stop_at=domain), event
-                )
+            # 🕰️ Restore the remembered configuration for a history target.
+            if target_state.type == "history":
+                for node in history_targets:
+                    self._enter_states(
+                        self._get_path_to_state(node, stop_at=domain), event
+                    )
+        except Exception:
+            logger.error(
+                "💥 Transition on '%s' failed; rolling back to the "
+                "pre-transition configuration.",
+                transition.source.id,
+                exc_info=True,
+            )
+            self._active_state_nodes.clear()
+            self._active_state_nodes.update(snapshot_before_transition)
+            raise
 
         # Notify plugins and subscribers of the completed transition.
         self._notify_subscribers()
@@ -563,7 +607,17 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         for state in states_to_enter:
             logger.info("➡️ Entering state: '%s'", state.id)
             self._active_state_nodes.add(state)
-            self._execute_actions(state.entry, Event(f"entry.{state.id}"))
+            # 📨 Pass the REAL triggering event through. Synthesising an
+            #    `entry.<id>` event here discarded the payload, so an entry
+            #    action reading `event.payload` — the normal way to seed state
+            #    from an event — silently received nothing. The async engine
+            #    always forwarded the real event, so this also made the two
+            #    engines disagree. `event` may be None during initial entry,
+            #    which is why the fallback is retained.
+            self._execute_actions(
+                state.entry,
+                event if event is not None else Event(f"entry.{state.id}"),
+            )
 
             # 🏁 Handle final state logic by firing a `done` event if applicable.
             if state.type == "final":
@@ -656,7 +710,11 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # 🏃‍♂️ Then proceed with normal exit processing.
         for state in states_to_exit:
             logger.info("⬅️ Exiting state: '%s'", state.id)
-            self._execute_actions(state.exit, Event(f"exit.{state.id}"))
+            # 📨 Forward the real triggering event; see `_enter_states`.
+            self._execute_actions(
+                state.exit,
+                event if event is not None else Event(f"exit.{state.id}"),
+            )
             self._active_state_nodes.discard(state)
             logger.debug("✅ State '%s' exited successfully.", state.id)
 

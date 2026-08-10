@@ -1954,14 +1954,31 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
     # -------------------------------------------------------------------------
 
     async def test_raises_error_for_missing_guard_implementation(self) -> None:
-        """Should raise ImplementationMissingError for an undefined guard."""
-        logger.info("🧪 Testing error for missing guard implementation.")
+        """A missing guard is contained; the run loop must survive it.
+
+        🐛 Regression: this test previously asserted the OPPOSITE — that the
+        event loop task completed with the exception. That behaviour was a
+        release blocker: because `send()` is fire-and-forget, an escaping
+        error killed the loop while callers still saw `status == "running"`,
+        so the machine went silently dead and dropped every later event.
+        `SyncInterpreter` raises to the caller and keeps running, so the two
+        engines also disagreed. The loop now logs and continues.
+        """
+        logger.info("🧪 Testing containment of a missing guard.")
         # 📋 Arrange
         machine = create_machine(
             {
                 "id": "missing",
                 "initial": "a",
-                "states": {"a": {"on": {"EVENT": {"guard": "nonexistent"}}}},
+                "states": {
+                    "a": {
+                        "on": {
+                            "EVENT": {"guard": "nonexistent"},
+                            "GOOD": "b",
+                        }
+                    },
+                    "b": {},
+                },
             },
             logic=MachineLogic(),
         )
@@ -1971,13 +1988,15 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
         await interpreter.send("EVENT")
         await asyncio.sleep(0.01)
 
-        # ✅ Assert: The event loop task should complete with an exception.
-        task = interpreter._event_loop_task
-        self.assertTrue(task.done())
-        with self.assertRaisesRegex(
-            ImplementationMissingError, "Guard 'nonexistent' not implemented"
-        ):
-            await task
+        # ✅ Assert: the loop is alive and the interpreter still runs.
+        self.assertFalse(interpreter._event_loop_task.done())
+        self.assertEqual("running", interpreter.status)
+
+        # ✅ Assert: a subsequent valid event is still processed.
+        await interpreter.send("GOOD")
+        await asyncio.sleep(0.01)
+        self.assertEqual({"missing.b"}, interpreter.current_state_ids)
+        await interpreter.stop()
 
     async def test_raises_error_for_missing_service_implementation(
         self,
