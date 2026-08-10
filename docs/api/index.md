@@ -1635,6 +1635,103 @@ The library defines several callable type aliases for documentation purposes:
 
 ---
 
+## Built-in Action Creators
+
+Added in v0.6.0. Each returns a plain action-definition dict, so they can be
+used directly in a config or written as raw JSON. See the
+[Actions guide](../guide/actions/#built-in-action-creators-v060).
+
+| Function | Signature |
+|:--|:--|
+| `assign` | `assign(assignment: dict \| Callable) -> dict` |
+| `choose` | `choose(conditions: list[dict]) -> dict` |
+| `pure` | `pure(fn: Callable) -> dict` |
+| `enqueue_actions` | `enqueue_actions(fn: Callable) -> dict` |
+| `raise_` | `raise_(event, *, delay=None) -> dict` |
+| `send_to` | `send_to(target, event, *, delay=None, send_id=None) -> dict` |
+| `send_parent` | `send_parent(event, *, delay=None) -> dict` |
+| `spawn_child` | `spawn_child(src, *, actor_id=None, system_id=None, input=None) -> dict` |
+| `stop_child` | `stop_child(actor_id) -> dict` |
+| `cancel` | `cancel(send_id: str) -> dict` |
+| `emit` | `emit(event) -> dict` |
+| `escalate` | `escalate(error) -> dict` |
+| `forward_to` | `forward_to(target: str) -> dict` |
+| `log` | `log(expr='', *, label=None) -> dict` |
+
+### `ActionEnqueuer`
+
+The object passed as `enqueue` to an `enqueue_actions` callback. Methods:
+`assign`, `raise_`, `send_to`, `send_parent`, `spawn_child`, `stop_child`,
+`emit`, `log`, `cancel`.
+
+```python
+from xstate_statemachine import enqueue_actions
+
+def build(args):
+    enqueue = args["enqueue"]          # ActionEnqueuer
+    enqueue.assign({"n": lambda x: x["context"]["n"] + 1})
+    enqueue.raise_({"type": "NEXT"})
+
+{"actions": enqueue_actions(build)}
+```
+
+> **Note:** the callback receives a **single mapping** containing `context`,
+> `event`, `enqueue`, `check` and `self` — not separate positional arguments.
+
+---
+
+## Pure API
+
+Compute transitions with no side effects: no timers start, no services fire,
+nothing mutates. See [Testing & The Pure API](../guide/testing-and-pure-api/).
+
+| Function | Returns |
+|:--|:--|
+| `initial_transition(machine, *, input=None)` | `(PureSnapshot, list[ActionDefinition])` |
+| `pure_transition(machine, snapshot, event)` | `(PureSnapshot, list[ActionDefinition])` |
+| `get_initial_snapshot(machine, *, input=None)` | `PureSnapshot` |
+| `get_next_snapshot(machine, snapshot, event)` | `PureSnapshot` |
+
+### `PureSnapshot`
+
+| Member | Description |
+|:--|:--|
+| `.state_ids` | Set of active state ids |
+| `.context` | The context dict |
+| `.status` | `'running'`, `'done'` or `'error'` |
+| `.output` | Machine output once a top-level final state is reached |
+| `.configuration` | The active `StateNode` objects |
+| `.matches(id)` | Test a state id, supporting nested paths |
+
+```python
+from xstate_statemachine import initial_transition, pure_transition
+
+snapshot, entry_actions = initial_transition(machine)
+next_snapshot, actions = pure_transition(machine, snapshot, "GO")
+```
+
+---
+
+## Waiting Helpers
+
+Poll a real predicate with a timeout instead of sleeping.
+
+| Function | Description |
+|:--|:--|
+| `wait_for(interp, predicate, *, timeout=10.0, poll_interval=0.005)` | Async; resolves when the predicate is true |
+| `wait_for_sync(interp, predicate, *, timeout=10.0, poll_interval=0.005)` | Blocking equivalent for `SyncInterpreter` |
+| `to_promise(interp)` | Async; resolves with the machine output when it reaches a final state |
+
+```python
+await wait_for(interp, lambda s: s.matches("fetch.success"), timeout=2)
+wait_for_sync(interp, lambda s: s.matches("job.done"), timeout=5)
+output = await to_promise(interp)
+```
+
+Both waiters raise on timeout rather than returning silently.
+
+---
+
 ## Version
 
 ```python
