@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from ..builders import render_functional_build
 from ..extractor import extract_events
+from ..simulation import demo_events
 from ..ir import parse_machine
 from .base import BaseStrategy, GenerationContext
 from ._shared import (
@@ -207,7 +208,7 @@ class PythonicFunctionalStrategy(BaseStrategy):
 
         # -- event simulation -----------------------------------------
         lines.append("    # Event Simulation")
-        events = sorted(extract_events(config))
+        events = demo_events(config)
         if events:
             for ev in events:
                 if ctx.log:

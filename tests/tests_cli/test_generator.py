@@ -285,7 +285,7 @@ class TestLogicCodeGenerator(unittest.TestCase):
         )
         # 🧐 ASSERT: Check for async keywords.
         self.assertIn("async def async_act(", code)
-        self.assertIn("await asyncio.sleep(0.1)", code)
+        self.assertNotIn("asyncio.sleep(0.1)", code)
 
     def test_generate_sync_guards_no_log(self) -> None:
         """
@@ -502,8 +502,18 @@ class TestLogicCodeGenerator(unittest.TestCase):
             machine_name=self.machine_name,
             file_count=2,
         )
-        # 🧐 ASSERT: The placeholder sleep should still be present to make it awaitable.
-        self.assertIn("await asyncio.sleep(0.1)", code)
+        # 🧐 ASSERT: No artificial delay is injected.
+        #
+        # This previously asserted the presence of
+        # `await asyncio.sleep(0.1)`, justified as making the stub
+        # "awaitable". That premise is false -- an `async def` is
+        # awaitable whether or not its body awaits anything (verified:
+        # the stub runs fine under asyncio.run without it). The
+        # placeholder only injected 100ms of real latency into every
+        # async action of a machine the user had not written yet, and
+        # was easy to leave behind in production code.
+        self.assertNotIn("asyncio.sleep(0.1)", code)
+        self.assertIn("# TODO: implement", code)
 
     def test_generate_sorted_names(self) -> None:
         """
@@ -882,7 +892,7 @@ class TestLogicCodeGenerator(unittest.TestCase):
             file_count=2,
         )
         # 🧐 ASSERT: The placeholder sleep makes the function awaitable.
-        self.assertIn("await asyncio.sleep(0.1)", code)
+        self.assertNotIn("asyncio.sleep(0.1)", code)
 
     def test_generate_no_dummy_for_sync_actions(self) -> None:
         """

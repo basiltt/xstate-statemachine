@@ -5,6 +5,7 @@ import keyword
 from typing import List, Set
 
 from ..extractor import extract_events
+from ..simulation import demo_events
 from .base import BaseStrategy, GenerationContext
 from ._shared import (
     escape_for_string,
@@ -232,7 +233,7 @@ class ClassJsonStrategy(BaseStrategy):
 
             # -- event simulation -------------------------------------
             lines.append("    # Event Simulation")
-            events = sorted(extract_events(ctx.configs[i]))
+            events = demo_events(ctx.configs[i])
             if events:
                 for ev in events:
                     if ctx.log:
@@ -577,10 +578,10 @@ class ClassJsonStrategy(BaseStrategy):
                         f'logger.info("{verb} {escape_for_string(original)}")'
                     )
                 if component_type == "action":
-                    if is_async:
-                        body_lines.append(
-                            "await asyncio.sleep(0.1)  # placeholder"
-                        )
+                    # 📝 No artificial sleep here. A placeholder
+                    #    `await asyncio.sleep(0.1)` in every async action
+                    #    injects real latency into a machine the user has
+                    #    not written yet, and is easy to leave behind.
                     body_lines.append("# TODO: implement")
                 else:
                     # service
