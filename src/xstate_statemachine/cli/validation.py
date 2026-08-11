@@ -69,9 +69,7 @@ def check_representable(
 
     # 🔍 A machine with no states produces a module that cannot build.
     if not machine.states:
-        problems.append(
-            "machine declares no states; nothing can be generated"
-        )
+        problems.append("machine declares no states; nothing can be generated")
 
     # 🔍 Placeholder context is a source-data problem the user should know
     #    about: the generated machine will start with an empty context.

@@ -183,3 +183,99 @@ class TestPolishPipeline(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class TestCombinedFileIsPolished(unittest.TestCase):
+    """Single-file output must be formatted as one artifact.
+
+    🏛️ Polishing has to happen AFTER the merge. Concatenating two
+    already-formatted files leaves seams black never sees -- duplicate
+    module docstrings and import blocks reflowed by de-duplication -- so
+    `--file-count 1` output failed `black --check` for every template.
+    """
+
+    CONFIG = {
+        "id": "n",
+        "initial": "a",
+        "states": {"a": {"entry": "logIt", "on": {"GO": "b"}}, "b": {}},
+    }
+
+    def test_every_template_produces_black_clean_single_file(self) -> None:
+        """All five templates, sync and async, in combined-file mode."""
+        import itertools
+        import json
+        import logging
+        import os
+        import subprocess
+        import sys
+        import tempfile
+
+        from src.xstate_statemachine.cli.__main__ import main
+
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+
+        templates = (
+            "pythonic-functional",
+            "pythonic-builder",
+            "pythonic-class",
+            "class-json",
+            "function-json",
+        )
+
+        for template, async_mode in itertools.product(
+            templates, ("yes", "no")
+        ):
+            with self.subTest(template=template, async_mode=async_mode):
+                with tempfile.TemporaryDirectory() as out:
+                    source = os.path.join(out, "n.json")
+                    with open(source, "w", encoding="utf-8") as handle:
+                        json.dump(self.CONFIG, handle)
+
+                    saved, sys.argv = sys.argv, [
+                        "xsm",
+                        "generate-template",
+                        source,
+                        "--template",
+                        template,
+                        "-o",
+                        out,
+                        "--force",
+                        "-am",
+                        async_mode,
+                        "-fc",
+                        "1",
+                    ]
+                    try:
+                        main()
+                    finally:
+                        sys.argv = saved
+
+                    produced = [
+                        os.path.join(out, name)
+                        for name in os.listdir(out)
+                        if name.endswith(".py")
+                    ]
+                    self.assertTrue(produced, "no file was generated")
+
+                    for path in produced:
+                        result = subprocess.run(
+                            [
+                                sys.executable,
+                                "-m",
+                                "black",
+                                "--check",
+                                "-l",
+                                "79",
+                                path,
+                            ],
+                            capture_output=True,
+                        )
+                        self.assertEqual(
+                            result.returncode, 0, f"{path} is not black-clean"
+                        )
+
+                    with open(produced[0], encoding="utf-8") as handle:
+                        content = handle.read()
+                    # 📝 Exactly one provenance docstring, not two merged.
+                    self.assertEqual(content.count("DO NOT EDIT BY HAND"), 1)

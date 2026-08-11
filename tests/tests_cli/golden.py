@@ -58,6 +58,7 @@ def _is_machine(value: Any) -> bool:
     """Return True if *value* is a MachineNode under either import path."""
     return isinstance(value, _MACHINE_TYPES)
 
+
 # -----------------------------------------------------------------------------
 # 🧬 Structural fingerprinting
 # -----------------------------------------------------------------------------
@@ -191,7 +192,9 @@ def structural_diff(
     extra = sorted(set(act_map) - set(exp_map))
 
     for path in missing:
-        diffs.append(f"MISSING STATE: {path!r} exists in source but not in generated")
+        diffs.append(
+            f"MISSING STATE: {path!r} exists in source but not in generated"
+        )
     for path in extra:
         diffs.append(f"EXTRA STATE: {path!r} generated but absent from source")
 

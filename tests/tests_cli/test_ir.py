@@ -17,9 +17,7 @@ from src.xstate_statemachine.machine_logic import MachineLogic
 
 logger = logging.getLogger(__name__)
 
-_CORPUS = os.path.join(
-    os.path.dirname(__file__), "stately_machines", "*.json"
-)
+_CORPUS = os.path.join(os.path.dirname(__file__), "stately_machines", "*.json")
 
 
 class TestHierarchyPreserved(unittest.TestCase):

@@ -293,8 +293,7 @@ def render_on_map(state: StateIR, machine: MachineIR) -> Optional[str]:
             value = render_transition_value(transitions[0], state, machine)
         else:
             rendered = ", ".join(
-                render_transition_value(t, state, machine)
-                for t in transitions
+                render_transition_value(t, state, machine) for t in transitions
             )
             value = f"[{rendered}]"
         entries.append(f"{literal(event)}: {value}")
@@ -319,8 +318,7 @@ def render_after_map(state: StateIR, machine: MachineIR) -> Optional[str]:
             value = render_transition_value(transitions[0], state, machine)
         else:
             rendered = ", ".join(
-                render_transition_value(t, state, machine)
-                for t in transitions
+                render_transition_value(t, state, machine) for t in transitions
             )
             value = f"[{rendered}]"
         entries.append(f"{literal(delay)}: {value}")

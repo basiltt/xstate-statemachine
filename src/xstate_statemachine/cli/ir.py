@@ -418,9 +418,7 @@ def parse_state(
     if isinstance(raw_after, dict):
         for delay_key, value in raw_after.items():
             after.extend(
-                parse_transitions(
-                    f"after.{delay_key}", value, delay=delay_key
-                )
+                parse_transitions(f"after.{delay_key}", value, delay=delay_key)
             )
 
     # ➡️ always / eventless transitions, including the legacy "" event key.
@@ -444,7 +442,9 @@ def parse_state(
     history_kind = None
     if _infer_kind(config, bool(children)) == "history":
         raw_history = config.get("history")
-        history_kind = raw_history if isinstance(raw_history, str) else "shallow"
+        history_kind = (
+            raw_history if isinstance(raw_history, str) else "shallow"
+        )
 
     unsupported = tuple(
         sorted(
@@ -501,7 +501,10 @@ def parse_machine(config: Dict[str, Any]) -> MachineIR:
         # 📝 Real Stately exports ship "{{initialContext}}" — tolerate it.
         placeholder = True
 
-    machine_known = _KNOWN_STATE_KEYS | {"predictableActionArguments", "version"}
+    machine_known = _KNOWN_STATE_KEYS | {
+        "predictableActionArguments",
+        "version",
+    }
     unsupported = tuple(
         sorted(
             k
@@ -531,6 +534,10 @@ def parse_machine(config: Dict[str, Any]) -> MachineIR:
         tags=tuple(
             t for t in _as_list(config.get("tags")) if isinstance(t, str)
         ),
-        meta=config.get("meta") if isinstance(config.get("meta"), dict) else None,
+        meta=(
+            config.get("meta")
+            if isinstance(config.get("meta"), dict)
+            else None
+        ),
         unsupported=unsupported,
     )

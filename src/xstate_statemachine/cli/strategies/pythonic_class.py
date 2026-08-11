@@ -92,7 +92,6 @@ class PythonicClassStrategy(BaseStrategy):
         )
         parts.append("")
 
-
         # -- states (via the shared IR emitters) ----------------------
         # 🏛️ The metaclass collects every class-level State attribute as a
         #    TOP-LEVEL state. Declaring nested states as sibling class
@@ -102,9 +101,7 @@ class PythonicClassStrategy(BaseStrategy):
         #    Nested states are therefore bound at MODULE level and attached
         #    to their parent through states=[...].
         parts.append(
-            self._generate_state_declarations(
-                ir_machine, class_name, indent
-            )
+            self._generate_state_declarations(ir_machine, class_name, indent)
         )
 
         # -- actions --------------------------------------------------

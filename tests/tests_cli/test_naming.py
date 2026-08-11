@@ -78,7 +78,9 @@ class TestIdentifierAllocator(unittest.TestCase):
     def test_allocation_is_stable(self) -> None:
         """Asking twice for the same source name yields the same binding."""
         alloc = IdentifierAllocator()
-        self.assertEqual(alloc.allocate("my-state"), alloc.allocate("my-state"))
+        self.assertEqual(
+            alloc.allocate("my-state"), alloc.allocate("my-state")
+        )
 
     def test_reserved_names_are_never_handed_out(self) -> None:
         """Module-level imports must not be shadowed by state bindings."""

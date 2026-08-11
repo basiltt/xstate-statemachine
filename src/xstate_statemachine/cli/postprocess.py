@@ -85,9 +85,7 @@ def prune_unused_imports(code: str) -> str:
         for i in range(start + 1, end):
             drop_lines.add(i)
 
-    return "".join(
-        line for i, line in enumerate(lines) if i not in drop_lines
-    )
+    return "".join(line for i, line in enumerate(lines) if i not in drop_lines)
 
 
 def _binding(alias: ast.alias) -> str:

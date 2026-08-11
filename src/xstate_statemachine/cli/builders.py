@@ -160,9 +160,7 @@ def render_functional_build(
             state, machine, include_initial=_is_initial(state, machine)
         )
         if state.children:
-            child_vars = ", ".join(
-                bindings[c.dotted] for c in state.children
-            )
+            child_vars = ", ".join(bindings[c.dotted] for c in state.children)
             kwargs.append(f"states=[{child_vars}]")
 
         args = ", ".join([literal(state.key)] + kwargs)

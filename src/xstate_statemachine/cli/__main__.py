@@ -21,6 +21,7 @@
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import argparse
+import ast
 import difflib
 import json
 import logging
@@ -209,6 +210,45 @@ def _safe_print(msg: str) -> None:
         print(msg.encode("ascii", errors="replace").decode("ascii"))
 
 
+def _combined_output(logic_code: str, runner_code: str) -> str:
+    """Merge logic and runner into one module and re-polish the result.
+
+    🏛️ Polishing must happen *after* the merge, not before. Concatenating two
+    already-formatted files leaves seams black never sees — duplicate module
+    docstrings, and import blocks reflowed by de-duplication. The merged file
+    is a new artifact and has to be formatted as one.
+
+    🛡️ The runner's provenance docstring is dropped first. Both files carry
+    one, and only the first position in a module is a docstring — the second
+    would land mid-file as a stray string expression, which is legal Python
+    but reads as a second header and confuses "which file am I looking at".
+    """
+    merged = _merge_code_for_single_file(
+        logic_code, _strip_module_docstring(runner_code)
+    )
+    return polish(merged)
+
+
+def _strip_module_docstring(code: str) -> str:
+    """Remove a module-level docstring, leaving the rest untouched."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:  # pragma: no cover — verification catches this
+        return code
+
+    body = tree.body
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        lines = code.splitlines(keepends=True)
+        end = body[0].end_lineno or 1
+        return "".join(lines[end:]).lstrip("\n")
+    return code
+
+
 def _check_output_files(
     file_count: int,
     paths: Dict[str, Path],
@@ -237,9 +277,7 @@ def _check_output_files(
     """
     if file_count == 1:
         expected = {
-            paths["single_file"]: _merge_code_for_single_file(
-                logic_code, runner_code
-            )
+            paths["single_file"]: _combined_output(logic_code, runner_code)
         }
     else:
         expected = {
@@ -296,7 +334,7 @@ def _write_output_files(
     logger.info("✍️ Writing generated code to disk...")
     if file_count == 1:
         # 🤝 Merge code into a single file
-        combined_code = _merge_code_for_single_file(logic_code, runner_code)
+        combined_code = _combined_output(logic_code, runner_code)
         target_path = paths["single_file"]
         logger.info(f"💾 Writing combined code to: {target_path}")
         target_path.write_text(combined_code, encoding="utf-8")
@@ -734,9 +772,7 @@ def run_generation_workflow(
     # 🏛️ --check/--diff never write, so there is nothing to overwrite and
     #    nothing to confirm. Prompting here would hang CI on stdin -- the
     #    exact environment --check exists to serve.
-    check_mode = getattr(args, "check", False) or getattr(
-        args, "diff", False
-    )
+    check_mode = getattr(args, "check", False) or getattr(args, "diff", False)
     files_to_check = (
         [paths["single_file"]]
         if args.file_count == 1

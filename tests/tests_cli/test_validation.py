@@ -101,9 +101,7 @@ class TestCatchesRegressions(unittest.TestCase):
 
     def test_catches_build_exception(self) -> None:
         """A build() that raises is reported, not swallowed."""
-        code = _HEADER + (
-            "\ndef build():\n    raise ValueError('boom')\n"
-        )
+        code = _HEADER + ("\ndef build():\n    raise ValueError('boom')\n")
         problems = verify_generated(
             NESTED, code, template="pythonic-functional"
         )
@@ -121,9 +119,7 @@ class TestAcceptsCorrectOutput(unittest.TestCase):
             "pythonic-class",
         ):
             with self.subTest(template=template):
-                code = get_strategy(template).generate_logic(
-                    _context(NESTED)
-                )
+                code = get_strategy(template).generate_logic(_context(NESTED))
                 self.assertEqual(
                     verify_generated(NESTED, code, template=template), []
                 )

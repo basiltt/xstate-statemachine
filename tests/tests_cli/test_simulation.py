@@ -16,9 +16,7 @@ from src.xstate_statemachine.cli.simulation import (
 )
 from src.xstate_statemachine.machine_logic import MachineLogic
 
-_CORPUS = os.path.join(
-    os.path.dirname(__file__), "stately_machines", "*.json"
-)
+_CORPUS = os.path.join(os.path.dirname(__file__), "stately_machines", "*.json")
 
 # 📝 The motivating example. Alphabetical order sends ALPHA, MIKE, ZULU --
 #    and ZULU is a dead no-op because nothing in `c` handles it.

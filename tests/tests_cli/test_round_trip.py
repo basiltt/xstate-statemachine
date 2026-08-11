@@ -26,9 +26,7 @@ from .golden import assert_round_trip
 
 logger = logging.getLogger(__name__)
 
-_CORPUS = os.path.join(
-    os.path.dirname(__file__), "stately_machines", "*.json"
-)
+_CORPUS = os.path.join(os.path.dirname(__file__), "stately_machines", "*.json")
 
 # 📝 Imports the generated snippets rely on. The real CLI emits these via
 #    _shared.generate_imports; here we only exercise machine construction.
@@ -65,9 +63,7 @@ class TestRoundTripSynthetic(unittest.TestCase):
         machine = parse_machine(config)
         for name, _ in _RENDERERS:
             with self.subTest(template=name):
-                assert_round_trip(
-                    config, _render(name, machine), label=name
-                )
+                assert_round_trip(config, _render(name, machine), label=name)
 
     def test_flat_two_state_machine_has_transitions(self) -> None:
         """Defect #1: functional produced machines with ZERO transitions.

@@ -164,9 +164,7 @@ def _resolve_from_root(target: str, machine: MachineIR) -> Optional[StateIR]:
     return machine.find(target)
 
 
-def _parent_of(
-    state: StateIR, machine: MachineIR
-) -> Optional[StateIR]:
+def _parent_of(state: StateIR, machine: MachineIR) -> Optional[StateIR]:
     """The parent of *state*, or None when it is top level."""
     if len(state.path) <= 1:
         return None
@@ -230,9 +228,7 @@ def describe_sequence(
                 continue
             destination = emit.resolve_target(trans.target, state, machine)
             if destination is not None:
-                notes[trans.event] = (
-                    f"{state.dotted} -> {destination.dotted}"
-                )
+                notes[trans.event] = f"{state.dotted} -> {destination.dotted}"
     return notes
 
 

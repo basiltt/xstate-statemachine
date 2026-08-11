@@ -730,9 +730,12 @@ def generate_runner_code(
                 f"    interpreter = {'Interpreter' if is_async else 'SyncInterpreter'}(machine)",
                 "    interpreter.use(LoggingInspector())",
                 f"    {await_prefix}interpreter.start()",
-                # FIX: Use the exact log message the test expects
+                # 📝 The f-prefix is intentional but has no placeholders of
+                #    its own: `{{...}}` escapes to a literal `{...}` so the
+                #    GENERATED code contains an f-string. Keeping the prefix
+                #    keeps this line symmetrical with its siblings.
                 (
-                    f"    logger.info(f'Initial state: {{interpreter.current_state_ids}}')"  # noqa: ignore
+                    "    logger.info(f'Initial state: {interpreter.current_state_ids}')"
                     if log
                     else ""
                 ),
