@@ -40,6 +40,7 @@ from .args import (
 from .extractor import extract_logic_names, guess_hierarchy
 from .strategies import GenerationContext, get_strategy
 from .ir import parse_machine
+from .postprocess import build_provenance_header, polish
 from .validation import (
     builds_machine_inline,
     check_representable,
@@ -718,6 +719,15 @@ def run_generation_workflow(
     logic_code = strategy.generate_logic(ctx)
     runner_code = strategy.generate_runner(ctx)
 
+    # 7a. ✨ Polish: prune unused imports, stamp provenance, run black.
+    #
+    # 🏛️ Runs BEFORE verification so what gets checked is exactly what gets
+    #    written. Verifying the pre-polish source would leave a gap in which
+    #    post-processing could alter behaviour unnoticed.
+    logic_code, runner_code = _polish_output(
+        logic_code, runner_code, json_paths=json_paths, template=template
+    )
+
     # 7b. 🛡️ Verify before writing anything.
     #
     # 🏛️ Architecture decision: generation is not "done" until the emitted
@@ -735,6 +745,44 @@ def run_generation_workflow(
 
     # 8. 💾 Write generated code to files
     _write_output_files(args.file_count, paths, logic_code, runner_code)
+
+
+def _polish_output(
+    logic_code: str,
+    runner_code: str,
+    *,
+    json_paths: List[str],
+    template: str,
+) -> Tuple[str, str]:
+    """Prune imports, stamp provenance and format both generated files.
+
+    Args:
+        logic_code: The generated logic module.
+        runner_code: The generated runner module.
+        json_paths: Source JSON paths, recorded in the header.
+        template: Template identifier, recorded in the header.
+
+    Returns:
+        The polished ``(logic_code, runner_code)`` pair.
+    """
+    from .. import __version__
+
+    sources = [Path(p).name for p in json_paths]
+    command = (
+        "xsm generate-template "
+        + " ".join(sources)
+        + f" --template {template}"
+    )
+    header = build_provenance_header(
+        source_files=sources,
+        template=template,
+        version=__version__,
+        command=command,
+    )
+    return (
+        polish(logic_code, header=header),
+        polish(runner_code, header=header),
+    )
 
 
 def _verify_or_refuse(
