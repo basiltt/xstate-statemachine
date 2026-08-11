@@ -104,7 +104,10 @@ def _referenced_names(tree: ast.AST) -> Set[str]:
         if isinstance(node, ast.Name):
             used.add(node.id)
         elif isinstance(node, ast.Attribute):
-            base = node
+            # 📝 Annotated as `expr` because the loop walks OFF the
+            #    Attribute chain: `a.b.c` unwraps to the Name `a`. Typing
+            #    this as Attribute makes the reassignment a type error.
+            base: ast.expr = node
             while isinstance(base, ast.Attribute):
                 base = base.value
             if isinstance(base, ast.Name):
