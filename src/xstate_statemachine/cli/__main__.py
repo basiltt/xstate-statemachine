@@ -963,6 +963,33 @@ def run_list_templates() -> None:
     _safe_print(f"  {'-' * 23}  {'-' * 19} {'-' * 55}")
     for tid, style, desc in templates:
         _safe_print(f"  {tid:<24} {style:<20} {desc}")
+
+    # 📋 Support matrix. Users previously had no way to know which
+    #    templates re-express the machine as Python (and are therefore
+    #    structurally verified) versus which load the JSON at runtime.
+    _safe_print("\nFeature support:\n")
+    _safe_print(
+        f"  {'Template ID':<24} {'Machine built':<15} "
+        f"{'Verified':<10} Config needed at runtime"
+    )
+    _safe_print(f"  {'-' * 23}  {'-' * 14} {'-' * 9}  {'-' * 24}")
+    for tid, _, _ in templates:
+        inline = builds_machine_inline(tid)
+        _safe_print(
+            f"  {tid:<24} "
+            f"{'in Python' if inline else 'from JSON':<15} "
+            f"{'structural' if inline else 'syntax':<10} "
+            f"{'no' if inline else 'yes -- ship the .json'}"
+        )
+    _safe_print(
+        "\n  All templates support nesting, parallel regions, history, "
+        "guards,\n  timers (numeric and named delays), invoke, tags and "
+        "meta.\n"
+        "  'Verified' is what the generator proves before writing: "
+        "templates that\n  build the machine in Python are executed and "
+        "compared against the source."
+    )
+
     _safe_print(
         "\nUsage: xsm generate-template <file.json> --template <template-id>\n"
     )

@@ -1271,3 +1271,113 @@ interp.stop()
 > **Tip:** Start with the **class-based** style. It's the most Pythonic, the most readable in code reviews, and the most IDE-friendly. Switch to the builder if you need to construct machines dynamically (e.g., from a database or config file).
 
 > **Tip:** All three styles can be mixed in the same project. A class-based machine and a builder-based machine produce identical `MachineNode` objects and run on the same interpreters.
+
+---
+
+## History States
+
+A history pseudo-state remembers which child of its parent was last active, so
+re-entering the parent resumes where you left off instead of restarting.
+
+```python
+from xstate_statemachine import State, build_machine
+
+# 🕰️ "shallow" restores the immediate child; "deep" restores the whole subtree.
+resume     = State("resume", history="deep")
+configuring = State("configuring", initial=True)
+running     = State("running")
+
+online = State(
+    "online",
+    initial=True,
+    states=[configuring, running, resume],
+    on={"DISCONNECT": "offline"},
+)
+offline = State("offline", on={"RECONNECT": "online.resume"})
+
+machine = build_machine(id="device", states=[online, offline])
+```
+
+Without `history=`, `RECONNECT` would drop you back into `configuring`.
+
+> **Note:** History states have no behaviour of their own — they are targets,
+> not states you "do" anything in. They take no `entry`, `exit` or `on`.
+
+---
+
+## Tags and Metadata
+
+`tags` group states so you can ask a question about the machine without
+enumerating state IDs. `meta` attaches arbitrary data for your own use.
+
+```python
+loading = State(
+    "loading",
+    tags=["busy", "network"],
+    meta={"spinner": "large", "timeout_ms": 5000},
+)
+saving = State("saving", tags=["busy"])
+idle   = State("idle", initial=True)
+```
+
+```python
+# 🏷️ One check instead of `state.matches("loading") or state.matches("saving")`
+if "busy" in snapshot.tags:
+    show_spinner()
+```
+
+Both are available on all three styles — `State(...)`, `MachineBuilder.state(...)`
+and class attributes.
+
+---
+
+## Machine-Level Properties
+
+Real machines often need a transition that works from *anywhere* — an emergency
+stop, a logout, a global reset. That belongs on the machine root, not on every
+state.
+
+Use `root=` with `build_machine()`:
+
+```python
+from xstate_statemachine import State, build_machine
+
+root = State("", on={"EMERGENCY": "halted"}, tags=["v2"])
+
+machine = build_machine(
+    id="press",
+    states=[idle, running, halted],
+    root=root,
+)
+```
+
+…or `MachineBuilder.root()`:
+
+```python
+machine = (
+    MachineBuilder("press")
+    .state("idle", initial=True)
+    .state("running")
+    .state("halted")
+    .root(on={"EMERGENCY": "halted"}, tags=["v2"])
+    .build()
+)
+```
+
+…or the `machine_root` class attribute:
+
+```python
+class Press(StateMachine):
+    machine_id = "press"
+    machine_root = State("", on={"EMERGENCY": "halted"})
+
+    idle = State("idle", initial=True)
+    # ...
+```
+
+`root` accepts `on`, `always`, `entry`, `exit`, `after`, `invoke`, `on_done`,
+`tags`, `meta` and `parallel=True`. Use JSON key spellings with
+`MachineBuilder.root()` (`onDone`, not `on_done`).
+
+> **Note:** A transition on the root is live in every state, and a state-level
+> transition for the same event wins over it — normal XState scoping.

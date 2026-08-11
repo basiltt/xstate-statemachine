@@ -7,6 +7,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-12
+
+**The code generator rewrite.** An audit of the five code-generation templates
+found that three of them — every `pythonic-*` template — produced machines that
+did not match their source JSON, on inputs as simple as a two-state machine.
+Two failed *silently*, with exit code 0.
+
+Measured on the 104-machine real-world corpus, round-trip fidelity went from
+**0/104 to 103/104** for all three templates. The single exclusion has no
+`states` key and is rejected by `create_machine()` too.
+
+> [!IMPORTANT]
+> If you generated code with `pythonic-class`, `pythonic-builder` or
+> `pythonic-functional` on 0.6.0 or earlier, **regenerate it**. The output was
+> not a faithful representation of your machine. `xsm generate-template … --diff`
+> will show you exactly what changes.
+
+### Fixed — silent wrong output (these produced working-looking, broken code)
+
+- **`pythonic-functional` produced machines with zero transitions.** The emitter
+  wrote `idle.to(busy, event="GO")` as a bare expression. `State.to()` *returns*
+  a `Transition`; it does not register one. The value was discarded and
+  `build_machine()` was called without it. Every machine this template ever
+  produced could start and then never move — including a flat two-state one.
+- **`pythonic-builder` silently dropped every nested state.** It never recursed
+  into `states`. One level of nesting lost two of four states, so the generated
+  code ran as a *different machine* and stubs were written against behaviour
+  that did not exist.
+- **`pythonic-class` failed to build at all**, raising
+  `InvalidConfigError: Multiple initial states`. Nested states were emitted as
+  sibling class attributes, and the metaclass treats every class-level `State`
+  as top-level — so a child marked `initial=True` became a second initial state
+  of the machine.
+- **Colliding state names destroyed states.** `"my-state"` and `"my_state"` both
+  sanitised to `my_state`; the second assignment silently overwrote the first.
+  In the reproducer the casualty was the machine's *initial* state.
+- **`final`, `after`, `always`, `parallel`, `history`, `tags` and `meta` were
+  dropped** by all three templates, so machines never completed, `onDone` never
+  fired, and timers vanished.
+
+### Fixed — hard failures
+
+- **Composite guards were never extracted.** `{"type": "and", "params":
+  {"guards": [...]}}` was tested with `isinstance(value, str)`, so the real leaf
+  guards were never stubbed and the machine died at runtime with
+  `ImplementationMissingError`.
+- **Named delays were never collected.** `after: {"BACKOFF": …}` produced no
+  `delays=` stub, and the transition silently never fired.
+- **Python keywords as state or service names emitted invalid code** — a service
+  named `None` produced `None = none`, a `SyntaxError`.
+- **Non-ASCII state names produced invalid Python.** Cyrillic and CJK names were
+  emitted verbatim as variable names.
+
+### Added
+
+- **Golden round-trip harness.** Generated code is now compiled, executed, and
+  the machine it builds compared structurally against
+  `create_machine(source_json)`. The pre-existing CLI tests asserted on generated
+  *strings* — one literally asserted `"green.to(yellow"`, pinning the defect as
+  correct behaviour, and passed for the entire life of the bug.
+- **The generator refuses to emit an unfaithful machine.** Verification runs
+  *before* anything is written; a mismatch prints what diverged and exits 1.
+  Nothing is written. `--no-verify` opts out.
+- **`--check` and `--diff`** — regenerate in memory and exit 1 if the files on
+  disk differ. Makes generated code safe to commit and keeps it honest in CI.
+  Both are strictly read-only and never prompt.
+- **Provenance header** in every generated file: source JSON, template,
+  generator version, and the exact command to regenerate.
+- **Support matrix** in `xsm list-templates`, showing which templates build the
+  machine in Python (and are structurally verified) versus which load JSON at
+  runtime.
+- **`State(history=…)`, `State(tags=…)`, `State(meta=…)`** on the Pythonic API.
+  These were previously unrepresentable, so *no* emitter could have preserved
+  them.
+- **`build_machine(root=…)` and `MachineBuilder.root()`** for machine-level
+  `on` / `entry` / `exit` / `tags` / `type: parallel`. Without these a global
+  escape transition such as `on: {EMERGENCY: …}` simply stopped existing.
+
+### Changed
+
+- **Generated code now passes `black --check` and `pyflakes` cleanly.** Unused
+  imports are pruned per-machine; previously a simple machine arrived with
+  `Optional`, `Union` and `Interpreter` unused (14 flake8 findings).
+- **Generated runners demonstrate a reachable path.** Events were previously
+  sent in *alphabetical* order, so a demo could end by firing an event nothing
+  handles. The runner now walks the machine and emits only transitions that can
+  actually fire — 94% of emitted events move the machine, measured on the corpus.
+- **Removed the `await asyncio.sleep(0.1)` placeholder** from async action stubs.
+  It was justified as making the stub "awaitable", which is false — an
+  `async def` is awaitable regardless. It only injected 100 ms of real latency
+  into every action of a machine the user had not written yet.
+
+### Changed — Pythonic API now matches the JSON engine
+
+The Pythonic API had drifted **stricter** than the config format it wraps,
+raising on machines `create_machine()` accepts. That made a whole class of real
+Stately exports impossible to code-generate. These now warn instead of raising,
+exactly as the engine does:
+
+- A compound state (or machine) with child states but no `initial`.
+- A `final` state with outgoing transitions — real exports ship these as
+  "undo" / "reconsider" transitions. `final` with *children* is still rejected.
+
+If you relied on these raising, they now emit a `WARNING` and continue.
+
 ## [0.6.0] - 2026-08-10
 
 **XState v5 feature parity, plus a full correctness pass.** This entry covers
