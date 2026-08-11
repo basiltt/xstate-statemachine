@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from src.xstate_statemachine import create_machine
 from src.xstate_statemachine.machine_logic import MachineLogic
 from src.xstate_statemachine.models import MachineNode, StateNode
+from src.xstate_statemachine.resolver import resolve_target_state
 
 # 🛡️ Dual-import guard. The test suite imports ``src.xstate_statemachine``
 #    while *generated* code imports ``xstate_statemachine``. Both resolve to
@@ -62,6 +63,22 @@ def _is_machine(value: Any) -> bool:
 # -----------------------------------------------------------------------------
 
 
+def _resolved_target(trans: Any) -> Optional[str]:
+    """Resolve a transition's target to a canonical state id.
+
+    🏛️ Comparing raw target *strings* would flag ``"#n.outerB"`` and
+    ``"outerB"`` as different when both name the same state. Fidelity is
+    about the machine you get, not the spelling used to describe it — so
+    resolve through the engine's own resolver and compare the destination.
+    """
+    if trans.target_str is None:
+        return None
+    try:
+        return resolve_target_state(trans.target_str, trans.source).id
+    except Exception:  # noqa: BLE001 - unresolvable targets compare raw
+        return f"<unresolved:{trans.target_str}>"
+
+
 def _transition_fingerprint(trans: Any) -> Tuple[Any, ...]:
     """Reduce a transition to its behaviourally significant parts.
 
@@ -70,7 +87,7 @@ def _transition_fingerprint(trans: Any) -> Tuple[Any, ...]:
     """
     return (
         trans.event,
-        trans.target_str,
+        _resolved_target(trans),
         tuple(a.type for a in trans.actions),
         trans.guard,
         bool(trans.reenter),
@@ -89,6 +106,12 @@ def _state_fingerprint(node: StateNode) -> Dict[str, Any]:
     ):
         after_map[delay] = [_transition_fingerprint(t) for t in transitions]
 
+    # 📝 `on_done` is a single TransitionDefinition on some nodes and a list
+    #    on others; normalise before fingerprinting.
+    raw_on_done = node.on_done or []
+    if not isinstance(raw_on_done, (list, tuple)):
+        raw_on_done = [raw_on_done]
+
     return {
         "type": node.type,
         "initial": node.initial,
@@ -98,9 +121,7 @@ def _state_fingerprint(node: StateNode) -> Dict[str, Any]:
         "on": on_map,
         "after": after_map,
         "invoke": sorted(i.src for i in node.invoke),
-        "on_done": [
-            _transition_fingerprint(t) for t in (node.on_done or [])
-        ],
+        "on_done": [_transition_fingerprint(t) for t in raw_on_done],
         "tags": sorted(node.tags or []),
         "meta": node.meta or {},
     }

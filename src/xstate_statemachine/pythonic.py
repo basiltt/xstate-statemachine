@@ -1014,6 +1014,8 @@ class MachineBuilder:
         invoke: Optional[Union[Dict, List]] = None,
         on_done: Optional[Union[str, Dict]] = None,
         always: Optional[Union[str, Dict, List]] = None,
+        tags: Optional[List[str]] = None,
+        meta: Optional[Dict[str, Any]] = None,
     ) -> "MachineBuilder":
         """Add a state to the machine.
 
@@ -1042,6 +1044,10 @@ class MachineBuilder:
             config["after"] = after
         if invoke:
             config["invoke"] = invoke
+        if tags:
+            config["tags"] = list(tags)
+        if meta:
+            config["meta"] = dict(meta)
         if on_done is not None:
             if isinstance(on_done, str):
                 config["onDone"] = {"target": on_done}
