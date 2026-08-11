@@ -56,6 +56,8 @@ def _state_kwargs(
         kwargs.append("final=True")
     elif state.kind == "parallel":
         kwargs.append("parallel=True")
+    elif state.kind == "history":
+        kwargs.append(f"history={literal(state.history_kind or 'shallow')}")
 
     if state.entry:
         kwargs.append(f"entry={emit.render_actions(state.entry)}")
@@ -96,10 +98,21 @@ def _is_initial(state: StateIR, machine: MachineIR) -> bool:
     Scoping this per-parent is what fixes audit defect #6: the old emitters
     flattened nested states into one namespace, so six states could all claim
     ``initial=True`` and construction failed outright.
+
+    🛡️ When a compound parent declares no ``initial``, NOTHING is nominated.
+    The engine leaves such a state's ``initial`` as None and warns; inventing
+    one here would make the generated machine differ from the source, which
+    is precisely the silent-divergence class of bug v0.7.0 exists to kill.
+    The generated code reproduces the machine faithfully, warts included.
     """
-    parent = machine.find(".".join(state.path[:-1])) if len(state.path) > 1 else None
+    parent = (
+        machine.find(".".join(state.path[:-1]))
+        if len(state.path) > 1
+        else None
+    )
     if parent is None:
         return machine.initial == state.key
+
     # 🚦 Parallel regions are all active at once; none is "initial".
     if parent.kind == "parallel":
         return False
@@ -156,6 +169,14 @@ def render_functional_build(
 
     root_vars = ", ".join(bindings[s.dotted] for s in machine.states)
     build_args = [f"id={literal(machine.id)}", f"states=[{root_vars}]"]
+
+    # 🌳 Machine-level on/entry/exit/tags/parallel, carried on a root State.
+    root_kwargs = _root_kwargs(machine)
+    if root_kwargs:
+        lines.append(f"    _root = State('', {', '.join(root_kwargs)})")
+        lines.append("")
+        build_args.append("root=_root")
+
     if context:
         build_args.append(f"context={literal(context)}")
 
@@ -165,6 +186,47 @@ def render_functional_build(
     lines.append("    )")
     lines.append("")
     return "\n".join(lines)
+
+
+def _root_kwargs(machine: MachineIR) -> List[str]:
+    """Keyword arguments describing machine-level (root) properties.
+
+    Real machines routinely declare a global escape transition such as
+    ``on: {EMERGENCY: "..."}`` at the top level. Before v0.7.0 these were
+    dropped, so the generated machine simply could not be escaped.
+    """
+    root = machine.root
+    if root is None:
+        return []
+
+    kwargs: List[str] = []
+    if root.kind == "parallel":
+        kwargs.append("parallel=True")
+    if root.entry:
+        kwargs.append(f"entry={emit.render_actions(root.entry)}")
+    if root.exit:
+        kwargs.append(f"exit={emit.render_actions(root.exit)}")
+
+    on_map = emit.render_on_map(root, machine)
+    if on_map:
+        kwargs.append(f"on={on_map}")
+    after_map = emit.render_after_map(root, machine)
+    if after_map:
+        kwargs.append(f"after={after_map}")
+    always = emit.render_always(root, machine)
+    if always:
+        kwargs.append(f"always={always}")
+    invoke = emit.render_invoke(root, machine)
+    if invoke:
+        kwargs.append(f"invoke={invoke}")
+    on_done = emit.render_on_done(root, machine)
+    if on_done:
+        kwargs.append(f"on_done={on_done}")
+    if root.tags:
+        kwargs.append(f"tags={list(root.tags)!r}")
+    if root.meta:
+        kwargs.append(f"meta={literal(root.meta)}")
+    return kwargs
 
 
 # -----------------------------------------------------------------------------
@@ -192,6 +254,10 @@ def render_builder_build(
     if context:
         lines.append(f"    builder.context({literal(context)})")
 
+    root_call = _builder_root_call(machine)
+    if root_call:
+        lines.append(root_call)
+
     for state in machine.states:
         kwargs = _state_kwargs(
             state, machine, include_initial=_is_initial(state, machine)
@@ -201,9 +267,10 @@ def render_builder_build(
 
         if state.children:
             nested = _nested_config(state, machine)
+            initial_key = state.initial
             initial = (
-                f", initial={literal(state.initial)}"
-                if state.initial and state.kind != "parallel"
+                f", initial={literal(initial_key)}"
+                if initial_key and state.kind != "parallel"
                 else ""
             )
             parallel = ", parallel=True" if state.kind == "parallel" else ""
@@ -215,6 +282,44 @@ def render_builder_build(
     lines.append("    return builder.build()")
     lines.append("")
     return "\n".join(lines)
+
+
+def _builder_root_call(machine: MachineIR) -> Optional[str]:
+    """Render ``builder.root(...)`` for machine-level properties."""
+    root = machine.root
+    if root is None:
+        return None
+
+    parts: List[str] = []
+    if root.kind == "parallel":
+        parts.append("type='parallel'")
+    if root.entry:
+        parts.append(f"entry={emit.render_actions(root.entry)}")
+    if root.exit:
+        parts.append(f"exit={emit.render_actions(root.exit)}")
+    on_map = emit.render_on_map(root, machine)
+    if on_map:
+        parts.append(f"on={on_map}")
+    after_map = emit.render_after_map(root, machine)
+    if after_map:
+        parts.append(f"after={after_map}")
+    always = emit.render_always(root, machine)
+    if always:
+        parts.append(f"always={always}")
+    invoke = emit.render_invoke(root, machine)
+    if invoke:
+        parts.append(f"invoke={invoke}")
+    on_done = emit.render_on_done(root, machine)
+    if on_done:
+        parts.append(f"onDone={on_done}")
+    if root.tags:
+        parts.append(f"tags={list(root.tags)!r}")
+    if root.meta:
+        parts.append(f"meta={literal(root.meta)}")
+
+    if not parts:
+        return None
+    return f"    builder.root({', '.join(parts)})"
 
 
 def _nested_config(state: StateIR, machine: MachineIR) -> str:
@@ -232,9 +337,13 @@ def _state_dict(state: StateIR, machine: MachineIR) -> str:
         parts.append("'type': 'final'")
     elif state.kind == "parallel":
         parts.append("'type': 'parallel'")
+    elif state.kind == "history":
+        parts.append("'type': 'history'")
+        parts.append(f"'history': {literal(state.history_kind or 'shallow')}")
 
     if state.initial and state.kind != "parallel":
         parts.append(f"'initial': {literal(state.initial)}")
+
     if state.entry:
         parts.append(f"'entry': {emit.render_actions(state.entry)}")
     if state.exit:

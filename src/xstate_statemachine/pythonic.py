@@ -20,6 +20,7 @@ All three styles compile to the same JSON config dict +
 import copy
 import functools
 import inspect
+import logging
 from collections import defaultdict
 from typing import (
     Any,
@@ -78,6 +79,8 @@ class State:
             siblings.
         final: Whether this is a final (terminal) state.
         parallel: Whether this is a parallel state.
+        history: Marks this as a history pseudo-state. Pass
+            ``"shallow"`` or ``"deep"``.
         on: Event-to-target shorthand dict,
             e.g. ``{"CLICK": "active"}``.
         entry: List of entry action names.
@@ -106,6 +109,7 @@ class State:
         initial: bool = False,
         final: bool = False,
         parallel: bool = False,
+        history: Optional[str] = None,
         on: Optional[Dict[str, Any]] = None,
         entry: Optional[List[str]] = None,
         exit: Optional[List[str]] = None,
@@ -126,6 +130,7 @@ class State:
         self.initial = initial
         self.final = final
         self.parallel = parallel
+        self.history = history
         self.on = on
         self.entry = entry or []
         self._exit_actions: List[str] = exit or []
@@ -535,18 +540,17 @@ def _compile_state(
     parent_parallel: bool = False,
 ) -> Dict[str, Any]:
     """Compile a single State into a JSON config dict entry."""
-    # 📝 Validate: final state cannot have transitions or children
-    if state.final:
-        if state.on:
-            raise InvalidConfigError(
-                f"Final state '{state.name}' cannot have "
-                f"outgoing transitions or child states"
-            )
-        if state.states:
-            raise InvalidConfigError(
-                f"Final state '{state.name}' cannot have "
-                f"outgoing transitions or child states"
-            )
+    # 📝 Validate: a final state cannot have CHILDREN.
+    #
+    # 🛡️ Outgoing transitions on a final state are deliberately allowed.
+    #    The JSON engine accepts them (real Stately exports ship final
+    #    states with an "undo" transition), and rejecting them here made the
+    #    Pythonic API stricter than the config format it mirrors — which in
+    #    turn made those machines impossible to code-generate.
+    if state.final and state.states:
+        raise InvalidConfigError(
+            f"Final state '{state.name}' cannot have child states"
+        )
 
     # 📝 Validate: child of parallel parent should not be initial
     if parent_parallel and state.initial:
@@ -563,6 +567,12 @@ def _compile_state(
         config["type"] = "final"
     elif state.parallel:
         config["type"] = "parallel"
+    elif state.history:
+        # 🕰️ History pseudo-state: remembers the previously active
+        #    child of its parent. Without this the node degrades to a plain
+        #    atomic state and the machine silently loses its memory.
+        config["type"] = "history"
+        config["history"] = state.history
 
     # 📝 Entry / Exit actions (defensive copy to avoid
     # mutating State objects shared across builds)
@@ -641,9 +651,15 @@ def _compile_state(
         if not state.parallel and initial_child:
             config["initial"] = initial_child
         elif not state.parallel and not initial_child and state.states:
-            raise InvalidConfigError(
-                "No initial state defined. Exactly one "
-                "state must have initial=True"
+            # 🛡️ The engine only WARNS for a compound state with no initial
+            #    (real Stately exports ship them). Raising here would make
+            #    the Pythonic API stricter than the JSON it mirrors, and
+            #    would make such a machine impossible to code-generate.
+            logging.getLogger(__name__).warning(
+                "⚠️ Compound state '%s' has %d child state(s) but no "
+                "initial=True. Starting this machine will fail.",
+                state.name,
+                len(state.states),
             )
 
     return config
@@ -654,6 +670,7 @@ def _compile_config(
     states: List[State],
     transitions: List[Union[Transition, TransitionGroup]],
     context: Optional[Dict] = None,
+    root: Optional[State] = None,
 ) -> Dict[str, Any]:
     """Compile State and Transition objects into a config dict.
 
@@ -712,10 +729,18 @@ def _compile_config(
                 )
             initial_state = s.name
 
-    if not has_parallel_root and initial_state is None and len(states) > 0:
-        raise InvalidConfigError(
-            "No initial state defined. Exactly one "
-            "state must have initial=True"
+    root_is_parallel = root is not None and root.parallel
+    if (
+        not has_parallel_root
+        and not root_is_parallel
+        and initial_state is None
+        and len(states) > 0
+    ):
+        logging.getLogger(__name__).warning(
+            "⚠️ Machine '%s' has %d top-level state(s) but none is marked "
+            "initial=True. Starting this machine will fail.",
+            machine_id,
+            len(states),
         )
 
     # 🔍 Flatten all transitions
@@ -735,10 +760,9 @@ def _compile_config(
                 f"is not a defined state"
             )
         src = all_states_by_name[t.source.name]
-        if src.final:
+        if src.final and src.states:
             raise InvalidConfigError(
-                f"Final state '{t.source.name}' cannot "
-                f"have outgoing transitions or child states"
+                f"Final state '{t.source.name}' cannot have child states"
             )
 
     # ⚙️ Compile each top-level state
@@ -795,6 +819,36 @@ def _compile_config(
         result["initial"] = initial_state
     if context is not None:
         result["context"] = context
+
+    # 🌳 Root-level properties. Real-world machines routinely declare
+    #    `on`, `entry`, `exit`, `tags` and even `type: parallel` at the top
+    #    level; without this they are silently dropped and a machine-wide
+    #    escape transition simply stops existing.
+    if root is not None:
+        if root.parallel:
+            result["type"] = "parallel"
+        if root.on:
+            result["on"] = dict(root.on)
+        if root.always is not None:
+            result.setdefault("on", {})[""] = root.always
+        if root.entry:
+            result["entry"] = list(root.entry)
+        if root.exit_actions:
+            result["exit"] = list(root.exit_actions)
+        if root.after:
+            result["after"] = dict(root.after)
+        if root.invoke:
+            result["invoke"] = root.invoke
+        if root.on_done is not None:
+            result["onDone"] = (
+                {"target": root.on_done}
+                if isinstance(root.on_done, str)
+                else root.on_done
+            )
+        if root.tags:
+            result["tags"] = list(root.tags)
+        if root.meta:
+            result["meta"] = dict(root.meta)
 
     return result
 
@@ -919,6 +973,7 @@ def build_machine(
     guards: Optional[List[Callable]] = None,
     services: Optional[List[Callable]] = None,
     context: Optional[Dict] = None,
+    root: Optional[State] = None,
 ) -> "MachineNode":
     """Build a state machine from Python objects (functional API).
 
@@ -933,6 +988,8 @@ def build_machine(
         guards: Optional list of guard callables.
         services: Optional list of service callables.
         context: Optional initial context dict.
+        root: Optional ``State`` carrying machine-level ``on``/``entry``/
+            ``exit``/``tags``/``parallel`` properties.
 
     Returns:
         A ``MachineNode`` ready for use with ``Interpreter``
@@ -944,6 +1001,7 @@ def build_machine(
         states=states,
         transitions=transitions or [],
         context=context,
+        root=root,
     )
     logic = _compile_logic_from_functions(
         actions=actions or [],
@@ -983,6 +1041,7 @@ class MachineBuilder:
         self._states: Dict[str, Dict[str, Any]] = {}
         self._initial_state: Optional[str] = None
         self._transitions: List[Dict[str, Any]] = []
+        self._root: Dict[str, Any] = {}
         self._actions: Dict[str, Callable] = {}
         self._guards: Dict[str, Callable] = {}
         self._services: Dict[str, Callable] = {}
@@ -1014,6 +1073,7 @@ class MachineBuilder:
         invoke: Optional[Union[Dict, List]] = None,
         on_done: Optional[Union[str, Dict]] = None,
         always: Optional[Union[str, Dict, List]] = None,
+        history: Optional[str] = None,
         tags: Optional[List[str]] = None,
         meta: Optional[Dict[str, Any]] = None,
     ) -> "MachineBuilder":
@@ -1034,6 +1094,9 @@ class MachineBuilder:
             config["type"] = "final"
         if parallel:
             config["type"] = "parallel"
+        if history:
+            config["type"] = "history"
+            config["history"] = history
         if on:
             config["on"] = on
         if entry:
@@ -1120,6 +1183,24 @@ class MachineBuilder:
         self._actions[name] = fn
         return self
 
+    def root(self, **properties: Any) -> "MachineBuilder":
+        """Set machine-level (root) properties.
+
+        Real-world machines routinely declare a global escape transition
+        such as ``on={"EMERGENCY": "shutdown"}`` at the top level, or mark
+        the whole machine ``type="parallel"``. Use JSON key spellings
+        (``onDone``, not ``on_done``).
+
+        Args:
+            **properties: Root config keys such as ``on``, ``entry``,
+                ``exit``, ``tags``, ``meta`` or ``type``.
+
+        Returns:
+            This builder, for chaining.
+        """
+        self._root.update(properties)
+        return self
+
     def guard(self, name: str, fn: Callable) -> "MachineBuilder":
         """Register a guard function.
 
@@ -1162,14 +1243,20 @@ class MachineBuilder:
             len(self._states) == 1
             and next(iter(self._states.values())).get("type") == "parallel"
         )
+        root_is_parallel = self._root.get("type") == "parallel"
         if (
             not has_parallel_root
+            and not root_is_parallel
             and self._initial_state is None
             and len(self._states) > 1
         ):
-            raise InvalidConfigError(
-                "No initial state defined. Exactly one "
-                "state must have initial=True"
+            # 🛡️ Warn, don't raise — see _compile_config for the rationale.
+            #    The JSON engine accepts this and so must the builder.
+            logging.getLogger(__name__).warning(
+                "⚠️ Machine '%s' has %d top-level state(s) but none is "
+                "marked initial=True. Starting this machine will fail.",
+                self._machine_id,
+                len(self._states),
             )
 
         # Deep-copy states so repeated builds don't corrupt
@@ -1216,6 +1303,10 @@ class MachineBuilder:
         ctx = context if context is not None else self._context
         if ctx is not None:
             config["context"] = ctx
+
+        # 🌳 Machine-level properties (see MachineBuilder.root).
+        if self._root:
+            config.update(copy.deepcopy(self._root))
 
         logic = MachineLogic(
             actions=dict(self._actions),

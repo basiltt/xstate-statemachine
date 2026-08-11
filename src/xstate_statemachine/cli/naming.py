@@ -72,8 +72,15 @@ def to_identifier(name: str, *, fallback: str = "state") -> str:
     candidate = _INVALID_CHARS.sub("_", _transliterate(name)).strip("_")
 
     if not candidate:
-        # 🌏 Names that are entirely non-ASCII (CJK, emoji) reduce to nothing.
-        candidate = fallback
+        # 🌏 Names that are entirely non-ASCII (Cyrillic, CJK, emoji) reduce
+        #    to nothing. The fallback is sanitised too — it is often derived
+        #    from the same untrusted name, so trusting it verbatim would
+        #    re-introduce the very characters we just stripped.
+        candidate = _INVALID_CHARS.sub("_", _transliterate(fallback)).strip(
+            "_"
+        )
+    if not candidate:
+        candidate = "state"
 
     if candidate[0].isdigit():
         candidate = f"s_{candidate}"

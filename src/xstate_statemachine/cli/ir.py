@@ -188,17 +188,27 @@ class MachineIR:
             exports sometimes ship ``"{{initialContext}}"`` as a string;
             that is recorded in ``context_is_placeholder`` instead.
         states: Top-level states, each retaining its own children.
+        root: The machine root treated as a state in its own right. Real
+            machines put ``on``/``entry``/``exit``/``tags`` and even
+            ``type: parallel`` at the top level, and those were silently
+            dropped before v0.7.0.
         unsupported: Machine-level keys the IR does not model.
     """
 
     id: str
     initial: Optional[str]
     states: Tuple[StateIR, ...]
+    root: Optional[StateIR] = None
     context: Optional[Dict[str, Any]] = None
     context_is_placeholder: bool = False
     tags: Tuple[str, ...] = ()
     meta: Optional[Dict[str, Any]] = None
     unsupported: Tuple[str, ...] = ()
+
+    @property
+    def is_parallel(self) -> bool:
+        """Whether the machine root itself is a parallel state."""
+        return self.root is not None and self.root.kind == "parallel"
 
     def walk(self) -> Iterator[StateIR]:
         """Yield every state in the machine, depth-first."""
@@ -353,10 +363,18 @@ def parse_invoke(raw: Any) -> Tuple[InvokeIR, ...]:
 
 
 def _infer_kind(config: Dict[str, Any], has_children: bool) -> str:
-    """Determine a state's kind from its declared type and shape."""
+    """Determine a state's kind from its declared type and shape.
+
+    🛡️ Mirrors the engine exactly. A state declared ``final`` that also has
+    *children* is downgraded to compound by the engine rather than rejected
+    — real Stately exports contain these. Note the rule is children only:
+    ``final`` with outgoing transitions stays ``final``. The IR must agree,
+    or generated code would refuse to build a machine the library itself
+    loads without complaint.
+    """
     declared = config.get("type")
     if declared == "final":
-        return "final"
+        return "compound" if has_children else "final"
     if declared == "parallel":
         return "parallel"
     if declared == "history":
@@ -482,10 +500,19 @@ def parse_machine(config: Dict[str, Any]) -> MachineIR:
     initial = config.get("initial")
     machine_id = config.get("id")
 
+    # 🌳 Parse the root as a state too, so top-level on/entry/exit/tags/meta
+    #    and `type: parallel` are captured rather than silently dropped.
+    #    Children are cleared: `states` already owns them, and leaving them
+    #    here would double every state in walk().
+    root = dataclasses.replace(
+        parse_state("", config, ()), children=(), unsupported=()
+    )
+
     return MachineIR(
         id=machine_id if isinstance(machine_id, str) else "machine",
         initial=initial if isinstance(initial, str) else None,
         states=tuple(states),
+        root=root,
         context=context,
         context_is_placeholder=placeholder,
         tags=tuple(
