@@ -91,6 +91,8 @@ class State:
         context: Initial context dict (only meaningful at root
             level).
         states: List of child ``State`` objects for hierarchy.
+        tags: Optional list of string tags for this state.
+        meta: Optional metadata dict attached to this state.
 
     Raises:
         InvalidConfigError: If ``final`` and ``parallel`` are
@@ -113,6 +115,8 @@ class State:
         always: Optional[Union[str, Dict, List]] = None,
         context: Optional[Dict] = None,
         states: Optional[List["State"]] = None,
+        tags: Optional[List[str]] = None,
+        meta: Optional[Dict[str, Any]] = None,
     ) -> None:
         if final and parallel:
             raise InvalidConfigError(
@@ -131,6 +135,8 @@ class State:
         self.always = always
         self.context = context
         self.states = states or []
+        self.tags = list(tags) if tags else []
+        self.meta = dict(meta) if meta else None
         # 📝 Internal: tracks functions registered via decorators
         self._enter_decorators: List[Callable] = []
         self._exit_decorators: List[Callable] = []
@@ -595,6 +601,14 @@ def _compile_state(
             config["onDone"] = {"target": state.on_done}
         else:
             config["onDone"] = state.on_done
+
+    # 🏷️ Tags & metadata — carried through so `matches()`/tag queries and
+    #    round-tripped JSON keep working. Previously dropped entirely, which
+    #    made full-fidelity code generation impossible.
+    if state.tags:
+        config["tags"] = list(state.tags)
+    if state.meta:
+        config["meta"] = dict(state.meta)
 
     # 📝 Child states (recurse)
     if state.states:
