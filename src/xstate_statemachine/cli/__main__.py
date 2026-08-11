@@ -21,6 +21,7 @@
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import argparse
+import difflib
 import json
 import logging
 import sys
@@ -206,6 +207,76 @@ def _safe_print(msg: str) -> None:
         print(msg)
     except UnicodeEncodeError:  # pragma: no cover - belt-and-braces
         print(msg.encode("ascii", errors="replace").decode("ascii"))
+
+
+def _check_output_files(
+    file_count: int,
+    paths: Dict[str, Path],
+    logic_code: str,
+    runner_code: str,
+    *,
+    show_diff: bool,
+) -> None:
+    """Compare on-disk files with what would be generated, writing nothing.
+
+    🏛️ Architecture decision: this is what makes generated code safe to
+    commit. Without it, a checked-in module can drift from its source JSON
+    silently — someone edits the machine, forgets to regenerate, and the
+    repository now contains code that describes a machine that no longer
+    exists. A CI step running ``--check`` turns that into a build failure.
+
+    Args:
+        file_count: 1 for a combined file, 2 for logic + runner.
+        paths: Candidate output paths.
+        logic_code: The freshly generated logic module.
+        runner_code: The freshly generated runner module.
+        show_diff: Print a unified diff for each difference.
+
+    Raises:
+        SystemExit: 1 if anything differs or is missing; 0 when in sync.
+    """
+    if file_count == 1:
+        expected = {
+            paths["single_file"]: _merge_code_for_single_file(
+                logic_code, runner_code
+            )
+        }
+    else:
+        expected = {
+            paths["logic_file"]: logic_code,
+            paths["runner_file"]: runner_code,
+        }
+
+    differences: List[str] = []
+    for path, generated in expected.items():
+        if not path.exists():
+            differences.append(f"{path}: missing (would be created)")
+            continue
+
+        current = path.read_text(encoding="utf-8")
+        if current == generated:
+            continue
+
+        differences.append(f"{path}: out of date")
+        if show_diff:
+            rendered = difflib.unified_diff(
+                current.splitlines(keepends=True),
+                generated.splitlines(keepends=True),
+                fromfile=f"{path} (on disk)",
+                tofile=f"{path} (generated)",
+            )
+            _safe_print("".join(rendered))
+
+    if differences:
+        for line in differences:
+            _safe_print(f"✗ {line}")
+        _safe_print(
+            "\nGenerated code is out of date. "
+            "Re-run without --check to update it."
+        )
+        raise SystemExit(1)
+
+    _safe_print("✓ Generated code is up to date.")
 
 
 def _write_output_files(
@@ -659,12 +730,23 @@ def run_generation_workflow(
     )
 
     # 5. 🛡️ Check for existing files before proceeding
+    #
+    # 🏛️ --check/--diff never write, so there is nothing to overwrite and
+    #    nothing to confirm. Prompting here would hang CI on stdin -- the
+    #    exact environment --check exists to serve.
+    check_mode = getattr(args, "check", False) or getattr(
+        args, "diff", False
+    )
     files_to_check = (
         [paths["single_file"]]
         if args.file_count == 1
         else [paths["logic_file"], paths["runner_file"]]
     )
-    if not args.force and any(f.exists() for f in files_to_check):
+    if (
+        not check_mode
+        and not args.force
+        and any(f.exists() for f in files_to_check)
+    ):
         # Prompt the user for confirmation to overwrite existing files.
         answer = (
             input("File(s) already exist. Overwrite? [Y/n] ").strip().lower()
@@ -743,7 +825,17 @@ def run_generation_workflow(
 
     logger.info("✅ Code generation complete.")
 
-    # 8. 💾 Write generated code to files
+    # 8. 💾 Write generated code to files — or, in check mode, compare only.
+    if getattr(args, "check", False) or getattr(args, "diff", False):
+        _check_output_files(
+            args.file_count,
+            paths,
+            logic_code,
+            runner_code,
+            show_diff=getattr(args, "diff", False),
+        )
+        return
+
     _write_output_files(args.file_count, paths, logic_code, runner_code)
 
 

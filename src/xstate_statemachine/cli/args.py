@@ -155,6 +155,23 @@ def _add_generation_option_args(parser: argparse.ArgumentParser) -> None:
             "inspect output the generator refuses to write."
         ),
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "Do not write anything. Exit 1 if the files on disk differ "
+            "from what would be generated. Intended for CI, so generated "
+            "code can be committed and kept honest."
+        ),
+    )
+    parser.add_argument(
+        "--diff",
+        action="store_true",
+        help=(
+            "Like --check, but also print a unified diff of the "
+            "differences. Implies --check."
+        ),
+    )
 
 
 def _add_simulation_option_args(parser: argparse.ArgumentParser) -> None:
