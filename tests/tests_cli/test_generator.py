@@ -376,7 +376,15 @@ class TestLogicCodeGenerator(unittest.TestCase):
             file_count=2,
         )
         # 🧐 ASSERT: Verify the Union type hint is present in both cases.
-        expected_hint = "interpreter: Union[Interpreter, SyncInterpreter],"
+        #
+        # 📝 Both interpreters are generic. A bare `Union[Interpreter,
+        #    SyncInterpreter]` fails `mypy --strict` with [type-arg], so the
+        #    emitted hint now carries explicit parameters. The intent of this
+        #    test -- that both variants appear -- is unchanged.
+        expected_hint = (
+            "interpreter: Union[Interpreter[Any, Any], "
+            "SyncInterpreter[Any, Any]],"
+        )
         self.assertIn(expected_hint, code_sync)
         self.assertIn(expected_hint, code_async)
 

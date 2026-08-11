@@ -462,7 +462,11 @@ class PythonicBuilderStrategy(BaseStrategy):
                 "async " if is_async and component_type != "guard" else ""
             )
 
-            interpreter_type = "Interpreter" if is_async else "SyncInterpreter"
+            # 📝 Both interpreters are generic; bare names fail
+            #    `mypy --strict` with [type-arg]. Dict[str, Any] is
+            #    the context type these stubs actually receive.
+            base = "Interpreter" if is_async else "SyncInterpreter"
+            interpreter_type = f"{base}[Dict[str, Any], Any]"
 
             if component_type == "guard":
                 args = [

@@ -171,7 +171,8 @@ def _generate_logic_component(
             ]
         else:
             args = [
-                f"{indent}        interpreter: Union[Interpreter, SyncInterpreter],",
+                f"{indent}        interpreter: "
+                f"Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],",
                 f"{indent}        context: Dict[str, Any],",
                 f"{indent}        event: Event,",
             ]

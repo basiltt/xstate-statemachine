@@ -523,7 +523,7 @@ class PythonicClassStrategy(BaseStrategy):
             elif component_type == "service":
                 args = [
                     f"{indent}        interpreter: "
-                    "Union[Interpreter, SyncInterpreter],",
+                    "Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],",
                     f"{indent}        context: Dict[str, Any],",
                     f"{indent}        event: Any,",
                 ]
@@ -532,7 +532,7 @@ class PythonicClassStrategy(BaseStrategy):
                 # action
                 args = [
                     f"{indent}        interpreter: "
-                    "Union[Interpreter, SyncInterpreter],",
+                    "Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],",
                     f"{indent}        context: Dict[str, Any],",
                     f"{indent}        event: Any,",
                     f"{indent}        action_def: Any,",

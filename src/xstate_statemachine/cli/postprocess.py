@@ -191,6 +191,30 @@ def apply_provenance(code: str, header: str) -> str:
     return header + "\n" + code.lstrip("\n")
 
 
+def sort_imports(code: str, *, line_length: int = _LINE_LENGTH) -> str:
+    """Group and order imports with isort, if it is available.
+
+    Emitters build their import block by concatenation, which cannot know
+    that ``shop_logic`` is first-party while ``xstate_statemachine`` is
+    third-party — so generated runners mixed the two groups and failed
+    ``isort --check``.
+
+    🛡️ Best-effort, like black: isort is a development dependency. Code
+    that is merely ungrouped is still valid and still faithful.
+    """
+    try:
+        import isort
+    except ImportError:  # pragma: no cover — optional dependency
+        logger.debug("isort unavailable; leaving import order untouched")
+        return code
+
+    try:
+        return isort.code(code, profile="black", line_length=line_length)
+    except Exception as exc:  # noqa: BLE001 — cosmetic step, never fatal
+        logger.debug("isort declined (%s); leaving import order", exc)
+        return code
+
+
 def format_source(code: str, *, line_length: int = _LINE_LENGTH) -> str:
     """Format *code* with black, returning it unchanged if black is absent.
 
@@ -235,10 +259,12 @@ def polish(
 ) -> str:
     """Run the full post-emit pipeline over generated *code*.
 
-    Order is deliberate: prune imports before formatting (so black does not
-    format lines about to be deleted), then add provenance, then format.
+    Order is deliberate: prune imports before sorting and formatting (so
+    neither tool works on lines about to be deleted), then add provenance,
+    then normalise import groups, then format.
     """
     code = prune_unused_imports(code)
     if header:
         code = apply_provenance(code, header)
+    code = sort_imports(code, line_length=line_length)
     return format_source(code, line_length=line_length)

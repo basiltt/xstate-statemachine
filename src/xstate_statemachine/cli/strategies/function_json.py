@@ -513,7 +513,8 @@ class FunctionJsonStrategy(BaseStrategy):
                 ]
             else:
                 args = [
-                    "    interpreter: " "Union[Interpreter, SyncInterpreter],",
+                    "    interpreter: "
+                    "Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],",
                     "    context: Dict[str, Any],",
                     "    event: Event,",
                 ]

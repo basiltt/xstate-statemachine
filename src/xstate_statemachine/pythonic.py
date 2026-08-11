@@ -28,7 +28,9 @@ from typing import (
     Dict,
     List,
     Optional,
+    TypeVar,
     Union,
+    overload,
 )
 
 # -------------------------------------------------------------------------
@@ -38,6 +40,13 @@ from .exceptions import InvalidConfigError, NotSupportedError
 from .factory import create_machine as _original_create_machine
 from .machine_logic import MachineLogic
 from .models import MachineNode
+
+# 📝 Decorators below return the SAME function, so a TypeVar keeps them
+#    transparent to type checkers. Without it mypy --strict reports
+#    "Untyped decorator makes function ... untyped" for every stub in
+#    generated code -- and for every hand-written one too.
+_DecoratedF = TypeVar("_DecoratedF", bound=Callable[..., Any])
+
 
 # -------------------------------------------------------------------------
 # 🛠️ Internal Helpers
@@ -113,7 +122,11 @@ class State:
         on: Optional[Dict[str, Any]] = None,
         entry: Optional[List[str]] = None,
         exit: Optional[List[str]] = None,
-        after: Optional[Dict[int, Any]] = None,
+        # 📝 Keys are a delay in ms OR a NAMED delay resolved from
+        #    MachineLogic.delays at runtime. Typing this as
+        #    Dict[int, Any] wrongly rejected named delays, which the
+        #    engine has always supported.
+        after: Optional[Dict[Union[int, str], Any]] = None,
         invoke: Optional[Union[Dict, List]] = None,
         on_done: Optional[Union[str, Dict]] = None,
         always: Optional[Union[str, Dict, List]] = None,
@@ -417,7 +430,13 @@ def transition(
 # -------------------------------------------------------------------------
 
 
-def action(fn_or_name=None):
+@overload
+def action(fn_or_name: _DecoratedF) -> _DecoratedF: ...
+@overload
+def action(
+    fn_or_name: Optional[str] = None,
+) -> Callable[[_DecoratedF], _DecoratedF]: ...
+def action(fn_or_name: Any = None) -> Any:
     """Decorator to mark a function as a state machine action.
 
     Can be used with or without arguments:
@@ -443,7 +462,7 @@ def action(fn_or_name=None):
         # 📝 Used as @action("customName")
         name = fn_or_name
 
-        def decorator(fn):
+        def decorator(fn: _DecoratedF) -> _DecoratedF:
             fn._xsm_type = "action"
             fn._xsm_name = name
             return fn
@@ -451,7 +470,13 @@ def action(fn_or_name=None):
         return decorator
 
 
-def guard(fn_or_name=None):
+@overload
+def guard(fn_or_name: _DecoratedF) -> _DecoratedF: ...
+@overload
+def guard(
+    fn_or_name: Optional[str] = None,
+) -> Callable[[_DecoratedF], _DecoratedF]: ...
+def guard(fn_or_name: Any = None) -> Any:
     """Decorator to mark a function as a state machine guard.
 
     Guards MUST be synchronous. Async guards raise
@@ -484,7 +509,7 @@ def guard(fn_or_name=None):
     else:
         name = fn_or_name
 
-        def decorator(fn):
+        def decorator(fn: _DecoratedF) -> _DecoratedF:
             if inspect.iscoroutinefunction(fn):
                 raise NotSupportedError(
                     f"Guard '{fn.__name__}' must be "
@@ -497,7 +522,13 @@ def guard(fn_or_name=None):
         return decorator
 
 
-def service(fn_or_name=None):
+@overload
+def service(fn_or_name: _DecoratedF) -> _DecoratedF: ...
+@overload
+def service(
+    fn_or_name: Optional[str] = None,
+) -> Callable[[_DecoratedF], _DecoratedF]: ...
+def service(fn_or_name: Any = None) -> Any:
     """Decorator to mark a function as a state machine service.
 
     Services can be sync or async.
@@ -521,7 +552,7 @@ def service(fn_or_name=None):
     else:
         name = fn_or_name
 
-        def decorator(fn):
+        def decorator(fn: _DecoratedF) -> _DecoratedF:
             fn._xsm_type = "service"
             fn._xsm_name = name
             return fn

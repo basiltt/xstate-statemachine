@@ -517,7 +517,7 @@ class ClassJsonStrategy(BaseStrategy):
             else:
                 args = [
                     f"{indent}        interpreter: "
-                    "Union[Interpreter, SyncInterpreter],",
+                    "Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],",
                     f"{indent}        context: Dict[str, Any],",
                     f"{indent}        event: Event,",
                 ]

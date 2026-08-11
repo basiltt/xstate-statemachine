@@ -321,8 +321,25 @@ def render_after_map(state: StateIR, machine: MachineIR) -> Optional[str]:
                 render_transition_value(t, state, machine) for t in transitions
             )
             value = f"[{rendered}]"
-        entries.append(f"{literal(delay)}: {value}")
+        entries.append(f"{_delay_key(delay)}: {value}")
     return "{" + ", ".join(entries) + "}"
+
+
+def _delay_key(delay: object) -> str:
+    """Render an ``after`` key the way a human would write it.
+
+    JSON object keys are always strings, so a numeric delay arrives as
+    ``"1000"``. The engine normalises both forms to ``1000``, so emitting
+    the string is *behaviourally* identical — but nobody hand-writes
+    ``after={"1000": ...}``, and generated code that looks hand-written is
+    the whole point. Named delays stay quoted.
+    """
+    if isinstance(delay, str):
+        try:
+            return str(int(delay))
+        except ValueError:
+            return literal(delay)
+    return literal(delay)
 
 
 def render_always(state: StateIR, machine: MachineIR) -> Optional[str]:
