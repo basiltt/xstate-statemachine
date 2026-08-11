@@ -161,3 +161,31 @@ def literal(value: object) -> str:
     strings manually, which broke on backslashes, newlines and mixed quotes.
     """
     return repr(value)
+
+
+# 🛡️ Characters that let a value escape a docstring or inject a comment.
+_DOCSTRING_UNSAFE = re.compile(r'["\\\r\n]')
+
+
+def docstring_safe(value: object, *, limit: int = 120) -> str:
+    """Render *value* for embedding in a generated docstring.
+
+    🛡️ SECURITY: docstrings are the one place generated code interpolates a
+    machine-supplied string *outside* a ``repr()``. A machine id containing
+    ``\"\"\"`` closes the docstring early, after which the rest of the id is
+    parsed as CODE — a config file becomes arbitrary execution the moment
+    the generator verifies its own output.
+
+    Reproducer this defends against::
+
+        {"id": "p\\"\\"\\"\\n    import os; os.system('...')\\n    \\"\\"\\""}
+
+    Quotes, backslashes and newlines are therefore removed rather than
+    escaped: a docstring is prose, so there is nothing to preserve, and
+    stripping cannot be undone by a second layer of interpretation.
+    """
+    text = str(value)
+    cleaned = _DOCSTRING_UNSAFE.sub(" ", text).strip()
+    if len(cleaned) > limit:
+        cleaned = cleaned[: limit - 1].rstrip() + "…"
+    return cleaned or "machine"

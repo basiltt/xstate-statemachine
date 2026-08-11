@@ -17,6 +17,7 @@ from ..extractor import extract_events
 from ..simulation import demo_events
 from ..ir import MachineIR, parse_machine
 from .base import BaseStrategy, GenerationContext
+from ..naming import docstring_safe
 from ._shared import (
     escape_for_string,
     generate_action_docstring,
@@ -226,7 +227,7 @@ class PythonicClassStrategy(BaseStrategy):
         lines.append(f"{func_prefix}def main() -> None:")
         lines.append(
             f'    """Executes the simulation for the '
-            f'{ctx.machine_name} machine."""'
+            f'{docstring_safe(ctx.machine_name)} machine."""'
         )
         lines.append("")
 

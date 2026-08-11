@@ -29,7 +29,7 @@ from typing import Dict, List, Optional, Tuple
 
 from . import emit
 from .ir import MachineIR, StateIR
-from .naming import literal
+from .naming import docstring_safe, literal
 
 # -----------------------------------------------------------------------------
 # 🧩 Shared: State(...) keyword arguments
@@ -145,7 +145,7 @@ def render_functional_build(
     bindings = emit.allocate_bindings(machine)
     lines: List[str] = [
         "def build() -> Any:",
-        f'    """Build the {machine.id} machine (functional style)."""',
+        f'    """Build the {docstring_safe(machine.id)} machine (functional style)."""',
     ]
 
     emitted: List[str] = []
@@ -254,7 +254,7 @@ def render_builder_build(
     """
     lines: List[str] = [
         "def build() -> Any:",
-        f'    """Build the {machine.id} machine (builder style)."""',
+        f'    """Build the {docstring_safe(machine.id)} machine (builder style)."""',
         f"    builder = MachineBuilder({literal(machine.id)})",
     ]
 
@@ -482,13 +482,15 @@ def render_class_build(
         lines.append("")
 
     lines.append(f"class {class_name}(StateMachine):")
-    lines.append(f'    """The {machine.id} state machine."""')
+    lines.append(f'    """The {docstring_safe(machine.id)} state machine."""')
     lines.append("")
     lines.append(render_class_attributes(machine, context=context))
     lines.append("")
     lines.append("")
     lines.append("def build() -> Any:")
-    lines.append(f'    """Build the {machine.id} machine (class style)."""')
+    lines.append(
+        f'    """Build the {docstring_safe(machine.id)} machine (class style)."""'
+    )
     lines.append(f"    return {class_name}.create_machine()")
     lines.append("")
     return "\n".join(lines)
