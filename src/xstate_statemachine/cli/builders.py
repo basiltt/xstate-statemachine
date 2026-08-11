@@ -25,7 +25,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from . import emit
 from .ir import MachineIR, StateIR
@@ -128,12 +128,19 @@ def render_functional_build(
     machine: MachineIR,
     *,
     context: Optional[Dict] = None,
+    logic_args: Optional[List[str]] = None,
 ) -> str:
     """Emit a ``build()`` using ``State`` objects and ``build_machine()``.
 
     States are emitted deepest-first so a parent can reference its children
     by variable in ``states=[...]`` — this is the real hierarchy that the old
     emitter discarded.
+
+    Args:
+        machine: The parsed machine.
+        context: Initial context dict, if any.
+        logic_args: Extra ``build_machine()`` keyword arguments such as
+            ``actions=[...]`` that wire in the generated stubs.
     """
     bindings = emit.allocate_bindings(machine)
     lines: List[str] = [
@@ -179,6 +186,8 @@ def render_functional_build(
 
     if context:
         build_args.append(f"context={literal(context)}")
+    if logic_args:
+        build_args.extend(logic_args)
 
     lines.append("    return build_machine(")
     for arg in build_args:
@@ -379,66 +388,105 @@ def _state_dict(state: StateIR, machine: MachineIR) -> str:
 # -----------------------------------------------------------------------------
 
 
+def _class_state_lines(
+    machine: MachineIR,
+) -> Tuple[List[str], List[str]]:
+    """Split a machine's states into module-level and class-level bindings.
+
+    🏛️ The metaclass treats every class-level ``State`` attribute as a
+    top-level state of the machine. Nested states must therefore live at
+    module scope and be attached to their parent via ``states=[...]``;
+    declaring them as sibling class attributes is what made several states
+    claim ``initial=True`` and killed construction outright.
+
+    Returns:
+        ``(module_lines, class_lines)`` — nested bindings and root bindings.
+    """
+    bindings = emit.allocate_bindings(machine)
+    module_lines: List[str] = []
+
+    def render(state: StateIR) -> str:
+        kwargs = _state_kwargs(
+            state, machine, include_initial=_is_initial(state, machine)
+        )
+        if state.children:
+            child_vars = ", ".join(bindings[c.dotted] for c in state.children)
+            kwargs.append(f"states=[{child_vars}]")
+        args = ", ".join([literal(state.key)] + kwargs)
+        return f"{bindings[state.dotted]} = State({args})"
+
+    def emit_nested(state: StateIR) -> None:
+        for child in state.children:
+            emit_nested(child)
+            module_lines.append(render(child))
+
+    for state in machine.states:
+        emit_nested(state)
+
+    class_lines = [render(state) for state in machine.states]
+    return module_lines, class_lines
+
+
+def render_class_nested_states(machine: MachineIR) -> str:
+    """Emit module-level bindings for every nested state."""
+    module_lines, _ = _class_state_lines(machine)
+    if not module_lines:
+        return ""
+    header = [
+        "# 🧩 Nested states are bound at module level and attached to their",
+        "#    parent via states=[...]. Declaring them as class attributes",
+        "#    would make the metaclass treat each as a top-level state.",
+    ]
+    return "\n".join(header + module_lines)
+
+
+def render_class_attributes(
+    machine: MachineIR,
+    indent: str = "    ",
+    *,
+    context: Optional[Dict] = None,
+) -> str:
+    """Emit the class body: machine_id, context, root and root states."""
+    _, class_lines = _class_state_lines(machine)
+
+    lines = [f"{indent}machine_id = {literal(machine.id)}"]
+    if context:
+        lines.append(f"{indent}initial_context = {literal(context)}")
+
+    root_kwargs = _root_kwargs(machine)
+    if root_kwargs:
+        lines.append(
+            f"{indent}machine_root = State('', {', '.join(root_kwargs)})"
+        )
+
+    lines.append("")
+    lines.extend(f"{indent}{line}" for line in class_lines)
+    return "\n".join(lines)
+
+
 def render_class_build(
     machine: MachineIR,
     class_name: str,
     *,
     context: Optional[Dict] = None,
 ) -> str:
-    """Emit a ``StateMachine`` subclass plus a ``build()`` helper.
+    """Emit a full ``StateMachine`` subclass plus a ``build()`` helper.
 
-    Child states are attached via ``states=[...]`` on their parent rather
-    than declared as sibling class attributes — the flattening that made
-    several states claim ``initial=True`` simultaneously.
+    Used by the round-trip harness; the CLI strategy composes the same
+    pieces via ``render_class_nested_states`` and ``render_class_attributes``
+    so it can interleave decorated methods into the class body.
     """
-    bindings = emit.allocate_bindings(machine)
-    lines: List[str] = [
-        f"class {class_name}(StateMachine):",
-        f'    """The {machine.id} state machine."""',
-        "",
-    ]
-
-    if context:
-        lines.append(f"    context = {literal(context)}")
+    lines: List[str] = []
+    nested = render_class_nested_states(machine)
+    if nested:
+        lines.append(nested)
+        lines.append("")
         lines.append("")
 
-    # 📝 Nested states are built as locals in a helper, then referenced,
-    #    because class bodies cannot easily express a deep tree inline.
-    nested_lines: List[str] = []
-
-    def emit_nested(state: StateIR) -> None:
-        for child in state.children:
-            emit_nested(child)
-        if not state.children:
-            return
-        var = bindings[state.dotted]
-        child_vars = ", ".join(bindings[c.dotted] for c in state.children)
-        kwargs = _state_kwargs(
-            state, machine, include_initial=_is_initial(state, machine)
-        )
-        kwargs.append(f"states=[{child_vars}]")
-        args = ", ".join([literal(state.key)] + kwargs)
-        nested_lines.append(f"{var} = State({args})")
-
-    def emit_leaf(state: StateIR) -> None:
-        for child in state.children:
-            emit_leaf(child)
-        if state.children:
-            return
-        var = bindings[state.dotted]
-        kwargs = _state_kwargs(
-            state, machine, include_initial=_is_initial(state, machine)
-        )
-        args = ", ".join([literal(state.key)] + kwargs)
-        nested_lines.append(f"{var} = State({args})")
-
-    for state in machine.states:
-        emit_leaf(state)
-        emit_nested(state)
-
-    for line in nested_lines:
-        lines.append(f"    {line}")
-
+    lines.append(f"class {class_name}(StateMachine):")
+    lines.append(f'    """The {machine.id} state machine."""')
+    lines.append("")
+    lines.append(render_class_attributes(machine, context=context))
     lines.append("")
     lines.append("")
     lines.append("def build() -> Any:")

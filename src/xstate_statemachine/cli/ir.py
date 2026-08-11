@@ -54,6 +54,10 @@ _KNOWN_STATE_KEYS = frozenset(
     }
 )
 
+# 🛡️ Guard combinators evaluated by the engine itself. These are never
+#    user-supplied implementations and must never be emitted as stub names.
+_COMPOSITE_OPERATORS = frozenset({"and", "or", "not"})
+
 # 📝 Purely cosmetic Stately/editor keys — safe to ignore without warning.
 _IGNORED_STATE_KEYS = frozenset({"description"})
 
@@ -78,13 +82,22 @@ class GuardIR:
         return bool(self.children)
 
     def leaf_names(self) -> Tuple[str, ...]:
-        """All non-composite guard names reachable from here."""
-        if not self.children:
-            return (self.type,)
-        out: List[str] = []
-        for child in self.children:
-            out.extend(child.leaf_names())
-        return tuple(out)
+        """All non-composite guard names reachable from here.
+
+        🛡️ Composite *operators* (``and``/``or``/``not``) are never returned.
+        They are combinators evaluated by the engine, not user-supplied
+        implementations — emitting one as a stub name produces
+        ``guards=[and, ...]``, which is a SyntaxError.
+        """
+        if self.children:
+            out: List[str] = []
+            for child in self.children:
+                out.extend(child.leaf_names())
+            return tuple(out)
+        # 📝 A childless composite operator has nothing to implement.
+        if self.type in _COMPOSITE_OPERATORS:
+            return ()
+        return (self.type,)
 
 
 @dataclasses.dataclass(frozen=True)

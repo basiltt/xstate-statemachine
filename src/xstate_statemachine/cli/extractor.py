@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Set, Tuple
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from ..actions import is_builtin as _is_builtin_action
+from .ir import parse_guard
 
 # -----------------------------------------------------------------------------
 # 🪵 Module-level Logger
@@ -96,9 +97,22 @@ def _extract_from_transition(
             _extract_actions(trans["actions"], actions)
 
         # 🛡️ Extract guards (supports both 'cond' and 'guard' keys)
+        #
+        # 🏛️ Composite guards must be recursed into, not taken at face value.
+        #    A guard like {"type": "and", "params": {"guards": [...]}} has
+        #    "and" as its type — the OPERATOR, not an implementation. The old
+        #    code did `isinstance(value, str)`, which meant:
+        #      • the real leaf guards were never stubbed, so the machine died
+        #        at runtime with ImplementationMissingError, and
+        #      • nothing was extracted for the dict form at all.
+        #    Worse, naively adding trans[guard_key]["type"] emits
+        #    `guards=[and, ...]` — `and` is a Python keyword, so the
+        #    generated module does not even compile.
         guard_key = "cond" if "cond" in trans else "guard"
-        if guard_key in trans and isinstance(trans[guard_key], str):
-            guards.add(trans[guard_key])
+        if guard_key in trans:
+            parsed = parse_guard(trans[guard_key])
+            if parsed is not None:
+                guards.update(parsed.leaf_names())
 
 
 def _traverse_and_extract(

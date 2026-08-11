@@ -1380,6 +1380,11 @@ class _StateMachineMeta(type):
 
             # Collect State instances
             if isinstance(attr_value, State):
+                # 🌳 `machine_root` carries machine-level properties
+                #    (on/entry/exit/tags/parallel) rather than being a
+                #    state of the machine. Keep it out of `states`.
+                if attr_name == "machine_root":
+                    continue
                 if not attr_value.name:
                     attr_value.name = attr_name
                 states.append(attr_value)
@@ -1427,6 +1432,7 @@ class StateMachine(metaclass=_StateMachineMeta):
 
     machine_id: Optional[str] = None
     initial_context: Optional[Dict] = None
+    machine_root: Optional[State] = None
 
     @classmethod
     def create_machine(cls, context=None):
@@ -1446,6 +1452,7 @@ class StateMachine(metaclass=_StateMachineMeta):
             states=cls._xsm_states,
             transitions=cls._xsm_transitions,
             context=ctx,
+            root=getattr(cls, "machine_root", None),
         )
 
         instance = cls()
