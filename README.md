@@ -948,6 +948,18 @@ xsm generate-template checkout.json --template pythonic-class -o ./app
 Templates: `class-json`, `function-json`, `pythonic-class`, `pythonic-builder`,
 `pythonic-functional`.
 
+**The generator proves its output before writing it.** For templates that build the machine in
+Python, `xsm` compiles the generated code, runs it, and compares the resulting machine against
+`create_machine(your.json)`. If anything diverges it prints what and exits non-zero — nothing is
+written. Nesting, parallel regions, history, timers (numeric *and* named delays), composite
+guards, `invoke`, tags and meta all round-trip exactly.
+
+Add `--check` in CI to catch generated code that has drifted from its source JSON:
+
+```bash
+xsm generate-template checkout.json --template pythonic-class -o ./app --check
+```
+
 <details>
 <summary><b>Why generate instead of hand-write?</b></summary>
 

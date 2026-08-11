@@ -110,7 +110,7 @@ Five templates are available:
 | `class-json` | Class with camelCase methods, JSON loaded at runtime *(default)* |
 | `function-json` | Module-level functions, JSON loaded at runtime |
 
-> **Note:** The `--style` flag (`class` / `function`) is deprecated and maps to `class-json` / `function-json`. It will be removed in v0.6.0. Use `--template` instead.
+> **Note:** The `--style` flag (`class` / `function`) is deprecated and maps to `class-json` / `function-json`. It will be removed in v0.8.0. Use `--template` instead.
 
 #### Async Mode (`-am` / `--async-mode`)
 
@@ -424,7 +424,7 @@ Example output:
 
 ```
 xstate-statemachine info
-  Version:     0.6.0
+  Version:     0.7.0
   Python:      3.12.0
   Platform:    Windows-11
   Install:     C:\...\xstate_statemachine
