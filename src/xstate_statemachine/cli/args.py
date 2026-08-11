@@ -146,6 +146,15 @@ def _add_generation_option_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Force overwrite of existing generated files without prompting.",
     )
+    parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help=(
+            "Skip the structural check that generated code rebuilds the "
+            "source machine. Syntax is still validated. Use only to "
+            "inspect output the generator refuses to write."
+        ),
+    )
 
 
 def _add_simulation_option_args(parser: argparse.ArgumentParser) -> None:

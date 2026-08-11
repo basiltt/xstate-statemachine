@@ -39,6 +39,13 @@ from .args import (
 )
 from .extractor import extract_logic_names, guess_hierarchy
 from .strategies import GenerationContext, get_strategy
+from .ir import parse_machine
+from .validation import (
+    builds_machine_inline,
+    check_representable,
+    format_refusal,
+    verify_generated,
+)
 from .utils import camel_to_snake, normalize_bool
 
 # -----------------------------------------------------------------------------
@@ -710,10 +717,76 @@ def run_generation_workflow(
     )
     logic_code = strategy.generate_logic(ctx)
     runner_code = strategy.generate_runner(ctx)
+
+    # 7b. 🛡️ Verify before writing anything.
+    #
+    # 🏛️ Architecture decision: generation is not "done" until the emitted
+    #    code has been proven to rebuild the source machine. Root cause RC-5
+    #    of the v0.7.0 audit was that nothing ever checked -- which is why
+    #    templates could emit an inert machine and still exit 0.
+    _verify_or_refuse(
+        configs=configs,
+        logic_code=logic_code,
+        template=template,
+        strict=not getattr(args, "no_verify", False),
+    )
+
     logger.info("✅ Code generation complete.")
 
     # 8. 💾 Write generated code to files
     _write_output_files(args.file_count, paths, logic_code, runner_code)
+
+
+def _verify_or_refuse(
+    *,
+    configs: List[Dict[str, Any]],
+    logic_code: str,
+    template: str,
+    strict: bool,
+) -> None:
+    """Prove the generated code rebuilds the source machine, or refuse.
+
+    Only single-machine generation is verified structurally: with multiple
+    configs the emitted module composes several machines and there is no
+    single expected machine to compare against. Syntax is always checked.
+
+    Raises:
+        SystemExit: With status 1 if the generated code is not faithful.
+    """
+    problems: List[str] = []
+    machine_id = configs[0].get("id", "machine") if configs else "machine"
+
+    # 🔍 Syntax is checked for EVERY template; structural comparison only
+    #    for those whose logic module builds the machine in Python. A
+    #    single machine is required, since multi-machine output composes
+    #    several and there is no one expected machine to compare against.
+    structural = (
+        strict and builds_machine_inline(template) and len(configs) == 1
+    )
+
+    # 🔍 Pre-emit: refuse constructs the generator provably cannot express,
+    #    so the failure names the offending config key rather than showing
+    #    up later as a mysterious structural difference.
+    if structural:
+        problems.extend(
+            check_representable(parse_machine(configs[0]), template)
+        )
+
+    problems.extend(
+        verify_generated(
+            configs[0], logic_code, template=template, strict=structural
+        )
+    )
+
+    if problems:
+        message = format_refusal(template, machine_id, problems)
+        logger.error("❌ %s", message)
+        raise SystemExit(1)
+
+    if structural:
+        logger.info(
+            "🛡️ Verified: generated code rebuilds '%s' exactly.", machine_id
+        )
 
 
 def run_list_templates() -> None:
