@@ -330,3 +330,86 @@ class TestRoundTripCorpus(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class TestRoundTripViaStrategies(unittest.TestCase):
+    """The same guarantee, through the code path the CLI actually runs.
+
+    🏛️ TestRoundTripCorpus exercises the renderers directly. This class
+    goes through ``get_strategy(...).generate_logic(ctx)`` — the exact
+    entry point ``xsm generate-template`` uses — so a renderer that is
+    correct but not *wired in* cannot pass. That distinction is not
+    hypothetical: every renderer was already correct and every user-facing
+    template was still broken.
+    """
+
+    TEMPLATES = (
+        "pythonic-functional",
+        "pythonic-builder",
+        "pythonic-class",
+    )
+
+    def setUp(self) -> None:
+        self.files = sorted(glob.glob(_CORPUS))
+        if not self.files:  # pragma: no cover - corpus ships with the repo
+            self.skipTest("stately_machines corpus not present")
+
+    @staticmethod
+    def _context(config: Dict[str, Any], name: str) -> Any:
+        from src.xstate_statemachine.cli.strategies.base import (
+            GenerationContext,
+        )
+
+        machine_id = config.get("id", "m")
+        return GenerationContext(
+            actions=set(),
+            guards=set(),
+            services=set(),
+            is_async=False,
+            log=True,
+            machine_name="m",
+            machine_id=machine_id,
+            machine_names=["m"],
+            machine_ids=[machine_id],
+            file_count=2,
+            configs=[config],
+            json_filenames=[name],
+            hierarchy=True,
+            sleep=False,
+            sleep_time=0,
+            loader=False,
+        )
+
+    def test_corpus_round_trips_through_cli_strategies(self) -> None:
+        """Every template regenerates every real machine exactly."""
+        from src.xstate_statemachine.cli.strategies import get_strategy
+
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+
+        failures: List[str] = []
+        checked = 0
+
+        for path in self.files:
+            name = os.path.basename(path)
+            if name in _INVALID_SOURCES:
+                continue
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    config = json.load(handle)
+            except (OSError, json.JSONDecodeError):  # pragma: no cover
+                continue
+
+            for template in self.TEMPLATES:
+                checked += 1
+                try:
+                    code = get_strategy(template).generate_logic(
+                        self._context(config, name)
+                    )
+                    assert_round_trip(config, code, label=template)
+                except AssertionError as exc:
+                    first = str(exc).strip().splitlines()[0]
+                    failures.append(f"{name} [{template}]: {first}")
+
+        self.assertGreater(checked, 300, "corpus did not load")
+        self.assertEqual(failures, [], "\n".join(failures))
