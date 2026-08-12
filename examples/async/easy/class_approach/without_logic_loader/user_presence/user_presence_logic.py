@@ -13,7 +13,7 @@ import logging
 import time
 from typing import Any, Dict
 
-from src.xstate_statemachine import Interpreter, Event, ActionDefinition
+from xstate_statemachine import Interpreter, Event, ActionDefinition
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration

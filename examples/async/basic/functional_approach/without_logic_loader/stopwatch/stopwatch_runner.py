@@ -12,7 +12,7 @@ import logging
 import os
 import sys
 
-from src.xstate_statemachine import Interpreter, MachineLogic, create_machine
+from xstate_statemachine import Interpreter, MachineLogic, create_machine
 
 # --- Ensure project root is on PYTHONPATH ---
 sys.path.insert(

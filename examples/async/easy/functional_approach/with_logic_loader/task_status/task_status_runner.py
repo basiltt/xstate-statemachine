@@ -23,7 +23,7 @@ sys.path.insert(
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../..")),
 )
 
-from src.xstate_statemachine import create_machine, Interpreter
+from xstate_statemachine import create_machine, Interpreter
 import task_status_logic  # noqa: E402
 
 # -----------------------------------------------------------------------------

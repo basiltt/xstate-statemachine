@@ -15,7 +15,7 @@ import time
 from typing import Any, Dict
 
 from audio_wizard_logic import AudioWizardLogic  # noqa: E402
-from src.xstate_statemachine import create_machine, SyncInterpreter
+from xstate_statemachine import create_machine, SyncInterpreter
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(

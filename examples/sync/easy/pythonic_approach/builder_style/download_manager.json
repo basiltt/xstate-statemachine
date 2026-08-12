@@ -1,0 +1,67 @@
+{
+  "id": "downloadManager",
+  "initial": "idle",
+  "context": {
+    "progress": 0,
+    "retries": 0
+  },
+  "states": {
+    "idle": {
+      "on": {
+        "START": {
+          "target": "downloading",
+          "actions": "resetProgress"
+        }
+      }
+    },
+    "downloading": {
+      "entry": "logStart",
+      "invoke": {
+        "src": "fetchFile",
+        "id": "fetch",
+        "onDone": {
+          "target": "complete",
+          "actions": "saveFile"
+        },
+        "onError": "failed"
+      },
+      "on": {
+        "PAUSE": "paused",
+        "CANCEL": "idle"
+      },
+      "after": {
+        "30000": {
+          "target": "failed",
+          "actions": "logTimeout"
+        }
+      },
+      "tags": [
+        "busy"
+      ]
+    },
+    "paused": {
+      "on": {
+        "RESUME": "downloading",
+        "CANCEL": "idle"
+      },
+      "tags": [
+        "busy"
+      ]
+    },
+    "failed": {
+      "on": {
+        "RETRY": {
+          "target": "downloading",
+          "guard": "canRetry",
+          "actions": "countRetry"
+        }
+      },
+      "meta": {
+        "alert": true
+      }
+    },
+    "complete": {
+      "type": "final"
+    }
+  }
+}

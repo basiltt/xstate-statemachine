@@ -10,7 +10,7 @@ import asyncio
 import logging
 from typing import Any, Dict
 
-from src.xstate_statemachine import ActionDefinition, Event, Interpreter
+from xstate_statemachine import ActionDefinition, Event, Interpreter
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration

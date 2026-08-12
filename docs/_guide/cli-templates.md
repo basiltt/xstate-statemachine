@@ -61,7 +61,7 @@ This machine has:
 
 ## Template 1: `pythonic-class`
 
-The `pythonic-class` template generates a `StateMachine` subclass with `State()` attributes, `.to()` transitions, and `@action` / `@guard` / `@service` decorated methods. **No JSON is needed at runtime** — the machine definition is compiled directly into Python.
+The `pythonic-class` template generates a `StateMachine` subclass whose `State()` attributes carry their own transitions via `on=`, plus `@action` / `@guard` / `@service` decorated methods. **No JSON is needed at runtime** — the machine definition is compiled directly into Python.
 
 ### Command
 
@@ -93,12 +93,26 @@ class CheckoutMachine(StateMachine):
     machine_id = "checkout"
     initial_context = {'items': [], 'total': 0}
 
-    cart = State(initial=True)
-    payment = State(invoke={'src': 'processPayment', 'onDone': {'target': 'confirmed', 'actions': 'clearCart'}, 'onError': {'target': 'cart', 'actions': 'showError'}})
-    confirmed = State()
-
-    # Transitions
-    submit = cart.to(payment, event="SUBMIT", actions="calculateTotal", guard="cartNotEmpty")
+    cart = State(
+        "cart",
+        initial=True,
+        on={
+            "SUBMIT": {
+                "target": "payment",
+                "guard": "cartNotEmpty",
+                "actions": ["calculateTotal"],
+            }
+        },
+    )
+    payment = State(
+        "payment",
+        invoke={
+            "src": "processPayment",
+            "onDone": {"target": "confirmed", "actions": ["clearCart"]},
+            "onError": {"target": "cart", "actions": ["showError"]},
+        },
+    )
+    confirmed = State("confirmed", final=True)
 
     # Actions
     @action
@@ -404,7 +418,7 @@ if __name__ == "__main__":
 
 ## Template 3: `pythonic-functional`
 
-The `pythonic-functional` template generates module-level decorated functions and a `build()` function that creates `State` objects, calls `.to()` for transitions, and assembles the machine with `build_machine()`.
+The `pythonic-functional` template generates module-level decorated functions and a `build()` function that creates `State` objects — each carrying its own transitions via `on=` — and assembles the machine with `build_machine()`.
 
 ### Command
 
@@ -515,22 +529,36 @@ def process_payment(
 
 
 def build() -> Any:
-    """Build the checkout machine using build_machine()."""
-    cart = State("cart", initial=True)
-    payment = State("payment", invoke={'src': 'processPayment', 'onDone': {'target': 'confirmed', 'actions': 'clearCart'}, 'onError': {'target': 'cart', 'actions': 'showError'}})
-    confirmed = State("confirmed")
+    """Build the checkout machine (functional style)."""
+    cart = State(
+        "cart",
+        initial=True,
+        on={
+            "SUBMIT": {
+                "target": "payment",
+                "guard": "cartNotEmpty",
+                "actions": ["calculateTotal"],
+            }
+        },
+    )
+    payment = State(
+        "payment",
+        invoke={
+            "src": "processPayment",
+            "onDone": {"target": "confirmed", "actions": ["clearCart"]},
+            "onError": {"target": "cart", "actions": ["showError"]},
+        },
+    )
+    confirmed = State("confirmed", final=True)
 
-    cart.to(payment, event="SUBMIT", actions="calculateTotal", guard="cartNotEmpty")
-
-    machine = build_machine(
+    return build_machine(
         id="checkout",
         states=[cart, payment, confirmed],
-        context={'items': [], 'total': 0},
+        context={"items": [], "total": 0},
         actions=[calculate_total, clear_cart, show_error],
         guards=[cart_not_empty],
         services=[process_payment],
     )
-    return machine
 ```
 
 ### Generated Runner File: `checkout_runner.py`
@@ -564,7 +592,9 @@ if __name__ == "__main__":
     main()
 ```
 
-> **Key Feature:** The `build()` function creates individual `State` objects, wires transitions with `.to()`, and calls `build_machine()` — the most explicit functional approach with function references passed directly.
+> **Key Feature:** The `build()` function creates individual `State` objects and calls `build_machine()` — the most explicit functional approach, with function references passed directly.
+>
+> Transitions are declared on the `State` itself via `on=`. `State.to()` *returns* a `Transition` rather than registering one, so it must be passed to `build_machine(transitions=[...])`; the generator uses `on=` to avoid that trap entirely.
 
 ---
 

@@ -85,6 +85,13 @@ interpreter.send_events(["STEP_1", "STEP_2", "STEP_3"])
 
 A transition answers one question: _"When event X happens while in state A, what should happen?"_
 
+> [!IMPORTANT]
+> The snippets below show the *shape* of a transition. `State.to()` **returns** a
+> `Transition` — it does not register one. Assign it inside a `StateMachine` class
+> body (`submit = editing.to(...)`), or pass it to
+> `build_machine(transitions=[...])`. A bare `off.to(on, ...)` statement is
+> discarded, and the machine will start but never move.
+
 ### Simple String Target
 
 The most basic form — just specify where to go:

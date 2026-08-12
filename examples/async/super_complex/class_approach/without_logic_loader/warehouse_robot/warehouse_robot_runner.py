@@ -17,7 +17,7 @@ import logging
 import os
 from typing import Any, Dict
 
-from src.xstate_statemachine import create_machine, Interpreter, MachineLogic
+from xstate_statemachine import create_machine, Interpreter, MachineLogic
 from warehouse_robot_logic import WarehouseRobotLogic  # noqa: E402
 
 # -----------------------------------------------------------------------------

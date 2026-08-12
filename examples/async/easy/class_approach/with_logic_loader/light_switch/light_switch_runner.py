@@ -23,7 +23,7 @@ sys.path.insert(
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../..")),
 )
 
-from src.xstate_statemachine import create_machine, Interpreter
+from xstate_statemachine import create_machine, Interpreter
 from light_switch_logic import LightSwitchLogic
 
 # -----------------------------------------------------------------------------

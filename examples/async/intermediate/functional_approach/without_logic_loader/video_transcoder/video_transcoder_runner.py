@@ -18,7 +18,7 @@ import os
 import sys
 from typing import Any, Dict
 
-from src.xstate_statemachine import Interpreter, MachineLogic, create_machine
+from xstate_statemachine import Interpreter, MachineLogic, create_machine
 
 # -----------------------------------------------------------------------------
 # 🛠️ Project Path Setup

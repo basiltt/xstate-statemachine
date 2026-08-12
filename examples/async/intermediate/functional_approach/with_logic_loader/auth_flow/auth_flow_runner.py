@@ -19,7 +19,7 @@ import os
 import sys
 from typing import Any, Dict
 
-from src.xstate_statemachine import create_machine, Interpreter
+from xstate_statemachine import create_machine, Interpreter
 
 # -----------------------------------------------------------------------------
 # 🛠️ Project Path Setup

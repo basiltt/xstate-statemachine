@@ -18,14 +18,14 @@ import random
 import uuid
 from typing import Any, Dict, Optional
 
-from src.xstate_statemachine import (
+from xstate_statemachine import (
     Interpreter,
     Event,
     ActionDefinition,
     create_machine,
     MachineLogic,
 )
-from src.xstate_statemachine.models import MachineNode
+from xstate_statemachine.models import MachineNode
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration

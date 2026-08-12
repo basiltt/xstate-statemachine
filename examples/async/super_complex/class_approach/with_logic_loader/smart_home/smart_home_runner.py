@@ -18,7 +18,7 @@ import os
 from typing import Any, Dict
 
 from smart_home_logic import SmartHomeLogic  # noqa: E402
-from src.xstate_statemachine import create_machine, Interpreter
+from xstate_statemachine import create_machine, Interpreter
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration

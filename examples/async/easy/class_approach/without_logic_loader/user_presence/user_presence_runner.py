@@ -23,7 +23,7 @@ sys.path.insert(
     os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../..")),
 )
 
-from src.xstate_statemachine import create_machine, Interpreter, MachineLogic
+from xstate_statemachine import create_machine, Interpreter, MachineLogic
 from user_presence_logic import UserPresenceLogic
 
 # -----------------------------------------------------------------------------

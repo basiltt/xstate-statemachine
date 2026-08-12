@@ -17,14 +17,14 @@ import json
 import logging
 from typing import Any, Dict, TYPE_CHECKING
 
-from src.xstate_statemachine import (
+from xstate_statemachine import (
     Interpreter,
     Event,
     ActionDefinition,
     create_machine,
     MachineLogic,
 )
-from src.xstate_statemachine.models import MachineNode
+from xstate_statemachine.models import MachineNode
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration

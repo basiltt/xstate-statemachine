@@ -31,7 +31,7 @@ from flight_booking_logic import (
     process_payment_service,
     ancillary_service,
 )  # noqa: E402
-from src.xstate_statemachine import create_machine, Interpreter, MachineLogic
+from xstate_statemachine import create_machine, Interpreter, MachineLogic
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
