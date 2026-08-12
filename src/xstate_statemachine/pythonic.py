@@ -431,11 +431,15 @@ def transition(
 
 
 @overload
-def action(fn_or_name: _DecoratedF) -> _DecoratedF: ...
+def action(fn_or_name: _DecoratedF) -> _DecoratedF: ...  # noqa: E704
+
+
 @overload
-def action(
+def action(  # noqa: E704
     fn_or_name: Optional[str] = None,
 ) -> Callable[[_DecoratedF], _DecoratedF]: ...
+
+
 def action(fn_or_name: Any = None) -> Any:
     """Decorator to mark a function as a state machine action.
 
@@ -471,11 +475,15 @@ def action(fn_or_name: Any = None) -> Any:
 
 
 @overload
-def guard(fn_or_name: _DecoratedF) -> _DecoratedF: ...
+def guard(fn_or_name: _DecoratedF) -> _DecoratedF: ...  # noqa: E704
+
+
 @overload
-def guard(
+def guard(  # noqa: E704
     fn_or_name: Optional[str] = None,
 ) -> Callable[[_DecoratedF], _DecoratedF]: ...
+
+
 def guard(fn_or_name: Any = None) -> Any:
     """Decorator to mark a function as a state machine guard.
 
@@ -523,11 +531,15 @@ def guard(fn_or_name: Any = None) -> Any:
 
 
 @overload
-def service(fn_or_name: _DecoratedF) -> _DecoratedF: ...
+def service(fn_or_name: _DecoratedF) -> _DecoratedF: ...  # noqa: E704
+
+
 @overload
-def service(
+def service(  # noqa: E704
     fn_or_name: Optional[str] = None,
 ) -> Callable[[_DecoratedF], _DecoratedF]: ...
+
+
 def service(fn_or_name: Any = None) -> Any:
     """Decorator to mark a function as a state machine service.
 
@@ -855,33 +867,53 @@ def _compile_config(
     #    `on`, `entry`, `exit`, `tags` and even `type: parallel` at the top
     #    level; without this they are silently dropped and a machine-wide
     #    escape transition simply stops existing.
-    if root is not None:
-        if root.parallel:
-            result["type"] = "parallel"
-        if root.on:
-            result["on"] = dict(root.on)
-        if root.always is not None:
-            result.setdefault("on", {})[""] = root.always
-        if root.entry:
-            result["entry"] = list(root.entry)
-        if root.exit_actions:
-            result["exit"] = list(root.exit_actions)
-        if root.after:
-            result["after"] = dict(root.after)
-        if root.invoke:
-            result["invoke"] = root.invoke
-        if root.on_done is not None:
-            result["onDone"] = (
-                {"target": root.on_done}
-                if isinstance(root.on_done, str)
-                else root.on_done
-            )
-        if root.tags:
-            result["tags"] = list(root.tags)
-        if root.meta:
-            result["meta"] = dict(root.meta)
+    _apply_root_properties(result, root)
 
     return result
+
+
+def _apply_root_properties(
+    config: Dict[str, Any],
+    root: Optional[State],
+) -> None:
+    """Merge machine-level (root) properties into *config* in place.
+
+    🏛️ Extracted from ``_compile_config`` rather than inlined: eleven
+    independent branches pushed that function past the project's
+    complexity gate, and none of them interact with the state-compilation
+    logic around them.
+
+    Real machines routinely declare a global escape transition such as
+    ``on: {EMERGENCY: ...}`` at the top level. Before v0.7.0 these were
+    dropped, so the generated machine simply could not be escaped.
+    """
+    if root is None:
+        return
+
+    if root.parallel:
+        config["type"] = "parallel"
+    if root.on:
+        config["on"] = dict(root.on)
+    if root.always is not None:
+        config.setdefault("on", {})[""] = root.always
+    if root.entry:
+        config["entry"] = list(root.entry)
+    if root.exit_actions:
+        config["exit"] = list(root.exit_actions)
+    if root.after:
+        config["after"] = dict(root.after)
+    if root.invoke:
+        config["invoke"] = root.invoke
+    if root.on_done is not None:
+        config["onDone"] = (
+            {"target": root.on_done}
+            if isinstance(root.on_done, str)
+            else root.on_done
+        )
+    if root.tags:
+        config["tags"] = list(root.tags)
+    if root.meta:
+        config["meta"] = dict(root.meta)
 
 
 # -----------------------------------------------------------------
