@@ -2,6 +2,7 @@
 """Tests for post-emit polish: imports, provenance, formatting (S1/S2)."""
 
 import ast
+import importlib.util
 import unittest
 
 from src.xstate_statemachine.cli.postprocess import (
@@ -11,6 +12,17 @@ from src.xstate_statemachine.cli.postprocess import (
     polish,
     prune_unused_imports,
 )
+
+# 📝 black is a DEVELOPMENT dependency, and `format_source` is best-effort by
+#    design: without it, generated code is still valid and still faithful,
+#    merely unformatted. Assertions about black's OUTPUT (double-quoted keys,
+#    normalised spacing) therefore only hold where black is installed. CI's
+#    test matrix installs the runtime plus pytest only, which is exactly the
+#    runtime-only user this fallback exists to serve -- so these tests skip
+#    there rather than fail. The behaviour that must hold EVERYWHERE (code is
+#    parseable, imports are pruned, provenance is stamped) is asserted
+#    unconditionally below.
+_HAS_BLACK = importlib.util.find_spec("black") is not None
 
 
 class TestPruneUnusedImports(unittest.TestCase):
@@ -145,8 +157,10 @@ class TestFormatting(unittest.TestCase):
     def test_formats_to_black_style(self) -> None:
         """Poorly formatted input comes back normalised."""
         formatted = format_source("x   =    {'a':1,   'b':2}\n")
-        self.assertIn('"a": 1', formatted)
         ast.parse(formatted)
+        if not _HAS_BLACK:  # pragma: no cover — runtime-only environment
+            self.skipTest("black not installed; formatting is best-effort")
+        self.assertIn('"a": 1', formatted)
 
     def test_unformattable_input_is_returned_unchanged(self) -> None:
         """black declining must not lose the caller's code."""
@@ -178,6 +192,8 @@ class TestPolishPipeline(unittest.TestCase):
         self.assertNotIn("asyncio", result)
         self.assertNotIn("Optional", result)
         self.assertIn("m.json", result)
+        if not _HAS_BLACK:  # pragma: no cover — runtime-only environment
+            self.skipTest("black not installed; formatting is best-effort")
         self.assertIn('"a": 1', result)
 
 
@@ -258,7 +274,9 @@ class TestCombinedFileIsPolished(unittest.TestCase):
                     ]
                     self.assertTrue(produced, "no file was generated")
 
-                    for path in produced:
+                    # 📝 The black-clean check needs black; the merge-seam
+                    #    check below does not, and runs everywhere.
+                    for path in produced if _HAS_BLACK else ():
                         result = subprocess.run(
                             [
                                 sys.executable,
@@ -285,12 +303,19 @@ class TestFormattingAvailability(unittest.TestCase):
     """The formatter probe is a hint and must never break generation."""
 
     def test_reports_true_when_black_is_installed(self) -> None:
-        """The development environment has black."""
+        """The probe must agree with whether black is actually importable.
+
+        📝 Asserted against the real environment rather than hardcoded to
+        True: this hint exists to tell RUNTIME-ONLY users to install the
+        ``format`` extra, so "correctly reports False" is as much a part of
+        the contract as "correctly reports True" -- and a test that only
+        ever ran with black installed could never catch an inverted probe.
+        """
         from src.xstate_statemachine.cli.postprocess import (
             formatting_available,
         )
 
-        self.assertTrue(formatting_available())
+        self.assertEqual(formatting_available(), _HAS_BLACK)
 
     def test_survives_a_finder_that_raises(self) -> None:
         """`find_spec` can RAISE rather than return None.
