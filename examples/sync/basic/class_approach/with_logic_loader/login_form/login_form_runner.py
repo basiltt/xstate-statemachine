@@ -25,6 +25,11 @@ sys.path.insert(
 )
 
 from xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    Event,
+    ActionDefinition,
+)
 
 # 🛡️ Windows consoles default to a legacy code page (cp1252), where the emoji
 #    below raise UnicodeEncodeError and abort the example. Reconfiguring the
@@ -32,11 +37,6 @@ from xstate_statemachine import (
 #    terminal that still cannot render a glyph degrades instead of crashing.
 if hasattr(sys.stdout, "reconfigure"):  # pragma: no cover - platform detail
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    create_machine,
-    SyncInterpreter,
-    Event,
-    ActionDefinition,
-)
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration

@@ -58,18 +58,29 @@ class TestExampleImports(unittest.TestCase):
 
         Sibling modules should be imported by name after adding the
         example's own directory, which works regardless of install method.
+
+        🔍 Dotted `examples.` paths are also caught inside STRING literals:
+        one example passed its logic module to `create_machine` as
+        `"examples.sync.easy...."`, which a line-prefix check misses
+        entirely because it is not an import statement at all.
         """
         offenders = []
         for path in glob.glob(
             os.path.join(_EXAMPLES, "**", "*.py"), recursive=True
         ):
             with open(path, encoding="utf-8") as handle:
-                for line in handle:
-                    if line.startswith("from examples.") or line.startswith(
-                        "import examples."
-                    ):
-                        offenders.append(os.path.relpath(path, _ROOT))
-                        break
+                content = handle.read()
+            rel = os.path.relpath(path, _ROOT)
+            for line in content.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    continue  # 📝 Path-shaped comments are documentation.
+                if stripped.startswith(("from examples.", "import examples.")):
+                    offenders.append(rel)
+                    break
+                if '"examples.' in line or "'examples." in line:
+                    offenders.append(rel)
+                    break
         self.assertEqual(offenders, [])
 
 

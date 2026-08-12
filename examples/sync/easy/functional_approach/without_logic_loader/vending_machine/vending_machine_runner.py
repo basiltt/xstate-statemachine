@@ -10,13 +10,19 @@ Key Concepts:
   • Explicit MachineLogic binding of actions and guards.
 """
 
+import sys
 import json
 import logging
-import sys
 import time
 from typing import Any, Dict
 
 from xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    MachineLogic,
+    Event,
+    ActionDefinition,
+)
 
 # 🛡️ Windows consoles default to a legacy code page (cp1252), where the emoji
 #    below raise UnicodeEncodeError and abort the example. Reconfiguring the
@@ -24,12 +30,6 @@ from xstate_statemachine import (
 #    terminal that still cannot render a glyph degrades instead of crashing.
 if hasattr(sys.stdout, "reconfigure"):  # pragma: no cover - platform detail
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    create_machine,
-    SyncInterpreter,
-    MachineLogic,
-    Event,
-    ActionDefinition,
-)
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
