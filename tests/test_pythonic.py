@@ -1968,3 +1968,37 @@ class TestConfigOutputMatchesJson(unittest.TestCase):
             },
         }
         self.assertEqual(config, expected)
+
+
+class TestMachineRootReserved(unittest.TestCase):
+    """`machine_root` is reserved, and the clash is reported loudly.
+
+    🏛️ The metaclass special-cases this exact attribute name. A user who
+    legitimately wants a STATE called "machine_root" would otherwise have
+    it silently vanish from the machine -- the invisible data loss this
+    API exists to avoid.
+    """
+
+    def test_state_named_machine_root_raises(self) -> None:
+        """An explicit clash is an error, not a silent drop."""
+        with self.assertRaises(InvalidConfigError) as caught:
+
+            class Clash(StateMachine):
+                machine_id = "m"
+                machine_root = State("machine_root", initial=True)
+                other = State("other")
+
+        self.assertIn("reserved", str(caught.exception))
+
+    def test_machine_root_still_carries_root_properties(self) -> None:
+        """The legitimate use is unaffected."""
+
+        class Good(StateMachine):
+            machine_id = "m"
+            machine_root = State("", on={"ESC": "b"})
+            a = State("a", initial=True)
+            b = State("b")
+
+        interpreter = SyncInterpreter(Good.create_machine()).start()
+        interpreter.send("ESC")
+        self.assertEqual(interpreter.current_state_ids, {"m.b"})

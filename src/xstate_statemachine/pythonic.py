@@ -1414,7 +1414,22 @@ class _StateMachineMeta(type):
                 # 🌳 `machine_root` carries machine-level properties
                 #    (on/entry/exit/tags/parallel) rather than being a
                 #    state of the machine. Keep it out of `states`.
+                #
+                # 🛡️ A user may legitimately want a STATE called
+                #    "machine_root". Silently dropping it would be exactly
+                #    the invisible data loss this API exists to avoid, so
+                #    the two cases are told apart by whether an explicit
+                #    name was given, and the ambiguous case is reported.
                 if attr_name == "machine_root":
+                    if attr_value.name and attr_value.name != "machine_root":
+                        continue
+                    if attr_value.name == "machine_root":
+                        raise InvalidConfigError(
+                            "'machine_root' is reserved for machine-level "
+                            "properties and cannot also be a state name. "
+                            "Rename the state, or leave machine_root's "
+                            "name empty to use it as the machine root."
+                        )
                     continue
                 if not attr_value.name:
                     attr_value.name = attr_name

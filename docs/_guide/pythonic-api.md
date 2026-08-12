@@ -1375,6 +1375,8 @@ class Press(StateMachine):
     # ...
 ```
 
+> **Note:** `machine_root` is a reserved class attribute. A state that genuinely needs to be called `machine_root` raises `InvalidConfigError` rather than being silently dropped — rename the state.
+
 `root` accepts `on`, `always`, `entry`, `exit`, `after`, `invoke`, `on_done`,
 `tags`, `meta` and `parallel=True`. Use JSON key spellings with
 `MachineBuilder.root()` (`onDone`, not `on_done`).
