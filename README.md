@@ -41,6 +41,17 @@ That's the whole story. **Zero runtime dependencies** — pure standard library,
 xsm info          # verify the install
 ```
 
+Using the code generator and want its output line-wrapped to match your linter?
+That needs `black` and `isort`, which stay optional so the core install keeps its
+zero-dependency promise:
+
+```bash
+pip install "xstate-statemachine[format]"
+```
+
+Without them, generated code is still valid and still faithful to your machine —
+just not reformatted.
+
 <details>
 <summary><b>uv · poetry · pipx</b></summary>
 
