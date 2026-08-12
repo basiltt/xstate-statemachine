@@ -282,9 +282,7 @@ class TestRoundTripSynthetic(unittest.TestCase):
                 "states": {
                     "a": {
                         "initial": "b",
-                        "states": {
-                            "b": {"initial": "c", "states": {"c": {}}}
-                        },
+                        "states": {"b": {"initial": "c", "states": {"c": {}}}},
                         "on": {"D": "b.c"},
                     },
                     "z": {},
