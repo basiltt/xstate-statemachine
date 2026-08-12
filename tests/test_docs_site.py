@@ -176,7 +176,18 @@ def _package_version() -> str:
 
 
 class TestSiteIsCurrent(unittest.TestCase):
-    """The landing page must not advertise a stale release."""
+    """No part of the site chrome may advertise a stale release.
+
+    🏛️ The site displays its version in TWO places: the hero badge on the
+    landing page and the nav badge in the shared layout, which appears on
+    every guide and API page. This test originally checked only the hero,
+    so the nav badge sat at v0.5.0 through two releases -- visible on more
+    pages than the one badge that was covered.
+
+    The nav badge is now rendered from `site.version` in `_config.yml`, so
+    there is a single value to keep in step; this test pins that value to
+    pyproject.toml and still checks the hero literal.
+    """
 
     def test_hero_badge_matches_package_version(self) -> None:
         """It sat at v0.5.0 for two releases before anyone noticed."""
@@ -186,6 +197,30 @@ class TestSiteIsCurrent(unittest.TestCase):
         badge = re.search(r'class="hero-badge">v([0-9.]+)', page)
         self.assertIsNotNone(badge, "hero badge not found")
         self.assertEqual(badge.group(1), version)
+
+    def test_nav_badge_matches_package_version(self) -> None:
+        """The nav badge shows on every page, not just the landing page."""
+        version = _package_version()
+
+        config = _read(os.path.join(_DOCS, "_config.yml"))
+        declared = re.search(r'^version:\s*"([0-9.]+)"', config, re.M)
+        self.assertIsNotNone(declared, "site.version not set in _config.yml")
+        self.assertEqual(declared.group(1), version)
+
+    def test_no_hardcoded_version_in_layout(self) -> None:
+        """A literal version in the layout is what went stale before.
+
+        The badge must be rendered from `site.version`; hardcoding it again
+        would reintroduce exactly the drift this suite exists to catch.
+        """
+        layout = _read(_LAYOUT)
+        hardcoded = re.findall(r"v[0-9]+\.[0-9]+\.[0-9]+", layout)
+        self.assertEqual(
+            hardcoded,
+            [],
+            f"hardcode a version in the layout and it will go stale: "
+            f"{hardcoded}; render it from site.version instead",
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover

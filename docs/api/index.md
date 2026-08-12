@@ -1749,5 +1749,5 @@ Both waiters raise on timeout rather than returning silently.
 
 ```python
 from xstate_statemachine import __version__
-print(__version__)  # "0.6.0"
+print(__version__)  # "0.7.0"
 ```
