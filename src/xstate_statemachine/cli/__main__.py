@@ -21,6 +21,8 @@
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import argparse
+import ast
+import difflib
 import json
 import logging
 import sys
@@ -39,6 +41,18 @@ from .args import (
 )
 from .extractor import extract_logic_names, guess_hierarchy
 from .strategies import GenerationContext, get_strategy
+from .ir import parse_machine
+from .postprocess import (
+    build_provenance_header,
+    formatting_available,
+    polish,
+)
+from .validation import (
+    builds_machine_inline,
+    check_representable,
+    format_refusal,
+    verify_generated,
+)
 from .utils import camel_to_snake, normalize_bool
 
 # -----------------------------------------------------------------------------
@@ -200,6 +214,113 @@ def _safe_print(msg: str) -> None:
         print(msg.encode("ascii", errors="replace").decode("ascii"))
 
 
+def _combined_output(logic_code: str, runner_code: str) -> str:
+    """Merge logic and runner into one module and re-polish the result.
+
+    🏛️ Polishing must happen *after* the merge, not before. Concatenating two
+    already-formatted files leaves seams black never sees — duplicate module
+    docstrings, and import blocks reflowed by de-duplication. The merged file
+    is a new artifact and has to be formatted as one.
+
+    🛡️ The runner's provenance docstring is dropped first. Both files carry
+    one, and only the first position in a module is a docstring — the second
+    would land mid-file as a stray string expression, which is legal Python
+    but reads as a second header and confuses "which file am I looking at".
+    """
+    merged = _merge_code_for_single_file(
+        logic_code, _strip_module_docstring(runner_code)
+    )
+    return polish(merged)
+
+
+def _strip_module_docstring(code: str) -> str:
+    """Remove a module-level docstring, leaving the rest untouched."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:  # pragma: no cover — verification catches this
+        return code
+
+    body = tree.body
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        lines = code.splitlines(keepends=True)
+        end = body[0].end_lineno or 1
+        return "".join(lines[end:]).lstrip("\n")
+    return code
+
+
+def _check_output_files(
+    file_count: int,
+    paths: Dict[str, Path],
+    logic_code: str,
+    runner_code: str,
+    *,
+    show_diff: bool,
+) -> None:
+    """Compare on-disk files with what would be generated, writing nothing.
+
+    🏛️ Architecture decision: this is what makes generated code safe to
+    commit. Without it, a checked-in module can drift from its source JSON
+    silently — someone edits the machine, forgets to regenerate, and the
+    repository now contains code that describes a machine that no longer
+    exists. A CI step running ``--check`` turns that into a build failure.
+
+    Args:
+        file_count: 1 for a combined file, 2 for logic + runner.
+        paths: Candidate output paths.
+        logic_code: The freshly generated logic module.
+        runner_code: The freshly generated runner module.
+        show_diff: Print a unified diff for each difference.
+
+    Raises:
+        SystemExit: 1 if anything differs or is missing; 0 when in sync.
+    """
+    if file_count == 1:
+        expected = {
+            paths["single_file"]: _combined_output(logic_code, runner_code)
+        }
+    else:
+        expected = {
+            paths["logic_file"]: logic_code,
+            paths["runner_file"]: runner_code,
+        }
+
+    differences: List[str] = []
+    for path, generated in expected.items():
+        if not path.exists():
+            differences.append(f"{path}: missing (would be created)")
+            continue
+
+        current = path.read_text(encoding="utf-8")
+        if current == generated:
+            continue
+
+        differences.append(f"{path}: out of date")
+        if show_diff:
+            rendered = difflib.unified_diff(
+                current.splitlines(keepends=True),
+                generated.splitlines(keepends=True),
+                fromfile=f"{path} (on disk)",
+                tofile=f"{path} (generated)",
+            )
+            _safe_print("".join(rendered))
+
+    if differences:
+        for line in differences:
+            _safe_print(f"✗ {line}")
+        _safe_print(
+            "\nGenerated code is out of date. "
+            "Re-run without --check to update it."
+        )
+        raise SystemExit(1)
+
+    _safe_print("✓ Generated code is up to date.")
+
+
 def _write_output_files(
     file_count: int,
     paths: Dict[str, Path],
@@ -217,7 +338,7 @@ def _write_output_files(
     logger.info("✍️ Writing generated code to disk...")
     if file_count == 1:
         # 🤝 Merge code into a single file
-        combined_code = _merge_code_for_single_file(logic_code, runner_code)
+        combined_code = _combined_output(logic_code, runner_code)
         target_path = paths["single_file"]
         logger.info(f"💾 Writing combined code to: {target_path}")
         target_path.write_text(combined_code, encoding="utf-8")
@@ -651,12 +772,21 @@ def run_generation_workflow(
     )
 
     # 5. 🛡️ Check for existing files before proceeding
+    #
+    # 🏛️ --check/--diff never write, so there is nothing to overwrite and
+    #    nothing to confirm. Prompting here would hang CI on stdin -- the
+    #    exact environment --check exists to serve.
+    check_mode = getattr(args, "check", False) or getattr(args, "diff", False)
     files_to_check = (
         [paths["single_file"]]
         if args.file_count == 1
         else [paths["logic_file"], paths["runner_file"]]
     )
-    if not args.force and any(f.exists() for f in files_to_check):
+    if (
+        not check_mode
+        and not args.force
+        and any(f.exists() for f in files_to_check)
+    ):
         # Prompt the user for confirmation to overwrite existing files.
         answer = (
             input("File(s) already exist. Overwrite? [Y/n] ").strip().lower()
@@ -710,10 +840,141 @@ def run_generation_workflow(
     )
     logic_code = strategy.generate_logic(ctx)
     runner_code = strategy.generate_runner(ctx)
+
+    # 7a. ✨ Polish: prune unused imports, stamp provenance, run black.
+    #
+    # 🏛️ Runs BEFORE verification so what gets checked is exactly what gets
+    #    written. Verifying the pre-polish source would leave a gap in which
+    #    post-processing could alter behaviour unnoticed.
+    logic_code, runner_code = _polish_output(
+        logic_code, runner_code, json_paths=json_paths, template=template
+    )
+
+    # 7b. 🛡️ Verify before writing anything.
+    #
+    # 🏛️ Architecture decision: generation is not "done" until the emitted
+    #    code has been proven to rebuild the source machine. Root cause RC-5
+    #    of the v0.7.0 audit was that nothing ever checked -- which is why
+    #    templates could emit an inert machine and still exit 0.
+    _verify_or_refuse(
+        configs=configs,
+        logic_code=logic_code,
+        template=template,
+        strict=not getattr(args, "no_verify", False),
+    )
+
     logger.info("✅ Code generation complete.")
 
-    # 8. 💾 Write generated code to files
+    # 8. 💾 Write generated code to files — or, in check mode, compare only.
+    if getattr(args, "check", False) or getattr(args, "diff", False):
+        _check_output_files(
+            args.file_count,
+            paths,
+            logic_code,
+            runner_code,
+            show_diff=getattr(args, "diff", False),
+        )
+        return
+
     _write_output_files(args.file_count, paths, logic_code, runner_code)
+
+
+def _polish_output(
+    logic_code: str,
+    runner_code: str,
+    *,
+    json_paths: List[str],
+    template: str,
+) -> Tuple[str, str]:
+    """Prune imports, stamp provenance and format both generated files.
+
+    Args:
+        logic_code: The generated logic module.
+        runner_code: The generated runner module.
+        json_paths: Source JSON paths, recorded in the header.
+        template: Template identifier, recorded in the header.
+
+    Returns:
+        The polished ``(logic_code, runner_code)`` pair.
+    """
+    from .. import __version__
+
+    sources = [Path(p).name for p in json_paths]
+    command = (
+        "xsm generate-template "
+        + " ".join(sources)
+        + f" --template {template}"
+    )
+    header = build_provenance_header(
+        source_files=sources,
+        template=template,
+        version=__version__,
+        command=command,
+    )
+    # 💡 Tell the user once, rather than silently emitting less-tidy code
+    #    and leaving them to wonder why it does not match their linter.
+    if not formatting_available():
+        logger.info(
+            "💡 Install the 'format' extra for line-wrapped output: "
+            'pip install "xstate-statemachine[format]"'
+        )
+
+    return (
+        polish(logic_code, header=header),
+        polish(runner_code, header=header),
+    )
+
+
+def _verify_or_refuse(
+    *,
+    configs: List[Dict[str, Any]],
+    logic_code: str,
+    template: str,
+    strict: bool,
+) -> None:
+    """Prove the generated code rebuilds the source machine, or refuse.
+
+    Only single-machine generation is verified structurally: with multiple
+    configs the emitted module composes several machines and there is no
+    single expected machine to compare against. Syntax is always checked.
+
+    Raises:
+        SystemExit: With status 1 if the generated code is not faithful.
+    """
+    problems: List[str] = []
+    machine_id = configs[0].get("id", "machine") if configs else "machine"
+
+    # 🔍 Syntax is checked for EVERY template; structural comparison only
+    #    for those whose logic module builds the machine in Python. A
+    #    single machine is required, since multi-machine output composes
+    #    several and there is no one expected machine to compare against.
+    structural = (
+        strict and builds_machine_inline(template) and len(configs) == 1
+    )
+
+    # 🔍 Pre-emit: refuse constructs the generator provably cannot express,
+    #    so the failure names the offending config key rather than showing
+    #    up later as a mysterious structural difference.
+    if structural:
+        problems.extend(
+            check_representable(parse_machine(configs[0]), template)
+        )
+
+    problems.extend(
+        verify_generated(
+            configs[0], logic_code, template=template, strict=structural
+        )
+    )
+
+    if problems:
+        message = format_refusal(template, machine_id, problems)
+        logger.error("❌ %s", message)
+        raise SystemExit(1)
+
+    if structural:
+        logger.info(
+            "🛡️ Verified: generated code rebuilds '%s' exactly.", machine_id
+        )
 
 
 def run_list_templates() -> None:
@@ -750,6 +1011,33 @@ def run_list_templates() -> None:
     _safe_print(f"  {'-' * 23}  {'-' * 19} {'-' * 55}")
     for tid, style, desc in templates:
         _safe_print(f"  {tid:<24} {style:<20} {desc}")
+
+    # 📋 Support matrix. Users previously had no way to know which
+    #    templates re-express the machine as Python (and are therefore
+    #    structurally verified) versus which load the JSON at runtime.
+    _safe_print("\nFeature support:\n")
+    _safe_print(
+        f"  {'Template ID':<24} {'Machine built':<15} "
+        f"{'Verified':<10} Config needed at runtime"
+    )
+    _safe_print(f"  {'-' * 23}  {'-' * 14} {'-' * 9}  {'-' * 24}")
+    for tid, _, _ in templates:
+        inline = builds_machine_inline(tid)
+        _safe_print(
+            f"  {tid:<24} "
+            f"{'in Python' if inline else 'from JSON':<15} "
+            f"{'structural' if inline else 'syntax':<10} "
+            f"{'no' if inline else 'yes -- ship the .json'}"
+        )
+    _safe_print(
+        "\n  All templates support nesting, parallel regions, history, "
+        "guards,\n  timers (numeric and named delays), invoke, tags and "
+        "meta.\n"
+        "  'Verified' is what the generator proves before writing: "
+        "templates that\n  build the machine in Python are executed and "
+        "compared against the source."
+    )
+
     _safe_print(
         "\nUsage: xsm generate-template <file.json> --template <template-id>\n"
     )

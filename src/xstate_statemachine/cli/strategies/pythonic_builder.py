@@ -9,8 +9,12 @@ fluent API to assemble the machine.
 import keyword
 from typing import Any, Dict, List, Set
 
+from ..builders import render_builder_build
 from ..extractor import extract_events
+from ..simulation import demo_events
+from ..ir import parse_machine
 from .base import BaseStrategy, GenerationContext
+from ..naming import docstring_safe
 from ._shared import (
     escape_for_string,
     generate_action_docstring,
@@ -180,7 +184,7 @@ class PythonicBuilderStrategy(BaseStrategy):
         lines.append(f"{func_prefix}def main() -> None:")
         lines.append(
             f'    """Executes the simulation for the '
-            f'{ctx.machine_name} machine."""'
+            f'{docstring_safe(ctx.machine_name)} machine."""'
         )
         lines.append("")
 
@@ -204,7 +208,7 @@ class PythonicBuilderStrategy(BaseStrategy):
 
         # -- event simulation -----------------------------------------
         lines.append("    # Event Simulation")
-        events = sorted(extract_events(config))
+        events = demo_events(config)
         if events:
             for ev in events:
                 if ctx.log:
@@ -459,7 +463,11 @@ class PythonicBuilderStrategy(BaseStrategy):
                 "async " if is_async and component_type != "guard" else ""
             )
 
-            interpreter_type = "Interpreter" if is_async else "SyncInterpreter"
+            # 📝 Both interpreters are generic; bare names fail
+            #    `mypy --strict` with [type-arg]. Dict[str, Any] is
+            #    the context type these stubs actually receive.
+            base = "Interpreter" if is_async else "SyncInterpreter"
+            interpreter_type = f"{base}[Dict[str, Any], Any]"
 
             if component_type == "guard":
                 args = [
@@ -556,202 +564,41 @@ class PythonicBuilderStrategy(BaseStrategy):
         config: Dict[str, Any],
         ctx: GenerationContext,
     ) -> str:
-        """Generate the ``build()`` function using MachineBuilder fluent API.
+        """Generate the ``build()`` function via the shared IR emitters.
 
-        Produces a function that chains ``.context()``, ``.state()``,
-        ``.transition()``, ``.action()``, ``.guard()``, ``.service()``,
-        and ``.build()`` calls on a ``MachineBuilder`` instance.
+        🏛️ Delegates to ``builders.render_builder_build``. The old local
+        implementation never recursed into ``states``, so every nested
+        state was silently dropped -- one level of nesting lost two of
+        four states and the generated machine ran as a different machine.
         """
-        machine_id = config.get("id", ctx.machine_id)
-        states_config = config.get("states", {})
-        initial_state = config.get("initial", "")
-        initial_context = config.get("context")
+        machine = parse_machine(config)
+        if not machine.id:
+            machine.id = ctx.machine_id
 
-        chain_parts: List[str] = []
-
-        # -- MachineBuilder("id") -------------------------------------
-        chain_parts.append(
-            f'MachineBuilder("{escape_for_string(machine_id)}")'
-        )
-
-        # -- .context({...}) ------------------------------------------
-        if initial_context is not None:
-            chain_parts.append(f".context({initial_context!r})")
-
-        # -- .state("name", ...) calls --------------------------------
-        for state_name, state_def in states_config.items():
-            if not isinstance(state_def, dict):
-                state_def = {}
-
-            kwargs: List[str] = []
-
-            if state_name == initial_state:
-                kwargs.append("initial=True")
-
-            # entry actions
-            entry = state_def.get("entry")
-            if entry is not None:
-                if isinstance(entry, str):
-                    kwargs.append(f'entry=["{escape_for_string(entry)}"]')
-                elif isinstance(entry, list):
-                    entry_repr = ", ".join(
-                        (
-                            f'"{escape_for_string(a)}"'
-                            if isinstance(a, str)
-                            else repr(a)
-                        )
-                        for a in entry
-                    )
-                    kwargs.append(f"entry=[{entry_repr}]")
-
-            # exit actions
-            exit_actions = state_def.get("exit")
-            if exit_actions is not None:
-                if isinstance(exit_actions, str):
-                    kwargs.append(
-                        f'exit=["{escape_for_string(exit_actions)}"]'
-                    )
-                elif isinstance(exit_actions, list):
-                    exit_repr = ", ".join(
-                        (
-                            f'"{escape_for_string(a)}"'
-                            if isinstance(a, str)
-                            else repr(a)
-                        )
-                        for a in exit_actions
-                    )
-                    kwargs.append(f"exit=[{exit_repr}]")
-
-            # invoke
-            invoke = state_def.get("invoke")
-            if invoke is not None:
-                kwargs.append(f"invoke={invoke!r}")
-
-            if kwargs:
-                args_str = ", ".join(kwargs)
-                chain_parts.append(
-                    f'.state("{escape_for_string(state_name)}", {args_str})'
-                )
-            else:
-                chain_parts.append(
-                    f'.state("{escape_for_string(state_name)}")'
-                )
-
-        # -- .transition(...) calls -----------------------------------
-        for state_name, state_def in states_config.items():
-            if not isinstance(state_def, dict):
-                continue
-            on_block = state_def.get("on", {})
-            if not isinstance(on_block, dict):
-                continue
-
-            for event_name, transition_data in on_block.items():
-                transitions = (
-                    transition_data
-                    if isinstance(transition_data, list)
-                    else [transition_data]
-                )
-                for trans in transitions:
-                    if isinstance(trans, str):
-                        chain_parts.append(
-                            f'.transition("{escape_for_string(state_name)}", '
-                            f'"{escape_for_string(event_name)}", "{escape_for_string(trans)}")'
-                        )
-                    elif isinstance(trans, dict):
-                        target = trans.get("target", "") or state_name
-                        t_kwargs: List[str] = []
-
-                        # actions
-                        actions_val = trans.get("actions")
-                        if actions_val is not None:
-                            if isinstance(actions_val, str):
-                                t_kwargs.append(
-                                    f'actions=["{escape_for_string(actions_val)}"]'
-                                )
-                            elif isinstance(actions_val, list):
-                                act_repr = ", ".join(
-                                    (
-                                        f'"{escape_for_string(a)}"'
-                                        if isinstance(a, str)
-                                        else repr(a)
-                                    )
-                                    for a in actions_val
-                                )
-                                t_kwargs.append(f"actions=[{act_repr}]")
-
-                        # guard
-                        guard_val = trans.get("cond") or trans.get("guard")
-                        if guard_val is not None:
-                            t_kwargs.append(
-                                f'guard="{escape_for_string(guard_val)}"'
-                            )
-
-                        base_args = (
-                            f'"{escape_for_string(state_name)}", '
-                            f'"{escape_for_string(event_name)}", '
-                            f'"{escape_for_string(target)}"'
-                        )
-                        if t_kwargs:
-                            extra = ", ".join(t_kwargs)
-                            chain_parts.append(
-                                f".transition({base_args}, {extra})"
-                            )
-                        else:
-                            chain_parts.append(f".transition({base_args})")
-
-        # -- .action("name", fn_ref) calls ----------------------------
-        for original in sorted(ctx.actions):
-            fn_name = snake_case_name(original)
-            if keyword.iskeyword(fn_name):
-                fn_name = f"{fn_name}_"
-            chain_parts.append(
-                f'.action("{escape_for_string(original)}", {fn_name})'
+        logic_lines: List[str] = []
+        for name in sorted(ctx.actions):
+            logic_lines.append(
+                f'    builder.action("{escape_for_string(name)}", '
+                f"{snake_case_name(name)})"
+            )
+        for name in sorted(ctx.guards):
+            logic_lines.append(
+                f'    builder.guard("{escape_for_string(name)}", '
+                f"{snake_case_name(name)})"
+            )
+        for name in sorted(ctx.services):
+            logic_lines.append(
+                f'    builder.service("{escape_for_string(name)}", '
+                f"{snake_case_name(name)})"
             )
 
-        # -- .guard("name", fn_ref) calls -----------------------------
-        for original in sorted(ctx.guards):
-            fn_name = snake_case_name(original)
-            if keyword.iskeyword(fn_name):
-                fn_name = f"{fn_name}_"
-            chain_parts.append(
-                f'.guard("{escape_for_string(original)}", {fn_name})'
+        code = render_builder_build(machine, context=machine.context)
+        if logic_lines:
+            marker = "    return builder.build()"
+            code = code.replace(
+                marker, "\n".join(logic_lines) + "\n" + marker, 1
             )
-
-        # -- .service("name", fn_ref) calls ---------------------------
-        for original in sorted(ctx.services):
-            fn_name = snake_case_name(original)
-            if keyword.iskeyword(fn_name):
-                fn_name = f"{fn_name}_"
-            chain_parts.append(
-                f'.service("{escape_for_string(original)}", {fn_name})'
-            )
-
-        # -- .build() -------------------------------------------------
-        chain_parts.append(".build()")
-
-        # -- Format the chain with indentation ------------------------
-        lines: List[str] = []
-        lines.append("")
-        lines.append("def build() -> Any:")
-        lines.append(
-            f'    """Build the {machine_id} machine '
-            f'using MachineBuilder."""'
-        )
-        lines.append("    machine = (")
-
-        # First part (MachineBuilder) gets 8-space indent
-        lines.append(f"        {chain_parts[0]}")
-        # Remaining parts get 8-space indent with leading dot
-        for part in chain_parts[1:]:
-            lines.append(f"        {part}")
-        lines.append("    )")
-        lines.append("    return machine")
-
-        return "\n".join(lines)
-
-    # -----------------------------------------------------------------
-    # Private helpers – Runner
-    # -----------------------------------------------------------------
+        return "\n" + code
 
     @staticmethod
     def _generate_runner_imports(

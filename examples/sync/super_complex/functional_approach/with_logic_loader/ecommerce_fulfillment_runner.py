@@ -9,12 +9,20 @@ now wired to snake_case actions and guards in the JSON.
 
 import json
 import logging
+import sys
 import random
 import time
 from typing import Any, Dict
 
 from ecommerce_fulfillment_logic import ECommerceFulfillmentLogic  # noqa: E402
-from src.xstate_statemachine import create_machine, SyncInterpreter
+from xstate_statemachine import create_machine, SyncInterpreter
+
+# 🛡️ Windows consoles default to a legacy code page (cp1252), where the emoji
+#    below raise UnicodeEncodeError and abort the example. Reconfiguring the
+#    stream keeps the output readable everywhere; `errors="replace"` means a
+#    terminal that still cannot render a glyph degrades instead of crashing.
+if hasattr(sys.stdout, "reconfigure"):  # pragma: no cover - platform detail
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")

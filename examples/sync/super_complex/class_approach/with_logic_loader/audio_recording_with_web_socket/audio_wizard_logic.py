@@ -10,7 +10,7 @@ with snake_case action and guard names to match the JSON contract.
 import logging
 from typing import Any, Dict
 
-from src.xstate_statemachine import Event, SyncInterpreter, ActionDefinition
+from xstate_statemachine import Event, SyncInterpreter, ActionDefinition
 
 logger = logging.getLogger(__name__)
 

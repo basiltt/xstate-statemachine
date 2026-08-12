@@ -12,6 +12,8 @@ from src.xstate_statemachine.cli.strategies.base import (
     GenerationContext,
 )
 
+from .golden import assert_round_trip
+
 logger = logging.getLogger(__name__)
 
 # A richer config for Pythonic generation testing
@@ -77,21 +79,34 @@ class TestPythonicBuilderStrategy(unittest.TestCase):
         """Generated logic uses MachineBuilder fluent API."""
         s = get_strategy("pythonic-builder")
         code = s.generate_logic(self._make_ctx())
-        self.assertIn('MachineBuilder("trafficLight")', code)
+        self.assertIn("MachineBuilder('trafficLight')", code)
 
     def test_logic_contains_fluent_state_calls(self) -> None:
         """Generated logic has fluent .state() calls."""
         s = get_strategy("pythonic-builder")
         code = s.generate_logic(self._make_ctx())
-        self.assertIn('.state("green"', code)
+        self.assertIn("builder.state('green'", code)
         self.assertIn("initial=True", code)
-        self.assertIn('.state("yellow")', code)
+        self.assertIn("builder.state('yellow'", code)
+
+    def test_logic_round_trips(self) -> None:
+        """The generated module rebuilds the source machine exactly.
+
+        The builder template used to never recurse into `states`, silently
+        dropping every nested state. Only a structural check catches that.
+        """
+        s = get_strategy("pythonic-builder")
+        assert_round_trip(
+            TRAFFIC_LIGHT_CONFIG,
+            s.generate_logic(self._make_ctx()),
+            label="builder",
+        )
 
     def test_logic_contains_transition_calls(self) -> None:
         """Generated logic has .transition() calls."""
         s = get_strategy("pythonic-builder")
         code = s.generate_logic(self._make_ctx())
-        self.assertIn('.transition("green", "TIMER", "yellow"', code)
+        self.assertIn("'TIMER'", code)
 
     def test_logic_contains_action_registration(self) -> None:
         """Generated logic registers actions on the builder."""

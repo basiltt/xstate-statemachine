@@ -17,7 +17,7 @@ import os
 import sys
 from typing import Any, Dict
 
-from src.xstate_statemachine import create_machine, Interpreter, MachineLogic
+from xstate_statemachine import create_machine, Interpreter, MachineLogic
 from offer_claim_logic import set_claimant
 
 # -----------------------------------------------------------------------------

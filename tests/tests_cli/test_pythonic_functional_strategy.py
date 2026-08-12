@@ -12,6 +12,8 @@ from src.xstate_statemachine.cli.strategies.base import (
     GenerationContext,
 )
 
+from .golden import assert_round_trip
+
 logger = logging.getLogger(__name__)
 
 # A richer config for Pythonic generation testing
@@ -78,21 +80,32 @@ class TestPythonicFunctionalStrategy(unittest.TestCase):
         s = get_strategy("pythonic-functional")
         code = s.generate_logic(self._make_ctx())
         self.assertIn("green = State(", code)
-        self.assertIn('"green"', code)
+        self.assertIn("'green'", code)
         self.assertIn("initial=True", code)
 
-    def test_logic_contains_to_transitions(self) -> None:
-        """Generated logic uses .to() calls on state objects."""
+    def test_logic_registers_transitions(self) -> None:
+        """Transitions must actually reach the built machine.
+
+        This test previously asserted ``assertIn("green.to(yellow", code)``
+        -- it pinned the defect as correct behaviour. ``State.to()`` RETURNS
+        a Transition, it does not register one, so emitting it as a bare
+        expression discarded the value and EVERY machine this template
+        produced had zero transitions and could never move.
+
+        Asserting on behaviour instead of syntax is the whole point: the
+        string form is an implementation detail, "the machine can move" is
+        the contract.
+        """
         s = get_strategy("pythonic-functional")
         code = s.generate_logic(self._make_ctx())
-        self.assertIn("green.to(yellow", code)
+        assert_round_trip(TRAFFIC_LIGHT_CONFIG, code, label="functional")
 
     def test_logic_contains_build_machine_call(self) -> None:
         """Generated logic calls build_machine() with correct args."""
         s = get_strategy("pythonic-functional")
         code = s.generate_logic(self._make_ctx())
         self.assertIn("build_machine(", code)
-        self.assertIn('id="trafficLight"', code)
+        self.assertIn("id='trafficLight'", code)
         self.assertIn("states=[", code)
 
     def test_logic_states_is_list(self) -> None:
@@ -172,18 +185,27 @@ class TestPythonicFunctionalStrategy(unittest.TestCase):
         self.assertIn("# Guards", code)
         self.assertIn("# Services", code)
 
+    def test_logic_round_trips(self) -> None:
+        """The generated module rebuilds the source machine exactly."""
+        s = get_strategy("pythonic-functional")
+        assert_round_trip(
+            TRAFFIC_LIGHT_CONFIG,
+            s.generate_logic(self._make_ctx()),
+            label="functional",
+        )
+
     def test_logic_build_function_docstring(self) -> None:
         """build() function has a descriptive docstring."""
         s = get_strategy("pythonic-functional")
         code = s.generate_logic(self._make_ctx())
         self.assertIn("def build()", code)
-        self.assertIn("build_machine()", code)
+        self.assertIn("build_machine(", code)
 
     def test_logic_state_entry_actions(self) -> None:
         """States with entry actions include them in State constructor."""
         s = get_strategy("pythonic-functional")
         code = s.generate_logic(self._make_ctx())
-        self.assertIn('entry=["logEnter"]', code)
+        self.assertIn("entry=['logEnter']", code)
 
     def test_logic_state_invoke(self) -> None:
         """States with invoke include it in State constructor."""
@@ -196,13 +218,13 @@ class TestPythonicFunctionalStrategy(unittest.TestCase):
         """Transitions include actions parameter."""
         s = get_strategy("pythonic-functional")
         code = s.generate_logic(self._make_ctx())
-        self.assertIn('actions="increment"', code)
+        self.assertIn("'actions': ['increment']", code)
 
     def test_logic_transition_with_guard(self) -> None:
         """Transitions include guard parameter."""
         s = get_strategy("pythonic-functional")
         code = s.generate_logic(self._make_ctx())
-        self.assertIn('guard="isReady"', code)
+        self.assertIn("'guard': 'isReady'", code)
 
     def test_logic_build_machine_actions_refs(self) -> None:
         """build_machine() receives action function references (not strings)."""

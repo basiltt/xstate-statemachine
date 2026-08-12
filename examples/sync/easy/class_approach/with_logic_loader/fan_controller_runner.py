@@ -11,17 +11,25 @@ Key Concepts:
   • Automatic Discovery: LogicLoader inspects the FanController instance.
 """
 
+import sys
 import json
 import logging
 import time
 from typing import Any, Dict
 
-from src.xstate_statemachine import (
+from xstate_statemachine import (
     create_machine,
     SyncInterpreter,
     Event,
     ActionDefinition,
 )
+
+# 🛡️ Windows consoles default to a legacy code page (cp1252), where the emoji
+#    below raise UnicodeEncodeError and abort the example. Reconfiguring the
+#    stream keeps the output readable everywhere; `errors="replace"` means a
+#    terminal that still cannot render a glyph degrades instead of crashing.
+if hasattr(sys.stdout, "reconfigure"):  # pragma: no cover - platform detail
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration

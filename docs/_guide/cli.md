@@ -91,6 +91,9 @@ xsm generate-template [JSON_FILES...] [OPTIONS]
 | — | `--log` | `yes/no` | `yes` | Include logging statements in generated code |
 | — | `--sleep` | `yes/no` | `yes` | Add sleep calls between events in simulation |
 | — | `--sleep-time` | `INT` | `2` | Sleep duration in seconds between events |
+| — | `--check` | flag | `false` | Write nothing; exit 1 if files on disk are out of date |
+| — | `--diff` | flag | `false` | Like `--check`, plus a unified diff. Implies `--check` |
+| — | `--no-verify` | flag | `false` | Skip the structural fidelity check (syntax is still checked) |
 | `-v` | `--version` | flag | — | Show version number and exit |
 
 ### Option Details
@@ -107,7 +110,7 @@ Five templates are available:
 | `class-json` | Class with camelCase methods, JSON loaded at runtime *(default)* |
 | `function-json` | Module-level functions, JSON loaded at runtime |
 
-> **Note:** The `--style` flag (`class` / `function`) is deprecated and maps to `class-json` / `function-json`. It will be removed in v0.6.0. Use `--template` instead.
+> **Note:** The `--style` flag (`class` / `function`) is deprecated and maps to `class-json` / `function-json`. It will be removed in v0.8.0. Use `--template` instead.
 
 #### Async Mode (`-am` / `--async-mode`)
 
@@ -421,7 +424,7 @@ Example output:
 
 ```
 xstate-statemachine info
-  Version:     0.6.0
+  Version:     0.7.0
   Python:      3.12.0
   Platform:    Windows-11
   Install:     C:\...\xstate_statemachine
@@ -443,3 +446,130 @@ xsm --version
 xsm --help
 xsm generate-template --help
 ```
+
+---
+
+## Verification: The Generator Refuses to Lie
+
+Since v0.7.0, `xsm` proves its output before writing it. For templates that
+build the machine in Python (`pythonic-class`, `pythonic-builder`,
+`pythonic-functional`) it:
+
+1. compiles the generated module,
+2. executes it and builds the machine,
+3. compares that machine structurally against `create_machine(your.json)`.
+
+If anything diverges, **nothing is written** and the command exits 1:
+
+```
+❌ Refusing to generate 'pythonic-builder' code for machine 'orders'.
+
+The generated code would not faithfully reproduce the source machine:
+  • state 'processing.payment' is missing from the generated code
+
+Nothing was written. This is deliberate: emitting a machine that silently
+differs from its source is worse than emitting nothing.
+```
+
+The `*-json` templates load your JSON at runtime, so their fidelity is exact by
+construction — they get syntax validation only.
+
+Use `--no-verify` to inspect output the generator refuses to write. It does not
+disable syntax checking.
+
+> [!WARNING]
+> **Verification executes the generated code in-process.** That is what makes
+> the guarantee meaningful — proving the code builds the right machine means
+> building it — but it means `xsm` runs code derived from your JSON with your
+> privileges.
+>
+> Untrusted JSON cannot inject code: every value is emitted through `repr()`,
+> and text reaching a docstring is stripped of quotes, backslashes and
+> newlines. The scratch module is never registered in `sys.modules`, and
+> `sys.modules` is restored afterwards.
+>
+> Even so, if you are generating from a machine definition you do not trust,
+> `--no-verify` skips the execution step. You lose the fidelity guarantee and
+> keep the syntax check.
+
+> **Why this exists:** before v0.7.0 nothing checked. Three templates shipped
+> code that produced a *different machine* than the source described, and two of
+> them did it silently with exit code 0. See the
+> [changelog](changelog.md) for the details.
+
+---
+
+## Keeping Generated Code Honest in CI
+
+Generated code is often committed so reviewers can see it and consumers don't
+need the CLI. The risk is drift: someone edits the machine, forgets to
+regenerate, and the repository now describes a machine that no longer exists.
+
+`--check` catches that. It regenerates in memory and compares:
+
+```bash
+xsm generate-template order.json --template pythonic-builder --check
+```
+
+```
+✓ Generated code is up to date.
+```
+
+Exit code is 1 when anything differs or is missing. Use `--diff` to see exactly
+what changed:
+
+```bash
+xsm generate-template order.json --template pythonic-builder --diff
+```
+
+Both flags are strictly read-only — they never write, and never prompt for
+overwrite confirmation, so they are safe in a non-interactive pipeline.
+
+### GitHub Actions example
+
+```yaml
+- name: Verify generated machine code is current
+  run: |
+    xsm generate-template machines/order.json \
+        --template pythonic-builder \
+        --output src/machines \
+        --check
+```
+
+---
+
+## Reading Generated Files
+
+Every generated file starts with a provenance header:
+
+```python
+"""Generated state machine logic — DO NOT EDIT BY HAND.
+
+Source:    order.json
+Template:  pythonic-builder
+Generator: xstate-statemachine 0.7.0
+
+Regenerate with::
+
+    xsm generate-template order.json --template pythonic-builder
+
+Implement your logic in the stubs below; the machine structure
+above is derived from the source JSON and will be overwritten.
+"""
+```
+
+The machine structure is derived from your JSON and **will be overwritten** on
+regeneration. Your action, guard and service bodies are the parts you own — keep
+them in the logic file and treat the runner as disposable.
+
+Generated code passes `black --check` and `pyflakes` cleanly, so it will not
+add lint noise to your project — provided the formatters are installed:
+
+```bash
+pip install "xstate-statemachine[format]"
+```
+
+The core library has **zero runtime dependencies**, so `black` and `isort` are
+not pulled in by default. Without them the generated code is still valid and
+still faithful to your machine — it simply is not line-wrapped, and `xsm` says
+so once per run.

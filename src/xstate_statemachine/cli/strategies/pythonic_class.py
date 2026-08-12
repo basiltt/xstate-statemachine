@@ -7,14 +7,18 @@ transitions, and ``@action`` / ``@guard`` / ``@service`` decorators.
 """
 
 import keyword
-from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set
 
+from ..builders import (
+    render_class_attributes,
+    render_class_nested_states,
+)
 from ..extractor import extract_events
+from ..simulation import demo_events
+from ..ir import MachineIR, parse_machine
 from .base import BaseStrategy, GenerationContext
+from ..naming import docstring_safe
 from ._shared import (
-    collect_all_states,
-    collect_all_transitions,
     escape_for_string,
     generate_action_docstring,
     generate_error_handling,
@@ -22,7 +26,6 @@ from ._shared import (
     generate_logger_setup,
     generate_section_header,
     pascal_case_name,
-    safe_identifier,
     snake_case_name,
 )
 
@@ -68,13 +71,21 @@ class PythonicClassStrategy(BaseStrategy):
         if ctx.log:
             parts.append(generate_logger_setup(ctx.log))
 
+        # -- parse once into the IR -----------------------------------
+        ir_machine = parse_machine(config)
+        if not ir_machine.id:
+            ir_machine.id = ctx.machine_id
+
         # -- class definition -----------------------------------------
         class_name = pascal_case_name(ctx.machine_name) + "Machine"
+        nested = render_class_nested_states(ir_machine)
+        if nested:
+            parts.append("")
+            parts.append(nested)
         parts.append("")
         parts.append(f"class {class_name}(StateMachine):")
 
         indent = "    "
-        machine_id = config.get("id", ctx.machine_id)
         parts.append(
             f'{indent}"""'
             f"{pascal_case_name(ctx.machine_name)} state machine "
@@ -82,34 +93,17 @@ class PythonicClassStrategy(BaseStrategy):
         )
         parts.append("")
 
-        # -- machine_id -----------------------------------------------
-        parts.append(f'{indent}machine_id = "{escape_for_string(machine_id)}"')
-
-        # -- initial_context ------------------------------------------
-        initial_context = config.get("context")
-        if initial_context is not None:
-            parts.append(f"{indent}initial_context = {initial_context!r}")
-
-        parts.append("")
-
-        # -- state objects --------------------------------------------
-        states_config = config.get("states", {})
-        initial_state = config.get("initial", "")
+        # -- states (via the shared IR emitters) ----------------------
+        # 🏛️ The metaclass collects every class-level State attribute as a
+        #    TOP-LEVEL state. Declaring nested states as sibling class
+        #    attributes -- what this template used to do -- made a child
+        #    marked initial=True become a second initial state of the
+        #    machine, so construction died with "Multiple initial states".
+        #    Nested states are therefore bound at MODULE level and attached
+        #    to their parent through states=[...].
         parts.append(
-            self._generate_state_declarations(
-                states_config, initial_state, indent
-            )
+            self._generate_state_declarations(ir_machine, class_name, indent)
         )
-        parts.append("")
-
-        # -- transitions ----------------------------------------------
-        parts.append(f"{indent}# Transitions")
-        parts.append(
-            self._generate_transitions(
-                states_config, indent, machine_id=machine_id
-            )
-        )
-        parts.append("")
 
         # -- actions --------------------------------------------------
         if ctx.actions:
@@ -233,7 +227,7 @@ class PythonicClassStrategy(BaseStrategy):
         lines.append(f"{func_prefix}def main() -> None:")
         lines.append(
             f'    """Executes the simulation for the '
-            f'{ctx.machine_name} machine."""'
+            f'{docstring_safe(ctx.machine_name)} machine."""'
         )
         lines.append("")
 
@@ -254,7 +248,7 @@ class PythonicClassStrategy(BaseStrategy):
 
         # -- event simulation -----------------------------------------
         lines.append("    # Event Simulation")
-        events = sorted(extract_events(config))
+        events = demo_events(config)
         if events:
             for ev in events:
                 if ctx.log:
@@ -471,173 +465,14 @@ class PythonicClassStrategy(BaseStrategy):
 
     @staticmethod
     def _generate_state_declarations(
-        states_config: Dict[str, Any],
-        initial_state: str,
+        machine: "MachineIR",
+        class_name: str,
         indent: str,
     ) -> str:
-        """Generate ``State()`` class attribute declarations.
-
-        Recursively collects all states (including nested children) and
-        declares each as a ``State()`` instance with a flattened name.
-        The initial state gets ``initial=True``. Entry actions and
-        invoke configs are passed as keyword arguments.
-        """
-        all_states = collect_all_states(states_config, initial_state)
-
-        lines: List[str] = []
-        for flat_name, _original_name, state_def, is_initial in all_states:
-            attr_name = safe_identifier(flat_name)
-            kwargs: List[str] = []
-
-            # initial
-            if is_initial:
-                kwargs.append("initial=True")
-
-            # entry actions
-            entry = state_def.get("entry")
-            if entry is not None:
-                if isinstance(entry, str):
-                    kwargs.append(f'entry=["{escape_for_string(entry)}"]')
-                elif isinstance(entry, list):
-                    entry_repr = ", ".join(
-                        (
-                            f'"{escape_for_string(a)}"'
-                            if isinstance(a, str)
-                            else repr(a)
-                        )
-                        for a in entry
-                    )
-                    kwargs.append(f"entry=[{entry_repr}]")
-
-            # exit actions
-            exit_actions = state_def.get("exit")
-            if exit_actions is not None:
-                if isinstance(exit_actions, str):
-                    kwargs.append(
-                        f'exit=["{escape_for_string(exit_actions)}"]'
-                    )
-                elif isinstance(exit_actions, list):
-                    exit_repr = ", ".join(
-                        (
-                            f'"{escape_for_string(a)}"'
-                            if isinstance(a, str)
-                            else repr(a)
-                        )
-                        for a in exit_actions
-                    )
-                    kwargs.append(f"exit=[{exit_repr}]")
-
-            # invoke
-            invoke = state_def.get("invoke")
-            if invoke is not None:
-                kwargs.append(f"invoke={invoke!r}")
-
-            # Build the State(...) call
-            if kwargs:
-                args_str = ", ".join(kwargs)
-                lines.append(f"{indent}{attr_name} = State({args_str})")
-            else:
-                lines.append(f"{indent}{attr_name} = State()")
-
-        return "\n".join(lines)
-
-    # -----------------------------------------------------------------
-    # Private helpers – Transitions
-    # -----------------------------------------------------------------
-
-    @staticmethod
-    def _generate_transitions(
-        states_config: Dict[str, Any],
-        indent: str,
-        machine_id: str = "",
-    ) -> str:
-        """Generate ``.to()`` transition chains grouped by event name.
-
-        Recursively collects transitions from all states (including
-        nested children) and groups them by event name.  Same-event
-        transitions from multiple sources are chained with ``|``.
-        """
-        # First, build the full state-var mapping (flat_name -> safe identifier)
-        initial_state = ""  # not needed for var mapping
-        all_states = collect_all_states(states_config, initial_state)
-        all_state_vars: Dict[str, str] = {}
-        for flat_name, _orig, _sdef, _init in all_states:
-            all_state_vars[flat_name] = safe_identifier(flat_name)
-
-        # Collect all transitions recursively
-        all_trans = collect_all_transitions(
-            states_config, machine_id, all_state_vars
+        """Emit machine_id, context, root and root-level State attributes."""
+        return render_class_attributes(
+            machine, indent, context=machine.context
         )
-
-        # Group by event name
-        event_transitions: Dict[  # type: ignore[arg-type]
-            str,
-            List[Tuple[str, str, Optional[Any], Optional[str]]],
-        ] = defaultdict(list)
-        for (
-            event_name,
-            source_flat,
-            target_resolved,
-            actions_val,
-            guard_val,
-        ) in all_trans:
-            event_transitions[event_name].append(
-                (source_flat, target_resolved, actions_val, guard_val)
-            )
-
-        # Build a set of state variable names for collision detection
-        state_var_names = set(all_state_vars.values())
-
-        lines: List[str] = []
-        for event_name, trans_list in event_transitions.items():
-            safe_event = safe_identifier(event_name)
-            # Avoid shadowing state attributes with transition names
-            if safe_event in state_var_names:
-                safe_event = f"{safe_event}_event"
-            to_calls: List[str] = []
-            for source, target, actions_val, guard_val in trans_list:
-                safe_src = safe_identifier(source)
-                # target is already resolved to a safe identifier
-                safe_tgt = target
-                parts: List[str] = [safe_tgt]
-                parts.append(f'event="{escape_for_string(event_name)}"')
-                if actions_val:
-                    if isinstance(actions_val, str):
-                        parts.append(
-                            f'actions="{escape_for_string(actions_val)}"'
-                        )
-                    elif isinstance(actions_val, list):
-                        act_repr = ", ".join(
-                            (
-                                f'"{escape_for_string(a)}"'
-                                if isinstance(a, str)
-                                else repr(a)
-                            )
-                            for a in actions_val
-                        )
-                        parts.append(f"actions=[{act_repr}]")
-                if guard_val is not None:
-                    parts.append(f'guard="{escape_for_string(guard_val)}"')
-
-                args_str = ", ".join(parts)
-                to_calls.append(f"{safe_src}.to({args_str})")
-
-            if len(to_calls) == 1:
-                lines.append(f"{indent}{safe_event} = {to_calls[0]}")
-            else:
-                # Multi-source: chain with |
-                chain = f"\n{indent}    | ".join(to_calls)
-                lines.append(
-                    f"{indent}{safe_event} = (\n"
-                    f"{indent}    {chain}\n"
-                    f"{indent})"
-                )
-
-        return "\n".join(lines)
-
-    # -----------------------------------------------------------------
-    # Private helpers – Decorated methods
-    # -----------------------------------------------------------------
 
     @staticmethod
     def _generate_decorated_methods(
@@ -689,7 +524,7 @@ class PythonicClassStrategy(BaseStrategy):
             elif component_type == "service":
                 args = [
                     f"{indent}        interpreter: "
-                    "Union[Interpreter, SyncInterpreter],",
+                    "Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],",
                     f"{indent}        context: Dict[str, Any],",
                     f"{indent}        event: Any,",
                 ]
@@ -698,7 +533,7 @@ class PythonicClassStrategy(BaseStrategy):
                 # action
                 args = [
                     f"{indent}        interpreter: "
-                    "Union[Interpreter, SyncInterpreter],",
+                    "Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],",
                     f"{indent}        context: Dict[str, Any],",
                     f"{indent}        event: Any,",
                     f"{indent}        action_def: Any,",

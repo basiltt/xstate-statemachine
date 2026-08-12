@@ -11,7 +11,62 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ---
 
-## [0.6.0] — 2026-08-10 *(Current Release)*
+## [0.7.0] — 2026-08-12 *(Current Release)*
+
+**The code generator rewrite.** Three of the five templates — every
+`pythonic-*` one — produced machines that did not match their source JSON,
+on inputs as simple as a two-state machine. Two failed *silently*, exit code 0.
+
+Round-trip fidelity across the 104-machine real-world corpus went from
+**0/104 to 103/104** for all three. The one exclusion has no `states` key and
+is rejected by `create_machine()` too.
+
+**If you generated code with `pythonic-class`, `pythonic-builder` or
+`pythonic-functional` on 0.6.0 or earlier, regenerate it.** Run
+`xsm generate-template <file.json> --template <id> --diff` to see what changes.
+
+### Fixed
+
+- `pythonic-functional` produced machines with **zero transitions** — every
+  machine it ever generated could start but never move. `State.to()` returns a
+  `Transition`; emitting it as a bare expression discarded it.
+- `pythonic-builder` **silently dropped every nested state**, so the generated
+  code ran as a different machine.
+- `pythonic-class` failed outright with `Multiple initial states`.
+- Colliding names (`"my-state"` / `"my_state"`) collapsed into one variable,
+  destroying a state.
+- `final`, `after`, `always`, `parallel`, `history`, `tags` and `meta` were
+  dropped by all three templates.
+- Composite guards (`and` / `or` / `not`) were never extracted, so leaf guards
+  were never stubbed and machines died with `ImplementationMissingError`.
+- Named delays (`after: {"BACKOFF": …}`) were never collected.
+- Python keywords and non-ASCII names produced invalid Python.
+
+### Added
+
+- **Round-trip verification.** Generated code is compiled, executed, and
+  compared structurally against `create_machine(source_json)` *before* anything
+  is written. A mismatch prints what diverged and exits 1.
+- **`--check` / `--diff`** — exit 1 when on-disk files differ from what would be
+  generated. Makes generated code safe to commit.
+- **Provenance header** — source JSON, template, version, regeneration command.
+- **Support matrix** in `xsm list-templates`.
+- `State(history=…)`, `State(tags=…)`, `State(meta=…)`,
+  `build_machine(root=…)` and `MachineBuilder.root()` — machine-level `on`,
+  `entry`, `exit`, `tags` and `type: parallel` were previously unrepresentable.
+
+### Changed
+
+- Generated code passes `black --check` and `pyflakes` cleanly.
+- Runners now demo a **reachable** event path instead of alphabetical order.
+- Removed the `await asyncio.sleep(0.1)` placeholder from async action stubs.
+- The Pythonic API no longer raises where the JSON engine merely warns: a
+  compound state with no `initial`, and a `final` state with outgoing
+  transitions, are now accepted with a warning.
+
+---
+
+## [0.6.0] — 2026-08-10
 
 ### Added
 

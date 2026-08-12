@@ -171,7 +171,8 @@ def _generate_logic_component(
             ]
         else:
             args = [
-                f"{indent}        interpreter: Union[Interpreter, SyncInterpreter],",
+                f"{indent}        interpreter: "
+                f"Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],",
                 f"{indent}        context: Dict[str, Any],",
                 f"{indent}        event: Event,",
             ]
@@ -730,9 +731,12 @@ def generate_runner_code(
                 f"    interpreter = {'Interpreter' if is_async else 'SyncInterpreter'}(machine)",
                 "    interpreter.use(LoggingInspector())",
                 f"    {await_prefix}interpreter.start()",
-                # FIX: Use the exact log message the test expects
+                # 📝 The f-prefix is intentional but has no placeholders of
+                #    its own: `{{...}}` escapes to a literal `{...}` so the
+                #    GENERATED code contains an f-string. Keeping the prefix
+                #    keeps this line symmetrical with its siblings.
                 (
-                    f"    logger.info(f'Initial state: {{interpreter.current_state_ids}}')"  # noqa: ignore
+                    "    logger.info(f'Initial state: {interpreter.current_state_ids}')"
                     if log
                     else ""
                 ),

@@ -10,18 +10,19 @@ the machine.
 import keyword
 from typing import Any, Dict, List, Optional, Set
 
+from ..builders import render_functional_build
 from ..extractor import extract_events
+from ..simulation import demo_events
+from ..ir import parse_machine
 from .base import BaseStrategy, GenerationContext
+from ..naming import docstring_safe
 from ._shared import (
-    _resolve_target,
-    collect_all_states,
     escape_for_string,
     generate_action_docstring,
     generate_error_handling,
     generate_imports,
     generate_logger_setup,
     generate_section_header,
-    safe_identifier,
     snake_case_name,
 )
 
@@ -184,7 +185,7 @@ class PythonicFunctionalStrategy(BaseStrategy):
         lines.append(f"{func_prefix}def main() -> None:")
         lines.append(
             f'    """Executes the simulation for the '
-            f'{ctx.machine_name} machine."""'
+            f'{docstring_safe(ctx.machine_name)} machine."""'
         )
         lines.append("")
 
@@ -208,7 +209,7 @@ class PythonicFunctionalStrategy(BaseStrategy):
 
         # -- event simulation -----------------------------------------
         lines.append("    # Event Simulation")
-        events = sorted(extract_events(config))
+        events = demo_events(config)
         if events:
             for ev in events:
                 if ctx.log:
@@ -463,7 +464,11 @@ class PythonicFunctionalStrategy(BaseStrategy):
                 "async " if is_async and component_type != "guard" else ""
             )
 
-            interpreter_type = "Interpreter" if is_async else "SyncInterpreter"
+            # 📝 Both interpreters are generic; bare names fail
+            #    `mypy --strict` with [type-arg]. Dict[str, Any] is
+            #    the context type these stubs actually receive.
+            base = "Interpreter" if is_async else "SyncInterpreter"
+            interpreter_type = f"{base}[Dict[str, Any], Any]"
 
             if component_type == "guard":
                 args = [
@@ -583,212 +588,35 @@ class PythonicFunctionalStrategy(BaseStrategy):
         config: Dict[str, Any],
         ctx: GenerationContext,
     ) -> str:
-        """Generate the ``build()`` function using State objects and build_machine().
+        """Generate the ``build()`` function via the shared IR emitters.
 
-        Produces a function that creates named ``State`` objects, calls
-        ``.to()`` for transitions, then calls ``build_machine()`` with
-        ``id``, ``states``, ``context``, ``actions``, ``guards``, and
-        ``services`` keyword arguments.
+        🏛️ This delegates to ``builders.render_functional_build`` rather
+        than deriving construction locally. The old local implementation
+        emitted ``a.to(b, event="X")`` as a bare expression -- ``.to()``
+        RETURNS a Transition, it does not register one -- so the value was
+        discarded and every machine this template produced had zero
+        transitions and could never move.
         """
-        machine_id = config.get("id", ctx.machine_id)
-        states_config = config.get("states", {})
-        initial_state = config.get("initial", "")
-        initial_context = config.get("context")
+        machine = parse_machine(config)
+        if not machine.id:
+            machine.id = ctx.machine_id
 
-        lines: List[str] = []
-        lines.append("")
-        lines.append("def build() -> Any:")
-        lines.append(
-            f'    """Build the {machine_id} machine '
-            f'using build_machine()."""'
-        )
-
-        # -- State object creation (recursive for nested) ---------------
-        state_names: List[str] = []
-        # Map flattened state names → safe Python identifiers
-        safe_state_vars: Dict[str, str] = {}
-        all_states = collect_all_states(states_config, initial_state)
-        for flat_name, original_name, state_def, is_initial in all_states:
-            var_name = safe_identifier(flat_name)
-            safe_state_vars[flat_name] = var_name
-            # Also register original name for target resolution
-            orig_key: str = original_name
-            if orig_key not in safe_state_vars:
-                safe_state_vars[orig_key] = var_name
-            state_names.append(var_name)
-            kwargs: List[str] = []
-
-            # initial
-            if is_initial:
-                kwargs.append("initial=True")
-
-            # entry actions
-            entry_kwarg = PythonicFunctionalStrategy._format_action_list_kwarg(
-                "entry", state_def.get("entry")
-            )
-            if entry_kwarg:
-                kwargs.append(entry_kwarg)
-
-            # exit actions
-            exit_kwarg = PythonicFunctionalStrategy._format_action_list_kwarg(
-                "exit", state_def.get("exit")
-            )
-            if exit_kwarg:
-                kwargs.append(exit_kwarg)
-
-            # invoke
-            invoke = state_def.get("invoke")
-            if invoke is not None:
-                kwargs.append(f"invoke={invoke!r}")
-
-            if kwargs:
-                args_str = ", ".join(kwargs)
-                lines.append(
-                    f"    {var_name} = State("
-                    f'"{escape_for_string(original_name)}", {args_str})'
-                )
-            else:
-                lines.append(
-                    f'    {var_name} = State("{escape_for_string(original_name)}")'
-                )
-
-        lines.append("")
-
-        # -- .to() transition calls (recursive for nested) ---------------
-        def _emit_transitions_recursive(
-            sc: Dict[str, Any],
-            prefix: str = "",
-        ) -> None:
-            for sn, sd in sc.items():
-                if not isinstance(sd, dict):
-                    continue
-                flat = f"{prefix}_{sn}" if prefix else sn
-                src_var = safe_state_vars.get(flat, safe_identifier(flat))
-
-                on_block = sd.get("on", {})
-                if isinstance(on_block, dict):
-                    for event_name, transition_data in on_block.items():
-                        transitions = (
-                            transition_data
-                            if isinstance(transition_data, list)
-                            else [transition_data]
-                        )
-                        for trans in transitions:
-                            if isinstance(trans, str):
-                                tgt_var = _resolve_target(
-                                    trans,
-                                    machine_id,
-                                    safe_state_vars,
-                                    source_prefix=prefix,
-                                )
-                                lines.append(
-                                    f"    {src_var}.to("
-                                    f'{tgt_var}, event="{escape_for_string(event_name)}")'
-                                )
-                            elif isinstance(trans, dict):
-                                target = trans.get("target", "") or sn
-                                tgt_var = _resolve_target(
-                                    target,
-                                    machine_id,
-                                    safe_state_vars,
-                                    source_prefix=prefix,
-                                )
-                                t_kwargs: List[str] = [
-                                    f'event="{escape_for_string(event_name)}"',
-                                ]
-
-                                # actions
-                                actions_val = trans.get("actions")
-                                if actions_val is not None:
-                                    if isinstance(actions_val, str):
-                                        t_kwargs.append(
-                                            f'actions="{escape_for_string(actions_val)}"'
-                                        )
-                                    elif isinstance(actions_val, list):
-                                        act_repr = ", ".join(
-                                            (
-                                                f'"{escape_for_string(a)}"'
-                                                if isinstance(a, str)
-                                                else repr(a)
-                                            )
-                                            for a in actions_val
-                                        )
-                                        t_kwargs.append(
-                                            f"actions=[{act_repr}]"
-                                        )
-
-                                # guard
-                                guard_val = trans.get("cond") or trans.get(
-                                    "guard"
-                                )
-                                if guard_val is not None:
-                                    t_kwargs.append(
-                                        f'guard="{escape_for_string(guard_val)}"'
-                                    )
-
-                                extra = ", ".join(t_kwargs)
-                                lines.append(
-                                    f"    {src_var}.to(" f"{tgt_var}, {extra})"
-                                )
-
-                # Recurse into child states
-                child_states = sd.get("states")
-                if isinstance(child_states, dict) and child_states:
-                    _emit_transitions_recursive(child_states, prefix=flat)
-
-        _emit_transitions_recursive(states_config)
-
-        lines.append("")
-
-        # -- build_machine() call -------------------------------------
-        bm_args: List[str] = []
-        bm_args.append(f'id="{escape_for_string(machine_id)}"')
-        bm_args.append(f"states=[{', '.join(state_names)}]")
-
-        if initial_context is not None:
-            bm_args.append(f"context={initial_context!r}")
-
-        # action function references
+        logic_args: List[str] = []
         if ctx.actions:
-            action_refs: List[str] = []
-            for original in sorted(ctx.actions):
-                fn_name = snake_case_name(original)
-                if keyword.iskeyword(fn_name):
-                    fn_name = f"{fn_name}_"
-                action_refs.append(fn_name)
-            bm_args.append(f"actions=[{', '.join(action_refs)}]")
-
-        # guard function references
+            names = ", ".join(sorted(snake_case_name(a) for a in ctx.actions))
+            logic_args.append(f"actions=[{names}]")
         if ctx.guards:
-            guard_refs: List[str] = []
-            for original in sorted(ctx.guards):
-                fn_name = snake_case_name(original)
-                if keyword.iskeyword(fn_name):
-                    fn_name = f"{fn_name}_"
-                guard_refs.append(fn_name)
-            bm_args.append(f"guards=[{', '.join(guard_refs)}]")
-
-        # service function references
+            names = ", ".join(sorted(snake_case_name(g) for g in ctx.guards))
+            logic_args.append(f"guards=[{names}]")
         if ctx.services:
-            service_refs: List[str] = []
-            for original in sorted(ctx.services):
-                fn_name = snake_case_name(original)
-                if keyword.iskeyword(fn_name):
-                    fn_name = f"{fn_name}_"
-                service_refs.append(fn_name)
-            bm_args.append(f"services=[{', '.join(service_refs)}]")
+            names = ", ".join(sorted(snake_case_name(s) for s in ctx.services))
+            logic_args.append(f"services=[{names}]")
 
-        lines.append("    machine = build_machine(")
-        for arg in bm_args:
-            lines.append(f"        {arg},")
-        lines.append("    )")
-        lines.append("    return machine")
-
-        return "\n".join(lines)
-
-    # -----------------------------------------------------------------
-    # Private helpers – Runner
-    # -----------------------------------------------------------------
+        return "\n" + render_functional_build(
+            machine,
+            context=machine.context,
+            logic_args=logic_args,
+        )
 
     @staticmethod
     def _generate_runner_imports(

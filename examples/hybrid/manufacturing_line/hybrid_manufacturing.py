@@ -24,7 +24,7 @@ import random
 import sys
 from typing import Any, Dict
 
-from src.xstate_statemachine import (
+from xstate_statemachine import (
     create_machine,
     Event,
     Interpreter,

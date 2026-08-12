@@ -12,6 +12,8 @@ from src.xstate_statemachine.cli.strategies.base import (
     GenerationContext,
 )
 
+from .golden import assert_round_trip
+
 logger = logging.getLogger(__name__)
 
 # A richer config for Pythonic generation testing
@@ -83,7 +85,7 @@ class TestPythonicClassStrategy(unittest.TestCase):
         """Generated logic sets machine_id."""
         s = get_strategy("pythonic-class")
         code = s.generate_logic(self._make_ctx())
-        self.assertIn('machine_id = "trafficLight"', code)
+        self.assertIn("machine_id = 'trafficLight'", code)
 
     def test_logic_contains_initial_context(self) -> None:
         """Generated logic sets initial_context."""
@@ -96,16 +98,22 @@ class TestPythonicClassStrategy(unittest.TestCase):
         s = get_strategy("pythonic-class")
         code = s.generate_logic(self._make_ctx())
         self.assertIn("green = State(", code)
-        self.assertIn("yellow = State()", code)
+        self.assertIn("yellow = State(", code)
         self.assertIn("red = State(", code)
         self.assertIn("initial=True", code)
 
-    def test_logic_contains_transitions(self) -> None:
-        """Generated logic has .to() transition calls."""
+    def test_logic_registers_transitions(self) -> None:
+        """Transitions must reach the built machine.
+
+        Previously asserted ``assertIn("green.to(yellow", code)``, pinning
+        the defect: the class template declared nested states as sibling
+        class attributes, so several claimed initial=True and construction
+        died with "Multiple initial states". Behaviour, not syntax, is the
+        contract.
+        """
         s = get_strategy("pythonic-class")
         code = s.generate_logic(self._make_ctx())
-        self.assertIn("green.to(yellow", code)
-        self.assertIn('event="TIMER"', code)
+        assert_round_trip(TRAFFIC_LIGHT_CONFIG, code, label="class")
 
     def test_logic_contains_action_decorator(self) -> None:
         """Generated logic uses @action decorator."""

@@ -17,14 +17,14 @@ import logging
 import random
 from typing import Any, Dict
 
-from src.xstate_statemachine import (
+from xstate_statemachine import (
     Interpreter,
     Event,
     ActionDefinition,
     MachineLogic,
     create_machine,
 )
-from src.xstate_statemachine.models import MachineNode
+from xstate_statemachine.models import MachineNode
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration

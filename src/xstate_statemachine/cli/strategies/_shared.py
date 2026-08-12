@@ -5,6 +5,7 @@ import keyword
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from ..naming import docstring_safe
 from ..utils import camel_to_snake
 
 
@@ -63,7 +64,10 @@ def generate_action_docstring(original_name: str, component_type: str) -> str:
         "service": "Run",
     }
     verb = verbs.get(component_type, "Execute")
-    lines = [f"{verb} the ``{original_name}`` {component_type}."]
+    # 🛡️ SECURITY: a name containing `"""` would close this docstring
+    #    early and turn the remainder into executable code.
+    safe_name = docstring_safe(original_name)
+    lines = [f"{verb} the ``{safe_name}`` {component_type}."]
     lines.append("")
     lines.append("Args:")
     if component_type == "guard":

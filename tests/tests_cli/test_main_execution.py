@@ -34,6 +34,7 @@ from src.xstate_statemachine.cli.generator import (
     generate_logic_code,
     generate_runner_code,
 )
+
 from .base import CLITestCaseBase
 from .fixtures import (
     HIERARCHY_CHILD_CONFIG,
@@ -42,6 +43,25 @@ from .fixtures import (
     SAMPLE_CONFIG_SIMPLE,
     create_temp_json,
 )
+
+
+def _quotes_normalised(code: str) -> str:
+    """Return *code* with single quotes folded to double quotes.
+
+    🏛️ These tests assert that generated runners contain particular
+    CONSTRUCTS -- an ``actor_cfgs`` entry per child machine. Whether that
+    entry is spelled ``'child_machine'`` or ``"child_machine"`` is decided
+    by black, a DEVELOPMENT dependency: the emitter writes single quotes and
+    black rewrites them. A runtime-only environment (which is exactly what
+    the CI test matrix installs) therefore keeps the emitter's quoting.
+
+    Asserting the post-black spelling made these tests fail wherever black
+    was absent, even though the generated code was correct. Normalising the
+    quotes keeps the assertion aimed at the construct rather than at the
+    formatter, so it holds with or without black.
+    """
+    return code.replace("'", '"')
+
 
 # -----------------------------------------------------------------------------
 # 🪵 Module-level Logger
@@ -649,7 +669,10 @@ class TestHierarchyExecution(CLITestCaseBase):
         # ✅ Assert: Check for hierarchical runner code constructs.
         self.assertIn("parent_cfg = json.loads", runner_content)
         self.assertIn("actor_cfgs = {", runner_content)
-        self.assertIn("'child_machine': json.loads", runner_content)
+        self.assertIn(
+            '"child_machine": json.loads',
+            _quotes_normalised(runner_content),
+        )
 
     @patch("sys.argv", new_callable=list)
     @patch("builtins.input", side_effect=["y"])
@@ -902,8 +925,14 @@ class TestHierarchyExecution(CLITestCaseBase):
         )
 
         # ✅ Assert: Verify both children are treated as actors.
-        self.assertIn("'child_machine': json.loads", runner_content)
-        self.assertIn("'child_machine2': json.loads", runner_content)
+        self.assertIn(
+            '"child_machine": json.loads',
+            _quotes_normalised(runner_content),
+        )
+        self.assertIn(
+            '"child_machine2": json.loads',
+            _quotes_normalised(runner_content),
+        )
 
     @patch("sys.argv", new_callable=list)
     def test_main_positional_parent_with_explicit_child(
@@ -943,7 +972,7 @@ class TestHierarchyExecution(CLITestCaseBase):
             encoding="utf-8"
         )
         self.assertIn("actor_cfgs = {", runner_content)
-        self.assertIn("'child_machine'", runner_content)
+        self.assertIn('"child_machine"', _quotes_normalised(runner_content))
 
     @patch("sys.argv", new_callable=list)
     def test_main_hierarchy_with_no_events(self, mock_argv: List[str]) -> None:
@@ -980,13 +1009,14 @@ class TestHierarchyExecution(CLITestCaseBase):
 
         # ✅ Assert: Verify it notes the lack of parent events.
         self.assertIn(
-            "logger.info('No events declared in parent machine.')",
-            runner_content,
+            'logger.info("No events declared in parent machine.")',
+            _quotes_normalised(runner_content),
         )
         # ✅ Assert: Verify it still simulates the child's events.
         self.assertIn("Simulating Actor «child_machine»", runner_content)
         self.assertIn(
-            "await actors['child_machine'].send('CHILD_EVENT')", runner_content
+            'await actors["child_machine"].send("CHILD_EVENT")',
+            _quotes_normalised(runner_content),
         )
 
     @patch("sys.argv", new_callable=list)
@@ -1059,7 +1089,7 @@ class TestHierarchyExecution(CLITestCaseBase):
             runner_content,
             "Runner should be in hierarchical mode",
         )
-        self.assertIn("'child_machine'", runner_content)
+        self.assertIn('"child_machine"', _quotes_normalised(runner_content))
 
     @patch("sys.argv", new_callable=list)
     def test_main_heuristic_invalid_manual_selection(
@@ -1189,7 +1219,7 @@ class TestHierarchyExecution(CLITestCaseBase):
         runner_content = (Path.cwd() / "real_parent_runner.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn("'decoy_parent'", runner_content)
+        self.assertIn('"decoy_parent"', _quotes_normalised(runner_content))
 
     @patch("sys.argv", new_callable=list)
     def test_main_hierarchy_with_loader_disabled(
@@ -1258,7 +1288,9 @@ class TestHierarchyExecution(CLITestCaseBase):
         self.assertIn("class ParentMachineLogic:", content)
         self.assertIn("# Runner part", content)
         self.assertIn("actor_cfgs = {", content)
-        self.assertIn("'child_machine': json.loads", content)
+        self.assertIn(
+            '"child_machine": json.loads', _quotes_normalised(content)
+        )
         self.assertIn("parent = Interpreter(parent_machine)", content)
 
 

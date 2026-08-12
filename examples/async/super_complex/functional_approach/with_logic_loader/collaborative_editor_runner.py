@@ -18,7 +18,7 @@ import os
 from typing import Any, Dict
 
 import collaborative_editor_logic  # noqa: E402
-from src.xstate_statemachine import create_machine, Interpreter
+from xstate_statemachine import create_machine, Interpreter
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration

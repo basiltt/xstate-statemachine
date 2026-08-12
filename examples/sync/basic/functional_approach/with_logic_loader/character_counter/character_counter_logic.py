@@ -9,7 +9,7 @@ Provides standalone action and guard functions for a character counter-machine.
 import logging
 from typing import Any, Dict
 
-from src.xstate_statemachine import SyncInterpreter, Event, ActionDefinition
+from xstate_statemachine import SyncInterpreter, Event, ActionDefinition
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration

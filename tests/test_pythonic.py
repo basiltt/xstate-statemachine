@@ -509,16 +509,31 @@ class TestCompileConfig(unittest.TestCase):
         self.assertEqual(config["states"]["a"]["entry"], "logIn")
         self.assertEqual(config["states"]["a"]["exit"], "logOut")
 
-    def test_no_initial_state_raises(self):
+    def test_no_initial_state_warns_but_does_not_raise(self):
+        """A missing initial state warns, matching the JSON engine.
+
+        This previously raised. That made the Pythonic API *stricter* than
+        the JSON config it mirrors: ``create_machine({'id': 't', 'states':
+        {'a': {}, 'b': {}}})`` is accepted by the engine and merely leaves
+        ``initial`` as None with a warning.
+
+        The inconsistency also made a whole class of real Stately exports
+        impossible to code-generate — several machines in the test corpus
+        ship compound states with no ``initial``. Refusing them here meant
+        the generator could not reproduce a machine the library itself
+        loads without complaint.
+        """
         a = State("a")
         b = State("b")
-        with self.assertRaises(InvalidConfigError):
-            _compile_config(
+        with self.assertLogs(level="WARNING") as captured:
+            config = _compile_config(
                 machine_id="t",
                 states=[a, b],
                 transitions=[],
                 context=None,
             )
+        self.assertNotIn("initial", config)
+        self.assertIn("initial=True", captured.output[0])
 
     def test_multiple_initial_states_raises(self):
         a = State("a", initial=True)
@@ -1428,16 +1443,27 @@ class TestErrorHandling(unittest.TestCase):
         with self.assertRaises(InvalidConfigError):
             State("bad", final=True, parallel=True)
 
-    def test_final_with_on_transitions_raises(self):
+    def test_final_with_on_transitions_is_allowed(self):
+        """A final state may declare outgoing transitions.
+
+        This previously raised. The JSON engine accepts it -- real Stately
+        exports ship final states with an "undo"/"reconsider" transition
+        (see Parallelism.json in the corpus) -- so rejecting it made the
+        Pythonic API stricter than the config format it mirrors, and made
+        those machines impossible to code-generate.
+
+        Only final states with CHILDREN are still rejected.
+        """
         done = State("done", final=True, on={"GO": "other"})
         other = State("other", initial=True)
-        with self.assertRaises(InvalidConfigError):
-            _compile_config(
-                machine_id="t",
-                states=[other, done],
-                transitions=[],
-                context=None,
-            )
+        config = _compile_config(
+            machine_id="t",
+            states=[other, done],
+            transitions=[],
+            context=None,
+        )
+        self.assertEqual(config["states"]["done"]["type"], "final")
+        self.assertIn("GO", config["states"]["done"]["on"])
 
     def test_final_with_children_raises(self):
         child = State("child", initial=True)
@@ -1451,17 +1477,23 @@ class TestErrorHandling(unittest.TestCase):
                 context=None,
             )
 
-    def test_final_with_transition_object_raises(self):
+    def test_final_with_transition_object_is_allowed(self):
+        """A Transition whose source is final is accepted.
+
+        Mirrors test_final_with_on_transitions_is_allowed: the engine
+        permits this, so the Pythonic API does too.
+        """
         done = State("done", final=True)
         other = State("other", initial=True)
         t = done.to(other, event="GO")
-        with self.assertRaises(InvalidConfigError):
-            _compile_config(
-                machine_id="t",
-                states=[other, done],
-                transitions=[t],
-                context=None,
-            )
+        config = _compile_config(
+            machine_id="t",
+            states=[other, done],
+            transitions=[t],
+            context=None,
+        )
+        self.assertEqual(config["states"]["done"]["type"], "final")
+        self.assertIn("GO", config["states"]["done"]["on"])
 
     def test_parallel_child_with_initial_raises(self):
         c1 = State(
@@ -1746,12 +1778,21 @@ class TestRound2Fixes(unittest.TestCase):
         with self.assertRaises(InvalidConfigError):
             builder.state("idle")
 
-    def test_builder_no_initial_state_raises(self):
-        """MachineBuilder.build() should raise when no initial
-        state is defined and multiple states exist."""
+    def test_builder_no_initial_state_warns(self):
+        """MachineBuilder.build() warns rather than raising.
+
+        Previously this raised, making the builder stricter than the JSON
+        engine it wraps: create_machine() accepts a machine with no initial
+        state, leaves ``initial`` as None and logs a warning.
+
+        Several machines in the real-world Stately corpus rely on this, so
+        raising here made them impossible to code-generate.
+        """
         builder = MachineBuilder("test").state("a").state("b")
-        with self.assertRaises(InvalidConfigError):
-            builder.build()
+        with self.assertLogs(level="WARNING") as captured:
+            machine = builder.build()
+        self.assertIsNone(machine.initial)
+        self.assertIn("initial=True", captured.output[0])
 
     def test_builder_single_state_no_initial_ok(self):
         """A single-state builder should not require initial
@@ -1927,3 +1968,37 @@ class TestConfigOutputMatchesJson(unittest.TestCase):
             },
         }
         self.assertEqual(config, expected)
+
+
+class TestMachineRootReserved(unittest.TestCase):
+    """`machine_root` is reserved, and the clash is reported loudly.
+
+    🏛️ The metaclass special-cases this exact attribute name. A user who
+    legitimately wants a STATE called "machine_root" would otherwise have
+    it silently vanish from the machine -- the invisible data loss this
+    API exists to avoid.
+    """
+
+    def test_state_named_machine_root_raises(self) -> None:
+        """An explicit clash is an error, not a silent drop."""
+        with self.assertRaises(InvalidConfigError) as caught:
+
+            class Clash(StateMachine):
+                machine_id = "m"
+                machine_root = State("machine_root", initial=True)
+                other = State("other")
+
+        self.assertIn("reserved", str(caught.exception))
+
+    def test_machine_root_still_carries_root_properties(self) -> None:
+        """The legitimate use is unaffected."""
+
+        class Good(StateMachine):
+            machine_id = "m"
+            machine_root = State("", on={"ESC": "b"})
+            a = State("a", initial=True)
+            b = State("b")
+
+        interpreter = SyncInterpreter(Good.create_machine()).start()
+        interpreter.send("ESC")
+        self.assertEqual(interpreter.current_state_ids, {"m.b"})

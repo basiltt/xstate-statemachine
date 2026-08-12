@@ -146,6 +146,32 @@ def _add_generation_option_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Force overwrite of existing generated files without prompting.",
     )
+    parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help=(
+            "Skip the structural check that generated code rebuilds the "
+            "source machine. Syntax is still validated. Use only to "
+            "inspect output the generator refuses to write."
+        ),
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "Do not write anything. Exit 1 if the files on disk differ "
+            "from what would be generated. Intended for CI, so generated "
+            "code can be committed and kept honest."
+        ),
+    )
+    parser.add_argument(
+        "--diff",
+        action="store_true",
+        help=(
+            "Like --check, but also print a unified diff of the "
+            "differences. Implies --check."
+        ),
+    )
 
 
 def _add_simulation_option_args(parser: argparse.ArgumentParser) -> None:
@@ -328,11 +354,16 @@ def resolve_template(
             )
         warnings.warn(
             f"--style is deprecated, use --template " f"{resolved} instead. "
-            # 📝 v0.6.0 shipped without removing it: `--style` is still
-            #    honoured, so the notice must name a FUTURE release rather
-            #    than the current one, which would be a promise already
-            #    broken at the moment the user reads it.
-            f"Will be removed in v0.7.0",
+            # 📝 The notice must always name a FUTURE release. Naming the
+            #    current one makes the promise broken at the moment the
+            #    user reads it. v0.6.0 shipped saying "removed in v0.7.0";
+            #    v0.7.0 still honours the flag, so the target moves again.
+            #
+            # 🏛️ Deliberately NOT removed in v0.7.0: this release already
+            #    asks every user of the pythonic templates to regenerate
+            #    their code. Breaking their CLI invocations in the same
+            #    release would compound one disruption with another.
+            f"Will be removed in v0.8.0",
             DeprecationWarning,
             stacklevel=2,
         )

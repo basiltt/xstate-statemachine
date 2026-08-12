@@ -27,7 +27,7 @@ poetry add xstate-statemachine
 
 ```bash
 xsm --version
-# Output: xsm 0.6.0
+# Output: xsm 0.7.0
 ```
 
 You can also verify the CLI tool is available:
