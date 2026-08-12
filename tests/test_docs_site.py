@@ -145,15 +145,42 @@ class TestSiteNavigation(unittest.TestCase):
         self.assertEqual(sorted(present - linked), [])
 
 
+def _package_version() -> str:
+    """Read ``project.version`` from pyproject.toml.
+
+    📝 ``tomllib`` is stdlib only from Python 3.11, but this package
+    supports 3.9+ and the CI matrix runs 3.9 and 3.10 — where importing it
+    raises ModuleNotFoundError and failed this test on three jobs. Rather
+    than add a `tomli` test dependency for one field, fall back to a
+    narrow regex anchored to the ``[project]`` table.
+    """
+    path = os.path.join(_ROOT, "pyproject.toml")
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # pragma: no cover — Python < 3.11
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        table = re.search(r"^\[project\]$(.*?)(?=^\[)", text, re.S | re.M)
+        match = re.search(
+            r'^version\s*=\s*"([^"]+)"',
+            table.group(1) if table else text,
+            re.M,
+        )
+        if match is None:  # pragma: no cover — malformed pyproject
+            raise AssertionError("could not read project.version")
+        return match.group(1)
+
+    with open(path, "rb") as handle:
+        version: str = tomllib.load(handle)["project"]["version"]
+    return version
+
+
 class TestSiteIsCurrent(unittest.TestCase):
     """The landing page must not advertise a stale release."""
 
     def test_hero_badge_matches_package_version(self) -> None:
         """It sat at v0.5.0 for two releases before anyone noticed."""
-        import tomllib
-
-        with open(os.path.join(_ROOT, "pyproject.toml"), "rb") as handle:
-            version = tomllib.load(handle)["project"]["version"]
+        version = _package_version()
 
         page = _read(_INDEX)
         badge = re.search(r'class="hero-badge">v([0-9.]+)', page)
