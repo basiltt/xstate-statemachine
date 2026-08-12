@@ -113,7 +113,7 @@ machine = create_machine(config, logic_providers=[ToggleLogic()])
 
 ---
 
-### `build_machine(*, id, states, transitions=None, actions=None, guards=None, services=None, context=None)`
+### `build_machine(*, id, states, transitions=None, actions=None, guards=None, services=None, context=None, root=None)`
 
 Builds a state machine entirely from Python objects using the **functional
 Pythonic API**. This is the simplest style -- define `State` objects,
@@ -127,6 +127,7 @@ dict and a `MachineLogic` instance, then delegates to `create_machine()`.
 |-----------|------|----------|---------|-------------|
 | `id` | `str` | Yes | -- | Machine identifier string. |
 | `states` | `List[State]` | Yes | -- | Top-level `State` objects. Exactly one must have `initial=True` (unless a single parallel root). |
+| `root` | `State` | No | `None` | A `State` carrying MACHINE-LEVEL properties: `on`, `always`, `entry`, `exit`, `after`, `invoke`, `on_done`, `tags`, `meta`, and `parallel=True`. Use it for a global escape transition such as `on={"EMERGENCY": "halted"}`, which is live from every state. *Added in v0.7.0.* |
 | `transitions` | `List[Union[Transition, TransitionGroup]]` | No | `None` | Explicit transitions created with `state.to()`, `transition()`, or the `\|` operator. |
 | `actions` | `List[Callable]` | No | `None` | Action callables (may be decorated with `@action`). |
 | `guards` | `List[Callable]` | No | `None` | Guard callables (may be decorated with `@guard`). Must be synchronous. |
@@ -174,15 +175,18 @@ State(
     initial: bool = False,
     final: bool = False,
     parallel: bool = False,
+    history: Optional[str] = None,
     on: Optional[Dict[str, Any]] = None,
     entry: Optional[List[str]] = None,
     exit: Optional[List[str]] = None,
-    after: Optional[Dict[int, Any]] = None,
+    after: Optional[Dict[Union[int, str], Any]] = None,
     invoke: Optional[Union[Dict, List]] = None,
     on_done: Optional[Union[str, Dict]] = None,
     always: Optional[Union[str, Dict, List]] = None,
     context: Optional[Dict] = None,
     states: Optional[List[State]] = None,
+    tags: Optional[List[str]] = None,
+    meta: Optional[Dict[str, Any]] = None,
 )
 ```
 
@@ -195,6 +199,7 @@ builder, and class-based).
 | `initial` | `bool` | `False` | Whether this is the initial state among its siblings. |
 | `final` | `bool` | `False` | Whether this is a final (terminal) state. Cannot be combined with `parallel`. |
 | `parallel` | `bool` | `False` | Whether this is a parallel state. Cannot be combined with `final`. |
+| `history` | `str` | `None` | Marks this as a history pseudo-state. Pass `"shallow"` or `"deep"`. *Added in v0.7.0.* |
 | `on` | `Dict[str, Any]` | `None` | Event-to-target shorthand dict, e.g. `{"CLICK": "active"}`. |
 | `entry` | `List[str]` | `None` | List of entry action names executed when the state is entered. |
 | `exit` | `List[str]` | `None` | List of exit action names executed when the state is exited. |
@@ -204,6 +209,8 @@ builder, and class-based).
 | `always` | `Union[str, Dict, List]` | `None` | Eventless (transient) transition config. Evaluated immediately after state entry. |
 | `context` | `Dict` | `None` | Initial context dict. Only meaningful at the root level. |
 | `states` | `List[State]` | `None` | Child `State` objects for building hierarchical/nested machines. |
+| `tags` | `List[str]` | `None` | Tags for this state. Query with `interpreter.has_tag(...)` / `.tags`. *Added in v0.7.0.* |
+| `meta` | `Dict[str, Any]` | `None` | Arbitrary metadata. Read merged values with `interpreter.get_meta()`. *Added in v0.7.0.* |
 
 **Raises:** `InvalidConfigError` if both `final=True` and `parallel=True`.
 
@@ -348,6 +355,7 @@ decorated methods at class-definition time.
 |-----------|------|---------|-------------|
 | `machine_id` | `Optional[str]` | `None` | Machine identifier. Defaults to the class name if not set. |
 | `initial_context` | `Optional[Dict]` | `None` | Initial context dictionary for the machine. |
+| `machine_root` | `Optional[State]` | `None` | A `State` carrying MACHINE-LEVEL properties (`on`, `entry`, `exit`, `tags`, `parallel=True`). Give it an empty name. `machine_root` is **reserved** — a state genuinely named `machine_root` raises `InvalidConfigError` rather than being silently dropped. *Added in v0.7.0.* |
 
 #### Class Method
 
@@ -416,6 +424,7 @@ that terminates with `.build()`.
 | `.action(name, fn)` | `name: str, fn: Callable` | `MachineBuilder` | Registers an action function by name. |
 | `.guard(name, fn)` | `name: str, fn: Callable` | `MachineBuilder` | Registers a guard function by name. |
 | `.service(name, fn)` | `name: str, fn: Callable` | `MachineBuilder` | Registers a service function by name. |
+| `.root(**properties)` | JSON key spellings | `MachineBuilder` | Sets MACHINE-LEVEL properties: `on`, `entry`, `exit`, `after`, `invoke`, `onDone`, `tags`, `meta`, `type="parallel"`. Use for a global escape transition live from every state. Note the JSON spelling `onDone`, not `on_done`. *Added in v0.7.0.* |
 | `.build(context=None)` | `context: Optional[Dict]` | `MachineNode` | Builds and returns the final `MachineNode`. Idempotent -- safe to call multiple times. |
 
 ##### `.state()` full parameters
@@ -434,6 +443,9 @@ that terminates with `.build()`.
     invoke: Optional[Union[Dict, List]] = None,
     on_done: Optional[Union[str, Dict]] = None,
     always: Optional[Union[str, Dict, List]] = None,
+    history: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    meta: Optional[Dict[str, Any]] = None,
 ) -> MachineBuilder
 ```
 

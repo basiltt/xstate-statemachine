@@ -6,14 +6,15 @@ title: Home
 <!-- Hero Section -->
 <section class="hero">
   <div class="hero-content">
-    <div class="hero-badge">v0.5.0 &mdash; Pythonic API &amp; CLI Generator</div>
+    <div class="hero-badge">v0.7.0 &mdash; Verified Code Generation</div>
     <h1>
       State Machines for Python,<br>
       <span class="gradient-text">Done Right.</span>
     </h1>
     <p class="hero-subtitle">
-      Define state machines in JSON or pure Python. Run them with async or sync interpreters.
-      Generate production code with the CLI. Zero dependencies.
+      Run your XState / Stately.ai JSON unmodified, or define machines in pure Python.
+      Async <em>and</em> sync interpreters. The CLI generates typed code and
+      <strong>proves</strong> it rebuilds your machine before writing it. Zero dependencies.
     </p>
     <div class="hero-actions">
       <a href="{{ '/guide/getting-started/' | relative_url }}" class="btn btn-primary">Get Started</a>
@@ -27,7 +28,7 @@ title: Home
     </div>
     <div class="hero-stats">
       <div class="hero-stat">
-        <span class="hero-stat-value">2,403</span>
+        <span class="hero-stat-value">2,800+</span>
         <span class="hero-stat-label">Tests Passing</span>
       </div>
       <div class="hero-stat">
@@ -115,6 +116,11 @@ is_submitting = False
       <span class="feature-icon">&#x1F6E0;&#xFE0F;</span>
       <h3>CLI Code Generator</h3>
       <p>Generate production-ready Python from XState JSON with 5 templates. Full type hints, docstrings, error handling, and logging.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">&#x1F6E1;&#xFE0F;</span>
+      <h3>Verified Output</h3>
+      <p>The generator compiles its own output, builds the machine, and compares it against your JSON <em>before writing</em>. A mismatch exits non-zero and writes nothing. Add <code>--check</code> to catch drift in CI.</p>
     </div>
     <div class="feature-card">
       <span class="feature-icon">&#x1F50C;</span>
@@ -210,13 +216,10 @@ interp.stop()</code></pre>
     <div class="code-tab-panel" data-tab="functional">
 <pre><code><span style="color:#ff7b72">from</span> <span style="color:#d2a8ff">xstate_statemachine</span> <span style="color:#ff7b72">import</span> State, build_machine, SyncInterpreter
 
-green  = State(<span style="color:#a5d6ff">"green"</span>,  initial=<span style="color:#79c0ff">True</span>)
-yellow = State(<span style="color:#a5d6ff">"yellow"</span>)
-red    = State(<span style="color:#a5d6ff">"red"</span>)
-
-green.to(yellow, event=<span style="color:#a5d6ff">"TIMER"</span>)
-yellow.to(red,   event=<span style="color:#a5d6ff">"TIMER"</span>)
-red.to(green,    event=<span style="color:#a5d6ff">"TIMER"</span>)
+green  = State(<span style="color:#a5d6ff">"green"</span>,  initial=<span style="color:#79c0ff">True</span>,
+                on={<span style="color:#a5d6ff">"TIMER"</span>: <span style="color:#a5d6ff">"yellow"</span>})
+yellow = State(<span style="color:#a5d6ff">"yellow"</span>, on={<span style="color:#a5d6ff">"TIMER"</span>: <span style="color:#a5d6ff">"red"</span>})
+red    = State(<span style="color:#a5d6ff">"red"</span>,    on={<span style="color:#a5d6ff">"TIMER"</span>: <span style="color:#a5d6ff">"green"</span>})
 
 machine = build_machine(
     id=<span style="color:#a5d6ff">"trafficLight"</span>,
