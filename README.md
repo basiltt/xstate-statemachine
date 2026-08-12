@@ -1198,7 +1198,7 @@ def test_declined_card_allows_retry():
     assert checkout.matches("checkout.charging")  # …ignored
 ```
 
-Or skip the interpreter entirely with the [pure API](#the-pure-api-no-interpreter).
+Or skip the interpreter entirely with the [pure API](#-the-pure-api--no-interpreter).
 
 </details>
 

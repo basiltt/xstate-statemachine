@@ -176,7 +176,7 @@ class TestReadmeBlocksRun(unittest.TestCase):
         #    self-contained, that is a README regression worth failing on:
         #    this test is only as strong as the number of blocks it runs.
         self.assertGreaterEqual(
-            executed, 10, f"only {executed} README blocks were executed"
+            executed, 12, f"only {executed} README blocks were executed"
         )
         self.assertEqual(failures, [], "\n".join(failures))
 
