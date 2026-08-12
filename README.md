@@ -1263,7 +1263,77 @@ in any order — handy when you're generating a machine from data.
 
 ### Functional — `build_machine()`
 
-For programmatic construction where a dict is the natural shape.
+Plain objects and explicit wiring. The style to reach for when the machine is
+data you are assembling, not a shape you are declaring:
+
+```python
+from xstate_statemachine import (
+    State, SyncInterpreter, action, build_machine,
+)
+
+@action
+def record_attempt(interpreter, ctx, evt, action_def):
+    ctx["attempts"] += 1
+
+reviewing = State("reviewing", initial=True,
+                  on={"SUBMIT": {"target": "charging",
+                                 "actions": ["recordAttempt"]}})
+charging  = State("charging", on={"PAID": "confirmed"})
+confirmed = State("confirmed", final=True, tags=["done"])
+
+machine = build_machine(
+    id="checkout",
+    states=[reviewing, charging, confirmed],
+    context={"attempts": 0},
+    actions=[record_attempt],
+)
+
+c = SyncInterpreter(machine).start()
+c.send("SUBMIT")
+print(sorted(c.current_state_ids), c.context)   # ['checkout.charging'] {'attempts': 1}
+c.send("PAID")
+print(sorted(c.current_state_ids), sorted(c.tags))  # ['checkout.confirmed'] ['done']
+```
+
+### Everything the JSON format supports
+
+All three styles compile to the same `MachineNode`, so none of them is a reduced
+subset. Nesting, parallel regions, history, timers, tags and metadata are all
+expressible:
+
+```jsonc
+State("online", initial=True, states=[configuring, running, resume],
+      on={"DISCONNECT": "offline"}, tags=["connected"])
+
+State("resume", history="deep")           // remembers the last active child
+State("failed", meta={"alert": True})     // arbitrary data for your UI
+State("regions", parallel=True, states=[...])
+```
+
+Machine-level properties — a global escape transition, root `entry`/`exit`, or a
+parallel root — go on `root=`:
+
+```python
+from xstate_statemachine import State, SyncInterpreter, build_machine
+
+root = State("", on={"EMERGENCY": "halted"}, tags=["v2"])
+machine = build_machine(
+    id="press",
+    states=[State("idle", initial=True), State("running"), State("halted")],
+    root=root,
+)
+
+p = SyncInterpreter(machine).start()
+p.send("EMERGENCY")                       # works from ANY state
+print(sorted(p.current_state_ids))        # ['press.halted']
+```
+
+`MachineBuilder.root(...)` and a `machine_root` class attribute do the same for
+the other two styles.
+
+> **Runnable examples** for all three styles — building the *same* machine, with
+> `invoke`, timers, guards, tags and meta — live in
+> [`examples/sync/easy/pythonic_approach/`](examples/sync/easy/pythonic_approach/).
 
 ---
 
