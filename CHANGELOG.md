@@ -78,6 +78,10 @@ Measured on the 104-machine real-world corpus, round-trip fidelity went from
 - **Support matrix** in `xsm list-templates`, showing which templates build the
   machine in Python (and are structurally verified) versus which load JSON at
   runtime.
+- **`[format]` extra** — `pip install "xstate-statemachine[format]"` pulls in
+  `black` and `isort` so generated code is line-wrapped. The core library keeps
+  its zero runtime dependencies; without the extra the output is still valid
+  and faithful, just not reformatted, and the CLI says so.
 - **`State(history=…)`, `State(tags=…)`, `State(meta=…)`** on the Pythonic API.
   These were previously unrepresentable, so *no* emitter could have preserved
   them.

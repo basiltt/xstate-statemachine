@@ -28,6 +28,21 @@ classifiers = [
     "Typing :: Typed",
 ]
 
+# 📦 Optional extras.
+#
+# 🏛️ The core library has ZERO runtime dependencies, and that stays true.
+#    Code generation formats its output with black and isort WHEN THEY ARE
+#    AVAILABLE; without them the emitted code is still valid and faithful,
+#    just not line-wrapped. Installing this extra makes generated code
+#    match what the project's own linters expect:
+#
+#        pip install "xstate-statemachine[format]"
+[project.optional-dependencies]
+format = [
+    "black>=24.0",
+    "isort>=5.13",
+]
+
 [project.urls]
 Homepage = "https://github.com/basiltt/xstate-statemachine"
 "Bug Tracker" = "https://github.com/basiltt/xstate-statemachine/issues"

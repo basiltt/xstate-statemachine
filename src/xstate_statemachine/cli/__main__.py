@@ -42,7 +42,11 @@ from .args import (
 from .extractor import extract_logic_names, guess_hierarchy
 from .strategies import GenerationContext, get_strategy
 from .ir import parse_machine
-from .postprocess import build_provenance_header, polish
+from .postprocess import (
+    build_provenance_header,
+    formatting_available,
+    polish,
+)
 from .validation import (
     builds_machine_inline,
     check_representable,
@@ -907,6 +911,14 @@ def _polish_output(
         version=__version__,
         command=command,
     )
+    # 💡 Tell the user once, rather than silently emitting less-tidy code
+    #    and leaving them to wonder why it does not match their linter.
+    if not formatting_available():
+        logger.info(
+            "💡 Install the 'format' extra for line-wrapped output: "
+            'pip install "xstate-statemachine[format]"'
+        )
+
     return (
         polish(logic_code, header=header),
         polish(runner_code, header=header),

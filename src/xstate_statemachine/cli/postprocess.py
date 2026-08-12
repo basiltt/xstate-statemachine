@@ -131,14 +131,25 @@ def _identifiers_in(text: str) -> Set[str]:
 
 
 def _render_import(node: ast.AST, kept: List[ast.alias]) -> str:
-    """Re-render an import statement keeping only *kept* aliases."""
-    names = ", ".join(
+    """Re-render an import statement keeping only *kept* aliases.
+
+    🛡️ Wraps when the single-line form would exceed the line budget. Pruning
+    collapses a multi-line ``from x import (a, b, c)`` onto one line, and
+    black normally re-wraps it — but black is a DEV dependency. A user who
+    installed only the runtime got an over-long import line, so the emitter
+    cannot delegate this and must produce correct output unaided.
+    """
+    names = [
         a.name if not a.asname else f"{a.name} as {a.asname}" for a in kept
-    )
+    ]
     if isinstance(node, ast.ImportFrom):
         module = "." * (node.level or 0) + (node.module or "")
-        return f"from {module} import {names}\n"
-    return f"import {names}\n"
+        single = f"from {module} import {', '.join(names)}\n"
+        if len(single) - 1 <= _LINE_LENGTH:
+            return single
+        body = "".join(f"    {name},\n" for name in names)
+        return f"from {module} import (\n{body})\n"
+    return f"import {', '.join(names)}\n"
 
 
 def build_provenance_header(
@@ -271,3 +282,17 @@ def polish(
         code = apply_provenance(code, header)
     code = sort_imports(code, line_length=line_length)
     return format_source(code, line_length=line_length)
+
+
+def formatting_available() -> bool:
+    """Whether black is importable, so output can be fully formatted.
+
+    Callers use this to tell the user *once* that installing the ``format``
+    extra improves the result — silently emitting less-tidy code leaves
+    them wondering why it does not match their linter.
+    """
+    try:
+        import black  # noqa: F401
+    except ImportError:
+        return False
+    return True

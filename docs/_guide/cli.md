@@ -548,4 +548,13 @@ regeneration. Your action, guard and service bodies are the parts you own — ke
 them in the logic file and treat the runner as disposable.
 
 Generated code passes `black --check` and `pyflakes` cleanly, so it will not
-add lint noise to your project.
+add lint noise to your project — provided the formatters are installed:
+
+```bash
+pip install "xstate-statemachine[format]"
+```
+
+The core library has **zero runtime dependencies**, so `black` and `isort` are
+not pulled in by default. Without them the generated code is still valid and
+still faithful to your machine — it simply is not line-wrapped, and `xsm` says
+so once per run.
