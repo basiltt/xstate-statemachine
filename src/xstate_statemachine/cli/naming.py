@@ -31,7 +31,7 @@ from __future__ import annotations
 import keyword
 import re
 import unicodedata
-from typing import Dict, Optional
+from typing import Dict, FrozenSet, Optional, Set
 
 # 📝 Soft keywords are legal identifiers but shadowing them in generated code
 #    produces confusing output; `match`/`case` in particular.
@@ -107,7 +107,7 @@ class IdentifierAllocator:
         alloc.allocate("my-state")   # -> "my_state"    (stable)
     """
 
-    def __init__(self, reserved: Optional[frozenset] = None) -> None:
+    def __init__(self, reserved: Optional[FrozenSet[str]] = None) -> None:
         """Initialise the allocator.
 
         Args:
@@ -115,7 +115,7 @@ class IdentifierAllocator:
                 helper functions) that must never be handed out.
         """
         self._by_key: Dict[str, str] = {}
-        self._taken: set = set(reserved or frozenset())
+        self._taken: Set[str] = set(reserved or frozenset())
 
     def allocate(self, name: str, *, fallback: str = "state") -> str:
         """Return a unique, stable binding for *name*.

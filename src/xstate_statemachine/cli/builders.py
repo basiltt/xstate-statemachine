@@ -25,7 +25,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from . import emit
 from .ir import MachineIR, StateIR
@@ -127,7 +127,7 @@ def _is_initial(state: StateIR, machine: MachineIR) -> bool:
 def render_functional_build(
     machine: MachineIR,
     *,
-    context: Optional[Dict] = None,
+    context: Optional[Dict[str, Any]] = None,
     logic_args: Optional[List[str]] = None,
 ) -> str:
     """Emit a ``build()`` using ``State`` objects and ``build_machine()``.
@@ -244,7 +244,7 @@ def _root_kwargs(machine: MachineIR) -> List[str]:
 def render_builder_build(
     machine: MachineIR,
     *,
-    context: Optional[Dict] = None,
+    context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Emit a ``build()`` using the fluent ``MachineBuilder`` API.
 
@@ -442,7 +442,7 @@ def render_class_attributes(
     machine: MachineIR,
     indent: str = "    ",
     *,
-    context: Optional[Dict] = None,
+    context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Emit the class body: machine_id, context, root and root states."""
     _, class_lines = _class_state_lines(machine)
@@ -466,7 +466,7 @@ def render_class_build(
     machine: MachineIR,
     class_name: str,
     *,
-    context: Optional[Dict] = None,
+    context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Emit a full ``StateMachine`` subclass plus a ``build()`` helper.
 

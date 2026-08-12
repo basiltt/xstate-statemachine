@@ -29,7 +29,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from . import emit
 from .ir import MachineIR, StateIR
@@ -232,7 +232,7 @@ def describe_sequence(
     return notes
 
 
-def demo_events(config: Dict) -> List[str]:
+def demo_events(config: Dict[str, Any]) -> List[str]:
     """Choose the event order a generated runner should demonstrate.
 
     Prefers a reachable sequence derived from the machine's structure.

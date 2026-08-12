@@ -27,7 +27,7 @@ from __future__ import annotations
 import ast
 import logging
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .ir import MachineIR
 
@@ -161,7 +161,7 @@ def verify_generated(
     return problems
 
 
-def _machine_types() -> tuple:
+def _machine_types() -> Tuple[type, ...]:
     """Every type that counts as a built machine.
 
     🛡️ Dual-import guard. Generated code imports ``xstate_statemachine``
@@ -175,7 +175,14 @@ def _machine_types() -> tuple:
 
     types_seen = [MachineNode]
     try:  # pragma: no cover — depends on import path
-        from xstate_statemachine.models import (  # type: ignore[import-not-found]
+        # 📝 This import is unresolvable when the package is NOT installed
+        #    (a source checkout reaches this module as
+        #    `src.xstate_statemachine...`) and perfectly resolvable when it
+        #    is. So `import-not-found` must be ignored, and that ignore is
+        #    itself unused in the installed case -- hence suppressing
+        #    `unused-ignore` alongside it. Both states are correct; only one
+        #    is true at a time.
+        from xstate_statemachine.models import (  # type: ignore[import-not-found,unused-ignore]
             MachineNode as _Installed,
         )
 
@@ -351,7 +358,7 @@ def _collect(node: Any, root_id: str, acc: Dict[str, Any]) -> None:
         _collect(child, root_id, acc)
 
 
-def _transition_fingerprint(trans: Any) -> tuple:
+def _transition_fingerprint(trans: Any) -> Tuple[Any, ...]:
     """Reduce a transition to everything that changes behaviour.
 
     The target is compared by RESOLVED destination rather than by the raw

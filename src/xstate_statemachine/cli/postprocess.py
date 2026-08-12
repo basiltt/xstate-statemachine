@@ -27,7 +27,7 @@ import importlib.util
 import logging
 import subprocess
 import sys
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ def prune_unused_imports(code: str) -> str:
     used = _referenced_names(tree)
     lines = code.splitlines(keepends=True)
     drop_lines: Set[int] = set()
-    edits: List[tuple] = []
+    edits: List[Tuple[ast.stmt, List[ast.alias]]] = []
 
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Import, ast.ImportFrom)):
