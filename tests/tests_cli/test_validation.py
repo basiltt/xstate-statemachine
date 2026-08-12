@@ -1,6 +1,7 @@
 # tests/tests_cli/test_validation.py
 """Tests for generation-time validation (M6 -- fail loudly)."""
 
+import sys
 import unittest
 from typing import Any, Dict
 
@@ -214,6 +215,65 @@ class TestAcceptsCorrectOutput(unittest.TestCase):
             ),
             [],
         )
+
+
+class TestExecIsolation(unittest.TestCase):
+    """Verification executes generated code; bound what it can disturb.
+
+    SECURITY: running the code in-process is unavoidable -- proving it
+    builds the right machine means building it. But a module the generated
+    code imports (or injects) must not persist into the CLI process, where
+    it could shadow a later import.
+
+    This is defence in depth, NOT a sandbox. The real barrier is that
+    untrusted JSON cannot become code at all -- see test_injection.py.
+    """
+
+    CONFIG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "a",
+        "states": {"a": {"on": {"GO": "b"}}, "b": {}},
+    }
+
+    @staticmethod
+    def _module(*extra: str) -> str:
+        """Build a valid generated module, plus any extra statements."""
+        lines = [
+            "from typing import Any",
+            "from xstate_statemachine import State, build_machine",
+            *extra,
+            "def build():",
+            "    return build_machine(",
+            "        id='m',",
+            "        states=[",
+            "            State('a', initial=True, on={'GO': 'b'}),",
+            "            State('b'),",
+            "        ],",
+            "    )",
+        ]
+        return "\n".join(lines) + "\n"
+
+    def test_sys_modules_is_restored(self) -> None:
+        """A module injected by generated code does not survive."""
+        code = self._module("import sys", "sys.modules['XSM_TEST_MARKER'] = 1")
+        self.assertEqual(
+            verify_generated(
+                self.CONFIG, code, template="pythonic-functional"
+            ),
+            [],
+        )
+        self.assertNotIn("XSM_TEST_MARKER", sys.modules)
+
+    def test_scratch_module_is_not_registered(self) -> None:
+        """The scratch module itself never enters sys.modules."""
+        before = set(sys.modules)
+        verify_generated(
+            self.CONFIG, self._module(), template="pythonic-builder"
+        )
+        leaked = [
+            name for name in set(sys.modules) - before if "xsm_verify" in name
+        ]
+        self.assertEqual(leaked, [])
 
 
 class TestRepresentability(unittest.TestCase):

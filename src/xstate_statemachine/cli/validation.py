@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import ast
 import logging
+import sys
 from typing import Any, Dict, List, Optional
 
 from .ir import MachineIR
@@ -190,12 +191,26 @@ def _build_generated(
     template: str,
     problems: List[str],
 ) -> Optional[Any]:
-    """Execute *code* in a scratch module and return the machine it builds."""
+    """Execute *code* in a scratch module and return the machine it builds.
+
+    🛡️ SECURITY: this runs generated code in-process, with the CLI's own
+    privileges. That is unavoidable — proving the code builds the right
+    machine means building it — but the blast radius is worth bounding.
+
+    The module is NOT registered in ``sys.modules``, and ``sys.modules`` is
+    snapshotted and restored afterwards, so a module the generated code
+    imports (or injects) cannot persist into the CLI process or shadow a
+    later import. This is defence in depth, not a sandbox: code that
+    reaches here can still touch the filesystem. The real barrier is that
+    untrusted JSON cannot become code in the first place — see
+    ``naming.docstring_safe`` and the injection tests.
+    """
     import types
 
     machine_types = _machine_types()
 
     module = types.ModuleType(f"_xsm_verify_{template.replace('-', '_')}")
+    saved_modules = dict(sys.modules)
     try:
         exec(compile(code, f"<{template}>", "exec"), module.__dict__)
     except Exception as exc:  # noqa: BLE001 — reported, not swallowed
@@ -203,6 +218,11 @@ def _build_generated(
             f"generated code raised {type(exc).__name__} on import: {exc}"
         )
         return None
+    finally:
+        # 🧹 Drop anything the executed code added or replaced.
+        for name in set(sys.modules) - set(saved_modules):
+            sys.modules.pop(name, None)
+        sys.modules.update(saved_modules)
 
     candidates = [
         v for v in vars(module).values() if isinstance(v, machine_types)

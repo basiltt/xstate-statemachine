@@ -477,6 +477,21 @@ construction — they get syntax validation only.
 Use `--no-verify` to inspect output the generator refuses to write. It does not
 disable syntax checking.
 
+> [!WARNING]
+> **Verification executes the generated code in-process.** That is what makes
+> the guarantee meaningful — proving the code builds the right machine means
+> building it — but it means `xsm` runs code derived from your JSON with your
+> privileges.
+>
+> Untrusted JSON cannot inject code: every value is emitted through `repr()`,
+> and text reaching a docstring is stripped of quotes, backslashes and
+> newlines. The scratch module is never registered in `sys.modules`, and
+> `sys.modules` is restored afterwards.
+>
+> Even so, if you are generating from a machine definition you do not trust,
+> `--no-verify` skips the execution step. You lose the fidelity guarantee and
+> keep the syntax check.
+
 > **Why this exists:** before v0.7.0 nothing checked. Three templates shipped
 > code that produced a *different machine* than the source described, and two of
 > them did it silently with exit code 0. See the
