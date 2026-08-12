@@ -9,7 +9,7 @@
 [![PyPI](https://img.shields.io/pypi/v/xstate-statemachine?style=flat-square&logo=pypi&logoColor=white&color=3775A9)](https://pypi.org/project/xstate-statemachine/)
 [![Python](https://img.shields.io/pypi/pyversions/xstate-statemachine?style=flat-square&logo=python&logoColor=white&color=3776AB)](https://pypi.org/project/xstate-statemachine/)
 [![CI](https://img.shields.io/github/actions/workflow/status/basiltt/xstate-statemachine/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/basiltt/xstate-statemachine/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-2682_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/tests-2797_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-88%25-3fb950?style=flat-square&logo=codecov&logoColor=white)](.github/workflows/ci.yml)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-ff8c00?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/pypi/l/xstate-statemachine?style=flat-square&color=yellow)](LICENSE)
@@ -23,9 +23,93 @@ and your Python backend. Async **and** sync interpreters. Zero dependencies.
 
 <br>
 
-[**Install**](#install) · [**60-Second Start**](#the-60-second-start) · [**Why**](#why-a-statechart) · [**Cookbook**](#cookbook) · [**Compare**](#how-it-compares) · [**API**](#api-reference) · [**Docs**](https://basiltt.github.io/xstate-statemachine/)
+[**Install**](#-install) · [**60-Second Start**](#-the-60-second-start) · [**Why**](#-why-a-statechart) · [**Cookbook**](#-cookbook) · [**API**](#-api-reference) · [**Docs**](https://basiltt.github.io/xstate-statemachine/)
 
 </div>
+
+---
+
+<div align="center">
+
+### 🗺️ Find your way
+
+</div>
+
+|   | Section | What you get |
+|:--|:--|:--|
+| 🚀 | [**Install**](#-install) · [**60-Second Start**](#-the-60-second-start) | Running in under a minute |
+| 🧠 | [**Why a Statechart**](#-why-a-statechart) · [**Mental Model**](#-the-mental-model) | The three bugs this deletes |
+| 🔗 | [**XState Interop**](#-the-part-no-other-python-library-does) | One JSON, React *and* Python |
+| 🧩 | [**Context**](#-context--the-machines-memory) · [**Guards**](#️-guards--conditional-transitions) · [**Actions**](#-actions--side-effects) | The building blocks |
+| 🔌 | [**Services**](#-services--invoke) · [**Timers**](#️-timers--delayed-transitions) | Async work and time |
+| 🌳 | [**Nested**](#-nested--parallel-states) · [**Parallel**](#parallel-states--concurrent-regions) · [**History**](#-history--final-states) | Real-world hierarchy |
+| 🤖 | [**Actors**](#-the-actor-model) · [**Persistence**](#-persistence--snapshots) | Systems of machines |
+| 🔍 | [**Introspection**](#-introspection--plugins) · [**Pure API**](#-the-pure-api--no-interpreter) | Observe and test |
+| 🐍 | [**Pythonic API**](#-prefer-pure-python-three-more-ways-to-define-a-machine) | No JSON required |
+| 🛠️ | [**CLI Generator**](#️-cli-code-generator) | JSON → typed Python, verified |
+| 📚 | [**Cookbook**](#-cookbook) · [**FAQ**](#-faq) | Copy-paste recipes |
+
+---
+
+<div align="center">
+
+### ✨ What you get
+
+</div>
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+**🔗 Real XState interop**
+
+Run Stately.ai JSON **unmodified**. Not "inspired by" — the same file your
+frontend uses.
+
+</td>
+<td width="33%" valign="top">
+
+**⚡ Async *and* sync**
+
+`Interpreter` for asyncio, `SyncInterpreter` for scripts, Django, and CLIs.
+Same machine, same semantics.
+
+</td>
+<td width="33%" valign="top">
+
+**📦 Zero dependencies**
+
+Pure standard library. Nothing to audit, nothing to conflict, Python 3.9 → 3.14.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**🌳 Full statechart spec**
+
+Nested, parallel, history, guards, timers, invoke, actors — not just a flat
+enum with `if` statements.
+
+</td>
+<td valign="top">
+
+**🧪 Testable by design**
+
+A pure, interpreter-free API returns the next state as a value. No mocks, no
+event loop, no sleeping.
+
+</td>
+<td valign="top">
+
+**🛠️ Verified codegen**
+
+`xsm` turns JSON into typed Python and **proves** the result rebuilds your
+machine before writing it.
+
+</td>
+</tr>
+</table>
 
 ---
 
@@ -131,7 +215,7 @@ production at 3am.
 
 **😌 A statechart**
 
-```python
+```jsonc
 "states": {
     "idle":    {"on": {"FETCH": "loading"}},
     "loading": {"on": {"OK": "done",
@@ -348,7 +432,7 @@ without editing.
 
 Actions fire **during** a transition, or on entering/leaving a state.
 
-```python
+```jsonc
 "states": {
     "loading": {
         "entry": ["showSpinner"],          # on the way in
@@ -382,7 +466,63 @@ You rarely need to hand-write these — import them and go:
 
 > **Note** — if an action raises, the error is **logged and contained**. The transition still
 > completes and the interpreter keeps running; one buggy side effect can't take down a
-> long-lived machine. To react to a failure, record it on context and guard on it.
+> long-lived machine. To react to a failure, use the `on_action_error` plugin hook or
+> record it on context and guard on it.
+
+<details>
+<summary><b>Worked examples — the ones that aren't obvious from the name</b></summary>
+
+<br>
+
+**`choose` — first passing guard wins.** The declarative form of `if/elif/else`:
+
+```jsonc
+"on": {"GO": {"target": "b", "actions": [choose([
+    {"guard": "isBig",   "actions": [assign({"label": lambda a: "big"})]},
+    {"guard": "isSmall", "actions": [assign({"label": lambda a: "small"})]},
+    {"actions": [assign({"label": lambda a: "other"})]},   # no guard = default
+])]}}
+```
+
+With `context = {"n": 7}` and guards `isBig = n > 10`, `isSmall = n < 5`, this
+falls through to `label = "other"`.
+
+**`pure` — decide the action list at runtime.** Return actions, or nothing:
+
+```jsonc
+"actions": [pure(lambda a:
+    [assign({"n": lambda b: b["context"]["n"] * 2})]
+    if a["context"]["n"] < 10 else []
+)]
+```
+
+Starting from `n = 2`, four sends give `2 → 4 → 8 → 16`, then it stops doubling
+because the guard inside `pure` returns an empty list.
+
+**`raise_` — feed an event back to *this* machine.** Useful for expressing
+"and then immediately…" without a fake external trigger:
+
+```jsonc
+"actions": [raise_("VALIDATE")]
+```
+
+**`send_to` / `send_parent` — talk to other actors.** Delayed sends are cancellable:
+
+```jsonc
+"actions": [send_to("timer", "TICK", delay=1000, send_id="tick")]
+# elsewhere
+"actions": [cancel("tick")]
+```
+
+**`emit` — publish outward without coupling.** The machine says *what happened*;
+subscribers decide what to do:
+
+```jsonc
+"actions": [emit("saved")]                        # or emit({"type": "saved", "id": 7})
+interpreter.on("saved", lambda ev: analytics.track(ev.type))
+```
+
+</details>
 
 ---
 
@@ -448,7 +588,7 @@ asyncio.run(main())
 `after` fires a transition if the machine is *still* in that state when the timer elapses.
 Leave early and the timer is cancelled for you.
 
-```python
+```jsonc
 "connecting": {
     "after": {5000: "timedOut"},          # 5000 ms
     "on": {"OPEN": "online"},             # ...unless we connect first
@@ -465,7 +605,7 @@ logic = MachineLogic(delays={
 })
 ```
 
-```python
+```jsonc
 "retrying": {"after": {"BACKOFF": "loading"}}
 ```
 
@@ -477,7 +617,7 @@ logic = MachineLogic(delays={
 
 Group related substates so shared transitions live in one place:
 
-```python
+```jsonc
 "states": {
     "authenticated": {
         "initial": "browsing",
@@ -536,7 +676,7 @@ This is where `current_state_ids` returning a **set** finally makes sense.
 **History** remembers where you were, so an interruption doesn't lose progress — the classic
 "resume the wizard where the user left off":
 
-```python
+```jsonc
 "states": {
     "wizard": {
         "initial": "step1",
@@ -645,16 +785,26 @@ a set of side-effect-free functions over immutable snapshots — ideal for tests
 "preview the next step" UI.
 
 ```python
-from xstate_statemachine import create_machine, initial_transition, pure_transition
+from xstate_statemachine import (
+    MachineLogic, create_machine, initial_transition, pure_transition,
+)
 
-machine = create_machine(config)
+machine = create_machine({
+    "id": "fetch",
+    "initial": "idle",
+    "states": {
+        "idle":    {"on": {"FETCH": {"target": "loading", "actions": "logStart"}}},
+        "loading": {"on": {"OK": "done"}},
+        "done":    {"type": "final"},
+    },
+}, logic=MachineLogic())      # 📝 no implementations needed — nothing runs
 
 snapshot, entry_actions = initial_transition(machine)
 next_snapshot, actions = pure_transition(machine, snapshot, "FETCH")
 
 print(snapshot.state_ids)         # {'fetch.idle'}
 print(next_snapshot.state_ids)    # {'fetch.loading'}
-print([a.type for a in actions])  # the actions that WOULD have run
+print([a.type for a in actions])  # ['logStart'] — what WOULD have run
 ```
 
 Both functions return `(snapshot, actions)`. If you only want the next state,
@@ -667,25 +817,122 @@ and `matches()`. No timers start. No services fire. Nothing mutates.
 
 ## 🔍 Introspection & Plugins
 
-Every interpreter answers questions about itself:
+A running machine can answer questions about itself — which is what lets you drive a UI
+from it without duplicating its logic in your view layer.
 
 ```python
-interp.matches("checkout.paying")     # bool — supports nested paths
-interp.can("SUBMIT")                  # would this event do anything right now?
-interp.has_tag("busy")                # state tags, great for UI binding
-interp.get_meta()                     # merged `meta` from active states
-interp.subscribe(lambda snap: ...)    # observe every transition
+from xstate_statemachine import (
+    create_machine, MachineLogic, SyncInterpreter, assign, emit,
+)
+
+editor = create_machine({
+    "id": "editor",
+    "initial": "clean",
+    "context": {"saves": 0},
+    "states": {
+        "clean":  {"tags": ["idle"],
+                   "meta": {"hint": "Nothing to save"},
+                   "on": {"EDIT": "dirty"}},
+        "dirty":  {"tags": ["unsaved"], "on": {"SAVE": "saving"}},
+        "saving": {"tags": ["unsaved", "busy"],
+                   "on": {"OK": {"target": "clean", "actions": [
+                       assign({"saves": lambda a: a["context"]["saves"] + 1}),
+                       emit("saved"),
+                   ]}}},
+    },
+}, logic=MachineLogic())
+
+ed = SyncInterpreter(editor).start()
+
+ed.matches("editor.clean")   # True  — nested paths work: "a.b.c"
+ed.can("EDIT")               # True  — would this event do anything *right now*?
+ed.can("SAVE")               # False — not handled in `clean`
+ed.has_tag("idle")           # True
+ed.tags                      # {'idle'}
+ed.get_meta()                # {'editor.clean': {'hint': 'Nothing to save'}}
+ed.context                   # {'saves': 0}
+ed.is_running                # True
 ```
 
-Plugins hook the whole lifecycle — one line gives you a complete transition audit trail:
+### `can()` — disable buttons without duplicating logic
+
+The machine already knows which events are legal. Ask it, instead of re-deriving
+the rule in your template:
+
+```python
+save_button.disabled = not ed.can("SAVE")
+```
+
+### Tags — style many states with one check
+
+`saving` and `dirty` are different states but share the `unsaved` tag, so a spinner
+needs one condition rather than a growing `or` chain:
+
+```python
+if ed.has_tag("busy"):
+    show_spinner()
+```
+
+### `subscribe()` — react to every settled transition
+
+The listener receives the **interpreter**, so read whatever you need from it:
+
+```python
+unsubscribe = ed.subscribe(
+    lambda i: print(sorted(i.current_state_ids), i.context)
+)
+# … later
+unsubscribe()
+```
+
+### `on()` — listen for emitted events
+
+`emit` publishes a domain event without coupling the machine to your transport:
+
+```python
+ed.on("saved", lambda event: analytics.track(event.type))
+ed.on("*", lambda event: audit_log.append(event))   # every emitted event
+```
+
+```python
+ed.send("EDIT"); ed.send("SAVE"); ed.send("OK")
+ed.context     # {'saves': 1}   ← assign ran
+ed.tags        # {'idle'}       ← back in `clean`
+```
+
+### Plugins — the whole lifecycle, one line
 
 ```python
 from xstate_statemachine import LoggingInspector
 
-interp.use(LoggingInspector())
+ed.use(LoggingInspector())    # complete transition audit trail
 ```
 
-Subclass `PluginBase` for metrics, tracing, or persistence-on-every-transition.
+Subclass `PluginBase` for metrics, tracing, or persistence-on-every-transition. Every
+hook is optional:
+
+| Hook | Fires when |
+|:--|:--|
+| `on_interpreter_start` / `on_interpreter_stop` | Lifecycle boundaries |
+| `on_event_received` | An event arrives, before any transition is chosen |
+| `on_transition` | A transition settles |
+| `on_guard_evaluated` | A guard returns — useful for "why didn't it fire?" |
+| `on_action_execute` | Before each action runs |
+| `on_action_error` | An action raised. **Failures are contained**, so without this hook they are invisible |
+| `on_service_start` / `on_service_done` / `on_service_error` | `invoke` lifecycle |
+
+```python
+from xstate_statemachine import PluginBase
+
+class Metrics(PluginBase):
+    def on_transition(self, interpreter, from_states, to_states, transition):
+        statsd.increment(f"fsm.{transition.event}")
+
+    def on_action_error(self, interpreter, action, error):
+        sentry.capture_exception(error)   # otherwise silently contained
+
+ed.use(Metrics())
+```
 
 ---
 
@@ -780,7 +1027,7 @@ Attempt counting, backoff math, and the give-up condition are each in exactly on
 
 <br>
 
-```python
+```jsonc
 "states": {
     "reviewing":  {"on": {"SUBMIT": "charging"}},
     "charging":   {                                  # ← no SUBMIT handler here
@@ -802,7 +1049,7 @@ button — because the state has no handler for it. The bug is *unrepresentable*
 
 <br>
 
-```python
+```jsonc
 "states": {
     "disconnected": {"on": {"CONNECT": "connecting"}},
     "connecting": {
@@ -828,7 +1075,7 @@ handle it. That's the zombie-callback class of bug, gone structurally.
 
 <br>
 
-```python
+```jsonc
 "states": {
     "planning": {"invoke": {"src": "askModel",
                             "onDone": [{"target": "callingTool", "guard": "wantsTool"},
@@ -984,6 +1231,86 @@ generation time rather than an `ImplementationMissingError` in production.
 
 ---
 
+## 🏭 Running It in Production
+
+Everything above is the happy path. Here is what matters once real traffic arrives.
+
+### Failure semantics — know what is contained
+
+| What fails | What happens | How to observe it |
+|:--|:--|:--|
+| An **action** raises | Logged and **contained**. The transition still completes; the machine keeps running | `on_action_error` plugin hook |
+| A **guard** raises | Treated as `False`; that candidate transition is skipped | `on_guard_evaluated` hook |
+| An invoked **service** raises | Routed to `onError` — a normal transition, not a crash | `onError` target, `on_service_error` hook |
+| An **unknown event** arrives | Ignored. `send("NONSENSE")` is a no-op, never an exception | `interpreter.can(...)` before sending |
+| A **transition action** raises mid-flight | Rolled back — the machine does not end up half-exited | Machine state stays consistent |
+
+Containment is deliberate: a long-lived machine should not die because one side effect
+had a bad day. The cost is that failures are **invisible unless you look**, so wire up
+`on_action_error` early:
+
+```python
+from xstate_statemachine import PluginBase
+
+class ErrorReporter(PluginBase):
+    def on_action_error(self, interpreter, action, error):
+        sentry.capture_exception(error)
+
+interp.use(ErrorReporter())
+```
+
+### Waiting for a machine to settle
+
+Do not poll by hand or `sleep()` and hope:
+
+```python
+from xstate_statemachine import wait_for, wait_for_sync, to_promise
+
+# async
+await wait_for(interp, lambda i: i.matches("job.done"), timeout=30)
+result = await to_promise(interp)          # resolves when the machine reaches a final state
+
+# sync
+wait_for_sync(interp, lambda i: i.matches("job.done"), timeout=30)
+```
+
+### Choosing an interpreter
+
+| Use | When |
+|:--|:--|
+| `Interpreter` | asyncio apps — FastAPI, aiohttp, bots, anything already async |
+| `SyncInterpreter` | Django views, Celery tasks, CLI tools, scripts, tests |
+
+Same machine JSON, same semantics, same guarantees. Timers, services and actors all work
+on both; the sync engine runs them on threads.
+
+### Long-running machines
+
+- **Persist on transition,** not on a timer — `get_persisted_snapshot()` in a
+  `subscribe()` callback gives you crash-safe resume points.
+- **`after` timers do not survive a snapshot.** Restoring a machine that was mid-timeout
+  will not re-arm it; re-send the triggering event, or model the deadline as data in
+  context and compare against wall-clock on resume.
+- **Always `stop()`** — it cancels timers and stops spawned actors. In a web app, tie it
+  to request teardown; in a worker, to the task's `finally`.
+
+### Testing
+
+The [pure API](#-the-pure-api--no-interpreter) is the fastest way to test machine
+*logic* — no event loop, no mocks, no sleeping:
+
+```python
+from xstate_statemachine import get_initial_snapshot, get_next_snapshot
+
+snap = get_initial_snapshot(machine)
+snap = get_next_snapshot(machine, snap, "SUBMIT")
+assert snap.matches("checkout.paying")
+```
+
+Use a real interpreter for integration tests, where you want the actions to actually run.
+
+---
+
 ## 📘 API Reference
 
 <details open>
@@ -1134,7 +1461,7 @@ Invoked **services** are different — their failures *are* routed back into the
 
 <br>
 
-2,682 tests, 88% coverage, CI across Python 3.9–3.14 on Linux, macOS and Windows. The engine
+2,797 tests, 88% coverage, CI across Python 3.9–3.14 on Linux, macOS and Windows. The engine
 implements the SCXML transition-selection algorithm and there's a dedicated test suite pinning
 that behaviour, plus one pinning XState v5 parity.
 
@@ -1179,7 +1506,7 @@ Guides · API reference · Migration notes · More examples
 ### Contributing
 
 Issues and PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
-Every PR runs the full matrix: lint, 2,682 tests, coverage gate, and a packaging check.
+Every PR runs the full matrix: lint, 2,797 tests, coverage gate, and a packaging check.
 
 <br>
 
