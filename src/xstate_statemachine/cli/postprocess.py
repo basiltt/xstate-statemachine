@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 import logging
 import subprocess
 import sys
@@ -290,9 +291,18 @@ def formatting_available() -> bool:
     Callers use this to tell the user *once* that installing the ``format``
     extra improves the result — silently emitting less-tidy code leaves
     them wondering why it does not match their linter.
+
+    📝 Uses ``find_spec`` rather than a bare ``import black``: an unused
+    import is exactly what a linter should flag, and suppressing it needs
+    a ``noqa`` that pyflakes does not honour. This states the intent —
+    "is it installed?" — without importing anything.
+
+    🛡️ ``find_spec`` can RAISE (ImportError, ValueError) rather than
+    return None when a parent package is broken or a meta-path finder
+    objects. This is a cosmetic hint; it must never be the reason
+    generation fails.
     """
     try:
-        import black  # noqa: F401
-    except ImportError:
+        return importlib.util.find_spec("black") is not None
+    except (ImportError, ValueError):  # pragma: no cover — env dependent
         return False
-    return True

@@ -279,3 +279,42 @@ class TestCombinedFileIsPolished(unittest.TestCase):
                         content = handle.read()
                     # 📝 Exactly one provenance docstring, not two merged.
                     self.assertEqual(content.count("DO NOT EDIT BY HAND"), 1)
+
+
+class TestFormattingAvailability(unittest.TestCase):
+    """The formatter probe is a hint and must never break generation."""
+
+    def test_reports_true_when_black_is_installed(self) -> None:
+        """The development environment has black."""
+        from src.xstate_statemachine.cli.postprocess import (
+            formatting_available,
+        )
+
+        self.assertTrue(formatting_available())
+
+    def test_survives_a_finder_that_raises(self) -> None:
+        """`find_spec` can RAISE rather than return None.
+
+        A broken parent package or a hostile meta-path finder makes
+        `find_spec("black")` raise. That would crash the CLI for exactly
+        the runtime-only users this hint exists to help.
+        """
+        import sys
+
+        from src.xstate_statemachine.cli.postprocess import (
+            formatting_available,
+        )
+
+        class _Blocker:
+            """Meta-path finder that refuses to look up black."""
+
+            def find_spec(self, name, path=None, target=None):
+                if name == "black":
+                    raise ImportError("blocked")
+                return None
+
+        sys.meta_path.insert(0, _Blocker())
+        try:
+            self.assertFalse(formatting_available())
+        finally:
+            sys.meta_path.pop(0)
