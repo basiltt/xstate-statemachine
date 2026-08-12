@@ -234,6 +234,64 @@ class TestRoundTripSynthetic(unittest.TestCase):
             }
         )
 
+    def test_transition_into_own_descendant(self) -> None:
+        """A state targeting its OWN child must resolve correctly.
+
+        The emitter used to render this as the leading-dot form (".p").
+        `resolver.py` bases a `.child` lookup on the source's PARENT, so
+        `.p` from `x` searched x's SIBLINGS -- the transition silently
+        failed to resolve and the generated machine could not take it.
+        """
+        self._check(
+            {
+                "id": "m",
+                "initial": "x",
+                "states": {
+                    "x": {
+                        "initial": "p",
+                        "states": {"p": {"on": {"BACK": "q"}}, "q": {}},
+                        "on": {"GO": "p"},
+                    },
+                    "z": {},
+                },
+            }
+        )
+
+    def test_dot_relative_target_in_source(self) -> None:
+        """A source that already uses `.sibling` round-trips unchanged."""
+        self._check(
+            {
+                "id": "m",
+                "initial": "x",
+                "states": {
+                    "x": {
+                        "initial": "p",
+                        "states": {"p": {"on": {"GO": ".q"}}, "q": {}},
+                    },
+                    "z": {},
+                },
+            }
+        )
+
+    def test_transition_into_deep_descendant(self) -> None:
+        """Multi-level descendant targets resolve to the same state."""
+        self._check(
+            {
+                "id": "m",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "initial": "b",
+                        "states": {
+                            "b": {"initial": "c", "states": {"c": {}}}
+                        },
+                        "on": {"D": "b.c"},
+                    },
+                    "z": {},
+                },
+            }
+        )
+
     def test_root_level_properties(self) -> None:
         """Machine-level `on` was dropped, so global escapes vanished."""
         self._check(

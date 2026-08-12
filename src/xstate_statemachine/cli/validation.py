@@ -300,20 +300,64 @@ def _collect(node: Any, root_id: str, acc: Dict[str, Any]) -> None:
     if not isinstance(on_done, (list, tuple)):
         on_done = [on_done]
 
+    # 🛡️ Transitions are compared in FULL: resolved destination, actions,
+    #    guard and reenter -- not merely the set of event names.
+    #
+    #    Recording only names made this gate structurally blind to the
+    #    worst defect class it exists to catch. Generated code sending GO
+    #    to 'c' where the source says 'b' is a different machine, yet the
+    #    fingerprints matched and the CLI printed "Verified ... exactly".
     acc[path] = {
         "type": node.type,
         "initial": node.initial,
         "history": node.history,
         "entry": [a.type for a in node.entry],
         "exit": [a.type for a in node.exit],
-        "events": sorted(node.on),
-        "delays": sorted(str(d) for d in node.after),
+        "on": {
+            event: [_transition_fingerprint(t) for t in transitions]
+            for event, transitions in sorted(node.on.items())
+        },
+        "after": {
+            str(delay): [_transition_fingerprint(t) for t in transitions]
+            for delay, transitions in sorted(
+                node.after.items(), key=lambda kv: str(kv[0])
+            )
+        },
         "invoke": sorted(i.src for i in node.invoke),
-        "on_done": len(on_done),
+        "on_done": [_transition_fingerprint(t) for t in on_done],
         "tags": sorted(node.tags or []),
     }
     for child in node.states.values():
         _collect(child, root_id, acc)
+
+
+def _transition_fingerprint(trans: Any) -> tuple:
+    """Reduce a transition to everything that changes behaviour.
+
+    The target is compared by RESOLVED destination rather than by the raw
+    string, so ``"#m.b"`` and ``"b"`` are correctly treated as identical
+    when they name the same state — fidelity is about the machine you get,
+    not the spelling used to describe it.
+    """
+    return (
+        trans.event,
+        _resolved_target(trans),
+        tuple(a.type for a in trans.actions),
+        trans.guard,
+        bool(trans.reenter),
+    )
+
+
+def _resolved_target(trans: Any) -> Optional[str]:
+    """Resolve a transition's target to a canonical state id."""
+    if trans.target_str is None:
+        return None
+    from ..resolver import resolve_target_state
+
+    try:
+        return resolve_target_state(trans.target_str, trans.source).id
+    except Exception:  # noqa: BLE001 — unresolvable targets compare raw
+        return f"<unresolved:{trans.target_str}>"
 
 
 def format_refusal(

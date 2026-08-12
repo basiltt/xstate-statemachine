@@ -107,9 +107,18 @@ def resolve_target(
                 return _descend(state, rest.split("."))
         return None
 
-    # 2️⃣ Relative ".child" references descend from the source.
+    # 2️⃣ Relative ".child" references resolve from the source's PARENT.
+    #    This mirrors resolver.py ("Base the search from the parent of the
+    #    current state"). Treating them as descending from the source
+    #    itself silently resolved to the wrong state.
     if raw.startswith("."):
-        return _descend(source, raw.lstrip(".").split("."))
+        parent = _state_at(machine, source.path[:-1])
+        base_children = parent.children if parent else machine.states
+        parts = raw.lstrip(".").split(".")
+        for candidate in base_children:
+            if candidate.key == parts[0]:
+                return _descend(candidate, parts[1:])
+        return None
 
     parts = raw.split(".")
 
@@ -258,24 +267,24 @@ def _target_expression(
     if target.path[:-1] == source.path[:-1]:
         return target.key
 
-    # 2️⃣ Descendant of the source itself: emit the relative ".child" form.
-    #    Emitting the absolute path here would be wrong — from `InProgress`
-    #    the string "InProgress.Assigned" looks for a *child* named
-    #    "InProgress", which does not exist.
-    if target.path[: len(source.path)] == source.path:
-        return "." + ".".join(target.path[len(source.path) :])
-
-    # 3️⃣ Descendant of one of the source's ancestors: emit the path
+    # 2️⃣ Descendant of one of the source's ancestors: emit the path
     #    relative to that ancestor, which the engine resolves by walking up.
-    for depth in range(len(source.path) - 1, -1, -1):
+    #
+    # 🛡️ The leading-dot form is deliberately NOT used for a descendant of
+    #    the source. `resolver.py` bases a `.child` lookup on the source's
+    #    PARENT (see "Base the search from the parent of the current
+    #    state"), so emitting `.p` for a child of `x` sends the engine
+    #    looking for `x`'s sibling `p` and the transition silently fails to
+    #    resolve. Every candidate below is round-trip verified instead.
+    for depth in range(len(source.path), -1, -1):
         ancestor_path = source.path[:depth]
         if target.path[:depth] == ancestor_path and len(target.path) > depth:
             candidate = ".".join(target.path[depth:])
-            # ✅ Only safe if it round-trips back to the same state.
+            # ✅ Only safe if it resolves back to the same state.
             if resolve_target(candidate, source, machine) is target:
                 return candidate
 
-    # 4️⃣ Absolute reference — always unambiguous.
+    # 3️⃣ Absolute reference — always unambiguous.
     return f"#{machine.id}.{target.dotted}"
 
 

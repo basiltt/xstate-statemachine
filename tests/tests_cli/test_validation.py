@@ -108,6 +108,79 @@ class TestCatchesRegressions(unittest.TestCase):
         self.assertIn("ValueError", " ".join(problems))
 
 
+class TestCatchesTransitionDivergence(unittest.TestCase):
+    """The gate must compare transitions, not just event NAMES.
+
+    🏛️ It once recorded only `sorted(node.on)` -- the event names -- plus
+    delay keys and an on_done COUNT. That made it structurally blind to
+    the worst defect class it exists to catch: generated code sending GO
+    to a different state matched the fingerprint exactly, and the CLI
+    printed "Verified: generated code rebuilds 'm' exactly."
+    """
+
+    CONFIG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "a",
+        "states": {"a": {"on": {"GO": "b"}}, "b": {}, "c": {}},
+    }
+    PRELUDE = (
+        "from typing import Any\n"
+        "from xstate_statemachine import State, build_machine\n"
+    )
+
+    def _build(self, body: str) -> str:
+        """Wrap a state-a definition in a complete build() module."""
+        return (
+            self.PRELUDE
+            + "def build():\n"
+            + f"    a = State('a', initial=True, {body})\n"
+            + "    return build_machine("
+            + "id='m', states=[a, State('b'), State('c')])\n"
+        )
+
+    def test_catches_wrong_target(self) -> None:
+        """GO -> c where the source says GO -> b is a different machine."""
+        problems = verify_generated(
+            self.CONFIG,
+            self._build("on={'GO': 'c'}"),
+            template="pythonic-functional",
+        )
+        self.assertTrue(problems, "wrong transition target went undetected")
+
+    def test_catches_spurious_guard(self) -> None:
+        """An invented guard would silently block the transition."""
+        problems = verify_generated(
+            self.CONFIG,
+            self._build("on={'GO': {'target': 'b', 'guard': 'nope'}}"),
+            template="pythonic-functional",
+        )
+        self.assertTrue(problems, "spurious guard went undetected")
+
+    def test_catches_spurious_action(self) -> None:
+        """An invented action would run code the machine never declared."""
+        problems = verify_generated(
+            self.CONFIG,
+            self._build("on={'GO': {'target': 'b', 'actions': ['extra']}}"),
+            template="pythonic-functional",
+        )
+        self.assertTrue(problems, "spurious action went undetected")
+
+    def test_equivalent_spellings_still_pass(self) -> None:
+        """`#m.b` and `b` name the same state and must NOT be flagged.
+
+        Fidelity is about the machine you get, not the spelling used to
+        describe it -- otherwise the gate would reject correct output.
+        """
+        self.assertEqual(
+            verify_generated(
+                self.CONFIG,
+                self._build("on={'GO': '#m.b'}"),
+                template="pythonic-functional",
+            ),
+            [],
+        )
+
+
 class TestAcceptsCorrectOutput(unittest.TestCase):
     """The gate must not cry wolf on correct generators."""
 
