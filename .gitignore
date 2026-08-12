@@ -702,3 +702,12 @@ docs/superpowers/
 # [tool.hatch.build.targets.sdist] in pyproject.toml), since anything tracked
 # here would otherwise be packaged into the tarball published to PyPI.
 .claude/
+
+# 🧪 Scratch dirs used for release verification (never part of the package)
+.rel/
+.rel_t/
+.rt/
+.doc/
+.sec/
+.aud/
+.verify/
