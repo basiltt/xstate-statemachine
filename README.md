@@ -978,6 +978,86 @@ cancellation, or more than ~5 states** — and they pay enormously at 20.
 
 Real problems, small solutions.
 
+Every recipe below is a fragment for readability. Here is one **complete, runnable**
+program first — a checkout that guards an empty cart, retries a declining card, and
+records the failure reason, in 40 lines:
+
+<details open>
+<summary><b>🧾 A whole machine, end to end</b></summary>
+
+<br>
+
+```python
+from xstate_statemachine import (
+    MachineLogic, SyncInterpreter, assign, create_machine,
+)
+
+ORDER = {
+    "id": "order",
+    "initial": "cart",
+    "context": {"items": 0, "attempts": 0, "error": None},
+    "states": {
+        "cart": {
+            "on": {
+                "ADD": {"actions": assign(
+                    {"items": lambda a: a["context"]["items"] + 1})},
+                "CHECKOUT": {"target": "charging", "guard": "hasItems"},
+            },
+        },
+        "charging": {
+            "entry": assign({"attempts": lambda a: a["context"]["attempts"] + 1}),
+            "invoke": {
+                "src": "chargeCard",
+                "onDone": "shipped",
+                "onError": {
+                    "target": "failed",
+                    "actions": assign({"error": lambda a: str(a["event"].data)}),
+                },
+            },
+        },
+        "failed": {"on": {"RETRY": {"target": "charging", "guard": "canRetry"}}},
+        "shipped": {"type": "final"},
+    },
+}
+
+
+def charge_card(interpreter, context, event):
+    """Fails the first time, succeeds on the retry."""
+    if context["attempts"] < 2:
+        raise RuntimeError("card declined")
+    return {"receipt": "r-123"}
+
+
+logic = MachineLogic(
+    guards={
+        "hasItems": lambda ctx, e: ctx["items"] > 0,
+        "canRetry": lambda ctx, e: ctx["attempts"] < 3,
+    },
+    services={"chargeCard": charge_card},
+)
+
+order = SyncInterpreter(create_machine(ORDER, logic=logic)).start()
+
+order.send("CHECKOUT")                    # guard blocks — the cart is empty
+print(sorted(order.current_state_ids))    # ['order.cart']
+
+order.send("ADD")
+order.send("CHECKOUT")                    # charges; the service raises
+print(sorted(order.current_state_ids))    # ['order.failed']
+print(order.context["error"])             # card declined
+
+order.send("RETRY")                       # second attempt succeeds
+print(sorted(order.current_state_ids))    # ['order.shipped']
+print(order.context["attempts"])          # 2
+```
+
+Note what is **absent**: no `try/except` around the charge, no `is_charging` flag, no
+"did we already ship?" check. A declined card is a `onError` edge, "cart is empty" is a
+guard, and double-charging is impossible because `shipped` is `final` and `charging`
+has no `CHECKOUT` handler.
+
+</details>
+
 <details open>
 <summary><b>🔁 Retry with exponential backoff and a give-up limit</b></summary>
 
@@ -1395,6 +1475,131 @@ they're registered automatically by arity: `(ctx, event)` is a guard,
 **Exceptions:** `XStateMachineError` (base) · `InvalidConfigError` ·
 `StateNotFoundError` · `ImplementationMissingError` · `ActorSpawningError` ·
 `NotSupportedError`
+
+</details>
+
+---
+
+## 🚨 Troubleshooting
+
+The five errors you are most likely to meet, and what each actually means.
+
+<details>
+<summary><b><code>ImplementationMissingError</code> — "no implementation was found"</b></summary>
+
+<br>
+
+Your machine names an action, guard or service that nothing provides. This is a
+**feature**: a typo in a guard name becomes an error at load time instead of a
+transition that mysteriously never fires.
+
+```python
+create_machine({"id": "a", "initial": "s",
+                "states": {"s": {"entry": "logStart"}}})
+# ImplementationMissingError: Action 'logStart' is defined in the machine
+# but no implementation was found …
+```
+
+**Fix** — supply it, or opt out explicitly:
+
+```python
+create_machine(config, logic=MachineLogic(actions={"logStart": my_fn}))
+create_machine(config, logic=MachineLogic())   # accept the stubs; nothing runs
+```
+
+`MachineLogic()` with no arguments is the right choice for tests, diagram export,
+and the [pure API](#-the-pure-api--no-interpreter), where actions never execute.
+
+</details>
+
+<details>
+<summary><b><code>StateNotFoundError</code> — a transition points nowhere</b></summary>
+
+<br>
+
+```jsonc
+{"s": {"on": {"GO": "ghost"}}}     # 'ghost' is not a sibling of 's'
+```
+
+Targets are **scope-relative**, resolved from the source state outward. Common causes:
+
+| Symptom | Cause |
+|:--|:--|
+| Target is a *child* of another state | Use `"parent.child"` or `"#machineId.parent.child"` |
+| Target is in a different branch | Use an absolute `"#machineId.path"` reference |
+| `.child` did not resolve | A leading dot resolves from the source's **parent**, not the source |
+
+Run `xsm validate machine.json` to catch these before runtime.
+
+</details>
+
+<details>
+<summary><b><code>InvalidConfigError</code> — the machine itself is malformed</b></summary>
+
+<br>
+
+Missing `states`, a bad `initial`, two states claiming `initial=True` in the same
+region, or a corrupt snapshot string passed to `from_snapshot`.
+
+```python
+create_machine({"id": "c"})        # InvalidConfigError: 'states' key is missing
+```
+
+</details>
+
+<details>
+<summary><b>My action ran but nothing happened</b></summary>
+
+<br>
+
+Action failures are **contained** — the transition completes and the machine keeps
+running. That is deliberate for long-lived machines, but it means a raising action
+is invisible unless you look:
+
+```python
+class ErrorReporter(PluginBase):
+    def on_action_error(self, interpreter, action, error):
+        raise error          # or log it, or ship it to Sentry
+
+interp.use(ErrorReporter())
+```
+
+</details>
+
+<details>
+<summary><b>My event did nothing</b></summary>
+
+<br>
+
+An event that the current state does not handle is **ignored**, by design —
+`send("BANANA")` is a no-op, never an exception. Three ways to find out why:
+
+```python
+interp.can("SUBMIT")          # False → not handled here at all
+interp.current_state_ids      # are you in the state you think you are?
+interp.use(LoggingInspector())  # shows guards evaluating and rejecting
+```
+
+If `can()` is `True` but nothing moves, a **guard** is returning `False`. The
+`on_guard_evaluated` plugin hook tells you which one.
+
+</details>
+
+<details>
+<summary><b>My <code>after</code> timer never fired after restoring a snapshot</b></summary>
+
+<br>
+
+Correct, and intentional. Timers are runtime state, not persisted state — restoring
+a machine that was mid-timeout does **not** re-arm it.
+
+If a deadline must survive a restart, model it as data:
+
+```jsonc
+"entry": assign({"deadline": lambda a: time.time() + 30}),
+```
+
+…then compare against wall-clock on resume, rather than relying on `after`.
 
 </details>
 
