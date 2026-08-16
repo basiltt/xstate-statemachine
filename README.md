@@ -1736,7 +1736,7 @@ Invoked **services** are different — their failures *are* routed back into the
 
 <br>
 
-2,800+ tests, 88% coverage, CI across Python 3.9–3.14 on Linux, macOS and Windows. The engine
+2,800+ tests, 88% coverage, CI runs Python 3.9–3.14 on Linux, with spot-checks on macOS and Windows. The engine
 implements the SCXML transition-selection algorithm and there's a dedicated test suite pinning
 that behaviour, plus one pinning XState v5 parity.
 
