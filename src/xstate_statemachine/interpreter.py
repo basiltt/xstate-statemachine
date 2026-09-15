@@ -90,6 +90,38 @@ _ACTOR_POLL_INTERVAL = 0.005
 # -----------------------------------------------------------------------------
 
 
+class _PreStartQueue:
+    """Stand-in for `Interpreter._event_queue` until `start()` binds a loop.
+
+    🏛️ Architecture decision: events may be sent BEFORE `start()` and must
+    be processed once it runs -- that is documented, tested behaviour. But
+    on Python 3.9 `asyncio.Queue()` binds to the current loop at
+    construction and raises when there is none, so the real queue cannot
+    exist until `start()`. This buffer speaks just enough of the `Queue`
+    API for the pre-start window (`put_nowait`, `put`, `qsize`, `empty`);
+    `_bind_loop()` drains it into the real queue in order.
+    """
+
+    def __init__(self) -> None:
+        self._items: List[Union[Event, AfterEvent, DoneEvent]] = []
+
+    def put_nowait(self, item: Union[Event, AfterEvent, DoneEvent]) -> None:
+        self._items.append(item)
+
+    async def put(self, item: Union[Event, AfterEvent, DoneEvent]) -> None:
+        self._items.append(item)
+
+    def qsize(self) -> int:
+        return len(self._items)
+
+    def empty(self) -> bool:
+        return not self._items
+
+    def drain(self) -> List[Union[Event, AfterEvent, DoneEvent]]:
+        items, self._items = self._items, []
+        return items
+
+
 def _completed() -> "asyncio.Future[None]":
     """An already-resolved awaitable -- what `send()` hands back.
 
@@ -151,9 +183,17 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         #: discarding the coroutine (#37).
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread_name: str = ""
-        self._event_queue: asyncio.Queue[
-            Union[Event, AfterEvent, DoneEvent]
-        ] = asyncio.Queue()
+        # 📬 Created lazily in `_bind_loop()`, not here.
+        #
+        # 🏛️ Architecture decision: on Python 3.9 `asyncio.Queue()` binds to
+        #    the CURRENT event loop at construction and raises when there is
+        #    none, so an `Interpreter` could only ever be built inside a
+        #    running loop. Deferring the queue to `start()` lets the object be
+        #    constructed anywhere (module level, a sync test, a factory) and
+        #    guarantees the queue belongs to the loop that actually drives it.
+        #    3.10+ removed the binding, so this is behaviour-neutral there.
+        self._event_queue: "asyncio.Queue[Union[Event, AfterEvent, DoneEvent]]"
+        self._event_queue = _PreStartQueue()  # type: ignore[assignment]
         self._event_loop_task: Optional[asyncio.Task[None]] = None
         #: Length of the current self-raised event chain. Incremented when an
         #: action enqueues onto our own queue *during* processing, reset when
@@ -467,9 +507,19 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         return asyncio.run_coroutine_threadsafe(_deliver(), self._loop)
 
     def _bind_loop(self) -> None:
-        """Record the loop (and thread) that owns this interpreter."""
+        """Record the loop (and thread) that owns this interpreter.
+
+        Also materialises the event queue on first bind -- see the note in
+        `__init__`. A re-bind (resuming a restored interpreter) keeps the
+        existing queue so already-queued events are not lost.
+        """
         self._loop = asyncio.get_running_loop()
         self._loop_thread_name = threading.current_thread().name
+        if isinstance(self._event_queue, _PreStartQueue):
+            pending = self._event_queue.drain()
+            self._event_queue = asyncio.Queue()
+            for item in pending:  # 📬 preserve pre-start send() order
+                self._event_queue.put_nowait(item)
 
     def _assert_owning_thread(self, method: str) -> None:
         """Raise if called from a thread that does not own our loop."""

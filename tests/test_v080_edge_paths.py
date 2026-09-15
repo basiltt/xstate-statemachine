@@ -355,6 +355,47 @@ class TestThreadSafeSendEdges(_Quiet):
 
 
 # -----------------------------------------------------------------------------
+# 📬 interpreter.py — pre-start queue buffer (py3.9 asyncio.Queue binding)
+# -----------------------------------------------------------------------------
+class TestPreStartQueue(_Quiet):
+    CFG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "a",
+        "context": {"seen": []},
+        "states": {"a": {"on": {"E": {"actions": ["rec"]}}}},
+    }
+
+    def test_constructible_outside_any_event_loop(self) -> None:
+        """Must not touch the loop at construction (3.9 raises otherwise)."""
+        logic = MachineLogic(actions={"rec": lambda *a: None})
+        i = Interpreter(create_machine(self.CFG, logic=logic))
+        self.assertEqual(i._event_queue.qsize(), 0)
+        self.assertTrue(i._event_queue.empty())
+
+    def test_pre_start_sends_are_delivered_in_order(self) -> None:
+        def rec(i, c, e, a):
+            c["seen"].append(e.payload["n"])
+
+        async def main():
+            i = Interpreter(
+                create_machine(
+                    self.CFG, logic=MachineLogic(actions={"rec": rec})
+                )
+            )
+            for n in range(3):
+                await i.send("E", n=n)  # `await`-form before start
+            i.send("E", n=3)  # fire-and-forget form before start
+            self.assertEqual(i._event_queue.qsize(), 4)
+            await i.start()
+            await asyncio.sleep(0.05)
+            out = list(i.context["seen"])
+            await i.stop()
+            return out
+
+        self.assertEqual(asyncio.run(main()), [0, 1, 2, 3])
+
+
+# -----------------------------------------------------------------------------
 # 🔁 interpreter.py — async defer replay stops when nothing moves
 # -----------------------------------------------------------------------------
 class TestAsyncDeferReplayNoProgress(_Quiet):

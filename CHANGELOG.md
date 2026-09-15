@@ -101,6 +101,12 @@ preserves 0.7.x semantics, so nothing changes on upgrade until you opt in.
 - `send()` / `send_threadsafe()` on an interpreter whose event loop has
   since been closed raise a `RuntimeError` that says so, instead of a
   `WrongThreadError` naming the same thread on both sides.
+- `Interpreter` no longer constructs its `asyncio.Queue` in `__init__`; the
+  queue is created when `start()` binds the loop, and events sent before
+  `start()` are buffered and delivered in order. On Python 3.9
+  `asyncio.Queue()` binds to the current loop at construction and raised
+  when built outside one, so an `Interpreter` could not previously be
+  instantiated in synchronous code on that version.
 
 
 ## [0.7.0] - 2026-08-12
