@@ -248,12 +248,12 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 action; `drain=True` finishes that macrostep first.
         """
         # 🚦 Idempotency check.
-        #
-        # 🏛️ `done` and `error` are terminal but NOT torn down: reaching a
-        # top-level final state must still release child actors and timers.
-        # Guarding on `!= "running"` made `stop()` a silent no-op for every
-        # machine that completed, leaking actors and their timer threads.
         if self.status in ("uninitialized", "stopped"):
+            return
+        # 🏁 #57: a terminal machine already reaped itself in `_on_terminal`;
+        #    `stop()` is a quiet no-op that keeps `status` as "done"/"error".
+        if self.status in ("done", "error"):
+            self._teardown()
             return
 
         if drain and self.status == "running" and not self._is_processing:
@@ -271,34 +271,11 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             "🛑 Stopping sync interpreter '%s' and its actors…", self.id
         )
 
-        # 1️⃣ Stop every child actor (blocking & non-blocking).
-        #
         # 📝 Status is set to "stopped" FIRST so a cyclic actor graph
         #    terminates: the child's own `stop()` re-enters this one, which
         #    now hits the idempotency guard instead of recursing forever.
         self.status = "stopped"
-        for actor_id, actor in list(self._actors.items()):
-            try:
-                actor.stop()
-            finally:
-                self._actors.pop(actor_id, None)
-
-        # 2️⃣ Cancel all `after` timers by signaling their cancellation events
-        for state_id in list(self._after_events.keys()):
-            self._after_events[state_id].set()
-        self._after_events.clear()
-        self._after_threads.clear()
-
-        # 2️⃣.5 Release any waiting delayed-send threads. They are daemons, so
-        #      they never block process exit, but a long delay would otherwise
-        #      keep one alive for its full duration after shutdown.
-        for cancel_flag in list(self._pending_send_cancels):
-            cancel_flag.set()
-        self._pending_send_cancels.clear()
-        self._scheduled_sends.clear()
-
-        # 3️⃣ Update status to prevent further operations
-        self.status = "stopped"
+        self._teardown()
 
         # 4️⃣ Notify plugins about the stop event
         for plugin in self._plugins:
@@ -330,6 +307,43 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         event_obj = self._prepare_event(event_or_type, **payload)
         self._event_queue.append(event_obj)
         self._process_event_queue()
+
+    # -------------------------------------------------------------------------
+    # 🏁 Reaping (#57)
+    # -------------------------------------------------------------------------
+    def _schedule_teardown(self) -> None:
+        # 🧵 Sync engine: no loop to defer to, and `_complete()` runs at the
+        #    end of a macrostep, so tearing down inline is safe.
+        self._teardown()
+
+    def _teardown(self) -> None:
+        """Release everything except `status` / `output` / `error` / `context`.
+
+        Shared by `stop()` and by reaching a terminal status (#57).
+        """
+        # 1️⃣ Stop every child actor (blocking & non-blocking).
+        for actor_id, actor in list(self._actors.items()):
+            try:
+                actor.stop()
+            finally:
+                self._actors.pop(actor_id, None)
+
+        # 2️⃣ Cancel all `after` timers by signalling their cancellation events.
+        for state_id in list(self._after_events.keys()):
+            self._after_events[state_id].set()
+        self._after_events.clear()
+        self._after_threads.clear()
+
+        # 3️⃣ Release any waiting delayed-send threads. They are daemons, so
+        #    they never block process exit, but a long delay would otherwise
+        #    keep one alive for its full duration after shutdown.
+        for cancel_flag in list(self._pending_send_cancels):
+            cancel_flag.set()
+        self._pending_send_cancels.clear()
+        self._scheduled_sends.clear()
+
+        # 4️⃣ Drop our own registry entry so the root does not pin us.
+        self._unregister_from_system()
 
     # -------------------------------------------------------------------------
     # 📬 Inbox (#47)

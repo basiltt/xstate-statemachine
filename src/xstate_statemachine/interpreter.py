@@ -82,7 +82,6 @@ logger = logging.getLogger(__name__)
 # ⏱️ How often `_spawn_and_manage_actor` checks whether an invoked child
 #    machine has reached a final state. Small enough that `onDone` feels
 #    immediate, large enough not to busy-wait a core.
-_ACTOR_POLL_INTERVAL = 0.005
 
 
 # -----------------------------------------------------------------------------
@@ -360,13 +359,17 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 until the inbox is empty.
         """
         # 🛡️ Idempotency check.
-        #
-        # 🏛️ `done` and `error` are terminal but NOT torn down: reaching a
-        # top-level final state must still release child actors and tasks.
         if self.status in ("uninitialized", "stopped"):
             logger.warning(
                 "⚠️ Interpreter '%s' is not running. Skipping stop.", self.id
             )
+            return
+        # 🏁 #57: a terminal machine has already reaped itself (or has a
+        #    teardown task in flight). `stop()` is then a quiet no-op that
+        #    leaves `status` as "done"/"error" so `output`/`error` stay
+        #    meaningful.
+        if self.status in ("done", "error"):
+            await self._teardown()
             return
 
         if drain and self.status == "running":
@@ -388,32 +391,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         for plugin in self._plugins:
             plugin.on_interpreter_stop(self)
 
-        # 🛑 Stop all child actors recursively.
-        #
-        # 🧵 Iterate over a SNAPSHOT. Stopping a child yields to the event
-        #    loop, which lets that child's own managing task run its `finally`
-        #    and pop itself from `self._actors` — mutating the dict mid-loop
-        #    and raising "dictionary changed size during iteration".
-        for actor in list(self._actors.values()):
-            await actor.stop()
-        self._actors.clear()
-
-        # ❌ Cancel all background tasks (timers, services) owned by this interpreter.
-        await self.task_manager.cancel_all()
-
-        # 🔌 Terminate the main event processing loop.
-        if self._event_loop_task:
-            self._event_loop_task.cancel()
-            # Wait for the loop to acknowledge the cancellation to prevent leaks.
-            try:
-                await self._event_loop_task
-            except asyncio.CancelledError:
-                logger.debug(
-                    "Event loop task for '%s' acknowledged cancellation.",
-                    self.id,
-                )
-            self._event_loop_task = None
-
+        # 🧹 Children, tasks, registry entry, run loop -- one shared path.
+        await self._teardown()
         logger.info("✅ Interpreter '%s' stopped successfully.", self.id)
 
     @overload
@@ -545,6 +524,60 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             self._event_queue = asyncio.Queue()
             for item in pending:  # 📬 preserve pre-start send() order
                 self._event_queue.put_nowait(item)
+
+    # -------------------------------------------------------------------------
+    # 🏁 Completion signal (#43) and reaping (#57)
+    # -------------------------------------------------------------------------
+    def wait_done(self) -> "asyncio.Future[str]":
+        """A future that resolves to the terminal status ("done" / "error").
+
+        🏛️ Architecture decision (#43): a parent used to learn its child had
+        finished by polling `child.status` every 5 ms in a dedicated task.
+        Every idle child therefore cost TWO tasks and 200 wake-ups a second,
+        and `onDone` had a 5 ms floor. This future is resolved from
+        `_on_terminal` the instant `status` flips, so the parent awaits it.
+        Returns an already-resolved future if the machine is terminal now
+        (the "child finished during start()" race must keep working).
+        """
+        loop = asyncio.get_running_loop()
+        fut: "asyncio.Future[str]" = loop.create_future()
+        if self.status in ("done", "error"):
+            fut.set_result(self.status)
+            return fut
+
+        def _resolve(status: str) -> None:
+            if not fut.done():
+                fut.set_result(status)
+
+        self._terminal_listeners.append(_resolve)
+        return fut
+
+    def _schedule_teardown(self) -> None:
+        # 🧵 `_complete()` is called from inside `_enter_states`, mid-
+        #    transition; tearing down children synchronously there would
+        #    stop them while the parent's own step is still unwinding.
+        #    Defer by one loop turn.
+        if self._loop is None or self._loop.is_closed():
+            return
+        self._loop.create_task(self._teardown())
+
+    async def _teardown(self) -> None:
+        """Release everything except `status` / `output` / `error` / `context`.
+
+        Shared by `stop()` and by reaching a terminal status (#57).
+        """
+        for actor in list(self._actors.values()):
+            await actor.stop()
+        self._actors.clear()
+        await self.task_manager.cancel_all()
+        self._unregister_from_system()
+        if self._event_loop_task and self.status != "running":
+            self._event_loop_task.cancel()
+            try:
+                await self._event_loop_task
+            except asyncio.CancelledError:
+                pass
+            self._event_loop_task = None
 
     # -------------------------------------------------------------------------
     # 📬 Inbox (#47)
@@ -1503,11 +1536,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             await child_interpreter.start()
 
             # ⏳ Now actually wait for the child to finish. `status` flips to
-            #    "done" on completion, or "error" if the machine failed;
-            #    polling the child's own lifecycle is what makes `onDone` mean
-            #    what XState says it means.
-            while child_interpreter.status == "running":
-                await asyncio.sleep(_ACTOR_POLL_INTERVAL)
+            #    "done" on completion, or "error" if the machine failed --
+            #    `wait_done()` resolves the instant that happens (#43), so
+            #    `onDone` means what XState says it means with no poll and
+            #    no latency floor.
+            await child_interpreter.wait_done()
 
             # 💥 A child that FAILED must satisfy `onError`, not `onDone`.
             #    Treating any non-running status as success reported a crashed

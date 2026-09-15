@@ -370,6 +370,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         #: Actor-system registry. Only the ROOT interpreter's copy is used;
         #: children reach it by walking up `parent`.
         self._system: Dict[str, "BaseInterpreter[Any, Any]"] = {}
+        #: Callbacks to run the moment `status` becomes terminal
+        #: ("done" / "error"). The async engine registers one that resolves
+        #: its completion future; the parent awaits that instead of polling
+        #: (#43). Fired at most once.
+        self._terminal_listeners: List[Callable[[str], None]] = []
         #: Snapshots of child actors that could not be rebuilt on restore
         #: (their service was not registered). Preserved rather than dropped
         #: so no data is lost and the caller can recover them.
@@ -2828,6 +2833,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             if callable(hook):
                 hook(self, error)
         self._notify_subscribers()
+        self._on_terminal("error")
 
     def _complete(self, output: Any) -> None:
         """Marks the machine as finished and records its output.
@@ -2854,6 +2860,41 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             hook = getattr(plugin, "on_done", None)
             if callable(hook):
                 hook(self, output)
+        # 🧹 #57: completion REAPS. Order matters -- `on_done` above and the
+        #    subscriber notification inside `_teardown` both run BEFORE
+        #    children are stopped, so an observer reading `system` or a
+        #    child's context at completion sees a consistent picture.
+        self._on_terminal("done")
+
+    def _on_terminal(self, status: str) -> None:
+        """Common tail of `_complete()` and `_fail()`.
+
+        Fires the completion listeners (the parent's await, #43) and then
+        schedules teardown of everything the machine still holds (#57):
+        child actors, timers, invoked services and its actor-system
+        registration. `status`, `output`, `error` and `context` are
+        deliberately RETAINED -- reading a result after completion is the
+        normal pattern, and the owner can drop the reference.
+        """
+        listeners, self._terminal_listeners = self._terminal_listeners, []
+        for listener in listeners:
+            listener(status)
+        self._schedule_teardown()
+
+    def _schedule_teardown(self) -> None:
+        """Engine-specific: run `_teardown()` now (sync) or as a task (async)."""
+        raise NotImplementedError  # pragma: no cover
+
+    def _unregister_from_system(self) -> None:
+        """Remove every registry entry pointing at THIS interpreter (#57).
+
+        The counterpart `_register_in_system` never had: without it the
+        root's registry held a strong reference to every child that ever
+        declared a `systemId`, for the life of the root.
+        """
+        registry = self._system_registry()
+        for system_id in [k for k, v in registry.items() if v is self]:
+            del registry[system_id]
 
     @staticmethod
     def _matching_descriptors(
