@@ -156,7 +156,10 @@ class TestSpawnBlockingDefaultIsBounded(_Quiet):
             )
             await asyncio.wait_for(i.start(), timeout=5.0)
             await i.send("GO")
-            await asyncio.sleep(0.02)
+            for _ in range(500):
+                if i.current_state_ids == {"p.b"}:
+                    break
+                await asyncio.sleep(0.002)
             out = set(i.current_state_ids)
             await i.stop()
             return out

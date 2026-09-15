@@ -35,6 +35,16 @@ class _Quiet(unittest.TestCase):
         self.addCleanup(logging.disable, logging.NOTSET)
 
 
+async def _until(pred, timeout: float = 2.0) -> None:
+    """Poll *pred* until true. Fixed sleeps flake on a loaded host; a
+    bounded wait on the actual condition does not."""
+    for _ in range(int(timeout / 0.002)):
+        if pred():
+            return
+        await asyncio.sleep(0.002)
+    raise AssertionError("condition not met in time")
+
+
 # A child that finishes when told to.
 CHILD: Dict[str, Any] = {
     "id": "kid",
@@ -221,7 +231,7 @@ class TestActorCompletionSignal(_Quiet):
                 await asyncio.sleep(0.001)
             child = i._actors["p:k"]
             await i.send("LEAVE")
-            await asyncio.sleep(0.02)
+            await _until(lambda: child.status == "stopped" and not i._actors)
             out = (set(i.current_state_ids), child.status, list(i._actors))
             await i.stop()
             return out
@@ -275,10 +285,10 @@ class TestReapingAsync(_Quiet):
     ) -> None:
         async def main():
             i = await self._start().start()
-            await asyncio.sleep(0.02)
+            await _until(lambda: "order:legA" in i._actors)
             child = i._actors["order:legA"]
             await i.send("FILL")
-            await asyncio.sleep(0.05)
+            await _until(lambda: i.status == "done" and not i._actors)
             return i.status, child.status, dict(i._actors)
 
         status, child_status, actors = asyncio.run(main())
@@ -290,9 +300,9 @@ class TestReapingAsync(_Quiet):
         async def main():
             base = len(asyncio.all_tasks())
             i = await self._start().start()
-            await asyncio.sleep(0.02)
+            await _until(lambda: "order:legA" in i._actors)
             await i.send("FILL")
-            await asyncio.sleep(0.05)
+            await _until(lambda: len(asyncio.all_tasks()) - base == 0)
             return len(asyncio.all_tasks()) - base
 
         self.assertEqual(asyncio.run(main()), 0)
@@ -300,10 +310,10 @@ class TestReapingAsync(_Quiet):
     def test_system_registry_empty_after_completion(self) -> None:
         async def main():
             i = await self._start().start()
-            await asyncio.sleep(0.02)
+            await _until(lambda: "order:legA" in i._actors)
             before = dict(i.system.get_all())
             await i.send("FILL")
-            await asyncio.sleep(0.05)
+            await _until(lambda: not i.system.get_all())
             return before, dict(i.system.get_all())
 
         before, after = asyncio.run(main())
@@ -313,7 +323,7 @@ class TestReapingAsync(_Quiet):
     def test_system_registry_empty_after_explicit_stop(self) -> None:
         async def main():
             i = await self._start().start()
-            await asyncio.sleep(0.02)
+            await _until(lambda: "order:legA" in i._actors)
             await i.stop()
             return dict(i.system.get_all())
 
@@ -322,9 +332,9 @@ class TestReapingAsync(_Quiet):
     def test_output_and_context_readable_after_completion(self) -> None:
         async def main():
             i = await self._start().start()
-            await asyncio.sleep(0.02)
+            await _until(lambda: "order:legA" in i._actors)
             await i.send("FILL")
-            await asyncio.sleep(0.05)
+            await _until(lambda: i.status == "done")
             return i.status, i.output, len(i.context["blob"])
 
         self.assertEqual(asyncio.run(main()), ("done", {"ok": True}, 1000))
@@ -342,9 +352,9 @@ class TestReapingAsync(_Quiet):
             i = self._start()
             i.use(spy)
             await i.start()
-            await asyncio.sleep(0.02)
+            await _until(lambda: "order:legA" in i._actors)
             await i.send("FILL")
-            await asyncio.sleep(0.05)
+            await _until(lambda: spy.seen_children is not None)
             return spy.seen_children
 
         self.assertEqual(asyncio.run(main()), ["order:legA"])
@@ -352,9 +362,9 @@ class TestReapingAsync(_Quiet):
     def test_stop_after_done_is_noop(self) -> None:
         async def main():
             i = await self._start().start()
-            await asyncio.sleep(0.02)
+            await _until(lambda: "order:legA" in i._actors)
             await i.send("FILL")
-            await asyncio.sleep(0.05)
+            await _until(lambda: i.status == "done" and not i._actors)
             # `assertNoLogs` is 3.10+; capture by hand for the 3.9 floor.
             logging.disable(logging.NOTSET)
             records = []
