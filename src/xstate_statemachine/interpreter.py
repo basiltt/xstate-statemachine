@@ -121,6 +121,9 @@ class _PreStartQueue:
         items, self._items = self._items, []
         return items
 
+    def peek(self) -> List[Union[Event, AfterEvent, DoneEvent]]:
+        return list(self._items)
+
 
 def _completed() -> "asyncio.Future[None]":
     """An already-resolved awaitable -- what `send()` hands back.
@@ -339,12 +342,22 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
         return self
 
-    async def stop(self) -> None:
+    async def stop(
+        self, *, drain: bool = False, timeout: Optional[float] = None
+    ) -> None:
         """Stops the interpreter, cleaning up all tasks and spawned actors.
 
         This method gracefully shuts down the event loop, cancels all running
         background tasks (timers, services), and recursively stops any child
         actors that were spawned by this interpreter. It is idempotent.
+
+        Args:
+            drain: When `True`, process every event already accepted by
+                `send()` before tearing down, so nothing the caller was
+                told "yes" to is discarded (#47). Default `False` keeps
+                0.7.x semantics, but a non-empty inbox is now logged.
+            timeout: Upper bound in seconds for the drain; `None` waits
+                until the inbox is empty.
         """
         # 🛡️ Idempotency check.
         #
@@ -355,6 +368,18 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 "⚠️ Interpreter '%s' is not running. Skipping stop.", self.id
             )
             return
+
+        if drain and self.status == "running":
+            await self._drain_inbox(timeout)
+        pending = self._event_queue.qsize()
+        if pending:
+            logger.warning(
+                "📬 Interpreter '%s' stopping with %d pending event(s) that "
+                "will NOT be processed. Use stop(drain=True) to finish them, "
+                "or read `pending_events` / `get_snapshot()` to persist them.",
+                self.id,
+                pending,
+            )
 
         logger.info("🛑 Gracefully stopping interpreter '%s'...", self.id)
         self.status = "stopped"
@@ -520,6 +545,51 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             self._event_queue = asyncio.Queue()
             for item in pending:  # 📬 preserve pre-start send() order
                 self._event_queue.put_nowait(item)
+
+    # -------------------------------------------------------------------------
+    # 📬 Inbox (#47)
+    # -------------------------------------------------------------------------
+    def _snapshot_pending_events(
+        self,
+    ) -> List[Union[Event, DoneEvent, AfterEvent]]:
+        q = self._event_queue
+        if isinstance(q, _PreStartQueue):
+            return q.peek()
+        # 🔍 `asyncio.Queue` keeps its items in a deque named `_queue`. This
+        #    is CPython-internal but stable since 3.4 and read-only here; a
+        #    public alternative would mean re-implementing the queue.
+        return list(getattr(q, "_queue", ()))
+
+    def _enqueue_restored(self, event: Event) -> None:
+        self._event_queue.put_nowait(event)
+
+    async def drain_pending(self) -> List[Union[Event, DoneEvent, AfterEvent]]:
+        """Remove and return every accepted-but-unprocessed event.
+
+        The events are NOT processed. Intended for shutdown paths that must
+        persist accepted work durably before the process exits.
+        """
+        q = self._event_queue
+        if isinstance(q, _PreStartQueue):
+            return q.drain()
+        drained: List[Union[Event, DoneEvent, AfterEvent]] = []
+        while not q.empty():
+            drained.append(q.get_nowait())
+            q.task_done()
+        return drained
+
+    async def _drain_inbox(self, timeout: Optional[float]) -> None:
+        """Let the run loop process the inbox to empty (bounded by timeout)."""
+        try:
+            await asyncio.wait_for(self._event_queue.join(), timeout)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "⏱️ stop(drain=True) on '%s' timed out after %.3fs with %d "
+                "event(s) still pending.",
+                self.id,
+                timeout,
+                self._event_queue.qsize(),
+            )
 
     def _assert_owning_thread(self, method: str) -> None:
         """Raise if called from a thread that does not own our loop."""

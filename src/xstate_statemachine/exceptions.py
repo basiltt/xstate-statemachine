@@ -266,6 +266,40 @@ class TransitionFailedError(XStateMachineError):
         )
 
 
+class SnapshotVersionError(XStateMachineError):
+    """Raised when a snapshot was written by a NEWER library than this one.
+
+    A snapshot's ``version`` is an integer bumped only when the payload
+    layout changes. Older versions are upcast transparently; a newer one
+    cannot be read safely, so restoring it is refused rather than guessed.
+
+    Attributes:
+        found: The version recorded in the snapshot.
+        supported: The highest version this library can read.
+    """
+
+    def __init__(self, found: int, supported: int):
+        self.found = found
+        self.supported = supported
+        super().__init__(
+            f"Snapshot version {found} is newer than the supported version "
+            f"{supported}. Upgrade xstate-statemachine to restore it."
+        )
+
+
+class SnapshotDriftError(XStateMachineError):
+    """Raised when a snapshot does not belong to the machine restoring it.
+
+    Either the recorded ``machine_id`` differs, or the machine's structural
+    hash (states, transitions, guard/action names, invokes, delays) has
+    changed since the snapshot was taken -- a guard added, a state renamed.
+    Pass ``verify_machine_hash=False`` to `from_snapshot` when the drift is
+    known to be compatible and the application has migrated the payload.
+    """
+
+    pass
+
+
 class WrongThreadError(XStateMachineError):
     """Raised when a loop-affine method is called from a foreign thread.
 

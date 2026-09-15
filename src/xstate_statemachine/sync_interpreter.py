@@ -234,12 +234,18 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         )
         return self
 
-    def stop(self) -> None:
+    def stop(self, *, drain: bool = False) -> None:
         """Stops the interpreter and cleans up all associated resources.
 
         This method stops all child actors, cancels any pending `after` timers,
         and sets the interpreter's status to 'stopped', preventing further
         event processing. It's idempotent.
+
+        Args:
+            drain: Process any events still queued before tearing down
+                (#47). The sync engine processes inline, so the queue is
+                only ever non-empty when `stop()` is called from INSIDE an
+                action; `drain=True` finishes that macrostep first.
         """
         # 🚦 Idempotency check.
         #
@@ -249,6 +255,17 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # machine that completed, leaking actors and their timer threads.
         if self.status in ("uninitialized", "stopped"):
             return
+
+        if drain and self.status == "running" and not self._is_processing:
+            self._process_event_queue()
+        if self._event_queue:
+            logger.warning(
+                "📬 Interpreter '%s' stopping with %d pending event(s) that "
+                "will NOT be processed. Use stop(drain=True), or read "
+                "`pending_events` / `get_snapshot()` to persist them.",
+                self.id,
+                len(self._event_queue),
+            )
 
         logger.info(
             "🛑 Stopping sync interpreter '%s' and its actors…", self.id
@@ -313,6 +330,27 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         event_obj = self._prepare_event(event_or_type, **payload)
         self._event_queue.append(event_obj)
         self._process_event_queue()
+
+    # -------------------------------------------------------------------------
+    # 📬 Inbox (#47)
+    # -------------------------------------------------------------------------
+    def _snapshot_pending_events(
+        self,
+    ) -> List[Union[Event, DoneEvent, AfterEvent]]:
+        return list(self._event_queue)
+
+    def _enqueue_restored(self, event: Event) -> None:
+        self._event_queue.append(event)
+
+    def drain_pending(self) -> List[Union[Event, DoneEvent, AfterEvent]]:
+        """Remove and return every accepted-but-unprocessed event.
+
+        The events are NOT processed. Sync mirror of
+        `Interpreter.drain_pending` (a plain method: nothing to await).
+        """
+        drained = list(self._event_queue)
+        self._event_queue.clear()
+        return drained
 
     def send_events(
         self, events: List[Union[Dict[str, Any], Event, str]]

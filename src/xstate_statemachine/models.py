@@ -1248,6 +1248,8 @@ class MachineNode(StateNode[TContext, TEvent]):
                 f"or a callable returning one."
             )
         self.initial_context = raw_context
+        #: Lazily computed structural fingerprint; see `structure_hash`.
+        self._structure_hash: Optional[str] = None
         #: Upper bound on microsteps when settling transient ("always")
         #: transitions, mirroring XState's `maxIterations` (v5.31.0).
         self.max_iterations: int = int(config.get("maxIterations", 1000))
@@ -1294,6 +1296,21 @@ class MachineNode(StateNode[TContext, TEvent]):
 
         # 🚀 Call the parent constructor to build the entire state tree.
         super().__init__(self, config, config["id"])
+
+    @property
+    def structure_hash(self) -> str:
+        """A 16-hex-char fingerprint of this machine's behavioural structure.
+
+        Stable across `meta` / `description` edits and key reordering;
+        changes when a state, transition, guard NAME, action NAME, invoke or
+        `after` delay is added, removed or renamed. Written into every
+        snapshot as ``machine_hash`` and checked on restore (#45).
+        """
+        if self._structure_hash is None:
+            from .persistence import structure_hash
+
+            self._structure_hash = structure_hash(self)
+        return self._structure_hash
 
     def get_state_by_id(self, state_id: str) -> Optional[StateNode]:
         """Finds a state node by its fully qualified ID.

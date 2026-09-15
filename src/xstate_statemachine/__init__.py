@@ -99,6 +99,8 @@ from .exceptions import (
     NotSupportedError,
     StateNotFoundError,
     TransitionFailedError,
+    SnapshotDriftError,
+    SnapshotVersionError,
     UnhandledEventError,
     WrongThreadError,
     XStateMachineError,
@@ -199,6 +201,8 @@ __all__ = [
     "UnhandledEventError",
     "TransitionFailedError",
     "WrongThreadError",
+    "SnapshotDriftError",
+    "SnapshotVersionError",
     "MachineNode",
     # 🐍 Pythonic API
     "State",

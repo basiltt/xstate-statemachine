@@ -29,6 +29,7 @@ import copy
 import inspect
 import json
 import logging
+import time
 import warnings
 from typing import (
     Any,
@@ -81,6 +82,7 @@ from .models import (
 )
 from .plugins import PluginBase
 from .resolver import resolve_target_state
+from . import persistence
 
 # This TypeVar allows methods to return the specific subclass instance (self).
 TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter")
@@ -838,6 +840,14 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         seen = seen | {id(self)}
 
         return {
+            # 📦 #45: envelope. `version` is the payload LAYOUT version (see
+            #    persistence.SNAPSHOT_VERSION), not the package version.
+            #    `machine_hash` lets `from_snapshot` refuse a blob taken from
+            #    a machine whose structure has since changed.
+            "version": persistence.SNAPSHOT_VERSION,
+            "machine_id": self.machine.id,
+            "machine_hash": self.machine.structure_hash,
+            "taken_at": time.time(),
             "status": self.status,
             # 🧊 Deep-copy so the snapshot is a true point-in-time capture.
             #    Returning the live dict made later execution retroactively
@@ -860,6 +870,15 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             "deferred": [
                 {"type": e.type, "payload": copy.deepcopy(e.payload)}
                 for e in self._deferred_events
+            ],
+            # 📬 #47: the inbox. Events `send()` ACCEPTED but has not yet
+            #    processed. Without this a crash between accept and process
+            #    lost them with no trace; with it a restored machine resumes
+            #    with its mailbox intact.
+            "pending_events": [
+                {"type": e.type, "payload": copy.deepcopy(e.payload)}
+                for e in self.pending_events
+                if isinstance(e, Event)
             ],
             # 🕰️ Remembered history, so a restored machine can still honour a
             #    later transition to a history state.
@@ -950,6 +969,8 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         cls: Type["BaseInterpreter[Any, Any]"],
         snapshot_str: str,
         machine: MachineNode[TContext, TEvent],
+        *,
+        verify_machine_hash: bool = True,
     ) -> "BaseInterpreter[TContext, TEvent]":
         """Creates and restores an interpreter instance from a saved snapshot.
 
@@ -969,6 +990,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 `get_snapshot()`.
             machine (MachineNode[TContext, TEvent]): The corresponding
                 `MachineNode` definition that the snapshot belongs to.
+            verify_machine_hash (bool): When `True` (default) refuse a
+                snapshot whose recorded ``machine_hash`` differs from
+                *machine*'s -- the machine's structure changed since the
+                snapshot was taken. Pass `False` after migrating the payload
+                for a known-compatible change. No-op for unversioned
+                (0.7.x) snapshots, which carry no hash.
 
         Returns:
             BaseInterpreter[TContext, TEvent]: A new interpreter instance
@@ -979,6 +1006,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 in the provided machine definition.
             InvalidConfigError: If the snapshot string is not valid JSON, or
                 does not decode to a JSON object.
+            SnapshotVersionError: The snapshot was written by a newer
+                library version.
+            SnapshotDriftError: The snapshot belongs to a different machine
+                id, or the machine's structure has changed.
         """
         logger.info(
             "🔄 Restoring interpreter for machine '%s' from snapshot...",
@@ -1000,6 +1031,14 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 f"Snapshot must decode to a JSON object, got "
                 f"{type(snapshot).__name__}."
             )
+
+        # 📦 #45: envelope checks FIRST, before any state is touched, so a
+        #    refused restore leaves nothing half-built behind.
+        version = persistence.check_version(snapshot)
+        persistence.check_identity(
+            snapshot, machine, verify_hash=verify_machine_hash
+        )
+        snapshot = persistence.upcast(snapshot, version)
 
         # 🧪 Create a new instance of the correct interpreter class (sync/async)
         interpreter = cls(machine)
@@ -1051,6 +1090,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             Event(type=d["type"], payload=d.get("payload") or {})
             for d in snapshot.get("deferred", [])
         ]
+        # 📬 #47: re-enqueue the persisted inbox in original order.
+        for record in snapshot.get("pending_events") or []:
+            interpreter._enqueue_restored(
+                Event(type=record["type"], payload=record.get("payload") or {})
+            )
         if recorded_error:
             # 📝 The original exception type cannot survive JSON, so the
             #    message is preserved in a dedicated wrapper. Without this a
@@ -1086,7 +1130,9 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 interpreter._pending_actor_snapshots[actor_id] = record
                 continue
             child = cls.from_snapshot(
-                json.dumps(record["snapshot"], default=str), child_machine
+                json.dumps(record["snapshot"], default=str),
+                child_machine,
+                verify_machine_hash=verify_machine_hash,
             )
             child.parent = interpreter
             child.id = actor_id
@@ -1141,6 +1187,33 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         raise NotImplementedError(
             "Subclasses must implement the 'stop' method."
         )
+
+    # -------------------------------------------------------------------------
+    # 📬 Inbox (#47)
+    # -------------------------------------------------------------------------
+    # 🏛️ Architecture decision: `send()` ACCEPTS an event; processing happens
+    # later (next loop turn on the async engine, end of the current macrostep
+    # on the sync one). Between the two the event lives only in a private
+    # queue -- invisible, not persisted, and thrown away by `stop()`. For a
+    # machine on a critical path that is silent data loss. These hooks make
+    # the inbox first-class: readable, drainable and part of the snapshot.
+
+    @property
+    def pending_events(
+        self,
+    ) -> Tuple[Union[Event, DoneEvent, AfterEvent], ...]:
+        """Events accepted by `send()` but not yet processed, in order."""
+        return tuple(self._snapshot_pending_events())
+
+    def _snapshot_pending_events(
+        self,
+    ) -> List[Union[Event, DoneEvent, AfterEvent]]:
+        """Return the queue contents WITHOUT removing them. Engine-specific."""
+        raise NotImplementedError  # pragma: no cover
+
+    def _enqueue_restored(self, event: Event) -> None:
+        """Place a persisted inbox event back on the queue (restore path)."""
+        raise NotImplementedError  # pragma: no cover
 
     @overload
     def send(self, event_type: str, **payload: Any) -> Any: ...  # noqa
