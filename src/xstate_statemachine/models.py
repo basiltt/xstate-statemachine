@@ -123,6 +123,11 @@ def _validated_policy(
 # ⚠️ Order matters: `spawn_blocking_` must be tested before `spawn_`, since the
 # latter is a prefix of the former.
 SPAWN_BLOCKING_PREFIX = "spawn_blocking_"
+#: Default upper bound (ms) a `spawn_blocking_<key>` waits for its child
+#: when the machine sets no `spawnBlockingTimeout`. Generous enough for any
+#: realistic child, short enough that a child with no final state cannot
+#: wedge its parent silently (review F2). 30 s.
+DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS = 30_000.0
 SPAWN_PREFIX = "spawn_"
 
 
@@ -520,6 +525,49 @@ class TransitionDefinition:
         )
 
 
+def _required_positional_arity(fn: Any) -> Optional[int]:
+    """Number of REQUIRED positional parameters, or None if unknowable.
+
+    🏛️ `len(signature.parameters)` mis-classified ``def f(args, debug=False)``
+    as the two-positional form and raised `ValueError` outright for
+    builtins like ``dict`` (review F10). Only parameters with no default
+    decide the calling convention; anything un-introspectable falls back
+    to the XState single-mapping form.
+    """
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return None
+    return sum(
+        1
+        for p in params
+        if p.default is inspect.Parameter.empty
+        and p.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    )
+
+
+def _call_input_factory(fn: Any, context: Any, event: Any) -> Any:
+    """Invoke an ``input`` factory using the arity it actually requires.
+
+    * 2+ required positionals -> ``fn(context, event)``
+    * exactly 1               -> ``fn({"context", "event"})`` (XState form)
+    * 0                       -> ``fn()``
+    * un-introspectable (C builtins such as ``dict``) -> ``fn()``: the one
+      call that cannot silently mis-bind arguments. A builtin that needs
+      arguments raises a clear `TypeError` from its own call.
+    """
+    arity = _required_positional_arity(fn)
+    if arity is None or arity == 0:
+        return fn()
+    if arity >= 2:
+        return fn(context, event)
+    return fn({"context": context, "event": event})
+
+
 class InvokeDefinition:
     """Represents an invoked service or child actor within a state.
 
@@ -608,11 +656,7 @@ class InvokeDefinition:
         if raw is None:
             return None
         if callable(raw):
-            arity = len(inspect.signature(raw).parameters)
-            if arity >= 2:
-                raw = raw(context, event)
-            else:
-                raw = raw({"context": context, "event": event})
+            raw = _call_input_factory(raw, context, event)
         return copy.deepcopy(raw)
 
 
@@ -1328,6 +1372,9 @@ class MachineNode(StateNode[TContext, TEvent]):
         #: identifier must name a sibling or ancestor-scope state, never an
         #: unrelated state elsewhere in the tree that merely shares the last
         #: id segment. Default False preserves 0.7.x resolution.
+        #: Disables the sibling fallback for `.child` targets (opt-in via the
+        #: `strictTargets` config key). Distinct from `create_machine`'s
+        #: `strict_targets=` kwarg, which governs UNRESOLVABLE targets.
         self.strict_targets: bool = bool(config.get("strictTargets", False))
 
         #: Custom `id` → node registry, populated by `StateNode.__init__` as

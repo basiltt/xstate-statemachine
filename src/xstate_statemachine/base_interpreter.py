@@ -423,17 +423,13 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             return copy.deepcopy(produced) if produced is not None else {}
         context = copy.deepcopy(raw)
         # 📥 Expose input to the machine even without a context factory.
+        #    Deliberately ONLY under `context["input"]` (0.7.x contract):
+        #    letting input overwrite declared keys would make
+        #    `Interpreter(m, input=untrusted)` a context-injection vector
+        #    (review F11). A child wanting its keys filled from the parent
+        #    declares a `context` factory -- see `InvokeDefinition.input`.
         if input is not None and isinstance(context, dict):
             context.setdefault("input", input)
-            # 🌱 #42: a child that DECLARES the keys it expects (the filer's
-            #    `context: {"snapshot": None}`) gets them filled from a dict
-            #    input. Only keys already present are touched -- input never
-            #    invents context keys, so a typo in the parent cannot grow
-            #    the child's schema.
-            if isinstance(input, dict):
-                for key, value in input.items():
-                    if key in context and key != "input":
-                        context[key] = copy.deepcopy(value)
         return context
 
     # -------------------------------------------------------------------------
@@ -498,6 +494,8 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         * compound state        -> ``{"life": "booking"}``
         * parallel state        -> one key per region, recursively
         * not started           -> ``{}``
+        * mid-transition        -> the deepest ACTIVE ancestor's key for a
+          compound whose child is momentarily absent (never raises)
 
         🏛️ Architecture decision (#58): `current_state_ids` is a flat set of
         leaf ids -- exactly right for ``"x" in ids`` checks and deliberately
@@ -515,7 +513,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         return self._value_of(self.machine)
 
     def _value_of(self, node: StateNode) -> Union[str, Dict[str, Any]]:
-        """Recursive worker for :attr:`value`; *node* must be active."""
+        """Recursive worker for :attr:`value`; *node* must be active.
+
+        Returns the value of *node*'s active DESCENDANTS. For the root that
+        is the whole tree; for a compound child it is what sits under the
+        child's key.
+        """
         active = self._active_state_nodes
         if node.type == "parallel":
             return {
@@ -523,19 +526,27 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 for key, child in node.states.items()
                 if child in active
             }
-        # 🌿 Compound: exactly one active child. A compound with no active
-        #    child is a torn configuration (only constructible via a
-        #    malformed restore) -- say so rather than emit a half-tree.
+        # 🌿 Compound: normally exactly one active child. But `value` is
+        #    read from plugins, entry/exit actions and periodic snapshotters
+        #    WHILE a transition is unwinding -- `_exit_states` discards the
+        #    leaf before its ancestor, and `_enter_states` adds the parent
+        #    before descending -- so "compound with no active child" is a
+        #    routine transient, not corruption. Raising here made
+        #    `get_snapshot()` throw on a healthy machine (review F1).
         child = next((c for c in node.states.values() if c in active), None)
         if child is None:
-            if node.is_atomic or node.is_final:
-                return node.key
-            raise StateNotFoundError(
-                f"<no active child of '{node.id}'>", node.id
-            )
-        if child.is_atomic or child.is_final:
+            # Momentarily childless. The deepest active node is `node`
+            # itself; represent it as a LEAF (its key), the same shape an
+            # atomic state has, so callers never see a half-tree.
+            return node.key if node is not self.machine else {}
+        if child.is_atomic or child.is_final or self._is_childless(child):
             return child.key
         return {child.key: self._value_of(child)}
+
+    def _is_childless(self, node: StateNode) -> bool:
+        """True when a compound/parallel *node* has no active child (F1)."""
+        active = self._active_state_nodes
+        return not any(c in active for c in node.states.values())
 
     def matches(self, state: Union[str, Dict[str, Any]]) -> bool:
         """Reports whether a state is part of the active configuration.

@@ -50,6 +50,30 @@ semantics, so nothing changes on upgrade until you opt in.
   hint if it was placed at the top level instead of under `params`.
 - New exceptions: `UnhandledEventError`, `TransitionFailedError`,
   `WrongThreadError`.
+- **`interpreter.value`** — the active configuration in hierarchical form
+  (a string for atomic, `{parent: child}` for compound, one key per region
+  for parallel, `{}` before `start()`). `matches()` now also accepts a
+  partial `value` dict.
+- **Snapshot envelope v1** — persisted snapshots gain `version`,
+  `machine_id`, `machine_hash`, and `taken_at`. `from_snapshot` refuses a
+  newer `version` with `SnapshotVersionError` and a mismatched id or hash
+  with `SnapshotDriftError`; `verify_machine_hash=False` opts out after a
+  migration. Unversioned 0.7.x payloads restore unchanged. New
+  `persistence` module owns the format contract.
+- **Inbox durability** — `interpreter.pending_events`, `drain_pending()`,
+  and `stop(drain=True)` (with `timeout=` on the async engine). Snapshots
+  now carry `pending_events`, restored recursively for child actors too.
+- **`invoke.input` may be a callable** — resolved per spawn via
+  `InvokeDefinition.resolve_input()`, deep-copied, and forwarded to a
+  child machine as its creation `input` (previously never forwarded at
+  all for machine invokes).
+- **`Interpreter.wait_done()`** — a future resolved the instant the
+  machine reaches `"done"`/`"error"`, replacing a 5&nbsp;ms poll loop.
+- **`spawnBlockingTimeout`** machine config key bounds how long
+  `spawn_blocking_<key>` waits for the child.
+- **Production Characteristics guide** — measured numbers for
+  per-process throughput, `after` timer lateness under load, and the
+  `SyncInterpreter` threading contract.
 
 ### Fixed
 
@@ -62,10 +86,24 @@ semantics, so nothing changes on upgrade until you opt in.
   machine's defaults instead of aliasing the caller's dict.
 - `@action` / `@guard` / `@service` markers win over arity-based
   auto-registration in `MachineLogic` subclasses.
+- Runtime target resolution no longer falls back to a whole-tree search by
+  last id segment — a bare `target: "someState"` is strictly a sibling,
+  `#id`, `.child`, or exact top-level key; both engines share one resolver.
+- `spawn_blocking_<key>` on the async `Interpreter` now actually blocks the
+  parent until the child reaches a terminal status (it previously ran
+  non-blocking).
+- The pure API caches one probe per machine instead of rebuilding one per
+  call, cutting the cost of `transition()` / `get_next_snapshot()` by
+  roughly 3x; semantics are unchanged.
 
 ### Changed
 
 - Per-event `INFO` log calls on the hot path are now `DEBUG`.
+- Reaching a top-level final state now tears down immediately — child
+  actors are stopped, `after` timers and invoked services cancelled, and
+  the machine's actor-system registration removed — instead of waiting
+  for a later `stop()` call. `status`, `output`, `error`, and `context`
+  are retained; `stop()` on an already-done machine is a quiet no-op.
 
 For full details, see the [`[Unreleased]` section of CHANGELOG.md](https://github.com/basiltt/xstate-statemachine/blob/main/CHANGELOG.md#unreleased).
 

@@ -69,6 +69,7 @@ from .models import (
     TContext,
     TEvent,
     TransitionDefinition,
+    DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS,
     SPAWN_BLOCKING_PREFIX,
     spawn_service_key,
 )
@@ -176,6 +177,18 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 f"restarted. Create a new interpreter, or restore one with "
                 f"`SyncInterpreter.from_snapshot(...)`."
             )
+        if self.status == "running" and self._event_queue:
+            # ♻️ Restored from a snapshot WITH a persisted inbox (review F8):
+            #    `from_snapshot` sets status "running" and re-enqueues the
+            #    events, so the plain "already running" early-return below
+            #    would leave them sitting until an unrelated send() happened
+            #    to flush them, interleaved with new work. Replay them now,
+            #    in order -- the async engine's run loop does the same the
+            #    moment it starts.
+            logger.info("♻️ Resuming restored interpreter '%s'...", self.id)
+            self._process_event_queue()
+            self._process_transient_transitions()
+            return self
         if self.status != "uninitialized":
             logger.info(
                 "🚧 Interpreter '%s' already running. Skipping start.",
@@ -1304,6 +1317,11 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         self._actors[actor_id] = child
         self._actor_sources[actor_id] = key
 
+        # 🧹 Review F3: a child that finishes on its own leaves the map.
+        child._terminal_listeners.append(
+            lambda _s, aid=actor_id: self._actors.pop(aid, None)
+        )
+
         # --- Blocking Execution Path ---
         if blocking:
             child.start()
@@ -1365,9 +1383,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         finished = threading.Event()
         child._terminal_listeners.append(lambda _status: finished.set())
         timeout_ms = self.machine.spawn_blocking_timeout_ms
-        if not finished.wait(
-            None if timeout_ms is None else timeout_ms / 1000.0
-        ):
+        if timeout_ms is None:
+            timeout_ms = DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS  # review F2
+        if not finished.wait(timeout_ms / 1000.0):
             logger.warning(
                 "⏱️ Blocking spawn of '%s' did not finish within %s ms; "
                 "continuing without it.",
@@ -1555,8 +1573,20 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             if invocation.system_id:
                 params["systemId"] = invocation.system_id
             # 📥 #42: resolve `input` against the parent's live context so
-            #    the child machine is parameterised exactly as in XState.
-            child_input = invocation.resolve_input(self.context, None)
+            #    the child machine is parameterised exactly as in XState. A
+            #    raising resolver is a child FAILURE -> `error.platform`,
+            #    exactly as on the async engine (review F10).
+            try:
+                child_input = invocation.resolve_input(self.context, None)
+            except Exception as exc:  # noqa: BLE001 -- user code
+                self.send(
+                    DoneEvent(
+                        type=f"error.platform.{invocation.id}",
+                        data=exc,
+                        src=invocation.id,
+                    )
+                )
+                return
             if child_input is not None:
                 params["input"] = child_input
             self._spawn_actor(

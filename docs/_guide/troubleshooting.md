@@ -20,7 +20,9 @@ XStateMachineError          ← Base class for ALL library errors
 ├── NotSupportedError       ← Feature not available in current mode
 ├── UnhandledEventError     ← Event matched no transition and onUnhandled="error"
 ├── TransitionFailedError   ← Action raised and actionErrorPolicy="fail"
-└── WrongThreadError        ← Interpreter.send() called from a foreign thread
+├── WrongThreadError        ← Interpreter.send() called from a foreign thread
+├── SnapshotVersionError    ← Snapshot's version is newer than this library supports
+└── SnapshotDriftError      ← Snapshot doesn't belong to the machine restoring it
 ```
 
 ### Importing Exceptions
@@ -36,6 +38,8 @@ from xstate_statemachine import (
     UnhandledEventError,       # Unhandled event, onUnhandled="error"
     TransitionFailedError,     # Action raised, actionErrorPolicy="fail"
     WrongThreadError,          # send() called off the owning event loop's thread
+    SnapshotVersionError,      # Snapshot version newer than SNAPSHOT_VERSION
+    SnapshotDriftError,        # Snapshot machine_id/machine_hash mismatch
 )
 ```
 
@@ -288,6 +292,48 @@ interp.send_threadsafe("TICK")
 ```
 
 `SyncInterpreter` has no owning event loop and is unaffected.
+
+---
+
+### `SnapshotVersionError`
+
+**What it looks like:**
+
+```
+xstate_statemachine.exceptions.SnapshotVersionError: Snapshot version 999 is newer than the supported version 1. Upgrade xstate-statemachine to restore it.
+```
+
+**Why it happens:** The snapshot's `version` field (the payload layout version) is higher than this installed library's `SNAPSHOT_VERSION`. It was written by a newer release and cannot be read safely, so the restore is refused rather than half-applied.
+
+**How to fix it:** Upgrade `xstate-statemachine` to a version that supports that snapshot layout, or restore the snapshot with the library version that produced it.
+
+---
+
+### `SnapshotDriftError`
+
+**What it looks like:**
+
+```
+xstate_statemachine.exceptions.SnapshotDriftError: machine 'm' structure changed since this snapshot was taken (deadbeefdeadbeef != f21b173044383a6d). Migrate the snapshot, or pass verify_machine_hash=False if the change is known to be compatible.
+```
+
+or, for an id mismatch:
+
+```
+xstate_statemachine.exceptions.SnapshotDriftError: snapshot was taken from machine 'other' but is being restored into 'm'
+```
+
+**Why it happens:** `from_snapshot()` refuses to restore a snapshot into a machine it doesn't recognize — either the `machine_id` differs, or (when `verify_machine_hash=True`, the default) the machine's `structure_hash` has changed since the snapshot was taken (a guard added, a state renamed, a transition retargeted).
+
+**How to fix it:** If the change is known to be backward-compatible, migrate the persisted context/state as needed and restore with `verify_machine_hash=False`:
+
+```python
+restored = SyncInterpreter.from_snapshot(
+    migrated_json, machine, verify_machine_hash=False
+)
+```
+
+See [Snapshots — Snapshot Envelope](snapshots/#snapshot-envelope) for the full migration pattern.
 
 ---
 

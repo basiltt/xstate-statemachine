@@ -29,6 +29,7 @@ class _Quiet(unittest.TestCase):
     def setUp(self) -> None:
         logging.disable(logging.CRITICAL)
         self.addCleanup(logging.disable, logging.NOTSET)
+        WORK_LOG.clear()
 
 
 # A child whose work happens in entry actions and ends in a final state --
@@ -58,20 +59,55 @@ def _parent(spawn_action: str) -> Dict[str, Any]:
     }
 
 
+# 🏛️ Observation point: the child machine's `work` action appends to a list
+# the PARENT's next action reads. If blocking held, the parent's action
+# sees the child's work already done. (Reading `interp._actors` would not
+# work: since #57 a completed child is reaped from the map -- review F3.)
+WORK_LOG: List[str] = []
+
+
 def _logic(seen: List[Any]) -> MachineLogic:
     def after_spawn(interp, ctx, event, action_def):
-        # What does the parent's NEXT action observe about the child?
-        children = list(interp._actors.values())
-        seen.append([c.status for c in children])
+        # What does the parent's NEXT action observe about the child's work?
+        seen.append(["done"] if WORK_LOG else ["running"])
 
     def work(interp, ctx, event, action_def):
         ctx["n"] += 1
+        WORK_LOG.append("worked")
 
     return MachineLogic(
         actions={"after_spawn": after_spawn},
         services={
             "worker": create_machine(
                 WORKER, logic=MachineLogic(actions={"work": work})
+            )
+        },
+    )
+
+
+def _timer_logic(seen: List[Any]) -> MachineLogic:
+    """A child whose completion is strictly later than start(): an `after`
+    timer into a final state whose entry action marks the WORK_LOG."""
+    slow = {
+        "id": "slow",
+        "initial": "busy",
+        "states": {
+            "busy": {"after": {"40": "finished"}},
+            "finished": {"type": "final", "entry": ["mark"]},
+        },
+    }
+
+    def after_spawn(interp, ctx, event, action_def):
+        seen.append(["done"] if WORK_LOG else ["running"])
+
+    return MachineLogic(
+        actions={"after_spawn": after_spawn},
+        services={
+            "worker": create_machine(
+                slow,
+                logic=MachineLogic(
+                    actions={"mark": lambda *a: WORK_LOG.append("t")}
+                ),
             )
         },
     )
@@ -102,22 +138,7 @@ class TestAsyncSpawnBlocking(_Quiet):
         test below) `spawn_blocking_` would wait it out.
         """
         seen: List[Any] = []
-        slow = {
-            "id": "slow",
-            "initial": "busy",
-            "states": {
-                "busy": {"after": {"40": "finished"}},
-                "finished": {"type": "final"},
-            },
-        }
-
-        def after_spawn(interp, ctx, event, action_def):
-            seen.append([c.status for c in interp._actors.values()])
-
-        logic = MachineLogic(
-            actions={"after_spawn": after_spawn},
-            services={"worker": create_machine(slow)},
-        )
+        logic = _timer_logic(seen)
 
         async def main():
             i = await Interpreter(
@@ -132,22 +153,7 @@ class TestAsyncSpawnBlocking(_Quiet):
     def test_async_spawn_blocking_waits_out_a_timer_child(self) -> None:
         """Same timer child as above, blocking: parent sees it finished."""
         seen: List[Any] = []
-        slow = {
-            "id": "slow",
-            "initial": "busy",
-            "states": {
-                "busy": {"after": {"40": "finished"}},
-                "finished": {"type": "final"},
-            },
-        }
-
-        def after_spawn(interp, ctx, event, action_def):
-            seen.append([c.status for c in interp._actors.values()])
-
-        logic = MachineLogic(
-            actions={"after_spawn": after_spawn},
-            services={"worker": create_machine(slow)},
-        )
+        logic = _timer_logic(seen)
 
         async def main():
             i = await Interpreter(

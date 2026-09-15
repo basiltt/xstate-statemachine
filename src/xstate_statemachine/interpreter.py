@@ -70,6 +70,7 @@ from .models import (
     StateNode,
     TContext,
     TEvent,
+    DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS,
     SPAWN_BLOCKING_PREFIX,
     spawn_service_key,
 )
@@ -383,6 +384,12 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
         if drain and self.status == "running":
             await self._drain_inbox(timeout)
+            # 🏁 A drained event may have completed the machine (review F5).
+            #    That is a `done`, not a `stopped`: keep the terminal status
+            #    and let the reaping path (already scheduled) finish.
+            if self.status in ("done", "error"):
+                await self._teardown()
+                return
         pending = self._event_queue.qsize()
         if pending:
             logger.warning(
@@ -561,6 +568,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         self._terminal_listeners.append(_resolve)
         return fut
 
+    def _forget_actor(self, actor_id: str) -> None:
+        """Drop a finished spawned child from the actor maps."""
+        self._actors.pop(actor_id, None)
+        self._actor_sources.pop(actor_id, None)
+
     def _schedule_teardown(self) -> None:
         # 🧵 `_complete()` is called from inside `_enter_states`, mid-
         #    transition; tearing down children synchronously there would
@@ -587,6 +599,14 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             except asyncio.CancelledError:
                 pass
             self._event_loop_task = None
+            # 📬 Ack anything still queued so a concurrent
+            #    `_event_queue.join()` (stop(drain=True), review F5) can
+            #    complete instead of waiting forever for a dead consumer.
+            q = self._event_queue
+            if not isinstance(q, _PreStartQueue):
+                while not q.empty():
+                    q.get_nowait()
+                    q.task_done()
 
     # -------------------------------------------------------------------------
     # 📬 Inbox (#47)
@@ -621,9 +641,22 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         return drained
 
     async def _drain_inbox(self, timeout: Optional[float]) -> None:
-        """Let the run loop process the inbox to empty (bounded by timeout)."""
+        """Let the run loop process the inbox to empty (bounded by timeout).
+
+        🏛️ Review F5: if a drained event drives the machine to a terminal
+        status, `_on_terminal` schedules teardown, which cancels the run
+        loop while events remain queued -- and nothing ever calls
+        `task_done()` for them, so `join()` never returns. `_teardown`
+        therefore acks whatever is left before cancelling the loop, and
+        this wait is additionally bounded by the machine no longer running.
+        """
+        # 📬 Restored-but-unstarted: the buffer is a `_PreStartQueue` with
+        #    nothing draining it (review F6); there is nothing to wait for.
+        if isinstance(self._event_queue, _PreStartQueue):
+            return
+        join = asyncio.ensure_future(self._event_queue.join())
         try:
-            await asyncio.wait_for(self._event_queue.join(), timeout)
+            await asyncio.wait_for(join, timeout)
         except asyncio.TimeoutError:
             logger.warning(
                 "⏱️ stop(drain=True) on '%s' timed out after %.3fs with %d "
@@ -1301,6 +1334,13 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         )
         self._actors[actor_id] = child_interpreter
         self._actor_sources[actor_id] = actor_machine_key
+        # 🧹 #57 review F3: a spawned child that finishes on its own must
+        #    leave the parent's map, or a supervisor that spawns per request
+        #    grows without bound. (Invoked children are popped by their
+        #    manager task; spawned ones had no owner watching.)
+        child_interpreter._terminal_listeners.append(
+            lambda _s, aid=actor_id: self._forget_actor(aid)
+        )
         await child_interpreter.start()
 
         # ⏸️ #41: `spawn_blocking_<key>` -- the child runs to completion
@@ -1311,10 +1351,17 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         #    child with no final state cannot hang the parent forever.
         if action_def.type.startswith(SPAWN_BLOCKING_PREFIX):
             timeout_ms = self.machine.spawn_blocking_timeout_ms
+            if timeout_ms is None:
+                # 🛡️ An unbounded wait INSIDE a transition wedges the parent
+                #    forever if the child never reaches a final state, and
+                #    the machine still reports "running" (review F2). A
+                #    bounded default keeps the guarantee for children that
+                #    do finish and makes the failure mode a WARNING, not a
+                #    hang. Set `spawnBlockingTimeout` explicitly to tune.
+                timeout_ms = DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS
             try:
                 await asyncio.wait_for(
-                    child_interpreter.wait_done(),
-                    None if timeout_ms is None else timeout_ms / 1000.0,
+                    child_interpreter.wait_done(), timeout_ms / 1000.0
                 )
             except asyncio.TimeoutError:
                 logger.warning(

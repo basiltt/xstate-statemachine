@@ -355,9 +355,18 @@ class TestReapingAsync(_Quiet):
             await asyncio.sleep(0.02)
             await i.send("FILL")
             await asyncio.sleep(0.05)
+            # `assertNoLogs` is 3.10+; capture by hand for the 3.9 floor.
             logging.disable(logging.NOTSET)
-            with self.assertNoLogs(level="WARNING"):
+            records = []
+            handler = logging.Handler()
+            handler.emit = records.append  # type: ignore[assignment]
+            handler.setLevel(logging.WARNING)
+            logging.getLogger().addHandler(handler)
+            try:
                 await i.stop()
+            finally:
+                logging.getLogger().removeHandler(handler)
+            self.assertEqual(records, [], [r.getMessage() for r in records])
             return i.status
 
         self.assertEqual(asyncio.run(main()), "done")

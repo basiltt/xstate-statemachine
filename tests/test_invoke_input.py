@@ -11,10 +11,10 @@
 # result as the child's `input`.
 #
 # Seeding rule when the child has NO context factory: `input` is exposed
-# at `context["input"]` (the existing convention), AND -- because the filer's
-# repro and the most common real shape is "child declares the keys it
-# expects" -- any top-level key of a dict input that the child's default
-# context ALREADY declares is filled in. New keys are never invented.
+# at `context["input"]` -- the 0.7.x convention, unchanged. It is NOT
+# spread into declared keys: that would make `Interpreter(m, input=...)` a
+# context-injection vector (review F11). A child that wants its keys filled
+# from the parent declares a `context` factory: `lambda a: {...a["input"]}`.
 # -----------------------------------------------------------------------------
 """`invoke.input`: static, callable, deep-copied, forwarded to machines."""
 
@@ -38,11 +38,21 @@ class _Quiet(unittest.TestCase):
         self.addCleanup(logging.disable, logging.NOTSET)
 
 
+# The filer's child, now with the XState-idiomatic factory that reads input.
 CHILD: Dict[str, Any] = {
     "id": "leg",
     "initial": "work",
-    "context": {"snapshot": None},
+    "context": lambda args: {
+        "snapshot": (args["input"] or {}).get("snapshot")
+    },
     "states": {"work": {"on": {"GO": "done"}}, "done": {"type": "final"}},
+}
+# A child with a PLAIN context dict: input lands only at context["input"].
+CHILD_PLAIN: Dict[str, Any] = {
+    "id": "leg",
+    "initial": "work",
+    "context": {"snapshot": None},
+    "states": {"work": {}},
 }
 CHILD_WITH_FACTORY: Dict[str, Any] = {
     "id": "leg",
@@ -118,6 +128,7 @@ class TestInputReachesChildMachine(_Quiet):
         )
         self.assertEqual(child.context["snapshot"], {"venue": "X", "size": 7})
         self.assertEqual(child.input, {"snapshot": {"venue": "X", "size": 7}})
+        self.assertNotIn("input", child.context)  # the factory shaped it
 
     def test_callable_input_resolved_against_parent_context_and_event(
         self,
@@ -157,9 +168,14 @@ class TestInputReachesChildMachine(_Quiet):
         )
         self.assertEqual(child.context, {"venue": "Z", "seen": True})
 
-    def test_unknown_input_keys_are_not_invented_into_context(self) -> None:
-        child, _ = asyncio.run(_child_of(_parent({"snapshot": 1, "extra": 2})))
-        self.assertEqual(child.context["snapshot"], 1)
+    def test_plain_context_child_gets_input_only_under_input_key(
+        self,
+    ) -> None:
+        """No factory -> 0.7.x rule: declared keys are NOT overwritten."""
+        child, _ = asyncio.run(
+            _child_of(_parent({"snapshot": 1, "extra": 2}, child=CHILD_PLAIN))
+        )
+        self.assertIsNone(child.context["snapshot"])  # untouched
         self.assertNotIn("extra", child.context)
         self.assertEqual(child.context["input"], {"snapshot": 1, "extra": 2})
 

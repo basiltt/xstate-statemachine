@@ -44,12 +44,34 @@ SNAPSHOT_VERSION: int = 1
 # -----------------------------------------------------------------------------
 # 🔏 Structural hash
 # -----------------------------------------------------------------------------
+def _guard_shape(g: Any) -> Any:
+    """Recursive shape of a guard: name, composite children, `stateIn` target.
+
+    🏛️ `t.guard` alone is the ROOT guard's type -- ``"and"`` -- so swapping a
+    child of a composite guard, or the target of a `stateIn`, left the hash
+    unchanged (review F9). Those are exactly the edits that change which
+    transitions fire, i.e. the drift a restore must refuse.
+    """
+    if g is None:
+        return None
+    shape: Dict[str, Any] = {"type": g.type}
+    if getattr(g, "children", None):
+        shape["children"] = [_guard_shape(c) for c in g.children]
+    if getattr(g, "is_state_in", False) and isinstance(g.params, dict):
+        shape["stateIn"] = g.params.get("stateValue")
+    return shape
+
+
 def _transition_shape(t: "TransitionDefinition") -> Tuple[Any, ...]:
-    """The parts of a transition that change its BEHAVIOUR."""
+    """The parts of a transition that change its BEHAVIOUR.
+
+    Action ORDER is preserved (a tuple, not a sorted list): running
+    ``["debit", "credit"]`` is not the same behaviour as the reverse.
+    """
     return (
         t.event,
         t.target_str,
-        t.guard,
+        json.dumps(_guard_shape(t.guard_def), sort_keys=True),
         tuple(a.type for a in t.actions),
         bool(t.reenter),
     )

@@ -69,6 +69,8 @@ cancelled = get_next_snapshot(machine, start, "CANCEL")   # `start` is unchanged
 > **Note:** the pure API resolves guards and computes actions, but never
 > **executes** them. Actions are returned for inspection.
 
+As of 0.8.0, the pure API caches one probe interpreter per machine instead of building a fresh one on every call, so a single pure-API call now costs roughly one real `send()` plus one context copy (previously about 4x that). Snapshots returned remain independent and immutable — branching from the same starting point still doesn't mutate it. If you hold on to an `actions` list returned from one call across later calls, it is now a copy: later calls cannot alias into or mutate a list you're still holding.
+
 ---
 
 ## Waiting Helpers

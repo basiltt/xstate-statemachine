@@ -60,6 +60,7 @@ These keys go at the root of the JSON `config` (alongside `"id"` and `"states"`)
 | `guardErrorPolicy` | `"false"` \| `"true"` \| `"raise"` | `"false"` | What a raising guard is treated as. |
 | `onUnhandled` | `"ignore"` \| `"defer"` \| `"error"` | `"ignore"` | What happens to an event that matches no transition. |
 | `strictTargets` | `true` \| `false` | `false` | Disables the sibling-reading fallback for leading-dot (`.child`) targets. |
+| `spawnBlockingTimeout` | number (ms) | `30000` | Upper bound a `spawn_blocking_<key>` action waits for the child to reach a terminal status. Never unbounded (a child with no final state would otherwise wedge its parent); on timeout the parent logs a warning and continues (does not raise). |
 
 
 #### Example 1 -- Minimal (no logic)
@@ -673,18 +674,21 @@ ensuring clean cancellation when states are exited.
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
 | `await .start()` | `() -> Interpreter` | `Interpreter` | Starts the interpreter and its event loop. Enters the initial state(s). Returns `self` for chaining. Idempotent. |
-| `await .stop()` | `() -> None` | `None` | Gracefully stops the event loop, cancels all tasks and child actors. Idempotent. |
+| `await .stop(drain=False, timeout=None)` | `(bool, Optional[float]) -> None` | `None` | Gracefully stops the event loop, cancels all tasks and child actors. `drain=True` processes the inbox to empty first, bounded by `timeout` seconds (`None` waits until empty). Idempotent; a no-op on an already-`"done"`/`"stopped"` interpreter. |
 | `await .send(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], **Any) -> None` | `None` | Sends an event to the queue. Accepts a string, dict, or `Event` object. Non-blocking. Raises `WrongThreadError` when called from a thread other than the one whose event loop owns this interpreter. |
 | `.send_threadsafe(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], **Any) -> concurrent.futures.Future[None]` | `concurrent.futures.Future[None]` | Sends an event from **any** thread by routing the enqueue through the interpreter's owning event loop. Returns a `Future` you may `.result()` on to block until the event is queued (not processed). |
 | `await .send_events(events)` | `(List[Union[str, Dict, Event]]) -> None` | `None` | Sends a list of events to the queue. Non-blocking. |
+| `.matches(state)` | `(Union[str, Dict[str, Any]]) -> bool` | `bool` | Reports whether *state* is part of the active configuration. Accepts a string id (fully-qualified, `#`-prefixed, or trailing partial path) or a partial `.value` dict. |
 | `.use(plugin)` | `(PluginBase) -> Interpreter` | `Interpreter` | Registers a plugin. Returns `self` for chaining. |
 | `.get_snapshot()` | `() -> str` | `str` | Returns a JSON string snapshot of current state, context, and status. |
+| `await .drain_pending()` | `() -> List[Union[Event, DoneEvent, AfterEvent]]` | `list` | Removes and returns every accepted-but-unprocessed event, without processing it. |
+| `await .wait_done()` | `() -> asyncio.Future[str]` | `Future[str]` | Resolves to `"done"`/`"error"` the instant the machine reaches a terminal status. Already-resolved if the machine is terminal now. |
 
 #### Class Method
 
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
-| `Interpreter.from_snapshot(json_str, machine)` | `(str, MachineNode) -> Interpreter` | `Interpreter` | Restores an interpreter from a snapshot. Does **not** re-run entry actions or restart timers/services. |
+| `Interpreter.from_snapshot(json_str, machine, *, verify_machine_hash=True)` | `(str, MachineNode, bool) -> Interpreter` | `Interpreter` | Restores an interpreter from a snapshot. Does **not** re-run entry actions or restart timers/services. Raises `SnapshotVersionError` for a snapshot newer than this library supports, and `SnapshotDriftError` on a machine id or structural-hash mismatch (skip the hash check with `verify_machine_hash=False`). |
 
 #### Properties
 
@@ -692,12 +696,14 @@ ensuring clean cancellation when states are exited.
 |----------|------|-------------|
 | `.current_state_ids` | `Set[str]` | Set of fully qualified IDs of all currently active atomic/final states. |
 | `.context` | `Dict[str, Any]` | The mutable machine context. Changes made to this dict persist across transitions. |
-| `.status` | `str` | One of `"uninitialized"`, `"running"`, or `"stopped"`. |
+| `.status` | `str` | One of `"uninitialized"`, `"running"`, `"done"`, `"error"`, or `"stopped"`. |
 | `.id` | `str` | The interpreter's identifier (inherited from machine ID). |
 | `.parent` | `Optional[BaseInterpreter]` | Reference to parent interpreter (for spawned child actors), otherwise `None`. |
 | `.last_transition_ok` | `bool` | Whether the most recently processed transition's actions all ran to completion, given `actionErrorPolicy`. |
 | `.deferred_count` | `int` | Number of events currently buffered under `onUnhandled: "defer"`. |
 | `Interpreter.DEFER_MAX` | `int` | Class attribute bounding the deferral buffer's size; oldest entries are evicted once full. |
+| `.value` | `str \| Dict[str, Any]` | The active configuration in hierarchical form: a string for an atomic state, `{parent: child}` for compound, one key per region for parallel, `{}` before `start()`. |
+| `.pending_events` | `Sequence[Union[Event, DoneEvent, AfterEvent]]` | Events accepted by `send()` but not yet processed, FIFO order. |
 
 #### Full async example
 
@@ -759,17 +765,19 @@ background `threading.Thread` objects.
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
 | `.start()` | `() -> SyncInterpreter` | `SyncInterpreter` | Starts the interpreter and enters the initial state(s). Returns `self` for chaining. Idempotent. |
-| `.stop()` | `() -> None` | `None` | Stops the interpreter, cancels timers, stops child actors. Idempotent. |
+| `.stop(drain=False, timeout=None)` | `(bool, Optional[float]) -> None` | `None` | Stops the interpreter, cancels timers, stops child actors. `drain=True` processes the inbox to empty first. Idempotent; a no-op on an already-`"done"`/`"stopped"` interpreter. |
 | `.send(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], **Any) -> None` | `None` | Sends an event for **immediate** synchronous processing. Blocks until the event and all resulting transitions are fully processed. |
 | `.send_events(events)` | `(List[Union[str, Dict, Event]]) -> None` | `None` | Sends a list of events for immediate processing. |
+| `.matches(state)` | `(Union[str, Dict[str, Any]]) -> bool` | `bool` | Reports whether *state* is part of the active configuration. Accepts a string id or a partial `.value` dict. |
 | `.use(plugin)` | `(PluginBase) -> SyncInterpreter` | `SyncInterpreter` | Registers a plugin. Returns `self` for chaining. |
 | `.get_snapshot()` | `() -> str` | `str` | Returns a JSON string snapshot. |
+| `.drain_pending()` | `() -> List[Union[Event, DoneEvent, AfterEvent]]` | `list` | Removes and returns every accepted-but-unprocessed event, without processing it. |
 
 #### Class Method
 
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
-| `SyncInterpreter.from_snapshot(json_str, machine)` | `(str, MachineNode) -> SyncInterpreter` | `SyncInterpreter` | Restores an interpreter from a snapshot. |
+| `SyncInterpreter.from_snapshot(json_str, machine, *, verify_machine_hash=True)` | `(str, MachineNode, bool) -> SyncInterpreter` | `SyncInterpreter` | Restores an interpreter from a snapshot. Raises `SnapshotVersionError`/`SnapshotDriftError` as described for `Interpreter.from_snapshot` above. |
 
 #### Properties
 
@@ -779,9 +787,11 @@ Same as `Interpreter`:
 |----------|------|-------------|
 | `.current_state_ids` | `Set[str]` | Active atomic/final state IDs. |
 | `.context` | `Dict[str, Any]` | Mutable machine context. |
-| `.status` | `str` | `"uninitialized"`, `"running"`, or `"stopped"`. |
+| `.status` | `str` | `"uninitialized"`, `"running"`, `"done"`, `"error"`, or `"stopped"`. |
 | `.id` | `str` | Interpreter identifier. |
 | `.parent` | `Optional[BaseInterpreter]` | Parent interpreter reference. |
+| `.value` | `str \| Dict[str, Any]` | The active configuration in hierarchical form. |
+| `.pending_events` | `Sequence[Union[Event, DoneEvent, AfterEvent]]` | Events accepted but not yet processed. |
 
 #### Sync limitations
 
@@ -1375,6 +1385,20 @@ assert targets == {"myMachine.running"}
 
 ---
 
+### `MachineNode.structure_hash`
+
+```python
+machine.structure_hash -> str
+```
+
+A 16-hex-character structural fingerprint of the machine's behavior: states, transitions, guard/action **names**, invokes, and `after` delays. Stable across `meta`/`description` edits and key reordering; changes when a state, transition, guard, action, invoke, or delay is added, removed, or renamed. Lazily computed and cached on first access. Written into every snapshot as `machine_hash` and checked on restore — see [Snapshots — Snapshot Envelope](../guide/snapshots/#snapshot-envelope).
+
+```python
+print(machine.structure_hash)  # e.g. "f21b173044383a6d"
+```
+
+---
+
 ### `MachineNode.to_plantuml() -> str`
 
 Generates a [PlantUML](https://plantuml.com/) state diagram string from the
@@ -1412,6 +1436,21 @@ print(mmd)
 
 ---
 
+## `xstate_statemachine.persistence`
+
+The module that owns the snapshot format contract — used internally by `get_snapshot()` / `from_snapshot()`, and importable directly for tooling that needs to inspect or migrate snapshots.
+
+```python
+from xstate_statemachine.persistence import SNAPSHOT_VERSION, structure_hash
+```
+
+| Member | Description |
+|--------|-------------|
+| `SNAPSHOT_VERSION` | `int` constant — the current snapshot payload layout version. Bumped only when the layout changes, never on an ordinary package release. |
+| `structure_hash(machine)` | `(MachineNode) -> str` — computes the 16-hex-char structural fingerprint backing `MachineNode.structure_hash`. |
+
+---
+
 ## Exceptions
 
 All exceptions inherit from `XStateMachineError`, enabling broad error
@@ -1429,6 +1468,8 @@ specific exception types.
 | `UnhandledEventError` | An event selected no transition and `onUnhandled` is `"error"`. | Sending an event no active state (or its ancestors) handles. |
 | `TransitionFailedError` | An action raised and `actionErrorPolicy` is `"fail"`. | An action raises during a transition on a machine configured with `actionErrorPolicy: "fail"`. |
 | `WrongThreadError` | A loop-affine `Interpreter` method was called from a foreign thread. | Calling `interpreter.send()` from a thread other than the one that started the interpreter; use `send_threadsafe()` instead. |
+| `SnapshotVersionError` | A snapshot's `version` is newer than this library's `SNAPSHOT_VERSION`. | Restoring a snapshot written by a newer release of the library. |
+| `SnapshotDriftError` | A snapshot doesn't belong to the machine restoring it. | The snapshot's `machine_id` differs from the target machine's, or (when `verify_machine_hash=True`) `machine_hash` no longer matches `machine.structure_hash`. |
 
 ### `StateNotFoundError` attributes
 
@@ -1450,6 +1491,8 @@ Exception
       +-- UnhandledEventError
       +-- TransitionFailedError
       +-- WrongThreadError
+      +-- SnapshotVersionError
+      +-- SnapshotDriftError
 ```
 
 ### Error handling example
@@ -1663,9 +1706,19 @@ Represents an invoked service within a state.
 |-----------|------|-------------|
 | `.id` | `str` | Unique invocation ID. |
 | `.src` | `Optional[str]` | Service name from the logic registry. |
-| `.input` | `Optional[Dict]` | Static input data. |
+| `.input` | `Any` | Static value, or a callable resolved per spawn by `.resolve_input()`. |
 | `.on_done` | `List[TransitionDefinition]` | Transitions on success. |
 | `.on_error` | `List[TransitionDefinition]` | Transitions on failure. |
+
+#### `InvokeDefinition.resolve_input(context, event) -> Any`
+
+Resolves this invoke's `input` against the parent's live state, per spawn. `input` may be:
+
+- a static value — returned as-is (deep-copied);
+- `fn(context, event)` — the two-positional form;
+- `fn(args)` — one mapping `{"context": ..., "event": ...}` (XState form).
+
+Returns a **deep copy** of the resolved value so the child never aliases the parent's context; returns `None` when no `input` is declared.
 
 ---
 

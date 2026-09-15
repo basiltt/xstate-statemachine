@@ -19,10 +19,18 @@ from xstate_statemachine import Interpreter, MachineLogic, create_machine
 
 logging.disable(logging.CRITICAL)
 
+# 0.8.0 (#42): a child is parameterised by its `context` FACTORY reading
+# `args["input"]` -- XState's contract, and the one this issue's acceptance
+# criteria name ("child context factory receives input key"). A plain dict
+# context receives input only at `context["input"]`; it is not spread into
+# declared keys, because that would let any caller of
+# `Interpreter(m, input=...)` overwrite the machine's own defaults.
 CHILD = {
     "id": "leg",
     "initial": "work",
-    "context": {"snapshot": None},
+    "context": lambda args: {
+        "snapshot": (args["input"] or {}).get("snapshot")
+    },
     "states": {"work": {"on": {"GO": "done"}}, "done": {"type": "final"}},
 }
 

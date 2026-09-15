@@ -170,6 +170,58 @@ interp.stop()
 
 > **Tip:** Use `spawn_blocking_` when you need the child to complete before the parent processes the next event. Use `spawn_` (non-blocking) when the child should run concurrently in a background thread.
 
+As of 0.8.0, **both** the async `Interpreter` and `SyncInterpreter` honour `spawn_blocking_` the same way: the child actor runs to a terminal status (`"done"` or `"error"`) before the parent's *next* action executes. (Previously the async engine silently ran it non-blocking.)
+
+A machine-level `spawnBlockingTimeout` config key (milliseconds) bounds how long the parent waits:
+
+```json
+{
+  "id": "form",
+  "spawnBlockingTimeout": 5000,
+  "initial": "editing",
+  "states": { "editing": {} }
+}
+```
+
+When unset, a **30-second default** applies (`DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS`). The wait is never unbounded: an unbounded wait inside a transition would wedge the parent forever if the child never reaches a final state, while the machine still reported `"running"`. If the timeout lapses, the parent logs a warning and continues — it does **not** raise.
+
+### Passing input to an invoked child: `invoke.input`
+
+`invoke.input` may be a static dict, or a callable resolved fresh **per spawn** via `InvokeDefinition.resolve_input(context, event)`:
+
+```python
+"invoke": {
+    "src": "childActor",
+    "id": "kid",
+    # static form
+    "input": {"greeting": "hi"},
+}
+```
+
+```python
+"invoke": {
+    "src": "childActor",
+    "id": "kid",
+    # callable, two-positional form
+    "input": lambda ctx, evt: {"greeting": ctx["name"]},
+}
+```
+
+```python
+"invoke": {
+    "src": "childActor",
+    "id": "kid",
+    # callable, single-arg XState form: fn({"context": ..., "event": ...})
+    "input": lambda args: {"greeting": args["context"]["name"]},
+}
+```
+
+The resolved value is deep-copied and passed to the child as its creation `input`. **The idiomatic way to parameterise a child is a context factory** — `context: lambda args: {"snapshot": args["input"]["snapshot"]}` — which shapes the child's context from the input exactly as in XState. A child with a plain dict `context` receives the input only under `context["input"]`; its declared keys are **not** overwritten. (Spreading input into declared keys would let any caller of `Interpreter(machine, input=...)` override the machine's own defaults, so the library deliberately does not.)
+
+If the resolver callable itself raises, the invocation routes to `onError` rather than propagating.
+
+> A completed parent now stops its children too — see [Interpreters — Lifecycle: completion and teardown](interpreters/#lifecycle-completion-and-teardown).
+
 ## Built-in Actor Actions (v0.6.0)
 
 Alongside the `spawn_` naming convention above, XState v5's built-in action
