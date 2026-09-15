@@ -28,6 +28,7 @@ Helper utilities: awaiting completion and pure transition computation.
 import asyncio
 import copy
 import logging
+import threading
 import time
 import weakref
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
@@ -246,12 +247,26 @@ class PureSnapshot:
 # ONE probe per `MachineNode` is cached (weakly, so machines can be freed)
 # and reset per call, and only the outbound copy remains -- that is the one
 # that makes the returned snapshot immutable, which is the promise the guide
-# makes. `_PROBES` is deliberately module state: the probe is stateless
-# between calls (everything it holds is overwritten by `_reset_probe`).
+# makes.
+#
+# 🧵 The cache is PER THREAD (`threading.local`). A probe is a mutable
+# interpreter reset in place; two threads sharing one -- e.g. a UI preview
+# and a test runner calling `get_next_snapshot` on the same machine -- would
+# interleave `_reset_probe` / `send` / `_capture` and return each other's
+# results. The pre-#54 code was accidentally thread-safe because it built a
+# fresh probe per call; caching must not give that up. Confirmed on Linux CI
+# (502 wrong results from 8 threads on a shared cache) before this fix.
 # -----------------------------------------------------------------------------
-_PROBES: "weakref.WeakKeyDictionary[MachineNode[Any, Any], _Probe]" = (
-    weakref.WeakKeyDictionary()
-)
+_PROBE_CACHE = threading.local()
+
+
+def _probes() -> "weakref.WeakKeyDictionary[MachineNode[Any, Any], Any]":
+    """This thread's machine -> probe cache (created on first use)."""
+    cache = getattr(_PROBE_CACHE, "probes", None)
+    if cache is None:
+        cache = weakref.WeakKeyDictionary()
+        _PROBE_CACHE.probes = cache
+    return cache
 
 
 def _make_probe_class() -> type:
@@ -324,14 +339,15 @@ def _build_probe(
         Tuple[Any, List[ActionDefinition]]: The probe interpreter and the list
         that will collect executed actions (already cleared).
     """
-    probe = _PROBES.get(machine)
+    cache = _probes()
+    probe = cache.get(machine)
     if probe is None or input is not None:
-        # 🆕 First use, or an explicit `input` (which shapes the initial
-        #    context, so it cannot be applied to a cached instance).
+        # 🆕 First use on this thread, or an explicit `input` (which shapes
+        #    the initial context, so it cannot be applied to a cached one).
         probe = _probe_class()(machine, input=input)
         probe._recorded = []
         if input is None:
-            _PROBES[machine] = probe
+            cache[machine] = probe
     _reset_probe(probe, snapshot)
     return probe, probe._recorded
 

@@ -487,19 +487,50 @@ class TestStrictTargetsTwoSwitches(_Quiet):
 # -----------------------------------------------------------------------------
 class TestPureProbeGuards(_Quiet):
     def test_concurrent_pure_calls_from_threads_are_correct(self) -> None:
+        """The probe cache is per-thread (`threading.local`).
+
+        History: the review flagged the shared cache as unsafe; it did not
+        reproduce on Windows but produced 502 wrong results out of 4,000 on
+        Linux CI, where the GIL hands off differently. A per-thread cache
+        removes the shared mutable state entirely. Uses a machine whose
+        transition mutates context via `assign`, so an interleaved probe
+        would also corrupt CONTEXT, not just the state id.
+        """
         m = create_machine(
             {
                 "id": "m",
                 "initial": "a",
-                "states": {"a": {"on": {"GO": "b"}}, "b": {}},
+                "context": {"n": 0},
+                "states": {
+                    "a": {
+                        "on": {
+                            "GO": {
+                                "target": "b",
+                                "actions": [
+                                    {
+                                        "type": "assign",
+                                        "params": {"assignment": {"n": 1}},
+                                    }
+                                ],
+                            }
+                        }
+                    },
+                    "b": {"on": {"BACK": "a"}},
+                },
             }
         )
         base = get_initial_snapshot(m)
         bad = [0]
+        start = threading.Barrier(8)
 
         def w():
-            for _ in range(200):
-                if get_next_snapshot(m, base, "GO").state_ids != {"m.b"}:
+            start.wait()
+            for _ in range(500):
+                nxt = get_next_snapshot(m, base, "GO")
+                if nxt.state_ids != {"m.b"} or nxt.context != {"n": 1}:
+                    bad[0] += 1
+                back = get_next_snapshot(m, nxt, "BACK")
+                if back.state_ids != {"m.a"}:
                     bad[0] += 1
 
         ts = [threading.Thread(target=w) for _ in range(8)]

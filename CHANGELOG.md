@@ -143,7 +143,8 @@ preserves 0.7.x semantics, with two deliberate exceptions called out under
   which it previously did not.
 - **[wave 2]** The pure API (`transition` / `get_next_snapshot`) built a
   fresh interpreter subclass per call and deep-copied twice, costing 4x a
-  real `send()` (#54). One probe per machine is now cached and reset;
+  real `send()` (#54). One probe per machine per THREAD is now cached
+  (thread-local, so concurrent callers never share one) and reset;
   measured ~3x faster. Semantics unchanged.
 
 ### Changed

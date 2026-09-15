@@ -23,7 +23,7 @@ from src.xstate_statemachine import (
     create_machine,
     get_next_snapshot,
 )
-from src.xstate_statemachine.helpers import _PROBES
+from src.xstate_statemachine.helpers import _probes
 
 
 class _Quiet(unittest.TestCase):
@@ -235,7 +235,7 @@ class TestPureHandBuiltSnapshot(_Quiet):
         # The cached probe was not torn down; a second call from s0 works.
         again = get_next_snapshot(m, s0, "E")
         self.assertEqual(again.state_ids, {"m.f"})
-        self.assertIn(m, _PROBES)
+        self.assertIn(m, _probes())
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -100,7 +100,7 @@ class TestPureSemantics(_Quiet):
         again = get_next_snapshot(m, nxt, "BACK")
         self.assertEqual(again.state_ids, {"m.a"})
         # And the cached probe holds no live timers.
-        probe = helpers._PROBES[m]
+        probe = helpers._probes()[m]
         self.assertEqual(probe._after_events, {})
 
     def test_snapshots_remain_independent(self) -> None:
@@ -121,7 +121,7 @@ class TestPureSemantics(_Quiet):
         for _ in range(5):
             snap = get_next_snapshot(m, snap, "GO")
             snap = get_next_snapshot(m, snap, "BACK")
-        self.assertEqual(len([k for k in helpers._PROBES if k is m]), 1)
+        self.assertEqual(len([k for k in helpers._probes() if k is m]), 1)
 
 
 class TestPurePerf(_Quiet):
