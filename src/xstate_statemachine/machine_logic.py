@@ -28,6 +28,7 @@ from __future__ import (
 )  # Enables postponed evaluation of type annotations
 
 import inspect
+import warnings
 import logging
 from typing import (
     Any,
@@ -232,6 +233,37 @@ class MachineLogic(Generic[TContext, TEvent]):
 
             bound = getattr(self, name)
 
+            # 🏷️ #52: an EXPLICIT role marker (set by the `@action`,
+            #    `@guard`, `@service` decorators) wins outright. Before
+            #    0.8.0 the decorator was silently ignored here and arity
+            #    decided -- so a decorated 3-arg action became a service.
+            #    Registration stays keyed by the Python method name: that
+            #    is what a MachineLogic config references. (`pythonic`
+            #    re-keys to `_xsm_name`; the two are deliberately distinct
+            #    so the camelCase mapping of #17 does not regress.)
+            explicit = getattr(member, "_xsm_type", None)
+            if explicit is not None:
+                by_role = {
+                    "action": self.actions,
+                    "guard": self.guards,
+                    "service": self.services,
+                }
+                registry = by_role.get(explicit)
+                if registry is None:
+                    warnings.warn(
+                        f"MachineLogic subclass method '{name}' carries an "
+                        f"unknown role marker {explicit!r}; skipped.",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                    continue
+                if name not in registry:
+                    registry[name] = bound
+                    logger.debug(
+                        "🧬 Registered '%s' as %s (explicit).", name, explicit
+                    )
+                continue
+
             try:
                 arity = len(inspect.signature(bound).parameters)
             except (TypeError, ValueError):  # pragma: no cover
@@ -240,10 +272,16 @@ class MachineLogic(Generic[TContext, TEvent]):
 
             registry = registries.get(arity)
             if registry is None:
-                logger.debug(
-                    "⏭️ Skipping '%s': arity %d matches no logic contract.",
-                    name,
-                    arity,
+                # 📢 Was a silent debug line: a method the author clearly
+                #    meant as logic that matches no contract is a bug, not
+                #    a detail.
+                warnings.warn(
+                    f"MachineLogic subclass method '{name}' has arity "
+                    f"{arity}, which matches no logic contract (guard=2, "
+                    f"service=3, action=4); it was NOT registered. Decorate "
+                    f"it with @action / @guard / @service to state the role.",
+                    UserWarning,
+                    stacklevel=3,
                 )
                 continue
 
@@ -252,4 +290,8 @@ class MachineLogic(Generic[TContext, TEvent]):
                 continue
 
             registry[name] = bound
-            logger.debug("🧬 Auto-registered subclass method '%s'.", name)
+            logger.debug(
+                "🧬 Auto-registered subclass method '%s' by arity %d.",
+                name,
+                arity,
+            )
