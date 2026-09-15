@@ -264,3 +264,17 @@ class TransitionFailedError(XStateMachineError):
             f"'{source_state}'; the transition was rolled back and the "
             f"machine stopped (actionErrorPolicy='fail')."
         )
+
+
+class WrongThreadError(XStateMachineError):
+    """Raised when a loop-affine method is called from a foreign thread.
+
+    🏛️ `Interpreter.send()` returns an awaitable bound to the event loop
+    that started the interpreter. Called from another thread there is
+    nothing to await it, so before 0.8.0 the coroutine was silently
+    discarded and every event lost. This exception is raised eagerly, at
+    the call site, so the mistake is loud. Use
+    ``Interpreter.send_threadsafe()`` from other threads.
+    """
+
+    pass

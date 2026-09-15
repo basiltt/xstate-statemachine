@@ -24,6 +24,8 @@ recommended choice for most modern applications.
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import asyncio
+import concurrent.futures
+import threading
 import inspect
 import logging
 import uuid
@@ -45,6 +47,7 @@ from typing import (
 from .base_interpreter import BaseInterpreter
 from .events import AfterEvent, DoneEvent, Event
 from .exceptions import (
+    WrongThreadError,
     ActorSpawningError,
     ImplementationMissingError,
     InvalidConfigError,
@@ -127,6 +130,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
         # 🗃️ Concurrency & Task Management
         self.task_manager: TaskManager = TaskManager()
+        #: The asyncio loop that owns this interpreter, bound at start().
+        #: Lets send() detect a foreign-thread call instead of silently
+        #: discarding the coroutine (#37).
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop_thread_name: str = ""
         self._event_queue: asyncio.Queue[
             Union[Event, AfterEvent, DoneEvent]
         ] = asyncio.Queue()
@@ -199,6 +207,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         ):
             logger.info("♻️ Resuming restored interpreter '%s'...", self.id)
             if self.status == "running":
+                self._bind_loop()
                 self._event_loop_task = asyncio.create_task(
                     self._run_event_loop()
                 )
@@ -232,6 +241,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         logger.info("🏁 Starting interpreter '%s'...", self.id)
         self.status = "running"
         # 🌀 Launch the main event loop as a background task.
+        self._bind_loop()
         self._event_loop_task = asyncio.create_task(self._run_event_loop())
 
         try:
@@ -326,27 +336,38 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         logger.info("✅ Interpreter '%s' stopped successfully.", self.id)
 
     @overload
-    async def send(self, event_type: str, **payload: Any) -> None: ...  # noqa
+    def send(  # noqa: E704
+        self, event_type: str, **payload: Any
+    ) -> Awaitable[None]: ...
 
     @overload
-    async def send(  # noqa
+    def send(  # noqa: E704
         self, event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent]
-    ) -> None: ...
+    ) -> Awaitable[None]: ...
 
-    async def send(
+    def send(  # type: ignore[override]
         self,
         event_or_type: Union[
             str, Dict[str, Any], Event, DoneEvent, AfterEvent
         ],
         **payload: Any,
-    ) -> None:
+    ) -> Awaitable[None]:
         """Sends an event to the machine's internal queue for processing.
 
         This is the primary method for interacting with a running state machine.
         It provides a flexible API, accepting either a string type with keyword
         arguments for the payload, a dictionary, or a pre-constructed `Event`
-        object. This is a non-blocking operation that returns immediately after
-        placing the event in the queue.
+        object. Await the result: ``await interp.send("GO")``.
+
+        🏛️ Architecture decision (#37): this is a *regular* method that
+        returns an awaitable, not an ``async def``. An ``async def`` body
+        runs only when awaited -- so a call from a foreign thread (which
+        cannot await it) executed NOTHING: not the status guard, not the
+        queue put. The coroutine was discarded and every event silently
+        lost, with only a GC-timed RuntimeWarning the library did not own.
+        Doing the thread check and event normalisation eagerly, before any
+        await, means a wrong-thread call raises AT THE CALL SITE whether or
+        not the result is awaited. In-loop callers see no difference.
 
         Args:
             event_or_type: The event to send. Can be an event type string,
@@ -354,7 +375,21 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 or an `Event`, `DoneEvent`, or `AfterEvent` object.
             **payload: Keyword arguments that become the event's payload if
                 `event_or_type` is a string.
+
+        Raises:
+            WrongThreadError: Called from a thread other than the one whose
+                event loop owns this interpreter. Use
+                :meth:`send_threadsafe` from other threads.
         """
+        self._assert_owning_thread("send")
+        # 📦 Normalise eagerly so a malformed event also fails at the call site.
+        event_obj = self._prepare_event(event_or_type, **payload)
+        return self._enqueue(event_obj)
+
+    async def _enqueue(
+        self, event_obj: Union[Event, DoneEvent, AfterEvent]
+    ) -> None:
+        """The awaitable half of :meth:`send`."""
         # 🚪 Refuse events once the machine is no longer processing. Nothing
         #    drains the queue after `stop()`, so every `send()` accumulated
         #    forever — a slow memory leak in any long-lived process that keeps
@@ -368,12 +403,58 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 self.status,
             )
             return
-
-        # 📦 Use the centralized helper from the base class to normalize the input.
-        event_obj = self._prepare_event(event_or_type, **payload)
-
         # 📥 Place the standardized event object into the async queue.
         await self._event_queue.put(event_obj)
+
+    def send_threadsafe(
+        self,
+        event_or_type: Union[
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+        ],
+        **payload: Any,
+    ) -> "concurrent.futures.Future[None]":
+        """Send an event from ANY thread.
+
+        Routes the enqueue through the interpreter's owning event loop via
+        ``run_coroutine_threadsafe``, because ``asyncio.Queue`` is not
+        thread-safe. Returns a ``concurrent.futures.Future`` the caller may
+        ``.result()`` on to block until the event is queued (not processed).
+
+        Raises:
+            RuntimeError: The interpreter has not been started, so no loop
+                owns it yet.
+        """
+        if self._loop is None:
+            raise RuntimeError(
+                f"Interpreter '{self.id}' has not been started; there is no "
+                f"event loop to hand the event to."
+            )
+        event_obj = self._prepare_event(event_or_type, **payload)
+        return asyncio.run_coroutine_threadsafe(
+            self._enqueue(event_obj), self._loop
+        )
+
+    def _bind_loop(self) -> None:
+        """Record the loop (and thread) that owns this interpreter."""
+        self._loop = asyncio.get_running_loop()
+        self._loop_thread_name = threading.current_thread().name
+
+    def _assert_owning_thread(self, method: str) -> None:
+        """Raise if called from a thread that does not own our loop."""
+        if self._loop is None:
+            return  # not started yet; start() will bind
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is not self._loop:
+            raise WrongThreadError(
+                f"Interpreter '{self.id}' is bound to the event loop on "
+                f"thread '{self._loop_thread_name}'; {method}() was called "
+                f"from thread '{threading.current_thread().name}'. Events "
+                f"sent this way would be silently lost. Use "
+                f"send_threadsafe() from other threads."
+            )
 
     async def send_events(
         self, events: List[Union[Dict[str, Any], Event, str]]

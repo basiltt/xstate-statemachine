@@ -50,9 +50,16 @@ async def main() -> int:
 
     caught: list[str] = []
 
+    raised: list[str] = []
+
     def worker_bare() -> None:
         for i in range(N):
-            interp.send("FILL", i=i)  # noqa: RUF006 — the bug under test
+            try:
+                interp.send("FILL", i=i)  # noqa: RUF006 — the bug under test
+            except Exception as exc:  # noqa: BLE001
+                # 0.8.0 (#37): send() now raises WrongThreadError eagerly at
+                # the call site instead of discarding the coroutine.
+                raised.append(type(exc).__name__)
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
@@ -71,8 +78,12 @@ async def main() -> int:
           "RuntimeWarning('coroutine ... was never awaited') attributed to the "
           "caller's line, not an error raised by the library")
     print(f"EXPECTED either {N}/{N} delivered, or a raised error from send()")
-    if delivered_bare != N:
+    # Fixed if EITHER every event was delivered OR the library raised on
+    # every foreign-thread call (the issue's "or a raised error from send()").
+    if delivered_bare != N and len(raised) != N:
         ok = False
+    if raised:
+        print(f"OBSERVED send() raised {raised[0]} on all {len(raised)}/{N} foreign-thread calls")
     await interp.stop()
 
     # --- B) run_coroutine_threadsafe: works, but 10x cost -----------------
