@@ -3128,14 +3128,26 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                     guard_callable, self.context, event, params
                 )
             )
-        except Exception:
+        except Exception as exc:
+            # 🛡️ #35: apply the machine's guard_error_policy. Before 0.8.0 a
+            #    raising guard was unconditionally `False` -- a crashing
+            #    risk check and a failing one were indistinguishable to
+            #    every observer. The hook fires under EVERY policy so the
+            #    failure is observable even when the default keeps the
+            #    0.7.x behaviour.
+            policy = self.machine.guard_error_policy
             logger.exception(
                 "🔥 Guard '%s' raised an exception while evaluating event "
-                "'%s'; treating it as False.",
+                "'%s'; guardErrorPolicy=%r.",
                 guard.type,
                 event.type,
+                policy,
             )
-            result = False
+            for plugin in self._plugins:
+                plugin.on_guard_error(self, guard.type, event, exc)
+            if policy == "raise":
+                raise
+            result = policy == "true"
 
         logger.info(
             "🛡️  Evaluating guard '%s': %s",

@@ -21,6 +21,12 @@ class GuardSpy(PluginBase):
     def on_guard_evaluated(self, interpreter, guard_type, event, result):  # noqa: ANN001
         self.seen.append((guard_type, result))
 
+    # 0.8.0 (#35): the hook this issue asked for. A raising guard is now
+    # distinguishable from one that returned False -- regardless of the
+    # guardErrorPolicy in force.
+    def on_guard_error(self, interpreter, guard_type, event, error):  # noqa: ANN001
+        self.seen.append((guard_type, f"RAISED:{type(error).__name__}"))
+
 
 def build(guard_fn):
     cfg = {

@@ -539,3 +539,75 @@ class LoggingInspector(PluginBase[Any]):
             error,
             exc_info=True,  # 🐛 Include full traceback for debugging.
         )
+
+    # -------------------------------------------------------------------------
+    # 🚨 Error-observability hooks (0.8.0, #33)
+    # -------------------------------------------------------------------------
+
+    def on_transition_failed(
+        self,
+        interpreter: "BaseInterpreter[Any, Any]",
+        transition: "TransitionDefinition",
+        failed_actions: List[Tuple["ActionDefinition", BaseException]],
+    ) -> None:
+        """Logs a transition whose action list did not run to completion."""
+        logger.error(
+            "💥 [INSPECT] Transition from '%s' on '%s' had %d failing "
+            "action(s): %s (policy=%s)",
+            transition.source.id,
+            transition.event or "always",
+            len(failed_actions),
+            ", ".join(f"{a.type}: {e!r}" for a, e in failed_actions),
+            interpreter.machine.action_error_policy,
+        )
+
+    def on_guard_error(
+        self,
+        interpreter: "BaseInterpreter[Any, Any]",
+        guard_name: str,
+        event: "Event",
+        error: BaseException,
+    ) -> None:
+        """Logs a guard that raised instead of returning."""
+        logger.error(
+            "🔥 [INSPECT] Guard '%s' RAISED on event '%s' (policy=%s): %r",
+            guard_name,
+            event.type,
+            interpreter.machine.guard_error_policy,
+            error,
+        )
+
+    def on_unhandled_event(
+        self,
+        interpreter: "BaseInterpreter[Any, Any]",
+        event: "Event",
+        active_state_ids: Set[str],
+        disposition: str,
+    ) -> None:
+        """Logs an event that matched no transition."""
+        logger.warning(
+            "🍃 [INSPECT] Event '%s' unhandled in %s -> %s",
+            event.type,
+            sorted(active_state_ids),
+            disposition,
+        )
+
+    def on_error(
+        self, interpreter: "BaseInterpreter[Any, Any]", error: BaseException
+    ) -> None:
+        """Logs the interpreter entering the terminal error status."""
+        logger.error(
+            "🚨 [INSPECT] Interpreter '%s' entered status 'error': %r",
+            interpreter.id,
+            error,
+        )
+
+    def on_done(
+        self, interpreter: "BaseInterpreter[Any, Any]", output: Any
+    ) -> None:
+        """Logs the machine reaching a top-level final state."""
+        logger.info(
+            "🏁 [INSPECT] Interpreter '%s' is done. Output: %r",
+            interpreter.id,
+            output,
+        )
