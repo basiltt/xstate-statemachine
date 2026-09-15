@@ -543,10 +543,31 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             event: The external event to process first.
         """
         # 1️⃣ Process the initial event that was dequeued.
+        before = frozenset(self._active_state_nodes)
         await self._process_event(event)
 
         # 2️⃣ Immediately settle any event-less ("always") transitions.
         await self._settle_transient_transitions()
+
+        # 3️⃣ Replay deferred events now that the configuration changed.
+        #
+        # 🏛️ Architecture decision: replayed HERE, inside the same run-loop
+        #    iteration, rather than re-queued. That is what puts them ahead
+        #    of live traffic in original order (LC-18) without touching the
+        #    asyncio.Queue. Anything still unhandled in the new state is
+        #    re-deferred by `_handle_unhandled_event`, not re-dropped.
+        #    Bounded by the same microstep limit as `always` loops.
+        if before != frozenset(self._active_state_nodes):
+            limit = getattr(self.machine, "max_iterations", 1000)
+            rounds = 0
+            while self._deferred_events and rounds < limit:
+                rounds += 1
+                snapshot = frozenset(self._active_state_nodes)
+                for deferred in self._take_deferred_for_replay():
+                    await self._process_event(deferred)
+                    await self._settle_transient_transitions()
+                if snapshot == frozenset(self._active_state_nodes):
+                    break  # nothing moved; remaining ones stay deferred
 
     async def _settle_transient_transitions(self) -> None:
         """Runs eventless ("always") transitions until the state is stable.

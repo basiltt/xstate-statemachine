@@ -755,6 +755,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             ),
             "output": self.output,
             "error": str(self.error) if self.error is not None else None,
+            # 📨 Deferred events survive a crash: drained on start()
+            #    before any invoke is re-driven.
+            "deferred": [
+                {"type": e.type, "payload": copy.deepcopy(e.payload)}
+                for e in self._deferred_events
+            ],
             # 🕰️ Remembered history, so a restored machine can still honour a
             #    later transition to a history state.
             "history": {
@@ -928,6 +934,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         # 🏁 Restore completion output and any recorded error.
         interpreter.output = snapshot.get("output")
         recorded_error = snapshot.get("error")
+        interpreter._deferred_events = [
+            Event(type=d["type"], payload=d.get("payload") or {})
+            for d in snapshot.get("deferred", [])
+        ]
         if recorded_error:
             # 📝 The original exception type cannot survive JSON, so the
             #    message is preserved in a dedicated wrapper. Without this a
@@ -1309,7 +1319,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         # 1. Select every transition this event triggers (one per region).
         transitions = self._select_transitions(event)
         if not transitions:
-            logger.debug("🍃 No transition found for event '%s'.", event.type)
+            self._handle_unhandled_event(event)
             return
 
         # 2. Execute each selected transition in isolation. A transition may
@@ -2360,6 +2370,87 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             bool: `True` if any `onError` transition is declared.
         """
         return bool(getattr(invocation, "on_error", None))
+
+    # 📨 Maximum events held under ``onUnhandled: "defer"`` before the
+    #    oldest is evicted. A permanently-unhandled event type must not
+    #    grow the buffer without bound.
+    DEFER_MAX: int = 1000
+
+    def _handle_unhandled_event(
+        self, event: Union[Event, DoneEvent, AfterEvent]
+    ) -> None:
+        """Apply the machine's ``onUnhandled`` policy to a matched-nothing event.
+
+        🏛️ Architecture decision: per XState an unhandled event is silently
+        ignored, and that remains the default. But on a critical path a
+        typo'd event name is a silent no-op no test can catch, and a fill
+        that arrives one microstep before its handler is armed is *lost*.
+        Both engines route here so they cannot disagree.
+
+        System events (``done.*``, ``after.*``, the init event) are exempt:
+        the machine did not ask for them and cannot be blamed for not
+        handling them.
+        """
+        if not isinstance(event, Event) or event.type.startswith(
+            ("done.", "after.", "error.", "___xstate")
+        ):
+            logger.debug("🍃 No transition for system event '%s'.", event.type)
+            return
+
+        policy = self.machine.on_unhandled
+        # Report the LEAF ids the user sees, not the internal configuration
+        # (which also holds every ancestor including the root).
+        active = self.current_state_ids
+
+        if policy == "error":
+            err = UnhandledEventError(event.type, active)
+            self._notify_unhandled(event, active, "errored")
+            self._fail(err)
+            return
+
+        if policy == "defer":
+            disposition = "deferred"
+            if len(self._deferred_events) >= self.DEFER_MAX:
+                evicted = self._deferred_events.pop(0)
+                # 🔔 Report the eviction against the EVICTED event, so the
+                #    caller learns which one was lost.
+                self._notify_unhandled(evicted, active, "dropped")
+            self._deferred_events.append(event)
+            self._notify_unhandled(event, active, disposition)
+            logger.debug(
+                "📨 Deferred '%s' (%d held).",
+                event.type,
+                len(self._deferred_events),
+            )
+            return
+
+        logger.debug("🍃 No transition found for event '%s'.", event.type)
+        self._notify_unhandled(event, active, "ignored")
+
+    def _notify_unhandled(
+        self, event: Event, active: Set[str], disposition: str
+    ) -> None:
+        for plugin in self._plugins:
+            plugin.on_unhandled_event(self, event, active, disposition)
+
+    @property
+    def deferred_count(self) -> int:
+        """Events currently held under ``onUnhandled: "defer"``."""
+        return len(self._deferred_events)
+
+    def _take_deferred_for_replay(self) -> List[Event]:
+        """Detach the deferral buffer for replay after a state change.
+
+        Returns the held events in original order and clears the buffer.
+        The caller re-injects them at the HEAD of its queue, ahead of live
+        traffic; any that are still unhandled in the new state come straight
+        back through `_handle_unhandled_event` and are re-deferred, so
+        nothing is re-dropped.
+        """
+        if not self._deferred_events:
+            return []
+        held, self._deferred_events = self._deferred_events, []
+        return held
 
     def _apply_action_error_policy(
         self,

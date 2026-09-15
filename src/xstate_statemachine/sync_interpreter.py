@@ -369,8 +369,19 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 for plugin in self._plugins:
                     plugin.on_event_received(self, current_event)
 
+                before = frozenset(self._active_state_nodes)
                 self._process_event(current_event)
                 self._process_transient_transitions()
+
+                # 📨 Replay deferred events at the HEAD of the queue, ahead of
+                #    live traffic and in original order (LC-18). `extendleft`
+                #    reverses, so feed it reversed to preserve order. Events
+                #    still unhandled in the new state come straight back
+                #    through `_handle_unhandled_event` and are re-deferred.
+                if before != frozenset(self._active_state_nodes):
+                    held = self._take_deferred_for_replay()
+                    if held:
+                        self._event_queue.extendleft(reversed(held))
         finally:
             self._is_processing = False
             logger.debug("🎉 Event processing cycle completed. Queue empty.")
@@ -394,9 +405,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # 1. Select every transition this event triggers (one per region).
         transitions = self._select_transitions(event)
         if not transitions:
-            logger.debug(
-                "🤷 No valid transition found for event '%s'.", event.type
-            )
+            self._handle_unhandled_event(event)
             return
 
         # 2. Execute each in turn, skipping any invalidated by an earlier one.

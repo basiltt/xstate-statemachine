@@ -253,7 +253,11 @@ class PluginBase(Generic[TInterpreter]):
         pass  # pragma: no cover
 
     def on_unhandled_event(
-        self, interpreter: TInterpreter, event: "Event"
+        self,
+        interpreter: TInterpreter,
+        event: "Event",
+        active_state_ids: Set[str],
+        disposition: str,
     ) -> None:
         """Called when an event selects no transition in the current state.
 
@@ -261,12 +265,17 @@ class PluginBase(Generic[TInterpreter]):
         ignored. But "ignored" and "lost" look identical from the outside,
         and for a machine on a critical path (an order lifecycle, a payment)
         a typo'd event name is a silent no-op that no test can catch. This
-        hook makes every dropped event observable. Fires exactly once per
-        such event, in both engines.
+        hook makes every such event observable, whatever the machine's
+        ``onUnhandled`` policy did with it. Fires exactly once per event,
+        in both engines.
 
         Args:
             interpreter: The interpreter instance.
             event: The event that matched nothing.
+            active_state_ids: The state ids active when it arrived.
+            disposition: What happened to it — ``"ignored"``,
+                ``"deferred"``, ``"errored"`` or ``"dropped"`` (the deferral
+                buffer was full and the oldest entry was evicted).
         """
         pass  # pragma: no cover
 
