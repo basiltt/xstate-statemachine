@@ -167,6 +167,23 @@ Children can transition between each other freely:
 }
 ```
 
+### Relative and Absolute Targets
+
+A target beginning with a dot, such as `".child"`, resolves into the **source** state's own children — matching XState v5. So `{target: ".profile"}` on `dashboard` means "my own child `profile`", not a sibling of `dashboard`.
+
+The 0.7.x reading — resolving `.child` as a sibling of the source, i.e. a child of the source's *parent* — is kept as a fallback for machines written against that behavior. Set `"strictTargets": true` on the machine to disable the fallback and get a hard error at `create_machine()` time instead of a silent mismatch:
+
+```json
+{
+  "id": "m",
+  "strictTargets": true,
+  "initial": "loggedIn",
+  "states": { "loggedIn": {} }
+}
+```
+
+An absolute target such as `"#machineId.path.to.state"` resolves from the machine root regardless of where the transition is defined, and is unaffected by `strictTargets`.
+
 ### Parent-Level Transitions (Catch-All)
 
 Transitions defined on the parent apply to **all** children. If a child doesn't handle an event, it bubbles up to the parent:

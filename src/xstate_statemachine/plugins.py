@@ -29,7 +29,9 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
+    List,
     Set,
+    Tuple,
     TypeVar,
 )  # Core typing utilities
 
@@ -172,25 +174,132 @@ class PluginBase(Generic[TInterpreter]):
     ) -> None:
         """Called when a user-supplied action raises.
 
-        Action errors are **contained**: the exception is logged, the
-        remaining actions in that list are skipped, and the transition still
-        completes, so a buggy side effect cannot corrupt the configuration or
-        kill a long-lived interpreter.
+        What happens *next* is decided by the machine's
+        ``action_error_policy`` (see :func:`create_machine`):
 
-        The trade-off is that the failure is otherwise invisible to your
-        program — the machine advances as though the action succeeded. This
-        hook is the supported way to observe it: route failures to Sentry, a
-        metrics counter, or a dead-letter queue.
+        * ``"continue"`` — the remaining actions in the list are skipped and
+          the transition still completes. The failure is reported through
+          :meth:`on_transition_failed` and ``interpreter.last_transition_ok``.
+        * ``"rollback"`` — the transition is aborted and the pre-transition
+          configuration and context are restored.
+        * ``"fail"`` — rolled back, then the interpreter stops with
+          ``status == "error"``.
+
+        This hook fires under every policy, before the policy is applied, so
+        it is the right place to route failures to Sentry, a metrics counter
+        or a dead-letter queue regardless of how the machine recovers.
 
         Args:
             interpreter: The interpreter instance.
             action: The `ActionDefinition` whose implementation raised.
-            error: The exception that was raised and contained.
+            error: The exception that was raised.
 
         Example:
             >>> class ActionErrorReporter(PluginBase):
             ...     def on_action_error(self, interpreter, action, error):
             ...         sentry_sdk.capture_exception(error)  # noqa
+        """
+        pass  # pragma: no cover
+
+    def on_transition_failed(
+        self,
+        interpreter: TInterpreter,
+        transition: "TransitionDefinition",
+        failed_actions: List[Tuple["ActionDefinition", BaseException]],
+    ) -> None:
+        """Called when a transition's action list did not run to completion.
+
+        🏛️ Architecture decision: :meth:`on_transition` documents itself as
+        firing after a *successful* transition, yet before 0.8.0 it also
+        fired when an action had raised part-way through the list — the
+        machine reported a state its own actions never finished building,
+        and that state could be persisted as truth. This hook exists so a
+        partially-executed transition is *distinguishable* from a complete
+        one.
+
+        Fires under every ``action_error_policy``. Under ``"continue"`` it is
+        followed by :meth:`on_transition` (the transition did commit); under
+        ``"rollback"`` and ``"fail"`` it is not (nothing committed).
+
+        Args:
+            interpreter: The interpreter instance.
+            transition: The transition whose actions failed.
+            failed_actions: ``(action, exception)`` pairs, in execution
+                order. Never empty.
+        """
+        pass  # pragma: no cover
+
+    def on_guard_error(
+        self,
+        interpreter: TInterpreter,
+        guard_name: str,
+        event: "Event",
+        error: BaseException,
+    ) -> None:
+        """Called when a guard implementation raises instead of returning.
+
+        Before 0.8.0 a raising guard was silently treated as ``False`` — a
+        crashing risk check and a failing one were indistinguishable to
+        every observer. This hook fires with the original exception under
+        every ``guard_error_policy``, immediately before
+        :meth:`on_guard_evaluated` reports the substituted result.
+
+        Args:
+            interpreter: The interpreter instance.
+            guard_name: The guard that raised.
+            event: The event being evaluated when it raised.
+            error: The exception the guard raised.
+        """
+        pass  # pragma: no cover
+
+    def on_unhandled_event(
+        self,
+        interpreter: TInterpreter,
+        event: "Event",
+        active_state_ids: Set[str],
+        disposition: str,
+    ) -> None:
+        """Called when an event selects no transition in the current state.
+
+        Per XState semantics an unhandled event is not an error — it is
+        ignored. But "ignored" and "lost" look identical from the outside,
+        and for a machine on a critical path (an order lifecycle, a payment)
+        a typo'd event name is a silent no-op that no test can catch. This
+        hook makes every such event observable, whatever the machine's
+        ``onUnhandled`` policy did with it. Fires exactly once per event,
+        in both engines.
+
+        Args:
+            interpreter: The interpreter instance.
+            event: The event that matched nothing.
+            active_state_ids: The state ids active when it arrived.
+            disposition: What happened to it — ``"ignored"``,
+                ``"deferred"``, ``"errored"`` or ``"dropped"`` (the deferral
+                buffer was full and the oldest entry was evicted).
+        """
+        pass  # pragma: no cover
+
+    def on_error(
+        self, interpreter: TInterpreter, error: BaseException
+    ) -> None:
+        """Called when the interpreter enters the ``"error"`` status.
+
+        This is the terminal failure signal: the machine has stopped and
+        will process no further events. ``interpreter.error`` holds the same
+        exception.
+
+        Args:
+            interpreter: The interpreter instance.
+            error: The exception that stopped the machine.
+        """
+        pass  # pragma: no cover
+
+    def on_done(self, interpreter: TInterpreter, output: Any) -> None:
+        """Called when the machine reaches a top-level final state.
+
+        Args:
+            interpreter: The interpreter instance.
+            output: The machine's ``output`` value (may be ``None``).
         """
         pass  # pragma: no cover
 
@@ -429,4 +538,76 @@ class LoggingInspector(PluginBase[Any]):
             invocation.id,
             error,
             exc_info=True,  # 🐛 Include full traceback for debugging.
+        )
+
+    # -------------------------------------------------------------------------
+    # 🚨 Error-observability hooks (0.8.0, #33)
+    # -------------------------------------------------------------------------
+
+    def on_transition_failed(
+        self,
+        interpreter: "BaseInterpreter[Any, Any]",
+        transition: "TransitionDefinition",
+        failed_actions: List[Tuple["ActionDefinition", BaseException]],
+    ) -> None:
+        """Logs a transition whose action list did not run to completion."""
+        logger.error(
+            "💥 [INSPECT] Transition from '%s' on '%s' had %d failing "
+            "action(s): %s (policy=%s)",
+            transition.source.id,
+            transition.event or "always",
+            len(failed_actions),
+            ", ".join(f"{a.type}: {e!r}" for a, e in failed_actions),
+            interpreter.machine.action_error_policy,
+        )
+
+    def on_guard_error(
+        self,
+        interpreter: "BaseInterpreter[Any, Any]",
+        guard_name: str,
+        event: "Event",
+        error: BaseException,
+    ) -> None:
+        """Logs a guard that raised instead of returning."""
+        logger.error(
+            "🔥 [INSPECT] Guard '%s' RAISED on event '%s' (policy=%s): %r",
+            guard_name,
+            event.type,
+            interpreter.machine.guard_error_policy,
+            error,
+        )
+
+    def on_unhandled_event(
+        self,
+        interpreter: "BaseInterpreter[Any, Any]",
+        event: "Event",
+        active_state_ids: Set[str],
+        disposition: str,
+    ) -> None:
+        """Logs an event that matched no transition."""
+        logger.warning(
+            "🍃 [INSPECT] Event '%s' unhandled in %s -> %s",
+            event.type,
+            sorted(active_state_ids),
+            disposition,
+        )
+
+    def on_error(
+        self, interpreter: "BaseInterpreter[Any, Any]", error: BaseException
+    ) -> None:
+        """Logs the interpreter entering the terminal error status."""
+        logger.error(
+            "🚨 [INSPECT] Interpreter '%s' entered status 'error': %r",
+            interpreter.id,
+            error,
+        )
+
+    def on_done(
+        self, interpreter: "BaseInterpreter[Any, Any]", output: Any
+    ) -> None:
+        """Logs the machine reaching a top-level final state."""
+        logger.info(
+            "🏁 [INSPECT] Interpreter '%s' is done. Output: %r",
+            interpreter.id,
+            output,
         )

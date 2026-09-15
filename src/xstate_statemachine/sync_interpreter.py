@@ -19,6 +19,7 @@
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
+import copy
 import logging
 import threading
 import time
@@ -32,6 +33,7 @@ from typing import (
     List,
     Optional,
     Set,
+    Tuple,
     Union,
     overload,
 )
@@ -39,7 +41,7 @@ from typing import (
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
-from .base_interpreter import BaseInterpreter
+from .base_interpreter import BaseInterpreter, _RollbackRequested
 from .events import AfterEvent, DoneEvent, Event
 from .exceptions import (
     ActorSpawningError,
@@ -346,9 +348,18 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         #    applies to both paths.
         processed = 0
         limit = getattr(self.machine, "max_iterations", 1000)
+        # 📨 Replayed deferred events are NOT new work the machine generated
+        #    for itself; they are user events that already waited their turn.
+        #    Counting them against the runaway-`raise` budget let a full
+        #    `DEFER_MAX` replay exhaust it and `clear()` live events behind
+        #    it -- data loss the async engine did not have (#28 review).
+        replay_credit = 0
         try:
             while self._event_queue:
-                processed += 1
+                if replay_credit:
+                    replay_credit -= 1
+                else:
+                    processed += 1
                 if processed > limit:
                     logger.error(
                         "🛑 Exceeded %d queued events in a single macrostep on "
@@ -362,13 +373,27 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     break
 
                 current_event = self._event_queue.popleft()
-                logger.info("⚙️ Processing event: '%s'", current_event.type)
+                logger.debug(
+                    "⚙️ Processing event: '%s'", current_event.type
+                )  # 📉 #55: hot path, DEBUG
 
                 for plugin in self._plugins:
                     plugin.on_event_received(self, current_event)
 
+                before = frozenset(self._active_state_nodes)
                 self._process_event(current_event)
                 self._process_transient_transitions()
+
+                # 📨 Replay deferred events at the HEAD of the queue, ahead of
+                #    live traffic and in original order (LC-18). `extendleft`
+                #    reverses, so feed it reversed to preserve order. Events
+                #    still unhandled in the new state come straight back
+                #    through `_handle_unhandled_event` and are re-deferred.
+                if before != frozenset(self._active_state_nodes):
+                    held = self._take_deferred_for_replay()
+                    if held:
+                        self._event_queue.extendleft(reversed(held))
+                        replay_credit += len(held)
         finally:
             self._is_processing = False
             logger.debug("🎉 Event processing cycle completed. Queue empty.")
@@ -392,9 +417,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # 1. Select every transition this event triggers (one per region).
         transitions = self._select_transitions(event)
         if not transitions:
-            logger.debug(
-                "🤷 No valid transition found for event '%s'.", event.type
-            )
+            self._handle_unhandled_event(event)
             return
 
         # 2. Execute each in turn, skipping any invalidated by an earlier one.
@@ -423,15 +446,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         """
         # 1. A "targetless" transition only executes actions without changing state.
         if not transition.target_str:
-            logger.info("🔄 Executing internal transition actions.")
-            self._execute_actions(transition.actions, event)
-            for plugin in self._plugins:
-                plugin.on_transition(
-                    self,
-                    self._active_state_nodes,
-                    self._active_state_nodes,
-                    transition,
-                )
+            logger.debug("🔄 Executing internal transition actions.")
+            self._execute_internal_transition(transition, event)
             return
 
         # 2. Resolve the target state node.
@@ -439,19 +455,58 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         # 3. A self-transition without `reenter: True` is also internal.
         if target_state == transition.source and not transition.reenter:
-            logger.info("🔄 Executing internal transition actions.")
-            self._execute_actions(transition.actions, event)
-            for plugin in self._plugins:
-                plugin.on_transition(
-                    self,
-                    self._active_state_nodes,
-                    self._active_state_nodes,
-                    transition,
-                )
+            logger.debug("🔄 Executing internal transition actions.")  # 📉 #55
+            self._execute_internal_transition(transition, event)
             return
 
         # 4. All other transitions are external; process the state change.
         self._process_single_transition(transition, event, target_state)
+
+    def _execute_internal_transition(
+        self, transition: TransitionDefinition, event: Event
+    ) -> None:
+        """Sync mirror of `BaseInterpreter._execute_internal_transition`.
+
+        Context-only transaction for targetless / internal self-transitions
+        so `actionErrorPolicy` applies to action-only handlers (#27 review).
+        """
+        context_before: Optional[TContext] = (
+            copy.deepcopy(self.context)
+            if self.machine.action_error_policy != "continue"
+            else None
+        )
+        try:
+            failed = self._execute_actions(transition.actions, event)
+            if failed:
+                self._apply_action_error_policy(transition, failed)
+        except _RollbackRequested as cause:
+            logger.warning(
+                "💥 Internal transition on '%s' failed; restoring context.",
+                transition.source.id,
+            )
+            self._finish_rollback(cause, transition, context_before)
+            return
+        if not failed:
+            self.last_transition_ok = True
+        for plugin in self._plugins:
+            plugin.on_transition(
+                self,
+                self._active_state_nodes,
+                self._active_state_nodes,
+                transition,
+            )
+
+    def _execute_lifecycle_actions(
+        self, actions: List[ActionDefinition], event: Event
+    ) -> None:
+        """Sync mirror of `BaseInterpreter._execute_lifecycle_actions`."""
+        failed = self._execute_actions(actions, event)
+        if not failed:
+            return
+        if self._lifecycle_failures:
+            self._lifecycle_failures[-1][1].extend(failed)
+            return
+        self._report_start_failure(failed)
 
     def _process_single_transition(
         self,
@@ -468,6 +523,13 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         """
         # For external transitions, prepare for state changes.
         snapshot_before_transition = self._active_state_nodes.copy()
+        # 🧷 See BaseInterpreter._execute_transition: context is only
+        #    snapshotted when a rollback could need it.
+        context_before: Optional[TContext] = (
+            copy.deepcopy(self.context)
+            if self.machine.action_error_policy != "continue"
+            else None
+        )
         domain = self._find_transition_domain(transition, target_state)
 
         # Determine the full path of states to exit and enter.
@@ -500,6 +562,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         #    actually exists, then re-raises so the caller still learns of the
         #    failure. A torn configuration is strictly worse than a rolled-back
         #    one: it is unrecoverable and silently swallows every later event.
+        # 🧾 Entry/exit failures are collected here and judged once the whole
+        #    sequence has run -- see `BaseInterpreter._execute_lifecycle_actions`.
+        self._lifecycle_failures.append((transition, []))
         try:
             self._exit_states(
                 sorted(
@@ -515,7 +580,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 ),
                 event,
             )
-            self._execute_actions(transition.actions, event)
+            failed_actions = self._execute_actions(transition.actions, event)
+            if failed_actions:
+                self._apply_action_error_policy(transition, failed_actions)
             self._enter_states(path_to_enter, event)
 
             # 🕰️ Restore the remembered configuration for a history target.
@@ -531,13 +598,23 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                             combined_path.append(step)
                 if combined_path:
                     self._enter_states(combined_path, event)
-        except Exception:
-            logger.error(
+            lifecycle_failed = self._lifecycle_failures[-1][1]
+            if lifecycle_failed:
+                self._apply_action_error_policy(transition, lifecycle_failed)
+            failed_actions = failed_actions or lifecycle_failed
+        except Exception as rollback_cause:
+            requested = isinstance(rollback_cause, _RollbackRequested)
+            logger.log(
+                logging.WARNING if requested else logging.ERROR,
                 "💥 Transition on '%s' failed; rolling back to the "
                 "pre-transition configuration.",
                 transition.source.id,
-                exc_info=True,
+                exc_info=not requested,
             )
+            # ⏱️ Cancel timers/invokes armed by the PARTIAL entry -- see the
+            #    matching comment in `BaseInterpreter._execute_transition`.
+            for node in self._active_state_nodes - snapshot_before_transition:
+                self._cancel_state_tasks(node)
             self._active_state_nodes.clear()
             self._active_state_nodes.update(snapshot_before_transition)
 
@@ -547,9 +624,17 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             for node in snapshot_before_transition:
                 if node in states_to_exit:
                     self._schedule_state_tasks(node)
+            if self._finish_rollback(
+                rollback_cause, transition, context_before
+            ):
+                return
             raise
+        finally:
+            self._lifecycle_failures.pop()
 
         # Notify plugins and subscribers of the completed transition.
+        if not failed_actions:
+            self.last_transition_ok = True
         self._notify_subscribers()
         for plugin in self._plugins:
             plugin.on_transition(
@@ -640,7 +725,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         }
 
         for state in states_to_enter:
-            logger.info("➡️ Entering state: '%s'", state.id)
+            logger.debug("➡️ Entering state: '%s'", state.id)  # 📉 #55
             self._active_state_nodes.add(state)
             # 📨 Pass the REAL triggering event through. Synthesising an
             #    `entry.<id>` event here discarded the payload, so an entry
@@ -649,7 +734,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             #    always forwarded the real event, so this also made the two
             #    engines disagree. `event` may be None during initial entry,
             #    which is why the fallback is retained.
-            self._execute_actions(
+            self._execute_lifecycle_actions(
                 state.entry,
                 event if event is not None else Event(f"entry.{state.id}"),
             )
@@ -744,9 +829,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         # 🏃‍♂️ Then proceed with normal exit processing.
         for state in states_to_exit:
-            logger.info("⬅️ Exiting state: '%s'", state.id)
+            logger.debug("⬅️ Exiting state: '%s'", state.id)  # 📉 #55
             # 📨 Forward the real triggering event; see `_enter_states`.
-            self._execute_actions(
+            self._execute_lifecycle_actions(
                 state.exit,
                 event if event is not None else Event(f"exit.{state.id}"),
             )
@@ -806,7 +891,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
     def _execute_actions(
         self, actions: List[ActionDefinition], event: Event
-    ) -> None:
+    ) -> List[Tuple[ActionDefinition, BaseException]]:
         """Synchronously executes a list of actions.
 
         This method iterates through action definitions, validates them, and
@@ -817,12 +902,19 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             actions: The list of `ActionDefinition` objects to execute.
             event: The event that triggered these actions.
 
+        Returns:
+            The ``(action, exception)`` pairs for actions that raised, in
+            execution order; empty when all succeeded. Mirrors
+            `Interpreter._execute_actions` so both engines feed the same
+            ``action_error_policy`` logic in `BaseInterpreter`.
+
         Raises:
             ImplementationMissingError: If an action implementation is not found.
             NotSupportedError: If an async action is encountered.
         """
+        failed: List[Tuple[ActionDefinition, BaseException]] = []
         if not actions:
-            return
+            return failed
 
         for action_def in actions:
             # 🔌 Notify plugins before execution
@@ -851,14 +943,21 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                         self._execute_builtin_action(
                             canonical, action_def, event
                         )
-                    except Exception:
+                    except Exception as exc:
                         logger.exception(
                             "🔥 Built-in action '%s' raised while handling "
                             "'%s'; skipping remaining actions.",
                             action_def.type,
                             event.type,
                         )
-                        return
+                        # 🔔 The async engine already fired this hook for
+                        #    built-in failures; the sync engine did not, so
+                        #    the same machine reported different things on
+                        #    the two engines. Aligned in 0.8.0.
+                        for plugin in self._plugins:
+                            plugin.on_action_error(self, action_def, exc)
+                        failed.append((action_def, exc))
+                        return failed
                     continue
 
             if not action_impl:
@@ -896,7 +995,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 #    Sentry, a metric, or a dead-letter queue.
                 for plugin in self._plugins:
                     plugin.on_action_error(self, action_def, exc)
-                return
+                failed.append((action_def, exc))
+                return failed
+        return failed
 
     def _execute_builtin_action(
         self,
@@ -1356,12 +1457,18 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 invocation.src,
                 invocation.id,
             )
+            # 🏛️ #40: only a DECLARED id becomes the actor address; the
+            #    parser's default (the hosting state's id) is shared by every
+            #    anonymous invoke in that state. `systemId` is threaded
+            #    through so the child is addressable system-wide.
+            params: Dict[str, Any] = {}
+            if invocation.id_is_explicit:
+                params["id"] = invocation.id
+            if invocation.system_id:
+                params["systemId"] = invocation.system_id
             self._spawn_actor(
                 ActionDefinition(
-                    {
-                        "type": f"spawn_{invocation.src}",
-                        "params": {"id": invocation.id},
-                    }
+                    {"type": f"spawn_{invocation.src}", "params": params}
                 ),
                 Event(type=f"invoke.{invocation.id}"),
                 on_complete=invocation.id,
@@ -1474,8 +1581,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     tgt,
                     ref.id,
                 )
-                # ‼️ CRITICAL: This mutation logic is restored from the original code.
-                transition.target_str = tgt
+                # 🚫 #59: no write-back to the shared TransitionDefinition
+                #    (see BaseInterpreter._resolve_target_state_node).
                 return state
             except StateNotFoundError:
                 continue  # Try the next method

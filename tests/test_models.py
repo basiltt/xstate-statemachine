@@ -526,7 +526,8 @@ class TestModels(unittest.TestCase):
             {
                 "id": "tester",
                 "initial": "a",
-                "states": {"a": {"on": {"NEXT": "b"}}},
+                # 📝 "b" must exist: 0.8.0 validates targets at build time.
+                "states": {"a": {"on": {"NEXT": "b"}}, "b": {}},
             }
         )
         transition = machine.states["a"].on["NEXT"][0]

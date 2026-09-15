@@ -24,6 +24,8 @@ recommended choice for most modern applications.
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import asyncio
+import concurrent.futures
+import threading
 import inspect
 import logging
 import uuid
@@ -34,6 +36,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Tuple,
     Union,
     overload,
 )
@@ -44,6 +47,7 @@ from typing import (
 from .base_interpreter import BaseInterpreter
 from .events import AfterEvent, DoneEvent, Event
 from .exceptions import (
+    WrongThreadError,
     ActorSpawningError,
     ImplementationMissingError,
     InvalidConfigError,
@@ -86,6 +90,54 @@ _ACTOR_POLL_INTERVAL = 0.005
 # -----------------------------------------------------------------------------
 
 
+class _PreStartQueue:
+    """Stand-in for `Interpreter._event_queue` until `start()` binds a loop.
+
+    🏛️ Architecture decision: events may be sent BEFORE `start()` and must
+    be processed once it runs -- that is documented, tested behaviour. But
+    on Python 3.9 `asyncio.Queue()` binds to the current loop at
+    construction and raises when there is none, so the real queue cannot
+    exist until `start()`. This buffer speaks just enough of the `Queue`
+    API for the pre-start window (`put_nowait`, `put`, `qsize`, `empty`);
+    `_bind_loop()` drains it into the real queue in order.
+    """
+
+    def __init__(self) -> None:
+        self._items: List[Union[Event, AfterEvent, DoneEvent]] = []
+
+    def put_nowait(self, item: Union[Event, AfterEvent, DoneEvent]) -> None:
+        self._items.append(item)
+
+    async def put(self, item: Union[Event, AfterEvent, DoneEvent]) -> None:
+        self._items.append(item)
+
+    def qsize(self) -> int:
+        return len(self._items)
+
+    def empty(self) -> bool:
+        return not self._items
+
+    def drain(self) -> List[Union[Event, AfterEvent, DoneEvent]]:
+        items, self._items = self._items, []
+        return items
+
+
+def _completed() -> "asyncio.Future[None]":
+    """An already-resolved awaitable -- what `send()` hands back.
+
+    🏛️ `send()` performs its work eagerly (see its docstring), so the object
+    it returns has nothing left to do. It exists so the call is still
+    ``await``-able and so `asyncio.gather(interp.send(...), ...)` continues
+    to type-check and run. A resolved `Future` is used rather than a
+    coroutine because an un-awaited coroutine triggers a `RuntimeWarning`
+    at GC time -- the very noise #37 set out to remove -- while a resolved
+    `Future` that nobody awaits is silent and correct.
+    """
+    fut: "asyncio.Future[None]" = asyncio.get_running_loop().create_future()
+    fut.set_result(None)
+    return fut
+
+
 class Interpreter(BaseInterpreter[TContext, TEvent]):
     """Brings a state machine to life by interpreting it asynchronously.
 
@@ -126,9 +178,22 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
         # 🗃️ Concurrency & Task Management
         self.task_manager: TaskManager = TaskManager()
-        self._event_queue: asyncio.Queue[
-            Union[Event, AfterEvent, DoneEvent]
-        ] = asyncio.Queue()
+        #: The asyncio loop that owns this interpreter, bound at start().
+        #: Lets send() detect a foreign-thread call instead of silently
+        #: discarding the coroutine (#37).
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop_thread_name: str = ""
+        # 📬 Created lazily in `_bind_loop()`, not here.
+        #
+        # 🏛️ Architecture decision: on Python 3.9 `asyncio.Queue()` binds to
+        #    the CURRENT event loop at construction and raises when there is
+        #    none, so an `Interpreter` could only ever be built inside a
+        #    running loop. Deferring the queue to `start()` lets the object be
+        #    constructed anywhere (module level, a sync test, a factory) and
+        #    guarantees the queue belongs to the loop that actually drives it.
+        #    3.10+ removed the binding, so this is behaviour-neutral there.
+        self._event_queue: "asyncio.Queue[Union[Event, AfterEvent, DoneEvent]]"
+        self._event_queue = _PreStartQueue()  # type: ignore[assignment]
         self._event_loop_task: Optional[asyncio.Task[None]] = None
         #: Length of the current self-raised event chain. Incremented when an
         #: action enqueues onto our own queue *during* processing, reset when
@@ -198,6 +263,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         ):
             logger.info("♻️ Resuming restored interpreter '%s'...", self.id)
             if self.status == "running":
+                self._bind_loop()
                 self._event_loop_task = asyncio.create_task(
                     self._run_event_loop()
                 )
@@ -231,6 +297,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         logger.info("🏁 Starting interpreter '%s'...", self.id)
         self.status = "running"
         # 🌀 Launch the main event loop as a background task.
+        self._bind_loop()
         self._event_loop_task = asyncio.create_task(self._run_event_loop())
 
         try:
@@ -325,27 +392,43 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         logger.info("✅ Interpreter '%s' stopped successfully.", self.id)
 
     @overload
-    async def send(self, event_type: str, **payload: Any) -> None: ...  # noqa
+    def send(  # noqa: E704
+        self, event_type: str, **payload: Any
+    ) -> Awaitable[None]: ...
 
     @overload
-    async def send(  # noqa
+    def send(  # noqa: E704
         self, event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent]
-    ) -> None: ...
+    ) -> Awaitable[None]: ...
 
-    async def send(
+    def send(  # type: ignore[override]
         self,
         event_or_type: Union[
             str, Dict[str, Any], Event, DoneEvent, AfterEvent
         ],
         **payload: Any,
-    ) -> None:
+    ) -> Awaitable[None]:
         """Sends an event to the machine's internal queue for processing.
 
         This is the primary method for interacting with a running state machine.
         It provides a flexible API, accepting either a string type with keyword
         arguments for the payload, a dictionary, or a pre-constructed `Event`
-        object. This is a non-blocking operation that returns immediately after
-        placing the event in the queue.
+        object. Await the result: ``await interp.send("GO")``.
+
+        🏛️ Architecture decision (#37): this is a *regular* method that
+        returns an awaitable, not an ``async def``. An ``async def`` body
+        runs only when awaited -- so a call from a foreign thread (which
+        cannot await it) executed NOTHING: not the status guard, not the
+        queue put. The coroutine was discarded and every event silently
+        lost, with only a GC-timed RuntimeWarning the library did not own.
+
+        ALL of the work -- thread check, normalisation, status guard and
+        the queue put -- therefore happens eagerly, before anything is
+        awaited. The queue is unbounded so ``put_nowait`` never blocks, and
+        the returned awaitable exists purely so ``await interp.send(...)``
+        keeps working unchanged. Consequences: a wrong-thread call raises
+        AT THE CALL SITE, and a fire-and-forget ``interp.send("GO")`` from
+        inside the loop is delivered rather than silently dropped.
 
         Args:
             event_or_type: The event to send. Can be an event type string,
@@ -353,6 +436,24 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 or an `Event`, `DoneEvent`, or `AfterEvent` object.
             **payload: Keyword arguments that become the event's payload if
                 `event_or_type` is a string.
+
+        Raises:
+            WrongThreadError: Called from a thread other than the one whose
+                event loop owns this interpreter. Use
+                :meth:`send_threadsafe` from other threads.
+        """
+        self._assert_owning_thread("send")
+        # 📦 Normalise eagerly so a malformed event also fails at the call site.
+        event_obj = self._prepare_event(event_or_type, **payload)
+        self._enqueue(event_obj)
+        return _completed()
+
+    def _enqueue(self, event_obj: Union[Event, DoneEvent, AfterEvent]) -> None:
+        """Put *event_obj* on the queue, or drop it if the machine is over.
+
+        Synchronous on purpose: see :meth:`send`. Must run on the owning
+        loop's thread (``asyncio.Queue`` is not thread-safe); callers on
+        other threads go through :meth:`send_threadsafe`.
         """
         # 🚪 Refuse events once the machine is no longer processing. Nothing
         #    drains the queue after `stop()`, so every `send()` accumulated
@@ -367,12 +468,86 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 self.status,
             )
             return
+        # 📥 Place the standardized event object into the async queue.
+        self._event_queue.put_nowait(event_obj)
 
-        # 📦 Use the centralized helper from the base class to normalize the input.
+    def send_threadsafe(
+        self,
+        event_or_type: Union[
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+        ],
+        **payload: Any,
+    ) -> "concurrent.futures.Future[None]":
+        """Send an event from ANY thread.
+
+        Routes the enqueue through the interpreter's owning event loop via
+        ``run_coroutine_threadsafe``, because ``asyncio.Queue`` is not
+        thread-safe. Returns a ``concurrent.futures.Future`` the caller may
+        ``.result()`` on to block until the event is queued (not processed).
+
+        Raises:
+            RuntimeError: The interpreter has not been started, or the loop
+                that owned it has since been closed.
+        """
+        if self._loop is None:
+            raise RuntimeError(
+                f"Interpreter '{self.id}' has not been started; there is no "
+                f"event loop to hand the event to."
+            )
+        if self._loop.is_closed():
+            raise RuntimeError(
+                f"Interpreter '{self.id}' was bound to an event loop that "
+                f"has been closed; it can no longer accept events."
+            )
         event_obj = self._prepare_event(event_or_type, **payload)
 
-        # 📥 Place the standardized event object into the async queue.
-        await self._event_queue.put(event_obj)
+        async def _deliver() -> None:
+            self._enqueue(event_obj)
+
+        return asyncio.run_coroutine_threadsafe(_deliver(), self._loop)
+
+    def _bind_loop(self) -> None:
+        """Record the loop (and thread) that owns this interpreter.
+
+        Also materialises the event queue on first bind -- see the note in
+        `__init__`. A re-bind (resuming a restored interpreter) keeps the
+        existing queue so already-queued events are not lost.
+        """
+        self._loop = asyncio.get_running_loop()
+        self._loop_thread_name = threading.current_thread().name
+        if isinstance(self._event_queue, _PreStartQueue):
+            pending = self._event_queue.drain()
+            self._event_queue = asyncio.Queue()
+            for item in pending:  # 📬 preserve pre-start send() order
+                self._event_queue.put_nowait(item)
+
+    def _assert_owning_thread(self, method: str) -> None:
+        """Raise if called from a thread that does not own our loop."""
+        if self._loop is None:
+            return  # not started yet; start() will bind
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is self._loop:
+            return
+        # 🪦 A closed loop is not "another thread": the interpreter simply
+        #    outlived its `asyncio.run()`. Say that, rather than emitting a
+        #    WrongThreadError that names the same thread on both sides.
+        if self._loop.is_closed():
+            raise RuntimeError(
+                f"Interpreter '{self.id}' was bound to an event loop that "
+                f"has been closed; {method}() can no longer be used. Create "
+                f"a new interpreter (or restore one with from_snapshot) "
+                f"inside the new event loop."
+            )
+        raise WrongThreadError(
+            f"Interpreter '{self.id}' is bound to the event loop on "
+            f"thread '{self._loop_thread_name}'; {method}() was called "
+            f"from thread '{threading.current_thread().name}'. Events "
+            f"sent this way would be silently lost. Use "
+            f"send_threadsafe() from other threads."
+        )
 
     async def send_events(
         self, events: List[Union[Dict[str, Any], Event, str]]
@@ -542,10 +717,31 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             event: The external event to process first.
         """
         # 1️⃣ Process the initial event that was dequeued.
+        before = frozenset(self._active_state_nodes)
         await self._process_event(event)
 
         # 2️⃣ Immediately settle any event-less ("always") transitions.
         await self._settle_transient_transitions()
+
+        # 3️⃣ Replay deferred events now that the configuration changed.
+        #
+        # 🏛️ Architecture decision: replayed HERE, inside the same run-loop
+        #    iteration, rather than re-queued. That is what puts them ahead
+        #    of live traffic in original order (LC-18) without touching the
+        #    asyncio.Queue. Anything still unhandled in the new state is
+        #    re-deferred by `_handle_unhandled_event`, not re-dropped.
+        #    Bounded by the same microstep limit as `always` loops.
+        if before != frozenset(self._active_state_nodes):
+            limit = getattr(self.machine, "max_iterations", 1000)
+            rounds = 0
+            while self._deferred_events and rounds < limit:
+                rounds += 1
+                snapshot = frozenset(self._active_state_nodes)
+                for deferred in self._take_deferred_for_replay():
+                    await self._process_event(deferred)
+                    await self._settle_transient_transitions()
+                if snapshot == frozenset(self._active_state_nodes):
+                    break  # nothing moved; remaining ones stay deferred
 
     async def _settle_transient_transitions(self) -> None:
         """Runs eventless ("always") transitions until the state is stable.
@@ -587,7 +783,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
     async def _execute_actions(
         self, actions: List[ActionDefinition], event: Event
-    ) -> None:
+    ) -> List[Tuple[ActionDefinition, BaseException]]:
         """Asynchronously executes a list of action definitions.
 
         This implementation respects the asynchronous nature of actions,
@@ -599,12 +795,24 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 objects to execute.
             event (Event): The event that triggered these actions.
 
+        Returns:
+            The ``(action, exception)`` pairs for actions that raised, in
+            execution order. Empty when every action succeeded. The first
+            failure stops execution of the remaining actions in the list.
+
+            🏛️ Returning the failures rather than swallowing them is what
+            lets the caller apply the machine's ``action_error_policy``:
+            before 0.8.0 this method returned ``None`` unconditionally, so
+            `_execute_transition` could not tell a complete action list from
+            a partially executed one and committed the transition either way.
+
         Raises:
             ImplementationMissingError: If a named action is not defined in the
                 machine's logic dictionary.
         """
+        failed: List[Tuple[ActionDefinition, BaseException]] = []
         if not actions:
-            return
+            return failed
 
         for action_def in actions:
             # 🔔 Notify plugins before executing each action.
@@ -647,7 +855,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                         )
                         for plugin in self._plugins:
                             plugin.on_action_error(self, action_def, exc)
-                        return
+                        failed.append((action_def, exc))
+                        return failed
                     continue
 
             if not action_callable:
@@ -681,12 +890,14 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                     action_def.type,
                     event.type,
                 )
-                # 🔔 Surface the failure programmatically — containment keeps
-                #    the machine alive but makes the error invisible, since
-                #    the transition completes as though the action succeeded.
+                # 🔔 Surface the failure programmatically. The hook fires
+                #    under every policy; what the caller DOES with the
+                #    failure is decided by `action_error_policy` upstream.
                 for plugin in self._plugins:
                     plugin.on_action_error(self, action_def, exc)
-                return
+                failed.append((action_def, exc))
+                return failed
+        return failed
 
     # -------------------------------------------------------------------------
     # 🤖 Asynchronous Task Implementations (Actors, Timers, Services)
@@ -1186,11 +1397,25 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         child_interpreter = None
         try:
             # 🧬 Create, configure, and start the new child interpreter.
-            actor_id = f"{self.id}:{invocation.src}:{uuid.uuid4()}"
+            #
+            # 🏛️ #40: mint the address from the DECLARED `id` when there is
+            #    one, so `sendTo("kid")` reaches the child invoked as
+            #    `{"src": ..., "id": "kid"}`. Anonymous invokes keep the uuid
+            #    suffix so two of them in one state stay distinct. Mirrors
+            #    the `spawn` path, which already honoured explicit ids.
+            actor_id = (
+                f"{self.id}:{invocation.id}"
+                if invocation.id_is_explicit
+                else f"{self.id}:{invocation.src}:{uuid.uuid4()}"
+            )
             child_interpreter = Interpreter(actor_machine)
             child_interpreter.parent = self
             child_interpreter.id = actor_id
             self._actors[actor_id] = child_interpreter
+            # Record the source so the src-alias lookup covers invoked
+            # actors too (it only covered spawned ones before).
+            self._actor_sources[actor_id] = invocation.src or ""
+            self._register_in_system(invocation.system_id, child_interpreter)
 
             for plugin in self._plugins:
                 plugin.on_service_start(self, invocation)

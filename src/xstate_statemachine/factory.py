@@ -34,6 +34,7 @@ from .logic_loader import LogicLoader
 from .logger import logger
 from .machine_logic import MachineLogic
 from .models import MachineNode
+from .validation import validate_machine
 
 # -----------------------------------------------------------------------------
 # 🏭 Factory Function
@@ -46,6 +47,7 @@ def create_machine(
     logic: Optional[MachineLogic] = None,
     logic_modules: Optional[List[Union[str, ModuleType]]] = None,
     logic_providers: Optional[List[Any]] = None,
+    strict_targets: bool = True,
 ) -> MachineNode:
     """Creates, validates, and assembles a state machine instance.
 
@@ -167,4 +169,15 @@ def create_machine(
     # The MachineNode constructor will handle the recursive parsing of the
     # entire statechart configuration.
     logger.info("🏭 Assembling final MachineNode for '%s'...", machine_id)
-    return MachineNode(config, final_logic)
+    machine = MachineNode(config, final_logic)
+
+    # -------------------------------------------------------------------------
+    # 🛡️ Step 4: Validate the built tree (0.8.0)
+    # -------------------------------------------------------------------------
+    # 🏛️ Unknown ACTIONS already raised here; unknown TARGETS and dead
+    #    `always` loops did not -- they became silent runtime no-ops. The
+    #    whole tree is needed to resolve cross-branch targets, so this runs
+    #    only after construction. `strict_targets=False` is the 0.7.x escape
+    #    hatch (warns instead of raising); it is removed in 1.0.
+    validate_machine(machine, strict_targets=strict_targets)
+    return machine

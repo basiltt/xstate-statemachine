@@ -11,6 +11,66 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ---
 
+## [Unreleased] — Adoption-readiness, part 1
+
+A production adoption audit ([#26](https://github.com/basiltt/xstate-statemachine/issues/26))
+filed 34 defects against 0.7.0 with a common theme: the library fails
+*silently* by default. This batch closes the blockers and top priorities.
+Every new behavior is a per-machine policy whose default preserves 0.7.x
+semantics, so nothing changes on upgrade until you opt in.
+
+### Added
+
+- **`actionErrorPolicy: "continue" | "rollback" | "fail"`** — an action that
+  raises no longer silently commits a half-built transition. `rollback`
+  restores configuration and context; `fail` also stops with
+  `TransitionFailedError`. New `on_transition_failed` hook and
+  `interpreter.last_transition_ok`. Covers `entry`, `exit`, transition and
+  action-only handlers alike. Default (`"continue"`) emits a one-shot
+  `DeprecationWarning`; flips to `rollback` in 1.0.
+- **`onUnhandled: "ignore" | "defer" | "error"`** — `"defer"` replays
+  unhandled events at the head of the queue, survives snapshots, and is
+  bounded by `DEFER_MAX`. New `on_unhandled_event` hook and
+  `UnhandledEventError`.
+- **`guardErrorPolicy: "false" | "true" | "raise"`** — a raising guard is now
+  observable via `on_guard_error` before the substituted result is reported.
+- **Build-time validation** — `create_machine()` rejects unresolvable
+  transition targets and non-progressing `always` self-targets in one
+  message. `strict_targets=False` downgrades target failures to a
+  `DeprecationWarning` (removed in 1.0).
+- **`strictTargets: true`** machine config disables the sibling fallback for
+  `.child` targets.
+- **`Interpreter.send_threadsafe()`** for delivering events from another
+  thread; `send()` from a foreign thread now raises `WrongThreadError`.
+- **Error-observability hooks** on `PluginBase`: `on_transition_failed`,
+  `on_guard_error`, `on_unhandled_event`, `on_error`, `on_done`, all
+  implemented by `LoggingInspector`.
+- **Built-in action param validation** — `raise`, `sendTo`, `cancel`,
+  `stopChild`, … fail at build time when a required key is missing, with a
+  hint if it was placed at the top level instead of under `params`.
+- New exceptions: `UnhandledEventError`, `TransitionFailedError`,
+  `WrongThreadError`.
+
+### Fixed
+
+- `.child` targets resolve into the **source's** descendants, matching
+  XState v5; the 0.7.x sibling reading is kept as a fallback.
+- `internal: false` is honored as `reenter: true` instead of being silently
+  dropped.
+- `sendTo` can address an invoke by its explicit `id` and by `systemId`.
+- `from_snapshot` deep-copies the persisted context and merges it over the
+  machine's defaults instead of aliasing the caller's dict.
+- `@action` / `@guard` / `@service` markers win over arity-based
+  auto-registration in `MachineLogic` subclasses.
+
+### Changed
+
+- Per-event `INFO` log calls on the hot path are now `DEBUG`.
+
+For full details, see the [`[Unreleased]` section of CHANGELOG.md](https://github.com/basiltt/xstate-statemachine/blob/main/CHANGELOG.md#unreleased).
+
+---
+
 ## [0.7.0] — 2026-08-12 *(Current Release)*
 
 **The code generator rewrite.** Three of the five templates — every

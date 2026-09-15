@@ -38,6 +38,7 @@ from typing import (
     Literal,
     Optional,
     Set,
+    Tuple,
     TypeVar,
     Union,
 )
@@ -45,6 +46,7 @@ from typing import (
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
+from .actions import BUILTIN_ACTION_PARAM_SPEC, resolve_builtin
 from .events import Event
 from .exceptions import InvalidConfigError, StateNotFoundError
 from .machine_logic import MachineLogic
@@ -68,6 +70,51 @@ TEvent = TypeVar("TEvent", bound=Dict[str, Any])
 
 # Define a specific type for state types for clarity and reuse.
 StateType = Literal["atomic", "compound", "parallel", "final", "history"]
+
+# -----------------------------------------------------------------------------
+# 🛡️ Failure Policies
+# -----------------------------------------------------------------------------
+# Each policy's FIRST value is the 0.7.x behaviour and remains the default.
+# -----------------------------------------------------------------------------
+
+#: What to do when a user-supplied action raises mid-transition.
+#:   continue — skip remaining actions, commit the transition, report it.
+#:   rollback — abort the transition; restore configuration and context.
+#:   fail     — roll back, then stop the interpreter with status "error".
+ACTION_ERROR_POLICIES: Tuple[str, ...] = ("continue", "rollback", "fail")
+
+#: What a raising guard evaluates to.
+#:   false — the guard is treated as not satisfied (0.7.x behaviour).
+#:   true  — the guard is treated as satisfied.
+#:   raise — the exception propagates to the caller of `send()`.
+GUARD_ERROR_POLICIES: Tuple[str, ...] = ("false", "true", "raise")
+
+#: What to do with an event that selects no transition.
+#:   ignore — drop it, firing `on_unhandled_event` (XState semantics).
+#:   defer  — hold it and replay it after the next successful transition.
+#:   error  — raise `UnhandledEventError`.
+UNHANDLED_EVENT_POLICIES: Tuple[str, ...] = ("ignore", "defer", "error")
+
+
+def _validated_policy(
+    config: Dict[str, Any],
+    key: str,
+    allowed: Tuple[str, ...],
+    default: str,
+) -> str:
+    """Read a policy string from *config*, rejecting anything unrecognised.
+
+    🛡️ A policy typo (`"rollbak"`) that silently fell back to the default
+    would recreate the very failure mode these policies exist to remove.
+    """
+    value = config.get(key, default)
+    if value not in allowed:
+        raise InvalidConfigError(
+            f"Machine '{config.get('id', '?')}': '{key}' must be one of "
+            f"{list(allowed)}, got {value!r}."
+        )
+    return str(value)
+
 
 # 👶 Prefixes marking an action as a built-in actor-spawning directive.
 #
@@ -174,6 +221,7 @@ class ActionDefinition:
             logger.debug("🔧 Parsing action definition from dict: %s", config)
             self.type: str = config.get("type", "UnknownAction")
             self.params: Optional[Dict[str, Any]] = config.get("params")
+            self._validate_builtin_params(config)
         else:
             # ❌ Reject invalid definitions
             logger.error(
@@ -183,6 +231,39 @@ class ActionDefinition:
             raise InvalidConfigError(
                 f"Action definition must be a string or a dictionary, got {type(config)}"
             )
+
+    def _validate_builtin_params(self, config: Dict[str, Any]) -> None:
+        """Reject a built-in action whose required params are missing.
+
+        🏛️ #32: this is the ONE place every action dict is parsed -- entry,
+        exit, transition actions, invoke onDone/onError, both engines -- so
+        one check here covers all of them. When the required keys are found
+        at the TOP level of the dict instead of under ``params`` (the
+        natural mistake), the error says so explicitly.
+        """
+        canonical = resolve_builtin(self.type)
+        if canonical is None:
+            return
+        spec = BUILTIN_ACTION_PARAM_SPEC.get(canonical)
+        if spec is None or callable(self.params):
+            return
+        required, optional = spec
+        supplied = set(self.params or {})
+        missing = required - supplied
+        if not missing:
+            return
+        stray = set(config) - {"type", "params"}
+        hint = ""
+        if stray & (required | optional):
+            hint = (
+                f" Found {sorted(stray & (required | optional))} at the top "
+                f"level of the action -- built-in action parameters must be "
+                f"nested under 'params'."
+            )
+        raise InvalidConfigError(
+            f"Built-in action '{self.type}' is missing required param(s) "
+            f"{sorted(missing)}.{hint}"
+        )
 
     def __repr__(self) -> str:
         """Provides a developer-friendly string representation."""
@@ -394,7 +475,14 @@ class TransitionDefinition:
         self.guard_def: Optional[GuardDefinition] = (
             GuardDefinition(raw_guard) if raw_guard is not None else None
         )
-        self.reenter: bool = config.get("reenter", False)
+        # 🔁 `reenter` (XState v5) with `internal` (v4) as an alias:
+        #    `internal: False` means "exit and re-enter", i.e. `reenter: True`.
+        #    Before 0.8.0 `internal` was silently dropped, so a migrating
+        #    user's explicit opt-in vanished with no validation error (#29).
+        if "internal" in config:
+            self.reenter: bool = not bool(config["internal"])
+        else:
+            self.reenter = bool(config.get("reenter", False))
         #: Marks an explicitly forbidden transition (``on: {"E": None}``).
         #: Selecting it consumes the event without changing state, which stops
         #: the upward walk from reaching an ancestor's handler.
@@ -467,6 +555,15 @@ class InvokeDefinition:
         self.id: str = invoke_id
         self.src: Optional[str] = config.get("src")
         self.input: Optional[Dict[str, Any]] = config.get("input")
+        #: True when the user DECLARED an `id`. The parser defaults an
+        #: omitted id to the hosting state's id, which every anonymous
+        #: invoke in that state shares -- so a bare `self.id` is not safe
+        #: to use as a unique actor address (#40).
+        self.id_is_explicit: bool = "id" in config
+        #: Registers the child in the actor system so `sendTo` can address
+        #: it by this name from anywhere in the tree. Was silently dropped
+        #: at parse time before 0.8.0.
+        self.system_id: Optional[str] = config.get("systemId")
         self.source: "StateNode" = source
         self.on_done: List[TransitionDefinition] = on_done
         self.on_error: List[TransitionDefinition] = on_error
@@ -1157,6 +1254,38 @@ class MachineNode(StateNode[TContext, TEvent]):
         #: Machine-level output declaration, resolved when a top-level final
         #: state is reached.
         self.machine_output: Any = config.get("output")
+
+        # 🛡️ Failure policies (0.8.0).
+        #
+        # 🏛️ Architecture decision: before 0.8.0 every one of these failures
+        #    degraded to a *silent* no-op — a raising action still committed
+        #    the transition, a raising guard became `False`, an unknown event
+        #    vanished. Each is a defensible default for a UI widget and a
+        #    money-losing one for an order lifecycle. Rather than pick one
+        #    audience, the behaviour is a per-machine policy. The 0.7.x
+        #    behaviour remains the default for every policy, so upgrading is
+        #    safe; strict users opt in. Read from config so the policy
+        #    travels WITH the machine definition, and validated here so a
+        #    typo is a build-time error rather than a runtime surprise.
+        self.action_error_policy: str = _validated_policy(
+            config, "actionErrorPolicy", ACTION_ERROR_POLICIES, "continue"
+        )
+        #: True until the user sets the policy explicitly. Drives a one-shot
+        #: DeprecationWarning ahead of the 1.0 default change.
+        self.action_error_policy_is_default: bool = (
+            "actionErrorPolicy" not in config
+        )
+        self.guard_error_policy: str = _validated_policy(
+            config, "guardErrorPolicy", GUARD_ERROR_POLICIES, "false"
+        )
+        self.on_unhandled: str = _validated_policy(
+            config, "onUnhandled", UNHANDLED_EVENT_POLICIES, "ignore"
+        )
+        #: When True, transition targets are resolved strictly: a plain
+        #: identifier must name a sibling or ancestor-scope state, never an
+        #: unrelated state elsewhere in the tree that merely shares the last
+        #: id segment. Default False preserves 0.7.x resolution.
+        self.strict_targets: bool = bool(config.get("strictTargets", False))
 
         #: Custom `id` → node registry, populated by `StateNode.__init__` as
         #: the tree is built. Must exist BEFORE `super().__init__` recurses

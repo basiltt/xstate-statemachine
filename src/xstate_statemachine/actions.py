@@ -32,7 +32,7 @@ Declarative built-in action creators for XState-compatible machines.
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import logging
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple, Union
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
@@ -60,6 +60,29 @@ ASSIGN = "xstate.assign"
 PURE = "xstate.pure"
 CHOOSE = "xstate.choose"
 ENQUEUE_ACTIONS = "xstate.enqueueActions"
+
+#: canonical built-in -> (required param names, optional param names).
+#:
+#: 🏛️ #32: built-in params must nest under ``params``. The obvious flat
+#:    spelling -- ``{"type": "raise", "event": "X"}`` -- parsed fine and
+#:    then did nothing at runtime, because the built-in read
+#:    ``params.get("event")`` and found None. This table lets
+#:    `ActionDefinition` reject that at build time with a hint naming
+#:    the stray keys. Built-ins whose shape is validated elsewhere
+#:    (assign/pure/choose/enqueueActions) are deliberately absent.
+BUILTIN_ACTION_PARAM_SPEC: Dict[str, Tuple[FrozenSet[str], FrozenSet[str]]] = {
+    RAISE: (frozenset({"event"}), frozenset({"delay", "id"})),
+    SEND_TO: (frozenset({"to", "event"}), frozenset({"delay", "id"})),
+    SEND_PARENT: (frozenset({"event"}), frozenset({"delay", "id"})),
+    FORWARD_TO: (frozenset({"to"}), frozenset()),
+    ESCALATE: (frozenset({"error"}), frozenset()),
+    # Runtime reads `sendId` (matching XState's cancel(sendId)), not `id`.
+    CANCEL: (frozenset({"sendId"}), frozenset()),
+    STOP_CHILD: (frozenset({"id"}), frozenset()),
+    SPAWN_CHILD: (frozenset({"src"}), frozenset({"id", "systemId", "input"})),
+    EMIT: (frozenset({"event"}), frozenset()),
+    LOG: (frozenset(), frozenset({"expr", "label"})),
+}
 
 #: Every accepted spelling → canonical built-in name.
 BUILTIN_ACTION_ALIASES: Dict[str, str] = {

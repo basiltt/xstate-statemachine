@@ -591,6 +591,27 @@ creators alike.
 > the machine as `onError`, which is the idiomatic way to model expected errors.
 > See [Services & Invoke](../services/).
 
+## When an Action Raises
+
+The behavior above is one of three policies, controlled by the machine-config key **`actionErrorPolicy`**:
+
+| Value | Behavior |
+|-------|----------|
+| `"continue"` (default) | The error is contained: it is logged, the transition still completes, and the machine keeps running. Emits a one-shot `DeprecationWarning` — the default flips to `"rollback"` in 1.0. |
+| `"rollback"` | The transition's configuration *and* context changes are rolled back; the machine stays in its pre-transition state. |
+| `"fail"` | Same rollback, plus the interpreter stops and raises `TransitionFailedError`, with `status` set to `"error"`. |
+
+```json
+{
+  "id": "m",
+  "actionErrorPolicy": "rollback",
+  "initial": "a",
+  "states": { "a": {} }
+}
+```
+
+Whichever policy is set, `interpreter.last_transition_ok` reports whether the most recent transition's actions all ran to completion, and the `on_transition_failed(interpreter, transition, failed_actions)` plugin hook fires with the list of `(action_def, exception)` pairs that failed. See [Plugins](../plugins/#on_transition_failedinterpreter-transition-failed_actions).
+
 ## Best Practices
 
 ### Keep Actions Simple

@@ -32,6 +32,7 @@ Conformance tests asserting both engines behave identically.
 import asyncio
 import logging
 import unittest
+import warnings
 from typing import Any, Dict, List
 
 # -----------------------------------------------------------------------------
@@ -186,10 +187,28 @@ class TestUnresolvableTarget(unittest.IsolatedAsyncioTestCase):
         },
     }
 
+    def _build_lenient(self) -> Any:
+        """Build with strict_targets=False.
+
+        📝 0.8.0 rejects unresolvable targets at create_machine(). This
+        class exists to test the RUNTIME behaviour when one slips through,
+        so it opts out of the build-time check -- and asserts that doing so
+        emits the deprecation warning the escape hatch promises.
+        """
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            machine = create_machine(
+                self.CONFIG, logic=MachineLogic(), strict_targets=False
+            )
+        self.assertTrue(
+            any(issubclass(w.category, DeprecationWarning) for w in caught)
+        )
+        return machine
+
     def test_sync_raises_and_stays_running(self) -> None:
         """The sync engine surfaces the error to the caller."""
         # Arrange
-        interpreter = SyncInterpreter(build(self.CONFIG)).start()
+        interpreter = SyncInterpreter(self._build_lenient()).start()
 
         # Act / Assert
         with self.assertRaises(StateNotFoundError):
@@ -201,7 +220,7 @@ class TestUnresolvableTarget(unittest.IsolatedAsyncioTestCase):
     async def test_async_survives_and_keeps_processing(self) -> None:
         """The async engine must stay alive and honour later events."""
         # Arrange
-        interpreter = await Interpreter(build(self.CONFIG)).start()
+        interpreter = await Interpreter(self._build_lenient()).start()
         self.addAsyncCleanup(interpreter.stop)
 
         # Act — a bad target, then a perfectly good event.

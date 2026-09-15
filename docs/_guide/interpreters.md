@@ -621,6 +621,49 @@ class SafeLogic(MachineLogic):
 
 > **Tip:** For expected errors (like network failures), use `invoke`/`onError`. The `onError` transition is the idiomatic way to handle service errors in state machines — unlike an action, an invoked service's failure *is* routed back into the machine as a transition.
 
+> **Note:** The behavior above is the default `actionErrorPolicy: "continue"`. `"rollback"` and `"fail"` are also available — see [Actions — When an Action Raises](../actions/#when-an-action-raises).
+
+---
+
+## Unhandled Events
+
+Per XState, an event that selects no transition in any active state is silently ignored — that remains the default. The machine-config key **`onUnhandled`** controls what happens instead:
+
+| Value | Behavior |
+|-------|----------|
+| `"ignore"` (default) | The event is dropped; matches 0.7.x behavior. |
+| `"defer"` | The event is buffered and replayed at the head of the queue, in original order, the next time the machine processes events — for example, after a transition that adds a handler for it. |
+| `"error"` | Raises `UnhandledEventError`. |
+
+```json
+{
+  "id": "m",
+  "onUnhandled": "defer",
+  "initial": "a",
+  "states": { "a": {} }
+}
+```
+
+`"defer"` is library-owned: a still-unhandled event is re-deferred, the buffer survives `get_snapshot()` / `from_snapshot()`, and it is bounded by `Interpreter.DEFER_MAX` — once full, the oldest entry is evicted. `interpreter.deferred_count` reports how many events are currently buffered.
+
+Whatever the policy, every unhandled event fires the `on_unhandled_event(interpreter, event, active_state_ids, disposition)` plugin hook, with `disposition` one of `"ignored"`, `"deferred"`, `"errored"`, or `"dropped"` (buffer was full). See [Plugins](../plugins/#on_unhandled_eventinterpreter-event-active_state_ids-disposition).
+
+---
+
+## Sending from Another Thread
+
+`Interpreter.send()` is bound to the event loop that started it; calling it from a different thread cannot be awaited there and would silently lose the event. As of 0.8.0, `send()` raises `WrongThreadError` at the call site when called from a foreign thread instead.
+
+To deliver an event from another thread, use `send_threadsafe()`:
+
+```python
+interp.send_threadsafe("TICK")
+```
+
+It routes the enqueue through the interpreter's owning event loop via `run_coroutine_threadsafe` and returns a `concurrent.futures.Future` you may `.result()` on to block until the event is queued (not processed).
+
+> **Note:** `SyncInterpreter` has no owning event loop and is unaffected by this restriction.
+
 ---
 
 ## Testing with SyncInterpreter

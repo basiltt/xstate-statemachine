@@ -29,6 +29,7 @@ import copy
 import inspect
 import json
 import logging
+import warnings
 from typing import (
     Any,
     Awaitable,
@@ -38,6 +39,7 @@ from typing import (
     List,
     Optional,
     Set,
+    Tuple,
     Type,
     Union,
     overload,
@@ -49,10 +51,13 @@ from typing import (
 # -----------------------------------------------------------------------------
 from .events import AfterEvent, DoneEvent, Event
 from .exceptions import (
+    ActorSpawningError,
     ImplementationMissingError,
     InvalidConfigError,
     RestoredError,
     StateNotFoundError,
+    TransitionFailedError,
+    UnhandledEventError,
 )
 from .actions import (
     ASSIGN,
@@ -232,6 +237,36 @@ class _SafePlugin:
         return repr(object.__getattribute__(self, "_plugin"))
 
 
+# 🏛️ Prefixes of events the ENGINE synthesises (`done.invoke.*`,
+#    `error.platform.*`, `after.*`, `xstate.error.actor.*` from `escalate`,
+#    and the init/exit sentinels). Shared by the wildcard matcher and the
+#    unhandled-event policy so the two can never disagree about what counts
+#    as a system event (#28 review).
+_SYSTEM_EVENT_PREFIXES: Tuple[str, ...] = (
+    "done.",
+    "error.",
+    "after.",
+    "xstate.",
+    "___xstate",
+)
+
+
+class _RollbackRequested(Exception):
+    """Internal signal: an action raised and the policy is not ``continue``.
+
+    Raised inside `_execute_transition`'s atomic block so the EXISTING
+    rollback path (built for transition-resolution failures in 0.6.0) is
+    reused for action failures. Never escapes `_execute_transition`.
+    """
+
+    def __init__(
+        self, action_def: ActionDefinition, original: BaseException
+    ) -> None:
+        super().__init__(action_def.type)
+        self.action_def = action_def
+        self.original = original
+
+
 class BaseInterpreter(Generic[TContext, TEvent]):
     """Provides the foundational logic for state machine interpretation.
 
@@ -309,6 +344,23 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         self.output: Any = None
         #: The error that put the machine into the "error" status, if any.
         self.error: Optional[BaseException] = None
+        #: False when the most recent transition's action list did not run to
+        #: completion. A persistence layer can gate snapshot writes on this
+        #: so a state built by a half-executed action list is never written
+        #: as truth.
+        self.last_transition_ok: bool = True
+        # 🧾 Stack of open action-error transactions; see
+        #    `_execute_lifecycle_actions`. Each entry is
+        #    ``(transition, failures_collected_so_far)``.
+        self._lifecycle_failures: List[
+            Tuple[
+                TransitionDefinition,
+                List[Tuple[ActionDefinition, BaseException]],
+            ]
+        ] = []
+        #: Events held back under ``onUnhandled: "defer"``, replayed after
+        #: the next successful transition. Empty under other policies.
+        self._deferred_events: List[Event] = []
         #: Listeners registered via :meth:`on`, keyed by emitted event type.
         self._emit_listeners: Dict[str, List[Callable[[Any], None]]] = {}
         #: Cancellation callbacks for pending delayed sends, keyed by send id.
@@ -727,6 +779,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             ),
             "output": self.output,
             "error": str(self.error) if self.error is not None else None,
+            # 📨 Deferred events survive a crash: drained on start()
+            #    before any invoke is re-driven.
+            "deferred": [
+                {"type": e.type, "payload": copy.deepcopy(e.payload)}
+                for e in self._deferred_events
+            ],
             # 🕰️ Remembered history, so a restored machine can still honour a
             #    later transition to a history state.
             "history": {
@@ -869,7 +927,20 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         # 🧪 Create a new instance of the correct interpreter class (sync/async)
         interpreter = cls(machine)
-        interpreter.context = snapshot["context"]
+        # 🧊 #46: layer the persisted context over the machine's CURRENT
+        #    defaults, and deep-copy so the caller's parsed dict does not
+        #    alias live state. Persisted values win for every key present;
+        #    defaults fill only keys the snapshot never had (e.g. a field
+        #    added to the machine after the snapshot was written). The
+        #    merge is deliberately SHALLOW: a recursive merge would
+        #    resurrect nested keys the application intentionally deleted.
+        restored = copy.deepcopy(snapshot["context"])
+        if isinstance(interpreter.context, dict) and isinstance(
+            restored, dict
+        ):
+            interpreter.context = {**interpreter.context, **restored}
+        else:
+            interpreter.context = restored
         interpreter.status = snapshot["status"]
 
         # 🌳 Reconstruct the set of active state nodes from their IDs.
@@ -900,6 +971,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         # 🏁 Restore completion output and any recorded error.
         interpreter.output = snapshot.get("output")
         recorded_error = snapshot.get("error")
+        interpreter._deferred_events = [
+            Event(type=d["type"], payload=d.get("payload") or {})
+            for d in snapshot.get("deferred", [])
+        ]
         if recorded_error:
             # 📝 The original exception type cannot survive JSON, so the
             #    message is preserved in a dedicated wrapper. Without this a
@@ -1031,8 +1106,15 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
     def _execute_actions(
         self, actions: List[ActionDefinition], event: Event
-    ) -> Union[None, Awaitable[None]]:
+    ) -> Union[
+        List[Tuple[ActionDefinition, BaseException]],
+        Awaitable[List[Tuple[ActionDefinition, BaseException]]],
+    ]:
         """Executes a list of action definitions.
+
+        Returns:
+            The ``(action, exception)`` pairs for actions that raised, in
+            execution order. Empty when every action succeeded.
 
         Raises:
             NotImplementedError: This method must be implemented by a concrete
@@ -1191,10 +1273,16 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         for tgt, ref in filter(None, resolution_attempts):
             try:
                 target_state = resolve_target_state(tgt, ref)
-                # This side effect is important for logging and debugging.
-                transition.target_str = tgt
+                # 🚫 #59: do NOT write back to `transition.target_str`. The
+                #    TransitionDefinition is shared by every interpreter of
+                #    this machine; rewriting it to the qualified form from
+                #    one interpreter changed what every other one saw, and
+                #    raced under threads. The resolved node is what matters
+                #    and it is returned; the original string stays intact.
                 logger.debug(
-                    "✅ Resolved via standard method: '%s'", target_state.id
+                    "✅ Resolved '%s' via standard method: '%s'",
+                    tgt,
+                    target_state.id,
                 )
                 break
             except StateNotFoundError:
@@ -1274,7 +1362,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         # 1. Select every transition this event triggers (one per region).
         transitions = self._select_transitions(event)
         if not transitions:
-            logger.debug("🍃 No transition found for event '%s'.", event.type)
+            self._handle_unhandled_event(event)
             return
 
         # 2. Execute each selected transition in isolation. A transition may
@@ -1363,6 +1451,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             return registry[spec]
         if spec in self._actors:
             return self._actors[spec]
+        # 🎯 #40: an EXPLICIT child id is `f"{self.id}:{spec}"` exactly.
+        #    Check it before the fuzzy segment scan so a declared name is
+        #    never reported "ambiguous" against same-src siblings.
+        exact = f"{self.id}:{spec}"
+        if exact in self._actors:
+            return self._actors[exact]
         # 🔑 Actor ids are namespaced as `parent:key` or `parent:key:uuid`, so
         #    a bare service key must match the MIDDLE segment too. Matching
         #    only the suffix silently missed every auto-id actor (the uuid is
@@ -1375,8 +1469,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         if len(matches) == 1:
             return matches[0]
         if len(matches) > 1:
-            logger.warning(
-                "⚠️ Actor key '%s' is ambiguous (%d matches). Use an explicit "
+            # 🔊 Escalated from warning: a dropped event on the actor path is
+            #    a correctness failure, not a nuisance (#40).
+            logger.error(
+                "🚫 Actor key '%s' is ambiguous (%d matches). Use an explicit "
                 "`id` or `systemId` to disambiguate; event dropped.",
                 spec,
                 len(matches),
@@ -1426,13 +1522,24 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         if not system_id:
             return
         registry = self._system_registry()
-        if system_id in registry and registry[system_id] is not actor:
-            logger.warning(
-                "⚠️ systemId '%s' is already registered to actor '%s'; the "
-                "new actor replaces it. systemIds must be unique within a "
-                "machine hierarchy.",
+        existing = registry.get(system_id)
+        if existing is not None and existing is not actor:
+            # 🛡️ #40 (LC-13): a duplicate systemId used to silently REPLACE
+            #    the previous actor, so every later `sendTo` reached the
+            #    wrong child. A stopped/finished actor may be superseded;
+            #    a live one may not.
+            if existing.status in ("running", "uninitialized"):
+                raise ActorSpawningError(
+                    f"systemId '{system_id}' is already registered to a "
+                    f"live actor ('{existing.id}'). systemIds must be "
+                    f"unique within a machine hierarchy."
+                )
+            logger.info(
+                "♻️ systemId '%s' re-registered: previous actor '%s' had "
+                "status '%s'.",
                 system_id,
-                registry[system_id].id,
+                existing.id,
+                existing.status,
             )
         registry[system_id] = actor
 
@@ -1749,14 +1856,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 "🎬 Executing targetless transition for event '%s'.",
                 event.type,
             )
-            await self._execute_actions(transition.actions, event)
-            for plug in self._plugins:
-                plug.on_transition(
-                    self,
-                    self._active_state_nodes,
-                    self._active_state_nodes,
-                    transition,
-                )
+            await self._execute_internal_transition(transition, event)
             return
 
         # 2. Resolve the target state node using a multi-stage process.
@@ -1771,18 +1871,19 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 "🎬 Executing internal self-transition for event '%s'.",
                 event.type,
             )
-            await self._execute_actions(transition.actions, event)
-            for plug in self._plugins:
-                plug.on_transition(
-                    self,
-                    self._active_state_nodes,
-                    self._active_state_nodes,
-                    transition,
-                )
+            await self._execute_internal_transition(transition, event)
             return
 
         # 4. All other transitions are "external" and will cause a state change.
         snapshot_before = self._active_state_nodes.copy()
+        # 🧷 Context is snapshotted only when a rollback could need it: a
+        #    deepcopy per transition on the "continue" hot path would be a
+        #    measurable tax for a feature the machine has opted out of.
+        context_before: Optional[TContext] = (
+            copy.deepcopy(self.context)
+            if self.machine.action_error_policy != "continue"
+            else None
+        )
         domain = self._find_transition_domain(transition, target_state)
 
         states_to_exit = self._compute_states_to_exit(domain, target_state)
@@ -1820,6 +1921,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         #    itself healthy. Rolling back to the pre-transition configuration
         #    keeps the machine in a state that genuinely exists; the exception
         #    still propagates so the caller learns the transition failed.
+        # 🧾 #27 review: entry/exit actions are part of the transaction too.
+        #    `_enter_states`/`_exit_states` report their action failures via
+        #    this stack instead of raising, so the policy is applied once,
+        #    here, for every action slot. See `_execute_lifecycle_actions`.
+        self._lifecycle_failures.append((transition, []))
         try:
             await self._exit_states(
                 sorted(
@@ -1835,7 +1941,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 ),
                 event,
             )
-            await self._execute_actions(transition.actions, event)
+            failed_actions = await self._execute_actions(
+                transition.actions, event
+            )
+            if failed_actions:
+                self._apply_action_error_policy(transition, failed_actions)
             await self._enter_states(path_to_enter, event)
 
             # 🕰️ Restore the remembered configuration for a history target.
@@ -1858,13 +1968,29 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                             combined_path.append(step)
                 if combined_path:
                     await self._enter_states(combined_path, event)
-        except Exception:
-            logger.error(
+            # 🧾 Entry/exit failures surface here, after the whole sequence
+            #    ran, so `"continue"` still commits the complete new
+            #    configuration while `"rollback"`/`"fail"` undo all of it.
+            lifecycle_failed = self._lifecycle_failures[-1][1]
+            if lifecycle_failed:
+                self._apply_action_error_policy(transition, lifecycle_failed)
+            failed_actions = failed_actions or lifecycle_failed
+        except Exception as rollback_cause:
+            requested = isinstance(rollback_cause, _RollbackRequested)
+            logger.log(
+                logging.WARNING if requested else logging.ERROR,
                 "💥 Transition on '%s' failed; rolling back to the "
                 "pre-transition configuration.",
                 transition.source.id,
-                exc_info=True,
+                exc_info=not requested,
             )
+            # ⏱️ Tear down what a PARTIAL entry armed. States entered before
+            #    the failure already scheduled their `after` timers and
+            #    invokes; left running, a timer belonging to a state the
+            #    machine has rolled out of would later fire and drive a
+            #    transition from a configuration that no longer exists.
+            for node in self._active_state_nodes - snapshot_before:
+                await self._cancel_state_tasks(node)
             self._active_state_nodes.clear()
             self._active_state_nodes.update(snapshot_before)
 
@@ -1877,9 +2003,17 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             for node in snapshot_before:
                 if node in states_to_exit:
                     self._schedule_state_tasks(node)
+            if self._finish_rollback(
+                rollback_cause, transition, context_before
+            ):
+                return
             raise
+        finally:
+            self._lifecycle_failures.pop()
 
         # 6. Notify plugins and subscribers of the completed transition.
+        if not failed_actions:
+            self.last_transition_ok = True
         for plug in self._plugins:
             plug.on_transition(
                 self,
@@ -1888,6 +2022,91 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 transition,
             )
         self._notify_subscribers()
+
+    async def _execute_internal_transition(
+        self,
+        transition: TransitionDefinition,
+        event: Union[Event, DoneEvent, AfterEvent],
+    ) -> None:
+        """Run a targetless or internal self-transition atomically.
+
+        🏛️ Architecture decision (#27 review): these two shapes used to call
+        `_execute_actions` and fire `on_transition` unconditionally, so a
+        raising action under ``"rollback"``/``"fail"`` still committed its
+        partial context mutation and `last_transition_ok` stayed ``True`` --
+        the policy simply did not apply to the most common machine shape
+        (an action-only event handler). No configuration changes here, so
+        the transaction is context-only: snapshot, run, restore on failure.
+        """
+        context_before: Optional[TContext] = (
+            copy.deepcopy(self.context)
+            if self.machine.action_error_policy != "continue"
+            else None
+        )
+        try:
+            failed = await self._execute_actions(transition.actions, event)
+            if failed:
+                self._apply_action_error_policy(transition, failed)
+        except _RollbackRequested as cause:
+            logger.warning(
+                "💥 Internal transition on '%s' failed; restoring context.",
+                transition.source.id,
+            )
+            self._finish_rollback(cause, transition, context_before)
+            return
+        if not failed:
+            self.last_transition_ok = True
+        for plug in self._plugins:
+            plug.on_transition(
+                self,
+                self._active_state_nodes,
+                self._active_state_nodes,
+                transition,
+            )
+
+    async def _execute_lifecycle_actions(
+        self, actions: List[ActionDefinition], event: Event
+    ) -> None:
+        """Run a state's ``entry``/``exit`` list and record any failures.
+
+        🏛️ Architecture decision (#27 review): `_enter_states` and
+        `_exit_states` are recursive and are called from several places
+        (transitions, `start()`, history restore). Raising from inside them
+        would unwind that recursion at an arbitrary depth and leave the
+        configuration torn -- exactly what the rollback exists to prevent.
+        Instead, failures are appended to the innermost open transaction on
+        `_lifecycle_failures`; the transaction owner applies the policy once
+        the whole exit → actions → enter sequence has run. Outside any
+        transaction (`start()`), failures are reported against a synthetic
+        init transition so `start()` honours the policy too.
+        """
+        failed = await self._execute_actions(actions, event)
+        if not failed:
+            return
+        if self._lifecycle_failures:
+            self._lifecycle_failures[-1][1].extend(failed)
+            return
+        # 🚀 No open transaction: this is initial entry from `start()`.
+        self._report_start_failure(failed)
+
+    def _report_start_failure(
+        self, failed: List[Tuple[ActionDefinition, BaseException]]
+    ) -> None:
+        """Apply the action-error policy to a failure during ``start()``.
+
+        There is no pre-start configuration to roll back to, so both
+        ``"rollback"`` and ``"fail"`` stop the machine with
+        `TransitionFailedError`; ``"continue"`` reports and carries on.
+        """
+        init = TransitionDefinition(
+            event="___xstate_init___", config={}, source=self.machine
+        )
+        try:
+            self._apply_action_error_policy(init, failed)
+        except _RollbackRequested as cause:
+            err = TransitionFailedError(cause.action_def.type, self.machine.id)
+            err.__cause__ = cause.original
+            self._fail(err)
 
     # -------------------------------------------------------------------------
     # ⏯️ State Management Sub-Routines
@@ -1939,7 +2158,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             logger.debug("➡️  Entering state: '%s'.", state.id)
 
             # ⚙️ Run entry actions and schedule background tasks.
-            await self._execute_actions(state.entry, trigger_event)
+            await self._execute_lifecycle_actions(state.entry, trigger_event)
             self._schedule_state_tasks(state)
 
             # 🎉 If we entered a final state, check if its parent is now complete.
@@ -2132,7 +2351,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             # 🛑 Crucially, cancel tasks before running exit actions.
             await self._cancel_state_tasks(state)
             # ⚙️ Then, run the synchronous exit actions.
-            await self._execute_actions(state.exit, trigger_event)
+            await self._execute_lifecycle_actions(state.exit, trigger_event)
             # 🗑️ Finally, remove from the active set.
             self._active_state_nodes.discard(state)
 
@@ -2306,6 +2525,154 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         """
         return bool(getattr(invocation, "on_error", None))
 
+    # 📨 Maximum events held under ``onUnhandled: "defer"`` before the
+    #    oldest is evicted. A permanently-unhandled event type must not
+    #    grow the buffer without bound.
+    DEFER_MAX: int = 1000
+
+    def _handle_unhandled_event(
+        self, event: Union[Event, DoneEvent, AfterEvent]
+    ) -> None:
+        """Apply the machine's ``onUnhandled`` policy to a matched-nothing event.
+
+        🏛️ Architecture decision: per XState an unhandled event is silently
+        ignored, and that remains the default. But on a critical path a
+        typo'd event name is a silent no-op no test can catch, and a fill
+        that arrives one microstep before its handler is armed is *lost*.
+        Both engines route here so they cannot disagree.
+
+        System events (``done.*``, ``after.*``, the init event) are exempt:
+        the machine did not ask for them and cannot be blamed for not
+        handling them.
+        """
+        if not isinstance(event, Event) or event.type.startswith(
+            _SYSTEM_EVENT_PREFIXES
+        ):
+            logger.debug("🍃 No transition for system event '%s'.", event.type)
+            return
+
+        policy = self.machine.on_unhandled
+        # Report the LEAF ids the user sees, not the internal configuration
+        # (which also holds every ancestor including the root).
+        active = self.current_state_ids
+
+        if policy == "error":
+            err = UnhandledEventError(event.type, active)
+            self._notify_unhandled(event, active, "errored")
+            self._fail(err)
+            return
+
+        if policy == "defer":
+            disposition = "deferred"
+            if len(self._deferred_events) >= self.DEFER_MAX:
+                evicted = self._deferred_events.pop(0)
+                # 🔔 Report the eviction against the EVICTED event, so the
+                #    caller learns which one was lost.
+                self._notify_unhandled(evicted, active, "dropped")
+            self._deferred_events.append(event)
+            self._notify_unhandled(event, active, disposition)
+            logger.debug(
+                "📨 Deferred '%s' (%d held).",
+                event.type,
+                len(self._deferred_events),
+            )
+            return
+
+        logger.debug("🍃 No transition found for event '%s'.", event.type)
+        self._notify_unhandled(event, active, "ignored")
+
+    def _notify_unhandled(
+        self, event: Event, active: Set[str], disposition: str
+    ) -> None:
+        for plugin in self._plugins:
+            plugin.on_unhandled_event(self, event, active, disposition)
+
+    @property
+    def deferred_count(self) -> int:
+        """Events currently held under ``onUnhandled: "defer"``."""
+        return len(self._deferred_events)
+
+    def _take_deferred_for_replay(self) -> List[Event]:
+        """Detach the deferral buffer for replay after a state change.
+
+        Returns the held events in original order and clears the buffer.
+        The caller re-injects them at the HEAD of its queue, ahead of live
+        traffic; any that are still unhandled in the new state come straight
+        back through `_handle_unhandled_event` and are re-deferred, so
+        nothing is re-dropped.
+        """
+        if not self._deferred_events:
+            return []
+        held, self._deferred_events = self._deferred_events, []
+        return held
+
+    def _apply_action_error_policy(
+        self,
+        transition: TransitionDefinition,
+        failed_actions: List[Tuple[ActionDefinition, BaseException]],
+    ) -> None:
+        """Report a partially-executed action list and apply the policy.
+
+        🏛️ Architecture decision: this is the single place both engines call
+        when `_execute_actions` returns failures, so the two never disagree
+        about what an action error means. Before 0.8.0 `_execute_actions`
+        returned ``None`` unconditionally and execution fell straight through
+        to `_enter_states` and `on_transition` whether or not the list had
+        completed -- the machine reported a state its own actions never
+        finished building.
+
+        Under ``"continue"`` this reports and returns; the caller commits.
+        Under ``"rollback"`` / ``"fail"`` it raises `_RollbackRequested`,
+        which the caller's atomic block turns into a restore.
+        """
+        self.last_transition_ok = False
+        for plug in self._plugins:
+            plug.on_transition_failed(self, transition, failed_actions)
+        if self.machine.action_error_policy_is_default:
+            # 📢 The 1.0 default will be "rollback". Warn once per machine so
+            #    users relying on "continue" pin it explicitly before the flip.
+            self.machine.action_error_policy_is_default = False
+            warnings.warn(
+                f"Machine '{self.machine.id}': an action raised and the "
+                f"transition was committed anyway because "
+                f"'actionErrorPolicy' is unset (default 'continue'). This "
+                f"default becomes 'rollback' in 1.0. Set 'actionErrorPolicy' "
+                f"explicitly to silence this.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        if self.machine.action_error_policy != "continue":
+            action_def, exc = failed_actions[0]
+            raise _RollbackRequested(action_def, exc)
+
+    def _finish_rollback(
+        self,
+        cause: BaseException,
+        transition: TransitionDefinition,
+        context_before: Optional[TContext],
+    ) -> bool:
+        """Common tail of both engines' rollback paths.
+
+        Restores context (when snapshotted), then decides what the caller
+        should do with *cause*.
+
+        Returns:
+            ``True`` if the caller should swallow the exception and return
+            normally (a policy-driven rollback); ``False`` if it should
+            re-raise (a genuine transition-resolution failure).
+        """
+        if context_before is not None:
+            self.context = context_before
+        if not isinstance(cause, _RollbackRequested):
+            return False
+        if self.machine.action_error_policy == "fail":
+            err = TransitionFailedError(
+                cause.action_def.type, transition.source.id
+            )
+            err.__cause__ = cause.original
+            self._fail(err)
+        return True
+
     def _fail(self, error: BaseException) -> None:
         """Puts the machine into the terminal `error` status.
 
@@ -2402,7 +2769,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         # swallow my own timers and service results". Without this guard a
         # single wildcard silently breaks every invoke and delayed transition
         # in that state — XState draws the same line.
-        if event_type.startswith(("done.", "error.", "after.", "xstate.")):
+        if event_type.startswith(_SYSTEM_EVENT_PREFIXES):
             return matches
 
         # 🌓 Partial descriptors: "a.b.*" matches "a.b.c" and "a.b".
@@ -2915,16 +3282,31 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                     guard_callable, self.context, event, params
                 )
             )
-        except Exception:
+        except Exception as exc:
+            # 🛡️ #35: apply the machine's guard_error_policy. Before 0.8.0 a
+            #    raising guard was unconditionally `False` -- a crashing
+            #    risk check and a failing one were indistinguishable to
+            #    every observer. The hook fires under EVERY policy so the
+            #    failure is observable even when the default keeps the
+            #    0.7.x behaviour.
+            policy = self.machine.guard_error_policy
             logger.exception(
                 "🔥 Guard '%s' raised an exception while evaluating event "
-                "'%s'; treating it as False.",
+                "'%s'; guardErrorPolicy=%r.",
                 guard.type,
                 event.type,
+                policy,
             )
-            result = False
+            for plugin in self._plugins:
+                plugin.on_guard_error(self, guard.type, event, exc)
+            if policy == "raise":
+                raise
+            result = policy == "true"
 
-        logger.info(
+        # 📉 #55: DEBUG, not INFO. This runs on EVERY guard evaluation; at
+        #    INFO it was one of four hot-path log calls costing ~4x
+        #    throughput for anyone with INFO logging configured.
+        logger.debug(
             "🛡️  Evaluating guard '%s': %s",
             guard.type,
             "✅ Passed" if result else "❌ Failed",

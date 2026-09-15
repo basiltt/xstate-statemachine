@@ -1031,9 +1031,12 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
                         "after": {
                             "50": {"target": "finished", "guard": "shouldFire"}
                         }
-                    }
+                    },
+                    # 🐛 Was a sibling of "states" -- an unreachable, undefined
+                    #    target the 0.7.x runtime silently ignored. Build-time
+                    #    validation (0.8.0, #30) now catches this.
+                    "finished": {},
                 },
-                "finished": {},
             },
             logic=logic,
         )

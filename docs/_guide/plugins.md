@@ -170,6 +170,13 @@ Every hook receives the `interpreter` instance as its first argument, giving plu
 | `on_service_start` | `(interpreter, invocation)` | When an invoked service begins |
 | `on_service_done` | `(interpreter, invocation, result)` | When a service completes successfully |
 | `on_service_error` | `(interpreter, invocation, error)` | When a service throws an exception |
+| `on_transition_failed` | `(interpreter, transition, failed_actions)` | A transition's action list did not run to completion |
+| `on_guard_error` | `(interpreter, guard_name, event, error)` | A guard raised instead of returning |
+| `on_unhandled_event` | `(interpreter, event, active_state_ids, disposition)` | An event selected no transition |
+| `on_error` | `(interpreter, error)` | The interpreter enters the `"error"` status |
+| `on_done` | `(interpreter, output)` | The machine reaches a top-level final state |
+
+`LoggingInspector` implements all five of these in addition to the hooks above.
 
 ### Hook Details
 
@@ -260,6 +267,52 @@ Fires when a service raises an exception. `error` is the `Exception` object.
 ```python
 def on_service_error(self, interpreter, invocation, error):
     print(f"Service '{invocation.src}' failed: {error}")
+```
+
+#### `on_transition_failed(interpreter, transition, failed_actions)`
+
+Fires under **every** `actionErrorPolicy` whenever one or more actions raised — in the transition's own action list or in the `entry` / `exit` list of any state the transition crossed. `failed_actions` is a list of `(ActionDefinition, exception)` pairs in execution order. Under `"continue"` it is followed by `on_transition` (the transition committed); under `"rollback"` and `"fail"` it is not. See [Actions — When an Action Raises](../actions/#when-an-action-raises).
+
+```python
+def on_transition_failed(self, interpreter, transition, failed_actions):
+    for action, error in failed_actions:
+        print(f"Action '{action.type}' failed: {error!r}")
+```
+
+#### `on_guard_error(interpreter, guard_name, event, error)`
+
+Fires when a guard raises instead of returning, before the raise is substituted with a result per `guardErrorPolicy`. See [Guards — Error Handling in Guards](../guards/#error-handling-in-guards).
+
+```python
+def on_guard_error(self, interpreter, guard_name, event, error):
+    print(f"Guard '{guard_name}' raised on '{event.type}': {error!r}")
+```
+
+#### `on_unhandled_event(interpreter, event, active_state_ids, disposition)`
+
+Fires when an event matches no transition in any active state, regardless of `onUnhandled` policy. `disposition` is `"ignored"`, `"deferred"`, `"errored"`, or `"dropped"` (the defer buffer was full and the oldest entry was evicted). See [Interpreters — Unhandled Events](../interpreters/#unhandled-events).
+
+```python
+def on_unhandled_event(self, interpreter, event, active_state_ids, disposition):
+    print(f"'{event.type}' unhandled in {active_state_ids}: {disposition}")
+```
+
+#### `on_error(interpreter, error)`
+
+Fires when the interpreter enters the terminal `"error"` status. `interpreter.error` holds the same exception.
+
+```python
+def on_error(self, interpreter, error):
+    print(f"Machine '{interpreter.id}' stopped with error: {error!r}")
+```
+
+#### `on_done(interpreter, output)`
+
+Fires when the machine reaches a top-level final state. `output` is the machine's `output` value (may be `None`).
+
+```python
+def on_done(self, interpreter, output):
+    print(f"Machine '{interpreter.id}' done. Output: {output!r}")
 ```
 
 ## Multiple Plugins

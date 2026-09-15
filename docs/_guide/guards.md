@@ -346,13 +346,30 @@ This restriction exists because guard evaluation happens in the hot path of tran
 
 ## Error Handling in Guards
 
-If a guard raises an exception, the interpreter treats it as `False` — the transition is skipped and the next candidate is tried:
+If a guard raises an exception, the interpreter substitutes a result and moves on to the next candidate. What it substitutes is controlled by the machine-config key **`guardErrorPolicy`**:
+
+| Value | Behavior |
+|-------|----------|
+| `"false"` (default) | The raise is treated as `False` — the transition is skipped, matching pre-0.8.0 behavior. |
+| `"true"` | The raise is treated as `True` — the transition is taken despite the error. |
+| `"raise"` | The exception propagates. In `SyncInterpreter` it reaches the `send()` caller; in the async `Interpreter` the run loop contains it and stays alive. Either way the machine is left in its pre-event state and remains usable. |
+
+```json
+{
+  "id": "m",
+  "guardErrorPolicy": "false",
+  "initial": "a",
+  "states": { "a": {} }
+}
+```
+
+Whatever the policy, the raise is observable via the `on_guard_error(interpreter, guard_name, event, error)` plugin hook, fired *before* the substituted result is reported — previously a raising guard was indistinguishable from one that legitimately returned `False`. See [Plugins](../plugins/#on_guard_errorinterpreter-guard_name-event-error).
 
 ```python
 class Logic(MachineLogic):
     def isValid(self, context, event):
         # If "data" key is missing, KeyError is raised
-        # The interpreter catches it and treats this guard as False
+        # guardErrorPolicy="false" (the default) treats this guard as False
         return context["data"]["value"] > 0
 ```
 
