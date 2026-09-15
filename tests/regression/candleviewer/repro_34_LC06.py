@@ -12,7 +12,12 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from xstate_statemachine import Interpreter, MachineLogic, create_machine
+from xstate_statemachine import (
+    Interpreter,
+    InvalidConfigError,
+    MachineLogic,
+    create_machine,
+)
 
 
 async def main() -> int:
@@ -40,9 +45,17 @@ async def main() -> int:
             },
         },
     }
-    interp = await Interpreter(
-        create_machine(cfg, logic=MachineLogic())
-    ).start()
+    # 0.8.0 (#30/#34): the unresolvable target is rejected at build time,
+    # which is the first of the two outcomes this repro's EXPECTED line
+    # accepts. Treat that as the pass; fall through to the runtime check
+    # only if the machine somehow builds.
+    try:
+        machine = create_machine(cfg, logic=MachineLogic())
+    except InvalidConfigError as exc:
+        print("OBSERVED: create_machine() raised", type(exc).__name__)
+        print("BOUND_FOREIGN_STATE: False")
+        return 0
+    interp = await Interpreter(machine).start()
     await interp.send("FILL")
     await asyncio.sleep(0.2)
     observed = sorted(interp.current_state_ids)

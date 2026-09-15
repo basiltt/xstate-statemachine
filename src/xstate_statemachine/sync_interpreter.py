@@ -1538,99 +1538,29 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     def _resolve_target_state_robustly(
         self, transition: TransitionDefinition
     ) -> StateNode:
-        """Resolves a target state string into a StateNode object robustly.
+        """Resolve a transition's target or raise `StateNotFoundError`.
 
-        This method attempts multiple resolution strategies in a specific order
-        to provide flexibility in how transitions are defined in the machine.
-
-        Args:
-            transition: The transition containing the target string.
-
-        Returns:
-            The resolved `StateNode` object.
+        🏛️ Architecture decision (#34, #60): this used to be a 100-line copy
+        of `BaseInterpreter._resolve_target_state_node` -- including the
+        three fuzzy fallbacks that bound typos to unrelated states. Two
+        copies of one algorithm is how the engines drifted apart. It now
+        delegates to the single shared implementation and only adds the
+        sync engine's raise-instead-of-None contract.
 
         Raises:
-            StateNotFoundError: If the target state cannot be found after all attempts.
-            ValueError: If the target string is empty for an external transition.
+            StateNotFoundError: The target resolves to nothing. The message
+                names the target AND the source state so the failing
+                transition is identifiable from the exception alone.
+            ValueError: Empty target on an external transition.
         """
-        target_str = transition.target_str
-        if not target_str:
+        if not transition.target_str:
             raise ValueError("Target string cannot be empty for resolution.")
-
-        root, source = self.machine, transition.source
-        parent = source.parent
-        logger.debug(
-            "🔄 Resolving target state: '%s' from source '%s'",
-            target_str,
-            source.id,
-        )
-
-        # 1️⃣ Standard resolution (relative to source, parent, root, and absolute)
-        # This logic is restored from the original implementation to fix the regression.
-        attempts = [
-            (target_str, source),
-            (target_str, parent) if parent else None,
-            (target_str, root),
-            (f"{root.id}.{target_str}", root),  # Absolute from root
-        ]
-        for tgt, ref in filter(None, attempts):
-            try:
-                state = resolve_target_state(tgt, ref)
-                logger.debug(
-                    "✅ Resolved '%s' via standard method from '%s'.",
-                    tgt,
-                    ref.id,
-                )
-                # 🚫 #59: no write-back to the shared TransitionDefinition
-                #    (see BaseInterpreter._resolve_target_state_node).
-                return state
-            except StateNotFoundError:
-                continue  # Try the next method
-
-        # 2️⃣ Direct attribute lookup on root
-        if hasattr(root, target_str) and isinstance(
-            getattr(root, target_str), StateNode
-        ):
-            logger.debug(
-                "✅ Resolved '%s' via root attribute lookup.", target_str
+        state = self._resolve_target_state_node(transition)
+        if state is None:
+            raise StateNotFoundError(
+                transition.target_str, transition.source.id
             )
-            return getattr(root, target_str)
-
-        # 3️⃣ Root states dictionary lookup
-        if hasattr(root, "states"):
-            states_dict = root.states
-            if target_str in states_dict:
-                logger.debug(
-                    "✅ Resolved '%s' via root states dictionary key.",
-                    target_str,
-                )
-                return states_dict[target_str]
-            for state in states_dict.values():
-                if state.id.split(".")[-1] == target_str:
-                    logger.debug(
-                        "✅ Resolved '%s' via local name in states dict.",
-                        target_str,
-                    )
-                    return state
-
-        # 4️⃣ Depth-first tree walk fallback (match local ID part)
-        for candidate in self._walk_tree(root):
-            if candidate.id.split(".")[-1] == target_str:
-                logger.debug(
-                    "✅ Resolved '%s' via deep tree walk to find '%s'.",
-                    target_str,
-                    candidate.id,
-                )
-                return candidate
-
-        # 🔚 Absolute failure
-        available_toplevel = list(root.states.keys())
-        logger.error(
-            "❌ All resolution attempts failed for target: '%s'. Available top-level states: %s",
-            target_str,
-            available_toplevel,
-        )
-        raise StateNotFoundError(target_str, root.id)
+        return state
 
     # -------------------------------------------------------------------------
     # 🛠️ Static Helper Methods
@@ -1653,23 +1583,3 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         return hasattr(callable_obj, "__code__") and (
             callable_obj.__code__.co_flags & 0x80  # noqa
         )
-
-    @staticmethod
-    def _walk_tree(node: StateNode) -> "SyncInterpreter._walk_tree":
-        """Recursively yields all nodes in a state tree using depth-first traversal.
-
-        This is a generator function used as a fallback mechanism for resolving
-        state targets when standard resolution methods fail.
-
-        Args:
-            node: The root `StateNode` from which to start the traversal.
-
-        Yields:
-            Each `StateNode` in the tree, starting with the root.
-        """
-        # 🚶‍♂️ Yield the current node first
-        yield node
-        # 🌳 If the node has children, recurse into them
-        if hasattr(node, "states"):
-            for child in node.states.values():
-                yield from SyncInterpreter._walk_tree(child)

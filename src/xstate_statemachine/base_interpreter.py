@@ -1296,55 +1296,36 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         if target_state:
             return target_state
 
-        # Fallback 1: Direct attribute lookup on root
-        if hasattr(root, target_str):
-            candidate = getattr(root, target_str)
-            if isinstance(candidate, StateNode):
-                logger.debug(
-                    "✅ Resolved via root attribute lookup: '%s'", candidate.id
-                )
-                return candidate
+        # 🔑 Exact top-level KEY. Keys may contain dots ("v2.0"), which the
+        #    path-splitting resolver above cannot express; this is the one
+        #    non-path lookup that is still unambiguous.
+        exact = root.states.get(target_str)
+        if exact is not None:
+            logger.debug("✅ Resolved via exact top-level key: '%s'", exact.id)
+            return exact
 
-        # Fallback 2: Lookup in root's `states` dict
-        if hasattr(root, "states"):
-            states_dict = getattr(root, "states", {})
-            if target_str in states_dict:
-                target_state = states_dict[target_str]
-                logger.debug(
-                    "✅ Resolved via root states dict (exact match): '%s'",
-                    target_state.id,
-                )
-                return target_state
-            for state in states_dict.values():
-                if state.id.split(".")[-1] == target_str:
-                    logger.debug(
-                        "✅ Resolved via root states dict (local name): '%s'",
-                        state.id,
-                    )
-                    return state
-
-        # Fallback 3: Exhaustive tree walk
-        def _walk(node):
-            yield node
-            if hasattr(node, "states"):
-                for child in node.states.values():
-                    yield from _walk(child)
-
-        for candidate in _walk(root):
-            if candidate.id.split(".")[-1] == target_str:
-                logger.debug(
-                    "✅ Resolved via full tree walk: '%s'", candidate.id
-                )
-                return candidate
-
-        available = list(getattr(root, "states", {}).keys())
+        # 🏛️ #34 (LC-06): there are deliberately NO further fallbacks.
+        #
+        #    Three used to follow here -- a `getattr(root, target)`, a scan of
+        #    top-level states by LAST id segment, and an exhaustive walk of the
+        #    whole tree by last segment. Short leaf names (`filled`, `done`,
+        #    `idle`) recur in every real machine, so the walk was far more
+        #    likely to find a WRONG match than no match: a transition in
+        #    `order` targeting a non-existent `filled` moved the unrelated
+        #    `audit` region to `audit.archive.filled` while `order` stayed
+        #    put. XState and SCXML scope targets lexically (sibling / `#id` /
+        #    `.child`); an unresolvable target is an error, never a search.
+        #    `validation.resolve_strict` mirrors exactly this set of
+        #    strategies, so build-time and runtime can never disagree.
+        available = sorted(root.states.keys())
         logger.error(
-            "🚫 All resolution attempts failed for target: '%s'", target_str
-        )
-        logger.error(
-            "📂 Available top-level states in machine '%s': %s",
+            "🚫 Target '%s' from '%s' does not resolve. Top-level states in "
+            "'%s': %s. Use a sibling key, '#%s.<path>' or '.<child>'.",
+            target_str,
+            transition.source.id,
             root.id,
             available,
+            root.id,
         )
         return None
 

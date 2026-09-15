@@ -85,21 +85,25 @@ def resolve_strict(
             return resolve_target_state(target_str, source)
         except StateNotFoundError:
             return None
+    # 🪞 This list mirrors `BaseInterpreter._resolve_target_state_node`'s
+    #    standard attempts ONE-FOR-ONE. Keep them in lock-step: any strategy
+    #    present on one side and absent on the other is a build/runtime
+    #    disagreement -- either a machine that validates and then fails at
+    #    runtime, or one that is rejected although the runtime handles it.
     parent = source.parent
-    for ref in (source, parent, machine):
-        if ref is None:
-            continue
+    attempts = [
+        (target_str, source),
+        (target_str, parent) if parent is not None else None,
+        (target_str, machine),
+        (f"{machine.id}.{target_str}", machine),
+    ]
+    for tgt, ref in filter(None, attempts):
         try:
-            return resolve_target_state(target_str, ref)
+            return resolve_target_state(tgt, ref)
         except StateNotFoundError:
             continue
-    try:
-        return resolve_target_state(f"{machine.id}.{target_str}", machine)
-    except StateNotFoundError:
-        pass
     # Exact top-level KEY match (handles dotted keys such as "v2.0").
-    exact = machine.states.get(target_str)
-    return exact
+    return machine.states.get(target_str)
 
 
 def _suggest(target_str: str, machine: "MachineNode") -> str:
