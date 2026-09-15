@@ -364,7 +364,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     break
 
                 current_event = self._event_queue.popleft()
-                logger.info("⚙️ Processing event: '%s'", current_event.type)
+                logger.debug(
+                    "⚙️ Processing event: '%s'", current_event.type
+                )  # 📉 #55: hot path, DEBUG
 
                 for plugin in self._plugins:
                     plugin.on_event_received(self, current_event)
@@ -668,7 +670,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         }
 
         for state in states_to_enter:
-            logger.info("➡️ Entering state: '%s'", state.id)
+            logger.debug("➡️ Entering state: '%s'", state.id)  # 📉 #55
             self._active_state_nodes.add(state)
             # 📨 Pass the REAL triggering event through. Synthesising an
             #    `entry.<id>` event here discarded the payload, so an entry
@@ -772,7 +774,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         # 🏃‍♂️ Then proceed with normal exit processing.
         for state in states_to_exit:
-            logger.info("⬅️ Exiting state: '%s'", state.id)
+            logger.debug("⬅️ Exiting state: '%s'", state.id)  # 📉 #55
             # 📨 Forward the real triggering event; see `_enter_states`.
             self._execute_actions(
                 state.exit,

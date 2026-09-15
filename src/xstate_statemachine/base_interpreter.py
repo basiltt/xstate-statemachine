@@ -3188,7 +3188,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 raise
             result = policy == "true"
 
-        logger.info(
+        # 📉 #55: DEBUG, not INFO. This runs on EVERY guard evaluation; at
+        #    INFO it was one of four hot-path log calls costing ~4x
+        #    throughput for anyone with INFO logging configured.
+        logger.debug(
             "🛡️  Evaluating guard '%s': %s",
             guard.type,
             "✅ Passed" if result else "❌ Failed",
