@@ -38,6 +38,7 @@ from typing import (
     Literal,
     Optional,
     Set,
+    Tuple,
     TypeVar,
     Union,
 )
@@ -68,6 +69,51 @@ TEvent = TypeVar("TEvent", bound=Dict[str, Any])
 
 # Define a specific type for state types for clarity and reuse.
 StateType = Literal["atomic", "compound", "parallel", "final", "history"]
+
+# -----------------------------------------------------------------------------
+# 🛡️ Failure Policies
+# -----------------------------------------------------------------------------
+# Each policy's FIRST value is the 0.7.x behaviour and remains the default.
+# -----------------------------------------------------------------------------
+
+#: What to do when a user-supplied action raises mid-transition.
+#:   continue — skip remaining actions, commit the transition, report it.
+#:   rollback — abort the transition; restore configuration and context.
+#:   fail     — roll back, then stop the interpreter with status "error".
+ACTION_ERROR_POLICIES: Tuple[str, ...] = ("continue", "rollback", "fail")
+
+#: What a raising guard evaluates to.
+#:   false — the guard is treated as not satisfied (0.7.x behaviour).
+#:   true  — the guard is treated as satisfied.
+#:   raise — the exception propagates to the caller of `send()`.
+GUARD_ERROR_POLICIES: Tuple[str, ...] = ("false", "true", "raise")
+
+#: What to do with an event that selects no transition.
+#:   ignore — drop it, firing `on_unhandled_event` (XState semantics).
+#:   defer  — hold it and replay it after the next successful transition.
+#:   error  — raise `UnhandledEventError`.
+UNHANDLED_EVENT_POLICIES: Tuple[str, ...] = ("ignore", "defer", "error")
+
+
+def _validated_policy(
+    config: Dict[str, Any],
+    key: str,
+    allowed: Tuple[str, ...],
+    default: str,
+) -> str:
+    """Read a policy string from *config*, rejecting anything unrecognised.
+
+    🛡️ A policy typo (`"rollbak"`) that silently fell back to the default
+    would recreate the very failure mode these policies exist to remove.
+    """
+    value = config.get(key, default)
+    if value not in allowed:
+        raise InvalidConfigError(
+            f"Machine '{config.get('id', '?')}': '{key}' must be one of "
+            f"{list(allowed)}, got {value!r}."
+        )
+    return str(value)
+
 
 # 👶 Prefixes marking an action as a built-in actor-spawning directive.
 #
@@ -1157,6 +1203,38 @@ class MachineNode(StateNode[TContext, TEvent]):
         #: Machine-level output declaration, resolved when a top-level final
         #: state is reached.
         self.machine_output: Any = config.get("output")
+
+        # 🛡️ Failure policies (0.8.0).
+        #
+        # 🏛️ Architecture decision: before 0.8.0 every one of these failures
+        #    degraded to a *silent* no-op — a raising action still committed
+        #    the transition, a raising guard became `False`, an unknown event
+        #    vanished. Each is a defensible default for a UI widget and a
+        #    money-losing one for an order lifecycle. Rather than pick one
+        #    audience, the behaviour is a per-machine policy. The 0.7.x
+        #    behaviour remains the default for every policy, so upgrading is
+        #    safe; strict users opt in. Read from config so the policy
+        #    travels WITH the machine definition, and validated here so a
+        #    typo is a build-time error rather than a runtime surprise.
+        self.action_error_policy: str = _validated_policy(
+            config, "actionErrorPolicy", ACTION_ERROR_POLICIES, "continue"
+        )
+        #: True until the user sets the policy explicitly. Drives a one-shot
+        #: DeprecationWarning ahead of the 1.0 default change.
+        self.action_error_policy_is_default: bool = (
+            "actionErrorPolicy" not in config
+        )
+        self.guard_error_policy: str = _validated_policy(
+            config, "guardErrorPolicy", GUARD_ERROR_POLICIES, "false"
+        )
+        self.on_unhandled: str = _validated_policy(
+            config, "onUnhandled", UNHANDLED_EVENT_POLICIES, "ignore"
+        )
+        #: When True, transition targets are resolved strictly: a plain
+        #: identifier must name a sibling or ancestor-scope state, never an
+        #: unrelated state elsewhere in the tree that merely shares the last
+        #: id segment. Default False preserves 0.7.x resolution.
+        self.strict_targets: bool = bool(config.get("strictTargets", False))
 
         #: Custom `id` → node registry, populated by `StateNode.__init__` as
         #: the tree is built. Must exist BEFORE `super().__init__` recurses

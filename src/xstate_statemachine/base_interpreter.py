@@ -29,6 +29,7 @@ import copy
 import inspect
 import json
 import logging
+import warnings
 from typing import (
     Any,
     Awaitable,
@@ -38,6 +39,7 @@ from typing import (
     List,
     Optional,
     Set,
+    Tuple,
     Type,
     Union,
     overload,
@@ -53,6 +55,8 @@ from .exceptions import (
     InvalidConfigError,
     RestoredError,
     StateNotFoundError,
+    TransitionFailedError,
+    UnhandledEventError,
 )
 from .actions import (
     ASSIGN,
@@ -232,6 +236,22 @@ class _SafePlugin:
         return repr(object.__getattribute__(self, "_plugin"))
 
 
+class _RollbackRequested(Exception):
+    """Internal signal: an action raised and the policy is not ``continue``.
+
+    Raised inside `_execute_transition`'s atomic block so the EXISTING
+    rollback path (built for transition-resolution failures in 0.6.0) is
+    reused for action failures. Never escapes `_execute_transition`.
+    """
+
+    def __init__(
+        self, action_def: ActionDefinition, original: BaseException
+    ) -> None:
+        super().__init__(action_def.type)
+        self.action_def = action_def
+        self.original = original
+
+
 class BaseInterpreter(Generic[TContext, TEvent]):
     """Provides the foundational logic for state machine interpretation.
 
@@ -309,6 +329,14 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         self.output: Any = None
         #: The error that put the machine into the "error" status, if any.
         self.error: Optional[BaseException] = None
+        #: False when the most recent transition's action list did not run to
+        #: completion. A persistence layer can gate snapshot writes on this
+        #: so a state built by a half-executed action list is never written
+        #: as truth.
+        self.last_transition_ok: bool = True
+        #: Events held back under ``onUnhandled: "defer"``, replayed after
+        #: the next successful transition. Empty under other policies.
+        self._deferred_events: List[Event] = []
         #: Listeners registered via :meth:`on`, keyed by emitted event type.
         self._emit_listeners: Dict[str, List[Callable[[Any], None]]] = {}
         #: Cancellation callbacks for pending delayed sends, keyed by send id.
@@ -1031,8 +1059,15 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
     def _execute_actions(
         self, actions: List[ActionDefinition], event: Event
-    ) -> Union[None, Awaitable[None]]:
+    ) -> Union[
+        List[Tuple[ActionDefinition, BaseException]],
+        Awaitable[List[Tuple[ActionDefinition, BaseException]]],
+    ]:
         """Executes a list of action definitions.
+
+        Returns:
+            The ``(action, exception)`` pairs for actions that raised, in
+            execution order. Empty when every action succeeded.
 
         Raises:
             NotImplementedError: This method must be implemented by a concrete
@@ -1783,6 +1818,14 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         # 4. All other transitions are "external" and will cause a state change.
         snapshot_before = self._active_state_nodes.copy()
+        # 🧷 Context is snapshotted only when a rollback could need it: a
+        #    deepcopy per transition on the "continue" hot path would be a
+        #    measurable tax for a feature the machine has opted out of.
+        context_before: Optional[TContext] = (
+            copy.deepcopy(self.context)
+            if self.machine.action_error_policy != "continue"
+            else None
+        )
         domain = self._find_transition_domain(transition, target_state)
 
         states_to_exit = self._compute_states_to_exit(domain, target_state)
@@ -1835,7 +1878,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 ),
                 event,
             )
-            await self._execute_actions(transition.actions, event)
+            failed_actions = await self._execute_actions(
+                transition.actions, event
+            )
+            if failed_actions:
+                self._apply_action_error_policy(transition, failed_actions)
             await self._enter_states(path_to_enter, event)
 
             # 🕰️ Restore the remembered configuration for a history target.
@@ -1858,12 +1905,14 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                             combined_path.append(step)
                 if combined_path:
                     await self._enter_states(combined_path, event)
-        except Exception:
-            logger.error(
+        except Exception as rollback_cause:
+            requested = isinstance(rollback_cause, _RollbackRequested)
+            logger.log(
+                logging.WARNING if requested else logging.ERROR,
                 "💥 Transition on '%s' failed; rolling back to the "
                 "pre-transition configuration.",
                 transition.source.id,
-                exc_info=True,
+                exc_info=not requested,
             )
             self._active_state_nodes.clear()
             self._active_state_nodes.update(snapshot_before)
@@ -1877,9 +1926,15 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             for node in snapshot_before:
                 if node in states_to_exit:
                     self._schedule_state_tasks(node)
+            if self._finish_rollback(
+                rollback_cause, transition, context_before
+            ):
+                return
             raise
 
         # 6. Notify plugins and subscribers of the completed transition.
+        if not failed_actions:
+            self.last_transition_ok = True
         for plug in self._plugins:
             plug.on_transition(
                 self,
@@ -2305,6 +2360,73 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             bool: `True` if any `onError` transition is declared.
         """
         return bool(getattr(invocation, "on_error", None))
+
+    def _apply_action_error_policy(
+        self,
+        transition: TransitionDefinition,
+        failed_actions: List[Tuple[ActionDefinition, BaseException]],
+    ) -> None:
+        """Report a partially-executed action list and apply the policy.
+
+        🏛️ Architecture decision: this is the single place both engines call
+        when `_execute_actions` returns failures, so the two never disagree
+        about what an action error means. Before 0.8.0 `_execute_actions`
+        returned ``None`` unconditionally and execution fell straight through
+        to `_enter_states` and `on_transition` whether or not the list had
+        completed -- the machine reported a state its own actions never
+        finished building.
+
+        Under ``"continue"`` this reports and returns; the caller commits.
+        Under ``"rollback"`` / ``"fail"`` it raises `_RollbackRequested`,
+        which the caller's atomic block turns into a restore.
+        """
+        self.last_transition_ok = False
+        for plug in self._plugins:
+            plug.on_transition_failed(self, transition, failed_actions)
+        if self.machine.action_error_policy_is_default:
+            # 📢 The 1.0 default will be "rollback". Warn once per machine so
+            #    users relying on "continue" pin it explicitly before the flip.
+            self.machine.action_error_policy_is_default = False
+            warnings.warn(
+                f"Machine '{self.machine.id}': an action raised and the "
+                f"transition was committed anyway because "
+                f"'actionErrorPolicy' is unset (default 'continue'). This "
+                f"default becomes 'rollback' in 1.0. Set 'actionErrorPolicy' "
+                f"explicitly to silence this.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        if self.machine.action_error_policy != "continue":
+            action_def, exc = failed_actions[0]
+            raise _RollbackRequested(action_def, exc)
+
+    def _finish_rollback(
+        self,
+        cause: BaseException,
+        transition: TransitionDefinition,
+        context_before: Optional[TContext],
+    ) -> bool:
+        """Common tail of both engines' rollback paths.
+
+        Restores context (when snapshotted), then decides what the caller
+        should do with *cause*.
+
+        Returns:
+            ``True`` if the caller should swallow the exception and return
+            normally (a policy-driven rollback); ``False`` if it should
+            re-raise (a genuine transition-resolution failure).
+        """
+        if context_before is not None:
+            self.context = context_before
+        if not isinstance(cause, _RollbackRequested):
+            return False
+        if self.machine.action_error_policy == "fail":
+            err = TransitionFailedError(
+                cause.action_def.type, transition.source.id
+            )
+            err.__cause__ = cause.original
+            self._fail(err)
+        return True
 
     def _fail(self, error: BaseException) -> None:
         """Puts the machine into the terminal `error` status.

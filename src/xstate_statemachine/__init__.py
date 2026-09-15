@@ -98,6 +98,8 @@ from .exceptions import (
     InvalidConfigError,
     NotSupportedError,
     StateNotFoundError,
+    TransitionFailedError,
+    UnhandledEventError,
     XStateMachineError,
 )
 
@@ -193,6 +195,8 @@ __all__ = [
     "ImplementationMissingError",
     "ActorSpawningError",
     "NotSupportedError",
+    "UnhandledEventError",
+    "TransitionFailedError",
     "MachineNode",
     # 🐍 Pythonic API
     "State",

@@ -19,6 +19,7 @@
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
+import copy
 import logging
 import threading
 import time
@@ -32,6 +33,7 @@ from typing import (
     List,
     Optional,
     Set,
+    Tuple,
     Union,
     overload,
 )
@@ -39,7 +41,7 @@ from typing import (
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
-from .base_interpreter import BaseInterpreter
+from .base_interpreter import BaseInterpreter, _RollbackRequested
 from .events import AfterEvent, DoneEvent, Event
 from .exceptions import (
     ActorSpawningError,
@@ -468,6 +470,13 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         """
         # For external transitions, prepare for state changes.
         snapshot_before_transition = self._active_state_nodes.copy()
+        # 🧷 See BaseInterpreter._execute_transition: context is only
+        #    snapshotted when a rollback could need it.
+        context_before: Optional[TContext] = (
+            copy.deepcopy(self.context)
+            if self.machine.action_error_policy != "continue"
+            else None
+        )
         domain = self._find_transition_domain(transition, target_state)
 
         # Determine the full path of states to exit and enter.
@@ -515,7 +524,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 ),
                 event,
             )
-            self._execute_actions(transition.actions, event)
+            failed_actions = self._execute_actions(transition.actions, event)
+            if failed_actions:
+                self._apply_action_error_policy(transition, failed_actions)
             self._enter_states(path_to_enter, event)
 
             # 🕰️ Restore the remembered configuration for a history target.
@@ -531,12 +542,14 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                             combined_path.append(step)
                 if combined_path:
                     self._enter_states(combined_path, event)
-        except Exception:
-            logger.error(
+        except Exception as rollback_cause:
+            requested = isinstance(rollback_cause, _RollbackRequested)
+            logger.log(
+                logging.WARNING if requested else logging.ERROR,
                 "💥 Transition on '%s' failed; rolling back to the "
                 "pre-transition configuration.",
                 transition.source.id,
-                exc_info=True,
+                exc_info=not requested,
             )
             self._active_state_nodes.clear()
             self._active_state_nodes.update(snapshot_before_transition)
@@ -547,9 +560,15 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             for node in snapshot_before_transition:
                 if node in states_to_exit:
                     self._schedule_state_tasks(node)
+            if self._finish_rollback(
+                rollback_cause, transition, context_before
+            ):
+                return
             raise
 
         # Notify plugins and subscribers of the completed transition.
+        if not failed_actions:
+            self.last_transition_ok = True
         self._notify_subscribers()
         for plugin in self._plugins:
             plugin.on_transition(
@@ -806,7 +825,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
     def _execute_actions(
         self, actions: List[ActionDefinition], event: Event
-    ) -> None:
+    ) -> List[Tuple[ActionDefinition, BaseException]]:
         """Synchronously executes a list of actions.
 
         This method iterates through action definitions, validates them, and
@@ -817,12 +836,19 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             actions: The list of `ActionDefinition` objects to execute.
             event: The event that triggered these actions.
 
+        Returns:
+            The ``(action, exception)`` pairs for actions that raised, in
+            execution order; empty when all succeeded. Mirrors
+            `Interpreter._execute_actions` so both engines feed the same
+            ``action_error_policy`` logic in `BaseInterpreter`.
+
         Raises:
             ImplementationMissingError: If an action implementation is not found.
             NotSupportedError: If an async action is encountered.
         """
+        failed: List[Tuple[ActionDefinition, BaseException]] = []
         if not actions:
-            return
+            return failed
 
         for action_def in actions:
             # 🔌 Notify plugins before execution
@@ -851,14 +877,21 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                         self._execute_builtin_action(
                             canonical, action_def, event
                         )
-                    except Exception:
+                    except Exception as exc:
                         logger.exception(
                             "🔥 Built-in action '%s' raised while handling "
                             "'%s'; skipping remaining actions.",
                             action_def.type,
                             event.type,
                         )
-                        return
+                        # 🔔 The async engine already fired this hook for
+                        #    built-in failures; the sync engine did not, so
+                        #    the same machine reported different things on
+                        #    the two engines. Aligned in 0.8.0.
+                        for plugin in self._plugins:
+                            plugin.on_action_error(self, action_def, exc)
+                        failed.append((action_def, exc))
+                        return failed
                     continue
 
             if not action_impl:
@@ -896,7 +929,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 #    Sentry, a metric, or a dead-letter queue.
                 for plugin in self._plugins:
                     plugin.on_action_error(self, action_def, exc)
-                return
+                failed.append((action_def, exc))
+                return failed
+        return failed
 
     def _execute_builtin_action(
         self,

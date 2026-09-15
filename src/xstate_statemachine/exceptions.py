@@ -42,7 +42,7 @@ Example:
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
-from typing import Optional
+from typing import Iterable, Optional
 
 # -----------------------------------------------------------------------------
 # 💥 Core Exception Classes
@@ -219,3 +219,48 @@ class RestoredError(XStateMachineError):
     """
 
     pass
+
+
+class UnhandledEventError(XStateMachineError):
+    """Raised when an event selects no transition and ``onUnhandled`` is ``"error"``.
+
+    🏛️ Per XState an unhandled event is silently ignored, and that remains
+    the default. On a critical path — an order lifecycle, a payment — a
+    typo'd event name being a silent no-op is exactly the failure that no
+    test can catch. Setting ``"onUnhandled": "error"`` on the machine turns
+    it into this exception instead.
+
+    Attributes:
+        event_type: The type of the event that matched nothing.
+        active_states: The state ids that were active when it arrived.
+    """
+
+    def __init__(self, event_type: str, active_states: Iterable[str]):
+        self.event_type = event_type
+        self.active_states = sorted(active_states)
+        super().__init__(
+            f"Event '{event_type}' is not handled in any active state "
+            f"{self.active_states} and the machine's onUnhandled policy "
+            f"is 'error'."
+        )
+
+
+class TransitionFailedError(XStateMachineError):
+    """Raised when ``actionErrorPolicy`` is ``"fail"`` and an action raised.
+
+    Wraps the original exception (available as ``__cause__``) and records
+    which action failed so the caller can act on it programmatically.
+
+    Attributes:
+        action_type: The ``type`` of the action that raised.
+        source_state: The id of the state the transition left from.
+    """
+
+    def __init__(self, action_type: str, source_state: str):
+        self.action_type = action_type
+        self.source_state = source_state
+        super().__init__(
+            f"Action '{action_type}' raised during a transition from "
+            f"'{source_state}'; the transition was rolled back and the "
+            f"machine stopped (actionErrorPolicy='fail')."
+        )

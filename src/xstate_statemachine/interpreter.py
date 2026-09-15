@@ -34,6 +34,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Tuple,
     Union,
     overload,
 )
@@ -587,7 +588,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
     async def _execute_actions(
         self, actions: List[ActionDefinition], event: Event
-    ) -> None:
+    ) -> List[Tuple[ActionDefinition, BaseException]]:
         """Asynchronously executes a list of action definitions.
 
         This implementation respects the asynchronous nature of actions,
@@ -599,12 +600,24 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 objects to execute.
             event (Event): The event that triggered these actions.
 
+        Returns:
+            The ``(action, exception)`` pairs for actions that raised, in
+            execution order. Empty when every action succeeded. The first
+            failure stops execution of the remaining actions in the list.
+
+            🏛️ Returning the failures rather than swallowing them is what
+            lets the caller apply the machine's ``action_error_policy``:
+            before 0.8.0 this method returned ``None`` unconditionally, so
+            `_execute_transition` could not tell a complete action list from
+            a partially executed one and committed the transition either way.
+
         Raises:
             ImplementationMissingError: If a named action is not defined in the
                 machine's logic dictionary.
         """
+        failed: List[Tuple[ActionDefinition, BaseException]] = []
         if not actions:
-            return
+            return failed
 
         for action_def in actions:
             # 🔔 Notify plugins before executing each action.
@@ -647,7 +660,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                         )
                         for plugin in self._plugins:
                             plugin.on_action_error(self, action_def, exc)
-                        return
+                        failed.append((action_def, exc))
+                        return failed
                     continue
 
             if not action_callable:
@@ -681,12 +695,14 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                     action_def.type,
                     event.type,
                 )
-                # 🔔 Surface the failure programmatically — containment keeps
-                #    the machine alive but makes the error invisible, since
-                #    the transition completes as though the action succeeded.
+                # 🔔 Surface the failure programmatically. The hook fires
+                #    under every policy; what the caller DOES with the
+                #    failure is decided by `action_error_policy` upstream.
                 for plugin in self._plugins:
                     plugin.on_action_error(self, action_def, exc)
-                return
+                failed.append((action_def, exc))
+                return failed
+        return failed
 
     # -------------------------------------------------------------------------
     # 🤖 Asynchronous Task Implementations (Actors, Timers, Services)
