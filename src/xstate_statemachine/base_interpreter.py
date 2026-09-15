@@ -474,27 +474,99 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     # 🔭 Observation & Introspection
     # -------------------------------------------------------------------------
 
-    def matches(self, state_id: str) -> bool:
-        """Reports whether a state is part of the active configuration.
+    @property
+    def value(self) -> Union[str, Dict[str, Any]]:
+        """The active configuration in XState's hierarchical ``value`` form.
 
-        Accepts a fully-qualified id (``"machine.parent.child"``), the same id
-        with a leading ``#``, or a trailing partial path (``"parent.child"``).
-        Matching an ancestor returns `True` when any descendant is active,
-        mirroring XState's ``snapshot.matches()``.
+        * atomic / final state  -> its key, e.g. ``"booking"``
+        * compound state        -> ``{"life": "booking"}``
+        * parallel state        -> one key per region, recursively
+        * not started           -> ``{}``
 
-        Args:
-            state_id (str): The state to test for.
+        🏛️ Architecture decision (#58): `current_state_ids` is a flat set of
+        leaf ids -- exactly right for ``"x" in ids`` checks and deliberately
+        unchanged. But a UI, a metrics label or a ``matches({...})`` call
+        needs the TREE, and rebuilding it from dotted ids breaks the moment
+        a key contains a dot. This walks `StateNode`s, so ``"v2.0"`` is a
+        key, not two path segments. Derived on every read; never persisted
+        as truth (the snapshot carries it for consumers, restore ignores it).
 
         Returns:
-            bool: `True` if the state or one of its descendants is active.
+            Union[str, Dict[str, Any]]: The state value.
         """
-        if not state_id:
+        if not self._active_state_nodes:
+            return {}
+        return self._value_of(self.machine)
+
+    def _value_of(self, node: StateNode) -> Union[str, Dict[str, Any]]:
+        """Recursive worker for :attr:`value`; *node* must be active."""
+        active = self._active_state_nodes
+        if node.type == "parallel":
+            return {
+                key: self._value_of(child)
+                for key, child in node.states.items()
+                if child in active
+            }
+        # 🌿 Compound: exactly one active child. A compound with no active
+        #    child is a torn configuration (only constructible via a
+        #    malformed restore) -- say so rather than emit a half-tree.
+        child = next((c for c in node.states.values() if c in active), None)
+        if child is None:
+            if node.is_atomic or node.is_final:
+                return node.key
+            raise StateNotFoundError(
+                f"<no active child of '{node.id}'>", node.id
+            )
+        if child.is_atomic or child.is_final:
+            return child.key
+        return {child.key: self._value_of(child)}
+
+    def matches(self, state: Union[str, Dict[str, Any]]) -> bool:
+        """Reports whether a state is part of the active configuration.
+
+        Accepts either form XState's ``snapshot.matches()`` accepts:
+
+        * a **string** -- a fully-qualified id (``"machine.parent.child"``),
+          the same with a leading ``#``, or a trailing partial path
+          (``"parent.child"``);
+        * a **dict** -- a partial :attr:`value` tree, e.g.
+          ``{"protection": {"risk": "armed"}}``. Every key named must be
+          active; a leaf given as a string matches when that child (or
+          any of ITS descendants) is active.
+
+        Matching an ancestor returns `True` when any descendant is active.
+
+        Args:
+            state: The state to test for.
+
+        Returns:
+            bool: `True` if the state (or one of its descendants) is active.
+        """
+        if isinstance(state, dict):
+            return self._matches_value(self.machine, state)
+        if not state:
             return False
-        target = state_id[1:] if state_id.startswith("#") else state_id
+        target = state[1:] if state.startswith("#") else state
         for node in self._active_state_nodes:
             if node.id == target or node.id.endswith("." + target):
                 return True
         return False
+
+    def _matches_value(
+        self, node: StateNode, pattern: Union[str, Dict[str, Any]]
+    ) -> bool:
+        """Recursive worker for the dict form of :meth:`matches`."""
+        active = self._active_state_nodes
+        if isinstance(pattern, str):
+            child = node.states.get(pattern)
+            return child is not None and child in active
+        for key, sub in pattern.items():
+            child = node.states.get(key)
+            if child is None or child not in active:
+                return False
+            if not self._matches_value(child, sub):
+                return False
+        return True
 
     def has_tag(self, tag: str) -> bool:
         """Reports whether any active state declares the given tag.
@@ -772,6 +844,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             #    rewrite an already-taken snapshot.
             "context": copy.deepcopy(self.context),
             "state_ids": sorted(self.current_state_ids),
+            # 🌲 #58: the hierarchical form, for downstream consumers (UIs,
+            #    dashboards) that read snapshots. DERIVED: `from_snapshot`
+            #    rebuilds from `configuration` and ignores this key.
+            "value": self.value,
             # 🌳 Full configuration, so ancestors are restored exactly rather
             #    than re-derived from leaves.
             "configuration": sorted(
