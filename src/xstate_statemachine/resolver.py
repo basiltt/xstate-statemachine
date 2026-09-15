@@ -169,9 +169,18 @@ def resolve_target_state(
         #    silently redirected every existing `#m.child` target into that
         #    unrelated branch. The machine root is the more established
         #    meaning, so it keeps priority.
-        if segments[0] == machine.key:
+        # 🔑 The machine key may itself contain dots (`"my.machine"`), in
+        #    which case it spans several segments. Match the longest prefix
+        #    of the raw path against the key rather than `segments[0]` alone,
+        #    otherwise every `#my.machine.x` target is unresolvable (#30/#31
+        #    review) -- and `pythonic` emits exactly that form.
+        raw = target[1:]
+        if raw == machine.key or raw.startswith(machine.key + "."):
+            rest = raw[len(machine.key) :]
             try:
-                return _find_descendant(machine, segments[1:])
+                return _find_descendant(
+                    machine, rest[1:].split(".") if rest else []
+                )
             except StateNotFoundError:
                 # ⤵️ Fall through: a custom id may still match, which keeps
                 #    `#name.child` working when `name` shadows the machine key

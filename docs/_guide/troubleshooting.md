@@ -17,7 +17,10 @@ XStateMachineError          ← Base class for ALL library errors
 ├── StateNotFoundError      ← Target state ID doesn't exist
 ├── ImplementationMissingError ← Action/guard/service function not provided
 ├── ActorSpawningError      ← Error creating child actor machine
-└── NotSupportedError       ← Feature not available in current mode
+├── NotSupportedError       ← Feature not available in current mode
+├── UnhandledEventError     ← Event matched no transition and onUnhandled="error"
+├── TransitionFailedError   ← Action raised and actionErrorPolicy="fail"
+└── WrongThreadError        ← Interpreter.send() called from a foreign thread
 ```
 
 ### Importing Exceptions
@@ -30,6 +33,9 @@ from xstate_statemachine import (
     ImplementationMissingError,# Missing action/guard/service
     ActorSpawningError,        # Actor creation failed
     NotSupportedError,         # Feature not supported in current mode
+    UnhandledEventError,       # Unhandled event, onUnhandled="error"
+    TransitionFailedError,     # Action raised, actionErrorPolicy="fail"
+    WrongThreadError,          # send() called off the owning event loop's thread
 )
 ```
 
@@ -179,6 +185,8 @@ xstate_statemachine.exceptions.StateNotFoundError: Could not resolve target stat
 
 **Why it happens:** A transition `target` references a state name that doesn't exist. This is usually a typo.
 
+> **Note:** As of 0.8.0, `create_machine()` walks the finished tree and rejects unresolvable targets at build time by default (`strict_targets=True`), raising `InvalidConfigError` — see [`InvalidConfigError` — Unresolvable transition target](#invalidconfigerror--unresolvable-transition-target) below. `StateNotFoundError` still fires for a target that only becomes invalid at runtime, e.g. one restored from an outdated snapshot, or when `strict_targets=False` and the runtime resolver's fuzzy fallback still fails.
+
 **How to fix it:** Check the spelling of your target state names:
 
 ```python
@@ -202,6 +210,88 @@ config = {
 ```
 
 ---
+
+### `InvalidConfigError` — Unresolvable transition target
+
+**What it looks like:**
+
+```
+xstate_statemachine.exceptions.InvalidConfigError: Machine 'test' has unresolvable transition targets:
+  test.idle: on 'GO' -> target 'runing' does not resolve
+```
+
+**Why it happens:** `create_machine()` validates every transition target — `on`, `always`, `after`, `onDone`, and every `invoke`'s `onDone`/`onError` — against the fully built tree, and reports every unresolved one together in a single message.
+
+**How to fix it:** Fix the typo, or if you need to keep loading a config with a known-bad target while you migrate it, downgrade the failure to a `DeprecationWarning`:
+
+```python
+machine = create_machine(config, strict_targets=False)
+```
+
+This escape hatch is removed in 1.0 — the unresolved transitions remain silent no-ops at runtime until then.
+
+---
+
+### `InvalidConfigError` — `always` self-target can never make progress
+
+**What it looks like:**
+
+```
+xstate_statemachine.exceptions.InvalidConfigError: Machine 'test' has non-progressing 'always' transitions:
+  test.idle: always self-target can never make progress -- the transition does not re-enter the state, so 'entry' will not re-run. Add "reenter": true, route via an intermediate state, or give the transition actions that mutate context.
+```
+
+**Why it happens:** An `always` transition that targets its own owning state, without `"reenter": true` and without `actions`, never exits/re-enters — `entry` never re-runs, nothing mutates context, and the machine parks forever while reporting `"running"`.
+
+**How to fix it:** Add `"reenter": true`, route through an intermediate state, or give the transition `actions` that mutate context so a guard can eventually flip.
+
+---
+
+### `InvalidConfigError` — built-in action missing params
+
+**What it looks like:**
+
+```
+xstate_statemachine.exceptions.InvalidConfigError: Built-in action 'sendTo' is missing required param(s) ['event', 'to']. Found ['event', 'to'] at the top level of the action -- built-in action parameters must be nested under 'params'.
+```
+
+**Why it happens:** Built-in actions (`raise`, `sendTo`, `cancel`, `stopChild`, …) require their parameters nested under `"params"`. Placing them at the top level of the action dict — a natural mistake — leaves the required key missing.
+
+**How to fix it:**
+
+```json
+{ "type": "sendTo", "params": { "to": "someActor", "event": {"type": "PING"} } }
+```
+
+not
+
+```json
+{ "type": "sendTo", "to": "someActor", "event": {"type": "PING"} }
+```
+
+---
+
+### `WrongThreadError`
+
+**What it looks like:**
+
+```
+xstate_statemachine.exceptions.WrongThreadError: Interpreter 'm' is bound to the event loop on thread 'MainThread'; send() was called from thread 'Thread-1'. Events sent this way would be silently lost. Use send_threadsafe() from other threads.
+```
+
+**Why it happens:** The async `Interpreter.send()` is bound to the event loop that started it. Calling it from a different thread cannot be awaited there, and before 0.8.0 the event was silently lost.
+
+**How to fix it:** Use `send_threadsafe()` from a foreign thread:
+
+```python
+interp.send_threadsafe("TICK")
+```
+
+`SyncInterpreter` has no owning event loop and is unaffected.
+
+---
+
+
 
 ### `ImplementationMissingError`
 

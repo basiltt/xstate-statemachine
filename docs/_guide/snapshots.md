@@ -85,6 +85,8 @@ interp.stop()
 
 The `from_snapshot()` class method creates a **new** interpreter instance pre-configured with the saved state. You provide the snapshot JSON string and the **same machine definition** that was used to create the original interpreter.
 
+The restored context is deep-copied and merged over the machine's default context — defaults fill in any keys missing from the snapshot, while persisted values win on conflict — and the snapshot also carries any events that were deferred (`onUnhandled: "defer"`) at save time.
+
 ```python
 import json
 

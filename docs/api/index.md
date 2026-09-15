@@ -17,7 +17,7 @@ from xstate_statemachine import create_machine, Interpreter, State  # etc.
 
 ## Factory Functions
 
-### `create_machine(config, *, logic=None, logic_modules=None, logic_providers=None)`
+### `create_machine(config, *, logic=None, logic_modules=None, logic_providers=None, strict_targets=True)`
 
 Creates, validates, and assembles a state machine instance from an
 XState-compatible JSON configuration dictionary. This is the **primary
@@ -29,12 +29,16 @@ passed via `logic`, it takes precedence. Otherwise, the factory delegates to
 `LogicLoader` to auto-discover implementations from the specified modules or
 provider objects.
 
+`create_machine()` also validates the fully built tree: every transition
+target must resolve, and no `always` self-target may be a permanent dead end.
+
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `config` | `Dict[str, Any]` | Yes | -- | The machine's structural definition. Must contain top-level `"id"` (non-empty string) and `"states"` keys. Typically loaded from JSON or YAML. |
 | `logic` | `MachineLogic` | No | `None` | A pre-constructed `MachineLogic` instance containing all required actions, guards, and services. When provided, auto-discovery is skipped. |
 | `logic_modules` | `List[Union[str, ModuleType]]` | No | `None` | Python modules (or their dotted import-path strings, e.g. `"my_app.logic.actions"`) to scan for logic functions. |
 | `logic_providers` | `List[object]` | No | `None` | Class instances whose public methods are scanned to satisfy the machine's logic requirements. Provider methods override module-level functions on name collision. |
+| `strict_targets` | `bool` | No | `True` | When `True`, an unresolvable transition target raises `InvalidConfigError` at build time. When `False`, it downgrades to a `DeprecationWarning` (0.7.x behavior; removed in 1.0). |
 
 **Returns:** `MachineNode` -- a fully constructed, validated machine ready for
 an interpreter.
@@ -43,8 +47,20 @@ an interpreter.
 
 | Exception | Condition |
 |-----------|-----------|
-| `InvalidConfigError` | `config` is missing `"id"`, `"states"`, or `"id"` is not a non-empty string. |
+| `InvalidConfigError` | `config` is missing `"id"`, `"states"`, or `"id"` is not a non-empty string; a transition target does not resolve (when `strict_targets=True`); an `always` self-target can never make progress; or a built-in action is missing a required `params` key. |
 | `ImplementationMissingError` | Auto-discovery is active and a required action, guard, or service cannot be found. |
+
+### Machine-level policy keys
+
+These keys go at the root of the JSON `config` (alongside `"id"` and `"states"`). Every one preserves 0.7.x behavior at its default; nothing changes on upgrade unless you opt in.
+
+| Key | Allowed values | Default | Effect |
+|-----|-----------------|---------|--------|
+| `actionErrorPolicy` | `"continue"` \| `"rollback"` \| `"fail"` | `"continue"` | What happens when an action raises during a transition. `"continue"` emits a one-shot `DeprecationWarning`; flips to `"rollback"` in 1.0. |
+| `guardErrorPolicy` | `"false"` \| `"true"` \| `"raise"` | `"false"` | What a raising guard is treated as. |
+| `onUnhandled` | `"ignore"` \| `"defer"` \| `"error"` | `"ignore"` | What happens to an event that matches no transition. |
+| `strictTargets` | `true` \| `false` | `false` | Disables the sibling-reading fallback for leading-dot (`.child`) targets. |
+
 
 #### Example 1 -- Minimal (no logic)
 
@@ -658,7 +674,8 @@ ensuring clean cancellation when states are exited.
 |--------|-----------|---------|-------------|
 | `await .start()` | `() -> Interpreter` | `Interpreter` | Starts the interpreter and its event loop. Enters the initial state(s). Returns `self` for chaining. Idempotent. |
 | `await .stop()` | `() -> None` | `None` | Gracefully stops the event loop, cancels all tasks and child actors. Idempotent. |
-| `await .send(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], **Any) -> None` | `None` | Sends an event to the queue. Accepts a string, dict, or `Event` object. Non-blocking. |
+| `await .send(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], **Any) -> None` | `None` | Sends an event to the queue. Accepts a string, dict, or `Event` object. Non-blocking. Raises `WrongThreadError` when called from a thread other than the one whose event loop owns this interpreter. |
+| `.send_threadsafe(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], **Any) -> concurrent.futures.Future[None]` | `concurrent.futures.Future[None]` | Sends an event from **any** thread by routing the enqueue through the interpreter's owning event loop. Returns a `Future` you may `.result()` on to block until the event is queued (not processed). |
 | `await .send_events(events)` | `(List[Union[str, Dict, Event]]) -> None` | `None` | Sends a list of events to the queue. Non-blocking. |
 | `.use(plugin)` | `(PluginBase) -> Interpreter` | `Interpreter` | Registers a plugin. Returns `self` for chaining. |
 | `.get_snapshot()` | `() -> str` | `str` | Returns a JSON string snapshot of current state, context, and status. |
@@ -678,6 +695,9 @@ ensuring clean cancellation when states are exited.
 | `.status` | `str` | One of `"uninitialized"`, `"running"`, or `"stopped"`. |
 | `.id` | `str` | The interpreter's identifier (inherited from machine ID). |
 | `.parent` | `Optional[BaseInterpreter]` | Reference to parent interpreter (for spawned child actors), otherwise `None`. |
+| `.last_transition_ok` | `bool` | Whether the most recently processed transition's actions all ran to completion, given `actionErrorPolicy`. |
+| `.deferred_count` | `int` | Number of events currently buffered under `onUnhandled: "defer"`. |
+| `Interpreter.DEFER_MAX` | `int` | Class attribute bounding the deferral buffer's size; oldest entries are evicted once full. |
 
 #### Full async example
 
@@ -1406,6 +1426,9 @@ specific exception types.
 | `ImplementationMissingError` | A referenced action, guard, or service has no Python implementation. | Config references `"actions": ["doSomething"]` but no function named `doSomething` is provided. |
 | `ActorSpawningError` | Error spawning a child actor machine. | Service registered for `spawn_` action is not a valid `MachineNode` or factory function. |
 | `NotSupportedError` | An unsupported operation was attempted for the current interpreter mode. | Async action/service used with `SyncInterpreter`; async guard function. |
+| `UnhandledEventError` | An event selected no transition and `onUnhandled` is `"error"`. | Sending an event no active state (or its ancestors) handles. |
+| `TransitionFailedError` | An action raised and `actionErrorPolicy` is `"fail"`. | An action raises during a transition on a machine configured with `actionErrorPolicy: "fail"`. |
+| `WrongThreadError` | A loop-affine `Interpreter` method was called from a foreign thread. | Calling `interpreter.send()` from a thread other than the one that started the interpreter; use `send_threadsafe()` instead. |
 
 ### `StateNotFoundError` attributes
 
@@ -1424,6 +1447,9 @@ Exception
       +-- ImplementationMissingError
       +-- ActorSpawningError
       +-- NotSupportedError
+      +-- UnhandledEventError
+      +-- TransitionFailedError
+      +-- WrongThreadError
 ```
 
 ### Error handling example
@@ -1493,6 +1519,13 @@ All hooks have empty default implementations -- override only those you need.
 | `on_service_done` | `(self, interpreter: TInterpreter, invocation: InvokeDefinition, result: Any) -> None` | A service completes successfully. |
 | `on_action_error` | A user action or built-in action creator raised; the error was contained |
 | `on_service_error` | `(self, interpreter: TInterpreter, invocation: InvokeDefinition, error: Exception) -> None` | A service fails with an error. |
+| `on_transition_failed` | `(self, interpreter: TInterpreter, transition: TransitionDefinition, failed_actions: List[Tuple[ActionDefinition, BaseException]]) -> None` | A transition's action list did not run to completion (`actionErrorPolicy` `"rollback"`/`"fail"`). |
+| `on_guard_error` | `(self, interpreter: TInterpreter, guard_name: str, event: Event, error: BaseException) -> None` | A guard raised instead of returning, before the substituted result (per `guardErrorPolicy`) is reported. |
+| `on_unhandled_event` | `(self, interpreter: TInterpreter, event: Event, active_state_ids: Set[str], disposition: str) -> None` | An event selects no transition. `disposition` is `"ignored"`, `"deferred"`, `"errored"`, or `"dropped"`. |
+| `on_error` | `(self, interpreter: TInterpreter, error: BaseException) -> None` | The interpreter enters the terminal `"error"` status. |
+| `on_done` | `(self, interpreter: TInterpreter, output: Any) -> None` | The machine reaches a top-level final state. |
+
+`LoggingInspector` implements all five of these hooks in addition to the ones above.
 
 #### Custom plugin example
 

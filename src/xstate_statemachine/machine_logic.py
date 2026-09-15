@@ -95,6 +95,14 @@ ServiceCallable = Callable[
 # -----------------------------------------------------------------------------
 
 
+# 📢 #52: arities whose contract is not unique. Used by
+#    `_register_by_arity` to phrase the ambiguity warning.
+_AMBIGUOUS_ARITY_ROLES: Dict[int, str] = {
+    2: "guard (or a 2-arg service)",
+    3: "service (or a 3-arg action)",
+}
+
+
 class MachineLogic(Generic[TContext, TEvent]):
     """A container for the implementation logic of a state machine.
 
@@ -217,101 +225,104 @@ class MachineLogic(Generic[TContext, TEvent]):
         if type(self) is MachineLogic:
             return
 
-        # 🗺️ Arity → the registry that contract belongs to.
-        registries: Dict[int, Dict[str, Any]] = {
-            2: self.guards,
-            3: self.services,
-            4: self.actions,
-        }
-
         for name, member in inspect.getmembers(
             type(self), predicate=inspect.isfunction
         ):
             # 🚫 Skip dunders, private helpers, and our own machinery.
             if name.startswith("_"):
                 continue
-
             bound = getattr(self, name)
 
             # 🏷️ #52: an EXPLICIT role marker (set by the `@action`,
             #    `@guard`, `@service` decorators) wins outright. Before
             #    0.8.0 the decorator was silently ignored here and arity
             #    decided -- so a decorated 3-arg action became a service.
-            #    Registration stays keyed by the Python method name: that
-            #    is what a MachineLogic config references. (`pythonic`
-            #    re-keys to `_xsm_name`; the two are deliberately distinct
-            #    so the camelCase mapping of #17 does not regress.)
             explicit = getattr(member, "_xsm_type", None)
             if explicit is not None:
-                by_role = {
-                    "action": self.actions,
-                    "guard": self.guards,
-                    "service": self.services,
-                }
-                registry = by_role.get(explicit)
-                if registry is None:
-                    warnings.warn(
-                        f"MachineLogic subclass method '{name}' carries an "
-                        f"unknown role marker {explicit!r}; skipped.",
-                        UserWarning,
-                        stacklevel=3,
-                    )
-                    continue
-                if name not in registry:
-                    registry[name] = bound
-                    logger.debug(
-                        "🧬 Registered '%s' as %s (explicit).", name, explicit
-                    )
-                continue
+                self._register_by_marker(name, bound, explicit)
+            else:
+                self._register_by_arity(name, bound)
 
-            try:
-                arity = len(inspect.signature(bound).parameters)
-            except (TypeError, ValueError):  # pragma: no cover
-                # 🤷 Un-introspectable callables cannot be classified.
-                continue
+    def _register_by_marker(self, name: str, bound: Any, role: str) -> None:
+        """Register *bound* under the role its decorator declared.
 
-            registry = registries.get(arity)
-            if registry is None:
-                # 📢 Was a silent debug line: a method the author clearly
-                #    meant as logic that matches no contract is a bug, not
-                #    a detail.
-                warnings.warn(
-                    f"MachineLogic subclass method '{name}' has arity "
-                    f"{arity}, which matches no logic contract (guard=2, "
-                    f"service=3, action=4); it was NOT registered. Decorate "
-                    f"it with @action / @guard / @service to state the role.",
-                    UserWarning,
-                    stacklevel=3,
-                )
-                continue
-
-            # ✅ Never clobber an explicitly provided implementation.
-            if name in registry:
-                continue
-
-            registry[name] = bound
-            # 📢 #52: arity 2 and 3 are AMBIGUOUS -- a 2-arg method is a
-            #    guard OR the loose (context, event) service form seen in
-            #    the guides; a 3-arg one is a service OR an action whose
-            #    author dropped the unused 4th param. Register by the
-            #    arity table (unchanged behaviour) but say so, so a
-            #    misfiled method is visible at construction time.
-            if arity in (2, 3):
-                roles = {
-                    2: "guard (or a 2-arg service)",
-                    3: "service (or a 3-arg action)",
-                }
-                warnings.warn(
-                    f"MachineLogic subclass method '{name}' was registered "
-                    f"as a {roles[arity].split(' ')[0]} by arity ({arity}), "
-                    f"but that arity is ambiguous: {roles[arity]}. Decorate "
-                    f"it with @action / @guard / @service to state the role "
-                    f"explicitly.",
-                    UserWarning,
-                    stacklevel=3,
-                )
-            logger.debug(
-                "🧬 Auto-registered subclass method '%s' by arity %d.",
-                name,
-                arity,
+        Registration stays keyed by the Python method name: that is what a
+        MachineLogic config references. (`pythonic` re-keys to `_xsm_name`;
+        the two are deliberately distinct so the camelCase mapping of #17
+        does not regress.) An explicitly supplied dictionary entry is never
+        clobbered.
+        """
+        by_role: Dict[str, Dict[str, Any]] = {
+            "action": self.actions,
+            "guard": self.guards,
+            "service": self.services,
+        }
+        registry = by_role.get(role)
+        if registry is None:
+            warnings.warn(
+                f"MachineLogic subclass method '{name}' carries an "
+                f"unknown role marker {role!r}; skipped.",
+                UserWarning,
+                stacklevel=4,
             )
+            return
+        if name not in registry:
+            registry[name] = bound
+            logger.debug("🧬 Registered '%s' as %s (explicit).", name, role)
+
+    def _register_by_arity(self, name: str, bound: Any) -> None:
+        """Register *bound* by parameter count, warning where that is lossy.
+
+        🏛️ Architecture decision (#52): arity is kept as the fallback for
+        backwards compatibility, but arities 2 and 3 are AMBIGUOUS -- a
+        2-arg method is a guard OR the loose ``(context, event)`` service
+        form seen in the guides; a 3-arg one is a service OR an action whose
+        author dropped the unused 4th param. We register by the arity table
+        (unchanged behaviour) but say so, so a misfiled method is visible at
+        construction time. An arity matching no contract used to be a
+        silent debug line; it is now a `UserWarning`.
+        """
+        # 🗺️ Arity → the registry that contract belongs to.
+        registries: Dict[int, Dict[str, Any]] = {
+            2: self.guards,
+            3: self.services,
+            4: self.actions,
+        }
+        try:
+            arity = len(inspect.signature(bound).parameters)
+        except (TypeError, ValueError):  # pragma: no cover
+            # 🤷 Un-introspectable callables cannot be classified.
+            return
+
+        registry = registries.get(arity)
+        if registry is None:
+            warnings.warn(
+                f"MachineLogic subclass method '{name}' has arity "
+                f"{arity}, which matches no logic contract (guard=2, "
+                f"service=3, action=4); it was NOT registered. Decorate "
+                f"it with @action / @guard / @service to state the role.",
+                UserWarning,
+                stacklevel=4,
+            )
+            return
+
+        # ✅ Never clobber an explicitly provided implementation.
+        if name in registry:
+            return
+
+        registry[name] = bound
+        if arity in _AMBIGUOUS_ARITY_ROLES:
+            role = _AMBIGUOUS_ARITY_ROLES[arity]
+            warnings.warn(
+                f"MachineLogic subclass method '{name}' was registered "
+                f"as a {role.split(' ')[0]} by arity ({arity}), but that "
+                f"arity is ambiguous: {role}. Decorate it with @action / "
+                f"@guard / @service to state the role explicitly.",
+                UserWarning,
+                stacklevel=4,
+            )
+        logger.debug(
+            "🧬 Auto-registered subclass method '%s' by arity %d.",
+            name,
+            arity,
+        )

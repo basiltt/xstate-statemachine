@@ -21,7 +21,11 @@ preserves 0.7.x semantics, so nothing changes on upgrade until you opt in.
   state. `rollback` restores configuration *and* context; `fail` rolls back
   and stops with `TransitionFailedError`. New `on_transition_failed` plugin
   hook and `interpreter.last_transition_ok`. The default (`continue`) emits
-  a one-shot `DeprecationWarning`; it flips to `rollback` in 1.0.
+  a one-shot `DeprecationWarning`; it flips to `rollback` in 1.0. The policy
+  covers **every** action slot -- `entry`, `exit`, the transition's own
+  `actions`, targetless and internal self-transitions, and the initial
+  entry performed by `start()` -- and a rollback cancels any `after` timers
+  or invokes that a partially-entered target state had already armed.
 - **`onUnhandled: "ignore" | "defer" | "error"`** (#28). `defer` is
   library-owned: replay is at the head of the queue in original order,
   still-unhandled events are re-deferred, the buffer survives snapshots and
@@ -65,6 +69,21 @@ preserves 0.7.x semantics, so nothing changes on upgrade until you opt in.
   auto-registration in `MachineLogic` subclasses; ambiguous arities warn (#52).
 - Resolving a transition no longer writes back into the shared
   `TransitionDefinition` (#59).
+- `#machineId.path` targets resolve when the machine `id` itself contains a
+  dot (`"my.machine"`); previously the first dotted segment alone was
+  compared against the key and every such target was unresolvable.
+- The unresolvable-target error names the absolute `#machine.path` form of
+  any nested state matching the bare name, so a 0.7.x machine that relied on
+  the fuzzy fallback gets the one-line fix in the message.
+- Engine-synthesised `xstate.*` events (e.g. `xstate.error.actor.*` from
+  `escalate`) are treated as system events by the `onUnhandled` policy, the
+  same as `done.*` / `error.*` / `after.*`. Under `onUnhandled: "error"` an
+  unhandled escalation no longer stops the parent with a misleading
+  `UnhandledEventError`.
+- `SyncInterpreter`: replayed deferred events no longer count against the
+  macrostep runaway budget, so replaying a full `DEFER_MAX` buffer cannot
+  trigger the overflow guard and discard live events queued behind it.
+  The async engine already behaved correctly; the two now agree.
 - Two tests in the suite declared a target as a sibling of `"states"`; the
   new validator caught them.
 
@@ -73,9 +92,15 @@ preserves 0.7.x semantics, so nothing changes on upgrade until you opt in.
 - Per-event `INFO` log calls on the hot path are now `DEBUG` (#55, part 1).
   Measured overhead of running at `INFO` on the filer's OMS machine dropped
   from 2.53× to ~1.0×.
-- `Interpreter.send()` is a regular method returning an awaitable (still
-  `await`-able exactly as before), so the owning-thread check runs at the
-  call site.
+- `Interpreter.send()` is a regular method that does **all** of its work
+  eagerly -- thread check, normalisation, status guard and the queue put --
+  and returns an already-resolved awaitable so `await interp.send(...)`
+  is unchanged. A fire-and-forget `interp.send("GO")` from inside the loop
+  is therefore delivered rather than silently dropped, and no
+  "coroutine was never awaited" warning is ever emitted by the library.
+- `send()` / `send_threadsafe()` on an interpreter whose event loop has
+  since been closed raise a `RuntimeError` that says so, instead of a
+  `WrongThreadError` naming the same thread on both sides.
 
 
 ## [0.7.0] - 2026-08-12

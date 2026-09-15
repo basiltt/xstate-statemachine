@@ -237,6 +237,20 @@ class _SafePlugin:
         return repr(object.__getattribute__(self, "_plugin"))
 
 
+# 🏛️ Prefixes of events the ENGINE synthesises (`done.invoke.*`,
+#    `error.platform.*`, `after.*`, `xstate.error.actor.*` from `escalate`,
+#    and the init/exit sentinels). Shared by the wildcard matcher and the
+#    unhandled-event policy so the two can never disagree about what counts
+#    as a system event (#28 review).
+_SYSTEM_EVENT_PREFIXES: Tuple[str, ...] = (
+    "done.",
+    "error.",
+    "after.",
+    "xstate.",
+    "___xstate",
+)
+
+
 class _RollbackRequested(Exception):
     """Internal signal: an action raised and the policy is not ``continue``.
 
@@ -335,6 +349,15 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         #: so a state built by a half-executed action list is never written
         #: as truth.
         self.last_transition_ok: bool = True
+        # 🧾 Stack of open action-error transactions; see
+        #    `_execute_lifecycle_actions`. Each entry is
+        #    ``(transition, failures_collected_so_far)``.
+        self._lifecycle_failures: List[
+            Tuple[
+                TransitionDefinition,
+                List[Tuple[ActionDefinition, BaseException]],
+            ]
+        ] = []
         #: Events held back under ``onUnhandled: "defer"``, replayed after
         #: the next successful transition. Empty under other policies.
         self._deferred_events: List[Event] = []
@@ -1833,14 +1856,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 "🎬 Executing targetless transition for event '%s'.",
                 event.type,
             )
-            await self._execute_actions(transition.actions, event)
-            for plug in self._plugins:
-                plug.on_transition(
-                    self,
-                    self._active_state_nodes,
-                    self._active_state_nodes,
-                    transition,
-                )
+            await self._execute_internal_transition(transition, event)
             return
 
         # 2. Resolve the target state node using a multi-stage process.
@@ -1855,14 +1871,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 "🎬 Executing internal self-transition for event '%s'.",
                 event.type,
             )
-            await self._execute_actions(transition.actions, event)
-            for plug in self._plugins:
-                plug.on_transition(
-                    self,
-                    self._active_state_nodes,
-                    self._active_state_nodes,
-                    transition,
-                )
+            await self._execute_internal_transition(transition, event)
             return
 
         # 4. All other transitions are "external" and will cause a state change.
@@ -1912,6 +1921,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         #    itself healthy. Rolling back to the pre-transition configuration
         #    keeps the machine in a state that genuinely exists; the exception
         #    still propagates so the caller learns the transition failed.
+        # 🧾 #27 review: entry/exit actions are part of the transaction too.
+        #    `_enter_states`/`_exit_states` report their action failures via
+        #    this stack instead of raising, so the policy is applied once,
+        #    here, for every action slot. See `_execute_lifecycle_actions`.
+        self._lifecycle_failures.append((transition, []))
         try:
             await self._exit_states(
                 sorted(
@@ -1954,6 +1968,13 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                             combined_path.append(step)
                 if combined_path:
                     await self._enter_states(combined_path, event)
+            # 🧾 Entry/exit failures surface here, after the whole sequence
+            #    ran, so `"continue"` still commits the complete new
+            #    configuration while `"rollback"`/`"fail"` undo all of it.
+            lifecycle_failed = self._lifecycle_failures[-1][1]
+            if lifecycle_failed:
+                self._apply_action_error_policy(transition, lifecycle_failed)
+            failed_actions = failed_actions or lifecycle_failed
         except Exception as rollback_cause:
             requested = isinstance(rollback_cause, _RollbackRequested)
             logger.log(
@@ -1963,6 +1984,13 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 transition.source.id,
                 exc_info=not requested,
             )
+            # ⏱️ Tear down what a PARTIAL entry armed. States entered before
+            #    the failure already scheduled their `after` timers and
+            #    invokes; left running, a timer belonging to a state the
+            #    machine has rolled out of would later fire and drive a
+            #    transition from a configuration that no longer exists.
+            for node in self._active_state_nodes - snapshot_before:
+                await self._cancel_state_tasks(node)
             self._active_state_nodes.clear()
             self._active_state_nodes.update(snapshot_before)
 
@@ -1980,6 +2008,8 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             ):
                 return
             raise
+        finally:
+            self._lifecycle_failures.pop()
 
         # 6. Notify plugins and subscribers of the completed transition.
         if not failed_actions:
@@ -1992,6 +2022,91 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 transition,
             )
         self._notify_subscribers()
+
+    async def _execute_internal_transition(
+        self,
+        transition: TransitionDefinition,
+        event: Union[Event, DoneEvent, AfterEvent],
+    ) -> None:
+        """Run a targetless or internal self-transition atomically.
+
+        🏛️ Architecture decision (#27 review): these two shapes used to call
+        `_execute_actions` and fire `on_transition` unconditionally, so a
+        raising action under ``"rollback"``/``"fail"`` still committed its
+        partial context mutation and `last_transition_ok` stayed ``True`` --
+        the policy simply did not apply to the most common machine shape
+        (an action-only event handler). No configuration changes here, so
+        the transaction is context-only: snapshot, run, restore on failure.
+        """
+        context_before: Optional[TContext] = (
+            copy.deepcopy(self.context)
+            if self.machine.action_error_policy != "continue"
+            else None
+        )
+        try:
+            failed = await self._execute_actions(transition.actions, event)
+            if failed:
+                self._apply_action_error_policy(transition, failed)
+        except _RollbackRequested as cause:
+            logger.warning(
+                "💥 Internal transition on '%s' failed; restoring context.",
+                transition.source.id,
+            )
+            self._finish_rollback(cause, transition, context_before)
+            return
+        if not failed:
+            self.last_transition_ok = True
+        for plug in self._plugins:
+            plug.on_transition(
+                self,
+                self._active_state_nodes,
+                self._active_state_nodes,
+                transition,
+            )
+
+    async def _execute_lifecycle_actions(
+        self, actions: List[ActionDefinition], event: Event
+    ) -> None:
+        """Run a state's ``entry``/``exit`` list and record any failures.
+
+        🏛️ Architecture decision (#27 review): `_enter_states` and
+        `_exit_states` are recursive and are called from several places
+        (transitions, `start()`, history restore). Raising from inside them
+        would unwind that recursion at an arbitrary depth and leave the
+        configuration torn -- exactly what the rollback exists to prevent.
+        Instead, failures are appended to the innermost open transaction on
+        `_lifecycle_failures`; the transaction owner applies the policy once
+        the whole exit → actions → enter sequence has run. Outside any
+        transaction (`start()`), failures are reported against a synthetic
+        init transition so `start()` honours the policy too.
+        """
+        failed = await self._execute_actions(actions, event)
+        if not failed:
+            return
+        if self._lifecycle_failures:
+            self._lifecycle_failures[-1][1].extend(failed)
+            return
+        # 🚀 No open transaction: this is initial entry from `start()`.
+        self._report_start_failure(failed)
+
+    def _report_start_failure(
+        self, failed: List[Tuple[ActionDefinition, BaseException]]
+    ) -> None:
+        """Apply the action-error policy to a failure during ``start()``.
+
+        There is no pre-start configuration to roll back to, so both
+        ``"rollback"`` and ``"fail"`` stop the machine with
+        `TransitionFailedError`; ``"continue"`` reports and carries on.
+        """
+        init = TransitionDefinition(
+            event="___xstate_init___", config={}, source=self.machine
+        )
+        try:
+            self._apply_action_error_policy(init, failed)
+        except _RollbackRequested as cause:
+            err = TransitionFailedError(cause.action_def.type, self.machine.id)
+            err.__cause__ = cause.original
+            self._fail(err)
 
     # -------------------------------------------------------------------------
     # ⏯️ State Management Sub-Routines
@@ -2043,7 +2158,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             logger.debug("➡️  Entering state: '%s'.", state.id)
 
             # ⚙️ Run entry actions and schedule background tasks.
-            await self._execute_actions(state.entry, trigger_event)
+            await self._execute_lifecycle_actions(state.entry, trigger_event)
             self._schedule_state_tasks(state)
 
             # 🎉 If we entered a final state, check if its parent is now complete.
@@ -2236,7 +2351,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             # 🛑 Crucially, cancel tasks before running exit actions.
             await self._cancel_state_tasks(state)
             # ⚙️ Then, run the synchronous exit actions.
-            await self._execute_actions(state.exit, trigger_event)
+            await self._execute_lifecycle_actions(state.exit, trigger_event)
             # 🗑️ Finally, remove from the active set.
             self._active_state_nodes.discard(state)
 
@@ -2431,7 +2546,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         handling them.
         """
         if not isinstance(event, Event) or event.type.startswith(
-            ("done.", "after.", "error.", "___xstate")
+            _SYSTEM_EVENT_PREFIXES
         ):
             logger.debug("🍃 No transition for system event '%s'.", event.type)
             return
@@ -2654,7 +2769,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         # swallow my own timers and service results". Without this guard a
         # single wildcard silently breaks every invoke and delayed transition
         # in that state — XState draws the same line.
-        if event_type.startswith(("done.", "error.", "after.", "xstate.")):
+        if event_type.startswith(_SYSTEM_EVENT_PREFIXES):
             return matches
 
         # 🌓 Partial descriptors: "a.b.*" matches "a.b.c" and "a.b".

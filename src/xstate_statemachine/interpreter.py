@@ -90,6 +90,22 @@ _ACTOR_POLL_INTERVAL = 0.005
 # -----------------------------------------------------------------------------
 
 
+def _completed() -> "asyncio.Future[None]":
+    """An already-resolved awaitable -- what `send()` hands back.
+
+    🏛️ `send()` performs its work eagerly (see its docstring), so the object
+    it returns has nothing left to do. It exists so the call is still
+    ``await``-able and so `asyncio.gather(interp.send(...), ...)` continues
+    to type-check and run. A resolved `Future` is used rather than a
+    coroutine because an un-awaited coroutine triggers a `RuntimeWarning`
+    at GC time -- the very noise #37 set out to remove -- while a resolved
+    `Future` that nobody awaits is silent and correct.
+    """
+    fut: "asyncio.Future[None]" = asyncio.get_running_loop().create_future()
+    fut.set_result(None)
+    return fut
+
+
 class Interpreter(BaseInterpreter[TContext, TEvent]):
     """Brings a state machine to life by interpreting it asynchronously.
 
@@ -365,9 +381,14 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         cannot await it) executed NOTHING: not the status guard, not the
         queue put. The coroutine was discarded and every event silently
         lost, with only a GC-timed RuntimeWarning the library did not own.
-        Doing the thread check and event normalisation eagerly, before any
-        await, means a wrong-thread call raises AT THE CALL SITE whether or
-        not the result is awaited. In-loop callers see no difference.
+
+        ALL of the work -- thread check, normalisation, status guard and
+        the queue put -- therefore happens eagerly, before anything is
+        awaited. The queue is unbounded so ``put_nowait`` never blocks, and
+        the returned awaitable exists purely so ``await interp.send(...)``
+        keeps working unchanged. Consequences: a wrong-thread call raises
+        AT THE CALL SITE, and a fire-and-forget ``interp.send("GO")`` from
+        inside the loop is delivered rather than silently dropped.
 
         Args:
             event_or_type: The event to send. Can be an event type string,
@@ -384,12 +405,16 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         self._assert_owning_thread("send")
         # 📦 Normalise eagerly so a malformed event also fails at the call site.
         event_obj = self._prepare_event(event_or_type, **payload)
-        return self._enqueue(event_obj)
+        self._enqueue(event_obj)
+        return _completed()
 
-    async def _enqueue(
-        self, event_obj: Union[Event, DoneEvent, AfterEvent]
-    ) -> None:
-        """The awaitable half of :meth:`send`."""
+    def _enqueue(self, event_obj: Union[Event, DoneEvent, AfterEvent]) -> None:
+        """Put *event_obj* on the queue, or drop it if the machine is over.
+
+        Synchronous on purpose: see :meth:`send`. Must run on the owning
+        loop's thread (``asyncio.Queue`` is not thread-safe); callers on
+        other threads go through :meth:`send_threadsafe`.
+        """
         # 🚪 Refuse events once the machine is no longer processing. Nothing
         #    drains the queue after `stop()`, so every `send()` accumulated
         #    forever — a slow memory leak in any long-lived process that keeps
@@ -404,7 +429,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             )
             return
         # 📥 Place the standardized event object into the async queue.
-        await self._event_queue.put(event_obj)
+        self._event_queue.put_nowait(event_obj)
 
     def send_threadsafe(
         self,
@@ -421,18 +446,25 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         ``.result()`` on to block until the event is queued (not processed).
 
         Raises:
-            RuntimeError: The interpreter has not been started, so no loop
-                owns it yet.
+            RuntimeError: The interpreter has not been started, or the loop
+                that owned it has since been closed.
         """
         if self._loop is None:
             raise RuntimeError(
                 f"Interpreter '{self.id}' has not been started; there is no "
                 f"event loop to hand the event to."
             )
+        if self._loop.is_closed():
+            raise RuntimeError(
+                f"Interpreter '{self.id}' was bound to an event loop that "
+                f"has been closed; it can no longer accept events."
+            )
         event_obj = self._prepare_event(event_or_type, **payload)
-        return asyncio.run_coroutine_threadsafe(
-            self._enqueue(event_obj), self._loop
-        )
+
+        async def _deliver() -> None:
+            self._enqueue(event_obj)
+
+        return asyncio.run_coroutine_threadsafe(_deliver(), self._loop)
 
     def _bind_loop(self) -> None:
         """Record the loop (and thread) that owns this interpreter."""
@@ -447,14 +479,25 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             running = asyncio.get_running_loop()
         except RuntimeError:
             running = None
-        if running is not self._loop:
-            raise WrongThreadError(
-                f"Interpreter '{self.id}' is bound to the event loop on "
-                f"thread '{self._loop_thread_name}'; {method}() was called "
-                f"from thread '{threading.current_thread().name}'. Events "
-                f"sent this way would be silently lost. Use "
-                f"send_threadsafe() from other threads."
+        if running is self._loop:
+            return
+        # 🪦 A closed loop is not "another thread": the interpreter simply
+        #    outlived its `asyncio.run()`. Say that, rather than emitting a
+        #    WrongThreadError that names the same thread on both sides.
+        if self._loop.is_closed():
+            raise RuntimeError(
+                f"Interpreter '{self.id}' was bound to an event loop that "
+                f"has been closed; {method}() can no longer be used. Create "
+                f"a new interpreter (or restore one with from_snapshot) "
+                f"inside the new event loop."
             )
+        raise WrongThreadError(
+            f"Interpreter '{self.id}' is bound to the event loop on "
+            f"thread '{self._loop_thread_name}'; {method}() was called "
+            f"from thread '{threading.current_thread().name}'. Events "
+            f"sent this way would be silently lost. Use "
+            f"send_threadsafe() from other threads."
+        )
 
     async def send_events(
         self, events: List[Union[Dict[str, Any], Event, str]]

@@ -102,20 +102,48 @@ def resolve_strict(
     return exact
 
 
-def validate_machine(machine: "MachineNode", *, strict_targets: bool) -> None:
-    """Run every build-time check and raise once with all findings.
+def _suggest(target_str: str, machine: "MachineNode") -> str:
+    """Name the absolute form(s) of any NESTED state matching *target_str*.
 
-    Args:
-        machine: The fully constructed tree.
-        strict_targets: When False, unresolvable targets emit a
-            ``DeprecationWarning`` instead of raising -- the 0.7.x escape
-            hatch, removed in 1.0.
-
-    Raises:
-        InvalidConfigError: One or more targets do not resolve, or an
-            ``always`` self-target cannot make progress. The message lists
-            every finding.
+    🏛️ Architecture decision: before 0.8.0 a bare ``"up"`` written from a
+    sibling branch reached ``moving.up`` through the runtime's last-segment
+    fallback -- the same fallback that let a typo bind to an unrelated state
+    (#34). XState rejects it, and so does the validator now; but a user
+    upgrading from 0.7.x deserves the one-line fix, not just the rejection.
     """
+    key = target_str.split(".")[-1]
+    hits = [n.id for n in walk(machine) if n is not machine and n.key == key]
+    if not hits:
+        return ""
+    forms = ", ".join(f'"#{h}"' for h in sorted(hits))
+    return f" (did you mean {forms}?)"
+
+
+def _is_dead_always_loop(
+    label: str, t: "TransitionDefinition", target: "StateNode"
+) -> bool:
+    """True when an ``always`` transition can never make progress (#29).
+
+    An eventless transition that targets its own owning state without
+    ``reenter`` never exits/re-enters, so ``entry`` never re-runs; if it
+    also carries no actions, nothing in the microstep can mutate context
+    and flip the guard. The eventless loop ends when a step changes
+    nothing -- which this step, by construction, never does -- so the
+    machine parks forever while reporting ``"running"``. Transitions with
+    actions are exempt: an action CAN mutate context.
+    """
+    return (
+        label == "always"
+        and target is t.source
+        and not t.reenter
+        and not t.actions
+    )
+
+
+def _collect_findings(
+    machine: "MachineNode",
+) -> Tuple[List[str], List[str]]:
+    """Walk the tree once and gather ``(unresolved, dead_loops)`` messages."""
     unresolved: List[str] = []
     dead_loops: List[str] = []
 
@@ -131,25 +159,9 @@ def validate_machine(machine: "MachineNode", *, strict_targets: bool) -> None:
             if target is None:
                 unresolved.append(
                     f"  {node.id}: {label} -> target {t.target_str!r} "
-                    f"does not resolve"
+                    f"does not resolve{_suggest(t.target_str, machine)}"
                 )
-                continue
-
-            # 🔁 #29: an `always` transition that targets its own owning
-            #    state without `reenter` never exits/re-enters, so `entry`
-            #    never re-runs and nothing else in the microstep mutates
-            #    context. The eventless loop ends when a step changes
-            #    nothing -- which this step, by construction, never does.
-            #    The machine parks forever while reporting "running".
-            #    Statically detectable, so reject it here. Transitions
-            #    that carry actions are exempt: an action CAN mutate context
-            #    and let the guard flip.
-            if (
-                label == "always"
-                and target is t.source
-                and not t.reenter
-                and not t.actions
-            ):
+            elif _is_dead_always_loop(label, t, target):
                 dead_loops.append(
                     f"  {node.id}: always self-target can never make "
                     f"progress -- the transition does not re-enter the "
@@ -157,7 +169,27 @@ def validate_machine(machine: "MachineNode", *, strict_targets: bool) -> None:
                     f'"reenter": true, route via an intermediate state, '
                     f"or give the transition actions that mutate context."
                 )
+    return unresolved, dead_loops
 
+
+def validate_machine(machine: "MachineNode", *, strict_targets: bool) -> None:
+    """Run every build-time check and raise once with all findings.
+
+    Args:
+        machine: The fully constructed tree.
+        strict_targets: When False, unresolvable targets emit a
+            ``DeprecationWarning`` instead of raising -- the 0.7.x escape
+            hatch, removed in 1.0.
+
+    Raises:
+        InvalidConfigError: One or more targets do not resolve, or an
+            ``always`` self-target cannot make progress. The message lists
+            every finding.
+    """
+    unresolved, dead_loops = _collect_findings(machine)
+
+    # 🛑 Dead loops are never downgradable: unlike a missing target (a
+    #    silent no-op), a parked machine is a hang.
     if dead_loops:
         raise InvalidConfigError(
             f"Machine '{machine.id}' has non-progressing 'always' "

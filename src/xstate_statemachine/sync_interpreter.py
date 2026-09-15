@@ -348,9 +348,18 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         #    applies to both paths.
         processed = 0
         limit = getattr(self.machine, "max_iterations", 1000)
+        # 📨 Replayed deferred events are NOT new work the machine generated
+        #    for itself; they are user events that already waited their turn.
+        #    Counting them against the runaway-`raise` budget let a full
+        #    `DEFER_MAX` replay exhaust it and `clear()` live events behind
+        #    it -- data loss the async engine did not have (#28 review).
+        replay_credit = 0
         try:
             while self._event_queue:
-                processed += 1
+                if replay_credit:
+                    replay_credit -= 1
+                else:
+                    processed += 1
                 if processed > limit:
                     logger.error(
                         "🛑 Exceeded %d queued events in a single macrostep on "
@@ -384,6 +393,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     held = self._take_deferred_for_replay()
                     if held:
                         self._event_queue.extendleft(reversed(held))
+                        replay_credit += len(held)
         finally:
             self._is_processing = False
             logger.debug("🎉 Event processing cycle completed. Queue empty.")
@@ -436,15 +446,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         """
         # 1. A "targetless" transition only executes actions without changing state.
         if not transition.target_str:
-            logger.info("🔄 Executing internal transition actions.")
-            self._execute_actions(transition.actions, event)
-            for plugin in self._plugins:
-                plugin.on_transition(
-                    self,
-                    self._active_state_nodes,
-                    self._active_state_nodes,
-                    transition,
-                )
+            logger.debug("🔄 Executing internal transition actions.")
+            self._execute_internal_transition(transition, event)
             return
 
         # 2. Resolve the target state node.
@@ -453,18 +456,57 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # 3. A self-transition without `reenter: True` is also internal.
         if target_state == transition.source and not transition.reenter:
             logger.debug("🔄 Executing internal transition actions.")  # 📉 #55
-            self._execute_actions(transition.actions, event)
-            for plugin in self._plugins:
-                plugin.on_transition(
-                    self,
-                    self._active_state_nodes,
-                    self._active_state_nodes,
-                    transition,
-                )
+            self._execute_internal_transition(transition, event)
             return
 
         # 4. All other transitions are external; process the state change.
         self._process_single_transition(transition, event, target_state)
+
+    def _execute_internal_transition(
+        self, transition: TransitionDefinition, event: Event
+    ) -> None:
+        """Sync mirror of `BaseInterpreter._execute_internal_transition`.
+
+        Context-only transaction for targetless / internal self-transitions
+        so `actionErrorPolicy` applies to action-only handlers (#27 review).
+        """
+        context_before: Optional[TContext] = (
+            copy.deepcopy(self.context)
+            if self.machine.action_error_policy != "continue"
+            else None
+        )
+        try:
+            failed = self._execute_actions(transition.actions, event)
+            if failed:
+                self._apply_action_error_policy(transition, failed)
+        except _RollbackRequested as cause:
+            logger.warning(
+                "💥 Internal transition on '%s' failed; restoring context.",
+                transition.source.id,
+            )
+            self._finish_rollback(cause, transition, context_before)
+            return
+        if not failed:
+            self.last_transition_ok = True
+        for plugin in self._plugins:
+            plugin.on_transition(
+                self,
+                self._active_state_nodes,
+                self._active_state_nodes,
+                transition,
+            )
+
+    def _execute_lifecycle_actions(
+        self, actions: List[ActionDefinition], event: Event
+    ) -> None:
+        """Sync mirror of `BaseInterpreter._execute_lifecycle_actions`."""
+        failed = self._execute_actions(actions, event)
+        if not failed:
+            return
+        if self._lifecycle_failures:
+            self._lifecycle_failures[-1][1].extend(failed)
+            return
+        self._report_start_failure(failed)
 
     def _process_single_transition(
         self,
@@ -520,6 +562,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         #    actually exists, then re-raises so the caller still learns of the
         #    failure. A torn configuration is strictly worse than a rolled-back
         #    one: it is unrecoverable and silently swallows every later event.
+        # 🧾 Entry/exit failures are collected here and judged once the whole
+        #    sequence has run -- see `BaseInterpreter._execute_lifecycle_actions`.
+        self._lifecycle_failures.append((transition, []))
         try:
             self._exit_states(
                 sorted(
@@ -553,6 +598,10 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                             combined_path.append(step)
                 if combined_path:
                     self._enter_states(combined_path, event)
+            lifecycle_failed = self._lifecycle_failures[-1][1]
+            if lifecycle_failed:
+                self._apply_action_error_policy(transition, lifecycle_failed)
+            failed_actions = failed_actions or lifecycle_failed
         except Exception as rollback_cause:
             requested = isinstance(rollback_cause, _RollbackRequested)
             logger.log(
@@ -562,6 +611,10 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 transition.source.id,
                 exc_info=not requested,
             )
+            # ⏱️ Cancel timers/invokes armed by the PARTIAL entry -- see the
+            #    matching comment in `BaseInterpreter._execute_transition`.
+            for node in self._active_state_nodes - snapshot_before_transition:
+                self._cancel_state_tasks(node)
             self._active_state_nodes.clear()
             self._active_state_nodes.update(snapshot_before_transition)
 
@@ -576,6 +629,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             ):
                 return
             raise
+        finally:
+            self._lifecycle_failures.pop()
 
         # Notify plugins and subscribers of the completed transition.
         if not failed_actions:
@@ -679,7 +734,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             #    always forwarded the real event, so this also made the two
             #    engines disagree. `event` may be None during initial entry,
             #    which is why the fallback is retained.
-            self._execute_actions(
+            self._execute_lifecycle_actions(
                 state.entry,
                 event if event is not None else Event(f"entry.{state.id}"),
             )
@@ -776,7 +831,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         for state in states_to_exit:
             logger.debug("⬅️ Exiting state: '%s'", state.id)  # 📉 #55
             # 📨 Forward the real triggering event; see `_enter_states`.
-            self._execute_actions(
+            self._execute_lifecycle_actions(
                 state.exit,
                 event if event is not None else Event(f"exit.{state.id}"),
             )
