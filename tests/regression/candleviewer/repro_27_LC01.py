@@ -22,7 +22,11 @@ CONFIG = {
     "initial": "a",
     "context": {"trace": []},
     "states": {
-        "a": {"on": {"GO": {"target": "b", "actions": ["first", "explode", "third"]}}},
+        "a": {
+            "on": {
+                "GO": {"target": "b", "actions": ["first", "explode", "third"]}
+            }
+        },
         "b": {"entry": ["entry_b"]},
     },
 }
@@ -34,7 +38,9 @@ class Spy(PluginBase):
         self.action_errors: list[str] = []
 
     def on_transition(self, interp, from_states, to_states, transition):
-        self.transitions.append(sorted(to_states and interp.current_state_ids)[0])
+        self.transitions.append(
+            sorted(to_states and interp.current_state_ids)[0]
+        )
 
     def on_action_error(self, interp, action_def, error):  # 0.6.0+
         self.action_errors.append(f"{action_def.type}:{type(error).__name__}")
@@ -55,7 +61,12 @@ async def main() -> int:
         c["trace"].append("entry_b")
 
     logic = MachineLogic(
-        actions={"first": first, "explode": explode, "third": third, "entry_b": entry_b}
+        actions={
+            "first": first,
+            "explode": explode,
+            "third": third,
+            "entry_b": entry_b,
+        }
     )
     spy = Spy()
     interp = Interpreter(create_machine(CONFIG, logic=logic))
@@ -80,8 +91,12 @@ async def main() -> int:
     print(f"OBSERVED interpreter.status     : {status}")
     print(f"OBSERVED on_transition fired    : {spy.transitions}")
     print(f"OBSERVED on_action_error fired  : {spy.action_errors}")
-    print("EXPECTED: transition NOT committed (state stays ['oms.a']) or an error")
-    print("EXPECTED: surfaced to the caller / a transition-failed hook; entry_b must")
+    print(
+        "EXPECTED: transition NOT committed (state stays ['oms.a']) or an error"
+    )
+    print(
+        "EXPECTED: surfaced to the caller / a transition-failed hook; entry_b must"
+    )
     print("EXPECTED: not run and on_transition must not report success.")
 
     bad = states == ["oms.b"] and "entry_b" in trace and raised is None

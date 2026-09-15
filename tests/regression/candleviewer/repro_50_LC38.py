@@ -103,7 +103,9 @@ def main() -> int:
             break
     time.sleep(0.2)
     counted = sm2.context["n"]
-    print(f"OBSERVED: bump() executed {writes} times, context['n'] = {counted}")
+    print(
+        f"OBSERVED: bump() executed {writes} times, context['n'] = {counted}"
+    )
     print("EXPECTED: context['n'] == number of bump() executions.")
     lost_update = counted != writes
 

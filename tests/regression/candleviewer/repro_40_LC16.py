@@ -23,7 +23,10 @@ CHILD = create_machine(
                 "on": {
                     "PING": {
                         "actions": [
-                            {"type": "send_parent", "params": {"event": "PONG"}}
+                            {
+                                "type": "send_parent",
+                                "params": {"event": "PONG"},
+                            }
                         ]
                     }
                 }
@@ -73,7 +76,9 @@ async def attempt(to: str, invoke: Dict[str, Any]) -> Optional[str]:
 
 async def main() -> int:
     observed = {
-        "by_service_key": await attempt("child", {"id": "kid", "src": "child"}),
+        "by_service_key": await attempt(
+            "child", {"id": "kid", "src": "child"}
+        ),
         "by_invoke_id": await attempt("kid", {"id": "kid", "src": "child"}),
         "by_system_id": await attempt(
             "kid", {"id": "kid", "src": "child", "systemId": "kid"}

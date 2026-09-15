@@ -70,15 +70,19 @@ async def main() -> int:
     tasks_live = len([t for t in asyncio.all_tasks() if not t.done()])
     child = next(iter(interp._actors.values()), None)
     print(f"OBSERVED status={interp.status!r} is_running={interp.is_running}")
-    print(f"OBSERVED context retained: len(blob)={len(interp.context['blob'])}")
+    print(
+        f"OBSERVED context retained: len(blob)={len(interp.context['blob'])}"
+    )
     print(f"OBSERVED actors after done  = {sorted(interp._actors)}")
     print(
         f"OBSERVED child after done: status="
         f"{child.status if child else None!r} event_loop_done="
         f"{child._event_loop_task.done() if child else None}"
     )
-    print(f"OBSERVED system registry after done = "
-          f"{sorted(interp.system.get_all())}")
+    print(
+        f"OBSERVED system registry after done = "
+        f"{sorted(interp.system.get_all())}"
+    )
     print(f"OBSERVED live asyncio tasks after done = {tasks_live}")
 
     leaked_on_done = bool(interp._actors) or (
@@ -87,8 +91,10 @@ async def main() -> int:
 
     await interp.stop()
     await asyncio.sleep(0.05)
-    print(f"OBSERVED after explicit stop(): actors={sorted(interp._actors)} "
-          f"system={sorted(interp.system.get_all())}")
+    print(
+        f"OBSERVED after explicit stop(): actors={sorted(interp._actors)} "
+        f"system={sorted(interp.system.get_all())}"
+    )
     leaked_after_stop = bool(interp.system.get_all())
 
     print(
@@ -101,10 +107,12 @@ async def main() -> int:
     ok = leaked_on_done and leaked_after_stop
     print(
         "RESULT:",
-        "REPRODUCED (done machine keeps children running; registry entry "
-        "survives even stop())"
-        if ok
-        else "NOT REPRODUCED",
+        (
+            "REPRODUCED (done machine keeps children running; registry entry "
+            "survives even stop())"
+            if ok
+            else "NOT REPRODUCED"
+        ),
     )
     return 1 if ok else 0
 

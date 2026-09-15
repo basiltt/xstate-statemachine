@@ -45,7 +45,9 @@ async def main() -> int:
         await asyncio.sleep(0.05)  # exchange ack latency
         return "ok"
 
-    logic = MachineLogic(actions={"apply_fill": apply_fill}, services={"place": place})
+    logic = MachineLogic(
+        actions={"apply_fill": apply_fill}, services={"place": place}
+    )
     interp = Interpreter(create_machine(CONFIG, logic=logic))
     await interp.start()
 
@@ -64,9 +66,13 @@ async def main() -> int:
     print(f"OBSERVED state  : {states}")
     print(f"OBSERVED filled : {filled}")
     print(f"OBSERVED status : {status}")
-    print("EXPECTED state  : ['oms.filled'] (or an observable unhandled-event signal)")
+    print(
+        "EXPECTED state  : ['oms.filled'] (or an observable unhandled-event signal)"
+    )
     print("EXPECTED filled : 30")
-    print("EXPECTED: the 3 events must not vanish without any programmatic trace.")
+    print(
+        "EXPECTED: the 3 events must not vanish without any programmatic trace."
+    )
 
     bad = filled == 0 and states != ["oms.filled"]
     print("RESULT: DEFECT REPRODUCED" if bad else "RESULT: not reproduced")

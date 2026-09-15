@@ -103,9 +103,13 @@ print(
     f"OBSERVED 8 threads x 100 cycles -> {len(WRITES)} writes to ONE shared "
     f"definition object from threads {writers}"
 )
-print(f"OBSERVED values written                     : "
-      f"{sorted({v for _, v in WRITES})}")
-print(f"OBSERVED final target_str                   : {TRANSITION.target_str!r}")
+print(
+    f"OBSERVED values written                     : "
+    f"{sorted({v for _, v in WRITES})}"
+)
+print(
+    f"OBSERVED final target_str                   : {TRANSITION.target_str!r}"
+)
 print(
     "EXPECTED zero writes: the machine definition should be immutable under "
     "interpretation, with resolution results memoised in a per-interpreter "

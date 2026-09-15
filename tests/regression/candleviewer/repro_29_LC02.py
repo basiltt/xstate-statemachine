@@ -34,7 +34,10 @@ SELF_LOOP = {
         "idle": {"on": {"GO": "loop"}},
         "loop": {
             "entry": ["inc"],
-            "always": [{"target": "done", "guard": "enough"}, {"target": "loop"}],
+            "always": [
+                {"target": "done", "guard": "enough"},
+                {"target": "loop"},
+            ],
         },
         "done": {},
     },
@@ -99,7 +102,9 @@ def make_logic():
     def inc(i, c, e, a):
         c["n"] += 1
 
-    return MachineLogic(actions={"inc": inc}, guards={"enough": lambda c, e: c["n"] >= 5})
+    return MachineLogic(
+        actions={"inc": inc}, guards={"enough": lambda c, e: c["n"] >= 5}
+    )
 
 
 async def run(cfg):
@@ -107,7 +112,11 @@ async def run(cfg):
     await interp.start()
     await interp.send("GO")
     await asyncio.sleep(0.2)
-    out = (sorted(interp.current_state_ids), interp.context["n"], interp.status)
+    out = (
+        sorted(interp.current_state_ids),
+        interp.context["n"],
+        interp.status,
+    )
     await interp.stop()
     return out
 
@@ -127,18 +136,36 @@ async def main() -> int:
     re_state, re_n, _ = await run(REENTER)
     int_state, int_n, _ = await run(INTERNAL_FALSE)
 
-    print(f"OBSERVED self-target loop  : state={self_state} n={self_n} status={self_status}")
+    print(
+        f"OBSERVED self-target loop  : state={self_state} n={self_n} status={self_status}"
+    )
     print(f"OBSERVED via-B loop        : state={via_state} n={via_n}")
     print(f"OBSERVED reenter:True loop : state={re_state} n={re_n}")
     print(f"OBSERVED internal:False    : state={int_state} n={int_n}")
-    print("EXPECTED: NOT that the self-target loop converges -- XState v5 agrees an")
-    print("EXPECTED: explicit self-target does not re-run `entry` (docs/transitions")
-    print("EXPECTED: #re-entering). `reenter: True` is the v5 opt-in and works here.")
-    print("EXPECTED: The defect is the ABSENCE OF A DIAGNOSTIC: create_machine()")
-    print("EXPECTED: should reject an `always` self-target that can never progress")
-    print("EXPECTED: (XState: 'If target is declared, the value should differ from")
-    print("EXPECTED: the current state node'), and `internal: False` must not be")
-    print("EXPECTED: silently dropped. Today both are accepted and the machine")
+    print(
+        "EXPECTED: NOT that the self-target loop converges -- XState v5 agrees an"
+    )
+    print(
+        "EXPECTED: explicit self-target does not re-run `entry` (docs/transitions"
+    )
+    print(
+        "EXPECTED: #re-entering). `reenter: True` is the v5 opt-in and works here."
+    )
+    print(
+        "EXPECTED: The defect is the ABSENCE OF A DIAGNOSTIC: create_machine()"
+    )
+    print(
+        "EXPECTED: should reject an `always` self-target that can never progress"
+    )
+    print(
+        "EXPECTED: (XState: 'If target is declared, the value should differ from"
+    )
+    print(
+        "EXPECTED: the current state node'), and `internal: False` must not be"
+    )
+    print(
+        "EXPECTED: silently dropped. Today both are accepted and the machine"
+    )
     print("EXPECTED: parks forever while still reporting status == 'running'.")
 
     # The defect: the non-progressing config builds without error, then parks

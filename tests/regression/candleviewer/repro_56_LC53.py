@@ -22,6 +22,7 @@ import pathlib
 import re
 import sys
 
+
 # Locate the shipped guide: env override, else walk up from CWD looking for a
 # checkout of the library, else assume we are running inside one.
 def _find_guide() -> pathlib.Path:
@@ -41,11 +42,21 @@ GUIDE = _find_guide()
 TOPICS = {
     "timer starvation / delayed-transition accuracy under load": (
         ["delayed-transitions.md", "interpreters.md", "faq.md"],
-        [r"starv", r"timer (drift|accuracy|precision)", r"fires? late", r"under load"],
+        [
+            r"starv",
+            r"timer (drift|accuracy|precision)",
+            r"fires? late",
+            r"under load",
+        ],
     ),
     "SyncInterpreter threading model (after timers on unlocked background threads)": (
         ["interpreters.md", "delayed-transitions.md"],
-        [r"threading\.timer", r"background thread", r"worker thread", r"thread-safe"],
+        [
+            r"threading\.timer",
+            r"background thread",
+            r"worker thread",
+            r"thread-safe",
+        ],
     ),
     "global throughput budget (one loop, one thread, shared ev/s)": (
         ["interpreters.md", "faq.md", "services.md"],
@@ -59,7 +70,9 @@ def main() -> int:
         print("OBSERVED  guide directory not found:", GUIDE)
         print("HINT      set XSM_REPO=/path/to/xstate-statemachine")
         return 1
-    print(f"OBSERVED  scanning docs/_guide/ ({len(list(GUIDE.glob('*.md')))} pages present)")
+    print(
+        f"OBSERVED  scanning docs/_guide/ ({len(list(GUIDE.glob('*.md')))} pages present)"
+    )
 
     undocumented = []
     for topic, (pages, patterns) in TOPICS.items():
@@ -69,7 +82,9 @@ def main() -> int:
             if (GUIDE / p).is_file()
         ).lower()
         hits = [p for p in patterns if re.search(p, corpus)]
-        print(f"OBSERVED  {topic!r}\n            pages={pages} matched={hits or 'NONE'}")
+        print(
+            f"OBSERVED  {topic!r}\n            pages={pages} matched={hits or 'NONE'}"
+        )
         if not hits:
             undocumented.append(topic)
 

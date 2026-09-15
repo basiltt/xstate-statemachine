@@ -19,7 +19,11 @@ BAD_TARGET = {
     "states": {"s": {"on": {"GO": "nowhere_at_all"}}, "t": {}},
 }
 
-BAD_ACTION = {"id": "m", "initial": "s", "states": {"s": {"entry": ["no_such_action"]}}}
+BAD_ACTION = {
+    "id": "m",
+    "initial": "s",
+    "states": {"s": {"entry": ["no_such_action"]}},
+}
 
 
 async def main() -> int:
@@ -57,7 +61,9 @@ async def main() -> int:
         f"OBSERVED: unknown target -> create_machine={create_err} "
         f"send={send_err} state={state} running={running}"
     )
-    print("EXPECTED: unknown target raises at create_machine() (like unknown actions)")
+    print(
+        "EXPECTED: unknown target raises at create_machine() (like unknown actions)"
+    )
 
     ok = False
     print("RESULT:", "PASS" if ok else "FAIL")

@@ -54,8 +54,10 @@ async def main() -> int:
     i2 = Interpreter.from_snapshot(snap, m2)
     missing = sorted({"cum_qty", "venue"} - set(i2.context))
     print(f"OBSERVED restored context     = {i2.context}")
-    print("EXPECTED restored context     = "
-          "{'order_id': 'A-1', 'qty': 10, 'cum_qty': 0, 'venue': 'X'}")
+    print(
+        "EXPECTED restored context     = "
+        "{'order_id': 'A-1', 'qty': 10, 'cum_qty': 0, 'venue': 'X'}"
+    )
     print(f"OBSERVED missing default keys = {missing}")
     print("EXPECTED missing default keys = []")
     if missing:

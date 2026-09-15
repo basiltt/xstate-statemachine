@@ -58,10 +58,16 @@ async def main() -> int:
             }
         },
     }
-    m = create_machine(cfg, logic=MachineLogic(services={"leg": create_machine(CHILD)}))
+    m = create_machine(
+        cfg, logic=MachineLogic(services={"leg": create_machine(CHILD)})
+    )
     inv = m.states["running"].invoke[0]
-    print(f"OBSERVED type(invoke.input) with a callable = {type(inv.input).__name__}")
-    print("EXPECTED it to be resolved per-spawn against {context, event} (a dict)")
+    print(
+        f"OBSERVED type(invoke.input) with a callable = {type(inv.input).__name__}"
+    )
+    print(
+        "EXPECTED it to be resolved per-spawn against {context, event} (a dict)"
+    )
     if callable(inv.input):
         ok = False
 
@@ -74,13 +80,22 @@ async def main() -> int:
     child = next(iter(interp._actors.values()))
     print(f"OBSERVED spawned child context = {child.context}")
     print(f"OBSERVED spawned child .input  = {child.input!r}")
-    print("EXPECTED context = {'snapshot': {'venue': 'X', 'size': 7}} "
-          "(invoke.input seeds the child)")
+    print(
+        "EXPECTED context = {'snapshot': {'venue': 'X', 'size': 7}} "
+        "(invoke.input seeds the child)"
+    )
     if child.context.get("snapshot") != {"venue": "X", "size": 7}:
         ok = False
     await interp.stop()
 
-    print("RESULT:", "REPRODUCED (invoke.input static + ignored)" if not ok else "NOT REPRODUCED")
+    print(
+        "RESULT:",
+        (
+            "REPRODUCED (invoke.input static + ignored)"
+            if not ok
+            else "NOT REPRODUCED"
+        ),
+    )
     return 1 if not ok else 0
 
 

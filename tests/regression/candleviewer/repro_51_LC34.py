@@ -79,9 +79,11 @@ async def main() -> int:
 
     print(
         "RESULT:",
-        "REPRODUCED (no strict mode; unknown events and payloads unvalidated)"
-        if ok
-        else "NOT REPRODUCED",
+        (
+            "REPRODUCED (no strict mode; unknown events and payloads unvalidated)"
+            if ok
+            else "NOT REPRODUCED"
+        ),
     )
     return 1 if ok else 0
 

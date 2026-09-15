@@ -85,7 +85,9 @@ async def scenario(load: int) -> dict:
     stop = asyncio.Event()
     busy, tasks = [], []
     for _ in range(load):
-        m = create_machine(BUSY_CFG, logic=MachineLogic(actions={"bump": bump}))
+        m = create_machine(
+            BUSY_CFG, logic=MachineLogic(actions={"bump": bump})
+        )
         busy.append(await Interpreter(m).start())
     tasks = [asyncio.create_task(churn(b, stop)) for b in busy]
     out = {d: await measure(d) for d in DELAYS_MS}
@@ -103,8 +105,12 @@ async def main() -> int:
     loaded = await scenario(LOAD)
     ok = True
     for d in DELAYS_MS:
-        print(f"OBSERVED {d:>4} ms timer, idle loop        = {idle[d]:+9.1f} ms error")
-        print(f"OBSERVED {d:>4} ms timer, {LOAD} busy actors = {loaded[d]:+9.1f} ms error")
+        print(
+            f"OBSERVED {d:>4} ms timer, idle loop        = {idle[d]:+9.1f} ms error"
+        )
+        print(
+            f"OBSERVED {d:>4} ms timer, {LOAD} busy actors = {loaded[d]:+9.1f} ms error"
+        )
         if loaded[d] > TOLERANCE_MS:
             ok = False
     print(f"EXPECTED every case within +{TOLERANCE_MS:.0f} ms of nominal")

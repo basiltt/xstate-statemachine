@@ -20,7 +20,12 @@ import asyncio
 import logging
 import sys
 
-from xstate_statemachine import Interpreter, MachineLogic, PluginBase, create_machine
+from xstate_statemachine import (
+    Interpreter,
+    MachineLogic,
+    PluginBase,
+    create_machine,
+)
 
 logging.disable(logging.CRITICAL)
 
@@ -53,19 +58,28 @@ class Recorder(PluginBase):
     def __init__(self) -> None:
         self.events: list = []
 
-    def on_transition(self, interpreter, from_states, to_states, transition):  # noqa: ANN001
-        self.events.append(("on_transition", sorted(interpreter.current_state_ids)))
+    def on_transition(
+        self, interpreter, from_states, to_states, transition
+    ):  # noqa: ANN001
+        self.events.append(
+            ("on_transition", sorted(interpreter.current_state_ids))
+        )
 
     def on_action_error(self, interpreter, action, error):  # noqa: ANN001
         self.events.append(("on_action_error", action.type))
 
-    def on_guard_evaluated(self, interpreter, guard_name, event, result):  # noqa: ANN001
+    def on_guard_evaluated(
+        self, interpreter, guard_name, event, result
+    ):  # noqa: ANN001
         self.events.append(("on_guard_evaluated", guard_name, result))
 
 
 async def main() -> int:
     machine = create_machine(
-        CFG, logic=MachineLogic(actions={"book": book}, guards={"may_cancel": may_cancel})
+        CFG,
+        logic=MachineLogic(
+            actions={"book": book}, guards={"may_cancel": may_cancel}
+        ),
     )
     rec = Recorder()
     interp = Interpreter(machine).use(rec)
@@ -78,14 +92,22 @@ async def main() -> int:
 
     missing = [
         h
-        for h in ("on_transition_failed", "on_guard_error", "on_unhandled_event")
+        for h in (
+            "on_transition_failed",
+            "on_guard_error",
+            "on_unhandled_event",
+        )
         if not hasattr(PluginBase, h)
     ]
-    declared_duck = [h for h in ("on_error", "on_done") if not hasattr(PluginBase, h)]
+    declared_duck = [
+        h for h in ("on_error", "on_done") if not hasattr(PluginBase, h)
+    ]
     print("OBSERVED  plugin events:", rec.events)
     print("OBSERVED  final state:", sorted(interp.current_state_ids))
     print("OBSERVED  missing PluginBase hooks:", missing)
-    print("OBSERVED  duck-typed hooks not declared on PluginBase:", declared_duck)
+    print(
+        "OBSERVED  duck-typed hooks not declared on PluginBase:", declared_duck
+    )
     print(
         "EXPECTED  on_transition_failed / on_guard_error / on_unhandled_event declared; "
         "guard failure distinguishable from a False guard; typo'd event surfaced"

@@ -79,7 +79,9 @@ interp = SyncInterpreter(machine()).start()
 for e in EVENTS:
     interp.send(e)
 
-print(f"CONTEXT  pure    state={sorted(snap.state_ids)} context={snap.context}")
+print(
+    f"CONTEXT  pure    state={sorted(snap.state_ids)} context={snap.context}"
+)
 print(
     f"CONTEXT  sync    state={interp.current_state_ids} "
     f"context={interp.context}"
@@ -88,6 +90,7 @@ print(
     "CONTEXT  the context difference above is CORRECT XState-parity "
     "behaviour (actions are effects returned to the caller); not asserted"
 )
+
 
 # 2️⃣ Performance: per-event cost of each path (warm).
 def time_pure(n: int) -> float:

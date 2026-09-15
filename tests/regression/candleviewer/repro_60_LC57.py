@@ -28,40 +28,67 @@ from xstate_statemachine import (
 )
 from xstate_statemachine.base_interpreter import BaseInterpreter
 
-STEPS = ("_process_event", "_execute_transition", "_enter_states", "_exit_states",
-         "_execute_actions", "_execute_builtin_action")
+STEPS = (
+    "_process_event",
+    "_execute_transition",
+    "_enter_states",
+    "_exit_states",
+    "_execute_actions",
+    "_execute_builtin_action",
+)
 
 
 def sloc(fn) -> int:
     try:
-        return len([ln for ln in inspect.getsource(fn).splitlines() if ln.strip()])
+        return len(
+            [ln for ln in inspect.getsource(fn).splitlines() if ln.strip()]
+        )
     except (TypeError, OSError):
         return 0
 
 
 broken_template, duplicated = [], []
 for name in STEPS:
-    base, sync, asy = (getattr(k, name, None) for k in (BaseInterpreter, SyncInterpreter, Interpreter))
+    base, sync, asy = (
+        getattr(k, name, None)
+        for k in (BaseInterpreter, SyncInterpreter, Interpreter)
+    )
     owner = getattr(sync, "__qualname__", "-").split(".")[0]
-    if base is not None and inspect.iscoroutinefunction(base) and sync is not base and not inspect.iscoroutinefunction(sync):
+    if (
+        base is not None
+        and inspect.iscoroutinefunction(base)
+        and sync is not base
+        and not inspect.iscoroutinefunction(sync)
+    ):
         broken_template.append(name)
     if sync is not base and asy is not base and sync is not asy:
         duplicated.append(name)
-    print(f"OBSERVED {name:24s} base_async={inspect.iscoroutinefunction(base)!s:5s} "
-          f"sync_owner={owner:16s} sync_sloc={sloc(sync):4d} async_sloc={sloc(asy):4d}")
+    print(
+        f"OBSERVED {name:24s} base_async={inspect.iscoroutinefunction(base)!s:5s} "
+        f"sync_owner={owner:16s} sync_sloc={sloc(sync):4d} async_sloc={sloc(asy):4d}"
+    )
 
-print(f"OBSERVED base async methods shadowed by same-named sync overrides: {broken_template}")
-print(f"OBSERVED core steps implemented separately by BOTH engines: {duplicated}")
+print(
+    f"OBSERVED base async methods shadowed by same-named sync overrides: {broken_template}"
+)
+print(
+    f"OBSERVED core steps implemented separately by BOTH engines: {duplicated}"
+)
 
 # The sync engine also forks two steps under *different* names, so the base's
 # async originals are never reached at all.
-for base_name, sync_name in (("_execute_transition", "_execute_transition_sync"),
-                             ("_resolve_target_state_node", "_resolve_target_state_robustly")):
+for base_name, sync_name in (
+    ("_execute_transition", "_execute_transition_sync"),
+    ("_resolve_target_state_node", "_resolve_target_state_robustly"),
+):
     fork = getattr(SyncInterpreter, sync_name, None)
-    print(f"OBSERVED BaseInterpreter.{base_name} (sloc={sloc(getattr(BaseInterpreter, base_name)):3d}) "
-          f"forked as SyncInterpreter.{sync_name} (sloc={sloc(fork):3d}) - renamed, so no override, no ABC check")
+    print(
+        f"OBSERVED BaseInterpreter.{base_name} (sloc={sloc(getattr(BaseInterpreter, base_name)):3d}) "
+        f"forked as SyncInterpreter.{sync_name} (sloc={sloc(fork):3d}) - renamed, so no override, no ABC check"
+    )
     if fork is not None:
         duplicated.append(sync_name)
+
 
 # --- live divergence caused by the duplicated guard -------------------------
 async def act(interp, ctx, evt, action_def):  # noqa: ANN001
@@ -69,8 +96,15 @@ async def act(interp, ctx, evt, action_def):  # noqa: ANN001
 
 
 machine = create_machine(
-    {"id": "m", "initial": "a", "context": {},
-     "states": {"a": {"on": {"GO": {"target": "b", "actions": ["act"]}}}, "b": {}}},
+    {
+        "id": "m",
+        "initial": "a",
+        "context": {},
+        "states": {
+            "a": {"on": {"GO": {"target": "b", "actions": ["act"]}}},
+            "b": {},
+        },
+    },
     logic=MachineLogic(actions={"act": functools.partial(act)}),
 )
 interp = SyncInterpreter(machine).start()
@@ -81,11 +115,17 @@ try:
 except NotSupportedError as exc:
     outcome, misclassified = f"NotSupportedError: {exc}", False
 
-print(f"OBSERVED SyncInterpreter._is_async_callable(partial(async_fn)) = "
-      f"{bool(SyncInterpreter._is_async_callable(functools.partial(act)))} "
-      f"(inspect.iscoroutinefunction says {inspect.iscoroutinefunction(functools.partial(act))})")
-print(f"OBSERVED sync engine running an async action wrapped in functools.partial -> {outcome}")
-print("EXPECTED one shared sans-io core parameterised over an execution strategy, so each "
-      "step (and each guard such as _is_async_callable) exists once and cannot diverge")
+print(
+    f"OBSERVED SyncInterpreter._is_async_callable(partial(async_fn)) = "
+    f"{bool(SyncInterpreter._is_async_callable(functools.partial(act)))} "
+    f"(inspect.iscoroutinefunction says {inspect.iscoroutinefunction(functools.partial(act))})"
+)
+print(
+    f"OBSERVED sync engine running an async action wrapped in functools.partial -> {outcome}"
+)
+print(
+    "EXPECTED one shared sans-io core parameterised over an execution strategy, so each "
+    "step (and each guard such as _is_async_callable) exists once and cannot diverge"
+)
 
 sys.exit(1 if (broken_template or duplicated or misclassified) else 0)

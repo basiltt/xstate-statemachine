@@ -81,7 +81,8 @@ def build():
 
 def events(n):
     return [{"type": "SUBMIT"}] + [
-        {"type": "FILL" if k % 2 else "AMEND", "qty": 1.0} for k in range(n - 1)
+        {"type": "FILL" if k % 2 else "AMEND", "qty": 1.0}
+        for k in range(n - 1)
     ]
 
 
@@ -117,6 +118,7 @@ for func, (nc, tt) in sorted(counts.items(), key=lambda kv: -kv[1][0]):
         f"  {func:<32} calls={nc:>7} ({nc / N:.1f}/event)  "
         f"tottime={tt * 1e6 / N:.1f} us/event"
     )
+
 
 # 2️⃣ INFO logging cost on the hot path.
 def run(n):

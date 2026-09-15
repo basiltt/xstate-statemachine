@@ -46,20 +46,30 @@ async def main() -> int:
     await asyncio.sleep(0.1)
     snapshot = interp.get_snapshot()
     await interp.stop()
-    print(f"OBSERVED pre-crash : state={sorted(interp.current_state_ids)} "
-          f"place_calls={calls['place']} entry_calls={calls['entry']}")
+    print(
+        f"OBSERVED pre-crash : state={sorted(interp.current_state_ids)} "
+        f"place_calls={calls['place']} entry_calls={calls['entry']}"
+    )
 
     calls["place"] = calls["entry"] = 0
-    restored = Interpreter.from_snapshot(snapshot, create_machine(CFG, logic=LOGIC))
+    restored = Interpreter.from_snapshot(
+        snapshot, create_machine(CFG, logic=LOGIC)
+    )
     await restored.start()
     await asyncio.sleep(0.3)
-    print(f"OBSERVED restored  : state={sorted(restored.current_state_ids)} "
-          f"place_calls={calls['place']} entry_calls={calls['entry']} "
-          f"status={restored.status!r}")
-    print("OBSERVED no API reports that `o.submitting` has an invoke that is not running")
-    print("EXPECTED restored  : the `place` invoke is restarted (place_calls >= 1) "
-          "under an opt-in flag, or an API enumerating stalled invokes so the "
-          "application can re-drive them")
+    print(
+        f"OBSERVED restored  : state={sorted(restored.current_state_ids)} "
+        f"place_calls={calls['place']} entry_calls={calls['entry']} "
+        f"status={restored.status!r}"
+    )
+    print(
+        "OBSERVED no API reports that `o.submitting` has an invoke that is not running"
+    )
+    print(
+        "EXPECTED restored  : the `place` invoke is restarted (place_calls >= 1) "
+        "under an opt-in flag, or an API enumerating stalled invokes so the "
+        "application can re-drive them"
+    )
     await restored.stop()
     return 1 if calls["place"] == 0 else 0
 

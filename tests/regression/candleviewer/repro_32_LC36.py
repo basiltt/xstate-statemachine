@@ -73,9 +73,13 @@ async def main() -> int:
     #    to the right spelling's outcome.
     try:
         status_w, states_w = await run(WRONG)
-        print(f"OBSERVED wrong spelling -> status={status_w} states={states_w}")
+        print(
+            f"OBSERVED wrong spelling -> status={status_w} states={states_w}"
+        )
     except Exception as exc:  # noqa: BLE001
-        print(f"OBSERVED wrong spelling -> rejected at build: {type(exc).__name__}")
+        print(
+            f"OBSERVED wrong spelling -> rejected at build: {type(exc).__name__}"
+        )
         status_w, states_w = "rejected", None
     status_r, states_r = await run(RIGHT)
     print(f"OBSERVED right spelling -> status={status_r} states={states_r}")
@@ -86,9 +90,11 @@ async def main() -> int:
     reproduced = (states_w is not None and states_w != states_r) or not ok
     print(
         "RESULT:",
-        "REPRODUCED (misspelled built-in params silently ignored)"
-        if reproduced
-        else "NOT REPRODUCED",
+        (
+            "REPRODUCED (misspelled built-in params silently ignored)"
+            if reproduced
+            else "NOT REPRODUCED"
+        ),
     )
     return 1 if reproduced else 0
 

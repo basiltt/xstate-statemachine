@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**Adoption-readiness, part 1.** A production adoption audit (tracking issue
+[#26](https://github.com/basiltt/xstate-statemachine/issues/26)) filed 34
+defects against 0.7.0 with a common theme: the library fails *silently* by
+default. This first batch closes all four blockers and the filer's top
+priorities. Every new behaviour is a per-machine policy whose default
+preserves 0.7.x semantics, so nothing changes on upgrade until you opt in.
+
+### Added
+
+- **`actionErrorPolicy: "continue" | "rollback" | "fail"`** (#27). Before,
+  an action that raised left the transition committed with a half-built
+  state. `rollback` restores configuration *and* context; `fail` rolls back
+  and stops with `TransitionFailedError`. New `on_transition_failed` plugin
+  hook and `interpreter.last_transition_ok`. The default (`continue`) emits
+  a one-shot `DeprecationWarning`; it flips to `rollback` in 1.0.
+- **`onUnhandled: "ignore" | "defer" | "error"`** (#28). `defer` is
+  library-owned: replay is at the head of the queue in original order,
+  still-unhandled events are re-deferred, the buffer survives snapshots and
+  is bounded by `DEFER_MAX`. `interpreter.deferred_count`, new
+  `on_unhandled_event` hook (fires under every policy) and
+  `UnhandledEventError`.
+- **`guardErrorPolicy: "false" | "true" | "raise"`** (#35). A raising guard
+  is now observable via `on_guard_error` before the substituted result is
+  reported; previously it was indistinguishable from a guard returning
+  `False`.
+- **Build-time validation** (#29, #30). `create_machine()` now walks the
+  finished tree and rejects, in one message, every transition target that
+  does not resolve and every `always` self-target that can never make
+  progress. `create_machine(..., strict_targets=False)` downgrades target
+  failures to a `DeprecationWarning`; that escape hatch is removed in 1.0.
+- **`strictTargets: true`** machine config (#31) disables the sibling
+  fallback for `.child` targets.
+- **`Interpreter.send_threadsafe()`** (#37) for delivering events from a
+  foreign thread. `send()` from a foreign thread now raises
+  `WrongThreadError` instead of silently losing the event.
+- **Error-observability hooks** on `PluginBase` (#33): `on_transition_failed`,
+  `on_guard_error`, `on_unhandled_event`, `on_error`, `on_done`. All
+  implemented by `LoggingInspector`. Existing plugins load unchanged.
+- **Built-in action param validation** (#32). `raise`, `sendTo`, `cancel`,
+  `stopChild`, … now fail at build time when a required key is missing, with
+  a hint if the key was placed at the top level instead of under `params`.
+- New exceptions exported: `UnhandledEventError`, `TransitionFailedError`,
+  `WrongThreadError`.
+
+### Fixed
+
+- `.child` targets resolve into the **source's** descendants, matching
+  XState v5; the 0.7.x sibling reading is kept as a fallback (#31).
+- `internal: false` (XState v4 spelling) is honoured as `reenter: true`
+  instead of being silently dropped (#29).
+- `sendTo` can address an invoke by its explicit `id` and by `systemId`;
+  a duplicate live `systemId` raises `ActorSpawningError` (#40).
+- `from_snapshot` deep-copies the persisted context and merges it over the
+  machine's defaults instead of aliasing the caller's dict (#46).
+- `@action` / `@guard` / `@service` markers win over arity-based
+  auto-registration in `MachineLogic` subclasses; ambiguous arities warn (#52).
+- Resolving a transition no longer writes back into the shared
+  `TransitionDefinition` (#59).
+- Two tests in the suite declared a target as a sibling of `"states"`; the
+  new validator caught them.
+
+### Changed
+
+- Per-event `INFO` log calls on the hot path are now `DEBUG` (#55, part 1).
+  Measured overhead of running at `INFO` on the filer's OMS machine dropped
+  from 2.53× to ~1.0×.
+- `Interpreter.send()` is a regular method returning an awaitable (still
+  `await`-able exactly as before), so the owning-thread check runs at the
+  call site.
+
+
 ## [0.7.0] - 2026-08-12
 
 **The code generator rewrite.** An audit of the five code-generation templates

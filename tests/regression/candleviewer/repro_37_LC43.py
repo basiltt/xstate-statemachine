@@ -41,7 +41,6 @@ def count(interp, ctx, event, action_def):  # noqa: ANN001
 async def main() -> int:
     ok = True
     logic = MachineLogic(actions={"count": count})
-    loop = asyncio.get_running_loop()
 
     # --- A) bare send() from a foreign thread ------------------------------
     interp = await Interpreter(
@@ -69,21 +68,29 @@ async def main() -> int:
         await asyncio.sleep(0.2)
         gc.collect()
         await asyncio.sleep(0.05)
-        caught = [str(x.message) for x in w if "never awaited" in str(x.message)]
+        caught = [
+            str(x.message) for x in w if "never awaited" in str(x.message)
+        ]
 
     delivered_bare = interp.context.get("n", 0)
-    print(f"OBSERVED bare cross-thread send(): {delivered_bare}/{N} delivered, "
-          f"exceptions raised = 0, interpreter still status={interp.status!r}")
-    print(f"OBSERVED the only signal is {len(caught)} GC-timed "
-          "RuntimeWarning('coroutine ... was never awaited') attributed to the "
-          "caller's line, not an error raised by the library")
+    print(
+        f"OBSERVED bare cross-thread send(): {delivered_bare}/{N} delivered, "
+        f"exceptions raised = 0, interpreter still status={interp.status!r}"
+    )
+    print(
+        f"OBSERVED the only signal is {len(caught)} GC-timed "
+        "RuntimeWarning('coroutine ... was never awaited') attributed to the "
+        "caller's line, not an error raised by the library"
+    )
     print(f"EXPECTED either {N}/{N} delivered, or a raised error from send()")
     # Fixed if EITHER every event was delivered OR the library raised on
     # every foreign-thread call (the issue's "or a raised error from send()").
     if delivered_bare != N and len(raised) != N:
         ok = False
     if raised:
-        print(f"OBSERVED send() raised {raised[0]} on all {len(raised)}/{N} foreign-thread calls")
+        print(
+            f"OBSERVED send() raised {raised[0]} on all {len(raised)}/{N} foreign-thread calls"
+        )
     await interp.stop()
 
     # --- B) run_coroutine_threadsafe: works, but 10x cost -----------------
@@ -113,7 +120,14 @@ async def main() -> int:
     )
     await interp2.stop()
 
-    print("RESULT:", "REPRODUCED (silent cross-thread loss)" if not ok else "NOT REPRODUCED")
+    print(
+        "RESULT:",
+        (
+            "REPRODUCED (silent cross-thread loss)"
+            if not ok
+            else "NOT REPRODUCED"
+        ),
+    )
     return 1 if not ok else 0
 
 

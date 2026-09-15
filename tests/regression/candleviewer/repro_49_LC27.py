@@ -60,7 +60,9 @@ async def main() -> int:
         ok = False
 
     # 3) Advancing the simulated clock does nothing; only wall time fires it.
-    interp = await Interpreter(create_machine(CFG, logic=MachineLogic())).start()
+    interp = await Interpreter(
+        create_machine(CFG, logic=MachineLogic())
+    ).start()
     started = time.monotonic()
     clock.advance(10_000)
     await asyncio.sleep(0)
@@ -76,13 +78,20 @@ async def main() -> int:
     while "order.timed_out" not in interp.current_state_ids:
         await asyncio.sleep(0.01)
     elapsed_ms = (time.monotonic() - started) * 1000
-    print(f"OBSERVED real wall-clock time to reach 'timed_out' = {elapsed_ms:.0f} ms")
-    print(f"EXPECTED ~0 ms under a simulated clock (real delay is {DELAY_MS} ms)")
+    print(
+        f"OBSERVED real wall-clock time to reach 'timed_out' = {elapsed_ms:.0f} ms"
+    )
+    print(
+        f"EXPECTED ~0 ms under a simulated clock (real delay is {DELAY_MS} ms)"
+    )
     if elapsed_ms >= DELAY_MS * 0.8:
         ok = False
     await interp.stop()
 
-    print("RESULT:", "REPRODUCED (no clock injection)" if not ok else "NOT REPRODUCED")
+    print(
+        "RESULT:",
+        "REPRODUCED (no clock injection)" if not ok else "NOT REPRODUCED",
+    )
     return 1 if not ok else 0
 
 

@@ -85,12 +85,21 @@ async def main() -> int:
         Interpreter(create_machine(CFG, logic=logic), max_queue_size=100)
         print("OBSERVED Interpreter(..., max_queue_size=100) accepted")
     except TypeError as exc:
-        print(f"OBSERVED Interpreter(..., max_queue_size=100) -> TypeError: {exc}")
+        print(
+            f"OBSERVED Interpreter(..., max_queue_size=100) -> TypeError: {exc}"
+        )
         ok = False
     print("EXPECTED an optional bound + overflow policy")
 
     await interp.stop()
-    print("RESULT:", "REPRODUCED (unbounded, unobservable queue)" if not ok else "NOT REPRODUCED")
+    print(
+        "RESULT:",
+        (
+            "REPRODUCED (unbounded, unobservable queue)"
+            if not ok
+            else "NOT REPRODUCED"
+        ),
+    )
     return 1 if not ok else 0
 
 

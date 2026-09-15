@@ -20,7 +20,10 @@ logging.disable(logging.CRITICAL)
 CHILD = {
     "id": "leg",
     "initial": "working",
-    "states": {"working": {"on": {"FINISH": "done"}}, "done": {"type": "final"}},
+    "states": {
+        "working": {"on": {"FINISH": "done"}},
+        "done": {"type": "final"},
+    },
 }
 
 
@@ -30,9 +33,7 @@ def parent_cfg(n: int) -> dict:
         "initial": "running",
         "states": {
             "running": {
-                "invoke": [
-                    {"id": f"leg{i}", "src": "leg"} for i in range(n)
-                ]
+                "invoke": [{"id": f"leg{i}", "src": "leg"} for i in range(n)]
             }
         },
     }
@@ -40,7 +41,8 @@ def parent_cfg(n: int) -> dict:
 
 async def measure(n: int) -> tuple[int, float]:
     machine = create_machine(
-        parent_cfg(n), logic=MachineLogic(services={"leg": create_machine(CHILD)})
+        parent_cfg(n),
+        logic=MachineLogic(services={"leg": create_machine(CHILD)}),
     )
     base = len(asyncio.all_tasks())
     interp = await Interpreter(machine).start()
@@ -59,7 +61,9 @@ async def measure(n: int) -> tuple[int, float]:
 
 
 async def main() -> int:
-    print(f"OBSERVED _ACTOR_POLL_INTERVAL = {interp_mod._ACTOR_POLL_INTERVAL}s")
+    print(
+        f"OBSERVED _ACTOR_POLL_INTERVAL = {interp_mod._ACTOR_POLL_INTERVAL}s"
+    )
     counts = {}
     for n in (0, 2, 10, 50):
         tasks, _ = await measure(n)
@@ -68,9 +72,7 @@ async def main() -> int:
     print("EXPECTED ~1 task per child (a lifecycle task awaiting a completion")
     print("EXPECTED future), i.e. no dedicated 5 ms polling task per child")
 
-    per_child = [
-        (counts[n] - counts[0]) / n for n in (2, 10, 50)
-    ]
+    per_child = [(counts[n] - counts[0]) / n for n in (2, 10, 50)]
     print(f"OBSERVED tasks per child = {per_child}")
     polling = interp_mod._ACTOR_POLL_INTERVAL <= 0.01
     two_per_child = all(p >= 2 for p in per_child)
@@ -79,7 +81,10 @@ async def main() -> int:
         f"two-tasks-per-child = {two_per_child}"
     )
     bad = polling and two_per_child
-    print("RESULT:", "REPRODUCED (2 tasks/child, 5 ms poll)" if bad else "NOT REPRODUCED")
+    print(
+        "RESULT:",
+        "REPRODUCED (2 tasks/child, 5 ms poll)" if bad else "NOT REPRODUCED",
+    )
     return 1 if bad else 0
 
 

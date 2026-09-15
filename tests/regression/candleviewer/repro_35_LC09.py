@@ -18,13 +18,17 @@ class GuardSpy(PluginBase):
     def __init__(self) -> None:
         self.seen = []
 
-    def on_guard_evaluated(self, interpreter, guard_type, event, result):  # noqa: ANN001
+    def on_guard_evaluated(
+        self, interpreter, guard_type, event, result
+    ):  # noqa: ANN001
         self.seen.append((guard_type, result))
 
     # 0.8.0 (#35): the hook this issue asked for. A raising guard is now
     # distinguishable from one that returned False -- regardless of the
     # guardErrorPolicy in force.
-    def on_guard_error(self, interpreter, guard_type, event, error):  # noqa: ANN001
+    def on_guard_error(
+        self, interpreter, guard_type, event, error
+    ):  # noqa: ANN001
         self.seen.append((guard_type, f"RAISED:{type(error).__name__}"))
 
 
@@ -45,7 +49,9 @@ def build(guard_fn):
             "fallback": {},
         },
     }
-    return create_machine(cfg, logic=MachineLogic(guards={"risk_ok": guard_fn}))
+    return create_machine(
+        cfg, logic=MachineLogic(guards={"risk_ok": guard_fn})
+    )
 
 
 async def run(guard_fn):
@@ -59,7 +65,11 @@ async def run(guard_fn):
         await asyncio.sleep(0.05)
     except Exception as exc:  # noqa: BLE001
         raised = type(exc).__name__
-    out = {"state": sorted(interp.current_state_ids), "raised": raised, "plugin": spy.seen}
+    out = {
+        "state": sorted(interp.current_state_ids),
+        "raised": raised,
+        "plugin": spy.seen,
+    }
     await interp.stop()
     return out
 
@@ -75,7 +85,9 @@ async def main() -> int:
     b = await run(boom)
     print(f"OBSERVED: guard returns False -> {a}")
     print(f"OBSERVED: guard RAISES       -> {b}")
-    print("EXPECTED: the two cases are distinguishable (raise, or on_guard_error hook)")
+    print(
+        "EXPECTED: the two cases are distinguishable (raise, or on_guard_error hook)"
+    )
     ok = a != b
     print("RESULT:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
