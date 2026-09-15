@@ -440,7 +440,14 @@ class TransitionDefinition:
         self.guard_def: Optional[GuardDefinition] = (
             GuardDefinition(raw_guard) if raw_guard is not None else None
         )
-        self.reenter: bool = config.get("reenter", False)
+        # 🔁 `reenter` (XState v5) with `internal` (v4) as an alias:
+        #    `internal: False` means "exit and re-enter", i.e. `reenter: True`.
+        #    Before 0.8.0 `internal` was silently dropped, so a migrating
+        #    user's explicit opt-in vanished with no validation error (#29).
+        if "internal" in config:
+            self.reenter: bool = not bool(config["internal"])
+        else:
+            self.reenter = bool(config.get("reenter", False))
         #: Marks an explicitly forbidden transition (``on: {"E": None}``).
         #: Selecting it consumes the event without changing state, which stops
         #: the upward walk from reaching an ancestor's handler.

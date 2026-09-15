@@ -113,7 +113,16 @@ async def run(cfg):
 
 
 async def main() -> int:
-    self_state, self_n, self_status = await run(SELF_LOOP)
+    # 0.8.0: the non-progressing SELF_LOOP is REJECTED at create_machine(),
+    # per this issue's acceptance criteria ("the repro must be updated to
+    # assert the validation error rather than the converged state").
+    rejected = False
+    self_state, self_n, self_status = ["m.loop"], 0, "running"
+    try:
+        await run(SELF_LOOP)
+    except Exception as exc:  # noqa: BLE001
+        rejected = "can never make progress" in str(exc)
+        self_status = f"REJECTED: {type(exc).__name__}"
     via_state, via_n, _ = await run(VIA_B)
     re_state, re_n, _ = await run(REENTER)
     int_state, int_n, _ = await run(INTERNAL_FALSE)
@@ -135,11 +144,13 @@ async def main() -> int:
     # The defect: the non-progressing config builds without error, then parks
     # silently -- while the documented opt-in (`reenter: True`) proves the engine
     # can drive the loop, and `internal: False` is silently discarded.
-    parks_silently = self_state == ["m.loop"] and self_n < 5 and self_status == "running"
+    parks_silently = (not rejected) and self_state == ["m.loop"] and self_n < 5
     engine_can_loop = via_state == ["m.done"] and re_state == ["m.done"]
     internal_dropped = int_state == ["m.loop"] and int_n < 5
 
-    bad = parks_silently and engine_can_loop and internal_dropped
+    # Defect present if EITHER the dead loop still builds silently OR
+    # `internal: False` is still dropped.
+    bad = (parks_silently and engine_can_loop) or internal_dropped
     print("RESULT: DEFECT REPRODUCED" if bad else "RESULT: not reproduced")
     return 1 if bad else 0
 

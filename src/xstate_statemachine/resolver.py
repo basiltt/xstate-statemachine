@@ -75,6 +75,14 @@ def _validate_segments(
         raise StateNotFoundError(target, reference_id)
 
 
+def _machine_of(node: "StateNode") -> Optional["StateNode"]:
+    """Walk to the root of *node*'s tree."""
+    current: Optional["StateNode"] = node
+    while current is not None and current.parent is not None:
+        current = current.parent
+    return current
+
+
 def _find_descendant(start_node: "StateNode", path: List[str]) -> "StateNode":
     """Traverses down the state tree to find a descendant node.
 
@@ -202,7 +210,23 @@ def resolve_target_state(
         logger.debug("  -> Attempting relative path resolution...")
         segments = target[1:].split(".")
         _validate_segments(segments, target, reference_state.id)
-        # ✅ Base the search from the parent of the current state.
+        # 🏛️ Architecture decision (0.8.0, #31): XState resolves a leading
+        #    dot into the SOURCE state's own descendants -- `{target:
+        #    ".child"}` on state `A` enters `A.child`. Verified against
+        #    XState 5.33.0. Before 0.8.0 this library based the lookup on
+        #    the source's PARENT (a "sibling" reading), so every `.child`
+        #    target failed to resolve and the transition was silently
+        #    dropped. The child lookup is now primary. The sibling reading
+        #    is kept as a FALLBACK so machines written against the old
+        #    behaviour keep working -- but under `strictTargets: True` that
+        #    fallback is disabled and a `.child` that is not a child raises.
+        try:
+            return _find_descendant(reference_state, segments)
+        except StateNotFoundError:
+            pass
+        machine = _machine_of(reference_state)
+        if machine is not None and getattr(machine, "strict_targets", False):
+            raise StateNotFoundError(target, reference_state.id)
         base = reference_state.parent or reference_state
         return _find_descendant(base, segments)
 

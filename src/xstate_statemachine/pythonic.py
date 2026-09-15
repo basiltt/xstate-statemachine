@@ -736,6 +736,12 @@ def _compile_config(
     # Uses dot-path keys to avoid collisions between
     # states with the same name at different hierarchy levels
     all_states_by_name: Dict[str, State] = {}
+    # 🗺️ State object -> its dot-path from the machine root. Used to emit
+    #    UNAMBIGUOUS transition targets: before 0.8.0 a nested target such
+    #    as `moving.up` was written as the bare `"up"`, which only ever
+    #    resolved through the runtime's fuzzy last-segment fallback (#34)
+    #    and fails outright under build-time target validation (#30).
+    path_of: Dict[int, str] = {}
 
     def _register_states(
         state_list: List[State],
@@ -744,6 +750,7 @@ def _compile_config(
         for s in state_list:
             key = f"{prefix}.{s.name}" if prefix else s.name
             all_states_by_name[key] = s
+            path_of[id(s)] = key
             # Also register the bare name for transition
             # source lookups (backward compat)
             all_states_by_name[s.name] = s
@@ -833,7 +840,15 @@ def _compile_config(
                 for t in t_list:
                     entry: Dict[str, Any] = {}
                     if not t.internal and t.target is not None:
-                        entry["target"] = t.target.name
+                        path = path_of.get(id(t.target), t.target.name)
+                        # A top-level target keeps its bare name (the
+                        # established output format). A NESTED target is
+                        # emitted as an absolute `#machine.path`, which is
+                        # the only form that resolves unambiguously from
+                        # any source (and passes build-time validation).
+                        entry["target"] = (
+                            f"#{machine_id}.{path}" if "." in path else path
+                        )
                     if t.guard:
                         entry["guard"] = t.guard
                     if t.actions:

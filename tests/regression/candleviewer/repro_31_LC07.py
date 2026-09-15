@@ -31,7 +31,10 @@ CONFIG = {
 async def main() -> int:
     log = []
     logic = MachineLogic(
-        actions={n: (lambda c, e, a, n=n: log.append(n)) for n in ("xA1", "eA2")}
+        # 📝 Actions receive (interpreter, context, event, action_def) -- the
+        #    original 3-arg lambda bound `n` to the ActionDefinition, which
+        #    made the log compare unequal even once the fix landed.
+        actions={n: (lambda i, c, e, a, n=n: log.append(n)) for n in ("xA1", "eA2")}
     )
     machine = create_machine(CONFIG, logic=logic)
     interp = await Interpreter(machine).start()

@@ -27,6 +27,7 @@ import logging
 import threading
 import time
 import unittest
+import warnings
 from typing import Any, Callable, Dict, List
 from unittest.mock import MagicMock
 
@@ -1176,21 +1177,33 @@ class TestSyncInterpreter(unittest.TestCase):
             "🧪 Testing one final region does not trigger parent `onDone`..."
         )
         # 🤖 Arrange
+        # 🐛 The original config declared "finished" as a sibling of
+        #    "states" (a dict key, not a state) -- an undefined `onDone`
+        #    target that the 0.7.x runtime silently ignored. Build-time
+        #    validation (0.8.0, #30) now rejects that, so the parallel
+        #    state is wrapped in a compound whose `onDone` targets a real
+        #    sibling. The behaviour under test is unchanged: one final
+        #    region must not fire the parallel state's onDone.
         machine_config: Dict[str, Any] = {
             "id": "p_final",
-            "type": "parallel",
-            "onDone": "finished",  # This should not be reached
+            "initial": "p",
             "states": {
-                "a": {
-                    "initial": "a1",
+                "p": {
+                    "type": "parallel",
+                    "onDone": "finished",  # This should not be reached
                     "states": {
-                        "a1": {"on": {"FINISH_A": "a2"}},
-                        "a2": {"type": "final"},
+                        "a": {
+                            "initial": "a1",
+                            "states": {
+                                "a1": {"on": {"FINISH_A": "a2"}},
+                                "a2": {"type": "final"},
+                            },
+                        },
+                        "b": {"initial": "b1", "states": {"b1": {}}},
                     },
                 },
-                "b": {"initial": "b1", "states": {"b1": {}}},
+                "finished": {},
             },
-            "finished": {},
         }
         machine = create_machine(machine_config)
         interpreter = SyncInterpreter(machine).start()
@@ -1200,7 +1213,8 @@ class TestSyncInterpreter(unittest.TestCase):
 
         # ✨ Assert: The machine remains in the parallel state.
         self.assertEqual(
-            interpreter.current_state_ids, {"p_final.a.a2", "p_final.b.b1"}
+            interpreter.current_state_ids,
+            {"p_final.p.a.a2", "p_final.p.b.b1"},
         )
 
     # -------------------------------------------------------------------------
@@ -2506,7 +2520,11 @@ class TestSyncInterpreter(unittest.TestCase):
             "initial": "a",
             "states": {"a": {"on": {"EVENT": "nonexistent"}}},
         }
-        machine = create_machine(machine_config)
+        # 📝 Opt out of 0.8.0 build-time target validation: this test
+        #    exercises the RUNTIME error path for a target that got through.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            machine = create_machine(machine_config, strict_targets=False)
         interpreter = SyncInterpreter(machine).start()
         # ⚡ Act & ✨ Assert
         with self.assertRaises(StateNotFoundError):
