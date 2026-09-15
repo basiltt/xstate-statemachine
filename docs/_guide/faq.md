@@ -464,11 +464,11 @@ xsm gt exported_machine.json --template pythonic-class
 The library is lightweight with minimal overhead:
 
 - Machine creation: microseconds for typical configs
-- Event processing: microseconds per transition
+- Event processing: tens of microseconds per transition **on an unloaded loop**. Aggregate throughput across all async interpreters in a process is a fixed budget (~20k trivial events/s on a laptop, i.e. ~18 ev/s each at 1,000 machines) — see [Production Characteristics](../production-characteristics/).
 - Memory: proportional to the number of states and transitions
-- No background threads or event loops (unless using `Interpreter` with `after`)
+- Background threads: the async `Interpreter` uses **none** — everything runs on your asyncio loop. The `SyncInterpreter` spawns a background thread per `after` timer, delayed send, and non-blocking child actor, and those threads re-enter the machine without a lock.
 
-For most applications, the state machine overhead is negligible compared to your business logic (database queries, API calls, etc.).
+For most applications, the state machine overhead is negligible compared to your business logic (database queries, API calls, etc.). Blocking work inside an action, however, stalls **every** machine sharing the loop.
 
 ---
 

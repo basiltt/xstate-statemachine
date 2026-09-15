@@ -152,6 +152,7 @@
         <div class="sidebar-section">
           <h3 class="sidebar-heading">Reference</h3>
           <a href="{{ '/api/' | relative_url }}" class="sidebar-link">API Reference</a>
+          <a href="{{ '/guide/production-characteristics/' | relative_url }}" class="sidebar-link">Production Characteristics</a>
           <a href="{{ '/guide/troubleshooting/' | relative_url }}" class="sidebar-link">Troubleshooting</a>
           <a href="{{ '/guide/faq/' | relative_url }}" class="sidebar-link">FAQ</a>
           <a href="{{ '/guide/changelog/' | relative_url }}" class="sidebar-link">Changelog</a>
@@ -206,7 +207,7 @@
         </div>
 
         <!-- Previous / Next Navigation -->
-        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,diagrams,examples,cli,cli-templates,cli-hierarchy,troubleshooting,faq,changelog" | split: "," %}
+        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,diagrams,examples,cli,cli-templates,cli-hierarchy,production-characteristics,troubleshooting,faq,changelog" | split: "," %}
         {% assign current_name = page.url | remove: "/guide/" | remove: "/" %}
         {% assign prev_page = nil %}
         {% assign next_page = nil %}

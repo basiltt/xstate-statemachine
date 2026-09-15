@@ -7,12 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-**Adoption-readiness, part 1.** A production adoption audit (tracking issue
+**Adoption-readiness.** A production adoption audit (tracking issue
 [#26](https://github.com/basiltt/xstate-statemachine/issues/26)) filed 34
 defects against 0.7.0 with a common theme: the library fails *silently* by
-default. This first batch closes all four blockers and the filer's top
-priorities. Every new behaviour is a per-machine policy whose default
-preserves 0.7.x semantics, so nothing changes on upgrade until you opt in.
+default. Part 1 closed all four blockers and the filer's top priorities.
+Part 2 (below, marked **[wave 2]**) closes the remaining small/medium items:
+actor lifecycle, persistence envelope, `invoke.input`, the pure API's cost,
+hierarchical `value`, and the production-characteristics documentation.
+Every new behaviour is a per-machine policy or an additive API whose default
+preserves 0.7.x semantics, with two deliberate exceptions called out under
+**Changed**.
 
 ### Added
 
@@ -54,6 +58,46 @@ preserves 0.7.x semantics, so nothing changes on upgrade until you opt in.
   a hint if the key was placed at the top level instead of under `params`.
 - New exceptions exported: `UnhandledEventError`, `TransitionFailedError`,
   `WrongThreadError`.
+- **[wave 2] `interpreter.value`** (#58) -- the active configuration in
+  XState's hierarchical form: a leaf key for an atomic root, `{parent:
+  child}` for compound (innermost collapses to a string), one key per
+  region for parallel, `{}` before `start()`. Tree-walked, so state keys
+  containing `.` are safe. `matches()` now also accepts a partial value
+  dict. Snapshots carry a derived `"value"` key; restore ignores it.
+- **[wave 2] Snapshot envelope v1** (#45). Persisted snapshots gain
+  `version` (integer payload-layout version, bumped only on layout change),
+  `machine_id`, `machine_hash` (a 16-hex structural fingerprint over
+  states, transitions, guard/action *names*, invokes and delays -- stable
+  across `meta`/`description` edits and key order) and `taken_at`.
+  `from_snapshot` refuses a newer `version` with `SnapshotVersionError`
+  and a mismatched id or hash with `SnapshotDriftError`;
+  `from_snapshot(..., verify_machine_hash=False)` opts out after a
+  migration. Unversioned 0.7.x payloads restore exactly as before.
+  New module `persistence.py` owns the format contract.
+- **[wave 2] Inbox durability** (#47), both engines:
+  `interpreter.pending_events` (accepted-but-unprocessed, FIFO),
+  `drain_pending()` (remove without processing), `stop(drain=True)`
+  (process to empty; async engine also takes `timeout=`). Snapshots carry
+  `pending_events` and restore re-enqueues them, recursively for child
+  actors.
+- **[wave 2] `invoke.input` may be a callable** (#42) --
+  `fn({context, event})` (XState form) or `fn(context, event)` -- resolved
+  per spawn via `InvokeDefinition.resolve_input()`, deep-copied, and
+  passed to a child MACHINE as its creation `input` (previously it was
+  never forwarded at all), so a child `context` factory receives
+  `{input}` as in XState. A plain-dict child context receives it only at
+  `context["input"]` -- declared keys are never overwritten. A raising
+  resolver becomes `onError` on both engines.
+- **[wave 2] `Interpreter.wait_done()`** (#43) -- a future resolved the
+  instant the machine reaches `done`/`error`.
+- **[wave 2] `spawnBlockingTimeout`** machine key (ms) bounds how long a
+  `spawn_blocking_<key>` waits for the child (#41). Default 30 s; the wait
+  is never unbounded, so a child that never reaches a final state cannot
+  wedge its parent.
+- **[wave 2] Docs: Production Characteristics** (#53, #56) -- a new guide
+  page with measured numbers for the per-process throughput budget, `after`
+  timer lateness under load, and the `SyncInterpreter` threading contract,
+  plus `benchmarks/production_characteristics.py` to reproduce them.
 
 ### Fixed
 
@@ -86,6 +130,22 @@ preserves 0.7.x semantics, so nothing changes on upgrade until you opt in.
   The async engine already behaved correctly; the two now agree.
 - Two tests in the suite declared a target as a sibling of `"states"`; the
   new validator caught them.
+- **[wave 2]** Runtime target resolution no longer falls back to a
+  whole-tree search by last id segment (#34). A bare `target: "filled"`
+  declared in one parallel region used to bind `audit.archive.filled` in
+  an unrelated region and move it. Resolution is now strictly lexical
+  (sibling / `#id` / `.child` / exact top-level key) in both engines,
+  which now share ONE resolver; the validator mirrors it one-for-one.
+- **[wave 2]** `spawn_blocking_<key>` on the async `Interpreter` honoured
+  only the `spawn_` half and ran non-blocking (#41). Both engines now wait
+  for the child to reach a terminal status before the parent's next
+  action; the sync engine also waits out a child driven by `after` timers,
+  which it previously did not.
+- **[wave 2]** The pure API (`transition` / `get_next_snapshot`) built a
+  fresh interpreter subclass per call and deep-copied twice, costing 4x a
+  real `send()` (#54). One probe per machine per THREAD is now cached
+  (thread-local, so concurrent callers never share one) and reset;
+  measured ~3x faster. Semantics unchanged.
 
 ### Changed
 
@@ -101,6 +161,19 @@ preserves 0.7.x semantics, so nothing changes on upgrade until you opt in.
 - `send()` / `send_threadsafe()` on an interpreter whose event loop has
   since been closed raise a `RuntimeError` that says so, instead of a
   `WrongThreadError` naming the same thread on both sides.
+- **[wave 2] Reaching a top-level final state now tears down** (#57):
+  child actors are stopped, `after` timers and invoked services cancelled,
+  and the machine's actor-system registration removed -- the moment
+  `status` becomes `"done"` (or `"error"`), not when `stop()` is later
+  called. `status`, `output`, `error` and `context` are retained;
+  `stop()` on a done machine is a quiet no-op that keeps `status ==
+  "done"`. Machines that relied on children outliving a completed parent
+  must restructure (that dependence was on a leak).
+- **[wave 2] Invoked child actors no longer poll** (#43). The parent
+  awaited `child.status` every 5 ms in a second task; it now awaits a
+  completion future. `onDone` latency drops from a 5 ms floor to ~0, which
+  can expose tests that used the delay as a settling window.
+  `_ACTOR_POLL_INTERVAL` is removed.
 - `Interpreter` no longer constructs its `asyncio.Queue` in `__init__`; the
   queue is created when `start()` binds the loop, and events sent before
   `start()` are buffered and delivered in order. On Python 3.9

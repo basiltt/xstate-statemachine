@@ -70,6 +70,8 @@ from .models import (
     StateNode,
     TContext,
     TEvent,
+    DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS,
+    SPAWN_BLOCKING_PREFIX,
     spawn_service_key,
 )
 from .task_manager import TaskManager
@@ -82,7 +84,6 @@ logger = logging.getLogger(__name__)
 # ⏱️ How often `_spawn_and_manage_actor` checks whether an invoked child
 #    machine has reached a final state. Small enough that `onDone` feels
 #    immediate, large enough not to busy-wait a core.
-_ACTOR_POLL_INTERVAL = 0.005
 
 
 # -----------------------------------------------------------------------------
@@ -121,6 +122,9 @@ class _PreStartQueue:
         items, self._items = self._items, []
         return items
 
+    def peek(self) -> List[Union[Event, AfterEvent, DoneEvent]]:
+        return list(self._items)
+
 
 def _completed() -> "asyncio.Future[None]":
     """An already-resolved awaitable -- what `send()` hands back.
@@ -151,6 +155,14 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
     It uses a dedicated `TaskManager` to cleanly manage the lifecycle of all
     background `asyncio.Task` objects, ensuring they are properly cancelled
     when states are exited.
+
+    📏 Every `Interpreter` in a process shares ONE event loop on ONE thread.
+    Concurrency between machines is interleaving, not parallelism, so
+    throughput is a per-process budget divided among all live interpreters
+    (~20k trivial events/s on a laptop; ~18 ev/s each at 1,000 machines),
+    and `after` timers fire late under load. Blocking work inside an action
+    stalls every machine. Measured tables and a sizing rule:
+    https://basiltt.github.io/xstate-statemachine/guide/production-characteristics/
 
     Attributes:
         task_manager (TaskManager): An instance of `TaskManager` that tracks and
@@ -339,22 +351,54 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
         return self
 
-    async def stop(self) -> None:
+    async def stop(
+        self, *, drain: bool = False, timeout: Optional[float] = None
+    ) -> None:
         """Stops the interpreter, cleaning up all tasks and spawned actors.
 
         This method gracefully shuts down the event loop, cancels all running
         background tasks (timers, services), and recursively stops any child
         actors that were spawned by this interpreter. It is idempotent.
+
+        Args:
+            drain: When `True`, process every event already accepted by
+                `send()` before tearing down, so nothing the caller was
+                told "yes" to is discarded (#47). Default `False` keeps
+                0.7.x semantics, but a non-empty inbox is now logged.
+            timeout: Upper bound in seconds for the drain; `None` waits
+                until the inbox is empty.
         """
         # 🛡️ Idempotency check.
-        #
-        # 🏛️ `done` and `error` are terminal but NOT torn down: reaching a
-        # top-level final state must still release child actors and tasks.
         if self.status in ("uninitialized", "stopped"):
             logger.warning(
                 "⚠️ Interpreter '%s' is not running. Skipping stop.", self.id
             )
             return
+        # 🏁 #57: a terminal machine has already reaped itself (or has a
+        #    teardown task in flight). `stop()` is then a quiet no-op that
+        #    leaves `status` as "done"/"error" so `output`/`error` stay
+        #    meaningful.
+        if self.status in ("done", "error"):
+            await self._teardown()
+            return
+
+        if drain and self.status == "running":
+            await self._drain_inbox(timeout)
+            # 🏁 A drained event may have completed the machine (review F5).
+            #    That is a `done`, not a `stopped`: keep the terminal status
+            #    and let the reaping path (already scheduled) finish.
+            if self.status in ("done", "error"):
+                await self._teardown()
+                return
+        pending = self._event_queue.qsize()
+        if pending:
+            logger.warning(
+                "📬 Interpreter '%s' stopping with %d pending event(s) that "
+                "will NOT be processed. Use stop(drain=True) to finish them, "
+                "or read `pending_events` / `get_snapshot()` to persist them.",
+                self.id,
+                pending,
+            )
 
         logger.info("🛑 Gracefully stopping interpreter '%s'...", self.id)
         self.status = "stopped"
@@ -363,32 +407,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         for plugin in self._plugins:
             plugin.on_interpreter_stop(self)
 
-        # 🛑 Stop all child actors recursively.
-        #
-        # 🧵 Iterate over a SNAPSHOT. Stopping a child yields to the event
-        #    loop, which lets that child's own managing task run its `finally`
-        #    and pop itself from `self._actors` — mutating the dict mid-loop
-        #    and raising "dictionary changed size during iteration".
-        for actor in list(self._actors.values()):
-            await actor.stop()
-        self._actors.clear()
-
-        # ❌ Cancel all background tasks (timers, services) owned by this interpreter.
-        await self.task_manager.cancel_all()
-
-        # 🔌 Terminate the main event processing loop.
-        if self._event_loop_task:
-            self._event_loop_task.cancel()
-            # Wait for the loop to acknowledge the cancellation to prevent leaks.
-            try:
-                await self._event_loop_task
-            except asyncio.CancelledError:
-                logger.debug(
-                    "Event loop task for '%s' acknowledged cancellation.",
-                    self.id,
-                )
-            self._event_loop_task = None
-
+        # 🧹 Children, tasks, registry entry, run loop -- one shared path.
+        await self._teardown()
         logger.info("✅ Interpreter '%s' stopped successfully.", self.id)
 
     @overload
@@ -520,6 +540,131 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             self._event_queue = asyncio.Queue()
             for item in pending:  # 📬 preserve pre-start send() order
                 self._event_queue.put_nowait(item)
+
+    # -------------------------------------------------------------------------
+    # 🏁 Completion signal (#43) and reaping (#57)
+    # -------------------------------------------------------------------------
+    def wait_done(self) -> "asyncio.Future[str]":
+        """A future that resolves to the terminal status ("done" / "error").
+
+        🏛️ Architecture decision (#43): a parent used to learn its child had
+        finished by polling `child.status` every 5 ms in a dedicated task.
+        Every idle child therefore cost TWO tasks and 200 wake-ups a second,
+        and `onDone` had a 5 ms floor. This future is resolved from
+        `_on_terminal` the instant `status` flips, so the parent awaits it.
+        Returns an already-resolved future if the machine is terminal now
+        (the "child finished during start()" race must keep working).
+        """
+        loop = asyncio.get_running_loop()
+        fut: "asyncio.Future[str]" = loop.create_future()
+        if self.status in ("done", "error"):
+            fut.set_result(self.status)
+            return fut
+
+        def _resolve(status: str) -> None:
+            if not fut.done():
+                fut.set_result(status)
+
+        self._terminal_listeners.append(_resolve)
+        return fut
+
+    def _forget_actor(self, actor_id: str) -> None:
+        """Drop a finished spawned child from the actor maps."""
+        self._actors.pop(actor_id, None)
+        self._actor_sources.pop(actor_id, None)
+
+    def _schedule_teardown(self) -> None:
+        # 🧵 `_complete()` is called from inside `_enter_states`, mid-
+        #    transition; tearing down children synchronously there would
+        #    stop them while the parent's own step is still unwinding.
+        #    Defer by one loop turn.
+        if self._loop is None or self._loop.is_closed():
+            return
+        self._loop.create_task(self._teardown())
+
+    async def _teardown(self) -> None:
+        """Release everything except `status` / `output` / `error` / `context`.
+
+        Shared by `stop()` and by reaching a terminal status (#57).
+        """
+        for actor in list(self._actors.values()):
+            await actor.stop()
+        self._actors.clear()
+        await self.task_manager.cancel_all()
+        self._unregister_from_system()
+        if self._event_loop_task and self.status != "running":
+            self._event_loop_task.cancel()
+            try:
+                await self._event_loop_task
+            except asyncio.CancelledError:
+                pass
+            self._event_loop_task = None
+            # 📬 Ack anything still queued so a concurrent
+            #    `_event_queue.join()` (stop(drain=True), review F5) can
+            #    complete instead of waiting forever for a dead consumer.
+            q = self._event_queue
+            if not isinstance(q, _PreStartQueue):
+                while not q.empty():
+                    q.get_nowait()
+                    q.task_done()
+
+    # -------------------------------------------------------------------------
+    # 📬 Inbox (#47)
+    # -------------------------------------------------------------------------
+    def _snapshot_pending_events(
+        self,
+    ) -> List[Union[Event, DoneEvent, AfterEvent]]:
+        q = self._event_queue
+        if isinstance(q, _PreStartQueue):
+            return q.peek()
+        # 🔍 `asyncio.Queue` keeps its items in a deque named `_queue`. This
+        #    is CPython-internal but stable since 3.4 and read-only here; a
+        #    public alternative would mean re-implementing the queue.
+        return list(getattr(q, "_queue", ()))
+
+    def _enqueue_restored(self, event: Event) -> None:
+        self._event_queue.put_nowait(event)
+
+    async def drain_pending(self) -> List[Union[Event, DoneEvent, AfterEvent]]:
+        """Remove and return every accepted-but-unprocessed event.
+
+        The events are NOT processed. Intended for shutdown paths that must
+        persist accepted work durably before the process exits.
+        """
+        q = self._event_queue
+        if isinstance(q, _PreStartQueue):
+            return q.drain()
+        drained: List[Union[Event, DoneEvent, AfterEvent]] = []
+        while not q.empty():
+            drained.append(q.get_nowait())
+            q.task_done()
+        return drained
+
+    async def _drain_inbox(self, timeout: Optional[float]) -> None:
+        """Let the run loop process the inbox to empty (bounded by timeout).
+
+        🏛️ Review F5: if a drained event drives the machine to a terminal
+        status, `_on_terminal` schedules teardown, which cancels the run
+        loop while events remain queued -- and nothing ever calls
+        `task_done()` for them, so `join()` never returns. `_teardown`
+        therefore acks whatever is left before cancelling the loop, and
+        this wait is additionally bounded by the machine no longer running.
+        """
+        # 📬 Restored-but-unstarted: the buffer is a `_PreStartQueue` with
+        #    nothing draining it (review F6); there is nothing to wait for.
+        if isinstance(self._event_queue, _PreStartQueue):
+            return
+        join = asyncio.ensure_future(self._event_queue.join())
+        try:
+            await asyncio.wait_for(join, timeout)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "⏱️ stop(drain=True) on '%s' timed out after %.3fs with %d "
+                "event(s) still pending.",
+                self.id,
+                timeout,
+                self._event_queue.qsize(),
+            )
 
     def _assert_owning_thread(self, method: str) -> None:
         """Raise if called from a thread that does not own our loop."""
@@ -820,9 +965,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 plugin.on_action_execute(self, action_def)
 
             # 👶 Handle actor spawning as a special, built-in action type.
-            if action_def.type.startswith("spawn_") and not is_builtin(
-                action_def.type
-            ):
+            # 🏛️ #41: `spawn_blocking_` is a distinct MODE (see
+            #    `_spawn_actor`), not just a longer prefix of `spawn_`.
+            if action_def.type.startswith(
+                (SPAWN_BLOCKING_PREFIX, "spawn_")
+            ) and not is_builtin(action_def.type):
                 await self._spawn_actor(action_def, event)
                 continue
 
@@ -1173,21 +1320,56 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             if explicit_id
             else f"{self.id}:{actor_machine_key}:{uuid.uuid4()}"
         )
-        child_interpreter = Interpreter(actor_machine)
+        # 📥 Input goes in at CONSTRUCTION so a child `context` factory
+        #    receives `{input}` (#42); `_build_initial_context` also seeds
+        #    declared keys and exposes `context["input"]`.
+        child_interpreter = Interpreter(
+            actor_machine, input=spawn_params.get("input")
+        )
         child_interpreter.parent = self
         child_interpreter.id = actor_id
-        # 📥 Seed the child's context with any declared input.
-        child_input = spawn_params.get("input")
-        if child_input is not None:
-            child_interpreter.context.setdefault("input", child_input)
         # 🌐 Register under a systemId so siblings can address it.
         self._register_in_system(
             spawn_params.get("systemId"), child_interpreter
         )
-        await child_interpreter.start()
-
         self._actors[actor_id] = child_interpreter
         self._actor_sources[actor_id] = actor_machine_key
+        # 🧹 #57 review F3: a spawned child that finishes on its own must
+        #    leave the parent's map, or a supervisor that spawns per request
+        #    grows without bound. (Invoked children are popped by their
+        #    manager task; spawned ones had no owner watching.)
+        child_interpreter._terminal_listeners.append(
+            lambda _s, aid=actor_id: self._forget_actor(aid)
+        )
+        await child_interpreter.start()
+
+        # ⏸️ #41: `spawn_blocking_<key>` -- the child runs to completion
+        #    BEFORE the parent's next action, exactly as on the sync engine.
+        #    Before 0.8.0 the async engine discarded the marker, so the same
+        #    action string meant two different things on the two engines.
+        #    Bounded by `spawnBlockingTimeout` (ms, machine config) so a
+        #    child with no final state cannot hang the parent forever.
+        if action_def.type.startswith(SPAWN_BLOCKING_PREFIX):
+            timeout_ms = self.machine.spawn_blocking_timeout_ms
+            if timeout_ms is None:
+                # 🛡️ An unbounded wait INSIDE a transition wedges the parent
+                #    forever if the child never reaches a final state, and
+                #    the machine still reports "running" (review F2). A
+                #    bounded default keeps the guarantee for children that
+                #    do finish and makes the failure mode a WARNING, not a
+                #    hang. Set `spawnBlockingTimeout` explicitly to tune.
+                timeout_ms = DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS
+            try:
+                await asyncio.wait_for(
+                    child_interpreter.wait_done(), timeout_ms / 1000.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "⏱️ Blocking spawn of '%s' did not finish within %s ms; "
+                    "continuing without it.",
+                    actor_id,
+                    timeout_ms,
+                )
         logger.info(
             "✅ Actor '%s' (child of '%s') spawned and started successfully.",
             actor_id,
@@ -1279,7 +1461,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             # Create a synthetic event to pass to the service if it needs context.
             invoke_event = Event(
                 type=f"invoke.{invocation.id}",
-                payload={"input": invocation.input or {}},
+                # 📥 #42: callable `input` is resolved here too, so a
+                #    service `src` and a machine `src` see the same value.
+                payload={
+                    "input": invocation.resolve_input(self.context, None) or {}
+                },
             )
             # 🏃‍♂️ Await the actual service coroutine.
             # 🔀 Accept both plain and coroutine services.
@@ -1408,7 +1594,12 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 if invocation.id_is_explicit
                 else f"{self.id}:{invocation.src}:{uuid.uuid4()}"
             )
-            child_interpreter = Interpreter(actor_machine)
+            # 📥 #42: resolve `input` against the PARENT's live context and
+            #    hand it to the child as its creation input, so a child
+            #    `context` factory receives `{input}` exactly as in XState.
+            #    A raising resolver is a child failure -> `onError`.
+            child_input = invocation.resolve_input(self.context, None)
+            child_interpreter = Interpreter(actor_machine, input=child_input)
             child_interpreter.parent = self
             child_interpreter.id = actor_id
             self._actors[actor_id] = child_interpreter
@@ -1433,11 +1624,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             await child_interpreter.start()
 
             # ⏳ Now actually wait for the child to finish. `status` flips to
-            #    "done" on completion, or "error" if the machine failed;
-            #    polling the child's own lifecycle is what makes `onDone` mean
-            #    what XState says it means.
-            while child_interpreter.status == "running":
-                await asyncio.sleep(_ACTOR_POLL_INTERVAL)
+            #    "done" on completion, or "error" if the machine failed --
+            #    `wait_done()` resolves the instant that happens (#43), so
+            #    `onDone` means what XState says it means with no poll and
+            #    no latency floor.
+            await child_interpreter.wait_done()
 
             # 💥 A child that FAILED must satisfy `onError`, not `onDone`.
             #    Treating any non-running status as success reported a crashed

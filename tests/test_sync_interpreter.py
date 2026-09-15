@@ -1461,7 +1461,15 @@ class TestSyncInterpreter(unittest.TestCase):
     # -------------------------------------------------------------------------
 
     def test_spawn_blocking_waits_for_child(self) -> None:
-        """Tests a blocking actor runs inline and stays registered."""
+        """Tests a blocking actor runs inline to completion.
+
+        History: this once asserted the finished child "stays registered"
+        in `_actors`. Since #57 (review F3) a child that reaches a terminal
+        status is reaped from the parent's map -- a supervisor spawning per
+        request must not grow without bound -- so the observable proof of
+        blocking is now that the child is ALREADY done (and gone) by the
+        time `start()` returns, not that it lingers.
+        """
         logger.info("🧪 Testing blocking actor spawn waits for completion...")
         # 🤖 Arrange
         child_cfg = {
@@ -1489,8 +1497,10 @@ class TestSyncInterpreter(unittest.TestCase):
         # ⚡ Act
         interp = SyncInterpreter(machine).start()
 
-        # ✨ Assert: Child finished, but remains in registry (blocking mode).
-        self.assertEqual(len(interp._actors), 1)
+        # ✅ The blocking child ran to its final state INSIDE start(), so by
+        #    now it has completed and been reaped from the parent's map.
+        self.assertEqual(len(interp._actors), 0)
+        self.assertEqual(interp.status, "running")
         interp.stop()
 
     def test_spawn_non_blocking_creates_child_actor(self) -> None:

@@ -29,6 +29,7 @@ import copy
 import inspect
 import json
 import logging
+import time
 import warnings
 from typing import (
     Any,
@@ -81,6 +82,7 @@ from .models import (
 )
 from .plugins import PluginBase
 from .resolver import resolve_target_state
+from . import persistence
 
 # This TypeVar allows methods to return the specific subclass instance (self).
 TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter")
@@ -368,6 +370,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         #: Actor-system registry. Only the ROOT interpreter's copy is used;
         #: children reach it by walking up `parent`.
         self._system: Dict[str, "BaseInterpreter[Any, Any]"] = {}
+        #: Callbacks to run the moment `status` becomes terminal
+        #: ("done" / "error"). The async engine registers one that resolves
+        #: its completion future; the parent awaits that instead of polling
+        #: (#43). Fired at most once.
+        self._terminal_listeners: List[Callable[[str], None]] = []
         #: Snapshots of child actors that could not be rebuilt on restore
         #: (their service was not registered). Preserved rather than dropped
         #: so no data is lost and the caller can recover them.
@@ -416,6 +423,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             return copy.deepcopy(produced) if produced is not None else {}
         context = copy.deepcopy(raw)
         # 📥 Expose input to the machine even without a context factory.
+        #    Deliberately ONLY under `context["input"]` (0.7.x contract):
+        #    letting input overwrite declared keys would make
+        #    `Interpreter(m, input=untrusted)` a context-injection vector
+        #    (review F11). A child wanting its keys filled from the parent
+        #    declares a `context` factory -- see `InvokeDefinition.input`.
         if input is not None and isinstance(context, dict):
             context.setdefault("input", input)
         return context
@@ -474,27 +486,114 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     # 🔭 Observation & Introspection
     # -------------------------------------------------------------------------
 
-    def matches(self, state_id: str) -> bool:
-        """Reports whether a state is part of the active configuration.
+    @property
+    def value(self) -> Union[str, Dict[str, Any]]:
+        """The active configuration in XState's hierarchical ``value`` form.
 
-        Accepts a fully-qualified id (``"machine.parent.child"``), the same id
-        with a leading ``#``, or a trailing partial path (``"parent.child"``).
-        Matching an ancestor returns `True` when any descendant is active,
-        mirroring XState's ``snapshot.matches()``.
+        * atomic / final state  -> its key, e.g. ``"booking"``
+        * compound state        -> ``{"life": "booking"}``
+        * parallel state        -> one key per region, recursively
+        * not started           -> ``{}``
+        * mid-transition        -> the deepest ACTIVE ancestor's key for a
+          compound whose child is momentarily absent (never raises)
 
-        Args:
-            state_id (str): The state to test for.
+        🏛️ Architecture decision (#58): `current_state_ids` is a flat set of
+        leaf ids -- exactly right for ``"x" in ids`` checks and deliberately
+        unchanged. But a UI, a metrics label or a ``matches({...})`` call
+        needs the TREE, and rebuilding it from dotted ids breaks the moment
+        a key contains a dot. This walks `StateNode`s, so ``"v2.0"`` is a
+        key, not two path segments. Derived on every read; never persisted
+        as truth (the snapshot carries it for consumers, restore ignores it).
 
         Returns:
-            bool: `True` if the state or one of its descendants is active.
+            Union[str, Dict[str, Any]]: The state value.
         """
-        if not state_id:
+        if not self._active_state_nodes:
+            return {}
+        return self._value_of(self.machine)
+
+    def _value_of(self, node: StateNode) -> Union[str, Dict[str, Any]]:
+        """Recursive worker for :attr:`value`; *node* must be active.
+
+        Returns the value of *node*'s active DESCENDANTS. For the root that
+        is the whole tree; for a compound child it is what sits under the
+        child's key.
+        """
+        active = self._active_state_nodes
+        if node.type == "parallel":
+            return {
+                key: self._value_of(child)
+                for key, child in node.states.items()
+                if child in active
+            }
+        # 🌿 Compound: normally exactly one active child. But `value` is
+        #    read from plugins, entry/exit actions and periodic snapshotters
+        #    WHILE a transition is unwinding -- `_exit_states` discards the
+        #    leaf before its ancestor, and `_enter_states` adds the parent
+        #    before descending -- so "compound with no active child" is a
+        #    routine transient, not corruption. Raising here made
+        #    `get_snapshot()` throw on a healthy machine (review F1).
+        child = next((c for c in node.states.values() if c in active), None)
+        if child is None:
+            # Momentarily childless. The deepest active node is `node`
+            # itself; represent it as a LEAF (its key), the same shape an
+            # atomic state has, so callers never see a half-tree.
+            return node.key if node is not self.machine else {}
+        if child.is_atomic or child.is_final or self._is_childless(child):
+            return child.key
+        return {child.key: self._value_of(child)}
+
+    def _is_childless(self, node: StateNode) -> bool:
+        """True when a compound/parallel *node* has no active child (F1)."""
+        active = self._active_state_nodes
+        return not any(c in active for c in node.states.values())
+
+    def matches(self, state: Union[str, Dict[str, Any]]) -> bool:
+        """Reports whether a state is part of the active configuration.
+
+        Accepts either form XState's ``snapshot.matches()`` accepts:
+
+        * a **string** -- a fully-qualified id (``"machine.parent.child"``),
+          the same with a leading ``#``, or a trailing partial path
+          (``"parent.child"``);
+        * a **dict** -- a partial :attr:`value` tree, e.g.
+          ``{"protection": {"risk": "armed"}}``. Every key named must be
+          active; a leaf given as a string matches when that child (or
+          any of ITS descendants) is active.
+
+        Matching an ancestor returns `True` when any descendant is active.
+
+        Args:
+            state: The state to test for.
+
+        Returns:
+            bool: `True` if the state (or one of its descendants) is active.
+        """
+        if isinstance(state, dict):
+            return self._matches_value(self.machine, state)
+        if not state:
             return False
-        target = state_id[1:] if state_id.startswith("#") else state_id
+        target = state[1:] if state.startswith("#") else state
         for node in self._active_state_nodes:
             if node.id == target or node.id.endswith("." + target):
                 return True
         return False
+
+    def _matches_value(
+        self, node: StateNode, pattern: Union[str, Dict[str, Any]]
+    ) -> bool:
+        """Recursive worker for the dict form of :meth:`matches`."""
+        active = self._active_state_nodes
+        if isinstance(pattern, str):
+            child = node.states.get(pattern)
+            return child is not None and child in active
+        for key, sub in pattern.items():
+            child = node.states.get(key)
+            if child is None or child not in active:
+                return False
+            if not self._matches_value(child, sub):
+                return False
+        return True
 
     def has_tag(self, tag: str) -> bool:
         """Reports whether any active state declares the given tag.
@@ -766,12 +865,24 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         seen = seen | {id(self)}
 
         return {
+            # 📦 #45: envelope. `version` is the payload LAYOUT version (see
+            #    persistence.SNAPSHOT_VERSION), not the package version.
+            #    `machine_hash` lets `from_snapshot` refuse a blob taken from
+            #    a machine whose structure has since changed.
+            "version": persistence.SNAPSHOT_VERSION,
+            "machine_id": self.machine.id,
+            "machine_hash": self.machine.structure_hash,
+            "taken_at": time.time(),
             "status": self.status,
             # 🧊 Deep-copy so the snapshot is a true point-in-time capture.
             #    Returning the live dict made later execution retroactively
             #    rewrite an already-taken snapshot.
             "context": copy.deepcopy(self.context),
             "state_ids": sorted(self.current_state_ids),
+            # 🌲 #58: the hierarchical form, for downstream consumers (UIs,
+            #    dashboards) that read snapshots. DERIVED: `from_snapshot`
+            #    rebuilds from `configuration` and ignores this key.
+            "value": self.value,
             # 🌳 Full configuration, so ancestors are restored exactly rather
             #    than re-derived from leaves.
             "configuration": sorted(
@@ -784,6 +895,15 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             "deferred": [
                 {"type": e.type, "payload": copy.deepcopy(e.payload)}
                 for e in self._deferred_events
+            ],
+            # 📬 #47: the inbox. Events `send()` ACCEPTED but has not yet
+            #    processed. Without this a crash between accept and process
+            #    lost them with no trace; with it a restored machine resumes
+            #    with its mailbox intact.
+            "pending_events": [
+                {"type": e.type, "payload": copy.deepcopy(e.payload)}
+                for e in self.pending_events
+                if isinstance(e, Event)
             ],
             # 🕰️ Remembered history, so a restored machine can still honour a
             #    later transition to a history state.
@@ -874,6 +994,8 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         cls: Type["BaseInterpreter[Any, Any]"],
         snapshot_str: str,
         machine: MachineNode[TContext, TEvent],
+        *,
+        verify_machine_hash: bool = True,
     ) -> "BaseInterpreter[TContext, TEvent]":
         """Creates and restores an interpreter instance from a saved snapshot.
 
@@ -893,6 +1015,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 `get_snapshot()`.
             machine (MachineNode[TContext, TEvent]): The corresponding
                 `MachineNode` definition that the snapshot belongs to.
+            verify_machine_hash (bool): When `True` (default) refuse a
+                snapshot whose recorded ``machine_hash`` differs from
+                *machine*'s -- the machine's structure changed since the
+                snapshot was taken. Pass `False` after migrating the payload
+                for a known-compatible change. No-op for unversioned
+                (0.7.x) snapshots, which carry no hash.
 
         Returns:
             BaseInterpreter[TContext, TEvent]: A new interpreter instance
@@ -903,6 +1031,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 in the provided machine definition.
             InvalidConfigError: If the snapshot string is not valid JSON, or
                 does not decode to a JSON object.
+            SnapshotVersionError: The snapshot was written by a newer
+                library version.
+            SnapshotDriftError: The snapshot belongs to a different machine
+                id, or the machine's structure has changed.
         """
         logger.info(
             "🔄 Restoring interpreter for machine '%s' from snapshot...",
@@ -924,6 +1056,14 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 f"Snapshot must decode to a JSON object, got "
                 f"{type(snapshot).__name__}."
             )
+
+        # 📦 #45: envelope checks FIRST, before any state is touched, so a
+        #    refused restore leaves nothing half-built behind.
+        version = persistence.check_version(snapshot)
+        persistence.check_identity(
+            snapshot, machine, verify_hash=verify_machine_hash
+        )
+        snapshot = persistence.upcast(snapshot, version)
 
         # 🧪 Create a new instance of the correct interpreter class (sync/async)
         interpreter = cls(machine)
@@ -975,6 +1115,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             Event(type=d["type"], payload=d.get("payload") or {})
             for d in snapshot.get("deferred", [])
         ]
+        # 📬 #47: re-enqueue the persisted inbox in original order.
+        for record in snapshot.get("pending_events") or []:
+            interpreter._enqueue_restored(
+                Event(type=record["type"], payload=record.get("payload") or {})
+            )
         if recorded_error:
             # 📝 The original exception type cannot survive JSON, so the
             #    message is preserved in a dedicated wrapper. Without this a
@@ -1010,7 +1155,9 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 interpreter._pending_actor_snapshots[actor_id] = record
                 continue
             child = cls.from_snapshot(
-                json.dumps(record["snapshot"], default=str), child_machine
+                json.dumps(record["snapshot"], default=str),
+                child_machine,
+                verify_machine_hash=verify_machine_hash,
             )
             child.parent = interpreter
             child.id = actor_id
@@ -1065,6 +1212,33 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         raise NotImplementedError(
             "Subclasses must implement the 'stop' method."
         )
+
+    # -------------------------------------------------------------------------
+    # 📬 Inbox (#47)
+    # -------------------------------------------------------------------------
+    # 🏛️ Architecture decision: `send()` ACCEPTS an event; processing happens
+    # later (next loop turn on the async engine, end of the current macrostep
+    # on the sync one). Between the two the event lives only in a private
+    # queue -- invisible, not persisted, and thrown away by `stop()`. For a
+    # machine on a critical path that is silent data loss. These hooks make
+    # the inbox first-class: readable, drainable and part of the snapshot.
+
+    @property
+    def pending_events(
+        self,
+    ) -> Tuple[Union[Event, DoneEvent, AfterEvent], ...]:
+        """Events accepted by `send()` but not yet processed, in order."""
+        return tuple(self._snapshot_pending_events())
+
+    def _snapshot_pending_events(
+        self,
+    ) -> List[Union[Event, DoneEvent, AfterEvent]]:
+        """Return the queue contents WITHOUT removing them. Engine-specific."""
+        raise NotImplementedError  # pragma: no cover
+
+    def _enqueue_restored(self, event: Event) -> None:
+        """Place a persisted inbox event back on the queue (restore path)."""
+        raise NotImplementedError  # pragma: no cover
 
     @overload
     def send(self, event_type: str, **payload: Any) -> Any: ...  # noqa
@@ -1296,55 +1470,36 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         if target_state:
             return target_state
 
-        # Fallback 1: Direct attribute lookup on root
-        if hasattr(root, target_str):
-            candidate = getattr(root, target_str)
-            if isinstance(candidate, StateNode):
-                logger.debug(
-                    "✅ Resolved via root attribute lookup: '%s'", candidate.id
-                )
-                return candidate
+        # 🔑 Exact top-level KEY. Keys may contain dots ("v2.0"), which the
+        #    path-splitting resolver above cannot express; this is the one
+        #    non-path lookup that is still unambiguous.
+        exact = root.states.get(target_str)
+        if exact is not None:
+            logger.debug("✅ Resolved via exact top-level key: '%s'", exact.id)
+            return exact
 
-        # Fallback 2: Lookup in root's `states` dict
-        if hasattr(root, "states"):
-            states_dict = getattr(root, "states", {})
-            if target_str in states_dict:
-                target_state = states_dict[target_str]
-                logger.debug(
-                    "✅ Resolved via root states dict (exact match): '%s'",
-                    target_state.id,
-                )
-                return target_state
-            for state in states_dict.values():
-                if state.id.split(".")[-1] == target_str:
-                    logger.debug(
-                        "✅ Resolved via root states dict (local name): '%s'",
-                        state.id,
-                    )
-                    return state
-
-        # Fallback 3: Exhaustive tree walk
-        def _walk(node):
-            yield node
-            if hasattr(node, "states"):
-                for child in node.states.values():
-                    yield from _walk(child)
-
-        for candidate in _walk(root):
-            if candidate.id.split(".")[-1] == target_str:
-                logger.debug(
-                    "✅ Resolved via full tree walk: '%s'", candidate.id
-                )
-                return candidate
-
-        available = list(getattr(root, "states", {}).keys())
+        # 🏛️ #34 (LC-06): there are deliberately NO further fallbacks.
+        #
+        #    Three used to follow here -- a `getattr(root, target)`, a scan of
+        #    top-level states by LAST id segment, and an exhaustive walk of the
+        #    whole tree by last segment. Short leaf names (`filled`, `done`,
+        #    `idle`) recur in every real machine, so the walk was far more
+        #    likely to find a WRONG match than no match: a transition in
+        #    `order` targeting a non-existent `filled` moved the unrelated
+        #    `audit` region to `audit.archive.filled` while `order` stayed
+        #    put. XState and SCXML scope targets lexically (sibling / `#id` /
+        #    `.child`); an unresolvable target is an error, never a search.
+        #    `validation.resolve_strict` mirrors exactly this set of
+        #    strategies, so build-time and runtime can never disagree.
+        available = sorted(root.states.keys())
         logger.error(
-            "🚫 All resolution attempts failed for target: '%s'", target_str
-        )
-        logger.error(
-            "📂 Available top-level states in machine '%s': %s",
+            "🚫 Target '%s' from '%s' does not resolve. Top-level states in "
+            "'%s': %s. Use a sibling key, '#%s.<path>' or '.<child>'.",
+            target_str,
+            transition.source.id,
             root.id,
             available,
+            root.id,
         )
         return None
 
@@ -2698,6 +2853,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             if callable(hook):
                 hook(self, error)
         self._notify_subscribers()
+        self._on_terminal("error")
 
     def _complete(self, output: Any) -> None:
         """Marks the machine as finished and records its output.
@@ -2724,6 +2880,41 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             hook = getattr(plugin, "on_done", None)
             if callable(hook):
                 hook(self, output)
+        # 🧹 #57: completion REAPS. Order matters -- `on_done` above and the
+        #    subscriber notification inside `_teardown` both run BEFORE
+        #    children are stopped, so an observer reading `system` or a
+        #    child's context at completion sees a consistent picture.
+        self._on_terminal("done")
+
+    def _on_terminal(self, status: str) -> None:
+        """Common tail of `_complete()` and `_fail()`.
+
+        Fires the completion listeners (the parent's await, #43) and then
+        schedules teardown of everything the machine still holds (#57):
+        child actors, timers, invoked services and its actor-system
+        registration. `status`, `output`, `error` and `context` are
+        deliberately RETAINED -- reading a result after completion is the
+        normal pattern, and the owner can drop the reference.
+        """
+        listeners, self._terminal_listeners = self._terminal_listeners, []
+        for listener in listeners:
+            listener(status)
+        self._schedule_teardown()
+
+    def _schedule_teardown(self) -> None:
+        """Engine-specific: run `_teardown()` now (sync) or as a task (async)."""
+        raise NotImplementedError  # pragma: no cover
+
+    def _unregister_from_system(self) -> None:
+        """Remove every registry entry pointing at THIS interpreter (#57).
+
+        The counterpart `_register_in_system` never had: without it the
+        root's registry held a strong reference to every child that ever
+        declared a `systemId`, for the life of the root.
+        """
+        registry = self._system_registry()
+        for system_id in [k for k, v in registry.items() if v is self]:
+            del registry[system_id]
 
     @staticmethod
     def _matching_descriptors(

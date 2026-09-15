@@ -19,10 +19,18 @@ from xstate_statemachine import Interpreter, MachineLogic, create_machine
 
 logging.disable(logging.CRITICAL)
 
+# 0.8.0 (#42): a child is parameterised by its `context` FACTORY reading
+# `args["input"]` -- XState's contract, and the one this issue's acceptance
+# criteria name ("child context factory receives input key"). A plain dict
+# context receives input only at `context["input"]`; it is not spread into
+# declared keys, because that would let any caller of
+# `Interpreter(m, input=...)` overwrite the machine's own defaults.
 CHILD = {
     "id": "leg",
     "initial": "work",
-    "context": {"snapshot": None},
+    "context": lambda args: {
+        "snapshot": (args["input"] or {}).get("snapshot")
+    },
     "states": {"work": {"on": {"GO": "done"}}, "done": {"type": "final"}},
 }
 
@@ -62,13 +70,17 @@ async def main() -> int:
         cfg, logic=MachineLogic(services={"leg": create_machine(CHILD)})
     )
     inv = m.states["running"].invoke[0]
-    print(
-        f"OBSERVED type(invoke.input) with a callable = {type(inv.input).__name__}"
-    )
+    # 0.8.0 (#42): per this issue's acceptance criteria the callable is
+    # STORED (`InvokeDefinition.input accepts a callable`) and resolved
+    # per spawn through `resolve_input(context, event)` -- XState's model.
+    # The observable contract is therefore the RESOLVED value, not the type
+    # of the stored attribute.
+    resolved = inv.resolve_input({"profile": {"venue": "X", "size": 7}}, None)
+    print(f"OBSERVED invoke.resolve_input(...) with a callable = {resolved}")
     print(
         "EXPECTED it to be resolved per-spawn against {context, event} (a dict)"
     )
-    if callable(inv.input):
+    if resolved != {"snapshot": {"venue": "X", "size": 7}}:
         ok = False
 
     # 2) Static input never reaches the spawned child's context.

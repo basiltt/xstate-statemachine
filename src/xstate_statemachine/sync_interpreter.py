@@ -69,6 +69,8 @@ from .models import (
     TContext,
     TEvent,
     TransitionDefinition,
+    DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS,
+    SPAWN_BLOCKING_PREFIX,
     spawn_service_key,
 )
 from .resolver import resolve_target_state
@@ -175,6 +177,18 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 f"restarted. Create a new interpreter, or restore one with "
                 f"`SyncInterpreter.from_snapshot(...)`."
             )
+        if self.status == "running" and self._event_queue:
+            # ♻️ Restored from a snapshot WITH a persisted inbox (review F8):
+            #    `from_snapshot` sets status "running" and re-enqueues the
+            #    events, so the plain "already running" early-return below
+            #    would leave them sitting until an unrelated send() happened
+            #    to flush them, interleaved with new work. Replay them now,
+            #    in order -- the async engine's run loop does the same the
+            #    moment it starts.
+            logger.info("♻️ Resuming restored interpreter '%s'...", self.id)
+            self._process_event_queue()
+            self._process_transient_transitions()
+            return self
         if self.status != "uninitialized":
             logger.info(
                 "🚧 Interpreter '%s' already running. Skipping start.",
@@ -234,54 +248,48 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         )
         return self
 
-    def stop(self) -> None:
+    def stop(self, *, drain: bool = False) -> None:
         """Stops the interpreter and cleans up all associated resources.
 
         This method stops all child actors, cancels any pending `after` timers,
         and sets the interpreter's status to 'stopped', preventing further
         event processing. It's idempotent.
+
+        Args:
+            drain: Process any events still queued before tearing down
+                (#47). The sync engine processes inline, so the queue is
+                only ever non-empty when `stop()` is called from INSIDE an
+                action; `drain=True` finishes that macrostep first.
         """
         # 🚦 Idempotency check.
-        #
-        # 🏛️ `done` and `error` are terminal but NOT torn down: reaching a
-        # top-level final state must still release child actors and timers.
-        # Guarding on `!= "running"` made `stop()` a silent no-op for every
-        # machine that completed, leaking actors and their timer threads.
         if self.status in ("uninitialized", "stopped"):
             return
+        # 🏁 #57: a terminal machine already reaped itself in `_on_terminal`;
+        #    `stop()` is a quiet no-op that keeps `status` as "done"/"error".
+        if self.status in ("done", "error"):
+            self._teardown()
+            return
+
+        if drain and self.status == "running" and not self._is_processing:
+            self._process_event_queue()
+        if self._event_queue:
+            logger.warning(
+                "📬 Interpreter '%s' stopping with %d pending event(s) that "
+                "will NOT be processed. Use stop(drain=True), or read "
+                "`pending_events` / `get_snapshot()` to persist them.",
+                self.id,
+                len(self._event_queue),
+            )
 
         logger.info(
             "🛑 Stopping sync interpreter '%s' and its actors…", self.id
         )
 
-        # 1️⃣ Stop every child actor (blocking & non-blocking).
-        #
         # 📝 Status is set to "stopped" FIRST so a cyclic actor graph
         #    terminates: the child's own `stop()` re-enters this one, which
         #    now hits the idempotency guard instead of recursing forever.
         self.status = "stopped"
-        for actor_id, actor in list(self._actors.items()):
-            try:
-                actor.stop()
-            finally:
-                self._actors.pop(actor_id, None)
-
-        # 2️⃣ Cancel all `after` timers by signaling their cancellation events
-        for state_id in list(self._after_events.keys()):
-            self._after_events[state_id].set()
-        self._after_events.clear()
-        self._after_threads.clear()
-
-        # 2️⃣.5 Release any waiting delayed-send threads. They are daemons, so
-        #      they never block process exit, but a long delay would otherwise
-        #      keep one alive for its full duration after shutdown.
-        for cancel_flag in list(self._pending_send_cancels):
-            cancel_flag.set()
-        self._pending_send_cancels.clear()
-        self._scheduled_sends.clear()
-
-        # 3️⃣ Update status to prevent further operations
-        self.status = "stopped"
+        self._teardown()
 
         # 4️⃣ Notify plugins about the stop event
         for plugin in self._plugins:
@@ -313,6 +321,64 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         event_obj = self._prepare_event(event_or_type, **payload)
         self._event_queue.append(event_obj)
         self._process_event_queue()
+
+    # -------------------------------------------------------------------------
+    # 🏁 Reaping (#57)
+    # -------------------------------------------------------------------------
+    def _schedule_teardown(self) -> None:
+        # 🧵 Sync engine: no loop to defer to, and `_complete()` runs at the
+        #    end of a macrostep, so tearing down inline is safe.
+        self._teardown()
+
+    def _teardown(self) -> None:
+        """Release everything except `status` / `output` / `error` / `context`.
+
+        Shared by `stop()` and by reaching a terminal status (#57).
+        """
+        # 1️⃣ Stop every child actor (blocking & non-blocking).
+        for actor_id, actor in list(self._actors.items()):
+            try:
+                actor.stop()
+            finally:
+                self._actors.pop(actor_id, None)
+
+        # 2️⃣ Cancel all `after` timers by signalling their cancellation events.
+        for state_id in list(self._after_events.keys()):
+            self._after_events[state_id].set()
+        self._after_events.clear()
+        self._after_threads.clear()
+
+        # 3️⃣ Release any waiting delayed-send threads. They are daemons, so
+        #    they never block process exit, but a long delay would otherwise
+        #    keep one alive for its full duration after shutdown.
+        for cancel_flag in list(self._pending_send_cancels):
+            cancel_flag.set()
+        self._pending_send_cancels.clear()
+        self._scheduled_sends.clear()
+
+        # 4️⃣ Drop our own registry entry so the root does not pin us.
+        self._unregister_from_system()
+
+    # -------------------------------------------------------------------------
+    # 📬 Inbox (#47)
+    # -------------------------------------------------------------------------
+    def _snapshot_pending_events(
+        self,
+    ) -> List[Union[Event, DoneEvent, AfterEvent]]:
+        return list(self._event_queue)
+
+    def _enqueue_restored(self, event: Event) -> None:
+        self._event_queue.append(event)
+
+    def drain_pending(self) -> List[Union[Event, DoneEvent, AfterEvent]]:
+        """Remove and return every accepted-but-unprocessed event.
+
+        The events are NOT processed. Sync mirror of
+        `Interpreter.drain_pending` (a plain method: nothing to await).
+        """
+        drained = list(self._event_queue)
+        self._event_queue.clear()
+        return drained
 
     def send_events(
         self, events: List[Union[Dict[str, Any], Event, str]]
@@ -923,7 +989,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
             # 🎭 Handle actor spawning actions
             if action_def.type.startswith(
-                ("spawn_", "spawn_blocking_")
+                (SPAWN_BLOCKING_PREFIX, "spawn_")
             ) and not is_builtin(action_def.type):
                 self._spawn_actor(action_def, event)
                 continue
@@ -1213,7 +1279,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 `MachineNode` or a factory that returns one.
         """
         # 🕵️ Determine mode (blocking vs. non-blocking) and service key
-        blocking = action_def.type.startswith("spawn_blocking_")
+        blocking = action_def.type.startswith(SPAWN_BLOCKING_PREFIX)
         key = spawn_service_key(action_def.type)
         logger.info("🎭 Spawning actor '%s' (Blocking: %s)", key, blocking)
 
@@ -1240,21 +1306,32 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             if explicit_id
             else f"{self.id}:{key}:{uuid.uuid4()}"
         )
-        child = SyncInterpreter(actor_machine)
+        # 📥 Input goes in at CONSTRUCTION so a child `context` factory
+        #    receives `{input}` (#42); `_build_initial_context` also seeds
+        #    declared keys and exposes `context["input"]`.
+        child = SyncInterpreter(actor_machine, input=spawn_params.get("input"))
         child.parent = self
         child.id = actor_id
-        # 📥 Seed the child's context with any declared input.
-        child_input = spawn_params.get("input")
-        if child_input is not None:
-            child.context.setdefault("input", child_input)
         # 🌐 Register under a systemId so siblings can address it.
         self._register_in_system(spawn_params.get("systemId"), child)
         self._actors[actor_id] = child
         self._actor_sources[actor_id] = key
 
+        # 🧹 Review F3: a child that finishes on its own leaves the map.
+        child._terminal_listeners.append(
+            lambda _s, aid=actor_id: self._actors.pop(aid, None)
+        )
+
         # --- Blocking Execution Path ---
         if blocking:
             child.start()
+            # ⏸️ #41: "blocking" means the child runs to COMPLETION before the
+            #    parent's next action -- on both engines. `start()` alone only
+            #    covers a child whose work is synchronous entry actions; one
+            #    driven by `after` timers (background threads here) is still
+            #    running when `start()` returns. Wait on its terminal signal,
+            #    bounded by `spawnBlockingTimeout` (ms) like the async engine.
+            self._wait_for_child_terminal(child)
             if on_complete is not None:
                 self._queue_actor_done(child, on_complete)
             return
@@ -1286,6 +1363,35 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         threading.Thread(
             target=_runner, daemon=True, name=f"actor-{actor_id}"
         ).start()
+
+    def _wait_for_child_terminal(self, child: "SyncInterpreter") -> None:
+        """Block until *child* is done/error, or `spawnBlockingTimeout` lapses.
+
+        Uses the shared terminal-listener hook (#43) rather than polling
+        `status`, so completion is observed the instant it happens.
+        """
+        if child.status in ("done", "error"):
+            return
+        # 🧭 A child with nothing in flight -- no `after` timers and no
+        #    actors of its own -- has already done everything `start()`
+        #    can make it do; it is idle, not "still working". Waiting on it
+        #    would block forever, and 0.7.x machines relied on this case
+        #    returning immediately. Only wait when the child can still
+        #    progress on its own.
+        if not child._after_events and not child._actors:
+            return
+        finished = threading.Event()
+        child._terminal_listeners.append(lambda _status: finished.set())
+        timeout_ms = self.machine.spawn_blocking_timeout_ms
+        if timeout_ms is None:
+            timeout_ms = DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS  # review F2
+        if not finished.wait(timeout_ms / 1000.0):
+            logger.warning(
+                "⏱️ Blocking spawn of '%s' did not finish within %s ms; "
+                "continuing without it.",
+                child.id,
+                timeout_ms,
+            )
 
     def _queue_actor_done(
         self, child: "SyncInterpreter", invoke_id: str
@@ -1466,6 +1572,23 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 params["id"] = invocation.id
             if invocation.system_id:
                 params["systemId"] = invocation.system_id
+            # 📥 #42: resolve `input` against the parent's live context so
+            #    the child machine is parameterised exactly as in XState. A
+            #    raising resolver is a child FAILURE -> `error.platform`,
+            #    exactly as on the async engine (review F10).
+            try:
+                child_input = invocation.resolve_input(self.context, None)
+            except Exception as exc:  # noqa: BLE001 -- user code
+                self.send(
+                    DoneEvent(
+                        type=f"error.platform.{invocation.id}",
+                        data=exc,
+                        src=invocation.id,
+                    )
+                )
+                return
+            if child_input is not None:
+                params["input"] = child_input
             self._spawn_actor(
                 ActionDefinition(
                     {"type": f"spawn_{invocation.src}", "params": params}
@@ -1496,7 +1619,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         try:
             # 🎁 Prepare a synthetic event for the service.
             invoke_event = Event(
-                f"invoke.{invocation.id}", {"input": invocation.input or {}}
+                f"invoke.{invocation.id}",
+                {"input": invocation.resolve_input(self.context, None) or {}},
             )
             # 🚀 Execute the synchronous service.
             result = service(self, self.context, invoke_event)
@@ -1538,99 +1662,29 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     def _resolve_target_state_robustly(
         self, transition: TransitionDefinition
     ) -> StateNode:
-        """Resolves a target state string into a StateNode object robustly.
+        """Resolve a transition's target or raise `StateNotFoundError`.
 
-        This method attempts multiple resolution strategies in a specific order
-        to provide flexibility in how transitions are defined in the machine.
-
-        Args:
-            transition: The transition containing the target string.
-
-        Returns:
-            The resolved `StateNode` object.
+        🏛️ Architecture decision (#34, #60): this used to be a 100-line copy
+        of `BaseInterpreter._resolve_target_state_node` -- including the
+        three fuzzy fallbacks that bound typos to unrelated states. Two
+        copies of one algorithm is how the engines drifted apart. It now
+        delegates to the single shared implementation and only adds the
+        sync engine's raise-instead-of-None contract.
 
         Raises:
-            StateNotFoundError: If the target state cannot be found after all attempts.
-            ValueError: If the target string is empty for an external transition.
+            StateNotFoundError: The target resolves to nothing. The message
+                names the target AND the source state so the failing
+                transition is identifiable from the exception alone.
+            ValueError: Empty target on an external transition.
         """
-        target_str = transition.target_str
-        if not target_str:
+        if not transition.target_str:
             raise ValueError("Target string cannot be empty for resolution.")
-
-        root, source = self.machine, transition.source
-        parent = source.parent
-        logger.debug(
-            "🔄 Resolving target state: '%s' from source '%s'",
-            target_str,
-            source.id,
-        )
-
-        # 1️⃣ Standard resolution (relative to source, parent, root, and absolute)
-        # This logic is restored from the original implementation to fix the regression.
-        attempts = [
-            (target_str, source),
-            (target_str, parent) if parent else None,
-            (target_str, root),
-            (f"{root.id}.{target_str}", root),  # Absolute from root
-        ]
-        for tgt, ref in filter(None, attempts):
-            try:
-                state = resolve_target_state(tgt, ref)
-                logger.debug(
-                    "✅ Resolved '%s' via standard method from '%s'.",
-                    tgt,
-                    ref.id,
-                )
-                # 🚫 #59: no write-back to the shared TransitionDefinition
-                #    (see BaseInterpreter._resolve_target_state_node).
-                return state
-            except StateNotFoundError:
-                continue  # Try the next method
-
-        # 2️⃣ Direct attribute lookup on root
-        if hasattr(root, target_str) and isinstance(
-            getattr(root, target_str), StateNode
-        ):
-            logger.debug(
-                "✅ Resolved '%s' via root attribute lookup.", target_str
+        state = self._resolve_target_state_node(transition)
+        if state is None:
+            raise StateNotFoundError(
+                transition.target_str, transition.source.id
             )
-            return getattr(root, target_str)
-
-        # 3️⃣ Root states dictionary lookup
-        if hasattr(root, "states"):
-            states_dict = root.states
-            if target_str in states_dict:
-                logger.debug(
-                    "✅ Resolved '%s' via root states dictionary key.",
-                    target_str,
-                )
-                return states_dict[target_str]
-            for state in states_dict.values():
-                if state.id.split(".")[-1] == target_str:
-                    logger.debug(
-                        "✅ Resolved '%s' via local name in states dict.",
-                        target_str,
-                    )
-                    return state
-
-        # 4️⃣ Depth-first tree walk fallback (match local ID part)
-        for candidate in self._walk_tree(root):
-            if candidate.id.split(".")[-1] == target_str:
-                logger.debug(
-                    "✅ Resolved '%s' via deep tree walk to find '%s'.",
-                    target_str,
-                    candidate.id,
-                )
-                return candidate
-
-        # 🔚 Absolute failure
-        available_toplevel = list(root.states.keys())
-        logger.error(
-            "❌ All resolution attempts failed for target: '%s'. Available top-level states: %s",
-            target_str,
-            available_toplevel,
-        )
-        raise StateNotFoundError(target_str, root.id)
+        return state
 
     # -------------------------------------------------------------------------
     # 🛠️ Static Helper Methods
@@ -1653,23 +1707,3 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         return hasattr(callable_obj, "__code__") and (
             callable_obj.__code__.co_flags & 0x80  # noqa
         )
-
-    @staticmethod
-    def _walk_tree(node: StateNode) -> "SyncInterpreter._walk_tree":
-        """Recursively yields all nodes in a state tree using depth-first traversal.
-
-        This is a generator function used as a fallback mechanism for resolving
-        state targets when standard resolution methods fail.
-
-        Args:
-            node: The root `StateNode` from which to start the traversal.
-
-        Yields:
-            Each `StateNode` in the tree, starting with the root.
-        """
-        # 🚶‍♂️ Yield the current node first
-        yield node
-        # 🌳 If the node has children, recurse into them
-        if hasattr(node, "states"):
-            for child in node.states.values():
-                yield from SyncInterpreter._walk_tree(child)

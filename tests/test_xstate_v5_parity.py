@@ -3689,12 +3689,14 @@ class TestLifecycleAndPersistenceRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({"parent.p2"}, interpreter.current_state_ids)
 
     def test_stop_tears_down_after_reaching_done(self) -> None:
-        """`stop()` must still run teardown from a terminal status.
+        """Reaching `done` tears down; `stop()` afterwards is a quiet no-op.
 
-        🐛 Regression: the guard was `status != "running"`, and the branch
-        introduced `done`/`error` as routine terminal statuses. Any machine
-        that completed therefore made `stop()` a silent no-op, leaking child
-        actors and their timer threads.
+        🐛 Regression history: the guard was once `status != "running"`, so
+        a completed machine made `stop()` a silent no-op and leaked child
+        actors. The first fix made `stop()` tear down from `done`. #57 goes
+        further: completion ITSELF reaps (children, timers, registry), and
+        `status` stays `"done"` so `output` remains meaningful -- so the
+        actors are already gone before `stop()` is ever called.
         """
         # Arrange
         interpreter = start(
@@ -3719,13 +3721,13 @@ class TestLifecycleAndPersistenceRegressions(unittest.IsolatedAsyncioTestCase):
         )
         interpreter.send("E")
         self.assertEqual("done", interpreter.status)
-        self.assertEqual(1, len(interpreter._actors))
+        self.assertEqual(0, len(interpreter._actors))  # reaped on completion
 
         # Act
         interpreter.stop()
 
         # Assert
-        self.assertEqual("stopped", interpreter.status)
+        self.assertEqual("done", interpreter.status)  # NOT "stopped" (#57)
         self.assertEqual(0, len(interpreter._actors))
 
     def test_persisted_snapshot_deep_copies_context(self) -> None:
@@ -3863,7 +3865,10 @@ class TestLifecycleAndPersistenceRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({"m.b"}, restored.current_state_ids)
 
     async def test_async_stop_tears_down_after_done(self) -> None:
-        """The async engine must also tear down from a terminal status."""
+        """The async engine: `done` reaps; `stop()` afterwards keeps `done`.
+
+        See the sync counterpart for the regression history (#57).
+        """
         # Arrange
         interpreter = await Interpreter(
             build(
@@ -3885,7 +3890,8 @@ class TestLifecycleAndPersistenceRegressions(unittest.IsolatedAsyncioTestCase):
         await interpreter.stop()
 
         # Assert
-        self.assertEqual("stopped", interpreter.status)
+        self.assertEqual("done", interpreter.status)  # NOT "stopped" (#57)
+        self.assertIsNone(interpreter._event_loop_task)  # loop released
 
 
 # -----------------------------------------------------------------------------

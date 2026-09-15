@@ -184,6 +184,20 @@ The 0.7.x reading — resolving `.child` as a sibling of the source, i.e. a chil
 
 An absolute target such as `"#machineId.path.to.state"` resolves from the machine root regardless of where the transition is defined, and is unaffected by `strictTargets`.
 
+### Bare Targets Are Sibling-Only
+
+As of 0.8.0, a bare `target: "someState"` (no leading dot, `#`, or path) resolves **only** as a sibling of the transition's source — a child of the source's own parent. There is no whole-tree search by last id segment anymore.
+
+Before 0.8.0, an unqualified target that didn't resolve as a sibling fell back to a fuzzy, whole-tree search for any state ending in that name — including states in an unrelated branch or parallel region. A bare `target: "filled"` declared in one parallel region could silently bind to `audit.archive.filled` in a completely different region and move it there instead. That fallback was a bug, not a feature, and has been removed; resolution is now strictly lexical (sibling / `#id` / `.child` / exact top-level key).
+
+To target a state in another branch or region, use the absolute `#machine.path.to.state` form:
+
+```json
+{
+  "target": "#myMachine.audit.archive.filled"
+}
+```
+
 ### Parent-Level Transitions (Catch-All)
 
 Transitions defined on the parent apply to **all** children. If a child doesn't handle an event, it bubbles up to the parent:

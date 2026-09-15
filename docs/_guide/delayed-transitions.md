@@ -363,9 +363,11 @@ When `LOGOUT` fires, the machine exits `dashboard` (cancelling its 60-second ref
 | Interpreter | Timer Behavior |
 |-------------|----------------|
 | `Interpreter` (async) | Uses `asyncio.create_task` / `asyncio.sleep` — timers run concurrently with your event loop |
-| `SyncInterpreter` | Timers are scheduled and processed on `send()` calls — they fire when you next interact with the machine |
+| `SyncInterpreter` | Each timer runs on a background `threading.Thread` that calls `send()` itself when the delay elapses — the resulting macrostep runs **on that thread**, with no lock |
 
 > **Tip:** For real-time timer behavior (actual wall-clock delays), use the async `Interpreter` with `asyncio`. The `SyncInterpreter` is best for testing and non-real-time workflows.
+
+> **`after` guarantees "not before", never "at".** On the async engine a timer's continuation queues behind every other machine's events, so under load it fires late — roughly +35 ms with 100 busy machines and +180 ms with 500, independent of the delay length, on top of the OS timer floor (~15.6 ms on Windows). Short deadlines therefore degrade worst in relative terms. Do not put money- or safety-critical deadlines on `after` in a busy process; see [Production Characteristics § 2](../production-characteristics/#2-after-timers-are-best-effort-and-starve-under-load) for the measured curve and alternatives. On the `SyncInterpreter`, timers fire from **background threads** (not on `send()` as older docs stated) — see [§ 3](../production-characteristics/#3-the-syncinterpreter-threading-contract).
 
 ## Complete Example: Polling Machine
 

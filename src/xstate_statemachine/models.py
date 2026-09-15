@@ -29,6 +29,8 @@ and invoked services.
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
+import copy
+import inspect
 import logging
 from typing import (
     Any,
@@ -121,6 +123,11 @@ def _validated_policy(
 # ⚠️ Order matters: `spawn_blocking_` must be tested before `spawn_`, since the
 # latter is a prefix of the former.
 SPAWN_BLOCKING_PREFIX = "spawn_blocking_"
+#: Default upper bound (ms) a `spawn_blocking_<key>` waits for its child
+#: when the machine sets no `spawnBlockingTimeout`. Generous enough for any
+#: realistic child, short enough that a child with no final state cannot
+#: wedge its parent silently (review F2). 30 s.
+DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS = 30_000.0
 SPAWN_PREFIX = "spawn_"
 
 
@@ -518,6 +525,49 @@ class TransitionDefinition:
         )
 
 
+def _required_positional_arity(fn: Any) -> Optional[int]:
+    """Number of REQUIRED positional parameters, or None if unknowable.
+
+    🏛️ `len(signature.parameters)` mis-classified ``def f(args, debug=False)``
+    as the two-positional form and raised `ValueError` outright for
+    builtins like ``dict`` (review F10). Only parameters with no default
+    decide the calling convention; anything un-introspectable falls back
+    to the XState single-mapping form.
+    """
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return None
+    return sum(
+        1
+        for p in params
+        if p.default is inspect.Parameter.empty
+        and p.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    )
+
+
+def _call_input_factory(fn: Any, context: Any, event: Any) -> Any:
+    """Invoke an ``input`` factory using the arity it actually requires.
+
+    * 2+ required positionals -> ``fn(context, event)``
+    * exactly 1               -> ``fn({"context", "event"})`` (XState form)
+    * 0                       -> ``fn()``
+    * un-introspectable (C builtins such as ``dict``) -> ``fn()``: the one
+      call that cannot silently mis-bind arguments. A builtin that needs
+      arguments raises a clear `TypeError` from its own call.
+    """
+    arity = _required_positional_arity(fn)
+    if arity is None or arity == 0:
+        return fn()
+    if arity >= 2:
+        return fn(context, event)
+    return fn({"context": context, "event": event})
+
+
 class InvokeDefinition:
     """Represents an invoked service or child actor within a state.
 
@@ -554,7 +604,9 @@ class InvokeDefinition:
         )
         self.id: str = invoke_id
         self.src: Optional[str] = config.get("src")
-        self.input: Optional[Dict[str, Any]] = config.get("input")
+        #: Input for the invoked child. Either a static value or a
+        #: callable resolved per spawn by `resolve_input()` (#42).
+        self.input: Any = config.get("input")
         #: True when the user DECLARED an `id`. The parser defaults an
         #: omitted id to the hosting state's id, which every anonymous
         #: invoke in that state shares -- so a bare `self.id` is not safe
@@ -579,6 +631,33 @@ class InvokeDefinition:
     def __repr__(self) -> str:
         """Provides a developer-friendly string representation."""
         return f"Invoke(id='{self.id}', src='{self.src}')"
+
+    def resolve_input(self, context: Any, event: Any) -> Any:
+        """Resolve this invoke's ``input`` against the parent's state (#42).
+
+        🏛️ Architecture decision: XState v5 defines
+        ``input: ({context, event}) => value`` -- computed PER SPAWN, so a
+        child can be parameterised by the parent's live context. Before
+        0.8.0 a callable was stored verbatim (the child received the
+        function object) and, for a child MACHINE, `input` was never
+        forwarded at all. Both engines call this one method so they cannot
+        disagree.
+
+        Accepted callable arities, mirroring `MachineLogic` conventions:
+
+        * ``fn(args)`` -- one mapping ``{"context", "event"}`` (XState form)
+        * ``fn(context, event)`` -- the two-positional form
+
+        Returns:
+            Any: A DEEP COPY of the resolved value, so the child never
+            aliases the parent's context. ``None`` when no input is declared.
+        """
+        raw = self.input
+        if raw is None:
+            return None
+        if callable(raw):
+            raw = _call_input_factory(raw, context, event)
+        return copy.deepcopy(raw)
 
 
 # -----------------------------------------------------------------------------
@@ -1248,9 +1327,17 @@ class MachineNode(StateNode[TContext, TEvent]):
                 f"or a callable returning one."
             )
         self.initial_context = raw_context
+        #: Lazily computed structural fingerprint; see `structure_hash`.
+        self._structure_hash: Optional[str] = None
         #: Upper bound on microsteps when settling transient ("always")
         #: transitions, mirroring XState's `maxIterations` (v5.31.0).
         self.max_iterations: int = int(config.get("maxIterations", 1000))
+        #: Upper bound (ms) a `spawn_blocking_<key>` waits for the child to
+        #: finish on the async engine; `None` waits indefinitely (#41).
+        raw_timeout = config.get("spawnBlockingTimeout")
+        self.spawn_blocking_timeout_ms: Optional[float] = (
+            None if raw_timeout is None else float(raw_timeout)
+        )
         #: Machine-level output declaration, resolved when a top-level final
         #: state is reached.
         self.machine_output: Any = config.get("output")
@@ -1285,6 +1372,9 @@ class MachineNode(StateNode[TContext, TEvent]):
         #: identifier must name a sibling or ancestor-scope state, never an
         #: unrelated state elsewhere in the tree that merely shares the last
         #: id segment. Default False preserves 0.7.x resolution.
+        #: Disables the sibling fallback for `.child` targets (opt-in via the
+        #: `strictTargets` config key). Distinct from `create_machine`'s
+        #: `strict_targets=` kwarg, which governs UNRESOLVABLE targets.
         self.strict_targets: bool = bool(config.get("strictTargets", False))
 
         #: Custom `id` → node registry, populated by `StateNode.__init__` as
@@ -1294,6 +1384,21 @@ class MachineNode(StateNode[TContext, TEvent]):
 
         # 🚀 Call the parent constructor to build the entire state tree.
         super().__init__(self, config, config["id"])
+
+    @property
+    def structure_hash(self) -> str:
+        """A 16-hex-char fingerprint of this machine's behavioural structure.
+
+        Stable across `meta` / `description` edits and key reordering;
+        changes when a state, transition, guard NAME, action NAME, invoke or
+        `after` delay is added, removed or renamed. Written into every
+        snapshot as ``machine_hash`` and checked on restore (#45).
+        """
+        if self._structure_hash is None:
+            from .persistence import structure_hash
+
+            self._structure_hash = structure_hash(self)
+        return self._structure_hash
 
     def get_state_by_id(self, state_id: str) -> Optional[StateNode]:
         """Finds a state node by its fully qualified ID.

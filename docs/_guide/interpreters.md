@@ -197,6 +197,11 @@ interp.stop()
 | `.context` | `dict` | The current machine context. Mutable — actions can modify this directly. |
 | `.is_running` | `bool` | `True` after `.start()`, `False` after `.stop()`. |
 | `.plugins` | `list` | List of attached plugin instances. Set before `.start()`. |
+| `.value` | `str \| dict` | The active configuration in hierarchical form — see [Hierarchical State Value](#hierarchical-state-value). |
+| `.pending_events` | `tuple`/`list` | Events accepted by `send()` but not yet processed, in FIFO order. |
+| `.drain_pending()` | method | Remove and return every pending event without processing it. |
+| `.wait_done()` | method | *(async `Interpreter` only)* A future resolved with `"done"`/`"error"` the instant the machine reaches a terminal status. |
+| `.stop(drain=False, timeout=None)` | method | Stop the interpreter; `drain=True` processes the inbox to empty first (`timeout` bounds this on the async engine). |
 
 ---
 
@@ -441,6 +446,74 @@ interp.stop()
 
 ---
 
+## Hierarchical State Value
+
+`interpreter.value` reports the active configuration in XState's hierarchical `value` form — a tree instead of the flat `current_state_ids` set:
+
+- **Atomic** (or final) state → a plain string, e.g. `"red"`.
+- **Compound** state → a single-key dict, e.g. `{"loggedIn": "idle"}`. The innermost level collapses to a string rather than nesting one more dict.
+- **Parallel** state → one dict key per active region, each recursively resolved the same way.
+- **Not yet started** → `{}`.
+
+```python
+import asyncio
+from xstate_statemachine import create_machine, Interpreter
+
+config = {
+    "id": "auth",
+    "initial": "loggedOut",
+    "states": {
+        "loggedOut": {"on": {"LOGIN": "loggedIn"}},
+        "loggedIn": {
+            "initial": "idle",
+            "states": {
+                "idle": {"on": {"FETCH": "pending"}},
+                "pending": {},
+            },
+        },
+    },
+}
+
+async def main():
+    interp = await Interpreter(create_machine(config)).start()
+    print(interp.value)          # 'loggedOut'
+
+    await interp.send("LOGIN")
+    await asyncio.sleep(0.05)
+    print(interp.value)          # {'loggedIn': 'idle'}
+
+asyncio.run(main())
+```
+
+Because `value` is tree-walked rather than built from dotted ids, a state key that itself contains a `.` (e.g. `"v2.0"`) is safe — it is never confused with a path separator.
+
+`matches()` accepts either the string form it always has (a fully-qualified id, optionally with a leading `#`, or a trailing partial path like `"loggedIn.idle"`) **or** a partial `value` dict:
+
+```python
+print(interp.matches("loggedIn.idle"))          # True — string form
+print(interp.matches({"loggedIn": "idle"}))      # True — dict form
+```
+
+## Lifecycle: completion and teardown
+
+As of 0.8.0, reaching a top-level final state tears the machine down immediately — the moment `status` becomes `"done"` or `"error"`, not later when `stop()` happens to be called. That teardown:
+
+- **Releases:** child actors (they are stopped), `after` timers and invoked services (cancelled), and the machine's actor-system registration (removed).
+- **Retains:** `status`, `output`, `error`, and `context` — all still readable after completion.
+
+Calling `stop()` on a machine that is already `"done"` (or `"error"`) is now a quiet no-op; `status` stays `"done"`. Machines that relied on children outliving a completed parent were relying on a leak and must restructure.
+
+`Interpreter.wait_done()` (async only) returns a future that resolves to the terminal status (`"done"` or `"error"`) the instant the machine reaches it, replacing a 5&nbsp;ms poll loop that used to sit between a parent and an invoked child:
+
+```python
+status = await interp.wait_done()
+print(status)  # 'done' or 'error'
+```
+
+If the machine is already terminal when `wait_done()` is called, it returns an already-resolved future.
+
+---
+
 ## Plugin Attachment
 
 Plugins observe machine execution without modifying behavior. Attach them before calling `.start()`:
@@ -650,6 +723,12 @@ Whatever the policy, every unhandled event fires the `on_unhandled_event(interpr
 
 ---
 
+## Throughput and Scaling
+
+All async `Interpreter`s in a process share **one** event loop on **one** thread, so throughput is a per-process budget (~20k trivial ev/s on a laptop) divided among your machines — not a per-machine capacity. Adding interpreters does not add capacity; scale by process. Measured tables, the sizing rule, and the timer-lateness curve are in [Production Characteristics](../production-characteristics/).
+
+---
+
 ## Sending from Another Thread
 
 `Interpreter.send()` is bound to the event loop that started it; calling it from a different thread cannot be awaited there and would silently lose the event. As of 0.8.0, `send()` raises `WrongThreadError` at the call site when called from a foreign thread instead.
@@ -663,6 +742,8 @@ interp.send_threadsafe("TICK")
 It routes the enqueue through the interpreter's owning event loop via `run_coroutine_threadsafe` and returns a `concurrent.futures.Future` you may `.result()` on to block until the event is queued (not processed).
 
 > **Note:** `SyncInterpreter` has no owning event loop and is unaffected by this restriction.
+
+> **Note:** If a foreign thread just sent events you don't want lost on shutdown, prefer `stop(drain=True)` over a plain `stop()` — see [Snapshots — The Inbox: pending events](snapshots/#the-inbox-pending-events).
 
 ---
 
@@ -777,7 +858,7 @@ pytest test_login.py -v
 | Plugins | Same API | Same API |
 | Context access | `interp.context` | `interp.context` |
 | Active states | `interp.active_state_ids` | `interp.active_state_ids` |
-| Thread safety | Single-threaded (asyncio) | Single-threaded |
+| Thread safety | Single-threaded (asyncio); use `send_threadsafe()` from other threads | Single-threaded **event processing**; `after` timers, delayed sends and non-blocking spawns run on background threads that re-enter the machine without a lock — see [Production Characteristics](../production-characteristics/#3-the-syncinterpreter-threading-contract) |
 
 > **Tip:** Use `SyncInterpreter` for **testing** even if your production code uses `Interpreter`. It eliminates async boilerplate in tests and makes assertions straightforward.
 

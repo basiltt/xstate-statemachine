@@ -179,5 +179,13 @@ def create_machine(
     #    whole tree is needed to resolve cross-branch targets, so this runs
     #    only after construction. `strict_targets=False` is the 0.7.x escape
     #    hatch (warns instead of raising); it is removed in 1.0.
+    # 🔀 Two DIFFERENT switches that happen to share a word (review A2):
+    #    * this kwarg (default True) -- reject UNRESOLVABLE targets at build
+    #      time; False downgrades to a DeprecationWarning (0.7.x hatch).
+    #    * the `strictTargets` CONFIG key (default False) -- disable the
+    #      `.child` SIBLING fallback, an opt-in stricter reading of relative
+    #      targets. It lives on `machine.strict_targets`.
+    #    Wiring the kwarg into the config flag would turn the opt-in into the
+    #    default and reject every legitimate `.sibling` machine.
     validate_machine(machine, strict_targets=strict_targets)
     return machine

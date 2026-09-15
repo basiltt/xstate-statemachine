@@ -137,6 +137,8 @@ When the machine enters a parallel state:
 
 > **Note:** Parallel regions don't have an `initial` flag on the parent — there's no "first" child. All children start together. However, each region (which is a compound state) still needs its own `initial` child.
 
+> **Note:** A bare `target: "someState"` only resolves as a **sibling** within the same region — it cannot reach into another parallel region by name. Use an absolute `#machine.path.to.state` target to move a state in a different region. See [Hierarchical States — Bare Targets Are Sibling-Only](hierarchical/#bare-targets-are-sibling-only).
+
 ## Creating Parallel States
 
 ### JSON: `"type": "parallel"`

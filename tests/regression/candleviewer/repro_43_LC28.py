@@ -61,9 +61,9 @@ async def measure(n: int) -> tuple[int, float]:
 
 
 async def main() -> int:
-    print(
-        f"OBSERVED _ACTOR_POLL_INTERVAL = {interp_mod._ACTOR_POLL_INTERVAL}s"
-    )
+    # 0.8.0 (#43): the acceptance criteria require the constant to be gone.
+    poll_interval = getattr(interp_mod, "_ACTOR_POLL_INTERVAL", None)
+    print(f"OBSERVED _ACTOR_POLL_INTERVAL = {poll_interval}")
     counts = {}
     for n in (0, 2, 10, 50):
         tasks, _ = await measure(n)
@@ -74,7 +74,7 @@ async def main() -> int:
 
     per_child = [(counts[n] - counts[0]) / n for n in (2, 10, 50)]
     print(f"OBSERVED tasks per child = {per_child}")
-    polling = interp_mod._ACTOR_POLL_INTERVAL <= 0.01
+    polling = poll_interval is not None and poll_interval <= 0.01
     two_per_child = all(p >= 2 for p in per_child)
     print(
         f"OBSERVED dedicated poll loop present = {polling}; "

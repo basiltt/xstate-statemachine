@@ -28,7 +28,9 @@ Helper utilities: awaiting completion and pure transition computation.
 import asyncio
 import copy
 import logging
+import threading
 import time
+import weakref
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 # -----------------------------------------------------------------------------
@@ -175,7 +177,14 @@ class PureSnapshot:
         output (Any): Output when the machine completed.
     """
 
-    __slots__ = ("state_ids", "configuration", "context", "status", "output")
+    __slots__ = (
+        "state_ids",
+        "configuration",
+        "context",
+        "status",
+        "output",
+        "_nodes",
+    )
 
     def __init__(
         self,
@@ -199,6 +208,10 @@ class PureSnapshot:
         self.context = context
         self.status = status
         self.output = output
+        #: Resolved `StateNode`s for `configuration`, filled in by `_capture`
+        #: (#54). Private: lets the chained-call pattern skip N id lookups
+        #: per step. Absent (None) on hand-built snapshots.
+        self._nodes: Optional[Set[Any]] = None
 
     def matches(self, state_id: str) -> bool:
         """Reports whether a state is active in this snapshot.
@@ -223,12 +236,98 @@ class PureSnapshot:
         )
 
 
+# -----------------------------------------------------------------------------
+# 🔬 Pure-transition probe
+# -----------------------------------------------------------------------------
+# 🏛️ Architecture decision (#54): `transition()` used to define a NEW
+# `SyncInterpreter` subclass inside the function (closing over a fresh
+# `recorded` list) and construct an instance of it on every call, then
+# deep-copy the context on the way in AND on the way out. Measured: the
+# "cheap" pure path cost 4x a real `send()`. The class is now module-level,
+# ONE probe per `MachineNode` is cached (weakly, so machines can be freed)
+# and reset per call, and only the outbound copy remains -- that is the one
+# that makes the returned snapshot immutable, which is the promise the guide
+# makes.
+#
+# 🧵 The cache is PER THREAD (`threading.local`). A probe is a mutable
+# interpreter reset in place; two threads sharing one -- e.g. a UI preview
+# and a test runner calling `get_next_snapshot` on the same machine -- would
+# interleave `_reset_probe` / `send` / `_capture` and return each other's
+# results. The pre-#54 code was accidentally thread-safe because it built a
+# fresh probe per call; caching must not give that up. Confirmed on Linux CI
+# (502 wrong results from 8 threads on a shared cache) before this fix.
+# -----------------------------------------------------------------------------
+_PROBE_CACHE = threading.local()
+
+
+def _probes() -> "weakref.WeakKeyDictionary[MachineNode[Any, Any], Any]":
+    """This thread's machine -> probe cache (created on first use)."""
+    cache = getattr(_PROBE_CACHE, "probes", None)
+    if cache is None:
+        cache = weakref.WeakKeyDictionary()
+        _PROBE_CACHE.probes = cache
+    return cache
+
+
+def _make_probe_class() -> type:
+    """Build the probe class once, after `SyncInterpreter` is importable.
+
+    The import is deferred to call time to avoid a circular import at
+    module load (`sync_interpreter` imports from this package too).
+    """
+    from .sync_interpreter import SyncInterpreter
+
+    class _Probe(SyncInterpreter):  # type: ignore[misc,valid-type]
+        """A SyncInterpreter that records actions rather than executing them."""
+
+        _recorded: List[ActionDefinition]
+
+        def _execute_actions(self, actions: Any, event: Any) -> List[Any]:
+            """Records actions without running their side effects.
+
+            `assign` is still applied, because context updates are part of
+            the computed next state rather than an external side effect.
+            Returns an empty failure list so the action-error machinery
+            (#27) sees a clean run.
+            """
+            from .actions import ASSIGN, resolve_builtin
+
+            for action_def in actions or []:
+                self._recorded.append(action_def)
+                if resolve_builtin(action_def.type) == ASSIGN:
+                    self._apply_assign(
+                        self._resolve_params(action_def.params, event) or {},
+                        event,
+                    )
+            return []
+
+        def _schedule_state_tasks(self, state: Any) -> None:
+            """Suppresses timers and invoked services entirely."""
+            return None
+
+        def _schedule_teardown(self) -> None:
+            """A probe owns nothing to reap; keep it reusable after `done`."""
+            return None
+
+    return _Probe
+
+
+_Probe: Any = None  # populated on first use by `_probe_class()`
+
+
+def _probe_class() -> type:
+    global _Probe
+    if _Probe is None:
+        _Probe = _make_probe_class()
+    return _Probe
+
+
 def _build_probe(
     machine: MachineNode[Any, Any],
     snapshot: Optional[PureSnapshot],
     input: Optional[Any] = None,
 ) -> Tuple[Any, List[ActionDefinition]]:
-    """Creates a throwaway interpreter that records actions instead of running.
+    """Return the cached probe for *machine*, reset to *snapshot* (or fresh).
 
     Args:
         machine (MachineNode): The machine to probe.
@@ -238,42 +337,54 @@ def _build_probe(
 
     Returns:
         Tuple[Any, List[ActionDefinition]]: The probe interpreter and the list
-        that will collect executed actions.
+        that will collect executed actions (already cleared).
     """
-    # 🔁 Imported here to avoid a circular import at module load.
-    from .sync_interpreter import SyncInterpreter
+    cache = _probes()
+    probe = cache.get(machine)
+    if probe is None or input is not None:
+        # 🆕 First use on this thread, or an explicit `input` (which shapes
+        #    the initial context, so it cannot be applied to a cached one).
+        probe = _probe_class()(machine, input=input)
+        probe._recorded = []
+        if input is None:
+            cache[machine] = probe
+    _reset_probe(probe, snapshot)
+    return probe, probe._recorded
 
-    recorded: List[ActionDefinition] = []
 
-    class _Probe(SyncInterpreter):
-        """A SyncInterpreter that records actions rather than executing them."""
-
-        def _execute_actions(
-            self, actions: List[ActionDefinition], event: Any
-        ) -> None:
-            """Records actions without running their side effects.
-
-            `assign` is still applied, because context updates are part of the
-            computed next state rather than an external side effect.
-            """
-            from .actions import ASSIGN, resolve_builtin
-
-            for action_def in actions or []:
-                recorded.append(action_def)
-                if resolve_builtin(action_def.type) == ASSIGN:
-                    self._apply_assign(
-                        self._resolve_params(action_def.params, event) or {},
-                        event,
-                    )
-
-        def _schedule_state_tasks(self, state: Any) -> None:
-            """Suppresses timers and invoked services entirely."""
-            return None
-
-    probe = _Probe(machine, input=input)
-    if snapshot is not None:
-        probe.context = copy.deepcopy(snapshot.context)
-    return probe, recorded
+def _reset_probe(probe: Any, snapshot: Optional[PureSnapshot]) -> None:
+    """Put a cached probe into exactly the state *snapshot* describes."""
+    probe._recorded.clear()
+    probe._event_queue.clear()
+    probe._deferred_events.clear()
+    probe.output = None
+    probe.error = None
+    probe.last_transition_ok = True
+    if snapshot is None:
+        probe.status = "uninitialized"
+        probe._active_state_nodes.clear()
+        probe.context = probe._build_initial_context(
+            probe.machine, probe.input
+        )
+        return
+    probe.status = "running"
+    # 🧊 ONE copy: the caller's snapshot must not be mutated by this step
+    #    (PureSnapshot is documented immutable), and `_capture` copies the
+    #    result on the way out. A second inbound copy was pure overhead.
+    probe.context = copy.deepcopy(snapshot.context)
+    # 🌳 Restore the exact configuration rather than re-deriving it. A
+    #    library-made snapshot carries the resolved nodes; a hand-built one
+    #    falls back to id lookup.
+    probe._active_state_nodes.clear()
+    nodes = getattr(snapshot, "_nodes", None)
+    if nodes is not None:
+        probe._active_state_nodes.update(nodes)
+        return
+    machine = probe.machine
+    for state_id in snapshot.configuration:
+        node = machine.get_state_by_id(state_id)
+        if node is not None:
+            probe._active_state_nodes.add(node)
 
 
 def _capture(probe: Any) -> PureSnapshot:
@@ -290,13 +401,15 @@ def _capture(probe: Any) -> PureSnapshot:
         status = "done"
     elif probe.status == "error":
         status = "error"
-    return PureSnapshot(
+    snap = PureSnapshot(
         state_ids=set(probe.current_state_ids),
         configuration={node.id for node in probe._active_state_nodes},
         context=copy.deepcopy(probe.context),
         status=status,
         output=probe.output,
     )
+    snap._nodes = set(probe._active_state_nodes)
+    return snap
 
 
 def initial_transition(
@@ -316,7 +429,7 @@ def initial_transition(
     """
     probe, recorded = _build_probe(machine, None, input)
     probe.start()
-    return _capture(probe), recorded
+    return _capture(probe), list(recorded)
 
 
 def transition(
@@ -341,19 +454,11 @@ def transition(
         and the actions that would have run.
     """
     probe, recorded = _build_probe(machine, snapshot, None)
-    probe.status = "running"
-
-    # 🌳 Restore the exact configuration rather than re-deriving it.
-    probe._active_state_nodes.clear()
-    for state_id in snapshot.configuration:
-        node = machine.get_state_by_id(state_id)
-        if node is not None:
-            probe._active_state_nodes.add(node)
-
-    # 📭 Only actions from THIS step should be reported.
-    recorded.clear()
     probe.send(probe._coerce_event(event))
-    return _capture(probe), recorded
+    # 📭 Hand back a COPY of the recorded list: the probe is cached and its
+    #    list is cleared on the next call, so a caller holding the list
+    #    across calls would otherwise see it emptied under them.
+    return _capture(probe), list(recorded)
 
 
 def get_initial_snapshot(

@@ -126,6 +126,79 @@ restored.stop()
 > - **Context is restored by value** — The context dictionary is deserialized from JSON. Non-serializable values (functions, class instances, file handles) will be lost or converted to strings.
 > - **Machine definition must match** — The `machine` argument to `from_snapshot()` must have the same structure as the original. If state IDs have changed, restoration will fail with `StateNotFoundError`.
 
+## Snapshot Envelope
+
+As of 0.8.0, `get_snapshot()` writes a versioned **envelope** around the fields described above. In addition to `status`, `context`, and `state_ids`, the JSON now carries:
+
+- **`version`** — the integer payload *layout* version. It is bumped only when the shape of the snapshot itself changes, never on an ordinary package release, so a patch or minor upgrade of the library does not invalidate stored snapshots.
+- **`machine_id`** — the `id` of the machine the snapshot was taken from.
+- **`machine_hash`** — a 16-hex-character structural fingerprint of the machine (`MachineNode.structure_hash`). It covers states, transitions, guard/action **names**, invokes, and `after` delays — the parts of the machine that change *behavior*. It deliberately excludes `meta`, `description`, and key order, so editing a docstring or reordering a dict does not change the hash. Adding a guard, renaming a state, or changing a transition's target, on the other hand, does.
+- **`taken_at`** — a Unix timestamp of when the snapshot was captured.
+- **`pending_events`** — see [The Inbox: pending events](#the-inbox-pending-events) below.
+- **`value`** — the hierarchical [`interpreter.value`](interpreters/#hierarchical-state-value) at the time of capture, included for convenience. Restore ignores it; it is derived fresh from `state_ids` every time.
+
+**Unversioned 0.7.x snapshots restore unchanged.** A payload with no `version` key is treated as version 0 and accepted unconditionally — there is no breaking change for snapshots taken before 0.8.0.
+
+### Restore-time checks
+
+`from_snapshot()` now runs two checks before restoring a versioned snapshot:
+
+- **`SnapshotVersionError`** — raised when the snapshot's `version` is *newer* than the library's `SNAPSHOT_VERSION`. A snapshot written by a newer release cannot be read safely, so it is refused rather than partially restored.
+- **`SnapshotDriftError`** — raised when the snapshot's `machine_id` doesn't match the machine being restored into, or (when hash verification is on) the machine's `structure_hash` no longer matches `machine_hash`. This is exactly the "a guard was added, or a state was renamed since this snapshot was taken" case.
+
+Pass `verify_machine_hash=False` to skip the hash check after you've migrated a snapshot to match a changed machine shape:
+
+```python
+import json
+from xstate_statemachine import create_machine, SyncInterpreter
+from xstate_statemachine.exceptions import SnapshotDriftError
+
+machine = create_machine(config)  # the CURRENT (changed) machine definition
+
+try:
+    restored = SyncInterpreter.from_snapshot(saved_snapshot_json, machine)
+except SnapshotDriftError:
+    # Migrate the payload to match the new machine shape.
+    payload = json.loads(saved_snapshot_json)
+    payload["context"].setdefault("new_field", None)
+    migrated_json = json.dumps(payload)
+
+    # The machine has changed on purpose -- skip the hash check.
+    restored = SyncInterpreter.from_snapshot(
+        migrated_json, machine, verify_machine_hash=False
+    )
+```
+
+## The Inbox: pending events
+
+The mailbox is now part of the snapshot. `interpreter.pending_events` exposes every event that was **accepted** (by `send()`) but not yet **processed**, in FIFO order; the same list is persisted under the snapshot's `pending_events` key and re-enqueued, in order, on restore. Child actors' inboxes are captured and restored **recursively**, so a parent's snapshot carries its children's queued-but-unprocessed events too.
+
+```python
+interp.send("STEP_1")
+interp.send("STEP_2")
+print(interp.pending_events)  # events not yet run through a transition
+```
+
+`drain_pending()` removes and returns every pending event **without processing it** — useful for a shutdown path that wants to persist accepted work durably instead of losing it:
+
+```python
+drained = interp.drain_pending()  # async: `await interp.drain_pending()`
+```
+
+`stop(drain=True)` asks the interpreter to process its inbox to empty before tearing down, so nothing the caller was told "yes" to (via `send()`) is silently discarded. The async `Interpreter.stop()` also accepts a `timeout=` (seconds) to bound how long it waits:
+
+```python
+await interp.stop(drain=True, timeout=5.0)  # async
+interp.stop(drain=True)                     # sync
+```
+
+There are two shutdown patterns, depending on what you want:
+
+- **Option A — finish queued work before stopping.** Call `stop(drain=True)` (with a `timeout=` on the async engine if you need an upper bound). Every event already accepted gets processed first.
+- **Option B — persist with pending events still in it, then stop immediately.** Call `get_snapshot()` first (it captures `pending_events` as-is), then `stop()` with the default `drain=False`. The next restore re-enqueues those events instead of losing them.
+
+By default (`drain=False`), a non-empty inbox at `stop()` time is now logged as a warning instead of being silently discarded.
+
 ## Persistence: Save to File
 
 The simplest persistence pattern writes the snapshot to a JSON file:
