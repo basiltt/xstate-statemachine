@@ -231,7 +231,17 @@ class TestActorCompletionSignal(_Quiet):
                 await asyncio.sleep(0.001)
             child = i._actors["p:k"]
             await i.send("LEAVE")
-            await _until(lambda: child.status == "stopped" and not i._actors)
+            # Wait for ALL three observable outcomes. Their relative order is
+            # not part of the contract and genuinely differs between Python
+            # versions: on 3.9 the cancelled child's manager task runs its
+            # `finally` (stop + pop from `_actors`) BEFORE the parent's
+            # `_enter_states` returns; on 3.14 after. Polling only two of
+            # the three read `p.a` on 3.9 -- a test bug, not an engine one.
+            await _until(
+                lambda: i.current_state_ids == {"p.b"}
+                and child.status == "stopped"
+                and not i._actors
+            )
             out = (set(i.current_state_ids), child.status, list(i._actors))
             await i.stop()
             return out
