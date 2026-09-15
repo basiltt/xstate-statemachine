@@ -650,6 +650,12 @@ Whatever the policy, every unhandled event fires the `on_unhandled_event(interpr
 
 ---
 
+## Throughput and Scaling
+
+All async `Interpreter`s in a process share **one** event loop on **one** thread, so throughput is a per-process budget (~20k trivial ev/s on a laptop) divided among your machines — not a per-machine capacity. Adding interpreters does not add capacity; scale by process. Measured tables, the sizing rule, and the timer-lateness curve are in [Production Characteristics](../production-characteristics/).
+
+---
+
 ## Sending from Another Thread
 
 `Interpreter.send()` is bound to the event loop that started it; calling it from a different thread cannot be awaited there and would silently lose the event. As of 0.8.0, `send()` raises `WrongThreadError` at the call site when called from a foreign thread instead.
@@ -777,7 +783,7 @@ pytest test_login.py -v
 | Plugins | Same API | Same API |
 | Context access | `interp.context` | `interp.context` |
 | Active states | `interp.active_state_ids` | `interp.active_state_ids` |
-| Thread safety | Single-threaded (asyncio) | Single-threaded |
+| Thread safety | Single-threaded (asyncio); use `send_threadsafe()` from other threads | Single-threaded **event processing**; `after` timers, delayed sends and non-blocking spawns run on background threads that re-enter the machine without a lock — see [Production Characteristics](../production-characteristics/#3-the-syncinterpreter-threading-contract) |
 
 > **Tip:** Use `SyncInterpreter` for **testing** even if your production code uses `Interpreter`. It eliminates async boilerplate in tests and makes assertions straightforward.
 

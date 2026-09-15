@@ -155,6 +155,14 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
     background `asyncio.Task` objects, ensuring they are properly cancelled
     when states are exited.
 
+    📏 Every `Interpreter` in a process shares ONE event loop on ONE thread.
+    Concurrency between machines is interleaving, not parallelism, so
+    throughput is a per-process budget divided among all live interpreters
+    (~20k trivial events/s on a laptop; ~18 ev/s each at 1,000 machines),
+    and `after` timers fire late under load. Blocking work inside an action
+    stalls every machine. Measured tables and a sizing rule:
+    https://basiltt.github.io/xstate-statemachine/guide/production-characteristics/
+
     Attributes:
         task_manager (TaskManager): An instance of `TaskManager` that tracks and
             manages all background `asyncio.Task` objects created by this

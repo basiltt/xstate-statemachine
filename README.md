@@ -1385,19 +1385,25 @@ generation time rather than an `ImplementationMissingError` in production.
 
 Everything above is the happy path. Here is what matters once real traffic arrives.
 
+### Throughput, timers and threads — read this before sizing
+
+All async interpreters in a process share **one** event loop on **one** thread: throughput is a per-process budget (~20k trivial ev/s on a laptop), divided among your machines. `after` timers fire *late* under load (~+180 ms at 500 busy machines), and the `SyncInterpreter` runs timers on background threads with no lock. The measured tables and a sizing rule are in **[Production Characteristics](https://basiltt.github.io/xstate-statemachine/guide/production-characteristics/)** — the one page to read before deploying.
+
 ### Failure semantics — know what is contained
 
-| What fails | What happens | How to observe it |
-|:--|:--|:--|
-| An **action** raises | Logged and **contained**. The transition still completes; the machine keeps running | `on_action_error` plugin hook |
-| A **guard** raises | Treated as `False`; that candidate transition is skipped | `on_guard_evaluated` hook |
-| An invoked **service** raises | Routed to `onError` — a normal transition, not a crash | `onError` target, `on_service_error` hook |
-| An **unknown event** arrives | Ignored. `send("NONSENSE")` is a no-op, never an exception | `interpreter.can(...)` before sending |
-| A **transition action** raises mid-flight | Rolled back — the machine does not end up half-exited | Machine state stays consistent |
+Each is a **per-machine policy**. The default preserves the historical behaviour; production machines should opt in explicitly.
 
-Containment is deliberate: a long-lived machine should not die because one side effect
-had a bad day. The cost is that failures are **invisible unless you look**, so wire up
-`on_action_error` early:
+| What fails | Default | Opt-in policy (machine config key) | How to observe it |
+|:--|:--|:--|:--|
+| An **action** raises (entry, exit, or transition) | Contained; the transition still commits | `actionErrorPolicy`: `"rollback"` restores configuration *and* context · `"fail"` also stops with `TransitionFailedError` | `on_action_error`, `on_transition_failed`, `interpreter.last_transition_ok` |
+| A **guard** raises | Treated as `False` | `guardErrorPolicy`: `"true"` · `"raise"` | `on_guard_error` (distinct from a guard that *returned* `False`) |
+| An invoked **service** raises | Routed to `onError` — a normal transition, not a crash | — | `onError` target, `on_service_error` |
+| An **unknown event** arrives | Ignored (XState semantics) | `onUnhandled`: `"defer"` replays it after the next state change · `"error"` stops with `UnhandledEventError` | `on_unhandled_event` fires under *every* policy |
+| A **transition target** does not resolve | Rejected at `create_machine()` | `strict_targets=False` downgrades to a `DeprecationWarning` (removed in 1.0) | `InvalidConfigError` lists every bad target at once |
+
+Containment by default is deliberate: a long-lived machine should not die because one
+side effect had a bad day. The cost is that failures are **invisible unless you look**, so
+wire up the hooks early — every one of them fires whatever policy you choose:
 
 ```python
 from xstate_statemachine import PluginBase
