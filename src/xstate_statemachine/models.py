@@ -520,6 +520,15 @@ class InvokeDefinition:
         self.id: str = invoke_id
         self.src: Optional[str] = config.get("src")
         self.input: Optional[Dict[str, Any]] = config.get("input")
+        #: True when the user DECLARED an `id`. The parser defaults an
+        #: omitted id to the hosting state's id, which every anonymous
+        #: invoke in that state shares -- so a bare `self.id` is not safe
+        #: to use as a unique actor address (#40).
+        self.id_is_explicit: bool = "id" in config
+        #: Registers the child in the actor system so `sendTo` can address
+        #: it by this name from anywhere in the tree. Was silently dropped
+        #: at parse time before 0.8.0.
+        self.system_id: Optional[str] = config.get("systemId")
         self.source: "StateNode" = source
         self.on_done: List[TransitionDefinition] = on_done
         self.on_error: List[TransitionDefinition] = on_error

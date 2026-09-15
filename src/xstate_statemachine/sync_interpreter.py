@@ -1400,12 +1400,18 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 invocation.src,
                 invocation.id,
             )
+            # 🏛️ #40: only a DECLARED id becomes the actor address; the
+            #    parser's default (the hosting state's id) is shared by every
+            #    anonymous invoke in that state. `systemId` is threaded
+            #    through so the child is addressable system-wide.
+            params: Dict[str, Any] = {}
+            if invocation.id_is_explicit:
+                params["id"] = invocation.id
+            if invocation.system_id:
+                params["systemId"] = invocation.system_id
             self._spawn_actor(
                 ActionDefinition(
-                    {
-                        "type": f"spawn_{invocation.src}",
-                        "params": {"id": invocation.id},
-                    }
+                    {"type": f"spawn_{invocation.src}", "params": params}
                 ),
                 Event(type=f"invoke.{invocation.id}"),
                 on_complete=invocation.id,

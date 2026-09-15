@@ -51,6 +51,7 @@ from typing import (
 # -----------------------------------------------------------------------------
 from .events import AfterEvent, DoneEvent, Event
 from .exceptions import (
+    ActorSpawningError,
     ImplementationMissingError,
     InvalidConfigError,
     RestoredError,
@@ -1408,6 +1409,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             return registry[spec]
         if spec in self._actors:
             return self._actors[spec]
+        # 🎯 #40: an EXPLICIT child id is `f"{self.id}:{spec}"` exactly.
+        #    Check it before the fuzzy segment scan so a declared name is
+        #    never reported "ambiguous" against same-src siblings.
+        exact = f"{self.id}:{spec}"
+        if exact in self._actors:
+            return self._actors[exact]
         # 🔑 Actor ids are namespaced as `parent:key` or `parent:key:uuid`, so
         #    a bare service key must match the MIDDLE segment too. Matching
         #    only the suffix silently missed every auto-id actor (the uuid is
@@ -1420,8 +1427,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         if len(matches) == 1:
             return matches[0]
         if len(matches) > 1:
-            logger.warning(
-                "⚠️ Actor key '%s' is ambiguous (%d matches). Use an explicit "
+            # 🔊 Escalated from warning: a dropped event on the actor path is
+            #    a correctness failure, not a nuisance (#40).
+            logger.error(
+                "🚫 Actor key '%s' is ambiguous (%d matches). Use an explicit "
                 "`id` or `systemId` to disambiguate; event dropped.",
                 spec,
                 len(matches),
@@ -1471,13 +1480,24 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         if not system_id:
             return
         registry = self._system_registry()
-        if system_id in registry and registry[system_id] is not actor:
-            logger.warning(
-                "⚠️ systemId '%s' is already registered to actor '%s'; the "
-                "new actor replaces it. systemIds must be unique within a "
-                "machine hierarchy.",
+        existing = registry.get(system_id)
+        if existing is not None and existing is not actor:
+            # 🛡️ #40 (LC-13): a duplicate systemId used to silently REPLACE
+            #    the previous actor, so every later `sendTo` reached the
+            #    wrong child. A stopped/finished actor may be superseded;
+            #    a live one may not.
+            if existing.status in ("running", "uninitialized"):
+                raise ActorSpawningError(
+                    f"systemId '{system_id}' is already registered to a "
+                    f"live actor ('{existing.id}'). systemIds must be "
+                    f"unique within a machine hierarchy."
+                )
+            logger.info(
+                "♻️ systemId '%s' re-registered: previous actor '%s' had "
+                "status '%s'.",
                 system_id,
-                registry[system_id].id,
+                existing.id,
+                existing.status,
             )
         registry[system_id] = actor
 

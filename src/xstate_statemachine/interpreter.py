@@ -1223,11 +1223,25 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         child_interpreter = None
         try:
             # 🧬 Create, configure, and start the new child interpreter.
-            actor_id = f"{self.id}:{invocation.src}:{uuid.uuid4()}"
+            #
+            # 🏛️ #40: mint the address from the DECLARED `id` when there is
+            #    one, so `sendTo("kid")` reaches the child invoked as
+            #    `{"src": ..., "id": "kid"}`. Anonymous invokes keep the uuid
+            #    suffix so two of them in one state stay distinct. Mirrors
+            #    the `spawn` path, which already honoured explicit ids.
+            actor_id = (
+                f"{self.id}:{invocation.id}"
+                if invocation.id_is_explicit
+                else f"{self.id}:{invocation.src}:{uuid.uuid4()}"
+            )
             child_interpreter = Interpreter(actor_machine)
             child_interpreter.parent = self
             child_interpreter.id = actor_id
             self._actors[actor_id] = child_interpreter
+            # Record the source so the src-alias lookup covers invoked
+            # actors too (it only covered spawned ones before).
+            self._actor_sources[actor_id] = invocation.src or ""
+            self._register_in_system(invocation.system_id, child_interpreter)
 
             for plugin in self._plugins:
                 plugin.on_service_start(self, invocation)
