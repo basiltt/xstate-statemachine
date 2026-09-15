@@ -1524,8 +1524,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     tgt,
                     ref.id,
                 )
-                # ‼️ CRITICAL: This mutation logic is restored from the original code.
-                transition.target_str = tgt
+                # 🚫 #59: no write-back to the shared TransitionDefinition
+                #    (see BaseInterpreter._resolve_target_state_node).
                 return state
             except StateNotFoundError:
                 continue  # Try the next method

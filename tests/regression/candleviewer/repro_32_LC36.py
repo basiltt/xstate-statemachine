@@ -67,15 +67,23 @@ async def main() -> int:
         print(f"OBSERVED create_machine() raised {type(exc).__name__}: {exc}")
 
     # 2) At runtime the wrong spelling does nothing.
-    status_w, states_w = await run(WRONG)
-    print(f"OBSERVED wrong spelling -> status={status_w} states={states_w}")
+    #    0.8.0 (#32): create_machine() now REJECTS the wrong spelling, so
+    #    it cannot reach the runtime at all -- which is the fix this issue
+    #    asked for ("or the wrong one to error"). Treat that as equivalent
+    #    to the right spelling's outcome.
+    try:
+        status_w, states_w = await run(WRONG)
+        print(f"OBSERVED wrong spelling -> status={status_w} states={states_w}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"OBSERVED wrong spelling -> rejected at build: {type(exc).__name__}")
+        status_w, states_w = "rejected", None
     status_r, states_r = await run(RIGHT)
     print(f"OBSERVED right spelling -> status={status_r} states={states_r}")
     print("EXPECTED both to reach 'eval.placed' (or the wrong one to error)")
-    if states_w == states_r:
-        ok = True and ok  # both worked -> not reproduced
+    if states_w == states_r or states_w is None:
+        ok = True and ok  # both worked, or wrong one errored -> not reproduced
 
-    reproduced = states_w != states_r or not ok
+    reproduced = (states_w is not None and states_w != states_r) or not ok
     print(
         "RESULT:",
         "REPRODUCED (misspelled built-in params silently ignored)"

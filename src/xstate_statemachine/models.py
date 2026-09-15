@@ -46,6 +46,7 @@ from typing import (
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
+from .actions import BUILTIN_ACTION_PARAM_SPEC, resolve_builtin
 from .events import Event
 from .exceptions import InvalidConfigError, StateNotFoundError
 from .machine_logic import MachineLogic
@@ -220,6 +221,7 @@ class ActionDefinition:
             logger.debug("🔧 Parsing action definition from dict: %s", config)
             self.type: str = config.get("type", "UnknownAction")
             self.params: Optional[Dict[str, Any]] = config.get("params")
+            self._validate_builtin_params(config)
         else:
             # ❌ Reject invalid definitions
             logger.error(
@@ -229,6 +231,39 @@ class ActionDefinition:
             raise InvalidConfigError(
                 f"Action definition must be a string or a dictionary, got {type(config)}"
             )
+
+    def _validate_builtin_params(self, config: Dict[str, Any]) -> None:
+        """Reject a built-in action whose required params are missing.
+
+        🏛️ #32: this is the ONE place every action dict is parsed -- entry,
+        exit, transition actions, invoke onDone/onError, both engines -- so
+        one check here covers all of them. When the required keys are found
+        at the TOP level of the dict instead of under ``params`` (the
+        natural mistake), the error says so explicitly.
+        """
+        canonical = resolve_builtin(self.type)
+        if canonical is None:
+            return
+        spec = BUILTIN_ACTION_PARAM_SPEC.get(canonical)
+        if spec is None or callable(self.params):
+            return
+        required, optional = spec
+        supplied = set(self.params or {})
+        missing = required - supplied
+        if not missing:
+            return
+        stray = set(config) - {"type", "params"}
+        hint = ""
+        if stray & (required | optional):
+            hint = (
+                f" Found {sorted(stray & (required | optional))} at the top "
+                f"level of the action -- built-in action parameters must be "
+                f"nested under 'params'."
+            )
+        raise InvalidConfigError(
+            f"Built-in action '{self.type}' is missing required param(s) "
+            f"{sorted(missing)}.{hint}"
+        )
 
     def __repr__(self) -> str:
         """Provides a developer-friendly string representation."""

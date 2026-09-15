@@ -904,7 +904,20 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         # 🧪 Create a new instance of the correct interpreter class (sync/async)
         interpreter = cls(machine)
-        interpreter.context = snapshot["context"]
+        # 🧊 #46: layer the persisted context over the machine's CURRENT
+        #    defaults, and deep-copy so the caller's parsed dict does not
+        #    alias live state. Persisted values win for every key present;
+        #    defaults fill only keys the snapshot never had (e.g. a field
+        #    added to the machine after the snapshot was written). The
+        #    merge is deliberately SHALLOW: a recursive merge would
+        #    resurrect nested keys the application intentionally deleted.
+        restored = copy.deepcopy(snapshot["context"])
+        if isinstance(interpreter.context, dict) and isinstance(
+            restored, dict
+        ):
+            interpreter.context = {**interpreter.context, **restored}
+        else:
+            interpreter.context = restored
         interpreter.status = snapshot["status"]
 
         # 🌳 Reconstruct the set of active state nodes from their IDs.
@@ -1237,10 +1250,16 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         for tgt, ref in filter(None, resolution_attempts):
             try:
                 target_state = resolve_target_state(tgt, ref)
-                # This side effect is important for logging and debugging.
-                transition.target_str = tgt
+                # 🚫 #59: do NOT write back to `transition.target_str`. The
+                #    TransitionDefinition is shared by every interpreter of
+                #    this machine; rewriting it to the qualified form from
+                #    one interpreter changed what every other one saw, and
+                #    raced under threads. The resolved node is what matters
+                #    and it is returned; the original string stays intact.
                 logger.debug(
-                    "✅ Resolved via standard method: '%s'", target_state.id
+                    "✅ Resolved '%s' via standard method: '%s'",
+                    tgt,
+                    target_state.id,
                 )
                 break
             except StateNotFoundError:
