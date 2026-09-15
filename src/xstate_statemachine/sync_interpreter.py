@@ -69,6 +69,7 @@ from .models import (
     TContext,
     TEvent,
     TransitionDefinition,
+    SPAWN_BLOCKING_PREFIX,
     spawn_service_key,
 )
 from .resolver import resolve_target_state
@@ -975,7 +976,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
             # 🎭 Handle actor spawning actions
             if action_def.type.startswith(
-                ("spawn_", "spawn_blocking_")
+                (SPAWN_BLOCKING_PREFIX, "spawn_")
             ) and not is_builtin(action_def.type):
                 self._spawn_actor(action_def, event)
                 continue
@@ -1265,7 +1266,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 `MachineNode` or a factory that returns one.
         """
         # 🕵️ Determine mode (blocking vs. non-blocking) and service key
-        blocking = action_def.type.startswith("spawn_blocking_")
+        blocking = action_def.type.startswith(SPAWN_BLOCKING_PREFIX)
         key = spawn_service_key(action_def.type)
         logger.info("🎭 Spawning actor '%s' (Blocking: %s)", key, blocking)
 
@@ -1292,13 +1293,12 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             if explicit_id
             else f"{self.id}:{key}:{uuid.uuid4()}"
         )
-        child = SyncInterpreter(actor_machine)
+        # 📥 Input goes in at CONSTRUCTION so a child `context` factory
+        #    receives `{input}` (#42); `_build_initial_context` also seeds
+        #    declared keys and exposes `context["input"]`.
+        child = SyncInterpreter(actor_machine, input=spawn_params.get("input"))
         child.parent = self
         child.id = actor_id
-        # 📥 Seed the child's context with any declared input.
-        child_input = spawn_params.get("input")
-        if child_input is not None:
-            child.context.setdefault("input", child_input)
         # 🌐 Register under a systemId so siblings can address it.
         self._register_in_system(spawn_params.get("systemId"), child)
         self._actors[actor_id] = child
@@ -1307,6 +1307,13 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # --- Blocking Execution Path ---
         if blocking:
             child.start()
+            # ⏸️ #41: "blocking" means the child runs to COMPLETION before the
+            #    parent's next action -- on both engines. `start()` alone only
+            #    covers a child whose work is synchronous entry actions; one
+            #    driven by `after` timers (background threads here) is still
+            #    running when `start()` returns. Wait on its terminal signal,
+            #    bounded by `spawnBlockingTimeout` (ms) like the async engine.
+            self._wait_for_child_terminal(child)
             if on_complete is not None:
                 self._queue_actor_done(child, on_complete)
             return
@@ -1338,6 +1345,35 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         threading.Thread(
             target=_runner, daemon=True, name=f"actor-{actor_id}"
         ).start()
+
+    def _wait_for_child_terminal(self, child: "SyncInterpreter") -> None:
+        """Block until *child* is done/error, or `spawnBlockingTimeout` lapses.
+
+        Uses the shared terminal-listener hook (#43) rather than polling
+        `status`, so completion is observed the instant it happens.
+        """
+        if child.status in ("done", "error"):
+            return
+        # 🧭 A child with nothing in flight -- no `after` timers and no
+        #    actors of its own -- has already done everything `start()`
+        #    can make it do; it is idle, not "still working". Waiting on it
+        #    would block forever, and 0.7.x machines relied on this case
+        #    returning immediately. Only wait when the child can still
+        #    progress on its own.
+        if not child._after_events and not child._actors:
+            return
+        finished = threading.Event()
+        child._terminal_listeners.append(lambda _status: finished.set())
+        timeout_ms = self.machine.spawn_blocking_timeout_ms
+        if not finished.wait(
+            None if timeout_ms is None else timeout_ms / 1000.0
+        ):
+            logger.warning(
+                "⏱️ Blocking spawn of '%s' did not finish within %s ms; "
+                "continuing without it.",
+                child.id,
+                timeout_ms,
+            )
 
     def _queue_actor_done(
         self, child: "SyncInterpreter", invoke_id: str
@@ -1518,6 +1554,11 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 params["id"] = invocation.id
             if invocation.system_id:
                 params["systemId"] = invocation.system_id
+            # 📥 #42: resolve `input` against the parent's live context so
+            #    the child machine is parameterised exactly as in XState.
+            child_input = invocation.resolve_input(self.context, None)
+            if child_input is not None:
+                params["input"] = child_input
             self._spawn_actor(
                 ActionDefinition(
                     {"type": f"spawn_{invocation.src}", "params": params}
@@ -1548,7 +1589,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         try:
             # 🎁 Prepare a synthetic event for the service.
             invoke_event = Event(
-                f"invoke.{invocation.id}", {"input": invocation.input or {}}
+                f"invoke.{invocation.id}",
+                {"input": invocation.resolve_input(self.context, None) or {}},
             )
             # 🚀 Execute the synchronous service.
             result = service(self, self.context, invoke_event)

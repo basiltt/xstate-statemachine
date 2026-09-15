@@ -425,6 +425,15 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         # 📥 Expose input to the machine even without a context factory.
         if input is not None and isinstance(context, dict):
             context.setdefault("input", input)
+            # 🌱 #42: a child that DECLARES the keys it expects (the filer's
+            #    `context: {"snapshot": None}`) gets them filled from a dict
+            #    input. Only keys already present are touched -- input never
+            #    invents context keys, so a typo in the parent cannot grow
+            #    the child's schema.
+            if isinstance(input, dict):
+                for key, value in input.items():
+                    if key in context and key != "input":
+                        context[key] = copy.deepcopy(value)
         return context
 
     # -------------------------------------------------------------------------

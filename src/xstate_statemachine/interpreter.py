@@ -70,6 +70,7 @@ from .models import (
     StateNode,
     TContext,
     TEvent,
+    SPAWN_BLOCKING_PREFIX,
     spawn_service_key,
 )
 from .task_manager import TaskManager
@@ -923,9 +924,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 plugin.on_action_execute(self, action_def)
 
             # 👶 Handle actor spawning as a special, built-in action type.
-            if action_def.type.startswith("spawn_") and not is_builtin(
-                action_def.type
-            ):
+            # 🏛️ #41: `spawn_blocking_` is a distinct MODE (see
+            #    `_spawn_actor`), not just a longer prefix of `spawn_`.
+            if action_def.type.startswith(
+                (SPAWN_BLOCKING_PREFIX, "spawn_")
+            ) and not is_builtin(action_def.type):
                 await self._spawn_actor(action_def, event)
                 continue
 
@@ -1276,21 +1279,42 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             if explicit_id
             else f"{self.id}:{actor_machine_key}:{uuid.uuid4()}"
         )
-        child_interpreter = Interpreter(actor_machine)
+        # 📥 Input goes in at CONSTRUCTION so a child `context` factory
+        #    receives `{input}` (#42); `_build_initial_context` also seeds
+        #    declared keys and exposes `context["input"]`.
+        child_interpreter = Interpreter(
+            actor_machine, input=spawn_params.get("input")
+        )
         child_interpreter.parent = self
         child_interpreter.id = actor_id
-        # 📥 Seed the child's context with any declared input.
-        child_input = spawn_params.get("input")
-        if child_input is not None:
-            child_interpreter.context.setdefault("input", child_input)
         # 🌐 Register under a systemId so siblings can address it.
         self._register_in_system(
             spawn_params.get("systemId"), child_interpreter
         )
-        await child_interpreter.start()
-
         self._actors[actor_id] = child_interpreter
         self._actor_sources[actor_id] = actor_machine_key
+        await child_interpreter.start()
+
+        # ⏸️ #41: `spawn_blocking_<key>` -- the child runs to completion
+        #    BEFORE the parent's next action, exactly as on the sync engine.
+        #    Before 0.8.0 the async engine discarded the marker, so the same
+        #    action string meant two different things on the two engines.
+        #    Bounded by `spawnBlockingTimeout` (ms, machine config) so a
+        #    child with no final state cannot hang the parent forever.
+        if action_def.type.startswith(SPAWN_BLOCKING_PREFIX):
+            timeout_ms = self.machine.spawn_blocking_timeout_ms
+            try:
+                await asyncio.wait_for(
+                    child_interpreter.wait_done(),
+                    None if timeout_ms is None else timeout_ms / 1000.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "⏱️ Blocking spawn of '%s' did not finish within %s ms; "
+                    "continuing without it.",
+                    actor_id,
+                    timeout_ms,
+                )
         logger.info(
             "✅ Actor '%s' (child of '%s') spawned and started successfully.",
             actor_id,
@@ -1382,7 +1406,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             # Create a synthetic event to pass to the service if it needs context.
             invoke_event = Event(
                 type=f"invoke.{invocation.id}",
-                payload={"input": invocation.input or {}},
+                # 📥 #42: callable `input` is resolved here too, so a
+                #    service `src` and a machine `src` see the same value.
+                payload={
+                    "input": invocation.resolve_input(self.context, None) or {}
+                },
             )
             # 🏃‍♂️ Await the actual service coroutine.
             # 🔀 Accept both plain and coroutine services.
@@ -1511,7 +1539,12 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 if invocation.id_is_explicit
                 else f"{self.id}:{invocation.src}:{uuid.uuid4()}"
             )
-            child_interpreter = Interpreter(actor_machine)
+            # 📥 #42: resolve `input` against the PARENT's live context and
+            #    hand it to the child as its creation input, so a child
+            #    `context` factory receives `{input}` exactly as in XState.
+            #    A raising resolver is a child failure -> `onError`.
+            child_input = invocation.resolve_input(self.context, None)
+            child_interpreter = Interpreter(actor_machine, input=child_input)
             child_interpreter.parent = self
             child_interpreter.id = actor_id
             self._actors[actor_id] = child_interpreter

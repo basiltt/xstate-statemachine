@@ -62,13 +62,17 @@ async def main() -> int:
         cfg, logic=MachineLogic(services={"leg": create_machine(CHILD)})
     )
     inv = m.states["running"].invoke[0]
-    print(
-        f"OBSERVED type(invoke.input) with a callable = {type(inv.input).__name__}"
-    )
+    # 0.8.0 (#42): per this issue's acceptance criteria the callable is
+    # STORED (`InvokeDefinition.input accepts a callable`) and resolved
+    # per spawn through `resolve_input(context, event)` -- XState's model.
+    # The observable contract is therefore the RESOLVED value, not the type
+    # of the stored attribute.
+    resolved = inv.resolve_input({"profile": {"venue": "X", "size": 7}}, None)
+    print(f"OBSERVED invoke.resolve_input(...) with a callable = {resolved}")
     print(
         "EXPECTED it to be resolved per-spawn against {context, event} (a dict)"
     )
-    if callable(inv.input):
+    if resolved != {"snapshot": {"venue": "X", "size": 7}}:
         ok = False
 
     # 2) Static input never reaches the spawned child's context.

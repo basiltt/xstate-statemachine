@@ -29,6 +29,8 @@ and invoked services.
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
+import copy
+import inspect
 import logging
 from typing import (
     Any,
@@ -554,7 +556,9 @@ class InvokeDefinition:
         )
         self.id: str = invoke_id
         self.src: Optional[str] = config.get("src")
-        self.input: Optional[Dict[str, Any]] = config.get("input")
+        #: Input for the invoked child. Either a static value or a
+        #: callable resolved per spawn by `resolve_input()` (#42).
+        self.input: Any = config.get("input")
         #: True when the user DECLARED an `id`. The parser defaults an
         #: omitted id to the hosting state's id, which every anonymous
         #: invoke in that state shares -- so a bare `self.id` is not safe
@@ -579,6 +583,37 @@ class InvokeDefinition:
     def __repr__(self) -> str:
         """Provides a developer-friendly string representation."""
         return f"Invoke(id='{self.id}', src='{self.src}')"
+
+    def resolve_input(self, context: Any, event: Any) -> Any:
+        """Resolve this invoke's ``input`` against the parent's state (#42).
+
+        🏛️ Architecture decision: XState v5 defines
+        ``input: ({context, event}) => value`` -- computed PER SPAWN, so a
+        child can be parameterised by the parent's live context. Before
+        0.8.0 a callable was stored verbatim (the child received the
+        function object) and, for a child MACHINE, `input` was never
+        forwarded at all. Both engines call this one method so they cannot
+        disagree.
+
+        Accepted callable arities, mirroring `MachineLogic` conventions:
+
+        * ``fn(args)`` -- one mapping ``{"context", "event"}`` (XState form)
+        * ``fn(context, event)`` -- the two-positional form
+
+        Returns:
+            Any: A DEEP COPY of the resolved value, so the child never
+            aliases the parent's context. ``None`` when no input is declared.
+        """
+        raw = self.input
+        if raw is None:
+            return None
+        if callable(raw):
+            arity = len(inspect.signature(raw).parameters)
+            if arity >= 2:
+                raw = raw(context, event)
+            else:
+                raw = raw({"context": context, "event": event})
+        return copy.deepcopy(raw)
 
 
 # -----------------------------------------------------------------------------
@@ -1253,6 +1288,12 @@ class MachineNode(StateNode[TContext, TEvent]):
         #: Upper bound on microsteps when settling transient ("always")
         #: transitions, mirroring XState's `maxIterations` (v5.31.0).
         self.max_iterations: int = int(config.get("maxIterations", 1000))
+        #: Upper bound (ms) a `spawn_blocking_<key>` waits for the child to
+        #: finish on the async engine; `None` waits indefinitely (#41).
+        raw_timeout = config.get("spawnBlockingTimeout")
+        self.spawn_blocking_timeout_ms: Optional[float] = (
+            None if raw_timeout is None else float(raw_timeout)
+        )
         #: Machine-level output declaration, resolved when a top-level final
         #: state is reached.
         self.machine_output: Any = config.get("output")

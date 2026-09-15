@@ -26,16 +26,23 @@ CHILD_WORK_S = 0.25
 
 
 def parent(action_type: str):
-    def slow(interp, ctx, evt, action):  # noqa: ANN001
-        time.sleep(CHILD_WORK_S)
-
+    # 0.8.0 (#41): the child's "work" is an `after` timer rather than a
+    # `time.sleep` in an entry action. A blocking sleep stalls the ENTIRE
+    # asyncio loop, so on the async engine both spawn modes would measure
+    # the full CHILD_WORK_S regardless of whether the marker is honoured --
+    # which is a property of asyncio (see docs: production characteristics),
+    # not of `spawn_blocking_`. A timer child lets the two modes be told
+    # apart on both engines.
     child = create_machine(
         {
             "id": "w",
-            "initial": "done",
-            "states": {"done": {"type": "final", "entry": ["slow"]}},
+            "initial": "busy",
+            "states": {
+                "busy": {"after": {str(int(CHILD_WORK_S * 1000)): "done"}},
+                "done": {"type": "final"},
+            },
         },
-        logic=MachineLogic(actions={"slow": slow}),
+        logic=MachineLogic(),
     )
     return create_machine(
         {"id": "p", "initial": "a", "states": {"a": {"entry": [action_type]}}},
