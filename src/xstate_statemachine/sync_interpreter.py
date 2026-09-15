@@ -452,7 +452,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         # 3. A self-transition without `reenter: True` is also internal.
         if target_state == transition.source and not transition.reenter:
-            logger.info("🔄 Executing internal transition actions.")
+            logger.debug("🔄 Executing internal transition actions.")  # 📉 #55
             self._execute_actions(transition.actions, event)
             for plugin in self._plugins:
                 plugin.on_transition(

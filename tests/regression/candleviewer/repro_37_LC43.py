@@ -94,10 +94,9 @@ async def main() -> int:
 
     def worker_safe() -> None:
         t0 = time.perf_counter()
-        futs = [
-            asyncio.run_coroutine_threadsafe(interp2.send("FILL", i=i), loop)
-            for i in range(N)
-        ]
+        # 0.8.0 (#37): `send()` now raises on a foreign thread by design
+        # (that is the fix), so part B uses the supported thread-safe API.
+        futs = [interp2.send_threadsafe("FILL", i=i) for i in range(N)]
         for f in futs:
             f.result()
         elapsed.append(time.perf_counter() - t0)

@@ -290,6 +290,26 @@ class MachineLogic(Generic[TContext, TEvent]):
                 continue
 
             registry[name] = bound
+            # 📢 #52: arity 2 and 3 are AMBIGUOUS -- a 2-arg method is a
+            #    guard OR the loose (context, event) service form seen in
+            #    the guides; a 3-arg one is a service OR an action whose
+            #    author dropped the unused 4th param. Register by the
+            #    arity table (unchanged behaviour) but say so, so a
+            #    misfiled method is visible at construction time.
+            if arity in (2, 3):
+                roles = {
+                    2: "guard (or a 2-arg service)",
+                    3: "service (or a 3-arg action)",
+                }
+                warnings.warn(
+                    f"MachineLogic subclass method '{name}' was registered "
+                    f"as a {roles[arity].split(' ')[0]} by arity ({arity}), "
+                    f"but that arity is ambiguous: {roles[arity]}. Decorate "
+                    f"it with @action / @guard / @service to state the role "
+                    f"explicitly.",
+                    UserWarning,
+                    stacklevel=3,
+                )
             logger.debug(
                 "🧬 Auto-registered subclass method '%s' by arity %d.",
                 name,

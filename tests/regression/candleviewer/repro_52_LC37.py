@@ -93,16 +93,24 @@ EXPECTED = {
 
 def main() -> int:
     # --- 1. undecorated: arity decides, and decides wrong ------------------
-    observed = registries_of(OrderLogic(), NAMES)
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        observed = registries_of(OrderLogic(), NAMES)
+    warned = [str(w.message) for w in caught if w.category is UserWarning]
 
     print(f"OBSERVED registries (undecorated): {observed}")
     print(f"EXPECTED registries: {EXPECTED}")
-    print("OBSERVED: no warning or error was raised at construction time.")
+    print(f"OBSERVED: {len(warned)} warning(s) at construction time.")
     print(
         "EXPECTED: misclassification is impossible (explicit decorators) or "
         "at minimum warns."
     )
-    misfiled = observed != EXPECTED
+    # 0.8.0 (#52): arity inference is kept for undecorated methods, but
+    # every ambiguous/unregistrable case now WARNS -- the issue's stated
+    # minimum. Misfiled without a warning is the defect.
+    misfiled = observed != EXPECTED and not warned
 
     # --- 2. decorated: the explicit role marker is ignored -----------------
     decorated = registries_of(DecoratedOrderLogic(), NAMES)
