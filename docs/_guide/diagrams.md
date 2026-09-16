@@ -147,6 +147,7 @@ yellow --> red : TIMER
 
 Both export methods work with any machine created via `create_machine()`:
 
+<!-- doc-fragment -->
 ```python
 import json
 from xstate_statemachine import create_machine

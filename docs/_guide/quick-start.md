@@ -113,6 +113,7 @@ class LightSwitchLogic(MachineLogic):
 
 **Step 3 — Run it:**
 
+<!-- doc-fragment -->
 ```python
 import json
 from xstate_statemachine import create_machine, SyncInterpreter

@@ -282,6 +282,7 @@ Your frontend team models a checkout flow in [Stately.ai](https://stately.ai/). 
 
 You take **that exact file** — unedited — and run it in Python:
 
+<!-- doc-fragment -->
 ```python
 import json
 from xstate_statemachine import create_machine, MachineLogic, SyncInterpreter
@@ -780,6 +781,7 @@ pools, per-user session machines, job workers.
 Serialize a running machine to JSON, store it anywhere, rebuild it later. Long-running flows
 survive deploys and restarts.
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 
@@ -935,6 +937,7 @@ ed.tags        # {'idle'}       ← back in `clean`
 
 ### Plugins — the whole lifecycle, one line
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import LoggingInspector
 
@@ -954,6 +957,7 @@ hook is optional:
 | `on_action_error` | An action raised. **Failures are contained**, so without this hook they are invisible |
 | `on_service_start` / `on_service_done` / `on_service_error` | `invoke` lifecycle |
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import PluginBase
 
@@ -1442,6 +1446,7 @@ Containment by default is deliberate: a long-lived machine should not die becaus
 side effect had a bad day. The cost is that failures are **invisible unless you look**, so
 wire up the hooks early — every one of them fires whatever policy you choose:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import PluginBase
 
@@ -1474,6 +1479,7 @@ await interp.send_priority("CANCEL")   # ahead of the inbox, exempt from its bou
 
 Do not poll by hand or `sleep()` and hope:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import wait_for, wait_for_sync, to_promise
 
@@ -1522,6 +1528,7 @@ the one thing either engine runs off-thread.
 The [pure API](#-the-pure-api--no-interpreter) is the simplest way to test machine
 *logic* — no event loop, no mocks, no sleeping:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import get_initial_snapshot, get_next_snapshot
 
@@ -1533,6 +1540,7 @@ assert snap.matches("checkout.paying")
 Use a real interpreter for integration tests, where you want the actions to actually run.
 For an `after` timer, don't sleep — inject a `SimulatedClock` and jump virtual time:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import SyncInterpreter, SimulatedClock
 

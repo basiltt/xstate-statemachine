@@ -13,6 +13,7 @@ A plugin implements the **Observer pattern**: it subscribes to lifecycle events 
 
 Every plugin extends the `PluginBase` class and overrides the hook methods it cares about. You register plugins with the interpreter using the `.use()` method.
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import SyncInterpreter, PluginBase
 
@@ -339,6 +340,7 @@ def on_done(self, interpreter, output):
 
 You can attach multiple plugins to a single interpreter. They execute in registration order:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import SyncInterpreter, LoggingInspector
 

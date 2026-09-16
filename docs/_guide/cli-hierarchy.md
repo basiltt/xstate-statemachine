@@ -155,6 +155,7 @@ xsm gt \
 
 The generated `order_orchestrator_runner.py` follows this structure:
 
+<!-- doc-fragment -->
 ```python
 from pathlib import Path
 import json

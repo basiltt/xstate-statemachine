@@ -571,6 +571,7 @@ Because errors are contained, an uncaught exception is *invisible to your
 machine* — it is logged, but the flow carries on as if the action succeeded.
 When you need to know, register a plugin:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import PluginBase
 
@@ -848,6 +849,7 @@ def fetch_data(interpreter, context, event):
     return {"items": [1, 2, 3]}
 ```
 
+<!-- doc-fragment -->
 ```python
 # main.py — use the module for auto-discovery
 import my_logic
@@ -943,6 +945,7 @@ interp.stop()
 
 For large applications, register modules globally so all machines can discover them:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import LogicLoader
 

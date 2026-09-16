@@ -170,6 +170,7 @@ class FormWizard(StateMachine):
 
 ### Running the Wizard
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import SyncInterpreter
 
@@ -269,6 +270,7 @@ A realistic checkout flow with nested states for the checkout process, a payment
 
 ### Logic Implementation
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import create_machine, MachineLogic, SyncInterpreter
 
@@ -1061,8 +1063,20 @@ from its own directory, exits `0`):
 - [`examples/sync/features/enqueue_actions/enqueue_actions_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/enqueue_actions/enqueue_actions_runner.py) — `enqueue_actions()`: imperatively building an action list.
 - [`examples/sync/features/choose/choose_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/choose/choose_runner.py) — `choose()`: the first matching branch runs.
 - [`examples/async/features/forward_to/forward_to_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/forward_to/forward_to_runner.py) — `forward_to()`: relaying the triggering event to another actor.
-
-Not yet covered (lower priority, tracked for a follow-up pass): `spawn_child` composed with `stop_child`, `send_to`, `wait_done`, `pure`, `raise_`, `subscribe`, `get_persisted_snapshot`, `strict_targets`/`strictTargets`, `history` (shallow/deep), `has_tag`, `get_meta`, `active_state_ids`, `RestoredError`.
+- [`examples/async/features/stop_child/stop_child_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/stop_child/stop_child_runner.py) — `stop_child()`: retiring a spawned actor by id.
+- [`examples/sync/features/pure_action/pure_action_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/pure_action/pure_action_runner.py) — `pure()`: computing an action list dynamically from context.
+- [`examples/sync/features/raise_internal_queue/raise_internal_queue_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/raise_internal_queue/raise_internal_queue_runner.py) — `raise_()`: a raised event is processed as a microstep before the next event (#36).
+- [`examples/async/features/wait_done/wait_done_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/wait_done/wait_done_runner.py) — `wait_done()`: awaiting a machine's terminal status.
+- [`examples/sync/features/subscribe/subscribe_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/subscribe/subscribe_runner.py) — `subscribe()`: a listener fired after every settled transition, with unsubscribe.
+- [`examples/sync/features/persisted_snapshot/persisted_snapshot_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/persisted_snapshot/persisted_snapshot_runner.py) — `get_persisted_snapshot()` vs. `get_snapshot()`, and `from_snapshot()`.
+- [`examples/sync/features/strict_targets/strict_targets_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/strict_targets/strict_targets_runner.py) — `strict_targets`: unresolvable transition targets rejected at build time, or downgraded to a warning.
+- [`examples/sync/features/history_shallow_deep/history_shallow_deep_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/history_shallow_deep/history_shallow_deep_runner.py) — `history: "shallow"` vs. `"deep"` pseudostates.
+- [`examples/sync/features/tags_and_meta/tags_and_meta_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/tags_and_meta/tags_and_meta_runner.py) — `tags`, `meta`, `has_tag()`, and `get_meta()`.
+- [`examples/sync/features/active_state_ids_and_value/active_state_ids_and_value_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/active_state_ids_and_value/active_state_ids_and_value_runner.py) — `current_state_ids`, `active_state_ids`, `value`, and `matches()`.
+- [`examples/sync/features/restored_error/restored_error_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/restored_error/restored_error_runner.py) — `actionErrorPolicy: "fail"` and `RestoredError` after a snapshot restore.
+- [`examples/sync/features/logic_loader/logic_loader_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/logic_loader/logic_loader_runner.py) — `logic_modules` and `logic_providers`: auto-discovering actions and guards by name.
+- [`examples/sync/features/send_events_batch/send_events_batch_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/send_events_batch/send_events_batch_runner.py) — `send_events()`: a single call processing a mixed batch of strings, dicts, and `Event` objects.
+- [`examples/async/features/can_and_pending_events/can_and_pending_events_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/can_and_pending_events/can_and_pending_events_runner.py) — `can()` as a dry-run predicate vs. `queue_depth`/`pending_events`/`drain_pending()`.
 
 ### Running Tests
 

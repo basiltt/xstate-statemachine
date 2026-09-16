@@ -84,6 +84,7 @@ def safe_run_machine(config, logic=None):
 
 `StateNotFoundError` includes extra attributes for debugging:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import StateNotFoundError
 
@@ -480,6 +481,7 @@ An interpreter restored via `from_snapshot()` sits in the `"error"` status, and 
 
 **How to fix it:** Treat `RestoredError` as a message-only diagnostic — check `interp.status` after restoring, and read `str(interp.error)` for the original failure text; don't rely on `isinstance` checks against the original exception type:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import SyncInterpreter, RestoredError
 
@@ -538,6 +540,7 @@ xstate_statemachine.exceptions.NotSupportedError: Guard 'my_guard' must be synch
 
 **How to fix it:**
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import guard
 
@@ -614,6 +617,7 @@ print(interp.current_state_ids)  # {'timer.timeout'}
 
 **Using `SimulatedClock`** for deterministic tests — advance virtual time instead of sleeping:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 from xstate_statemachine.clock import SimulatedClock
@@ -676,6 +680,7 @@ def my_actor_service(interpreter, context, event):
 
 The `LoggingInspector` plugin logs every transition, action, guard, and state change:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, LoggingInspector
 
@@ -731,6 +736,7 @@ When debugging, prefer `SyncInterpreter` over `Interpreter` because:
 - State changes happen synchronously
 - Easier to inspect state after each operation
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 

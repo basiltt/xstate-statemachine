@@ -101,6 +101,7 @@ machine = build_machine(id="trafficLight", states=[green, yellow, red])
 
 **Async example:**
 
+<!-- doc-fragment -->
 ```python
 import asyncio
 from xstate_statemachine import create_machine, Interpreter
@@ -119,6 +120,7 @@ asyncio.run(main())
 
 **Sync example:**
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 
@@ -206,6 +208,7 @@ Regardless of the chosen policy, any plugin's `on_guard_error` hook (e.g. `Loggi
 
 Yes! Create separate `MachineNode` instances and run them with separate interpreters:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 
@@ -341,6 +344,7 @@ Python **3.9** through **3.14**, with full test coverage across all versions. Th
 
 Use the snapshot system to serialize and restore interpreter state:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 import json
@@ -387,6 +391,7 @@ def checkout_view(request):
 
 **FastAPI** (async): Use `Interpreter`:
 
+<!-- doc-fragment -->
 ```python
 # FastAPI endpoint example
 from xstate_statemachine import create_machine, Interpreter
@@ -489,6 +494,7 @@ For most applications, the state machine overhead is negligible compared to your
 
 Yes. The plugin system allows you to hook into the interpreter lifecycle:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import PluginBase
 
