@@ -11,99 +11,250 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ---
 
-## [Unreleased] — Adoption-readiness, part 1
+## [Unreleased] — Adoption-readiness, parts 1–3
 
-A production adoption audit ([#26](https://github.com/basiltt/xstate-statemachine/issues/26))
-filed 34 defects against 0.7.0 with a common theme: the library fails
-*silently* by default. This batch closes the blockers and top priorities.
-Every new behavior is a per-machine policy whose default preserves 0.7.x
-semantics, so nothing changes on upgrade until you opt in.
+**Adoption-readiness.** A production adoption audit (tracking issue
+[#26](https://github.com/basiltt/xstate-statemachine/issues/26)) filed 34
+defects against 0.7.0 with a common theme: the library fails *silently* by
+default. Part 1 closed all four blockers and the filer's top priorities.
+Part 2 (below, marked **[wave 2]**) closes the remaining small/medium items:
+actor lifecycle, persistence envelope, `invoke.input`, the pure API's cost,
+hierarchical `value`, and the production-characteristics documentation.
+Part 3 (below, marked **[wave 3]**) closes the concurrency and correctness
+items: the SCXML-correct internal event queue, a bounded inbox with
+overflow policies, `send(wait=, priority=)` receipts, resumable
+invocations after restore, an injectable clock with a starvation-free
+timer lane, strict-mode event validation, and a refactor that now runs
+both engines off one core algorithm.
+Every new behaviour is a per-machine policy or an additive API whose default
+preserves 0.7.x semantics, with two deliberate exceptions called out under
+**Changed**.
 
 ### Added
 
-- **`actionErrorPolicy: "continue" | "rollback" | "fail"`** — an action that
-  raises no longer silently commits a half-built transition. `rollback`
-  restores configuration and context; `fail` also stops with
-  `TransitionFailedError`. New `on_transition_failed` hook and
-  `interpreter.last_transition_ok`. Covers `entry`, `exit`, transition and
-  action-only handlers alike. Default (`"continue"`) emits a one-shot
-  `DeprecationWarning`; flips to `rollback` in 1.0.
-- **`onUnhandled: "ignore" | "defer" | "error"`** — `"defer"` replays
-  unhandled events at the head of the queue, survives snapshots, and is
-  bounded by `DEFER_MAX`. New `on_unhandled_event` hook and
+- **`actionErrorPolicy: "continue" | "rollback" | "fail"`** (#27). Before,
+  an action that raised left the transition committed with a half-built
+  state. `rollback` restores configuration *and* context; `fail` rolls back
+  and stops with `TransitionFailedError`. New `on_transition_failed` plugin
+  hook and `interpreter.last_transition_ok`. The default (`continue`) emits
+  a one-shot `DeprecationWarning`; it flips to `rollback` in 1.0. The policy
+  covers **every** action slot -- `entry`, `exit`, the transition's own
+  `actions`, targetless and internal self-transitions, and the initial
+  entry performed by `start()` -- and a rollback cancels any `after` timers
+  or invokes that a partially-entered target state had already armed.
+- **`onUnhandled: "ignore" | "defer" | "error"`** (#28). `defer` is
+  library-owned: replay is at the head of the queue in original order,
+  still-unhandled events are re-deferred, the buffer survives snapshots and
+  is bounded by `DEFER_MAX`. `interpreter.deferred_count`, new
+  `on_unhandled_event` hook (fires under every policy) and
   `UnhandledEventError`.
-- **`guardErrorPolicy: "false" | "true" | "raise"`** — a raising guard is now
-  observable via `on_guard_error` before the substituted result is reported.
-- **Build-time validation** — `create_machine()` rejects unresolvable
-  transition targets and non-progressing `always` self-targets in one
-  message. `strict_targets=False` downgrades target failures to a
-  `DeprecationWarning` (removed in 1.0).
-- **`strictTargets: true`** machine config disables the sibling fallback for
-  `.child` targets.
-- **`Interpreter.send_threadsafe()`** for delivering events from another
-  thread; `send()` from a foreign thread now raises `WrongThreadError`.
-- **Error-observability hooks** on `PluginBase`: `on_transition_failed`,
-  `on_guard_error`, `on_unhandled_event`, `on_error`, `on_done`, all
-  implemented by `LoggingInspector`.
-- **Built-in action param validation** — `raise`, `sendTo`, `cancel`,
-  `stopChild`, … fail at build time when a required key is missing, with a
-  hint if it was placed at the top level instead of under `params`.
-- New exceptions: `UnhandledEventError`, `TransitionFailedError`,
+- **`guardErrorPolicy: "false" | "true" | "raise"`** (#35). A raising guard
+  is now observable via `on_guard_error` before the substituted result is
+  reported; previously it was indistinguishable from a guard returning
+  `False`.
+- **Build-time validation** (#29, #30). `create_machine()` now walks the
+  finished tree and rejects, in one message, every transition target that
+  does not resolve and every `always` self-target that can never make
+  progress. `create_machine(..., strict_targets=False)` downgrades target
+  failures to a `DeprecationWarning`; that escape hatch is removed in 1.0.
+- **`strictTargets: true`** machine config (#31) disables the sibling
+  fallback for `.child` targets.
+- **`Interpreter.send_threadsafe()`** (#37) for delivering events from a
+  foreign thread. `send()` from a foreign thread now raises
+  `WrongThreadError` instead of silently losing the event.
+- **Error-observability hooks** on `PluginBase` (#33): `on_transition_failed`,
+  `on_guard_error`, `on_unhandled_event`, `on_error`, `on_done`. All
+  implemented by `LoggingInspector`. Existing plugins load unchanged.
+- **Built-in action param validation** (#32). `raise`, `sendTo`, `cancel`,
+  `stopChild`, … now fail at build time when a required key is missing, with
+  a hint if the key was placed at the top level instead of under `params`.
+- New exceptions exported: `UnhandledEventError`, `TransitionFailedError`,
   `WrongThreadError`.
-- **`interpreter.value`** — the active configuration in hierarchical form
-  (a string for atomic, `{parent: child}` for compound, one key per region
-  for parallel, `{}` before `start()`). `matches()` now also accepts a
-  partial `value` dict.
-- **Snapshot envelope v1** — persisted snapshots gain `version`,
-  `machine_id`, `machine_hash`, and `taken_at`. `from_snapshot` refuses a
-  newer `version` with `SnapshotVersionError` and a mismatched id or hash
-  with `SnapshotDriftError`; `verify_machine_hash=False` opts out after a
-  migration. Unversioned 0.7.x payloads restore unchanged. New
-  `persistence` module owns the format contract.
-- **Inbox durability** — `interpreter.pending_events`, `drain_pending()`,
-  and `stop(drain=True)` (with `timeout=` on the async engine). Snapshots
-  now carry `pending_events`, restored recursively for child actors too.
-- **`invoke.input` may be a callable** — resolved per spawn via
-  `InvokeDefinition.resolve_input()`, deep-copied, and forwarded to a
-  child machine as its creation `input` (previously never forwarded at
-  all for machine invokes).
-- **`Interpreter.wait_done()`** — a future resolved the instant the
-  machine reaches `"done"`/`"error"`, replacing a 5&nbsp;ms poll loop.
-- **`spawnBlockingTimeout`** machine config key bounds how long
-  `spawn_blocking_<key>` waits for the child.
-- **Production Characteristics guide** — measured numbers for
-  per-process throughput, `after` timer lateness under load, and the
-  `SyncInterpreter` threading contract.
+- **[wave 2] `interpreter.value`** (#58) -- the active configuration in
+  XState's hierarchical form: a leaf key for an atomic root, `{parent:
+  child}` for compound (innermost collapses to a string), one key per
+  region for parallel, `{}` before `start()`. Tree-walked, so state keys
+  containing `.` are safe. `matches()` now also accepts a partial value
+  dict. Snapshots carry a derived `"value"` key; restore ignores it.
+- **[wave 2] Snapshot envelope v1** (#45). Persisted snapshots gain
+  `version` (integer payload-layout version, bumped only on layout change),
+  `machine_id`, `machine_hash` (a 16-hex structural fingerprint over
+  states, transitions, guard/action *names*, invokes and delays -- stable
+  across `meta`/`description` edits and key order) and `taken_at`.
+  `from_snapshot` refuses a newer `version` with `SnapshotVersionError`
+  and a mismatched id or hash with `SnapshotDriftError`;
+  `from_snapshot(..., verify_machine_hash=False)` opts out after a
+  migration. Unversioned 0.7.x payloads restore exactly as before.
+  New module `persistence.py` owns the format contract.
+- **[wave 2] Inbox durability** (#47), both engines:
+  `interpreter.pending_events` (accepted-but-unprocessed, FIFO),
+  `drain_pending()` (remove without processing), `stop(drain=True)`
+  (process to empty; async engine also takes `timeout=`). Snapshots carry
+  `pending_events` and restore re-enqueues them, recursively for child
+  actors.
+- **[wave 2] `invoke.input` may be a callable** (#42) --
+  `fn({context, event})` (XState form) or `fn(context, event)` -- resolved
+  per spawn via `InvokeDefinition.resolve_input()`, deep-copied, and
+  passed to a child MACHINE as its creation `input` (previously it was
+  never forwarded at all), so a child `context` factory receives
+  `{input}` as in XState. A plain-dict child context receives it only at
+  `context["input"]` -- declared keys are never overwritten. A raising
+  resolver becomes `onError` on both engines.
+- **[wave 2] `Interpreter.wait_done()`** (#43) -- a future resolved the
+  instant the machine reaches `done`/`error`.
+- **[wave 2] `spawnBlockingTimeout`** machine key (ms) bounds how long a
+  `spawn_blocking_<key>` waits for the child (#41). Default 30 s; the wait
+  is never unbounded, so a child that never reaches a final state cannot
+  wedge its parent.
+- **[wave 2] Docs: Production Characteristics** (#53, #56) -- a new guide
+  page with measured numbers for the per-process throughput budget, `after`
+  timer lateness under load, and the `SyncInterpreter` threading contract,
+  plus `benchmarks/production_characteristics.py` to reproduce them.
+- **[wave 3] SCXML internal event queue** (#36) -- a zero-delay `raise` to
+  self during a macrostep now goes to a dedicated internal queue that both
+  engines drain to completion before taking the next external event,
+  instead of sharing one queue with the outside world. Trace order is now
+  `['entry', 'RAISED', 'EXTERNAL']`, not `['entry', 'EXTERNAL', 'RAISED']`.
+  Chains of raises stay FIFO; `always` transitions still run first within
+  each microstep.
+- **[wave 3] Bounded inbox** (#38) -- `Interpreter(max_queue_size=,
+  overflow_policy=OverflowPolicy.*)` (`RAISE` the default once a bound is
+  set, `BLOCK`, or `DROP_NEWEST`). `RAISE` raises `QueueOverflowError`;
+  `DROP_NEWEST` warns and calls the new `PluginBase.on_event_dropped` hook.
+  New `interpreter.queue_depth` on both engines for observability.
+  `max_queue_size=None` keeps the unbounded queue (default, unchanged).
+- **[wave 3] `send(wait=True)` / `send(priority=True)`** (#39) --
+  `wait=True` resolves to a `Receipt(state_ids, changed, error)` once the
+  macrostep for that exact event has run, so a caller can gate on the
+  machine's decision without polling. `priority=True` (also
+  `send_priority()`) delivers ahead of the inbox and is exempt from its
+  bound. A dict-form payload using the reserved `wait`/`priority` keys
+  still works but emits a `DeprecationWarning`. New exports: `Receipt`,
+  `OverflowPolicy`, `QueueOverflowError`, `InterpreterStoppedError`.
+- **[wave 3] `from_snapshot(restart_services=True)` and
+  `pending_invocations()`** (#44) -- restoring a snapshot is still a
+  static rebuild that starts nothing by default, but
+  `pending_invocations()` now lists every `PendingInvocation(state_id,
+  invoke_id, src)` in the active configuration with no live service or
+  child actor, and `restart_services=True` re-invokes each of them from
+  scratch (not resumed) through the same path `_enter_states` uses on
+  both engines.
+- **[wave 3] Injectable `Clock`** (#48, #49, #50) -- `Clock` protocol,
+  `RealClock` (default) and `SimulatedClock` (virtual time), passed as
+  `Interpreter(clock=)` / `SyncInterpreter(clock=)`; invoked and spawned
+  children inherit the parent's clock. `RealClock` now delivers a fired
+  `after` timer through a priority lane the async run loop checks ahead
+  of the inbox, so a due timer can no longer be starved behind a burst of
+  external events; `AfterEvent` gains `scheduled_for`, `fired_at`, and
+  `lateness_ms`. `SyncInterpreter` no longer spawns an OS thread per
+  `after` timer or delayed send -- a due deadline is delivered on the
+  caller's thread at the top of `send()`, in the macrostep loop, or by the
+  new `tick()`.
+- **[wave 3] Strict mode** (#51) -- `strict` machine config key or
+  `Interpreter`/`SyncInterpreter(strict=)` constructor flag (ctor wins).
+  Under strict, `send()` of an event type the machine has never declared
+  raises `UnknownEventError` synchronously at the call site, before the
+  event is queued, with a difflib suggestion (`'Did you mean FILL?'`).
+  `MachineNode.is_known_event()` applies the same matching rules as
+  dispatch, including partial (`'mouse.*'`) and bare-`'*'` descriptors.
+  `create_machine(event_schemas={'FILL': Fill})` adds opt-in,
+  dependency-free payload validation -- any object with `validate(payload)`
+  or `__call__` -- raising `InvalidEventPayloadError` at the call site
+  regardless of the strict setting. Default (strict unset, no schemas) is
+  unchanged.
 
 ### Fixed
 
 - `.child` targets resolve into the **source's** descendants, matching
-  XState v5; the 0.7.x sibling reading is kept as a fallback.
-- `internal: false` is honored as `reenter: true` instead of being silently
-  dropped.
-- `sendTo` can address an invoke by its explicit `id` and by `systemId`.
+  XState v5; the 0.7.x sibling reading is kept as a fallback (#31).
+- `internal: false` (XState v4 spelling) is honoured as `reenter: true`
+  instead of being silently dropped (#29).
+- `sendTo` can address an invoke by its explicit `id` and by `systemId`;
+  a duplicate live `systemId` raises `ActorSpawningError` (#40).
 - `from_snapshot` deep-copies the persisted context and merges it over the
-  machine's defaults instead of aliasing the caller's dict.
+  machine's defaults instead of aliasing the caller's dict (#46).
 - `@action` / `@guard` / `@service` markers win over arity-based
-  auto-registration in `MachineLogic` subclasses.
-- Runtime target resolution no longer falls back to a whole-tree search by
-  last id segment — a bare `target: "someState"` is strictly a sibling,
-  `#id`, `.child`, or exact top-level key; both engines share one resolver.
-- `spawn_blocking_<key>` on the async `Interpreter` now actually blocks the
-  parent until the child reaches a terminal status (it previously ran
-  non-blocking).
-- The pure API caches one probe per machine instead of rebuilding one per
-  call, cutting the cost of `transition()` / `get_next_snapshot()` by
-  roughly 3x; semantics are unchanged.
+  auto-registration in `MachineLogic` subclasses; ambiguous arities warn (#52).
+- Resolving a transition no longer writes back into the shared
+  `TransitionDefinition` (#59).
+- `#machineId.path` targets resolve when the machine `id` itself contains a
+  dot (`"my.machine"`); previously the first dotted segment alone was
+  compared against the key and every such target was unresolvable.
+- The unresolvable-target error names the absolute `#machine.path` form of
+  any nested state matching the bare name, so a 0.7.x machine that relied on
+  the fuzzy fallback gets the one-line fix in the message.
+- Engine-synthesised `xstate.*` events (e.g. `xstate.error.actor.*` from
+  `escalate`) are treated as system events by the `onUnhandled` policy, the
+  same as `done.*` / `error.*` / `after.*`. Under `onUnhandled: "error"` an
+  unhandled escalation no longer stops the parent with a misleading
+  `UnhandledEventError`.
+- `SyncInterpreter`: replayed deferred events no longer count against the
+  macrostep runaway budget, so replaying a full `DEFER_MAX` buffer cannot
+  trigger the overflow guard and discard live events queued behind it.
+  The async engine already behaved correctly; the two now agree.
+- Two tests in the suite declared a target as a sibling of `"states"`; the
+  new validator caught them.
+- **[wave 2]** Runtime target resolution no longer falls back to a
+  whole-tree search by last id segment (#34). A bare `target: "filled"`
+  declared in one parallel region used to bind `audit.archive.filled` in
+  an unrelated region and move it. Resolution is now strictly lexical
+  (sibling / `#id` / `.child` / exact top-level key) in both engines,
+  which now share ONE resolver; the validator mirrors it one-for-one.
+- **[wave 2]** `spawn_blocking_<key>` on the async `Interpreter` honoured
+  only the `spawn_` half and ran non-blocking (#41). Both engines now wait
+  for the child to reach a terminal status before the parent's next
+  action; the sync engine also waits out a child driven by `after` timers,
+  which it previously did not.
+- **[wave 2]** The pure API (`transition` / `get_next_snapshot`) built a
+  fresh interpreter subclass per call and deep-copied twice, costing 4x a
+  real `send()` (#54). One probe per machine per THREAD is now cached
+  (thread-local, so concurrent callers never share one) and reset;
+  measured ~3x faster. Semantics unchanged.
 
 ### Changed
 
-- Per-event `INFO` log calls on the hot path are now `DEBUG`.
-- Reaching a top-level final state now tears down immediately — child
-  actors are stopped, `after` timers and invoked services cancelled, and
-  the machine's actor-system registration removed — instead of waiting
-  for a later `stop()` call. `status`, `output`, `error`, and `context`
-  are retained; `stop()` on an already-done machine is a quiet no-op.
+- Per-event `INFO` log calls on the hot path are now `DEBUG` (#55, part 1).
+  Measured overhead of running at `INFO` on the filer's OMS machine dropped
+  from 2.53× to ~1.0×.
+- `Interpreter.send()` is a regular method that does **all** of its work
+  eagerly -- thread check, normalisation, status guard and the queue put --
+  and returns an already-resolved awaitable so `await interp.send(...)`
+  is unchanged. A fire-and-forget `interp.send("GO")` from inside the loop
+  is therefore delivered rather than silently dropped, and no
+  "coroutine was never awaited" warning is ever emitted by the library.
+- `send()` / `send_threadsafe()` on an interpreter whose event loop has
+  since been closed raise a `RuntimeError` that says so, instead of a
+  `WrongThreadError` naming the same thread on both sides.
+- **[wave 2] Reaching a top-level final state now tears down** (#57):
+  child actors are stopped, `after` timers and invoked services cancelled,
+  and the machine's actor-system registration removed -- the moment
+  `status` becomes `"done"` (or `"error"`), not when `stop()` is later
+  called. `status`, `output`, `error` and `context` are retained;
+  `stop()` on a done machine is a quiet no-op that keeps `status ==
+  "done"`. Machines that relied on children outliving a completed parent
+  must restructure (that dependence was on a leak).
+- **[wave 2] Invoked child actors no longer poll** (#43). The parent
+  awaited `child.status` every 5 ms in a second task; it now awaits a
+  completion future. `onDone` latency drops from a 5 ms floor to ~0, which
+  can expose tests that used the delay as a settling window.
+  `_ACTOR_POLL_INTERVAL` is removed.
+- `Interpreter` no longer constructs its `asyncio.Queue` in `__init__`; the
+  queue is created when `start()` binds the loop, and events sent before
+  `start()` are buffered and delivered in order. On Python 3.9
+  `asyncio.Queue()` binds to the current loop at construction and raised
+  when built outside one, so an `Interpreter` could not previously be
+  instantiated in synchronous code on that version.
+- **[wave 3] One core algorithm, two execution strategies** (#60). The
+  step, transition-execution, state-entry/exit, lifecycle-action, and
+  built-in-action logic is now implemented once on `BaseInterpreter`;
+  `SyncInterpreter` inherits it unchanged and drives each coroutine to
+  completion synchronously instead of re-implementing it as a parallel
+  set of plain-`def` methods. No behaviour change is intended -- an
+  action trace is now pinned byte-identical across both engines by test
+  -- other than incidental bug fixes already released in earlier wave-3
+  commits (e.g. `functools.partial`-wrapped async actions on the sync
+  engine now raise `NotSupportedError` instead of having their coroutine
+  silently discarded).
 
 For full details, see the [`[Unreleased]` section of CHANGELOG.md](https://github.com/basiltt/xstate-statemachine/blob/main/CHANGELOG.md#unreleased).
 
