@@ -330,6 +330,51 @@ class InterpreterStoppedError(XStateMachineError):
     pass
 
 
+class UnknownEventError(XStateMachineError):
+    """Raised under ``strict`` when an event type is not declared anywhere
+    in the machine (#51).
+
+    Distinct from an event that IS declared but not handled by the current
+    state -- that is a normal, silently ignored no-op per XState. Unknown
+    means a typo or an outdated producer, which is a bug.
+
+    Attributes:
+        event_type: The offending type.
+        machine_id: The machine that refused it.
+        known: The declared descriptor set, sorted.
+    """
+
+    def __init__(self, event_type: str, machine_id: str, known: "list[str]"):
+        import difflib
+
+        self.event_type = event_type
+        self.machine_id = machine_id
+        self.known = known
+        hint = difflib.get_close_matches(event_type, known, n=1, cutoff=0.6)
+        suggestion = f" Did you mean '{hint[0]}'?" if hint else ""
+        shown = ", ".join(known[:20]) + (" ..." if len(known) > 20 else "")
+        super().__init__(
+            f"Event '{event_type}' is not declared by machine "
+            f"'{machine_id}'. Known events: {shown}.{suggestion}"
+        )
+
+
+class InvalidEventPayloadError(XStateMachineError):
+    """Raised when an event's payload fails its declared schema (#51).
+
+    Attributes:
+        event_type: The event whose payload was rejected.
+        cause: The exception the validator raised.
+    """
+
+    def __init__(self, event_type: str, cause: BaseException):
+        self.event_type = event_type
+        self.cause = cause
+        super().__init__(
+            f"payload for '{event_type}' failed validation: {cause}"
+        )
+
+
 class WrongThreadError(XStateMachineError):
     """Raised when a loop-affine method is called from a foreign thread.
 

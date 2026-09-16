@@ -48,6 +48,7 @@ def create_machine(
     logic_modules: Optional[List[Union[str, ModuleType]]] = None,
     logic_providers: Optional[List[Any]] = None,
     strict_targets: bool = True,
+    event_schemas: Optional[Dict[str, Any]] = None,
 ) -> MachineNode:
     """Creates, validates, and assembles a state machine instance.
 
@@ -170,6 +171,11 @@ def create_machine(
     # entire statechart configuration.
     logger.info("🏭 Assembling final MachineNode for '%s'...", machine_id)
     machine = MachineNode(config, final_logic)
+    # 🛡️ #51: payload validators. Any object exposing `validate(payload)`
+    #    or being callable works -- pydantic models, TypedDict adapters,
+    #    hand-written functions -- so the library takes no dependency.
+    if event_schemas:
+        machine.event_schemas = dict(event_schemas)
 
     # -------------------------------------------------------------------------
     # 🛡️ Step 4: Validate the built tree (0.8.0)

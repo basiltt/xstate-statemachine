@@ -122,6 +122,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         machine: MachineNode[TContext, TEvent],
         input: Optional[Any] = None,
         clock: Optional[Clock] = None,
+        strict: Optional[bool] = None,
     ) -> None:
         """Initializes a new synchronous Interpreter instance.
 
@@ -138,6 +139,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             interpreter_class=SyncInterpreter,
             input=input,
             clock=clock,
+            strict=strict,
         )
         #: ⏱️ Live clock handles per owning state id, so exiting a state
         #: cancels its timers on any Clock (#49/#50).
@@ -358,6 +360,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         event_obj = self._prepare_event(event_or_type, **payload)
         self._warn_reserved_payload_keys(event_obj)
+        self._check_strict(event_obj)  # #51
         config_before = frozenset(self._active_state_nodes)
         context_before = copy.deepcopy(self.context) if wait else None
         self.last_transition_ok = True
@@ -1161,9 +1164,11 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         params = self._resolve_params(action_def.params, event) or {}
 
         if canonical == RAISE:
+            raised = self._resolve_event_spec(params.get("event"), event)
+            self._check_strict(raised)  # #51: internal typos too
             self._deliver(
                 self,
-                self._resolve_event_spec(params.get("event"), event),
+                raised,
                 self._resolve_delay(params.get("delay"), event),
                 params.get("id"),
             )

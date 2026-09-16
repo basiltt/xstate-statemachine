@@ -45,7 +45,8 @@ async def main() -> int:
         ok = False  # not reproduced
 
     # 2) A typo'd event is a silent no-op.
-    interp = await Interpreter(create_machine(CFG)).start()
+    # 0.8.0 (#51): opt in. `strict` is accepted on the config AND the ctor.
+    interp = await Interpreter(create_machine(CFG), strict=True).start()
     before = list(interp.current_state_ids)
     raised = None
     try:
@@ -64,11 +65,24 @@ async def main() -> int:
 
     # 3) Payloads are unvalidated.
     seen: list = []
-    machine2 = create_machine(CFG)
+
+    class FillSchema:  # dependency-free: anything with validate()/__call__
+        @staticmethod
+        def validate(payload):
+            if not isinstance(payload.get("qty"), (int, float)):
+                raise ValueError("qty must be a number")
+
+    machine2 = create_machine(CFG, event_schemas={"FILL": FillSchema})
     interp2 = await Interpreter(machine2).start()
     interp2.subscribe(lambda snap: seen.append(dict(snap.context)))
-    await interp2.send("FILL", qty="not-a-number", side=object())
+    rejected = None
+    try:
+        await interp2.send("FILL", qty="not-a-number", side=object())
+    except Exception as exc:  # noqa: BLE001
+        rejected = exc
     await asyncio.sleep(0.05)
+    if rejected is None:
+        ok = True  # still reproduced: payload was not validated
     print(
         f"OBSERVED send('FILL', qty='not-a-number') accepted; "
         f"status={interp2.status} states={list(interp2.current_state_ids)}"

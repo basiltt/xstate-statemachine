@@ -183,6 +183,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         clock: Optional[Clock] = None,
         max_queue_size: Optional[int] = None,
         overflow_policy: "OverflowPolicy" = OverflowPolicy.RAISE,
+        strict: Optional[bool] = None,
     ) -> None:
         """Initializes a new asynchronous Interpreter instance.
 
@@ -205,7 +206,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         # 🏛️ Initialize the base class, passing our own class type so that
         # `from_snapshot` can create the correct `Interpreter` instance.
         super().__init__(
-            machine, interpreter_class=Interpreter, input=input, clock=clock
+            machine,
+            interpreter_class=Interpreter,
+            input=input,
+            clock=clock,
+            strict=strict,
         )
         #: ⚡ #48: a fired timer is delivered here, NOT via the inbox, so it
         #: cannot queue behind 2,000 external events. Checked first by the
@@ -538,6 +543,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         # 📦 Normalise eagerly so a malformed event also fails at the call site.
         event_obj = self._prepare_event(event_or_type, **payload)
         self._warn_reserved_payload_keys(event_obj)
+        self._check_strict(event_obj)  # #51: at the call site, pre-queue
         receipt = self._make_receipt(event_obj) if wait else None
         if priority:
             if not self._refuse_if_not_running(event_obj):
@@ -1344,6 +1350,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
         if canonical == RAISE:
             target_event = self._resolve_event_spec(params.get("event"), event)
+            self._check_strict(target_event)  # #51: internal typos too
             delay = self._resolve_delay(params.get("delay"), event)
             await self._deliver(self, target_event, delay, params.get("id"))
 

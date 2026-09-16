@@ -34,6 +34,7 @@ import inspect
 import logging
 from enum import Enum
 from typing import (
+    FrozenSet,
     Any,
     Dict,
     Generic,
@@ -1350,6 +1351,12 @@ class MachineNode(StateNode[TContext, TEvent]):
         #: Upper bound on microsteps when settling transient ("always")
         #: transitions, mirroring XState's `maxIterations` (v5.31.0).
         self.max_iterations: int = int(config.get("maxIterations", 1000))
+        #: 🛡️ #51: `strict` from config; an interpreter may also opt in.
+        self.strict: bool = bool(config.get("strict", False))
+        #: Payload validators keyed by event type; set by `create_machine`.
+        self.event_schemas: Dict[str, Any] = {}
+        #: Lazily built descriptor set; see `known_events`.
+        self._known_events: Optional[FrozenSet[str]] = None
         #: Upper bound (ms) a `spawn_blocking_<key>` waits for the child to
         #: finish on the async engine; `None` waits indefinitely (#41).
         raw_timeout = config.get("spawnBlockingTimeout")
@@ -1402,6 +1409,54 @@ class MachineNode(StateNode[TContext, TEvent]):
 
         # 🚀 Call the parent constructor to build the entire state tree.
         super().__init__(self, config, config["id"])
+
+    @property
+    def known_events(self) -> FrozenSet[str]:
+        """Every event descriptor this machine declares, anywhere (#51).
+
+        Built once, lazily, from every state's ``on`` keys (including
+        partial ``"a.b.*"`` and bare ``"*"`` descriptors), every ``after``
+        delay's generated type, and every ``invoke``'s generated
+        ``done.invoke.<id>`` / ``error.platform.<id>``. This is the set
+        `strict` mode checks a sent event against.
+        """
+        if self._known_events is None:
+            from .validation import walk
+
+            found = set()
+            for node in walk(self):
+                found.update(node.on.keys())
+                for group in node.after.values():
+                    found.update(t.event for t in group)
+                for inv in node.invoke:
+                    found.add(f"done.invoke.{inv.id}")
+                    found.add(f"error.platform.{inv.id}")
+            found.discard("")  # the eventless (`always`) key
+            self._known_events = frozenset(found)
+        return self._known_events
+
+    def is_known_event(self, event_type: str) -> bool:
+        """True if *event_type* matches a declared descriptor (#51).
+
+        Honours the same matching rules as dispatch: an exact key, a
+        partial ``"prefix.*"`` whose prefix matches by dot-segment, or the
+        bare ``"*"`` wildcard, which makes EVERY event known. Engine-
+        synthesised events (``done.``, ``error.``, ``after.``, ``xstate.``,
+        the init sentinel) are always known.
+        """
+        known = self.known_events
+        if "*" in known or event_type in known:
+            return True
+        if event_type.startswith(
+            ("done.", "error.", "after.", "xstate.", "___xstate")
+        ):
+            return True
+        for key in known:
+            if key.endswith(".*"):
+                prefix = key[:-2]
+                if event_type == prefix or event_type.startswith(prefix + "."):
+                    return True
+        return False
 
     @property
     def structure_hash(self) -> str:

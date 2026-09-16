@@ -53,6 +53,8 @@ from typing import (
 # -----------------------------------------------------------------------------
 from .events import AfterEvent, DoneEvent, Event
 from .exceptions import (
+    InvalidEventPayloadError,
+    UnknownEventError,
     ActorSpawningError,
     ImplementationMissingError,
     InvalidConfigError,
@@ -326,6 +328,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         interpreter_class: Optional[Type["BaseInterpreter"]] = None,
         input: Optional[Any] = None,
         clock: Optional[Clock] = None,
+        strict: Optional[bool] = None,
     ) -> None:
         """Initializes the BaseInterpreter instance.
 
@@ -344,6 +347,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 delayed sends (#49). Defaults to :class:`RealClock`; pass a
                 :class:`SimulatedClock` for deterministic tests. Invoked
                 children inherit it.
+            strict (Optional[bool]): (#51) When `True`, `send()` of an
+                event type the machine never declares raises
+                `UnknownEventError` at the call site instead of being a
+                silent no-op. `None` (default) defers to the machine's
+                ``strict`` config key. Declared-but-unhandled events stay
+                silent no-ops (XState semantics).
         """
         logger.info(
             "🧠 Initializing BaseInterpreter for machine '%s'...", machine.id
@@ -359,6 +368,8 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         #: ⏱️ Every timing path -- `after`, delayed `raise`/`sendTo` -- goes
         #: through this object and nothing else (#49). See `clock.py`.
         self.clock: Clock = clock if clock is not None else RealClock()
+        #: 🛡️ #51: effective strictness -- the ctor flag wins over config.
+        self.strict: bool = machine.strict if strict is None else bool(strict)
         self.parent: Optional["BaseInterpreter[Any, Any]"] = None
 
         # 🌳 State & Actor Management
@@ -1458,6 +1469,35 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     # -------------------------------------------------------------------------
     # ✉️ Event Preparation Helper
     # -------------------------------------------------------------------------
+
+    def _check_strict(self, event: Any) -> None:
+        """Raise for an undeclared type or an invalid payload (#51).
+
+        🏛️ Called SYNCHRONOUSLY at the call site of `send()` -- before the
+        event is queued -- because the async `send()` is fire-and-forget: a
+        violation raised later inside the run loop could never reach the
+        caller. Also applied to the `raise` built-in so an internal typo is
+        caught too. Engine-synthesised events are always known.
+
+        Raises:
+            UnknownEventError: `strict` and the type is undeclared.
+            InvalidEventPayloadError: a schema is registered for the type
+                and rejected the payload (applies regardless of `strict`).
+        """
+        if not isinstance(event, Event):
+            return
+        if self.strict and not self.machine.is_known_event(event.type):
+            raise UnknownEventError(
+                event.type, self.machine.id, sorted(self.machine.known_events)
+            )
+        schema = self.machine.event_schemas.get(event.type)
+        if schema is not None:
+            validate = getattr(schema, "validate", None)
+            fn = validate if callable(validate) else schema
+            try:
+                fn(event.payload)
+            except Exception as exc:  # noqa: BLE001 -- user validator
+                raise InvalidEventPayloadError(event.type, exc) from exc
 
     #: Keyword arguments of `send()` that are NOT payload (#39). A dict-form
     #: event carrying one of these keys is honoured but warns, because the
