@@ -146,6 +146,11 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         # ⚙️ Initialize synchronous-specific attributes
         self._event_queue: Deque[Union[Event, DoneEvent, AfterEvent]] = deque()
+        #: 🔁 #36: events raised BY this machine during a macrostep, drained
+        #: before the next external event (SCXML internal queue).
+        self._internal_queue: Deque[Union[Event, DoneEvent, AfterEvent]] = (
+            deque()
+        )
         self._is_processing: bool = False
         # 🏛️ #50: `_after_threads` / `_after_events` / `_pending_send_cancels`
         #    are gone. Timers no longer own threads; see `_after_timer`.
@@ -365,6 +370,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 self.clock.clear_timeout(handle)
         self._timer_handles.clear()
         self._scheduled_sends.clear()
+        self._internal_queue.clear()  # mid-macrostep state; never persisted
 
         # 4️⃣ Drop our own registry entry so the root does not pin us.
         self._unregister_from_system()
@@ -431,7 +437,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         #    it -- data loss the async engine did not have (#28 review).
         replay_credit = 0
         try:
-            while self._event_queue:
+            while self._event_queue or self._internal_queue:
                 if replay_credit:
                     replay_credit -= 1
                 else:
@@ -454,7 +460,11 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 #    at the tail; the acceptance criterion is "not dropped
                 #    and drained in the same loop", which this satisfies.
                 self._pump_timers()
-                current_event = self._event_queue.popleft()
+                # 🔁 #36: internal (self-raised) events first, in order.
+                if self._internal_queue:
+                    current_event = self._internal_queue.popleft()
+                else:
+                    current_event = self._event_queue.popleft()
                 logger.debug(
                     "⚙️ Processing event: '%s'", current_event.type
                 )  # 📉 #55: hot path, DEBUG
@@ -1227,6 +1237,14 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             send_id (Optional[str]): Id allowing later cancellation.
         """
         if not delay:
+            if actor is self and self._is_processing:
+                # 🔁 #36: a `raise` to OURSELVES mid-macrostep is INTERNAL:
+                #    it must run before any external event already queued.
+                #    It goes to `_internal_queue`, which the macrostep loop
+                #    drains ahead of `_event_queue`; a chain of raises stays
+                #    FIFO among themselves -- see `_process_event_queue`.
+                self._internal_queue.append(target_event)
+                return
             actor.send(target_event)
             return
 

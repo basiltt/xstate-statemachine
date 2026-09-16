@@ -196,6 +196,13 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         self._priority_queue: "deque[Union[Event, AfterEvent, DoneEvent]]" = (
             deque()
         )
+        #: 🔁 #36: the INTERNAL queue -- events this machine raised for
+        #: itself mid-macrostep. Drained to completion before the next
+        #: external event is taken, per SCXML. Distinct from the priority
+        #: lane (timers) and the inbox (the outside world).
+        self._internal_queue: "deque[Union[Event, AfterEvent, DoneEvent]]" = (
+            deque()
+        )
         self._timer_handles: Dict[str, List[Any]] = {}
         #: Wakes the run loop when a priority event arrives while it is
         #: blocked on the (empty) inbox.
@@ -619,6 +626,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 self.clock.clear_timeout(handle)
         self._timer_handles.clear()
         self._priority_queue.clear()
+        self._internal_queue.clear()  # mid-macrostep state; never persisted
         self._unregister_from_system()
         if self._event_loop_task and self.status != "running":
             self._event_loop_task.cancel()
@@ -1203,7 +1211,13 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             #    `_run_event_loop` can break the chain; external `send()`
             #    calls never pass through here.
             if actor is self and self._processing:
+                # 🔁 #36: a `raise` to OURSELVES during a macrostep is an
+                #    INTERNAL event. It goes to the internal queue, drained
+                #    before any external event, so the machine finishes its
+                #    own step before it observes the outside world again.
                 self._raise_depth += 1
+                self._internal_queue.append(target_event)
+                return
             await self._send_to_actor(actor, target_event)
             return
 
@@ -1451,6 +1465,9 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         """
         assert self._wakeup is not None
         while True:
+            # 🔁 #36: finish our own macrostep first (SCXML internal queue).
+            if self._internal_queue:
+                return self._internal_queue.popleft(), False
             if self._priority_queue:
                 return self._priority_queue.popleft(), False
             try:
