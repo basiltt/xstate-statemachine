@@ -514,7 +514,7 @@ The interpreter follows a strict lifecycle:
 ### Step-by-Step
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter
+from xstate_statemachine import MachineLogic, SyncInterpreter, create_machine
 
 config = {
     "id": "lifecycle",
@@ -527,7 +527,15 @@ config = {
     }
 }
 
-machine = create_machine(config)
+def log_entry(interpreter, context, event, action_def):
+    print(f"entered via {action_def.type}")
+
+machine = create_machine(
+    config,
+    logic=MachineLogic(
+        actions={n: log_entry for n in ("onEnterIdle", "onEnterRunning", "onEnterDone")}
+    ),
+)
 
 # 1. CREATE — machine is defined but not running
 interp = SyncInterpreter(machine)

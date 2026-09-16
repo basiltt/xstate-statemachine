@@ -335,7 +335,9 @@ python generate_docs.py
 ## Complete Example: Complex Machine with All Features
 
 ```python
-from xstate_statemachine import create_machine
+from pathlib import Path
+
+from xstate_statemachine import MachineLogic, create_machine
 
 config = {
     "id": "orderSystem",
@@ -373,7 +375,16 @@ config = {
     }
 }
 
-machine = create_machine(config)
+# Diagrams need only the SHAPE; stub the named logic so the build-time
+# check for missing implementations passes.
+machine = create_machine(
+    config,
+    logic=MachineLogic(
+        actions={"addToCart": lambda *a: None},
+        guards={"cartNotEmpty": lambda c, e: True},
+        services={"processPayment": lambda *a: None},
+    ),
+)
 
 # Save both diagram formats
 Path("order_system.puml").write_text(machine.to_plantuml())
