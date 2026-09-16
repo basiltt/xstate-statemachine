@@ -399,6 +399,35 @@ asyncio.run(main())
 
 > **Tip:** Use `SyncInterpreter` for scripts, CLI tools, and testing. Use `Interpreter` for web servers, event loops, and real-time applications.
 
+## What's New in 0.8.0
+
+The 0.8.0 release closes a production-adoption audit spanning 34 defects
+across three waves. Highlights:
+
+- **[Production Hardened](../production-characteristics/)** &mdash;
+  `actionErrorPolicy: "rollback"` restores configuration and context after a
+  raising action instead of committing a half-built transition.
+- **[Unhandled events, on purpose](../core-concepts/)** &mdash; `onUnhandled:
+  "defer" | "error"` replaces silently dropping events the machine never
+  declared a handler for.
+- **[Strict mode](../interpreters/)** &mdash; `strict=True` rejects an
+  unknown event at the `send()` call site, with a difflib suggestion, before
+  it's ever queued.
+- **[Bounded inbox](../interpreters/)** &mdash; `max_queue_size=` with
+  `OverflowPolicy.RAISE` / `BLOCK` / `DROP_NEWEST` caps how many events an
+  interpreter will buffer.
+- **[Receipts and priority sends](../interpreters/#receipts-and-priority-sends-39)**
+  &mdash; `send(wait=True)` resolves a `Receipt` once the macrostep runs, and
+  `send(priority=True)` jumps the inbox &mdash; no more polling `active_state_ids`.
+- **[Injectable Clock](../delayed-transitions/)** &mdash; `SimulatedClock`
+  drives `after` timers and delayed sends deterministically in tests; no more
+  sleeping in your test suite.
+- **[Snapshot envelope v1](../snapshots/)** &mdash; persisted snapshots carry
+  a version, machine id, and structural hash, and `from_snapshot()` can
+  detect drift or restart services on restore.
+
+See the [full changelog](../changelog/) for every change in this release.
+
 ## Next Steps
 
 Now that you're set up, explore the features:

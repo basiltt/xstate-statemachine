@@ -25,10 +25,12 @@ recommended choice for most modern applications.
 # -----------------------------------------------------------------------------
 import asyncio
 import concurrent.futures
-import threading
+import copy
 import inspect
 import logging
+import threading
 import uuid
+from collections import deque
 from typing import (
     Any,
     Awaitable,
@@ -38,20 +40,10 @@ from typing import (
     Optional,
     Tuple,
     Union,
+    cast,
     overload,
 )
 
-# -----------------------------------------------------------------------------
-# 📥 Project-Specific Imports
-# -----------------------------------------------------------------------------
-from .base_interpreter import BaseInterpreter
-from .events import AfterEvent, DoneEvent, Event
-from .exceptions import (
-    WrongThreadError,
-    ActorSpawningError,
-    ImplementationMissingError,
-    InvalidConfigError,
-)
 from .actions import (
     ESCALATE,
     FORWARD_TO,
@@ -63,15 +55,31 @@ from .actions import (
     is_builtin,
     resolve_builtin,
 )
+
+# -----------------------------------------------------------------------------
+# 📥 Project-Specific Imports
+# -----------------------------------------------------------------------------
+from .base_interpreter import BaseInterpreter
+from .clock import Clock, SimulatedClock
+from .events import AfterEvent, DoneEvent, Event, Receipt
+from .exceptions import (
+    ActorSpawningError,
+    ImplementationMissingError,
+    InterpreterStoppedError,
+    InvalidConfigError,
+    QueueOverflowError,
+    WrongThreadError,
+)
 from .models import (
+    DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS,
+    SPAWN_BLOCKING_PREFIX,
     ActionDefinition,
     InvokeDefinition,
     MachineNode,
+    OverflowPolicy,
     StateNode,
     TContext,
     TEvent,
-    DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS,
-    SPAWN_BLOCKING_PREFIX,
     spawn_service_key,
 )
 from .task_manager import TaskManager
@@ -174,8 +182,24 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         self,
         machine: MachineNode[TContext, TEvent],
         input: Optional[Any] = None,
+        clock: Optional[Clock] = None,
+        max_queue_size: Optional[int] = None,
+        overflow_policy: "OverflowPolicy" = OverflowPolicy.RAISE,
+        strict: Optional[bool] = None,
     ) -> None:
         """Initializes a new asynchronous Interpreter instance.
+
+        Args:
+            machine: The machine to run.
+            input: Creation input for a `context` factory.
+            clock: Source of time (#49).
+            max_queue_size: Bound on the inbox (#38). ``None`` (default)
+                keeps today's unbounded queue. When set, `overflow_policy`
+                decides what a full inbox does to `send()`.
+            overflow_policy: ``RAISE`` (default) / ``BLOCK`` /
+                ``DROP_NEWEST``; see `OverflowPolicy`. Ignored when no
+                bound is set. The priority lane is never bounded: an urgent
+                decision must get through a full inbox.
 
         Args:
             machine (MachineNode[TContext, TEvent]): The `MachineNode` instance
@@ -183,7 +207,41 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         """
         # 🏛️ Initialize the base class, passing our own class type so that
         # `from_snapshot` can create the correct `Interpreter` instance.
-        super().__init__(machine, interpreter_class=Interpreter, input=input)
+        super().__init__(
+            machine,
+            interpreter_class=Interpreter,
+            input=input,
+            clock=clock,
+            strict=strict,
+        )
+        #: ⚡ #48: a fired timer is delivered here, NOT via the inbox, so it
+        #: cannot queue behind 2,000 external events. Checked first by the
+        #: run loop. `_timer_handles` maps owner state id -> live handles so
+        #: exiting a state cancels its timers on any Clock.
+        self._priority_queue: "deque[Union[Event, AfterEvent, DoneEvent]]" = (
+            deque()
+        )
+        #: 🔁 #36: the INTERNAL queue -- events this machine raised for
+        #: itself mid-macrostep. Drained to completion before the next
+        #: external event is taken, per SCXML. Distinct from the priority
+        #: lane (timers) and the inbox (the outside world).
+        self._internal_queue: "deque[Union[Event, AfterEvent, DoneEvent]]" = (
+            deque()
+        )
+        self._timer_handles: Dict[str, List[Any]] = {}
+        #: Wakes the run loop when a priority event arrives while it is
+        #: blocked on the (empty) inbox.
+        self._wakeup: Optional[asyncio.Event] = None
+        #: 📏 #38: inbox bound and overflow policy.
+        if max_queue_size is not None and max_queue_size < 1:
+            raise InvalidConfigError("max_queue_size must be >= 1 or None")
+        self._max_queue_size: Optional[int] = max_queue_size
+        self._overflow_policy: OverflowPolicy = OverflowPolicy(overflow_policy)
+        #: 🧾 #39: receipts awaiting the macrostep of a specific event,
+        #: keyed by the event object's identity (events are NamedTuples and
+        #: may compare equal; identity is what distinguishes two sends of
+        #: "TICK"). Resolved by the run loop; failed by `_teardown`.
+        self._receipts: Dict[int, "asyncio.Future[Receipt]"] = {}
         logger.info(
             "🚀 Initializing Asynchronous Interpreter for '%s'...", self.id
         )
@@ -279,6 +337,10 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 self._event_loop_task = asyncio.create_task(
                     self._run_event_loop()
                 )
+                # 🔁 #44: opt-in re-drive of invokes the snapshot left parked.
+                if self._restart_services_on_start:
+                    self._restart_services_on_start = False
+                    self._restart_dormant_invocations()
             # 👶 Resume restored child actors too, so a whole hierarchy comes
             #    back alive rather than just its root.
             for actor in list(self._actors.values()):
@@ -421,13 +483,16 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         self, event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent]
     ) -> Awaitable[None]: ...
 
-    def send(  # type: ignore[override]
+    def send(  # type: ignore[override, misc]
         self,
         event_or_type: Union[
             str, Dict[str, Any], Event, DoneEvent, AfterEvent
         ],
+        *,
+        wait: bool = False,
+        priority: bool = False,
         **payload: Any,
-    ) -> Awaitable[None]:
+    ) -> "Awaitable[Optional[Receipt]]":
         """Sends an event to the machine's internal queue for processing.
 
         This is the primary method for interacting with a running state machine.
@@ -457,16 +522,174 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             **payload: Keyword arguments that become the event's payload if
                 `event_or_type` is a string.
 
+            wait: (#39) When ``True``, the returned awaitable resolves to a
+                :class:`Receipt` only AFTER the macrostep caused by this
+                event has run to completion -- state, whether anything
+                changed, and any error. Default ``False`` resolves
+                immediately to ``None``, exactly as before.
+            priority: (#39) When ``True``, the event goes to the head of
+                processing, ahead of every already-queued external event
+                (FIFO among priority events) and exempt from
+                ``max_queue_size``. Use for decisions that must not wait
+                behind routine traffic; it REORDERS events relative to
+                non-priority sends.
+
         Raises:
             WrongThreadError: Called from a thread other than the one whose
                 event loop owns this interpreter. Use
                 :meth:`send_threadsafe` from other threads.
+            QueueOverflowError: The inbox is bounded, full, and the policy
+                is ``RAISE`` (#38).
         """
         self._assert_owning_thread("send")
         # 📦 Normalise eagerly so a malformed event also fails at the call site.
         event_obj = self._prepare_event(event_or_type, **payload)
-        self._enqueue(event_obj)
-        return _completed()
+        self._warn_reserved_payload_keys(event_obj)
+        self._check_strict(event_obj)  # #51: at the call site, pre-queue
+        receipt = self._make_receipt(event_obj) if wait else None
+        if priority:
+            if not self._refuse_if_not_running(event_obj):
+                self._deliver_priority(event_obj)
+        elif self._overflow_policy is OverflowPolicy.BLOCK and (
+            self._max_queue_size is not None
+        ):
+            # 🔒 #38 (0.8.0 audit): a BLOCK send issued FROM AN ACTION runs
+            #    on the run-loop task itself. The run loop is the only
+            #    thing that ever drains the inbox, so suspending it in
+            #    `_enqueue_blocking` until the inbox has room is a
+            #    self-deadlock: `status` stays "running" while nothing
+            #    advances. A self-send during a macrostep is, semantically,
+            #    an internal event (#36) -- route it there. The internal
+            #    queue is unbounded by design and drained before the next
+            #    external event, so ordering matches SCXML `raise`.
+            if self._processing and not self._refuse_if_not_running(event_obj):
+                self._raise_depth += 1
+                self._internal_queue.append(event_obj)
+                return receipt if receipt is not None else _completed()
+            # ⏸️ BLOCK is the one policy that must genuinely await.
+            return self._enqueue_blocking(event_obj, receipt)
+        else:
+            self._enqueue(event_obj)
+        return receipt if receipt is not None else _completed()
+
+    def send_priority(
+        self,
+        event_or_type: Union[
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+        ],
+        *,
+        wait: bool = True,
+        **payload: Any,
+    ) -> "Awaitable[Optional[Receipt]]":
+        """``send(..., priority=True, wait=True)`` -- ask an urgent question.
+
+        The discoverable spelling of the two `send()` options that together
+        give a bounded-latency decision under any backlog (#39)::
+
+            receipt = await interp.send_priority("CHECK", order_id=oid)
+            if "risk.halted" in receipt.state_ids:
+                ...
+
+        `wait` defaults to ``True`` here because a priority send is almost
+        always a question that needs its answer; pass ``wait=False`` for a
+        fire-and-forget event that merely jumps the queue.
+        """
+        # 🧭 `send` is overloaded on the event's TYPE; mypy resolves this
+        #    forwarding call against the first (str) overload. Runtime
+        #    dispatch is by value, so the cast only silences the checker.
+        return self.send(
+            cast(str, event_or_type), wait=wait, priority=True, **payload
+        )
+
+    # -------------------------------------------------------------------------
+    # 🧾 Receipts (#39) and inbox bound (#38)
+    # -------------------------------------------------------------------------
+    def _make_receipt(self, event_obj: Any) -> "asyncio.Future[Receipt]":
+        loop = asyncio.get_running_loop()
+        fut: "asyncio.Future[Receipt]" = loop.create_future()
+        self._receipts[id(event_obj)] = fut
+        return fut
+
+    def _resolve_receipt(
+        self, event_obj: Any, changed: bool, error: Optional[BaseException]
+    ) -> None:
+        fut = self._receipts.pop(id(event_obj), None)
+        if fut is not None and not fut.done():
+            fut.set_result(
+                Receipt(frozenset(self.current_state_ids), changed, error)
+            )
+
+    def _fail_receipt(self, event_obj: Any, message: str) -> None:
+        fut = self._receipts.pop(id(event_obj), None)
+        if fut is not None and not fut.done():
+            fut.set_result(
+                Receipt(
+                    frozenset(self.current_state_ids),
+                    False,
+                    InterpreterStoppedError(message),
+                )
+            )
+
+    def _fail_all_receipts(self) -> None:
+        """`_teardown`: nobody awaiting a receipt may hang on shutdown."""
+        for key in list(self._receipts):
+            fut = self._receipts.pop(key)
+            if not fut.done():
+                fut.set_result(
+                    Receipt(
+                        frozenset(self.current_state_ids),
+                        False,
+                        InterpreterStoppedError(
+                            f"Interpreter '{self.id}' stopped before the "
+                            f"event was processed."
+                        ),
+                    )
+                )
+
+    def _refuse_if_not_running(self, event_obj: Any) -> bool:
+        """Drop + report an event sent to a stopped/done/errored machine.
+
+        Returns ``True`` if the event was refused.
+        """
+        if self.status not in ("stopped", "done", "error"):
+            return False
+        logger.warning(
+            "⚠️ Interpreter '%s' is %s; dropping event '%s'. Nothing drains "
+            "the queue after shutdown, so queuing here would leak.",
+            self.id,
+            self.status,
+            event_obj.type,
+        )
+        for plugin in self._plugins:
+            plugin.on_event_dropped(self, event_obj, "not_running")
+        self._fail_receipt(
+            event_obj,
+            f"Interpreter '{self.id}' is {self.status}; event "
+            f"'{event_obj.type}' was dropped.",
+        )
+        return True
+
+    def _inbox_is_full(self) -> bool:
+        return (
+            self._max_queue_size is not None
+            and self._event_queue.qsize() >= self._max_queue_size
+        )
+
+    async def _enqueue_blocking(
+        self, event_obj: Any, receipt: "Optional[asyncio.Future[Receipt]]"
+    ) -> Optional[Receipt]:
+        """`OverflowPolicy.BLOCK`: suspend the producer until there is room."""
+        if self._refuse_if_not_running(event_obj):
+            return await receipt if receipt is not None else None
+        while self._inbox_is_full():
+            if self.status != "running":
+                self._fail_receipt(
+                    event_obj, "stopped while blocked on a full inbox"
+                )
+                return await receipt if receipt is not None else None
+            await asyncio.sleep(0)
+        self._put_inbox(event_obj)
+        return await receipt if receipt is not None else None
 
     def _enqueue(self, event_obj: Union[Event, DoneEvent, AfterEvent]) -> None:
         """Put *event_obj* on the queue, or drop it if the machine is over.
@@ -480,16 +703,29 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         #    forever — a slow memory leak in any long-lived process that keeps
         #    a reference to a finished machine. Dropping with a warning also
         #    surfaces the mistake instead of hiding it.
-        if self.status in ("stopped", "done", "error"):
-            logger.warning(
-                "⚠️ Interpreter '%s' is %s; dropping event. Nothing drains "
-                "the queue after shutdown, so queuing here would leak.",
-                self.id,
-                self.status,
-            )
+        if self._refuse_if_not_running(event_obj):
             return
+        # 📏 #38: bounded inbox. RAISE and DROP_NEWEST are decided here,
+        #    synchronously; BLOCK is handled by `_enqueue_blocking`.
+        if self._inbox_is_full():
+            depth = self._event_queue.qsize()
+            if self._overflow_policy is OverflowPolicy.DROP_NEWEST:
+                logger.warning(
+                    "📉 Interpreter '%s' inbox full (%d/%d); event '%s' "
+                    "dropped (OverflowPolicy.DROP_NEWEST).",
+                    self.id,
+                    depth,
+                    self._max_queue_size,
+                    event_obj.type,
+                )
+                for plugin in self._plugins:
+                    plugin.on_event_dropped(self, event_obj, "queue_full")
+                self._fail_receipt(event_obj, "dropped: inbox full")
+                return
+            self._fail_receipt(event_obj, "refused: inbox full")
+            raise QueueOverflowError(self.id, depth, self._max_queue_size or 0)
         # 📥 Place the standardized event object into the async queue.
-        self._event_queue.put_nowait(event_obj)
+        self._put_inbox(event_obj)
 
     def send_threadsafe(
         self,
@@ -535,6 +771,13 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         """
         self._loop = asyncio.get_running_loop()
         self._loop_thread_name = threading.current_thread().name
+        if self._wakeup is None:
+            self._wakeup = asyncio.Event()
+        # 🧪 A SimulatedClock must let THIS interpreter settle after firing
+        #    timers, or `await clock.increment()` returns before the machine
+        #    has processed the AfterEvent it just queued.
+        if isinstance(self.clock, SimulatedClock):
+            self.clock._attach(self._settle_for_clock)
         if isinstance(self._event_queue, _PreStartQueue):
             pending = self._event_queue.drain()
             self._event_queue = asyncio.Queue()
@@ -591,6 +834,13 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             await actor.stop()
         self._actors.clear()
         await self.task_manager.cancel_all()
+        for handles in self._timer_handles.values():
+            for handle in handles:
+                self.clock.clear_timeout(handle)
+        self._timer_handles.clear()
+        self._priority_queue.clear()
+        self._internal_queue.clear()  # mid-macrostep state; never persisted
+        self._fail_all_receipts()
         self._unregister_from_system()
         if self._event_loop_task and self.status != "running":
             self._event_loop_task.cancel()
@@ -623,7 +873,18 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         return list(getattr(q, "_queue", ()))
 
     def _enqueue_restored(self, event: Event) -> None:
+        self._put_inbox(event)
+
+    def _put_inbox(self, event: Union[Event, DoneEvent, AfterEvent]) -> None:
+        """Enqueue on the inbox AND wake a run loop parked on an empty one.
+
+        Every inbox write must go through here: `_next_event` blocks on
+        `_wakeup`, not on `Queue.get()`, so a bare `put_nowait` would be
+        invisible to an idle loop until the next unrelated event.
+        """
         self._event_queue.put_nowait(event)
+        if self._wakeup is not None:
+            self._wakeup.set()
 
     async def drain_pending(self) -> List[Union[Event, DoneEvent, AfterEvent]]:
         """Remove and return every accepted-but-unprocessed event.
@@ -716,8 +977,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             return
 
         for event in events:
-            event_obj = self._prepare_event(event)
-            await self._event_queue.put(event_obj)
+            self._enqueue(self._prepare_event(event))
 
     # -------------------------------------------------------------------------
     # ⚙️ Internal Event Loop & Execution Logic
@@ -743,8 +1003,10 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         limit = getattr(self.machine, "max_iterations", 1000)
         try:
             while self.status == "running":
-                # 📬 Wait indefinitely for the next event from the queue.
-                event = await self._event_queue.get()
+                # ⚡ #48: due timers first. They were delivered by the clock
+                #    straight into the priority lane; an external backlog of
+                #    any depth cannot delay them past this point.
+                event, from_inbox = await self._next_event()
 
                 if self._raise_depth > limit:
                     logger.error(
@@ -756,7 +1018,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                         self.id,
                     )
                     self._raise_depth = 0
-                    self._event_queue.task_done()
+                    if from_inbox:
+                        self._event_queue.task_done()
                     continue
 
                 logger.debug(
@@ -787,6 +1050,17 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 #    The transition itself is already atomic (see
                 #    `_execute_transition`), so the configuration is intact
                 #    here; we log and carry on with the next event.
+                # 🧾 #39: what a receipt reports is decided by comparing
+                #    the configuration + context before and after, and by
+                #    the action-failure signal the policy machinery records.
+                config_before = frozenset(self._active_state_nodes)
+                context_before = (
+                    copy.deepcopy(self.context)
+                    if id(event) in self._receipts
+                    else None
+                )
+                step_error: Optional[BaseException] = None
+                self.last_transition_ok = True
                 try:
                     self._processing = True
                     depth_before = self._raise_depth
@@ -797,6 +1071,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
+                    step_error = exc
                     logger.error(
                         "💥 Error processing event '%s' on '%s'; the "
                         "interpreter remains running. %s",
@@ -807,8 +1082,17 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                     )
                 finally:
                     self._processing = False
+                if id(event) in self._receipts:
+                    if step_error is None and not self.last_transition_ok:
+                        step_error = self._last_action_error
+                    changed = (
+                        frozenset(self._active_state_nodes) != config_before
+                        or self.context != context_before
+                    )
+                    self._resolve_receipt(event, changed, step_error)
 
-                self._event_queue.task_done()
+                if from_inbox:
+                    self._event_queue.task_done()
 
         except asyncio.CancelledError:
             # This is an expected, clean shutdown triggered by `stop()`.
@@ -926,219 +1210,29 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             else:
                 break  # No more transient transitions; state is stable.
 
-    async def _execute_actions(
-        self, actions: List[ActionDefinition], event: Event
-    ) -> List[Tuple[ActionDefinition, BaseException]]:
-        """Asynchronously executes a list of action definitions.
-
-        This implementation respects the asynchronous nature of actions,
-        `await`ing them if they are coroutine functions. It also handles the
-        special "spawn" action for creating child actors.
-
-        Args:
-            actions (List[ActionDefinition]): The list of `ActionDefinition`
-                objects to execute.
-            event (Event): The event that triggered these actions.
-
-        Returns:
-            The ``(action, exception)`` pairs for actions that raised, in
-            execution order. Empty when every action succeeded. The first
-            failure stops execution of the remaining actions in the list.
-
-            🏛️ Returning the failures rather than swallowing them is what
-            lets the caller apply the machine's ``action_error_policy``:
-            before 0.8.0 this method returned ``None`` unconditionally, so
-            `_execute_transition` could not tell a complete action list from
-            a partially executed one and committed the transition either way.
-
-        Raises:
-            ImplementationMissingError: If a named action is not defined in the
-                machine's logic dictionary.
-        """
-        failed: List[Tuple[ActionDefinition, BaseException]] = []
-        if not actions:
-            return failed
-
-        for action_def in actions:
-            # 🔔 Notify plugins before executing each action.
-            for plugin in self._plugins:
-                plugin.on_action_execute(self, action_def)
-
-            # 👶 Handle actor spawning as a special, built-in action type.
-            # 🏛️ #41: `spawn_blocking_` is a distinct MODE (see
-            #    `_spawn_actor`), not just a longer prefix of `spawn_`.
-            if action_def.type.startswith(
-                (SPAWN_BLOCKING_PREFIX, "spawn_")
-            ) and not is_builtin(action_def.type):
-                await self._spawn_actor(action_def, event)
-                continue
-
-            # 🔎 Find the implementation for the named action.
-            action_callable = self.machine.logic.actions.get(action_def.type)
-
-            # 🎬 Built-in action creators. Resolved only when the user has NOT
-            #    supplied an action of the same name, so a machine that
-            #    legitimately defines its own `log` or `assign` keeps working.
-            if action_callable is None:
-                canonical = resolve_builtin(action_def.type)
-                if canonical is not None:
-                    # 🛡️ Built-ins resolve user-supplied params/callables, so
-                    #    they can raise for exactly the same reasons a user
-                    #    action can. Containing them here keeps the documented
-                    #    contract - and stops an escaping error from killing
-                    #    the fire-and-forget run loop.
-                    try:
-                        await self._execute_builtin_action(
-                            canonical, action_def, event
-                        )
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as exc:
-                        logger.exception(
-                            "🔥 Built-in action '%s' raised while handling "
-                            "'%s'; skipping remaining actions.",
-                            action_def.type,
-                            event.type,
-                        )
-                        for plugin in self._plugins:
-                            plugin.on_action_error(self, action_def, exc)
-                        failed.append((action_def, exc))
-                        return failed
-                    continue
-
-            if not action_callable:
-                raise ImplementationMissingError(
-                    f"Action '{action_def.type}' is not implemented."
-                )
-
-            # 🏃‍♂️ Execute the action, awaiting if it's an async function.
-            #
-            # 🏛️ Architecture decision: exceptions from user-supplied actions
-            # are contained here. `send()` is fire-and-forget, so an escaping
-            # exception would tear down `_run_event_loop` while callers still
-            # observed `status == "running"` — a silently dead machine. Per
-            # the documented contract the error is logged, the remaining
-            # actions are skipped, and the run loop survives. Configuration
-            # errors (missing action) are raised above and remain fatal.
-            try:
-                if inspect.iscoroutinefunction(action_callable):
-                    await action_callable(
-                        self, self.context, event, action_def
-                    )
-                else:
-                    action_callable(self, self.context, event, action_def)
-            except asyncio.CancelledError:
-                # 🛑 Cooperative cancellation must always propagate.
-                raise
-            except Exception as exc:
-                logger.exception(
-                    "🔥 Action '%s' raised while handling event '%s'; "
-                    "skipping remaining actions in this list.",
-                    action_def.type,
-                    event.type,
-                )
-                # 🔔 Surface the failure programmatically. The hook fires
-                #    under every policy; what the caller DOES with the
-                #    failure is decided by `action_error_policy` upstream.
-                for plugin in self._plugins:
-                    plugin.on_action_error(self, action_def, exc)
-                failed.append((action_def, exc))
-                return failed
-        return failed
-
     # -------------------------------------------------------------------------
     # 🤖 Asynchronous Task Implementations (Actors, Timers, Services)
     # -------------------------------------------------------------------------
 
-    async def _execute_builtin_action(
+    async def _run_user_action(
         self,
-        canonical: str,
+        impl: Callable[..., Any],
         action_def: ActionDefinition,
-        event: Event,
+        event: Any,
     ) -> None:
-        """Executes a built-in action creator asynchronously.
+        """Leaf: call one action, awaiting it if it is a coroutine function."""
+        if inspect.iscoroutinefunction(impl):
+            await impl(self, self.context, event, action_def)
+        else:
+            impl(self, self.context, event, action_def)
 
-        Pure-state effects (`assign`, `log`, `emit`, `pure`, `choose`,
-        `enqueueActions`, `cancel`) are handled by the shared base
-        implementation. Delivery effects (`raise`, `sendTo`, `sendParent`,
-        `forwardTo`, `escalate`, `stopChild`, `spawnChild`) need the event
-        loop and are handled here.
+    async def _dispatch_internal(self, event: Any) -> None:
+        self._enqueue(event)
 
-        Args:
-            canonical (str): The canonical built-in action name.
-            action_def (ActionDefinition): The action being executed.
-            event (Event): The triggering event.
-        """
-        # 🧮 Shared semantics first; may yield nested actions to run.
-        followups = self._collect_builtin_followups(
-            canonical, action_def, event
-        )
-        if followups:
-            self._action_depth += 1
-            try:
-                await self._execute_actions(
-                    [ActionDefinition(f) for f in followups], event
-                )
-            finally:
-                self._action_depth -= 1
-
-        params = self._resolve_params(action_def.params, event) or {}
-
-        if canonical == RAISE:
-            target_event = self._resolve_event_spec(params.get("event"), event)
-            delay = self._resolve_delay(params.get("delay"), event)
-            await self._deliver(self, target_event, delay, params.get("id"))
-
-        elif canonical == SEND_TO:
-            actor = self._resolve_actor_target(params.get("to"), event)
-            if actor is None:
-                logger.warning(
-                    "⚠️ sendTo could not resolve target %r; event dropped.",
-                    params.get("to"),
-                )
-                return
-            target_event = self._resolve_event_spec(params.get("event"), event)
-            delay = self._resolve_delay(params.get("delay"), event)
-            await self._deliver(actor, target_event, delay, params.get("id"))
-
-        elif canonical == SEND_PARENT:
-            if self.parent is None:
-                logger.warning("⚠️ sendParent called with no parent actor.")
-                return
-            target_event = self._resolve_event_spec(params.get("event"), event)
-            delay = self._resolve_delay(params.get("delay"), event)
-            await self._deliver(
-                self.parent, target_event, delay, params.get("id")
-            )
-
-        elif canonical == FORWARD_TO:
-            actor = self._resolve_actor_target(params.get("to"), event)
-            if actor is None:
-                logger.warning(
-                    "⚠️ forwardTo could not resolve target %r.",
-                    params.get("to"),
-                )
-                return
-            await self._deliver(actor, event, None, None)
-
-        elif canonical == ESCALATE:
-            error_payload = params.get("error")
-            escalate_event = Event(
-                type=f"xstate.error.actor.{self.id}",
-                payload={"error": error_payload},
-            )
-            if self.parent is not None:
-                await self._deliver(self.parent, escalate_event, None, None)
-            else:
-                logger.error(
-                    "🔥 escalate() with no parent actor: %r", error_payload
-                )
-
-        elif canonical == STOP_CHILD:
-            await self._stop_child_actor(params.get("id"), event)
-
-        elif canonical == SPAWN_CHILD:
-            await self._spawn_child_action(params, event)
+    async def _stop_actor_leaf(self, actor: Any) -> None:
+        result = actor.stop()
+        if inspect.isawaitable(result):
+            await result
 
     async def _deliver(
         self,
@@ -1161,36 +1255,39 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             #    `_run_event_loop` can break the chain; external `send()`
             #    calls never pass through here.
             if actor is self and self._processing:
+                # 🔁 #36: a `raise` to OURSELVES during a macrostep is an
+                #    INTERNAL event. It goes to the internal queue, drained
+                #    before any external event, so the machine finishes its
+                #    own step before it observes the outside world again.
                 self._raise_depth += 1
+                self._internal_queue.append(target_event)
+                return
             await self._send_to_actor(actor, target_event)
             return
 
         key = str(send_id) if send_id else None
 
-        async def _delayed() -> None:
-            """Waits out the delay, then delivers."""
-            try:
-                await asyncio.sleep(delay / 1000.0)
-                await self._send_to_actor(actor, target_event)
-            except asyncio.CancelledError:  # pragma: no cover - shutdown
-                raise
-            finally:
-                # 🧹 Only clear the registry if it still points at THIS task.
-                #    A later send reusing the same id replaces the entry, and
-                #    popping unconditionally would drop the live registration
-                #    and leave the newer send uncancellable.
-                if (
-                    key is not None
-                    and self._scheduled_sends.get(key) is _cancel
-                ):
-                    self._scheduled_sends.pop(key, None)
+        def _fire() -> None:
+            """Deliver once the clock says the delay has elapsed (#49)."""
+            # 🧹 Only clear the registry if it still points at THIS send.
+            #    A later send reusing the same id replaces the entry, and
+            #    popping unconditionally would drop the live registration
+            #    and leave the newer send uncancellable.
+            if key is not None and self._scheduled_sends.get(key) is _cancel:
+                self._scheduled_sends.pop(key, None)
+            if self.status != "running":
+                return
+            if actor is self:
+                self._deliver_priority(target_event)
+            else:
+                asyncio.ensure_future(self._send_to_actor(actor, target_event))
 
-        task = asyncio.create_task(_delayed())
-        self.task_manager.add(self.id, task)
+        handle = self.clock.set_timeout(_fire, delay / 1000.0, owner=self.id)
+        self._timer_handles.setdefault(self.id, []).append(handle)
 
         def _cancel() -> None:
             """Cancels this specific delayed send."""
-            task.cancel()
+            self.clock.clear_timeout(handle)
 
         if key is not None:
             # 🔁 Reusing a send id supersedes the earlier send. Without this
@@ -1218,58 +1315,6 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         result = actor.send(target_event)
         if inspect.isawaitable(result):
             await result
-
-    async def _stop_child_actor(self, spec: Any, event: Event) -> None:
-        """Stops a spawned child actor by id.
-
-        Args:
-            spec (Any): The child's id, or a callable resolving one.
-            event (Event): The triggering event.
-        """
-        actor = self._resolve_actor_target(spec, event)
-        if actor is None:
-            logger.warning("⚠️ stopChild could not resolve %r.", spec)
-            return
-        for actor_id, candidate in list(self._actors.items()):
-            if candidate is actor:
-                del self._actors[actor_id]
-                self._actor_sources.pop(actor_id, None)
-                break
-        # 🌐 Also drop it from the actor-system registry, otherwise a stopped
-        #    actor stays addressable by systemId and silently swallows events.
-        registry = self._system_registry()
-        for system_id, candidate in list(registry.items()):
-            if candidate is actor:
-                del registry[system_id]
-        result = actor.stop()
-        if inspect.isawaitable(result):
-            await result
-
-    async def _spawn_child_action(
-        self, params: Dict[str, Any], event: Event
-    ) -> None:
-        """Spawns an actor declaratively via the `spawnChild` action.
-
-        Args:
-            params (Dict[str, Any]): Params carrying `src`, `id`, `systemId`
-                and `input`.
-            event (Event): The triggering event.
-        """
-        src = params.get("src")
-        if not isinstance(src, str):
-            logger.warning("⚠️ spawnChild requires a string 'src'.")
-            return
-        synthetic = ActionDefinition(
-            {
-                "type": f"spawn_{src}",
-                "params": {
-                    "id": params.get("id"),
-                    "systemId": params.get("systemId"),
-                    "input": params.get("input"),
-                },
-            }
-        )
-        await self._spawn_actor(synthetic, event)
 
     async def _spawn_actor(
         self, action_def: ActionDefinition, event: Event
@@ -1323,8 +1368,15 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         # 📥 Input goes in at CONSTRUCTION so a child `context` factory
         #    receives `{input}` (#42); `_build_initial_context` also seeds
         #    declared keys and exposes `context["input"]`.
+        # 🕰️ A child shares the parent's `clock` (#49) -- one timeline for
+        #    a whole actor tree -- and its constructor-level `strict` (#51):
+        #    a parent that opted into strict mode must not get a child that
+        #    silently swallows typos because it fell back to `machine.strict`.
         child_interpreter = Interpreter(
-            actor_machine, input=spawn_params.get("input")
+            actor_machine,
+            input=spawn_params.get("input"),
+            clock=self.clock,
+            strict=self.strict,
         )
         child_interpreter.parent = self
         child_interpreter.id = actor_id
@@ -1388,49 +1440,122 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         """
         # Encapsulation: Delegate cancellation to the dedicated TaskManager.
         await self.task_manager.cancel_by_owner(state.id)
+        # ⏱️ And the clock-scheduled timers this state owns (#49).
+        for handle in self._timer_handles.pop(state.id, []):
+            self.clock.clear_timeout(handle)
 
-    async def _after_timer_task(
-        self, delay_sec: float, event: AfterEvent
-    ) -> None:
-        """Coroutine that waits for a delay and then sends an `AfterEvent`.
+    async def _next_event(
+        self,
+    ) -> Tuple[Union[Event, AfterEvent, DoneEvent], bool]:
+        """Return ``(event, from_inbox)``: priority lane first, then inbox.
 
-        This is the actual task body for a timed transition (`after`).
+        `from_inbox` tells the caller whether it owes the inbox a
+        `task_done()` -- priority events never passed through `get()`, and
+        acking them would corrupt the join counter.
 
-        Args:
-            delay_sec (float): The delay in seconds to wait.
-            event (AfterEvent): The `AfterEvent` to send after the delay.
+        🏛️ Architecture decision: this deliberately does NOT race a
+        `Queue.get()` future against the wake-up event. An earlier version
+        did, and a cancelled `get()` that had already dequeued an item lost
+        that item (148 of 3,000 events under load), while the loser future
+        of every race leaked a task. Instead: take from the lane, else
+        `get_nowait()` from the inbox, and only when BOTH are empty block
+        on the wake-up event -- which `put()` and `_deliver_priority` both
+        set. One await, no futures, nothing to cancel.
         """
-        try:
-            await asyncio.sleep(delay_sec)
-            logger.info(
-                "🕒 'after' timer fired for event '%s' in '%s'.",
-                event.type,
-                self.id,
-            )
-            await self.send(event)
-        except asyncio.CancelledError:
-            # This is expected when a state is exited before the timer fires.
-            logger.debug(
-                "🚫 'after' timer for event '%s' in '%s' was cancelled.",
-                event.type,
-                self.id,
-            )
-            raise  # Re-raise to ensure the task is properly cleaned up.
+        assert self._wakeup is not None
+        while True:
+            # 🔁 #36: finish our own macrostep first (SCXML internal queue).
+            if self._internal_queue:
+                return self._internal_queue.popleft(), False
+            if self._priority_queue:
+                return self._priority_queue.popleft(), False
+            try:
+                event = self._event_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            else:
+                # ⚡ #48: taking from the inbox without ever awaiting would
+                #    drain a 2,000-event backlog in ONE loop turn, and a
+                #    `call_later` timer that came due meanwhile could not
+                #    run until the inbox was empty -- the starvation this
+                #    lane exists to end. Yield once per inbox event so
+                #    due timers get their turn and land in the lane, which
+                #    is checked first on the next iteration.
+                await asyncio.sleep(0)
+                return event, True
+            # 🔒 Clear THEN re-check both sources, so an event that arrived
+            #    between the checks above and this clear is not slept
+            #    through (lost wake-up).
+            self._wakeup.clear()
+            if self._priority_queue or not self._event_queue.empty():
+                continue
+            await self._wakeup.wait()
+
+    def _deliver_priority(
+        self, event: Union[Event, AfterEvent, DoneEvent]
+    ) -> None:
+        """Place *event* at the head of processing and wake the run loop."""
+        self._priority_queue.append(event)
+        if self._wakeup is not None:
+            self._wakeup.set()
+
+    async def _settle_for_clock(self) -> None:
+        """`SimulatedClock` hook: process everything queued by fired timers."""
+        for _ in range(1000):
+            if not self._priority_queue and self._event_queue.empty():
+                if not self._processing:
+                    return
+            await asyncio.sleep(0)
+        # Something is looping; leave it to the runaway guard.
+
+    def _invocation_is_live(
+        self, state: StateNode, invocation: InvokeDefinition
+    ) -> bool:
+        # A service invoke runs as a task owned by the state; a machine
+        # invoke as a child actor addressed `<self.id>:<invoke id>` (or a
+        # uuid-suffixed anonymous id recorded in `_actor_sources`).
+        if any(
+            not t.done()
+            for t in self.task_manager.get_tasks_by_owner(state.id)
+        ):
+            return True
+        if f"{self.id}:{invocation.id}" in self._actors:
+            return True
+        return any(
+            src == invocation.src for src in self._actor_sources.values()
+        )
 
     def _after_timer(
         self, delay_sec: float, event: AfterEvent, owner_id: str
     ) -> None:
-        """Creates and registers a background task for a delayed `AfterEvent`.
+        """Schedule a delayed `AfterEvent` on the interpreter's clock (#49).
+
+        🏛️ #48: the callback does NOT go through `send()`. It stamps
+        `fired_at` and drops the event into the PRIORITY lane, so a due
+        timer is processed before any external backlog. On a `RealClock`
+        inside a loop this is `loop.call_later`; on a `SimulatedClock` it
+        fires from `increment()`.
 
         Args:
             delay_sec (float): The delay in seconds.
-            event (AfterEvent): The event to be sent after the delay.
-            owner_id (str): The ID of the state that owns this timer, used for
-                cancellation upon state exit.
+            event (AfterEvent): The event to deliver after the delay.
+            owner_id (str): The owning state; exiting it cancels the timer.
         """
-        task = asyncio.create_task(self._after_timer_task(delay_sec, event))
-        # Register the task with its owner for lifecycle management.
-        self.task_manager.add(owner_id, task)
+
+        def _fire() -> None:
+            if self.status != "running":
+                return
+            fired = event._replace(fired_at=self.clock.now())
+            logger.info(
+                "🕒 'after' timer fired for event '%s' in '%s' (+%.1f ms).",
+                fired.type,
+                self.id,
+                fired.lateness_ms,
+            )
+            self._deliver_priority(fired)
+
+        handle = self.clock.set_timeout(_fire, delay_sec, owner=owner_id)
+        self._timer_handles.setdefault(owner_id, []).append(handle)
 
     async def _invoke_service_task(
         self,
@@ -1599,7 +1724,13 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             #    `context` factory receives `{input}` exactly as in XState.
             #    A raising resolver is a child failure -> `onError`.
             child_input = invocation.resolve_input(self.context, None)
-            child_interpreter = Interpreter(actor_machine, input=child_input)
+            # 🕰️ Same inheritance as `_spawn_actor`: clock (#49) + strict (#51).
+            child_interpreter = Interpreter(
+                actor_machine,
+                input=child_input,
+                clock=self.clock,
+                strict=self.strict,
+            )
             child_interpreter.parent = self
             child_interpreter.id = actor_id
             self._actors[actor_id] = child_interpreter

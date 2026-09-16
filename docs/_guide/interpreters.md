@@ -274,6 +274,179 @@ interp.send_events([
 
 ---
 
+## Event Ordering — Microsteps vs. Macrosteps (#36)
+
+Each call to `send()` (or a delivered `after`/invocation event) starts a **macrostep**: the machine runs transitions, actions, and any events those actions `raise` on themselves, until it settles into a stable configuration with nothing left to do. SCXML calls a single one of those internal, self-raised events a **microstep** — and microsteps always finish before the next *external* event (the next `send()`) is looked at.
+
+Concretely: if an entry action raises an event with the `raise` action creator, that event is **not** appended to the end of the inbox behind other callers' events. It goes to an internal queue that is drained to completion, in order, before the interpreter's run loop looks at the next externally sent event:
+
+```python
+config = {
+    "id": "order",
+    "initial": "a",
+    "states": {
+        "a": {
+            "entry": [{"type": "raise", "params": {"event": "GO"}}],
+            "on": {"GO": "b"},
+        },
+        "b": {},
+    },
+}
+
+machine = create_machine(config)
+interp = await Interpreter(machine).start()
+# start() resolves as soon as the synthetic init transition into "a" is
+# entered; the "GO" raised by a's entry action is enqueued for the
+# background run loop and is not yet processed here.
+print(interp.current_state_ids)  # {'order.a'}
+
+await asyncio.sleep(0.05)  # let the run loop drain the raised "GO"
+print(interp.current_state_ids)  # {'order.b'}
+```
+
+The same guarantee applies mid-run: `await interp.send("START", wait=True)` does not resolve until every event `START` transitively raised on itself has also been processed, so the `Receipt` (see below) reflects the machine's *final* settled state for that macrostep, not an intermediate one.
+
+**What changed vs. 0.7**: prior releases queued a self-raised event onto the same inbox as external `send()` calls, so a `raise`d event could be interleaved with (or delayed behind) events sent concurrently from elsewhere. As of #36 the interpreter keeps a dedicated internal queue for self-raised events (`_internal_queue` on both engines), which is drained FIFO — internal events among themselves, in the order raised — ahead of the next external event. This makes ordering match the SCXML processing model and removes a class of races where an external event could be processed *between* two microsteps of the same macrostep.
+
+A runaway chain of self-raised events (a machine that keeps raising to itself forever) is still bounded: exceeding the configured event limit for a single macrostep raises rather than hanging the run loop forever.
+
+---
+
+## Bounded Inbox and Overflow Policy (#38)
+
+By default an interpreter's inbox (the queue `send()` appends to) is unbounded — nothing on a hot path is ever refused, but nothing stops it from growing without limit if producers outrun the consumer. Pass `max_queue_size` to `Interpreter` (or `SyncInterpreter`) to put a ceiling on it, and `overflow_policy` to choose what happens once that ceiling is hit:
+
+```python
+from xstate_statemachine import create_machine, Interpreter, OverflowPolicy
+
+interp = await Interpreter(
+    machine,
+    max_queue_size=100,
+    overflow_policy=OverflowPolicy.RAISE,  # the default once a bound is set
+).start()
+```
+
+- `max_queue_size` — `None` (default) keeps the historical unbounded inbox. Once set it must be `>= 1`; `0` or a negative value raises `InvalidConfigError` at construction time.
+- `overflow_policy` — an `OverflowPolicy` member; ignored when `max_queue_size` is `None`.
+
+### `OverflowPolicy` members
+
+| Member | Behavior |
+|--------|----------|
+| `OverflowPolicy.RAISE` (default) | `send()` raises `QueueOverflowError` immediately when the inbox is full. The event is refused at the call site — the producer decides what to do next (retry, shed, alarm). |
+| `OverflowPolicy.BLOCK` | `await send(...)` suspends the caller until the consumer frees a slot. Intended for trusted, in-process producers that can tolerate being slowed down rather than refused. |
+| `OverflowPolicy.DROP_NEWEST` | The incoming event is discarded with a WARNING log line and a call to `PluginBase.on_event_dropped`. This is the only policy that silently loses an event, so it is never the default — opt in only where staleness is preferable to backlog (e.g. high-frequency telemetry). |
+
+The priority lane (see `send(priority=True)` below) is **never** bounded — an urgent decision must always get through, even into a full inbox.
+
+### `QueueOverflowError`
+
+Raised by `send()` only when the inbox is bounded, full, and the policy is `RAISE`:
+
+```python
+from xstate_statemachine import QueueOverflowError
+
+try:
+    interp.send("T")
+except QueueOverflowError as exc:
+    print(exc.interpreter_id, exc.depth, exc.maxsize)
+```
+
+- `interpreter_id` — which machine refused the event.
+- `depth` — events queued at the moment of refusal.
+- `maxsize` — the configured `max_queue_size`.
+
+### Observing drops with `on_event_dropped`
+
+Any plugin can implement `on_event_dropped(interpreter, event, reason)` to observe an event that never made it onto the inbox — whether because `DROP_NEWEST` shed it under backpressure, or because it was sent to a machine that is no longer running:
+
+```python
+from xstate_statemachine import PluginBase
+
+class DropWatcher(PluginBase):
+    def on_event_dropped(self, interpreter, event, reason):
+        print(f"dropped {event.type!r}: {reason}")
+
+interp = Interpreter(
+    machine,
+    max_queue_size=1,
+    overflow_policy=OverflowPolicy.DROP_NEWEST,
+)
+interp.use(DropWatcher())
+await interp.start()
+```
+
+### Observing inbox depth
+
+The `.queue_depth` property (and the underlying `.pending_events`) reports how many events are accepted but not yet processed, so a caller can watch backlog build up before it hits the bound:
+
+```python
+interp.send("T")
+print(interp.queue_depth)     # 1
+print(interp.pending_events)  # (Event(type='T', payload={}),)
+```
+
+---
+
+## Receipts and Priority Sends (#39)
+
+### `send(wait=True)` and `Receipt`
+
+By default `send()` returns as soon as the event is accepted onto the inbox — it does not wait for the event to actually be processed. Pass `wait=True` to get back a `Receipt` once the event's full macrostep (including any events it raised on itself, per #36 above) has run to completion:
+
+```python
+receipt = await interp.send("GO", wait=True)
+print(receipt.state_ids)  # the leaf state IDs active when the macrostep settled
+print(receipt.changed)    # True if this event caused a transition or context change
+print(receipt.error)      # the exception raised while processing THIS event, or None
+```
+
+`Receipt` is a `NamedTuple` with three fields:
+
+- `state_ids: FrozenSet[str]` — the active leaf state IDs when the instant processing this event finished.
+- `changed: bool` — `True` if a transition was taken (configuration or context changed) *for this event*.
+- `error: Optional[BaseException]` — set when an action raised or a target was unresolvable while processing this event; otherwise `None`. The machine can still be `running` when `error` is set (depending on `actionErrorPolicy`) — the receipt only reports whether *this caller's* event was processed cleanly.
+
+`error` is also set (to `InterpreterStoppedError`) if the interpreter is stopped, refuses the event, or tears down before a pending receipt resolves, so a caller awaiting `wait=True` never hangs on shutdown.
+
+### `send(priority=True)`
+
+Pass `priority=True` to jump an event to the head of processing, ahead of every already-queued external event (priority events are FIFO among themselves), and exempt from `max_queue_size`:
+
+```python
+receipt = await interp.send("CHECK_RISK", priority=True, wait=True, order_id=oid)
+if "risk.halted" in receipt.state_ids:
+    ...
+```
+
+`priority=True` **reorders** events relative to ordinary sends — use it for decisions that must not wait behind routine traffic, not as a default.
+
+### `send_priority()`
+
+`send_priority()` is the discoverable spelling of `send(priority=True, wait=True)` — a priority send is almost always a question that needs an answer:
+
+```python
+receipt = await interp.send_priority("CHECK_RISK", order_id=oid)
+```
+
+`wait` defaults to `True` here (unlike plain `send()`); pass `wait=False` for a fire-and-forget event that only needs to jump the queue.
+
+### Both engines
+
+`SyncInterpreter.send(wait=True)` is supported for API symmetry with the async engine. The sync engine already processes an event's full macrostep inline before `send()` returns at all, so `wait=True` simply hands back the `Receipt` for the macrostep that already ran instead of `None`:
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter
+
+interp = SyncInterpreter(machine).start()
+receipt = interp.send("GO", wait=True)
+print(receipt.state_ids, receipt.changed, receipt.error)
+```
+
+`priority=True` is accepted by `SyncInterpreter.send()` for signature compatibility but has no effect: there is no backlog to jump, since the inbox is fully drained before every `send()` call returns.
+
+---
+
 ## Event Payloads — Accessing Event Data
 
 When you send an event with payload data, actions and guards can access it through the `event` parameter:
@@ -858,7 +1031,7 @@ pytest test_login.py -v
 | Plugins | Same API | Same API |
 | Context access | `interp.context` | `interp.context` |
 | Active states | `interp.active_state_ids` | `interp.active_state_ids` |
-| Thread safety | Single-threaded (asyncio); use `send_threadsafe()` from other threads | Single-threaded **event processing**; `after` timers, delayed sends and non-blocking spawns run on background threads that re-enter the machine without a lock — see [Production Characteristics](../production-characteristics/#3-the-syncinterpreter-threading-contract) |
+| Thread safety | Single-threaded (asyncio); use `send_threadsafe()` from other threads | Single-threaded; `after` timers and delayed sends fire on the caller's thread inside `send()`/`tick()`. Only non-blocking `spawn_<key>` children run on a background thread — see [Production Characteristics](../production-characteristics/#3-the-syncinterpreter-threading-contract) |
 
 > **Tip:** Use `SyncInterpreter` for **testing** even if your production code uses `Interpreter`. It eliminates async boilerplate in tests and makes assertions straightforward.
 

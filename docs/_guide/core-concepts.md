@@ -522,7 +522,92 @@ interp.stop()
 
 ---
 
-## Next Steps
+## One Algorithm, Two Engines
+
+`Interpreter` (async) and `SyncInterpreter` (sync) used to carry two
+independent copies of the transition logic -- each engine reimplementing
+action execution, guard evaluation, event selection, and error handling with
+its own subtle differences. As of `#60`, there is exactly **one**
+implementation of the core algorithm, living in `BaseInterpreter`. Each
+engine supplies only a small set of engine-specific **leaves**:
+
+- how to invoke a single user action (`await` on the async engine, a plain
+  call on the sync engine);
+- how to invoke a single service;
+- how to spawn or stop a child actor.
+
+Everything else -- resolving built-in actions, running the action list in
+order, containing an action's exception, applying `actionErrorPolicy`,
+firing `on_action_execute` / `on_action_error` / `on_transition` plugin
+hooks, deciding whether an event is unhandled -- is written once and shared.
+
+What this guarantees you as a user:
+
+- **Identical semantics on both engines.** A machine that behaves a
+  particular way under `SyncInterpreter` behaves the *same* way under
+  `Interpreter` (modulo the unavoidable sync/async boundary -- an
+  `async def` action or service still requires the async engine and raises
+  `NotSupportedError` on the sync one). Guard order, action order, error
+  policies, and unhandled-event handling are not "close enough" between
+  engines; they are the same code path.
+- **A bug fixed once is fixed everywhere.** There is no second copy of the
+  transition logic to have drifted, and no risk of a fix landing on one
+  engine but not the other.
+- **Choosing an engine is purely an I/O concern** -- do you need
+  non-blocking async services and timers, or immediate, thread-free
+  execution? -- never a behavioral one.
+
+## The Microstep / Macrostep Model
+
+Processing a single external event is a **macrostep**, made of one or more
+**microsteps**, mirroring the SCXML processing model (`#36`):
+
+1. An external event (from `send()`, a fired `after` timer, or a completed
+   `invoke`) is taken off the inbox. This starts a macrostep.
+2. The machine evaluates transitions and runs their actions. An action can
+   itself `raise()` a new event **to this same machine** -- that event does
+   **not** go back onto the external inbox. It goes onto an internal queue.
+3. Before the interpreter looks at the next *external* event, it drains the
+   internal queue completely, one microstep at a time, in the order events
+   were raised. Each internal event may itself raise further internal
+   events, which are appended and processed in turn.
+4. Only once the internal queue is empty does the macrostep end and the
+   interpreter return to the external inbox for the next event.
+
+```python
+from xstate_statemachine import State, build_machine, SyncInterpreter, raise_
+
+step_one = State("stepOne", initial=True)
+step_two = State("stepTwo", entry=[raise_({"type": "NEXT"})])
+step_three = State("stepThree")
+
+# Entering "stepTwo" immediately raises NEXT to itself -- processed as part
+# of the SAME macrostep, before any externally queued event is looked at.
+machine = build_machine(
+    id="microsteps",
+    states=[step_one, step_two, step_three],
+    transitions=[
+        step_one.to(step_two, event="START"),
+        step_two.to(step_three, event="NEXT"),
+    ],
+)
+
+interp = SyncInterpreter(machine).start()
+interp.send("START")
+# By the time send() returns, only the macrostep for "START" has been
+# processed -- but internally, entering stepTwo could `raise_({"type": "NEXT"})`
+# and the machine would already be sitting in stepThree.
+interp.stop()
+```
+
+This is why an event you `send()` is never interleaved with the internal
+consequences of a *previous* event: the internal queue always drains first,
+so external events observe a machine that has already settled from its own
+self-raised events.
+
+---
+
+
 
 Now that you understand the building blocks:
 

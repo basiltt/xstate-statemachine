@@ -30,7 +30,7 @@ would affect all subsequently created events.
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 from dataclasses import dataclass, field
-from typing import Any, Dict, NamedTuple
+from typing import Any, Dict, FrozenSet, NamedTuple, Optional
 
 # -----------------------------------------------------------------------------
 # 📨 Event Definitions
@@ -133,6 +133,25 @@ class DoneEvent(NamedTuple):
     src: str
 
 
+class Receipt(NamedTuple):
+    """What ``send(..., wait=True)`` resolves to once the event's macrostep
+    has run to completion (#39).
+
+    Attributes:
+        state_ids: The active leaf ids the instant processing finished.
+        changed: ``True`` if a transition was taken (configuration or
+            context changed) for THIS event.
+        error: The exception raised while processing this event -- an
+            action that raised, an unresolvable target -- or ``None``. The
+            machine may still be ``running`` (see ``actionErrorPolicy``);
+            the receipt tells the CALLER its request did not run cleanly.
+    """
+
+    state_ids: FrozenSet[str]
+    changed: bool
+    error: Optional[BaseException] = None
+
+
 class AfterEvent(NamedTuple):
     """Represents a delayed event used for timed (`after`) transitions.
 
@@ -169,3 +188,13 @@ class AfterEvent(NamedTuple):
 
     # 🏷️ The structured, internally-generated name of the delayed event.
     type: str
+    #: 📏 #48: when the timer was DUE (clock seconds) and when it actually
+    #: fired. `lateness_ms` is the difference -- data an application can
+    #: alarm on instead of inferring timer starvation from symptoms.
+    scheduled_for: float = 0.0
+    fired_at: float = 0.0
+
+    @property
+    def lateness_ms(self) -> float:
+        """Milliseconds the timer fired AFTER its deadline (>= 0)."""
+        return max(0.0, (self.fired_at - self.scheduled_for) * 1000.0)

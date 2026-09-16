@@ -101,7 +101,7 @@ class TestPureSemantics(_Quiet):
         self.assertEqual(again.state_ids, {"m.a"})
         # And the cached probe holds no live timers.
         probe = helpers._probes()[m]
-        self.assertEqual(probe._after_events, {})
+        self.assertEqual(probe._timer_handles, {})
 
     def test_snapshots_remain_independent(self) -> None:
         """Branching twice from one snapshot leaves the original untouched."""
@@ -192,6 +192,42 @@ class TestPurePerf(_Quiet):
             f"{real * 1e6:.1f} us (pure total {pure * 1e6:.1f}, "
             f"floor {floor * 1e6:.1f})",
         )
+
+
+class TestPureProbeIsolation(_Quiet):
+    """#54 (0.8.0 audit): the cached probe must not carry state between
+    independent pure calls. History was the one field `_reset_probe`
+    forgot, so a history target resolved to wherever an UNRELATED earlier
+    call had been -- a silently wrong result from an API sold as pure."""
+
+    CFG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "p",
+        "states": {
+            "p": {
+                "initial": "a",
+                "states": {
+                    "a": {"on": {"TO_B": "b"}},
+                    "b": {},
+                    "h": {"type": "history"},
+                },
+                "on": {"OUT": "q"},
+            },
+            "q": {"on": {"BACK": "p.h"}},
+        },
+    }
+
+    def test_history_does_not_leak_across_independent_snapshots(self) -> None:
+        m = create_machine(self.CFG)
+        # Chain 1 leaves `p` while in `p.b`; the probe now remembers b.
+        s = helpers.get_initial_snapshot(m)
+        s = helpers.get_next_snapshot(m, s, "TO_B")
+        helpers.get_next_snapshot(m, s, "OUT")
+        # An unrelated snapshot in `q` with NO history of its own must
+        # resolve `p.h` to the default child, not to chain 1's memory.
+        q = helpers.PureSnapshot({"m.q"}, {"m", "m.q"}, {}, "running")
+        r = helpers.get_next_snapshot(m, q, "BACK")
+        self.assertEqual(r.state_ids, {"m.p.a"})
 
 
 if __name__ == "__main__":  # pragma: no cover

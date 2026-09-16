@@ -11,6 +11,8 @@
 
 import asyncio
 import logging
+import subprocess
+import sys
 import time
 import unittest
 from typing import Any, Dict, List
@@ -452,6 +454,274 @@ class TestSendSemantics(_Quiet):
         self.assertFalse(
             [w for w in caught if "never awaited" in str(w.message)]
         )
+
+
+class TestAfterTypeHintMatchesNamedDelays(_Quiet):
+    """🐛 [Issue #60] `StateNode.after`'s class-level type hint must match
+    what `_parse_after` actually returns/assigns (`Dict[Union[int, str],
+    ...]`), since named delays (e.g. ``after: {"TIMEOUT": ...}``) resolve
+    to string keys, not just int millisecond keys.
+    """
+
+    def test_models_module_has_no_after_dict_assignment_mypy_error(
+        self,
+    ) -> None:
+        # 🧪 Regression pin: mypy previously flagged the `self.after = ...`
+        # assignment in `_parse_after` as incompatible with the stale
+        # `Dict[int, ...]` class attribute annotation. This must be clean.
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "mypy",
+                "src/xstate_statemachine/models.py",
+                "--ignore-missing-imports",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotIn(
+            "Incompatible types in assignment",
+            result.stdout,
+            msg=result.stdout,
+        )
+
+
+class TestSpawnedActorRolledBackWithTransition(_Quiet):
+    """Finding: a `spawn_*` action's child actor must not survive a
+    rollback of the SAME transition (issue #61 follow-up review).
+    """
+
+    def test_spawned_actor_is_stopped_when_its_own_transition_rolls_back(
+        self,
+    ) -> None:
+        child_cfg = {
+            "id": "child",
+            "initial": "running",
+            "states": {"running": {}},
+        }
+
+        def failing_action(interpreter, context, event, action_def=None):
+            raise RuntimeError("boom")
+
+        cfg = {
+            "id": "m",
+            "actionErrorPolicy": "rollback",
+            "initial": "A",
+            "states": {
+                "A": {
+                    "on": {
+                        "GO": {
+                            "target": "B",
+                            "actions": [
+                                {
+                                    "type": "spawn_childMachine",
+                                    "params": {"id": "kid"},
+                                },
+                                "fail",
+                            ],
+                        }
+                    }
+                },
+                "B": {},
+            },
+        }
+        child_machine = create_machine(child_cfg)
+        logic = MachineLogic(
+            services={"childMachine": child_machine},
+            actions={"fail": failing_action},
+        )
+
+        async def main():
+            machine = create_machine(cfg, logic=logic)
+            interp = await Interpreter(machine).start()
+            await interp.send("GO")
+            await asyncio.sleep(0.05)
+            states = set(interp.current_state_ids)
+            kid = interp._actors.get("m:kid")
+            kid_status = kid.status if kid is not None else None
+            await interp.stop()
+            return states, kid, kid_status
+
+        states, kid, kid_status = asyncio.run(main())
+        self.assertEqual(states, {"m.A"})
+        # 👶 #60 review: the child spawned inside the rolled-back
+        # transition must be neither registered nor left running.
+        self.assertIsNone(kid)
+        self.assertIsNone(kid_status)
+
+
+# -----------------------------------------------------------------------------
+# Finding (HIGH): spawned SyncInterpreter children must inherit the parent's
+# clock so SimulatedClock-driven `after` timers fire deterministically.
+# -----------------------------------------------------------------------------
+class TestSpawnedChildInheritsParentClock(_Quiet):
+    """🕰️ #60: a spawned child must share the parent's `Clock` instance."""
+
+    def test_spawned_child_uses_parent_simulated_clock(self) -> None:
+        from src.xstate_statemachine.clock import SimulatedClock
+
+        child_cfg = {
+            "id": "child",
+            "initial": "waiting",
+            "states": {
+                "waiting": {"after": {"1000": "done"}},
+                "done": {"type": "final"},
+            },
+        }
+        child_machine = create_machine(child_cfg)
+
+        parent_cfg = {
+            "id": "parent",
+            "initial": "active",
+            "states": {
+                "active": {
+                    "entry": [
+                        {
+                            "type": "xstate.spawnChild",
+                            "params": {"src": "child", "id": "kid"},
+                        }
+                    ],
+                }
+            },
+        }
+        parent_machine = create_machine(
+            parent_cfg,
+            logic=MachineLogic(services={"child": child_machine}),
+        )
+
+        clock = SimulatedClock()
+        interp = SyncInterpreter(parent_machine, clock=clock).start()
+        kid = interp._actors.get("parent:kid")
+
+        # 🕵️ The child must share the SAME SimulatedClock instance as its
+        # parent, not silently fall back to a fresh RealClock.
+        self.assertIs(kid.clock, clock)
+
+        # ⏩ Advancing the parent's virtual clock must fire the child's
+        # `after` timer deterministically (no real wall-clock wait).
+        clock.increment(1000)
+        self.assertEqual(kid.status, "done")
+
+
+class TestSendOverloadImplementationHasNoMiscMypyError(_Quiet):
+    """🐛 The `# type: ignore[override]` on `Interpreter.send`'s
+    implementation only suppresses the `[override]` error code, leaving
+    the `[misc]` "does not accept all possible parameters" errors for
+    both `@overload` signatures unsuppressed and uncovered.
+    """
+
+    def test_interpreter_module_has_no_send_overload_misc_error(
+        self,
+    ) -> None:
+        # 🧪 Regression pin: mypy previously reported two `[misc]` errors
+        # at the `send()` implementation line (overloaded implementation
+        # does not accept all possible parameters of signature 1/2),
+        # uncovered by the `[override]`-only ignore comment. Must be clean.
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "mypy",
+                "src/xstate_statemachine/interpreter.py",
+                "--ignore-missing-imports",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotIn(
+            "does not accept all possible parameters",
+            result.stdout,
+            msg=result.stdout,
+        )
+
+
+class TestSendPriorityForwardsArgTypeHasNoMypyError(_Quiet):
+    """🐛 [Issue #38/#39] `send_priority` forwards its `event_or_type`
+    parameter (typed as the full `Union[str, Dict, Event, DoneEvent,
+    AfterEvent]`) straight into `self.send(event_or_type, ...)`. Because
+    `send` is `@overload`-ed, mypy resolves the call against the first,
+    `str`-only overload and flags every non-`str` member of the union as
+    an incompatible argument, even though the runtime dispatch is correct.
+    """
+
+    def test_interpreter_module_has_no_send_priority_arg_type_error(
+        self,
+    ) -> None:
+        # 🧪 Regression pin: mypy previously reported an `[arg-type]` error
+        # at the `self.send(event_or_type, ...)` call inside
+        # `send_priority` ("Argument 1 to "send" of "Interpreter" has
+        # incompatible type ... expected "str""). Must be clean.
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "mypy",
+                "src/xstate_statemachine/interpreter.py",
+                "--ignore-missing-imports",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotIn(
+            'Argument 1 to "send" of "Interpreter" has incompatible type',
+            result.stdout,
+            msg=result.stdout,
+        )
+
+
+class TestNextEventLostWakeupRaceWindow(_Quiet):
+    """🐛 [Coverage] `_next_event`'s re-check-before-sleep branch (an event
+    arriving between the emptiness checks and `_wakeup.clear()`) had no
+    test forcing that exact race window; a regression there would only
+    show up as an intermittent hang, not a deterministic failure.
+    """
+
+    CFG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "a",
+        "states": {"a": {"on": {"GO": "b"}}, "b": {}},
+    }
+
+    def test_event_arriving_during_wakeup_clear_is_not_slept_through(
+        self,
+    ) -> None:
+        # 🧪 Regression pin: force the race by making `_wakeup.clear()`
+        # itself the thing that delivers the event -- simulating another
+        # task enqueuing between the "is anything pending?" checks and the
+        # clear call. If the re-check-after-clear guard at
+        # interpreter.py:1528-1530 were removed, this event would only be
+        # picked up after `_wakeup.wait()` unblocks it, which nothing here
+        # ever does, so the test would hang until pytest's timeout.
+        async def main():
+            i = await Interpreter(create_machine(self.CFG)).start()
+            await asyncio.sleep(0.02)  # let the loop settle into idle
+
+            real_clear = i._wakeup.clear
+
+            def clear_and_sneak_in_event():
+                real_clear()
+                i._event_queue.put_nowait(_make_go_event())
+
+            i._wakeup.clear = clear_and_sneak_in_event
+
+            # ▶️ Nudge the loop out of its current `await` so `_next_event`
+            # re-enters and hits the patched `clear()`.
+            i._wakeup.set()
+            await asyncio.wait_for(asyncio.sleep(0.05), timeout=1)
+
+            out = set(i.current_state_ids)
+            await i.stop()
+            return out
+
+        state = asyncio.run(main())
+        self.assertEqual(state, {"m.b"})
+
+
+def _make_go_event() -> Any:
+    from src.xstate_statemachine.models import Event
+
+    return Event(type="GO")
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -1,0 +1,231 @@
+# tests/test_core_algorithm.py
+# -----------------------------------------------------------------------------
+# 🏛️ #60 (LC-57): ONE algorithm, two execution strategies
+# -----------------------------------------------------------------------------
+# 🏛️ Architecture decision: the SyncInterpreter used to re-implement the
+# core steps -- transition execution, entry/exit, event processing -- as
+# plain-def forks of the base's `async def`s (some under different names,
+# so no override check could catch drift). Every wave of this effort found
+# a bug that existed on one engine only. The base algorithm awaits NOTHING
+# but its own methods; the sync engine now inherits it unchanged and drives
+# each coroutine to completion with `_drive()`, which raises if any leaf
+# ever truly suspends. The only sync-specific code left is the LEAVES
+# (`_execute_actions`, `_cancel_state_tasks`, `send`, spawning, timers),
+# each returning an already-finished awaitable. The filer's repro asserts
+# this structurally; so does this suite.
+# -----------------------------------------------------------------------------
+"""Engine unification: no core step exists twice (#60)."""
+
+import asyncio
+import functools
+import inspect
+import logging
+import unittest
+from typing import Any, Dict
+
+from src.xstate_statemachine import (
+    Interpreter,
+    MachineLogic,
+    NotSupportedError,
+    SyncInterpreter,
+    create_machine,
+)
+from src.xstate_statemachine.base_interpreter import BaseInterpreter
+
+
+class _Quiet(unittest.TestCase):
+    def setUp(self) -> None:
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+
+
+CORE_STEPS = (
+    "_process_event",
+    "_execute_transition",
+    "_execute_internal_transition",
+    "_execute_lifecycle_actions",
+    "_enter_states",
+    "_exit_states",
+    "_check_and_fire_on_done",
+)
+
+
+class TestOneAlgorithm(_Quiet):
+    def test_both_engines_share_one_algorithm_implementation(self) -> None:
+        """Neither engine defines its own copy of a core step."""
+        for name in CORE_STEPS:
+            with self.subTest(step=name):
+                base = getattr(BaseInterpreter, name)
+                self.assertIs(getattr(SyncInterpreter, name), base, name)
+                self.assertIs(getattr(Interpreter, name), base, name)
+
+    def test_no_base_coroutine_is_shadowed_by_a_plain_def(self) -> None:
+        for name, member in vars(BaseInterpreter).items():
+            if not inspect.iscoroutinefunction(member):
+                continue
+            override = vars(SyncInterpreter).get(name)
+            if override is None:
+                continue
+            with self.subTest(step=name):
+                # A sync override of a base coroutine must itself return an
+                # awaitable (a leaf), never be a plain fork of the algorithm.
+                self.assertNotIn(
+                    name, CORE_STEPS, f"{name} forked in SyncInterpreter"
+                )
+
+    def test_renamed_forks_are_gone(self) -> None:
+        for renamed in (
+            "_execute_transition_sync",
+            "_process_single_transition",
+        ):
+            self.assertFalse(
+                hasattr(SyncInterpreter, renamed), f"{renamed} still exists"
+            )
+
+
+class TestSyncStrategyRejectsAsyncLogic(_Quiet):
+    """LC-58: the sync engine must refuse EVERY async-callable shape."""
+
+    CFG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "a",
+        "states": {
+            "a": {"on": {"GO": {"target": "b", "actions": ["act"]}}},
+            "b": {},
+        },
+    }
+
+    def _expect_not_supported(self, action: Any) -> None:
+        i = SyncInterpreter(
+            create_machine(
+                self.CFG, logic=MachineLogic(actions={"act": action})
+            )
+        ).start()
+        with self.assertRaises(NotSupportedError):
+            i.send("GO")
+        i.stop()
+
+    def test_partial_wrapped_async_action_raises_not_supported(self) -> None:
+        async def act(i, c, e, a):
+            pass
+
+        self._expect_not_supported(functools.partial(act))
+
+    def test_async_call_object_raises_not_supported(self) -> None:
+        class Act:
+            async def __call__(self, i, c, e, a):
+                pass
+
+        self._expect_not_supported(Act())
+
+    def test_async_generator_action_raises_not_supported(self) -> None:
+        async def act(i, c, e, a):
+            yield 1
+
+        self._expect_not_supported(act)
+
+    def test_plain_sync_action_still_runs(self) -> None:
+        hits = []
+        i = SyncInterpreter(
+            create_machine(
+                self.CFG,
+                logic=MachineLogic(actions={"act": lambda *a: hits.append(1)}),
+            )
+        ).start()
+        i.send("GO")
+        self.assertEqual(hits, [1])
+        self.assertEqual(i.current_state_ids, {"m.b"})
+
+
+class TestDriveNeverSuspends(_Quiet):
+    def test_sync_engine_raises_if_a_leaf_truly_suspends(self) -> None:
+        """`_drive` is the safety net: a leaf that awaits real I/O is a bug."""
+
+        class Bad(SyncInterpreter):
+            def _execute_actions(self, actions, event):  # type: ignore[override]
+                async def suspends():
+                    await asyncio.sleep(0)
+                    return []
+
+                return suspends()
+
+        i = Bad(
+            create_machine(
+                {
+                    "id": "m",
+                    "initial": "a",
+                    "states": {"a": {"on": {"G": "b"}}, "b": {}},
+                }
+            )
+        )
+        with self.assertRaises(RuntimeError) as cm:
+            i.start()
+        self.assertIn("suspend", str(cm.exception).lower())
+
+
+class TestParityOnSharedAlgorithm(_Quiet):
+    """The same machine, both engines, byte-identical observable trace."""
+
+    CFG: Dict[str, Any] = {
+        "id": "p",
+        "initial": "a",
+        "context": {"trace": []},
+        "states": {
+            "a": {
+                "entry": ["ea"],
+                "exit": ["xa"],
+                "on": {"GO": {"target": "b", "actions": ["t"]}},
+            },
+            "b": {
+                "entry": ["eb"],
+                "initial": "b1",
+                "states": {
+                    "b1": {
+                        "entry": ["eb1"],
+                        "always": {"target": "b2", "actions": ["al"]},
+                    },
+                    "b2": {"entry": ["eb2"], "type": "final"},
+                },
+                "onDone": {"target": "c", "actions": ["od"]},
+            },
+            "c": {"entry": ["ec"], "type": "final"},
+        },
+    }
+
+    def _logic(self) -> MachineLogic:
+        names = ("ea", "xa", "t", "eb", "eb1", "al", "eb2", "od", "ec")
+        return MachineLogic(
+            actions={
+                n: (lambda i, c, e, a, n=n: c["trace"].append(n))
+                for n in names
+            }
+        )
+
+    def test_trace_identical_on_both_engines(self) -> None:
+        s = SyncInterpreter(
+            create_machine(self.CFG, logic=self._logic())
+        ).start()
+        s.send("GO")
+        sync_trace = list(s.context["trace"])
+
+        async def main():
+            i = await Interpreter(
+                create_machine(self.CFG, logic=self._logic())
+            ).start()
+            await i.send("GO")
+            for _ in range(200):
+                if i.status == "done":
+                    break
+                await asyncio.sleep(0.002)
+            out = list(i.context["trace"])
+            await i.stop()
+            return out
+
+        self.assertEqual(sync_trace, asyncio.run(main()))
+        self.assertEqual(
+            sync_trace, ["ea", "xa", "t", "eb", "eb1", "al", "eb2", "od", "ec"]
+        )
+
+
+if __name__ == "__main__":  # pragma: no cover
+    unittest.main()

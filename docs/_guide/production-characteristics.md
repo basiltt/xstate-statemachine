@@ -47,25 +47,27 @@ The `SyncInterpreter` is different in kind, not degree: it processes each `send(
 
 An `after` delay guarantees **not before** — never **at**.
 
-On the async engine a timer is an ordinary coroutine (`asyncio.sleep` then `send`). When the deadline passes, the timer's continuation goes to the back of the same queue every other machine's events are in. Under load it waits its turn like everything else.
+On the async engine a timer is scheduled through the interpreter's [`Clock`](../delayed-transitions/#controlling-time) (`loop.call_later` on the default `RealClock`). When the deadline passes, the fired timer is delivered through a **priority lane** that the run loop checks ahead of its inbox, so it does not queue behind that machine's own backlog of external events. It still has to wait for the *current* macrostep of every other machine sharing the loop to yield — Python's event loop is cooperative — so under load it fires late:
 
 | Busy machines in the process | `after: 10` fires late by |
 |---:|---:|
-| 0 | ~0.3 ms |
-| 10 | ~3 ms |
-| 100 | ~35 ms |
-| 500 | ~180 ms |
+| 0 | ~0.2 ms |
+| 10 | ~1 ms |
+| 100 | ~12 ms |
+| 500 | ~63 ms |
+
+(Before 0.8.0 the timer's continuation shared the inbox and the same run measured ~35 ms and ~180 ms; the priority lane cut the lateness by roughly a factor of three. `AfterEvent.lateness_ms` reports the actual figure for each firing.)
 
 Two properties of that curve matter for design:
 
-- **The error is roughly constant in absolute terms across delay sizes.** A 10 ms timer and a 10 s timer are each ~180 ms late at 500 busy machines — so *short* deadlines degrade worst *relatively*. A 10 ms timeout at 500 machines is meaningless; a 30 s one is fine.
+- **The error is roughly constant in absolute terms across delay sizes.** A 10 ms timer and a 10 s timer are each ~60 ms late at 500 busy machines — so *short* deadlines degrade worst *relatively*. A 10 ms timeout at 500 machines is meaningless; a 30 s one is fine.
 - **The OS floor.** On Windows the default timer resolution is ~15.6 ms; an `after: 5` cannot fire at 5 ms on an idle loop there. Linux and macOS are ~1 ms.
 
 ### What to use `after` for
 
 Session timeouts, retry back-off, debounce, "give up after 30 s" — anything where a few hundred milliseconds of lateness is harmless. **Do not** use it for deadlines that carry money or safety (an order's time-in-force, a watchdog) when the process is also busy; put those on a dedicated scheduler and deliver the result as an ordinary event.
 
-On the `SyncInterpreter`, `after` timers are not on an event loop at all — see the next section.
+On the `SyncInterpreter`, `after` timers are not on an event loop at all — they fire on the thread that next calls `send()` or `tick()`; see the next section. In tests, drive either engine with a [`SimulatedClock`](../testing-and-pure-api/#virtual-time-with-simulatedclock) and the lateness question disappears.
 
 ---
 
@@ -74,21 +76,22 @@ On the `SyncInterpreter`, `after` timers are not on an event loop at all — see
 `SyncInterpreter` is single-threaded **for event processing only**.
 
 - `send()` runs the whole macrostep — guards, actions, entry/exit, `always` chains — synchronously on the **calling thread**, and returns when it is done. Two `send()` calls from one thread cannot overlap. That is the guarantee, and it is what makes the sync engine ideal for tests and step-through debugging.
-- **`after` timers run on background `threading.Thread`s.** When a delay elapses, that thread calls `send()` itself, which runs the resulting macrostep — including any actions that mutate `context` — **on the timer thread, with no lock.** The same is true of delayed `sendTo` / `raise` with a `delay`, and of non-blocking spawned child actors, each of which runs on its own thread.
+- **`after` timers and delayed sends do not own a thread.** Since 0.8.0 (#50) a delay is a deadline recorded on the interpreter's `Clock`; a due deadline is delivered on the **caller's thread** at the top of the next `send()`, inside the macrostep loop, or when you call `tick()` explicitly. Nothing fires between your own statements. (Before 0.8.0 each timer was a `threading.Thread` that re-entered the machine without a lock.)
+- **Non-blocking `spawn_<key>` children still run on a background thread.** Each such child has a daemon runner thread that pumps its `tick()`; the child's actions execute on that thread. The parent is only re-entered through the child's completion event or `sendParent`, both of which go through the parent's inbox and are processed on the parent's next `send()`/`tick()`.
 
-So if your machine uses `after` (or delayed sends, or `spawn_<key>` children), the sync engine is *not* single-threaded, and `context` can change between two statements of your own code.
+So a machine that uses `after` and delayed sends is single-threaded end-to-end; only `spawn_<key>` (non-blocking) children introduce a second thread, and that thread runs the *child's* code, not the parent's.
 
 ### What is and is not safe
 
 | | Safe? |
 |---|---|
 | Calling `send()` from the thread that created the interpreter | Yes |
-| Reading `context` / `current_state_ids` between your own `send()` calls, machine has **no** `after` / delays / spawns | Yes — nothing else can run |
-| The same, but the machine **does** use `after` / delays / spawns | **No** — a timer thread may have run a macrostep in between |
-| Calling `send()` from two different threads concurrently | **No** — macrosteps will interleave; `context` mutations race |
-| Assuming an action runs on the thread that called `start()` | **No** — it runs on whichever thread delivered the triggering event |
+| Reading `context` / `current_state_ids` between your own `send()` calls, machine uses `after` / delayed sends but **no** non-blocking spawns | Yes — a due timer only fires inside `send()`/`tick()` |
+| Reading a non-blocking **child's** `context` from the parent's thread | **No** — the child's runner thread may be mid-macrostep |
+| Calling `send()` on one interpreter from two different threads concurrently | **No** — macrosteps will interleave; `context` mutations race |
+| Assuming a `spawn_<key>` child's action runs on the thread that called `start()` | **No** — it runs on the child's runner thread |
 
-If you need a sync machine with timers *and* a thread-safety guarantee, own the lock yourself: wrap every `send()` — yours and, via a small subclass, the timer thread's — in one `threading.Lock`. Or use the async `Interpreter`, where everything is on one loop and the question does not arise.
+A sync machine that must not miss a deadline while idle needs *someone* to call `tick()` (or `send()`) — a due `after` cannot fire on its own. If you need cross-thread delivery, use the async `Interpreter` with `send_threadsafe()`.
 
 ---
 

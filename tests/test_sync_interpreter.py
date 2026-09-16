@@ -46,6 +46,8 @@ from src.xstate_statemachine import (
     SyncInterpreter,
     create_machine,
 )
+from src.xstate_statemachine.clock import SimulatedClock
+from src.xstate_statemachine.exceptions import UnknownEventError
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
@@ -1397,9 +1399,14 @@ class TestSyncInterpreter(unittest.TestCase):
         interpreter.start()
         self.assertEqual(interpreter.current_state_ids, {"timer.waiting"})
 
-        # ⚡ Act: Wait for the plugin to signal that the transition has occurred.
-        # A generous timeout of 1 second is used to avoid test flakes on slow systems.
-        event_was_set = transition_happened.wait(timeout=1.0)
+        # ⚡ Act: since #50 the sync engine has NO timer threads -- a due
+        #    `after` is delivered on the caller's next `send()` / `tick()`.
+        #    Wait past the deadline, then pump.
+        deadline = time.monotonic() + 1.0
+        while not transition_happened.is_set() and time.monotonic() < deadline:
+            time.sleep(0.005)
+            interpreter.tick()
+        event_was_set = transition_happened.is_set()
 
         # ✨ Assert: The event should have been set, and the state should be correct.
         self.assertTrue(
@@ -2028,6 +2035,91 @@ class TestSyncInterpreter(unittest.TestCase):
 
         # ✨ Assert
         self.assertEqual(len(interp._actors), 0)
+        interp.stop()
+
+    def test_spawned_child_inherits_parent_clock(self) -> None:
+        """Tests a spawned child shares the parent's Clock instance (#60).
+
+        Regression test: `_spawn_actor_sync` used to construct the child
+        `SyncInterpreter` with no `clock=` kwarg, so it always got its own
+        fresh `RealClock` -- even when the parent used a `SimulatedClock`.
+        That broke `after` timers inside spawned children under simulated
+        time and made `spawn_blocking_*` wait on REAL wall-clock time.
+        """
+        logger.info("🧪 Testing spawned child inherits parent clock...")
+        # 🤖 Arrange: child has a 1000ms `after` timer driven by the clock.
+        child_cfg = {
+            "id": "timerChild",
+            "initial": "wait",
+            "states": {
+                "wait": {"after": {1000: "done"}},
+                "done": {"type": "final"},
+            },
+        }
+        machine = create_machine(
+            {
+                "id": "parent",
+                "initial": "a",
+                "states": {"a": {"entry": ["spawn_child"]}},
+            },
+            logic=MachineLogic(
+                services={"child": lambda i, c, e: create_machine(child_cfg)}
+            ),
+        )
+        clock = SimulatedClock()
+
+        # ⚡ Act
+        interp = SyncInterpreter(machine, clock=clock).start()
+        actor_ids = list(interp._actors.keys())
+        self.assertEqual(len(actor_ids), 1)
+        child = interp._actors[actor_ids[0]]
+
+        # ✨ Assert: the child shares the same Clock object as the parent,
+        # so advancing the parent's simulated clock fires the child's timer.
+        self.assertIs(child.clock, clock)
+        clock.increment(1000)
+        self.assertTrue(
+            wait_until(lambda: child.status == "done"),
+            "Child's `after` timer never fired -- clock was not shared.",
+        )
+        interp.stop()
+
+    def test_spawned_child_inherits_parent_strict_mode(self) -> None:
+        """Tests a spawned child inherits `strict=True` from its parent (#60).
+
+        Regression test: the child used to always fall back to
+        `machine.strict` (typically False), so an undeclared event sent
+        directly to a spawned child was silently accepted even though the
+        parent interpreter had opted into strict mode.
+        """
+        logger.info("🧪 Testing spawned child inherits parent strict mode...")
+        # 🤖 Arrange
+        child_cfg = {
+            "id": "child",
+            "initial": "wait",
+            "states": {"wait": {"on": {"KNOWN": "wait"}}},
+        }
+        machine = create_machine(
+            {
+                "id": "parent",
+                "initial": "a",
+                "states": {"a": {"entry": ["spawn_child"]}},
+            },
+            logic=MachineLogic(
+                services={"child": lambda i, c, e: create_machine(child_cfg)}
+            ),
+        )
+
+        # ⚡ Act
+        interp = SyncInterpreter(machine, strict=True).start()
+        actor_ids = list(interp._actors.keys())
+        self.assertEqual(len(actor_ids), 1)
+        child = interp._actors[actor_ids[0]]
+
+        # ✨ Assert: the child's strict flag matches the parent's.
+        self.assertTrue(child.strict)
+        with self.assertRaises(UnknownEventError):
+            child.send("UNDECLARED_EVENT")
         interp.stop()
 
     # -------------------------------------------------------------------------

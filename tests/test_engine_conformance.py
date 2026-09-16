@@ -377,8 +377,17 @@ class TestRaiseStormIsBounded(unittest.IsolatedAsyncioTestCase):
         # Act — well above the default 1000 microstep ceiling.
         total = 3000
         await asyncio.gather(*[interpreter.send("TICK") for _ in range(total)])
-        for _ in range(400):
-            if interpreter.context["n"] >= total:
+        # ⏳ Wait for COMPLETION, bounded by wall time, not by a poll count.
+        #    This test is about loss, not latency: `IsolatedAsyncioTestCase`
+        #    runs the loop in asyncio DEBUG mode, and on Windows'
+        #    ProactorEventLoop before 3.14 each debug-mode `sleep(0)` -- the
+        #    per-event anti-starvation yield from #48 -- costs ~5 ms, so
+        #    3,000 events legitimately take ~15 s there (0.07 s outside
+        #    debug mode). A 4 s poll budget reported 799/3000 and looked
+        #    like data loss; it was not.
+        deadline = asyncio.get_running_loop().time() + 60.0
+        while interpreter.context["n"] < total:
+            if asyncio.get_running_loop().time() > deadline:
                 break
             await asyncio.sleep(0.01)
 
@@ -958,6 +967,7 @@ class TestRobustnessFixes(unittest.IsolatedAsyncioTestCase):
             if fired:
                 break
             time.sleep(0.01)
+            interpreter.tick()  # #50: sync timers fire on a pump
         self.assertEqual(["T"], fired)
 
     def test_corrupt_snapshot_raises_a_library_error(self) -> None:

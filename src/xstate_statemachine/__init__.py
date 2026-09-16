@@ -73,6 +73,7 @@ Example:
 # ⚙️ Core Components
 # -----------------------------------------------------------------------------
 from .factory import create_machine
+from .base_interpreter import PendingInvocation
 from .interpreter import Interpreter
 from .sync_interpreter import SyncInterpreter
 from .machine_logic import MachineLogic
@@ -81,8 +82,8 @@ from .logic_loader import LogicLoader
 # -----------------------------------------------------------------------------
 # ✉️ Event & Model Definitions
 # -----------------------------------------------------------------------------
-from .events import Event
-from .models import ActionDefinition, MachineNode
+from .events import Event, Receipt
+from .models import ActionDefinition, MachineNode, OverflowPolicy
 
 # -----------------------------------------------------------------------------
 # 🔌 Extensibility & Plugins
@@ -101,6 +102,10 @@ from .exceptions import (
     TransitionFailedError,
     SnapshotDriftError,
     SnapshotVersionError,
+    QueueOverflowError,
+    InterpreterStoppedError,
+    UnknownEventError,
+    InvalidEventPayloadError,
     UnhandledEventError,
     WrongThreadError,
     XStateMachineError,
@@ -109,6 +114,7 @@ from .exceptions import (
 # -------------------------------------------------------------------------
 # 🐍 Pythonic API
 # -------------------------------------------------------------------------
+from .clock import Clock, RealClock, SimulatedClock
 from .pythonic import (
     State,
     StateMachine,
@@ -203,7 +209,18 @@ __all__ = [
     "WrongThreadError",
     "SnapshotDriftError",
     "SnapshotVersionError",
+    "QueueOverflowError",
+    "InterpreterStoppedError",
+    "UnknownEventError",
+    "InvalidEventPayloadError",
+    "Receipt",
+    "OverflowPolicy",
     "MachineNode",
+    "PendingInvocation",
+    # ⏱️ Clock
+    "Clock",
+    "RealClock",
+    "SimulatedClock",
     # 🐍 Pythonic API
     "State",
     "StateMachine",

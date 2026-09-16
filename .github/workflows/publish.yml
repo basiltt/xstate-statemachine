@@ -77,7 +77,7 @@ jobs:
           import xstate_statemachine as x
           from xstate_statemachine import create_machine, MachineLogic, SyncInterpreter
           print('version:', x.__version__)
-          assert len(x.__all__) == 53, len(x.__all__)
+          assert len(x.__all__) == 63, len(x.__all__)
           m = create_machine(
               {'id': 'ci', 'initial': 'a', 'states': {'a': {'on': {'GO': 'b'}}, 'b': {}}},
               logic=MachineLogic(),

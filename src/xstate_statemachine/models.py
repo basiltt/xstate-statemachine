@@ -32,7 +32,9 @@ and invoked services.
 import copy
 import inspect
 import logging
+from enum import Enum
 from typing import (
+    FrozenSet,
     Any,
     Dict,
     Generic,
@@ -122,6 +124,23 @@ def _validated_policy(
 #
 # ⚠️ Order matters: `spawn_blocking_` must be tested before `spawn_`, since the
 # latter is a prefix of the former.
+class OverflowPolicy(str, Enum):
+    """What ``send()`` does when a bounded inbox is full (#38).
+
+    * ``RAISE`` -- default once a bound is set. `send()` raises
+      `QueueOverflowError`; the gateway sheds load and alarms.
+    * ``BLOCK`` -- `await send()` suspends until the consumer frees a slot.
+      For trusted in-process producers that can be slowed.
+    * ``DROP_NEWEST`` -- the incoming event is discarded with a WARNING and
+      `PluginBase.on_event_dropped`. The only policy that can lose an event;
+      never the default. For telemetry where staleness beats backlog.
+    """
+
+    RAISE = "raise"
+    BLOCK = "block"
+    DROP_NEWEST = "drop_newest"
+
+
 SPAWN_BLOCKING_PREFIX = "spawn_blocking_"
 #: Default upper bound (ms) a `spawn_blocking_<key>` waits for its child
 #: when the machine sets no `spawnBlockingTimeout`. Generous enough for any
@@ -688,7 +707,10 @@ class StateNode(Generic[TContext, TEvent]):
     initial: Optional[str]
     on: Dict[str, List[TransitionDefinition]]
     on_done: Optional[TransitionDefinition]
-    after: Dict[int, List[TransitionDefinition]]
+    # 🐛 [Issue #60] Keys may be int (ms delays) or str (named delays,
+    # e.g. "TIMEOUT"), matching what `_parse_after` actually returns and
+    # assigns to `self.after` below -- keeps this in sync with mypy.
+    after: Dict[Union[int, str], List[TransitionDefinition]]
     entry: List[ActionDefinition]
     exit: List[ActionDefinition]
     invoke: List[InvokeDefinition]
@@ -838,6 +860,20 @@ class StateNode(Generic[TContext, TEvent]):
         self.entry = self._parse_actions(config.get("entry"))
         self.exit = self._parse_actions(config.get("exit"))
         self.on = self._parse_on(config)
+        # ⚡ #55 part 2: precompiled descriptor index. `_matching_descriptors`
+        #    used to scan every `on` key per event to find partials; for a
+        #    typical machine there are none, so the scan was pure overhead
+        #    on the hottest path. Built ONCE here.
+        self._on_partials: List[Tuple[str, str]] = sorted(
+            (
+                (key, key[:-2])
+                for key in self.on
+                if key != "*" and key.endswith(".*")
+            ),
+            key=lambda kv: len(kv[0]),
+            reverse=True,
+        )
+        self._on_has_wildcard: bool = "*" in self.on
         self.on_done = self._parse_on_done(config)
         self.after = self._parse_after(config)
         self.invoke = self._parse_invoke(config)
@@ -1332,6 +1368,12 @@ class MachineNode(StateNode[TContext, TEvent]):
         #: Upper bound on microsteps when settling transient ("always")
         #: transitions, mirroring XState's `maxIterations` (v5.31.0).
         self.max_iterations: int = int(config.get("maxIterations", 1000))
+        #: 🛡️ #51: `strict` from config; an interpreter may also opt in.
+        self.strict: bool = bool(config.get("strict", False))
+        #: Payload validators keyed by event type; set by `create_machine`.
+        self.event_schemas: Dict[str, Any] = {}
+        #: Lazily built descriptor set; see `known_events`.
+        self._known_events: Optional[FrozenSet[str]] = None
         #: Upper bound (ms) a `spawn_blocking_<key>` waits for the child to
         #: finish on the async engine; `None` waits indefinitely (#41).
         raw_timeout = config.get("spawnBlockingTimeout")
@@ -1384,6 +1426,57 @@ class MachineNode(StateNode[TContext, TEvent]):
 
         # 🚀 Call the parent constructor to build the entire state tree.
         super().__init__(self, config, config["id"])
+
+    @property
+    def known_events(self) -> FrozenSet[str]:
+        """Every event descriptor this machine declares, anywhere (#51).
+
+        Built once, lazily, from every state's ``on`` keys (including
+        partial ``"a.b.*"`` and bare ``"*"`` descriptors), every ``after``
+        delay's generated type, and every ``invoke``'s generated
+        ``done.invoke.<id>`` / ``error.platform.<id>``. This is the set
+        `strict` mode checks a sent event against.
+        """
+        if self._known_events is None:
+            from .validation import walk
+
+            # 🏷️ #51: explicit element type avoids a mypy var-annotated
+            # error since the mixed .update()/.add() calls below don't
+            # let mypy infer the element type on their own.
+            found: Set[str] = set()
+            for node in walk(self):
+                found.update(node.on.keys())
+                for group in node.after.values():
+                    found.update(t.event for t in group)
+                for inv in node.invoke:
+                    found.add(f"done.invoke.{inv.id}")
+                    found.add(f"error.platform.{inv.id}")
+            found.discard("")  # the eventless (`always`) key
+            self._known_events = frozenset(found)
+        return self._known_events
+
+    def is_known_event(self, event_type: str) -> bool:
+        """True if *event_type* matches a declared descriptor (#51).
+
+        Honours the same matching rules as dispatch: an exact key, a
+        partial ``"prefix.*"`` whose prefix matches by dot-segment, or the
+        bare ``"*"`` wildcard, which makes EVERY event known. Engine-
+        synthesised events (``done.``, ``error.``, ``after.``, ``xstate.``,
+        the init sentinel) are always known.
+        """
+        known = self.known_events
+        if "*" in known or event_type in known:
+            return True
+        if event_type.startswith(
+            ("done.", "error.", "after.", "xstate.", "___xstate")
+        ):
+            return True
+        for key in known:
+            if key.endswith(".*"):
+                prefix = key[:-2]
+                if event_type == prefix or event_type.startswith(prefix + "."):
+                    return True
+        return False
 
     @property
     def structure_hash(self) -> str:

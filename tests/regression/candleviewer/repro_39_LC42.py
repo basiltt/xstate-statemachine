@@ -39,7 +39,8 @@ async def main() -> int:
     ).start()
 
     # 1) send() returns None — no future/receipt to await.
-    ret = await interp.send("NOISE")
+    # 0.8.0 (#39): `wait=True` returns a Receipt after the macrostep.
+    ret = await interp.send("NOISE", wait=True)
     sig = inspect.signature(Interpreter.send)
     print(
         f"OBSERVED Interpreter.send(...) returned {ret!r}; return annotation "
@@ -48,14 +49,15 @@ async def main() -> int:
     print(
         "EXPECTED an awaitable receipt resolving after the event is processed"
     )
-    if ret is not None:
+    # The 0.7.0 defect was `ret is None`; the fix is a Receipt.
+    if ret is None or not hasattr(ret, "state_ids"):
         ok = False
 
     # 2) After `await send(TRIP)` the machine has NOT transitioned yet.
     interp2 = await Interpreter(
         create_machine(CFG, logic=MachineLogic())
     ).start()
-    await interp2.send("TRIP")
+    await interp2.send("TRIP", wait=True)
     state_right_after = set(interp2.current_state_ids)
     print(
         f"OBSERVED state immediately after `await send('TRIP')` = {state_right_after}"
@@ -76,9 +78,9 @@ async def main() -> int:
         for n in range(BACKGROUND):
             await i.send("NOISE", n=n)
         t0 = time.perf_counter()
-        await i.send("TRIP")
-        while "gov.tripped" not in i.current_state_ids:
-            await asyncio.sleep(0)  # the only available "answer" mechanism
+        # priority jumps the backlog; wait returns when THIS event has run.
+        receipt = await i.send("TRIP", wait=True, priority=True)
+        assert "gov.tripped" in receipt.state_ids
         lat.append((time.perf_counter() - t0) * 1000)
         await i.stop()
     print(

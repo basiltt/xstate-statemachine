@@ -970,12 +970,9 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
             }
         )
         interpreter = await Interpreter(machine).start()
+        # #49: `after` timers are clock handles keyed by owner, not tasks.
         self.assertGreater(
-            len(
-                interpreter.task_manager._tasks_by_owner.get(
-                    "timer_canceller.waiting", []
-                )
-            ),
+            len(interpreter._timer_handles.get("timer_canceller.waiting", [])),
             0,
         )
 
@@ -983,16 +980,11 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
         await interpreter.send("EARLY_EXIT")
         await self.wait_for_state(interpreter, {"timer_canceller.exited"})
 
-        # ✅ Assert: The task for the timer has been cancelled and removed.
+        # ✅ Assert: the timer handle has been cancelled and removed.
         self.assertEqual(
-            len(
-                interpreter.task_manager._tasks_by_owner.get(
-                    "timer_canceller.waiting", []
-                )
-            ),
+            len(interpreter._timer_handles.get("timer_canceller.waiting", [])),
             0,
         )
-        await interpreter.stop()
 
     async def test_multiple_after_timers_in_one_state(self) -> None:
         """Should fire the shortest timer when multiple 'after' timers exist."""

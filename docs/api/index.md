@@ -17,7 +17,7 @@ from xstate_statemachine import create_machine, Interpreter, State  # etc.
 
 ## Factory Functions
 
-### `create_machine(config, *, logic=None, logic_modules=None, logic_providers=None, strict_targets=True)`
+### `create_machine(config, *, logic=None, logic_modules=None, logic_providers=None, strict_targets=True, event_schemas=None)`
 
 Creates, validates, and assembles a state machine instance from an
 XState-compatible JSON configuration dictionary. This is the **primary
@@ -39,6 +39,7 @@ target must resolve, and no `always` self-target may be a permanent dead end.
 | `logic_modules` | `List[Union[str, ModuleType]]` | No | `None` | Python modules (or their dotted import-path strings, e.g. `"my_app.logic.actions"`) to scan for logic functions. |
 | `logic_providers` | `List[object]` | No | `None` | Class instances whose public methods are scanned to satisfy the machine's logic requirements. Provider methods override module-level functions on name collision. |
 | `strict_targets` | `bool` | No | `True` | When `True`, an unresolvable transition target raises `InvalidConfigError` at build time. When `False`, it downgrades to a `DeprecationWarning` (0.7.x behavior; removed in 1.0). |
+| `event_schemas` | `Optional[Dict[str, Any]]` | No | `None` | Opt-in payload validation. Maps an event type to a validator -- a callable, a dataclass, or anything with a `model_validate`/`parse_obj`-style constructor -- that the event's `payload`/data is passed through before a transition runs. A validation failure raises `InvalidEventPayloadError` (#51). |
 
 **Returns:** `MachineNode` -- a fully constructed, validated machine ready for
 an interpreter.
@@ -49,6 +50,7 @@ an interpreter.
 |-----------|-----------|
 | `InvalidConfigError` | `config` is missing `"id"`, `"states"`, or `"id"` is not a non-empty string; a transition target does not resolve (when `strict_targets=True`); an `always` self-target can never make progress; or a built-in action is missing a required `params` key. |
 | `ImplementationMissingError` | Auto-discovery is active and a required action, guard, or service cannot be found. |
+| `InvalidEventPayloadError` | Raised later, at send-time (not by `create_machine()` itself), when `event_schemas` is set and an incoming event's payload fails its declared schema. Listed here because it is a direct consequence of the `event_schemas` parameter. |
 
 ### Machine-level policy keys
 
@@ -658,7 +660,14 @@ t3 = transition(
 ### `Interpreter(machine)` -- Async
 
 ```python
-Interpreter(machine: MachineNode)
+Interpreter(
+    machine: MachineNode,
+    input: Optional[Any] = None,
+    clock: Optional[Clock] = None,
+    max_queue_size: Optional[int] = None,
+    overflow_policy: OverflowPolicy = OverflowPolicy.RAISE,
+    strict: Optional[bool] = None,
+)
 ```
 
 The primary **asynchronous** state machine engine. Processes events from an
@@ -669,13 +678,24 @@ applications (web servers, IoT, automation scripts).
 Uses a dedicated `TaskManager` to track all background `asyncio.Task` objects,
 ensuring clean cancellation when states are exited.
 
+#### Constructor parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `machine` | `MachineNode` | -- | The machine to run. |
+| `input` | `Optional[Any]` | `None` | Creation input for a `context` factory. |
+| `clock` | `Optional[Clock]` | `None` | Source of time. Defaults to `RealClock`. Pass a `SimulatedClock` for deterministic virtual-time tests **[wave 3]** (#49). |
+| `max_queue_size` | `Optional[int]` | `None` | Bound on the inbox. `None` keeps the unbounded queue; when set, `overflow_policy` decides what a full inbox does to `send()` **[wave 3]** (#38). |
+| `overflow_policy` | `OverflowPolicy` | `OverflowPolicy.RAISE` | `RAISE` / `BLOCK` / `DROP_NEWEST`; ignored when no `max_queue_size` is set. The priority lane (`send(priority=True)`) is never bounded **[wave 3]** (#38). |
+| `strict` | `Optional[bool]` | `None` | When `True`, an event type not declared anywhere in the machine raises `UnknownEventError` at the `send()` call site instead of silently no-opping **[wave 3]** (#51). |
+
 #### Methods
 
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
 | `await .start()` | `() -> Interpreter` | `Interpreter` | Starts the interpreter and its event loop. Enters the initial state(s). Returns `self` for chaining. Idempotent. |
 | `await .stop(drain=False, timeout=None)` | `(bool, Optional[float]) -> None` | `None` | Gracefully stops the event loop, cancels all tasks and child actors. `drain=True` processes the inbox to empty first, bounded by `timeout` seconds (`None` waits until empty). Idempotent; a no-op on an already-`"done"`/`"stopped"` interpreter. |
-| `await .send(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], **Any) -> None` | `None` | Sends an event to the queue. Accepts a string, dict, or `Event` object. Non-blocking. Raises `WrongThreadError` when called from a thread other than the one whose event loop owns this interpreter. |
+| `await .send(event, *, wait=False, priority=False, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], bool, bool, **Any) -> Optional[Receipt]` | `Optional[Receipt]` | Sends an event to the queue. Accepts a string, dict, or `Event` object. Non-blocking unless `overflow_policy=OverflowPolicy.BLOCK`. `wait=True` **[wave 3]** (#39) makes the returned awaitable resolve to a `Receipt` once the event's macrostep has fully run; `False` (default) resolves immediately to `None`. `priority=True` **[wave 3]** (#39) delivers the event ahead of every already-queued external event and exempts it from `max_queue_size`. Raises `WrongThreadError` when called from a thread other than the one whose event loop owns this interpreter, and `QueueOverflowError` when the inbox is bounded, full, and the policy is `RAISE` **[wave 3]** (#38). |
 | `.send_threadsafe(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], **Any) -> concurrent.futures.Future[None]` | `concurrent.futures.Future[None]` | Sends an event from **any** thread by routing the enqueue through the interpreter's owning event loop. Returns a `Future` you may `.result()` on to block until the event is queued (not processed). |
 | `await .send_events(events)` | `(List[Union[str, Dict, Event]]) -> None` | `None` | Sends a list of events to the queue. Non-blocking. |
 | `.matches(state)` | `(Union[str, Dict[str, Any]]) -> bool` | `bool` | Reports whether *state* is part of the active configuration. Accepts a string id (fully-qualified, `#`-prefixed, or trailing partial path) or a partial `.value` dict. |
@@ -683,12 +703,13 @@ ensuring clean cancellation when states are exited.
 | `.get_snapshot()` | `() -> str` | `str` | Returns a JSON string snapshot of current state, context, and status. |
 | `await .drain_pending()` | `() -> List[Union[Event, DoneEvent, AfterEvent]]` | `list` | Removes and returns every accepted-but-unprocessed event, without processing it. |
 | `await .wait_done()` | `() -> asyncio.Future[str]` | `Future[str]` | Resolves to `"done"`/`"error"` the instant the machine reaches a terminal status. Already-resolved if the machine is terminal now. |
+| `.pending_invocations()` | `() -> List[PendingInvocation]` | `list` | Invokes in the active configuration that have NO live service -- the truthful list of what a static `from_snapshot()` restore left dormant **[wave 3]** (#44). Empty on a live machine and after `restart_services=True`. |
 
 #### Class Method
 
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
-| `Interpreter.from_snapshot(json_str, machine, *, verify_machine_hash=True)` | `(str, MachineNode, bool) -> Interpreter` | `Interpreter` | Restores an interpreter from a snapshot. Does **not** re-run entry actions or restart timers/services. Raises `SnapshotVersionError` for a snapshot newer than this library supports, and `SnapshotDriftError` on a machine id or structural-hash mismatch (skip the hash check with `verify_machine_hash=False`). |
+| `Interpreter.from_snapshot(json_str, machine, *, verify_machine_hash=True, restart_services=False)` | `(str, MachineNode, bool, bool) -> Interpreter` | `Interpreter` | Restores an interpreter from a snapshot. Does **not** re-run entry actions or restart timers/services by default. Raises `SnapshotVersionError` for a snapshot newer than this library supports, and `SnapshotDriftError` on a machine id or structural-hash mismatch (skip the hash check with `verify_machine_hash=False`). `restart_services=True` **[wave 3]** (#44) makes the restored interpreter's `start()` re-invoke every `invoke` in the restored configuration from scratch (not resumed) -- opt in only when the service is safe to run again (e.g. guarded by a client-supplied idempotency key). |
 
 #### Properties
 
@@ -749,7 +770,12 @@ asyncio.run(main())
 ### `SyncInterpreter(machine)` -- Synchronous
 
 ```python
-SyncInterpreter(machine: MachineNode)
+SyncInterpreter(
+    machine: MachineNode,
+    input: Optional[Any] = None,
+    clock: Optional[Clock] = None,
+    strict: Optional[bool] = None,
+)
 ```
 
 A fully **synchronous** interpreter that processes events immediately within
@@ -757,8 +783,17 @@ the `send()` call. Suitable for CLI tools, desktop GUI event loops, simple
 workflows, and predictable testing scenarios.
 
 Events are handled one at a time from an internal `collections.deque`,
-ensuring sequential, blocking execution. After timers are implemented using
-background `threading.Thread` objects.
+ensuring sequential, blocking execution. `after` timers are scheduled on the
+injected `Clock` (thread-free; #49/#50) rather than a background thread.
+
+#### Constructor parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `machine` | `MachineNode` | -- | The state machine definition to run. |
+| `input` | `Optional[Any]` | `None` | Creation input for a `context` factory. |
+| `clock` | `Optional[Clock]` | `None` | Source of time. Defaults to `RealClock`, whose sync-side timers are a thread-free deadline list drained by `.tick()` / `.send()` **[wave 3]** (#49, #50). Pass a `SimulatedClock` for deterministic virtual-time tests. |
+| `strict` | `Optional[bool]` | `None` | When `True`, an event type not declared anywhere in the machine raises `UnknownEventError` at the `send()` call site **[wave 3]** (#51). |
 
 #### Methods
 
@@ -766,18 +801,19 @@ background `threading.Thread` objects.
 |--------|-----------|---------|-------------|
 | `.start()` | `() -> SyncInterpreter` | `SyncInterpreter` | Starts the interpreter and enters the initial state(s). Returns `self` for chaining. Idempotent. |
 | `.stop(drain=False, timeout=None)` | `(bool, Optional[float]) -> None` | `None` | Stops the interpreter, cancels timers, stops child actors. `drain=True` processes the inbox to empty first. Idempotent; a no-op on an already-`"done"`/`"stopped"` interpreter. |
-| `.send(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], **Any) -> None` | `None` | Sends an event for **immediate** synchronous processing. Blocks until the event and all resulting transitions are fully processed. |
+| `.send(event, *, wait=False, priority=False, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], bool, bool, **Any) -> Optional[Receipt]` | `Optional[Receipt]` | Sends an event for **immediate** synchronous processing. Blocks until the event and all resulting transitions are fully processed. `wait=True` **[wave 3]** (#39) returns a `Receipt` for API symmetry with the async engine's `send(wait=True)` (the sync engine already processes inline by the time `send()` returns). `priority` is accepted for signature symmetry but has no effect -- there is no backlog to jump. |
 | `.send_events(events)` | `(List[Union[str, Dict, Event]]) -> None` | `None` | Sends a list of events for immediate processing. |
 | `.matches(state)` | `(Union[str, Dict[str, Any]]) -> bool` | `bool` | Reports whether *state* is part of the active configuration. Accepts a string id or a partial `.value` dict. |
 | `.use(plugin)` | `(PluginBase) -> SyncInterpreter` | `SyncInterpreter` | Registers a plugin. Returns `self` for chaining. |
 | `.get_snapshot()` | `() -> str` | `str` | Returns a JSON string snapshot. |
 | `.drain_pending()` | `() -> List[Union[Event, DoneEvent, AfterEvent]]` | `list` | Removes and returns every accepted-but-unprocessed event, without processing it. |
+| `.pending_invocations()` | `() -> List[PendingInvocation]` | `list` | Invokes in the active configuration that have NO live service, per `Interpreter.pending_invocations()` above **[wave 3]** (#44). |
 
 #### Class Method
 
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
-| `SyncInterpreter.from_snapshot(json_str, machine, *, verify_machine_hash=True)` | `(str, MachineNode, bool) -> SyncInterpreter` | `SyncInterpreter` | Restores an interpreter from a snapshot. Raises `SnapshotVersionError`/`SnapshotDriftError` as described for `Interpreter.from_snapshot` above. |
+| `SyncInterpreter.from_snapshot(json_str, machine, *, verify_machine_hash=True, restart_services=False)` | `(str, MachineNode, bool, bool) -> SyncInterpreter` | `SyncInterpreter` | Restores an interpreter from a snapshot. Raises `SnapshotVersionError`/`SnapshotDriftError` as described for `Interpreter.from_snapshot` above. `restart_services=True` **[wave 3]** (#44) re-invokes every dormant `invoke` from scratch when the restored interpreter starts. |
 
 #### Properties
 
@@ -797,7 +833,7 @@ Same as `Interpreter`:
 
 | Feature | Supported? | Notes |
 |---------|-----------|-------|
-| `after` timers | Yes | Implemented via `threading.Thread`. Fires event when delay elapses. |
+| `after` timers | Yes | Scheduled on the injected `Clock` (no background thread; #49/#50). Fires event when delay elapses. |
 | `invoke` services | Sync only | Async (`async def`) services raise `NotSupportedError`. |
 | Async actions | No | `async def` actions raise `NotSupportedError`. |
 | Actor spawning | Yes | Supports `spawn_` (background thread) and `spawn_blocking_` (blocking). |
@@ -844,6 +880,73 @@ interpreter = (
     .start()
 )
 # All events, transitions, and actions will be logged
+```
+
+---
+
+## Clock **[wave 3]**
+
+Time as an injectable dependency (#48, #49, #50). A `Clock` schedules
+**callbacks**; the interpreter decides what a fired callback means. The same
+`Clock` object may serve both engines at once, so a parent and its invoked
+children (which may be either engine) share one timeline.
+
+### `Clock` (Protocol)
+
+```python
+@runtime_checkable
+class Clock(Protocol):
+    def now(self) -> float: ...
+    def set_timeout(self, fn, delay_sec: float, *, owner: Any = None) -> Any: ...
+    def clear_timeout(self, handle: Any) -> None: ...
+    def pump(self) -> int: ...
+```
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `.now()` | `() -> float` | Current time in seconds (monotonic; origin is clock-specific). |
+| `.set_timeout(fn, delay_sec, *, owner=None)` | `(Callable[[], Any], float, Any) -> Any` | Schedule `fn` after `delay_sec`; returns a cancellation handle. |
+| `.clear_timeout(handle)` | `(Any) -> None` | Cancel a scheduled callback. Idempotent. |
+| `.pump()` | `() -> int` | Run every callback whose deadline has passed; returns how many fired. |
+
+### `RealClock()`
+
+Wall-clock time and the default for both engines when no `clock` is passed to
+`Interpreter`/`SyncInterpreter`. Inside a running asyncio loop, a timeout is
+`loop.call_later` (the same primitive `asyncio.sleep` uses). Outside a loop
+(the sync engine), a timeout is a record in a deadline heap and no thread is
+started -- due callbacks run when `SyncInterpreter.send()` / `.tick()` calls
+`.pump()`.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `.pending` | `int` | Deadlines waiting in the heap (sync-engine timers only). |
+
+### `SimulatedClock()`
+
+Virtual time for deterministic tests, mirroring XState's `SimulatedClock`.
+Time does not pass on its own -- `.increment()` advances virtual time and
+fires every timer that became due, in due order.
+
+| Method | Signature | Returns | Description |
+|--------|-----------|---------|-------------|
+| `.increment(ms)` | `(float) -> Union[None, Awaitable[None]]` | `None` or an awaitable | Advances virtual time by `ms` milliseconds and fires what became due, one timer at a time (so an `after` chain scheduled inside the same window fires in order). Returns an **awaitable** when called inside a running event loop (`await clock.increment(ms)`) and `None` otherwise; a forgotten `await` inside a loop raises a `RuntimeWarning` at garbage-collection time instead of silently racing. |
+| `.set(ms)` | `(float) -> Union[None, Awaitable[None]]` | Same as `.increment()` | Jumps to absolute virtual time `ms`; raises `ValueError` if that would move backwards. |
+| `.pending` | `int` | -- | Property: number of live (uncancelled) timers. |
+
+```python
+from xstate_statemachine import Interpreter, SyncInterpreter, SimulatedClock
+
+# Sync engine
+clock = SimulatedClock()
+interp = SyncInterpreter(machine, clock=clock).start()
+clock.increment(30_000)   # fires a 30s `after` transition synchronously
+
+# Async engine
+async def main():
+    clock = SimulatedClock()
+    service = await Interpreter(machine, clock=clock).start()
+    await clock.increment(30_000)   # fires the 30s `after`, settles the loop
 ```
 
 ---
@@ -1009,6 +1112,83 @@ configuration. **Users never create this event manually.**
 |--------|---------------------------|
 | `"after": {"3000": "timeout"}` on state `pending` in machine `myApp` | `"after.3000.myApp.pending"` |
 | `"after": {"500": "retry"}` on state `loading` in machine `fetch` | `"after.500.fetch.loading"` |
+
+---
+
+### `Receipt(state_ids, changed, error=None)` **[wave 3]**
+
+```python
+class Receipt(NamedTuple):
+    state_ids: FrozenSet[str]
+    changed: bool
+    error: Optional[BaseException] = None
+```
+
+What `send(..., wait=True)` resolves to once the event's macrostep has run to
+completion (#39).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `state_ids` | `FrozenSet[str]` | The active leaf ids the instant processing finished. |
+| `changed` | `bool` | `True` if a transition was taken (configuration or context changed) for THIS event. |
+| `error` | `Optional[BaseException]` | The exception raised while processing this event -- an action that raised, an unresolvable target -- or `None`. The machine may still be `"running"` (per `actionErrorPolicy`); the receipt tells the caller its request did not run cleanly. |
+
+```python
+receipt = await interpreter.send("SUBMIT", wait=True)
+if receipt.error is not None:
+    print(f"SUBMIT did not run cleanly: {receipt.error}")
+```
+
+---
+
+### `OverflowPolicy` **[wave 3]**
+
+```python
+class OverflowPolicy(str, Enum):
+    RAISE = "raise"
+    BLOCK = "block"
+    DROP_NEWEST = "drop_newest"
+```
+
+What `send()` does when a bounded inbox (`max_queue_size` on `Interpreter`) is
+full (#38).
+
+| Member | Value | Behavior |
+|--------|-------|----------|
+| `OverflowPolicy.RAISE` | `"raise"` | Default once `max_queue_size` is set. `send()` raises `QueueOverflowError`; the gateway sheds load and alarms. |
+| `OverflowPolicy.BLOCK` | `"block"` | `await send()` suspends until the consumer frees a slot. For trusted in-process producers that can be slowed. |
+| `OverflowPolicy.DROP_NEWEST` | `"drop_newest"` | The incoming event is discarded with a WARNING log and `PluginBase.on_event_dropped`. The only policy that can lose an event; never the default. For telemetry where staleness beats backlog. |
+
+`OverflowPolicy` is a `str` subclass, so plain strings (`"raise"`, `"block"`,
+`"drop_newest"`) are also accepted anywhere it is expected.
+
+```python
+from xstate_statemachine import Interpreter, OverflowPolicy
+
+service = await Interpreter(
+    machine, max_queue_size=1000, overflow_policy=OverflowPolicy.DROP_NEWEST
+).start()
+```
+
+---
+
+### `PendingInvocation(state_id, invoke_id, src)` **[wave 3]**
+
+```python
+class PendingInvocation(NamedTuple):
+    state_id: str
+    invoke_id: str
+    src: str
+```
+
+An `invoke` that is part of the active configuration but has no live task --
+what `.pending_invocations()` returns (#44).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `state_id` | `str` | The state that owns the invoke. |
+| `invoke_id` | `str` | The invoke's id (explicit, or the parser default). |
+| `src` | `str` | The service key. |
 
 ---
 
@@ -1436,6 +1616,32 @@ print(mmd)
 
 ---
 
+### `MachineNode.is_known_event(event_type) -> bool` **[wave 3]**
+
+```python
+machine.is_known_event(event_type: str) -> bool
+```
+
+True if *event_type* matches a descriptor declared anywhere in the machine
+(#51) -- the check `strict` mode runs against a sent event. Honours the same
+matching rules as dispatch: an exact `on` key, a partial `"prefix.*"` whose
+prefix matches by dot-segment, or the bare `"*"` wildcard, which makes every
+event known. Engine-synthesised events (`done.*`, `error.*`, `after.*`,
+`xstate.*`, the init sentinel) are always known.
+
+Backed by the `machine.known_events` property (`FrozenSet[str]`), which is
+built once, lazily, from every state's `on` keys, every `after` delay's
+generated type, and every `invoke`'s generated `done.invoke.<id>` /
+`error.platform.<id>`.
+
+```python
+machine = create_machine(config)
+assert machine.is_known_event("OPEN")
+assert not machine.is_known_event("TYPO_EVENT")
+```
+
+---
+
 ## `xstate_statemachine.persistence`
 
 The module that owns the snapshot format contract — used internally by `get_snapshot()` / `from_snapshot()`, and importable directly for tooling that needs to inspect or migrate snapshots.
@@ -1470,6 +1676,33 @@ specific exception types.
 | `WrongThreadError` | A loop-affine `Interpreter` method was called from a foreign thread. | Calling `interpreter.send()` from a thread other than the one that started the interpreter; use `send_threadsafe()` instead. |
 | `SnapshotVersionError` | A snapshot's `version` is newer than this library's `SNAPSHOT_VERSION`. | Restoring a snapshot written by a newer release of the library. |
 | `SnapshotDriftError` | A snapshot doesn't belong to the machine restoring it. | The snapshot's `machine_id` differs from the target machine's, or (when `verify_machine_hash=True`) `machine_hash` no longer matches `machine.structure_hash`. |
+| `QueueOverflowError` **[wave 3]** | `send()` refused an event because the bounded inbox is full. | `max_queue_size` is set, `overflow_policy=OverflowPolicy.RAISE` (the default once a bound is set), and the inbox is at capacity (#38). |
+| `UnknownEventError` **[wave 3]** | `send()` was called with an event type not declared anywhere in the machine. | `strict=True` on the interpreter and the event type matches no `on` key, `after` delay, or `invoke` completion descriptor (#51). |
+| `InvalidEventPayloadError` **[wave 3]** | An event's payload failed its declared schema. | `event_schemas` is set on `create_machine()` and an incoming event's payload does not satisfy the validator registered for its type (#51). |
+| `InterpreterStoppedError` **[wave 3]** | A `send(wait=True)` receipt cannot resolve because the interpreter stopped, or dropped the event, before it was processed. | `interpreter.send(event, wait=True)` is awaited/blocked on and the interpreter is stopped, or the event is dropped by an overflow policy, before that event is processed (#39). |
+
+### `QueueOverflowError` attributes **[wave 3]**
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `interpreter_id` | `str` | Which machine refused the event. |
+| `depth` | `int` | Events queued at the moment of refusal. |
+| `maxsize` | `int` | The configured `max_queue_size` bound. |
+
+### `UnknownEventError` attributes **[wave 3]**
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `event_type` | `str` | The offending type. |
+| `machine_id` | `str` | The machine that refused it. |
+| `known` | `list[str]` | The declared descriptor set, sorted. |
+
+### `InvalidEventPayloadError` attributes **[wave 3]**
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `event_type` | `str` | The event whose payload was rejected. |
+| `cause` | `BaseException` | The exception the validator raised. |
 
 ### `StateNotFoundError` attributes
 
@@ -1493,6 +1726,10 @@ Exception
       +-- WrongThreadError
       +-- SnapshotVersionError
       +-- SnapshotDriftError
+      +-- QueueOverflowError
+      +-- UnknownEventError
+      +-- InvalidEventPayloadError
+      +-- InterpreterStoppedError
 ```
 
 ### Error handling example
@@ -1565,6 +1802,7 @@ All hooks have empty default implementations -- override only those you need.
 | `on_transition_failed` | `(self, interpreter: TInterpreter, transition: TransitionDefinition, failed_actions: List[Tuple[ActionDefinition, BaseException]]) -> None` | A transition's action list did not run to completion (`actionErrorPolicy` `"rollback"`/`"fail"`). |
 | `on_guard_error` | `(self, interpreter: TInterpreter, guard_name: str, event: Event, error: BaseException) -> None` | A guard raised instead of returning, before the substituted result (per `guardErrorPolicy`) is reported. |
 | `on_unhandled_event` | `(self, interpreter: TInterpreter, event: Event, active_state_ids: Set[str], disposition: str) -> None` | An event selects no transition. `disposition` is `"ignored"`, `"deferred"`, `"errored"`, or `"dropped"`. |
+| `on_event_dropped` **[wave 3]** | `(self, interpreter: TInterpreter, event: Event, reason: str) -> None` | An accepted-looking event was discarded unprocessed: `reason="queue_full"` under `OverflowPolicy.DROP_NEWEST` with a full bounded inbox, or `reason="not_running"` when a send reaches a stopped/done/errored machine. Also logged at WARNING. The observability hook for load shedding (#38). |
 | `on_error` | `(self, interpreter: TInterpreter, error: BaseException) -> None` | The interpreter enters the terminal `"error"` status. |
 | `on_done` | `(self, interpreter: TInterpreter, output: Any) -> None` | The machine reaches a top-level final state. |
 

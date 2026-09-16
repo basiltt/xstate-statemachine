@@ -28,7 +28,7 @@ title: Home
     </div>
     <div class="hero-stats">
       <div class="hero-stat">
-        <span class="hero-stat-value">2,800+</span>
+        <span class="hero-stat-value">3,148+</span>
         <span class="hero-stat-label">Tests Passing</span>
       </div>
       <div class="hero-stat">
@@ -146,6 +146,21 @@ is_submitting = False
       <span class="feature-icon">&#x23F1;&#xFE0F;</span>
       <h3>Delayed Transitions</h3>
       <p>Timer-based <code>after</code> transitions for timeouts, polling, and auto-progression. Multiple timers per state supported.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">&#x1F6E1;&#xFE0F;</span>
+      <h3>Production Hardened</h3>
+      <p><code>actionErrorPolicy: "rollback"</code> restores configuration and context after a raising action, <code>onUnhandled</code> catches events nothing handles, <code>strict</code> mode raises on undeclared events at the call site, and a bounded inbox with <code>OverflowPolicy</code> gives you backpressure instead of unbounded memory.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">&#x23F2;&#xFE0F;</span>
+      <h3>Virtual Time</h3>
+      <p>Inject a <code>Clock</code> &mdash; <code>RealClock</code> in production, <code>SimulatedClock</code> in tests. Advance virtual time deterministically to fire <code>after</code> timers and delayed sends without sleeping, on either interpreter.</p>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">&#x270B;</span>
+      <h3>Ask, Don&rsquo;t Poll</h3>
+      <p><code>send(wait=True)</code> returns a <code>Receipt</code> the moment the macrostep for that event has run &mdash; no polling for state to settle. <code>priority=True</code> jumps the inbox for decisions that cannot wait behind routine traffic.</p>
     </div>
   </div>
 </section>

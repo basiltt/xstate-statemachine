@@ -184,6 +184,7 @@ class PureSnapshot:
         "status",
         "output",
         "_nodes",
+        "_history",
     )
 
     def __init__(
@@ -212,6 +213,15 @@ class PureSnapshot:
         #: (#54). Private: lets the chained-call pattern skip N id lookups
         #: per step. Absent (None) on hand-built snapshots.
         self._nodes: Optional[Set[Any]] = None
+        #: History memory (`parent id -> remembered children`) as of this
+        #: snapshot (#54, 0.8.0 audit). A history target is only
+        #: meaningful relative to the path that produced the snapshot, so
+        #: it must ride WITH the snapshot: chained calls resolve `p.hist`
+        #: to where that chain left `p`; an unrelated or hand-built
+        #: snapshot (None) resolves it to the default child. Before this
+        #: the cached probe's own memory served both -- correct for one
+        #: chain, silently wrong across independent calls.
+        self._history: Optional[Dict[str, List[Any]]] = None
 
     def matches(self, state_id: str) -> bool:
         """Reports whether a state is active in this snapshot.
@@ -282,15 +292,19 @@ def _make_probe_class() -> type:
 
         _recorded: List[ActionDefinition]
 
-        def _execute_actions(self, actions: Any, event: Any) -> List[Any]:
+        def _execute_actions(  # type: ignore[override]
+            self, actions: Any, event: Any
+        ) -> Any:
             """Records actions without running their side effects.
 
             `assign` is still applied, because context updates are part of
             the computed next state rather than an external side effect.
-            Returns an empty failure list so the action-error machinery
-            (#27) sees a clean run.
+            Returns an (already finished) awaitable of an empty failure
+            list -- the shared base algorithm `await`s this leaf (#60) and
+            the action-error machinery (#27) sees a clean run.
             """
             from .actions import ASSIGN, resolve_builtin
+            from .sync_interpreter import _Done
 
             for action_def in actions or []:
                 self._recorded.append(action_def)
@@ -299,7 +313,7 @@ def _make_probe_class() -> type:
                         self._resolve_params(action_def.params, event) or {},
                         event,
                     )
-            return []
+            return _Done([])
 
         def _schedule_state_tasks(self, state: Any) -> None:
             """Suppresses timers and invoked services entirely."""
@@ -357,6 +371,12 @@ def _reset_probe(probe: Any, snapshot: Optional[PureSnapshot]) -> None:
     probe._recorded.clear()
     probe._event_queue.clear()
     probe._deferred_events.clear()
+    # 🧠 History is snapshot state, not probe state (#54, 0.8.0 audit):
+    #    start from exactly what the incoming snapshot remembers -- nothing,
+    #    for a hand-built or initial one -- never from a previous call.
+    probe._history.clear()
+    if snapshot is not None and snapshot._history:
+        probe._history.update(snapshot._history)
     probe.output = None
     probe.error = None
     probe.last_transition_ok = True
@@ -409,6 +429,7 @@ def _capture(probe: Any) -> PureSnapshot:
         output=probe.output,
     )
     snap._nodes = set(probe._active_state_nodes)
+    snap._history = {k: list(v) for k, v in probe._history.items()}
     return snap
 
 

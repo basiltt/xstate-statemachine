@@ -1997,6 +1997,7 @@ class TestNamedDelays(unittest.TestCase):
             and time.monotonic() < deadline
         ):
             time.sleep(0.005)
+            interpreter.tick()  # #50: sync timers fire on a pump
 
         # Assert
         self.assertEqual({"m.b"}, interpreter.current_state_ids)
@@ -2020,6 +2021,7 @@ class TestNamedDelays(unittest.TestCase):
             and time.monotonic() < deadline
         ):
             time.sleep(0.005)
+            interpreter.tick()  # #50: sync timers fire on a pump
 
         # Assert
         self.assertEqual({"m.b"}, interpreter.current_state_ids)
@@ -3069,6 +3071,7 @@ class TestWildcardExcludesInternalEvents(unittest.IsolatedAsyncioTestCase):
             and time.monotonic() < deadline
         ):
             time.sleep(0.005)
+            interpreter.tick()  # #50: sync timers fire on a pump
 
         # Assert
         self.assertEqual({"m.timed"}, interpreter.current_state_ids)
@@ -4737,8 +4740,10 @@ class TestSpawnInputAndRegistryCleanup(unittest.IsolatedAsyncioTestCase):
             interpreter.send("S")
             interpreter.send("C")
 
-        # Assert — nothing accumulates across cancel cycles.
-        self.assertEqual(0, len(interpreter._pending_send_cancels))
+        # Assert — nothing accumulates across cancel cycles. (#50: delayed
+        # sends are clock deadlines, not threads; a cancelled one is a dead
+        # heap entry that `pending` excludes.)
+        self.assertEqual(0, interpreter.clock.pending)
 
 
 # -----------------------------------------------------------------------------
