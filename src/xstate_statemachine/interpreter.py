@@ -25,6 +25,7 @@ recommended choice for most modern applications.
 # -----------------------------------------------------------------------------
 import asyncio
 import concurrent.futures
+from collections import deque
 import threading
 import inspect
 import logging
@@ -45,6 +46,7 @@ from typing import (
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from .base_interpreter import BaseInterpreter
+from .clock import Clock, SimulatedClock
 from .events import AfterEvent, DoneEvent, Event
 from .exceptions import (
     WrongThreadError,
@@ -174,6 +176,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         self,
         machine: MachineNode[TContext, TEvent],
         input: Optional[Any] = None,
+        clock: Optional[Clock] = None,
     ) -> None:
         """Initializes a new asynchronous Interpreter instance.
 
@@ -183,7 +186,20 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         """
         # 🏛️ Initialize the base class, passing our own class type so that
         # `from_snapshot` can create the correct `Interpreter` instance.
-        super().__init__(machine, interpreter_class=Interpreter, input=input)
+        super().__init__(
+            machine, interpreter_class=Interpreter, input=input, clock=clock
+        )
+        #: ⚡ #48: a fired timer is delivered here, NOT via the inbox, so it
+        #: cannot queue behind 2,000 external events. Checked first by the
+        #: run loop. `_timer_handles` maps owner state id -> live handles so
+        #: exiting a state cancels its timers on any Clock.
+        self._priority_queue: "deque[Union[Event, AfterEvent, DoneEvent]]" = (
+            deque()
+        )
+        self._timer_handles: Dict[str, List[Any]] = {}
+        #: Wakes the run loop when a priority event arrives while it is
+        #: blocked on the (empty) inbox.
+        self._wakeup: Optional[asyncio.Event] = None
         logger.info(
             "🚀 Initializing Asynchronous Interpreter for '%s'...", self.id
         )
@@ -489,7 +505,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             )
             return
         # 📥 Place the standardized event object into the async queue.
-        self._event_queue.put_nowait(event_obj)
+        self._put_inbox(event_obj)
 
     def send_threadsafe(
         self,
@@ -535,6 +551,13 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         """
         self._loop = asyncio.get_running_loop()
         self._loop_thread_name = threading.current_thread().name
+        if self._wakeup is None:
+            self._wakeup = asyncio.Event()
+        # 🧪 A SimulatedClock must let THIS interpreter settle after firing
+        #    timers, or `await clock.increment()` returns before the machine
+        #    has processed the AfterEvent it just queued.
+        if isinstance(self.clock, SimulatedClock):
+            self.clock._attach(self._settle_for_clock)
         if isinstance(self._event_queue, _PreStartQueue):
             pending = self._event_queue.drain()
             self._event_queue = asyncio.Queue()
@@ -591,6 +614,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             await actor.stop()
         self._actors.clear()
         await self.task_manager.cancel_all()
+        for handles in self._timer_handles.values():
+            for handle in handles:
+                self.clock.clear_timeout(handle)
+        self._timer_handles.clear()
+        self._priority_queue.clear()
         self._unregister_from_system()
         if self._event_loop_task and self.status != "running":
             self._event_loop_task.cancel()
@@ -623,7 +651,18 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         return list(getattr(q, "_queue", ()))
 
     def _enqueue_restored(self, event: Event) -> None:
+        self._put_inbox(event)
+
+    def _put_inbox(self, event: Union[Event, DoneEvent, AfterEvent]) -> None:
+        """Enqueue on the inbox AND wake a run loop parked on an empty one.
+
+        Every inbox write must go through here: `_next_event` blocks on
+        `_wakeup`, not on `Queue.get()`, so a bare `put_nowait` would be
+        invisible to an idle loop until the next unrelated event.
+        """
         self._event_queue.put_nowait(event)
+        if self._wakeup is not None:
+            self._wakeup.set()
 
     async def drain_pending(self) -> List[Union[Event, DoneEvent, AfterEvent]]:
         """Remove and return every accepted-but-unprocessed event.
@@ -716,8 +755,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             return
 
         for event in events:
-            event_obj = self._prepare_event(event)
-            await self._event_queue.put(event_obj)
+            self._put_inbox(self._prepare_event(event))
 
     # -------------------------------------------------------------------------
     # ⚙️ Internal Event Loop & Execution Logic
@@ -743,8 +781,10 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         limit = getattr(self.machine, "max_iterations", 1000)
         try:
             while self.status == "running":
-                # 📬 Wait indefinitely for the next event from the queue.
-                event = await self._event_queue.get()
+                # ⚡ #48: due timers first. They were delivered by the clock
+                #    straight into the priority lane; an external backlog of
+                #    any depth cannot delay them past this point.
+                event, from_inbox = await self._next_event()
 
                 if self._raise_depth > limit:
                     logger.error(
@@ -756,7 +796,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                         self.id,
                     )
                     self._raise_depth = 0
-                    self._event_queue.task_done()
+                    if from_inbox:
+                        self._event_queue.task_done()
                     continue
 
                 logger.debug(
@@ -808,7 +849,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 finally:
                     self._processing = False
 
-                self._event_queue.task_done()
+                if from_inbox:
+                    self._event_queue.task_done()
 
         except asyncio.CancelledError:
             # This is an expected, clean shutdown triggered by `stop()`.
@@ -1167,30 +1209,27 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
         key = str(send_id) if send_id else None
 
-        async def _delayed() -> None:
-            """Waits out the delay, then delivers."""
-            try:
-                await asyncio.sleep(delay / 1000.0)
-                await self._send_to_actor(actor, target_event)
-            except asyncio.CancelledError:  # pragma: no cover - shutdown
-                raise
-            finally:
-                # 🧹 Only clear the registry if it still points at THIS task.
-                #    A later send reusing the same id replaces the entry, and
-                #    popping unconditionally would drop the live registration
-                #    and leave the newer send uncancellable.
-                if (
-                    key is not None
-                    and self._scheduled_sends.get(key) is _cancel
-                ):
-                    self._scheduled_sends.pop(key, None)
+        def _fire() -> None:
+            """Deliver once the clock says the delay has elapsed (#49)."""
+            # 🧹 Only clear the registry if it still points at THIS send.
+            #    A later send reusing the same id replaces the entry, and
+            #    popping unconditionally would drop the live registration
+            #    and leave the newer send uncancellable.
+            if key is not None and self._scheduled_sends.get(key) is _cancel:
+                self._scheduled_sends.pop(key, None)
+            if self.status != "running":
+                return
+            if actor is self:
+                self._deliver_priority(target_event)
+            else:
+                asyncio.ensure_future(self._send_to_actor(actor, target_event))
 
-        task = asyncio.create_task(_delayed())
-        self.task_manager.add(self.id, task)
+        handle = self.clock.set_timeout(_fire, delay / 1000.0, owner=self.id)
+        self._timer_handles.setdefault(self.id, []).append(handle)
 
         def _cancel() -> None:
             """Cancels this specific delayed send."""
-            task.cancel()
+            self.clock.clear_timeout(handle)
 
         if key is not None:
             # 🔁 Reusing a send id supersedes the earlier send. Without this
@@ -1324,7 +1363,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         #    receives `{input}` (#42); `_build_initial_context` also seeds
         #    declared keys and exposes `context["input"]`.
         child_interpreter = Interpreter(
-            actor_machine, input=spawn_params.get("input")
+            actor_machine, input=spawn_params.get("input"), clock=self.clock
         )
         child_interpreter.parent = self
         child_interpreter.id = actor_id
@@ -1388,49 +1427,102 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         """
         # Encapsulation: Delegate cancellation to the dedicated TaskManager.
         await self.task_manager.cancel_by_owner(state.id)
+        # ⏱️ And the clock-scheduled timers this state owns (#49).
+        for handle in self._timer_handles.pop(state.id, []):
+            self.clock.clear_timeout(handle)
 
-    async def _after_timer_task(
-        self, delay_sec: float, event: AfterEvent
-    ) -> None:
-        """Coroutine that waits for a delay and then sends an `AfterEvent`.
+    async def _next_event(
+        self,
+    ) -> Tuple[Union[Event, AfterEvent, DoneEvent], bool]:
+        """Return ``(event, from_inbox)``: priority lane first, then inbox.
 
-        This is the actual task body for a timed transition (`after`).
+        `from_inbox` tells the caller whether it owes the inbox a
+        `task_done()` -- priority events never passed through `get()`, and
+        acking them would corrupt the join counter.
 
-        Args:
-            delay_sec (float): The delay in seconds to wait.
-            event (AfterEvent): The `AfterEvent` to send after the delay.
+        🏛️ Architecture decision: this deliberately does NOT race a
+        `Queue.get()` future against the wake-up event. An earlier version
+        did, and a cancelled `get()` that had already dequeued an item lost
+        that item (148 of 3,000 events under load), while the loser future
+        of every race leaked a task. Instead: take from the lane, else
+        `get_nowait()` from the inbox, and only when BOTH are empty block
+        on the wake-up event -- which `put()` and `_deliver_priority` both
+        set. One await, no futures, nothing to cancel.
         """
-        try:
-            await asyncio.sleep(delay_sec)
-            logger.info(
-                "🕒 'after' timer fired for event '%s' in '%s'.",
-                event.type,
-                self.id,
-            )
-            await self.send(event)
-        except asyncio.CancelledError:
-            # This is expected when a state is exited before the timer fires.
-            logger.debug(
-                "🚫 'after' timer for event '%s' in '%s' was cancelled.",
-                event.type,
-                self.id,
-            )
-            raise  # Re-raise to ensure the task is properly cleaned up.
+        assert self._wakeup is not None
+        while True:
+            if self._priority_queue:
+                return self._priority_queue.popleft(), False
+            try:
+                event = self._event_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            else:
+                # ⚡ #48: taking from the inbox without ever awaiting would
+                #    drain a 2,000-event backlog in ONE loop turn, and a
+                #    `call_later` timer that came due meanwhile could not
+                #    run until the inbox was empty -- the starvation this
+                #    lane exists to end. Yield once per inbox event so
+                #    due timers get their turn and land in the lane, which
+                #    is checked first on the next iteration.
+                await asyncio.sleep(0)
+                return event, True
+            # 🔒 Clear THEN re-check both sources, so an event that arrived
+            #    between the checks above and this clear is not slept
+            #    through (lost wake-up).
+            self._wakeup.clear()
+            if self._priority_queue or not self._event_queue.empty():
+                continue
+            await self._wakeup.wait()
+
+    def _deliver_priority(
+        self, event: Union[Event, AfterEvent, DoneEvent]
+    ) -> None:
+        """Place *event* at the head of processing and wake the run loop."""
+        self._priority_queue.append(event)
+        if self._wakeup is not None:
+            self._wakeup.set()
+
+    async def _settle_for_clock(self) -> None:
+        """`SimulatedClock` hook: process everything queued by fired timers."""
+        for _ in range(1000):
+            if not self._priority_queue and self._event_queue.empty():
+                if not self._processing:
+                    return
+            await asyncio.sleep(0)
+        # Something is looping; leave it to the runaway guard.
 
     def _after_timer(
         self, delay_sec: float, event: AfterEvent, owner_id: str
     ) -> None:
-        """Creates and registers a background task for a delayed `AfterEvent`.
+        """Schedule a delayed `AfterEvent` on the interpreter's clock (#49).
+
+        🏛️ #48: the callback does NOT go through `send()`. It stamps
+        `fired_at` and drops the event into the PRIORITY lane, so a due
+        timer is processed before any external backlog. On a `RealClock`
+        inside a loop this is `loop.call_later`; on a `SimulatedClock` it
+        fires from `increment()`.
 
         Args:
             delay_sec (float): The delay in seconds.
-            event (AfterEvent): The event to be sent after the delay.
-            owner_id (str): The ID of the state that owns this timer, used for
-                cancellation upon state exit.
+            event (AfterEvent): The event to deliver after the delay.
+            owner_id (str): The owning state; exiting it cancels the timer.
         """
-        task = asyncio.create_task(self._after_timer_task(delay_sec, event))
-        # Register the task with its owner for lifecycle management.
-        self.task_manager.add(owner_id, task)
+
+        def _fire() -> None:
+            if self.status != "running":
+                return
+            fired = event._replace(fired_at=self.clock.now())
+            logger.info(
+                "🕒 'after' timer fired for event '%s' in '%s' (+%.1f ms).",
+                fired.type,
+                self.id,
+                fired.lateness_ms,
+            )
+            self._deliver_priority(fired)
+
+        handle = self.clock.set_timeout(_fire, delay_sec, owner=owner_id)
+        self._timer_handles.setdefault(owner_id, []).append(handle)
 
     async def _invoke_service_task(
         self,
@@ -1599,7 +1691,9 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             #    `context` factory receives `{input}` exactly as in XState.
             #    A raising resolver is a child failure -> `onError`.
             child_input = invocation.resolve_input(self.context, None)
-            child_interpreter = Interpreter(actor_machine, input=child_input)
+            child_interpreter = Interpreter(
+                actor_machine, input=child_input, clock=self.clock
+            )
             child_interpreter.parent = self
             child_interpreter.id = actor_id
             self._actors[actor_id] = child_interpreter

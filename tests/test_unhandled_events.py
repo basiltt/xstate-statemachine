@@ -108,6 +108,7 @@ class TestIgnoreIsDefault(_Quiet):
         import time
 
         time.sleep(0.1)
+        i.tick()  # #50: the sync engine delivers due timers on a pump
         self.assertEqual(sorted(i.current_state_ids), ["t.b"])
         self.assertEqual(i.status, "running")
         self.assertEqual(spy.unhandled, [])

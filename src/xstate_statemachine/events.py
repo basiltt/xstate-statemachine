@@ -169,3 +169,13 @@ class AfterEvent(NamedTuple):
 
     # 🏷️ The structured, internally-generated name of the delayed event.
     type: str
+    #: 📏 #48: when the timer was DUE (clock seconds) and when it actually
+    #: fired. `lateness_ms` is the difference -- data an application can
+    #: alarm on instead of inferring timer starvation from symptoms.
+    scheduled_for: float = 0.0
+    fired_at: float = 0.0
+
+    @property
+    def lateness_ms(self) -> float:
+        """Milliseconds the timer fired AFTER its deadline (>= 0)."""
+        return max(0.0, (self.fired_at - self.scheduled_for) * 1000.0)

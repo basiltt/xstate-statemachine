@@ -447,10 +447,10 @@ class TestReapingSync(_Quiet):
 
     def test_after_timers_cancelled_on_completion(self) -> None:
         i = self._start()
-        self.assertTrue(i._after_events)
+        self.assertTrue(i._timer_handles)  # #50: clock handles, not threads
         i.send("FILL")
-        self.assertEqual(i._after_events, {})
-        self.assertEqual(i._after_threads, {})
+        self.assertEqual(i._timer_handles, {})
+        self.assertEqual(i.clock.pending, 0)
 
     def test_system_registry_empty_after_completion_and_stop(self) -> None:
         i = self._start()

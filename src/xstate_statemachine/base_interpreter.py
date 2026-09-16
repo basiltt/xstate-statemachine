@@ -83,6 +83,7 @@ from .models import (
 from .plugins import PluginBase
 from .resolver import resolve_target_state
 from . import persistence
+from .clock import Clock, RealClock
 
 # This TypeVar allows methods to return the specific subclass instance (self).
 TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter")
@@ -307,6 +308,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         machine: MachineNode[TContext, TEvent],
         interpreter_class: Optional[Type["BaseInterpreter"]] = None,
         input: Optional[Any] = None,
+        clock: Optional[Clock] = None,
     ) -> None:
         """Initializes the BaseInterpreter instance.
 
@@ -319,6 +321,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 `SyncInterpreter`). This is used internally for correctly
                 restoring an interpreter from a snapshot. If not provided, it
                 defaults to the class of the current instance.
+            input (Optional[Any]): Creation input, exposed to a `context`
+                factory as ``{"input": ...}``.
+            clock (Optional[Clock]): Source of time for `after` delays and
+                delayed sends (#49). Defaults to :class:`RealClock`; pass a
+                :class:`SimulatedClock` for deterministic tests. Invoked
+                children inherit it.
         """
         logger.info(
             "🧠 Initializing BaseInterpreter for machine '%s'...", machine.id
@@ -331,6 +339,9 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         self.context: TContext = self._build_initial_context(machine, input)
         self.status: str = "uninitialized"
         self.id: str = machine.id
+        #: ⏱️ Every timing path -- `after`, delayed `raise`/`sendTo` -- goes
+        #: through this object and nothing else (#49). See `clock.py`.
+        self.clock: Clock = clock if clock is not None else RealClock()
         self.parent: Optional["BaseInterpreter[Any, Any]"] = None
 
         # 🌳 State & Actor Management
@@ -3356,7 +3367,12 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 continue
             for t_def in transitions:
                 delay_sec = float(resolved_ms) / 1000.0
-                after_event = AfterEvent(type=t_def.event)
+                # 📏 #48: record the deadline so the fired event can report
+                #    its own lateness.
+                after_event = AfterEvent(
+                    type=t_def.event,
+                    scheduled_for=self.clock.now() + delay_sec,
+                )
                 self._after_timer(delay_sec, after_event, owner_id=state.id)
                 logger.debug(
                     "🕒 Scheduled 'after' event '%s' in %.2fs for state '%s'.",

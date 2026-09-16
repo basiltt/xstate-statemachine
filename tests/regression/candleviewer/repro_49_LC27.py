@@ -29,14 +29,10 @@ CFG = {
 }
 
 
-class SimulatedClock:
-    """What XState v5 lets you pass as `clock`. Nothing consumes it here."""
-
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def advance(self, ms: int) -> None:
-        self.now += ms / 1000.0
+# 0.8.0 (#49): the library ships `SimulatedClock` (XState's name and
+# semantics). The stand-in that used to live here -- a class nothing
+# consumed, to demonstrate the gap -- is replaced by the real one.
+from xstate_statemachine import SimulatedClock  # noqa: E402
 
 
 async def main() -> int:
@@ -61,11 +57,10 @@ async def main() -> int:
 
     # 3) Advancing the simulated clock does nothing; only wall time fires it.
     interp = await Interpreter(
-        create_machine(CFG, logic=MachineLogic())
+        create_machine(CFG, logic=MachineLogic()), clock=clock
     ).start()
     started = time.monotonic()
-    clock.advance(10_000)
-    await asyncio.sleep(0)
+    await clock.increment(10_000)
     fired_after_virtual_advance = "order.timed_out" in interp.current_state_ids
     print(
         "OBSERVED after advancing simulated clock by 10000ms: "

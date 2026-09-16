@@ -109,6 +109,7 @@ from .exceptions import (
 # -------------------------------------------------------------------------
 # 🐍 Pythonic API
 # -------------------------------------------------------------------------
+from .clock import Clock, RealClock, SimulatedClock
 from .pythonic import (
     State,
     StateMachine,
@@ -204,6 +205,10 @@ __all__ = [
     "SnapshotDriftError",
     "SnapshotVersionError",
     "MachineNode",
+    # ⏱️ Clock
+    "Clock",
+    "RealClock",
+    "SimulatedClock",
     # 🐍 Pythonic API
     "State",
     "StateMachine",

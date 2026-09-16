@@ -42,6 +42,7 @@ from typing import (
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from .base_interpreter import BaseInterpreter, _RollbackRequested
+from .clock import Clock, SimulatedClock
 from .events import AfterEvent, DoneEvent, Event
 from .exceptions import (
     ActorSpawningError,
@@ -108,8 +109,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             manage the event processing sequence in a first-in, first-out (FIFO) manner.
         _is_processing (bool): A flag to prevent re-entrant event processing,
             ensuring atomicity of a single `send` call's execution loop.
-        _after_threads (Dict[str, threading.Thread]): Tracks background threads for `after` timers.
-        _after_events (Dict[str, threading.Event]): Manages cancellation signals for `after` timers.
+        _timer_handles (Dict[str, List[Any]]): Clock handles for `after` timers
+            and delayed sends, keyed by owning state id.
     """
 
     # -------------------------------------------------------------------------
@@ -120,25 +121,34 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         self,
         machine: MachineNode[TContext, TEvent],
         input: Optional[Any] = None,
+        clock: Optional[Clock] = None,
     ) -> None:
         """Initializes a new synchronous Interpreter instance.
 
         Args:
             machine: The state machine definition that this interpreter will run.
+            input: Creation input for a `context` factory.
+            clock: Source of time (#49). Defaults to `RealClock`, whose
+                sync-side timers are a thread-free deadline list drained by
+                :meth:`tick` / :meth:`send` (#50).
         """
         # 🤝 Initialize the base interpreter first
         super().__init__(
-            machine, interpreter_class=SyncInterpreter, input=input
+            machine,
+            interpreter_class=SyncInterpreter,
+            input=input,
+            clock=clock,
         )
+        #: ⏱️ Live clock handles per owning state id, so exiting a state
+        #: cancels its timers on any Clock (#49/#50).
+        self._timer_handles: Dict[str, List[Any]] = {}
         logger.info("⛓️ Initializing Synchronous Interpreter... 🚀")
 
         # ⚙️ Initialize synchronous-specific attributes
         self._event_queue: Deque[Union[Event, DoneEvent, AfterEvent]] = deque()
         self._is_processing: bool = False
-        self._after_threads: Dict[str, threading.Thread] = {}
-        self._after_events: Dict[str, threading.Event] = {}
-        #: Cancellation flags for pending delayed sends, released by `stop()`.
-        self._pending_send_cancels: Set[threading.Event] = set()
+        # 🏛️ #50: `_after_threads` / `_after_events` / `_pending_send_cancels`
+        #    are gone. Timers no longer own threads; see `_after_timer`.
 
         logger.info("✅ Synchronous Interpreter '%s' initialized. 🎉", self.id)
 
@@ -198,6 +208,10 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         logger.info("🏁 Starting sync interpreter '%s'...", self.id)
         self.status = "running"
+        # 🧪 A SimulatedClock drives us through `tick()` after each increment
+        #    so `clock.increment(ms)` leaves the machine settled (#49).
+        if isinstance(self.clock, SimulatedClock):
+            self.clock._attach(self.tick)
 
         # ✅ Define a pseudo-transition for the initial state entry
         initial_transition = TransitionDefinition(
@@ -319,6 +333,9 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             return
 
         event_obj = self._prepare_event(event_or_type, **payload)
+        # ⏰ #50: deliver every deadline that has elapsed BEFORE this event,
+        #    on this thread, in due order -- the pump.
+        self._pump_timers()
         self._event_queue.append(event_obj)
         self._process_event_queue()
 
@@ -342,18 +359,11 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             finally:
                 self._actors.pop(actor_id, None)
 
-        # 2️⃣ Cancel all `after` timers by signalling their cancellation events.
-        for state_id in list(self._after_events.keys()):
-            self._after_events[state_id].set()
-        self._after_events.clear()
-        self._after_threads.clear()
-
-        # 3️⃣ Release any waiting delayed-send threads. They are daemons, so
-        #    they never block process exit, but a long delay would otherwise
-        #    keep one alive for its full duration after shutdown.
-        for cancel_flag in list(self._pending_send_cancels):
-            cancel_flag.set()
-        self._pending_send_cancels.clear()
+        # 2️⃣ Cancel every clock-scheduled timer and delayed send (#50).
+        for handles in self._timer_handles.values():
+            for handle in handles:
+                self.clock.clear_timeout(handle)
+        self._timer_handles.clear()
         self._scheduled_sends.clear()
 
         # 4️⃣ Drop our own registry entry so the root does not pin us.
@@ -438,6 +448,12 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     self._event_queue.clear()
                     break
 
+                # ⏰ #50: a deadline that elapsed while THIS macrostep was
+                #    busy is delivered in-loop, in due order, rather than
+                #    waiting for the next external send(). Due timers land
+                #    at the tail; the acceptance criterion is "not dropped
+                #    and drained in the same loop", which this satisfies.
+                self._pump_timers()
                 current_event = self._event_queue.popleft()
                 logger.debug(
                     "⚙️ Processing event: '%s'", current_event.type
@@ -1199,7 +1215,10 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         delay: Optional[float],
         send_id: Optional[str],
     ) -> None:
-        """Sends an event to an actor, honouring an optional delay.
+        """Send an event to an actor, honouring an optional delay.
+
+        A delayed send is a clock deadline (#50), not a thread; it is
+        delivered by the next pump on the caller's thread.
 
         Args:
             actor (Any): The recipient interpreter.
@@ -1211,50 +1230,39 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             actor.send(target_event)
             return
 
-        cancel_flag = threading.Event()
+        key = str(send_id) if send_id else None
 
         def _fire() -> None:
-            """Delivers the event unless cancelled while waiting."""
-            if cancel_flag.wait(delay / 1000.0):
+            if key is not None and self._scheduled_sends.get(key) is _cancel:
+                self._scheduled_sends.pop(key, None)
+            if self.status != "running":
                 return
-            if send_id:
-                self._scheduled_sends.pop(str(send_id), None)
-            self._pending_send_cancels.discard(cancel_flag)
-            try:
-                actor.send(target_event)
-            except Exception:  # pragma: no cover - defensive
-                logger.exception(
-                    "🔥 Delayed send of '%s' failed.", target_event.type
-                )
+            if actor is self:
+                # To OURSELVES: straight onto our queue; the pump that fired
+                # us is about to drain it on this thread.
+                self._event_queue.append(target_event)
+            else:
+                try:
+                    actor.send(target_event)
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception(
+                        "🔥 Delayed send of '%s' failed.", target_event.type
+                    )
+
+        handle = self.clock.set_timeout(_fire, delay / 1000.0, owner=self.id)
+        self._timer_handles.setdefault(self.id, []).append(handle)
 
         # 🔁 Reusing a send id supersedes the earlier send. Without this the
         #    first timer is orphaned: the registry entry is overwritten, so
         #    `cancel(id)` can no longer reach it and it fires anyway.
         def _cancel() -> None:
-            """Cancels this send and releases its waiter immediately."""
-            cancel_flag.set()
-            # 🧹 Drop the flag now rather than waiting for the thread to wake
-            #    up. A long-delayed send that is cancelled would otherwise
-            #    keep its Event referenced in `_pending_send_cancels` for the
-            #    full original duration.
-            self._pending_send_cancels.discard(cancel_flag)
+            self.clock.clear_timeout(handle)
 
-        if send_id:
-            previous = self._scheduled_sends.get(str(send_id))
+        if key is not None:
+            previous = self._scheduled_sends.get(key)
             if previous is not None:
                 previous()
-            self._scheduled_sends[str(send_id)] = _cancel
-
-        # 🧹 Track every pending waiter so `stop()` can release it. The
-        #    threads are daemons (they cannot block interpreter exit), but a
-        #    long delay would otherwise keep one alive for its full duration
-        #    after the machine has shut down.
-        self._pending_send_cancels.add(cancel_flag)
-
-        timer = threading.Thread(
-            target=_fire, name=f"send-{target_event.type}", daemon=True
-        )
-        timer.start()
+            self._scheduled_sends[key] = _cancel
 
     def _spawn_actor(
         self,
@@ -1342,7 +1350,12 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             try:
                 # 🚀 Start the actor in the background thread.
                 child.start()
-                # 🔄 Keep the thread alive while the child runs.
+                # 🔄 Keep the thread alive while the child runs. This thread
+                #    is the child's pump: with no timer threads (#50), the
+                #    child's `after` deadlines fire only when someone calls
+                #    `tick()`, and for a non-blocking actor that someone is
+                #    this runner -- so every action the child runs executes
+                #    on THIS thread, never on a timer thread.
                 while child.status == "running":
                     # 🏁 Exit loop if the child reaches a top-level final state.
                     if any(
@@ -1350,6 +1363,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                         for s in child._active_state_nodes
                     ):
                         break
+                    child.tick()
                     time.sleep(0.01)  # 🤏 Yield to prevent busy-waiting.
             finally:
                 # 🧹 Ensure cleanup happens whether the child finishes or is stopped.
@@ -1378,7 +1392,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         #    would block forever, and 0.7.x machines relied on this case
         #    returning immediately. Only wait when the child can still
         #    progress on its own.
-        if not child._after_events and not child._actors:
+        if not child._timer_handles and not child._actors:
             return
         finished = threading.Event()
         child._terminal_listeners.append(lambda _status: finished.set())
@@ -1426,112 +1440,83 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         self.send(done_event)
 
     def _cancel_state_tasks(self, state: StateNode) -> None:
-        """Cancel all pending **after** timers that belong to a state.
-
-        This handles *multiple* timers per state by matching a prefix-based key.
-        Older code assumed one timer per state and leaked others.
+        """Cancel every clock timer (`after`, delayed send) a state owns.
 
         Args:
-            state (StateNode): The state whose timers should be cancelled.
+            state (StateNode): The state being exited.
         """
-        state_prefix = f"{state.id}::"  # our internal key scheme
-        to_cancel = [
-            k
-            for k in list(self._after_events.keys())
-            if k == state.id or k.startswith(state_prefix)
-        ]
-
-        if not to_cancel:
+        handles = self._timer_handles.pop(state.id, [])
+        for handle in handles:
+            self.clock.clear_timeout(handle)
+        if handles:
             logger.debug(
-                "🧹 No 'after' timers to cancel for state '%s'.", state.id
+                "🧹 Cancelled %d timer(s) for state '%s'.",
+                len(handles),
+                state.id,
             )
-            return
-
-        for key in to_cancel:
-            try:
-                logger.debug(
-                    "🧹 Cancelling 'after' timer key='%s' (owner='%s')",
-                    key,
-                    state.id,
-                )
-                self._after_events[key].set()  # signal cancellation
-            finally:
-                # Remove from tracking dicts whether the thread is alive or not;
-                # the thread cleans itself up on exit as well.
-                self._after_events.pop(key, None)
-                self._after_threads.pop(key, None)
 
     def _after_timer(
         self, delay_sec: float, event: AfterEvent, owner_id: str
     ) -> None:
-        """Schedule a delayed `AfterEvent` on a background thread.
+        """Schedule a delayed `AfterEvent` on the interpreter's clock.
 
-        Supports **multiple timers per owner** by storing them under unique keys.
-        Threads watch a cancellation `Event` so exits cleanly on state leave.
+        🏛️ Architecture decision (#50): before 0.8.0 this started a daemon
+        OS THREAD per timer which called `send()` when the delay elapsed --
+        so actions ran on timer threads and mutated `context` under no lock
+        while the class advertised itself as single-threaded. Now the
+        deadline is a record in `self.clock`; `_pump_timers()` (run at the
+        top of every `send()` and by `tick()`) fires due timers on the
+        CALLER's thread by appending the event to the queue, where the
+        ordinary macrostep loop processes it in order. Exiting the owning
+        state cancels the handle. A `SimulatedClock` fires them from
+        `increment()` (#49).
 
         Args:
-            delay_sec (float): Delay (seconds) before firing.
-            event (AfterEvent): Event to send when the timer expires.
-            owner_id (str): ID of the state that owns this timer.
+            delay_sec (float): Delay before the event is due.
+            event (AfterEvent): The event to deliver.
+            owner_id (str): Owning state id; used for cancellation.
         """
-        # Generate a unique handle so a state can own several timers simultaneously.
-        unique_key = f"{owner_id}::{uuid.uuid4()}"
-        cancel_event = threading.Event()
-
         logger.info(
-            "⏰ Scheduling 'after' (%s) in %.2fs for state '%s' [key=%s]",
+            "⏰ Scheduling 'after' (%s) in %.2fs for state '%s'",
             event.type,
             delay_sec,
             owner_id,
-            unique_key,
         )
 
-        # Register for lifecycle management.
-        self._after_events[unique_key] = cancel_event
+        def _fire() -> None:
+            # Fire only if still running AND the owner is still active; a
+            # late pump after the state was left must not resurrect it.
+            if self.status != "running" or not any(
+                s.id == owner_id for s in self._active_state_nodes
+            ):
+                return
+            self._event_queue.append(event._replace(fired_at=self.clock.now()))
 
-        def timer_thread() -> None:
-            """Worker that waits, checks cancellation, and sends the event."""
-            try:
-                cancelled = cancel_event.wait(timeout=delay_sec)
-                if cancelled:
-                    logger.debug(
-                        "🚫 Timer cancelled before firing [key=%s].",
-                        unique_key,
-                    )
-                    return
+        handle = self.clock.set_timeout(_fire, delay_sec, owner=owner_id)
+        self._timer_handles.setdefault(owner_id, []).append(handle)
 
-                # Fire only if interpreter still running AND owner still active.
-                if self.status == "running" and any(
-                    s.id == owner_id for s in self._active_state_nodes
-                ):
-                    logger.debug(
-                        "🕒 Timer expired -> sending event '%s' [key=%s].",
-                        event.type,
-                        unique_key,
-                    )
-                    self.send(event)
-                else:
-                    logger.debug(
-                        "⚠️ Timer expired but owner inactive or interpreter stopped [key=%s].",
-                        unique_key,
-                    )
-            except Exception as exc:  # pragma: no cover (safety net)
-                logger.error(
-                    "💥 Error in after-timer thread [key=%s]: %s",
-                    unique_key,
-                    exc,
-                    exc_info=True,
-                )
-            finally:
-                # Ensure we don't leak references.
-                self._after_threads.pop(unique_key, None)
-                self._after_events.pop(unique_key, None)
+    def _pump_timers(self) -> int:
+        """Fire every due clock deadline onto the queue (the timer pump).
 
-        thread = threading.Thread(
-            target=timer_thread, daemon=True, name=f"after-{unique_key}"
-        )
-        self._after_threads[unique_key] = thread
-        thread.start()
+        Called at the top of `send()` and by `tick()`. Returns how many
+        fired. Does NOT process the queue; the caller does.
+        """
+        return self.clock.pump()
+
+    def tick(self) -> None:
+        """Deliver every `after` / delayed send whose deadline has passed.
+
+        🏛️ #50: with no timer threads, a machine that receives no events
+        needs a caller to advance it. `tick()` is that pump: it fires due
+        deadlines onto the queue and processes them, all on the calling
+        thread. It is also the seam a `SimulatedClock` drives.
+        """
+        if self.status != "running":
+            return
+        self._pump_timers()
+        if self._event_queue and not self._is_processing:
+            self._process_event_queue()
+            self._process_transient_transitions()
 
     def _invoke_service(
         self,

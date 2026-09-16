@@ -958,6 +958,7 @@ class TestRobustnessFixes(unittest.IsolatedAsyncioTestCase):
             if fired:
                 break
             time.sleep(0.01)
+            interpreter.tick()  # #50: sync timers fire on a pump
         self.assertEqual(["T"], fired)
 
     def test_corrupt_snapshot_raises_a_library_error(self) -> None:

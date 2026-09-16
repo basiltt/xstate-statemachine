@@ -1397,9 +1397,14 @@ class TestSyncInterpreter(unittest.TestCase):
         interpreter.start()
         self.assertEqual(interpreter.current_state_ids, {"timer.waiting"})
 
-        # ⚡ Act: Wait for the plugin to signal that the transition has occurred.
-        # A generous timeout of 1 second is used to avoid test flakes on slow systems.
-        event_was_set = transition_happened.wait(timeout=1.0)
+        # ⚡ Act: since #50 the sync engine has NO timer threads -- a due
+        #    `after` is delivered on the caller's next `send()` / `tick()`.
+        #    Wait past the deadline, then pump.
+        deadline = time.monotonic() + 1.0
+        while not transition_happened.is_set() and time.monotonic() < deadline:
+            time.sleep(0.005)
+            interpreter.tick()
+        event_was_set = transition_happened.is_set()
 
         # ✨ Assert: The event should have been set, and the state should be correct.
         self.assertTrue(

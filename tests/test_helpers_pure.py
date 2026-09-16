@@ -101,7 +101,7 @@ class TestPureSemantics(_Quiet):
         self.assertEqual(again.state_ids, {"m.a"})
         # And the cached probe holds no live timers.
         probe = helpers._probes()[m]
-        self.assertEqual(probe._after_events, {})
+        self.assertEqual(probe._timer_handles, {})
 
     def test_snapshots_remain_independent(self) -> None:
         """Branching twice from one snapshot leaves the original untouched."""
