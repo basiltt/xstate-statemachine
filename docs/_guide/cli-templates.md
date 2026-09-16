@@ -234,6 +234,7 @@ class CheckoutMachine(StateMachine):
 
 ### Generated Runner File: `checkout_runner.py`
 
+<!-- doc-fragment -->
 ```python
 import logging
 from xstate_statemachine import SyncInterpreter
@@ -399,6 +400,7 @@ def build() -> Any:
 
 ### Generated Runner File: `checkout_runner.py`
 
+<!-- doc-fragment -->
 ```python
 import logging
 from xstate_statemachine import SyncInterpreter
@@ -579,6 +581,7 @@ def build() -> Any:
 
 ### Generated Runner File: `checkout_runner.py`
 
+<!-- doc-fragment -->
 ```python
 import logging
 from xstate_statemachine import SyncInterpreter
@@ -765,6 +768,7 @@ class CheckoutLogic:
 
 ### Generated Runner File: `checkout_runner.py`
 
+<!-- doc-fragment -->
 ```python
 from pathlib import Path
 import json
@@ -968,6 +972,7 @@ processPayment = process_payment  # alias for JSON name
 
 ### Generated Runner File: `checkout_runner.py`
 
+<!-- doc-fragment -->
 ```python
 from pathlib import Path
 import json

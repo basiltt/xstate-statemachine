@@ -62,6 +62,7 @@ is_authenticated = True
 
 Events are the **only** way to trigger state changes. They come from the outside world — user clicks, API responses, timers, or your own code calling `send()`.
 
+<!-- doc-fragment -->
 ```python
 # String shorthand — most common
 interpreter.send("TOGGLE")

@@ -86,6 +86,7 @@ predicate with a timeout instead.
 
 ### `wait_for` — async
 
+<!-- doc-fragment -->
 ```python
 import asyncio
 from xstate_statemachine import (
@@ -110,6 +111,7 @@ asyncio.run(main())
 The same contract for `SyncInterpreter`, for use in Django views, Celery tasks,
 CLI tools and plain tests:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import wait_for_sync
 
@@ -164,6 +166,7 @@ the queue for a bounded-latency question under backlog.
 
 When you just want to run a machine to its final state and get the result:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import to_promise
 
@@ -243,6 +246,7 @@ That test asserts a 30-second timeout without burning 30 seconds of real time.
 
 On the async `Interpreter`, `clock.increment(ms)` returns an awaitable — `await` it so the fired timer (and anything it triggers) has finished processing before you assert:
 
+<!-- doc-fragment -->
 ```python
 import asyncio
 from xstate_statemachine import create_machine, Interpreter, SimulatedClock

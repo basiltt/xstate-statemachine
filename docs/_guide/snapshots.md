@@ -195,6 +195,7 @@ Because the service runs again rather than resuming, use this only for idempoten
 
 If the machine being restored into no longer registers the service a dormant `invoke` needs, `restart_services=True` raises `ImplementationMissingError` when `start()` tries to re-drive it — the same exception a live machine raises for an unregistered service:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import ImplementationMissingError
 
@@ -228,6 +229,7 @@ As of 0.8.0, `get_snapshot()` writes a versioned **envelope** around the fields 
 
 Pass `verify_machine_hash=False` to skip the hash check after you've migrated a snapshot to match a changed machine shape:
 
+<!-- doc-fragment -->
 ```python
 import json
 from xstate_statemachine import create_machine, SyncInterpreter

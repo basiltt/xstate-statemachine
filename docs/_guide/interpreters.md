@@ -314,6 +314,7 @@ interp.send("ADD_ITEM", product_id=42, quantity=3)
 
 Create an `Event` instance directly:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import Event
 
@@ -397,6 +398,7 @@ A runaway chain of self-raised events (a machine that keeps raising to itself fo
 
 By default an interpreter's inbox (the queue `send()` appends to) is unbounded — nothing on a hot path is ever refused, but nothing stops it from growing without limit if producers outrun the consumer. Pass `max_queue_size` to `Interpreter` (or `SyncInterpreter`) to put a ceiling on it, and `overflow_policy` to choose what happens once that ceiling is hit:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import create_machine, Interpreter, OverflowPolicy
 
@@ -424,6 +426,7 @@ The priority lane (see `send(priority=True)` below) is **never** bounded — an 
 
 Raised by `send()` only when the inbox is bounded, full, and the policy is `RAISE`:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import QueueOverflowError
 
@@ -441,6 +444,7 @@ except QueueOverflowError as exc:
 
 Any plugin can implement `on_event_dropped(interpreter, event, reason)` to observe an event that never made it onto the inbox — whether because `DROP_NEWEST` shed it under backpressure, or because it was sent to a machine that is no longer running:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import PluginBase
 
@@ -516,6 +520,7 @@ receipt = await interp.send_priority("CHECK_RISK", order_id=oid)
 
 `SyncInterpreter.send(wait=True)` is supported for API symmetry with the async engine. The sync engine already processes an event's full macrostep inline before `send()` returns at all, so `wait=True` simply hands back the `Receipt` for the macrostep that already ran instead of `None`:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 
@@ -818,6 +823,7 @@ interp.stop()
 
 ### Custom Plugin Example
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import PluginBase
 

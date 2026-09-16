@@ -266,6 +266,13 @@ preserves 0.7.x semantics, with two deliberate exceptions called out under
   pinned "slow path still taken when needed" test. Consequences visible in
   Production Characteristics: per-process budget ~20k -> ~30k trivial ev/s,
   `after` lateness at 500 busy machines ~63 ms -> ~46 ms.
+- **[wave 3] Documentation is executed in CI.** `tests/test_docs_executable.py`
+  runs every ```python block in README.md and docs/_guide/*.md that imports
+  the package (a block opts out with a visible `<!-- doc-fragment -->`
+  marker) and resolves every guide cross-link and anchor, so a sample that
+  stops running or a link that 404s on the site fails the build. 34
+  runnable feature examples now live under `examples/*/features/`, one per
+  capability, all executed by `tests/test_examples.py`.
 - **[wave 3] `RestoredError` is exported** from the package root. It is what
   `interpreter.error` holds after restoring a snapshot taken in the `error`
   status, and the docs showed it as importable, but it was missing from

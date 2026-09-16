@@ -1358,6 +1358,7 @@ state.
 
 Use `root=` with `build_machine()`:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import State, build_machine
 

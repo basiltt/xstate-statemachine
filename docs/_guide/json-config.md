@@ -791,6 +791,7 @@ This machine models a complete data-fetching flow with retries, timeout, and con
 
 ### Running It
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 
@@ -875,6 +876,7 @@ By default, sending an event type that no state in the machine ever declares is 
 
 Enable it with the `strict` config key, or with the `strict=` keyword argument on either interpreter constructor. The constructor argument wins when both are given:
 
+<!-- doc-fragment -->
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 
