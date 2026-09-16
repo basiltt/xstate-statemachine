@@ -546,6 +546,7 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 config = {
     "id": "shop",
     "initial": "checkout",
+    "context": {"items": []},
     "states": {
         "checkout": {
             "initial": "cart",
@@ -577,7 +578,7 @@ class ShopLogic(MachineLogic):
         print("Cart is empty!")
 
 machine = create_machine(config, logic=ShopLogic())
-interp = SyncInterpreter(machine, context={"items": []}).start()
+interp = SyncInterpreter(machine).start()
 
 interp.send("PROCEED")
 print(interp.active_state_ids)

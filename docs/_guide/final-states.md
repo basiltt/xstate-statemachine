@@ -651,6 +651,8 @@ from xstate_statemachine import State, StateMachine, SyncInterpreter, action, gu
 
 class ApprovalWorkflow(StateMachine):
     machine_id = "approval"
+    # `input` (passed to the interpreter) seeds the document; the rest
+    # is fixed initial context.
     initial_context = {
         "document": None,
         "managerApproved": False,
@@ -703,7 +705,9 @@ class ApprovalWorkflow(StateMachine):
     # Guards
     @guard
     def has_document(self, context, event):
-        return context.get("document") is not None
+        return context.get("document") is not None or (
+            context.get("input") or {}
+        ).get("document") is not None
 
     @guard
     def was_approved(self, context, event):
@@ -728,13 +732,9 @@ class ApprovalWorkflow(StateMachine):
 
 machine = ApprovalWorkflow.create_machine()
 
-# Test the approval flow
-interp = SyncInterpreter(machine, context={
-    "document": "Q4 Report",
-    "managerApproved": False,
-    "directorApproved": False,
-    "rejectedBy": None
-}).start()
+# Test the approval flow. Initial context comes from the class; per-run
+# data goes in through `input`, readable as `context["input"]`.
+interp = SyncInterpreter(machine, input={"document": "Q4 Report"}).start()
 
 print(interp.active_state_ids)
 # {'approval.draft'}
