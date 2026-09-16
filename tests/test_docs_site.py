@@ -47,9 +47,12 @@ class TestProductionCharacteristicsPage(unittest.TestCase):
         body = _read(PAGE)
         topics = {
             "timer starvation": [r"starv", r"fires? late", r"under load"],
+            # #50: timers no longer own a thread; only non-blocking
+            # `spawn_<key>` children do. The page must say both.
             "sync threading": [
-                r"background `?threading\.thread`?s?",
-                r"no lock",
+                r"do not own a thread",
+                r"caller's thread",
+                r"runner thread",
             ],
             "throughput budget": [
                 r"ev/s",
@@ -122,7 +125,9 @@ class TestCorrectedStatements(unittest.TestCase):
     def test_faq_attributes_threads_to_the_right_interpreter(self) -> None:
         body = _read(GUIDE / "faq.md")
         self.assertNotIn("unless using `interpreter` with `after`", body)
-        self.assertIn("syncinterpreter` spawns a background thread", body)
+        # #50: the sync engine spawns a thread only for non-blocking children.
+        self.assertIn("only a non-blocking `spawn_<key>` child", body)
+        self.assertNotIn("thread per `after` timer", body)
         self.assertIn("on an unloaded loop", body)
 
 

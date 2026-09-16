@@ -121,10 +121,90 @@ restored.stop()
 > **Warning:** `from_snapshot()` performs a **static restoration**. Be aware of these constraints:
 >
 > - **Entry actions are NOT re-run** — The restored interpreter is placed directly into the saved states without executing their `entry` actions.
-> - **Services are NOT restarted** — Any `invoke` services that were running when the snapshot was taken are not re-invoked.
+> - **Services are NOT restarted** — Any `invoke` services that were running when the snapshot was taken are not re-invoked by default. Inspect what's dormant with `pending_invocations()`, or opt in to re-driving it with `from_snapshot(..., restart_services=True)` — see [Restoring Dormant Invocations](#restoring-dormant-invocations) below.
 > - **Timers are NOT resumed** — Any `after` delayed transitions are not rescheduled. The countdown does not persist across snapshots.
 > - **Context is restored by value** — The context dictionary is deserialized from JSON. Non-serializable values (functions, class instances, file handles) will be lost or converted to strings.
 > - **Machine definition must match** — The `machine` argument to `from_snapshot()` must have the same structure as the original. If state IDs have changed, restoration will fail with `StateNotFoundError`.
+
+## Restoring Dormant Invocations
+
+`from_snapshot()`'s static restore means a machine snapshotted mid-`invoke` comes back parked: the restored configuration says the work is in flight, but no task is actually running it. That default is deliberate — restarting a non-idempotent action (an order placement, a charge) from scratch can be worse than leaving it parked — but it is no longer silent.
+
+### `pending_invocations()` — what's dormant
+
+`pending_invocations()` lists every `invoke` in the interpreter's active configuration that has no live service backing it. It's empty on a running (never-restored) machine, and empty again after a restore made with `restart_services=True`.
+
+```python
+import asyncio
+from xstate_statemachine import create_machine, MachineLogic, Interpreter
+
+OMS = {
+    "id": "oms",
+    "initial": "submitting",
+    "context": {"acked": False},
+    "states": {
+        "submitting": {
+            "invoke": {"src": "place", "id": "place", "onDone": "live"},
+            "on": {"LEAVE": "idle"},
+        },
+        "live": {"entry": ["ack"]},
+        "idle": {},
+    },
+}
+
+async def place(interpreter, context, event):
+    await asyncio.sleep(5.0)  # simulate a slow call
+    return "ok"
+
+def ack(interpreter, context, event, action_def):
+    context["acked"] = True
+
+logic = MachineLogic(actions={"ack": ack}, services={"place": place})
+
+async def main():
+    interp = await Interpreter(create_machine(OMS, logic=logic)).start()
+    await asyncio.sleep(0.01)  # `place` has started, far from done
+    snapshot = interp.get_snapshot()
+    await interp.stop()
+
+    restored = Interpreter.from_snapshot(snapshot, create_machine(OMS, logic=logic))
+    print(restored.pending_invocations())
+    # [PendingInvocation(state_id='oms.submitting', invoke_id='place', src='place')]
+
+asyncio.run(main())
+```
+
+Each entry is a `PendingInvocation(state_id, invoke_id, src)` namedtuple — the state that owns the `invoke`, the invoke's id (explicit, or the parser's default), and the service key. Check this list first, then decide whether to re-drive the work.
+
+### `restart_services=True` — re-invoking from scratch
+
+Pass `restart_services=True` to `from_snapshot()` to have `start()` re-invoke every dormant `invoke` in the restored configuration. This runs the service **again, from the beginning** — it does not resume the original call — through the exact same path a normal state entry uses, so the restarted task is owner-registered and still gets cancelled if the state is exited.
+
+```python
+restored = Interpreter.from_snapshot(
+    snapshot, create_machine(OMS, logic=logic), restart_services=True
+)
+await restored.start()
+# ... service re-runs; eventually transitions oms.submitting -> oms.live
+print(restored.pending_invocations())  # []
+```
+
+Because the service runs again rather than resuming, use this only for idempotent work, or gate it behind a client-supplied idempotency key (an order placement, for example, should carry one). This applies identically on both `Interpreter` (async) and `SyncInterpreter` (sync).
+
+### `ImplementationMissingError` on a missing service
+
+If the machine being restored into no longer registers the service a dormant `invoke` needs, `restart_services=True` raises `ImplementationMissingError` when `start()` tries to re-drive it — the same exception a live machine raises for an unregistered service:
+
+```python
+from xstate_statemachine import ImplementationMissingError
+
+bare = create_machine(OMS, logic=MachineLogic(actions={"ack": ack}))  # no 'place' service registered
+restored = Interpreter.from_snapshot(snapshot, bare, restart_services=True)
+try:
+    await restored.start()
+except ImplementationMissingError as exc:
+    print(exc)  # "Service 'place' referenced by state 'oms.submitting' is not registered."
+```
 
 ## Snapshot Envelope
 

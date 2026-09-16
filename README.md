@@ -1387,7 +1387,7 @@ Everything above is the happy path. Here is what matters once real traffic arriv
 
 ### Throughput, timers and threads — read this before sizing
 
-All async interpreters in a process share **one** event loop on **one** thread: throughput is a per-process budget (~20k trivial ev/s on a laptop), divided among your machines. `after` timers fire *late* under load (~+180 ms at 500 busy machines), and the `SyncInterpreter` runs timers on background threads with no lock. The measured tables and a sizing rule are in **[Production Characteristics](https://basiltt.github.io/xstate-statemachine/guide/production-characteristics/)** — the one page to read before deploying.
+All async interpreters in a process share **one** event loop on **one** thread: throughput is a per-process budget (~20k trivial ev/s on a laptop), divided among your machines. `after` timers fire *late* under load (~+60 ms at 500 busy machines, even with the 0.8.0 priority timer lane), and a `SyncInterpreter` timer only fires when someone calls `send()` or `tick()`. The measured tables and a sizing rule are in **[Production Characteristics](https://basiltt.github.io/xstate-statemachine/guide/production-characteristics/)** — the one page to read before deploying.
 
 ### Failure semantics — know what is contained
 

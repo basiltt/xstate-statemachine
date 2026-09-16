@@ -466,7 +466,7 @@ The library is lightweight with minimal overhead:
 - Machine creation: microseconds for typical configs
 - Event processing: tens of microseconds per transition **on an unloaded loop**. Aggregate throughput across all async interpreters in a process is a fixed budget (~20k trivial events/s on a laptop, i.e. ~18 ev/s each at 1,000 machines) — see [Production Characteristics](../production-characteristics/).
 - Memory: proportional to the number of states and transitions
-- Background threads: the async `Interpreter` uses **none** — everything runs on your asyncio loop. The `SyncInterpreter` spawns a background thread per `after` timer, delayed send, and non-blocking child actor, and those threads re-enter the machine without a lock.
+- Background threads: the async `Interpreter` uses **none** — everything runs on your asyncio loop. The `SyncInterpreter` spawns none for `after` timers or delayed sends either (since 0.8.0 they fire on the caller's thread inside `send()`/`tick()`); only a non-blocking `spawn_<key>` child gets its own runner thread.
 
 For most applications, the state machine overhead is negligible compared to your business logic (database queries, API calls, etc.). Blocking work inside an action, however, stalls **every** machine sharing the loop.
 

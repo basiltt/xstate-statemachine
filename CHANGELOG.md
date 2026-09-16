@@ -14,6 +14,12 @@ default. Part 1 closed all four blockers and the filer's top priorities.
 Part 2 (below, marked **[wave 2]**) closes the remaining small/medium items:
 actor lifecycle, persistence envelope, `invoke.input`, the pure API's cost,
 hierarchical `value`, and the production-characteristics documentation.
+Part 3 (below, marked **[wave 3]**) closes the concurrency and correctness
+items: the SCXML-correct internal event queue, a bounded inbox with
+overflow policies, `send(wait=, priority=)` receipts, resumable
+invocations after restore, an injectable clock with a starvation-free
+timer lane, strict-mode event validation, and a refactor that now runs
+both engines off one core algorithm.
 Every new behaviour is a per-machine policy or an additive API whose default
 preserves 0.7.x semantics, with two deliberate exceptions called out under
 **Changed**.
@@ -98,6 +104,58 @@ preserves 0.7.x semantics, with two deliberate exceptions called out under
   page with measured numbers for the per-process throughput budget, `after`
   timer lateness under load, and the `SyncInterpreter` threading contract,
   plus `benchmarks/production_characteristics.py` to reproduce them.
+- **[wave 3] SCXML internal event queue** (#36) -- a zero-delay `raise` to
+  self during a macrostep now goes to a dedicated internal queue that both
+  engines drain to completion before taking the next external event,
+  instead of sharing one queue with the outside world. Trace order is now
+  `['entry', 'RAISED', 'EXTERNAL']`, not `['entry', 'EXTERNAL', 'RAISED']`.
+  Chains of raises stay FIFO; `always` transitions still run first within
+  each microstep.
+- **[wave 3] Bounded inbox** (#38) -- `Interpreter(max_queue_size=,
+  overflow_policy=OverflowPolicy.*)` (`RAISE` the default once a bound is
+  set, `BLOCK`, or `DROP_NEWEST`). `RAISE` raises `QueueOverflowError`;
+  `DROP_NEWEST` warns and calls the new `PluginBase.on_event_dropped` hook.
+  New `interpreter.queue_depth` on both engines for observability.
+  `max_queue_size=None` keeps the unbounded queue (default, unchanged).
+- **[wave 3] `send(wait=True)` / `send(priority=True)`** (#39) --
+  `wait=True` resolves to a `Receipt(state_ids, changed, error)` once the
+  macrostep for that exact event has run, so a caller can gate on the
+  machine's decision without polling. `priority=True` (also
+  `send_priority()`) delivers ahead of the inbox and is exempt from its
+  bound. A dict-form payload using the reserved `wait`/`priority` keys
+  still works but emits a `DeprecationWarning`. New exports: `Receipt`,
+  `OverflowPolicy`, `QueueOverflowError`, `InterpreterStoppedError`.
+- **[wave 3] `from_snapshot(restart_services=True)` and
+  `pending_invocations()`** (#44) -- restoring a snapshot is still a
+  static rebuild that starts nothing by default, but
+  `pending_invocations()` now lists every `PendingInvocation(state_id,
+  invoke_id, src)` in the active configuration with no live service or
+  child actor, and `restart_services=True` re-invokes each of them from
+  scratch (not resumed) through the same path `_enter_states` uses on
+  both engines.
+- **[wave 3] Injectable `Clock`** (#48, #49, #50) -- `Clock` protocol,
+  `RealClock` (default) and `SimulatedClock` (virtual time), passed as
+  `Interpreter(clock=)` / `SyncInterpreter(clock=)`; invoked and spawned
+  children inherit the parent's clock. `RealClock` now delivers a fired
+  `after` timer through a priority lane the async run loop checks ahead
+  of the inbox, so a due timer can no longer be starved behind a burst of
+  external events; `AfterEvent` gains `scheduled_for`, `fired_at`, and
+  `lateness_ms`. `SyncInterpreter` no longer spawns an OS thread per
+  `after` timer or delayed send -- a due deadline is delivered on the
+  caller's thread at the top of `send()`, in the macrostep loop, or by the
+  new `tick()`.
+- **[wave 3] Strict mode** (#51) -- `strict` machine config key or
+  `Interpreter`/`SyncInterpreter(strict=)` constructor flag (ctor wins).
+  Under strict, `send()` of an event type the machine has never declared
+  raises `UnknownEventError` synchronously at the call site, before the
+  event is queued, with a difflib suggestion (`'Did you mean FILL?'`).
+  `MachineNode.is_known_event()` applies the same matching rules as
+  dispatch, including partial (`'mouse.*'`) and bare-`'*'` descriptors.
+  `create_machine(event_schemas={'FILL': Fill})` adds opt-in,
+  dependency-free payload validation -- any object with `validate(payload)`
+  or `__call__` -- raising `InvalidEventPayloadError` at the call site
+  regardless of the strict setting. Default (strict unset, no schemas) is
+  unchanged.
 
 ### Fixed
 
@@ -180,6 +238,17 @@ preserves 0.7.x semantics, with two deliberate exceptions called out under
   `asyncio.Queue()` binds to the current loop at construction and raised
   when built outside one, so an `Interpreter` could not previously be
   instantiated in synchronous code on that version.
+- **[wave 3] One core algorithm, two execution strategies** (#60). The
+  step, transition-execution, state-entry/exit, lifecycle-action, and
+  built-in-action logic is now implemented once on `BaseInterpreter`;
+  `SyncInterpreter` inherits it unchanged and drives each coroutine to
+  completion synchronously instead of re-implementing it as a parallel
+  set of plain-`def` methods. No behaviour change is intended -- an
+  action trace is now pinned byte-identical across both engines by test
+  -- other than incidental bug fixes already released in earlier wave-3
+  commits (e.g. `functools.partial`-wrapped async actions on the sync
+  engine now raise `NotSupportedError` instead of having their coroutine
+  silently discarded).
 
 
 ## [0.7.0] - 2026-08-12

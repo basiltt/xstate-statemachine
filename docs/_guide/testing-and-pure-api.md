@@ -160,6 +160,89 @@ def test_double_submit_cannot_double_charge():
 
 ---
 
+## Virtual Time with `SimulatedClock`
+
+Machines with `after` timers or delayed sends don't have to make your tests slow. Every timer is scheduled through an injectable `Clock` (mirroring XState v5's `createActor(machine, { clock })`); swap in a `SimulatedClock` and advance virtual time instead of waiting on the wall clock.
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter, SimulatedClock
+
+config = {
+    "id": "order",
+    "initial": "submitting",
+    "states": {
+        "submitting": {"after": {"30000": "timed_out"}, "on": {"ACK": "live"}},
+        "live": {},
+        "timed_out": {},
+    },
+}
+machine = create_machine(config)
+
+clock = SimulatedClock()
+interp = SyncInterpreter(machine, clock=clock).start()
+
+clock.increment(29_999)
+assert interp.matches("order.submitting")   # not due yet
+
+clock.increment(1)
+assert interp.matches("order.timed_out")    # the 30 s timer just fired
+
+interp.stop()
+```
+
+That test asserts a 30-second timeout without burning 30 seconds of real time.
+
+### Async interpreters: `await` the increment
+
+On the async `Interpreter`, `clock.increment(ms)` returns an awaitable — `await` it so the fired timer (and anything it triggers) has finished processing before you assert:
+
+```python
+import asyncio
+from xstate_statemachine import create_machine, Interpreter, SimulatedClock
+
+async def main():
+    clock = SimulatedClock()
+    interp = await Interpreter(machine, clock=clock).start()
+    await clock.increment(29_999)
+    assert set(interp.current_state_ids) == {"order.submitting"}
+    await clock.increment(1)
+    assert set(interp.current_state_ids) == {"order.timed_out"}
+    await interp.stop()
+
+asyncio.run(main())
+```
+
+Calling `increment()`/`set()` inside a running event loop without `await` raises a `RuntimeWarning` at the next garbage collection rather than silently racing the loop — a forgotten `await` is a bug, not a flaky test.
+
+### One clock, both engines
+
+A `Clock` isn't tied to a single engine. Give a `SimulatedClock` to a `SyncInterpreter` and to an async `Interpreter` that invokes it (or vice versa) and one `increment()` call advances — and settles — both:
+
+```python
+clock = SimulatedClock()
+sync_child = SyncInterpreter(create_machine(child_config), clock=clock).start()
+
+async def main():
+    parent = await Interpreter(create_machine(parent_config), clock=clock).start()
+    await clock.increment(100)   # fires whatever is due on EITHER engine
+    ...
+    await parent.stop()
+```
+
+### Other `SimulatedClock` members
+
+| Member | Behavior |
+|:--|:--|
+| `increment(ms)` | Advance virtual time by `ms`, firing due timers in order. Raises `ValueError` on a negative delta. |
+| `set(ms)` | Jump to an absolute virtual time; raises `ValueError` if `ms` is before the current time. |
+| `pending` | Number of live (uncancelled) timers still scheduled. |
+
+Timers fire **one at a time**, re-reading the schedule between each — so a timer that itself schedules another timer inside the same `increment()` window (an `after` chain) fires in the correct order, and multiple timers due at different delays fire shortest-delay-first regardless of which state or actor registered them.
+
+> **Note:** `SimulatedClock` is for tests. For real code, the default `RealClock` preserves normal wall-clock timing for both engines — see [Delayed Transitions § Controlling Time](../delayed-transitions/#controlling-time) for the full `Clock` API, including how a `SyncInterpreter` without a background thread advances its own timers via `pump()`.
+
+---
+
 ## See Also
 
 - [Interpreters](../interpreters/) — sync vs async, lifecycle
