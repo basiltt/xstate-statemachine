@@ -1,0 +1,399 @@
+{
+  "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "cpu": "Intel64 Family 6 Model 141 Stepping 1, GenuineIntel",
+  "libs": {
+    "python-statemachine": "3.2.1",
+    "sismic": "1.6.11",
+    "transitions": "0.9.3",
+    "xstate-statemachine (async)": "0.7.0",
+    "xstate-statemachine (pure)": "0.7.0",
+    "xstate-statemachine (sync)": "0.7.0"
+  },
+  "results": [
+    {
+      "lib": "python-statemachine",
+      "scenario": "S1",
+      "n": 20000,
+      "median_s": 2.088677200023085,
+      "ops_per_s": 9575.43846400916,
+      "note": ""
+    },
+    {
+      "lib": "python-statemachine",
+      "scenario": "S2",
+      "n": 20000,
+      "median_s": 2.630056300025899,
+      "ops_per_s": 7604.399951363419,
+      "note": ""
+    },
+    {
+      "lib": "python-statemachine",
+      "scenario": "S3",
+      "n": 20000,
+      "median_s": 7.636327100044582,
+      "ops_per_s": 2619.060149987975,
+      "note": ""
+    },
+    {
+      "lib": "python-statemachine",
+      "scenario": "S4",
+      "n": 20000,
+      "median_s": 7.3496730999904685,
+      "ops_per_s": 2721.209464408143,
+      "note": ""
+    },
+    {
+      "lib": "python-statemachine",
+      "scenario": "S5",
+      "n": 200,
+      "median_s": 0.23096329998224974,
+      "ops_per_s": 865.9384413686964,
+      "note": ""
+    },
+    {
+      "lib": "python-statemachine",
+      "scenario": "S6",
+      "n": 1000,
+      "median_s": 0.3550010999897495,
+      "ops_per_s": 2816.8926801321873,
+      "note": ""
+    },
+    {
+      "lib": "python-statemachine",
+      "scenario": "S7",
+      "n": 200,
+      "median_s": 0.07033610000507906,
+      "ops_per_s": 2843.4900426034105,
+      "note": ""
+    },
+    {
+      "lib": "python-statemachine",
+      "scenario": "S8",
+      "n": 20000,
+      "median_s": 3.711592500039842,
+      "ops_per_s": 5388.522581556384,
+      "note": ""
+    },
+    {
+      "lib": "sismic",
+      "scenario": "S1",
+      "n": 20000,
+      "median_s": 1.8240563999861479,
+      "ops_per_s": 10964.573244638643,
+      "note": ""
+    },
+    {
+      "lib": "sismic",
+      "scenario": "S2",
+      "n": 20000,
+      "median_s": 1.9982579000061378,
+      "ops_per_s": 10008.718093864945,
+      "note": ""
+    },
+    {
+      "lib": "sismic",
+      "scenario": "S3",
+      "n": 20000,
+      "median_s": 5.465396999963559,
+      "ops_per_s": 3659.386500218255,
+      "note": ""
+    },
+    {
+      "lib": "sismic",
+      "scenario": "S4",
+      "n": 20000,
+      "median_s": 4.35262469999725,
+      "ops_per_s": 4594.928664539499,
+      "note": "supported natively via 'parallel states' in the statechart YAML"
+    },
+    {
+      "lib": "sismic",
+      "scenario": "S5",
+      "n": 200,
+      "median_s": 1.0982695000129752,
+      "ops_per_s": 182.10466556490658,
+      "note": ""
+    },
+    {
+      "lib": "sismic",
+      "scenario": "S6",
+      "n": 1000,
+      "median_s": 0.17298889998346567,
+      "ops_per_s": 5780.717722903494,
+      "note": ""
+    },
+    {
+      "lib": "sismic",
+      "scenario": "S7",
+      "n": 200,
+      "median_s": 0.04617320001125336,
+      "ops_per_s": 4331.516982822414,
+      "note": ""
+    },
+    {
+      "lib": "sismic",
+      "scenario": "S8",
+      "n": 20000,
+      "median_s": null,
+      "ops_per_s": null,
+      "note": "sismic has no native asyncio interpreter loop; unsupported"
+    },
+    {
+      "lib": "transitions",
+      "scenario": "S1",
+      "n": 20000,
+      "median_s": 0.20367459999397397,
+      "ops_per_s": 98195.84769328985,
+      "note": ""
+    },
+    {
+      "lib": "transitions",
+      "scenario": "S2",
+      "n": 20000,
+      "median_s": 0.2568719999981113,
+      "ops_per_s": 77859.7900905784,
+      "note": ""
+    },
+    {
+      "lib": "transitions",
+      "scenario": "S3",
+      "n": 20000,
+      "median_s": 3.026142200047616,
+      "ops_per_s": 6609.074748597505,
+      "note": ""
+    },
+    {
+      "lib": "transitions",
+      "scenario": "S4",
+      "n": 20000,
+      "median_s": 4.0894619999453425,
+      "ops_per_s": 4890.618863867009,
+      "note": ""
+    },
+    {
+      "lib": "transitions",
+      "scenario": "S5",
+      "n": 200,
+      "median_s": 0.02718430000822991,
+      "ops_per_s": 7357.187786312356,
+      "note": ""
+    },
+    {
+      "lib": "transitions",
+      "scenario": "S6",
+      "n": 1000,
+      "median_s": 0.042078300029970706,
+      "ops_per_s": 23765.218634967183,
+      "note": ""
+    },
+    {
+      "lib": "transitions",
+      "scenario": "S7",
+      "n": 200,
+      "median_s": 2.600445599993691,
+      "ops_per_s": 76.9098957503611,
+      "note": ""
+    },
+    {
+      "lib": "transitions",
+      "scenario": "S8",
+      "n": 20000,
+      "median_s": 0.5757207999704406,
+      "ops_per_s": 34739.06101885995,
+      "note": ""
+    },
+    {
+      "lib": "xstate-statemachine (async)",
+      "scenario": "S1",
+      "n": 20000,
+      "median_s": null,
+      "ops_per_s": null,
+      "note": "identical flat-toggle path already benchmarked via SyncInterpreter in xstate_sync.py"
+    },
+    {
+      "lib": "xstate-statemachine (async)",
+      "scenario": "S2",
+      "n": 20000,
+      "median_s": null,
+      "ops_per_s": null,
+      "note": "identical guarded-context path already benchmarked via SyncInterpreter in xstate_sync.py"
+    },
+    {
+      "lib": "xstate-statemachine (async)",
+      "scenario": "S3",
+      "n": 20000,
+      "median_s": null,
+      "ops_per_s": null,
+      "note": "identical hierarchical path already benchmarked via SyncInterpreter in xstate_sync.py"
+    },
+    {
+      "lib": "xstate-statemachine (async)",
+      "scenario": "S4",
+      "n": 20000,
+      "median_s": null,
+      "ops_per_s": null,
+      "note": "identical parallel path already benchmarked via SyncInterpreter in xstate_sync.py"
+    },
+    {
+      "lib": "xstate-statemachine (async)",
+      "scenario": "S5",
+      "n": 200,
+      "median_s": null,
+      "ops_per_s": null,
+      "note": "identical construction path already benchmarked via SyncInterpreter in xstate_sync.py"
+    },
+    {
+      "lib": "xstate-statemachine (async)",
+      "scenario": "S6",
+      "n": 1000,
+      "median_s": null,
+      "ops_per_s": null,
+      "note": "identical many-instances path already benchmarked via SyncInterpreter in xstate_sync.py"
+    },
+    {
+      "lib": "xstate-statemachine (async)",
+      "scenario": "S7",
+      "n": 200,
+      "median_s": null,
+      "ops_per_s": null,
+      "note": "identical delayed-transition path already benchmarked via SyncInterpreter in xstate_sync.py"
+    },
+    {
+      "lib": "xstate-statemachine (async)",
+      "scenario": "S8",
+      "n": 20000,
+      "median_s": 1.466720400028862,
+      "ops_per_s": 13635.864067620823,
+      "note": ""
+    },
+    {
+      "lib": "xstate-statemachine (pure)",
+      "scenario": "S1",
+      "n": 20000,
+      "median_s": 1.2625699000200257,
+      "ops_per_s": 15840.707116241865,
+      "note": ""
+    },
+    {
+      "lib": "xstate-statemachine (pure)",
+      "scenario": "S2",
+      "n": 20000,
+      "median_s": 1.113689100020565,
+      "ops_per_s": 17958.333254434012,
+      "note": ""
+    },
+    {
+      "lib": "xstate-statemachine (pure)",
+      "scenario": "S3",
+      "n": 20000,
+      "median_s": 2.6212732999701984,
+      "ops_per_s": 7629.879723044286,
+      "note": ""
+    },
+    {
+      "lib": "xstate-statemachine (pure)",
+      "scenario": "S4",
+      "n": 20000,
+      "median_s": null,
+      "ops_per_s": null,
+      "note": "pure reducer has no instance to hold two orthogonal regions across calls meaningfully; use the interpreter adapters"
+    },
+    {
+      "lib": "xstate-statemachine (pure)",
+      "scenario": "S5",
+      "n": 200,
+      "median_s": null,
+      "ops_per_s": null,
+      "note": "pure API has no interpreter to construct; construction cost is measured on the interpreter adapters"
+    },
+    {
+      "lib": "xstate-statemachine (pure)",
+      "scenario": "S6",
+      "n": 1000,
+      "median_s": null,
+      "ops_per_s": null,
+      "note": "pure API has no interpreter instances; use the interpreter adapters"
+    },
+    {
+      "lib": "xstate-statemachine (pure)",
+      "scenario": "S7",
+      "n": 200,
+      "median_s": null,
+      "ops_per_s": null,
+      "note": "pure API is actor-free and schedules no timers; use the interpreter adapters"
+    },
+    {
+      "lib": "xstate-statemachine (pure)",
+      "scenario": "S8",
+      "n": 20000,
+      "median_s": null,
+      "ops_per_s": null,
+      "note": "pure API has no asyncio dispatch loop; use xstate_async.py"
+    },
+    {
+      "lib": "xstate-statemachine (sync)",
+      "scenario": "S1",
+      "n": 20000,
+      "median_s": 0.8158523999736644,
+      "ops_per_s": 24514.23811543068,
+      "note": ""
+    },
+    {
+      "lib": "xstate-statemachine (sync)",
+      "scenario": "S2",
+      "n": 20000,
+      "median_s": 0.689963600016199,
+      "ops_per_s": 28987.03641689277,
+      "note": ""
+    },
+    {
+      "lib": "xstate-statemachine (sync)",
+      "scenario": "S3",
+      "n": 20000,
+      "median_s": 1.847904699970968,
+      "ops_per_s": 10823.06896038211,
+      "note": ""
+    },
+    {
+      "lib": "xstate-statemachine (sync)",
+      "scenario": "S4",
+      "n": 20000,
+      "median_s": 1.0628693000180647,
+      "ops_per_s": 18816.98906879715,
+      "note": ""
+    },
+    {
+      "lib": "xstate-statemachine (sync)",
+      "scenario": "S5",
+      "n": 200,
+      "median_s": 0.03576350002549589,
+      "ops_per_s": 5592.293815130496,
+      "note": ""
+    },
+    {
+      "lib": "xstate-statemachine (sync)",
+      "scenario": "S6",
+      "n": 1000,
+      "median_s": 0.08341379999183118,
+      "ops_per_s": 11988.42397898107,
+      "note": ""
+    },
+    {
+      "lib": "xstate-statemachine (sync)",
+      "scenario": "S7",
+      "n": 200,
+      "median_s": 0.03555299999425188,
+      "ops_per_s": 5625.404326845429,
+      "note": ""
+    },
+    {
+      "lib": "xstate-statemachine (sync)",
+      "scenario": "S8",
+      "n": 20000,
+      "median_s": null,
+      "ops_per_s": null,
+      "note": "native asyncio dispatch benchmarked separately in xstate_async.py"
+    }
+  ]
+}
