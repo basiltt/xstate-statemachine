@@ -481,6 +481,16 @@ class TransitionDefinition:
         self.source: "StateNode" = source
         self.target_str: Optional[str] = config.get("target")
         self.actions: List[ActionDefinition] = actions or []
+        #: ⚡ Perf: the target `StateNode`, resolved ONCE at build time by
+        #: `validation.validate_machine` (which already has to resolve it to
+        #: reject bad targets). The runtime read this back per transition
+        #: through the full multi-strategy resolver -- ~15% of a flat
+        #: macrostep -- for an answer that cannot change after the tree is
+        #: built. `None` means "not resolved at build" (targetless, or an
+        #: unresolvable target kept alive by `strict_targets=False`), and the
+        #: runtime falls back to resolving live. The resolver stays the single
+        #: authority: this only memoises its result.
+        self.resolved_target: Optional["StateNode"] = None
 
         # 🛡️ Guard resolution.
         #
@@ -1374,6 +1384,18 @@ class MachineNode(StateNode[TContext, TEvent]):
         self.event_schemas: Dict[str, Any] = {}
         #: Lazily built descriptor set; see `known_events`.
         self._known_events: Optional[FrozenSet[str]] = None
+        #: ⚡ Perf: does ANY state in this machine declare a `history` child?
+        #: Filled in by `_index_history()` after the tree is built. When
+        #: False the interpreter skips `_record_history` entirely -- it was
+        #: walking every exiting state's ancestor chain and scanning each
+        #: one's children on every transition, to find nothing, in the
+        #: overwhelmingly common machine with no history states.
+        self.has_history_states: bool = False
+        #: ⚡ Perf: does ANY state declare an `always` (eventless) transition?
+        #: When False, both engines skip the transient-settle pass that ran a
+        #: full `_select_transitions` after EVERY event -- half of all
+        #: selection work on a machine that has nothing to settle.
+        self.has_always_transitions: bool = False
         #: Upper bound (ms) a `spawn_blocking_<key>` waits for the child to
         #: finish on the async engine; `None` waits indefinitely (#41).
         raw_timeout = config.get("spawnBlockingTimeout")
@@ -1426,6 +1448,27 @@ class MachineNode(StateNode[TContext, TEvent]):
 
         # 🚀 Call the parent constructor to build the entire state tree.
         super().__init__(self, config, config["id"])
+        # ⚡ Tree is complete: one walk to learn whether history bookkeeping
+        #    is ever needed (see `has_history_states`).
+        self.has_history_states, self.has_always_transitions = (
+            self._scan_tree_features(self)
+        )
+
+    @staticmethod
+    def _scan_tree_features(root: "StateNode") -> Tuple[bool, bool]:
+        """One walk: (any history child anywhere, any `always` anywhere)."""
+        history = False
+        always = "" in root.on
+        stack = [root]
+        while stack:
+            current = stack.pop()
+            for child in current.states.values():
+                if child.type == "history":
+                    history = True
+                if "" in child.on:
+                    always = True
+                stack.append(child)
+        return history, always
 
     @property
     def known_events(self) -> FrozenSet[str]:

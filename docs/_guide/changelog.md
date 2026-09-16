@@ -252,6 +252,20 @@ preserves 0.7.x semantics, with two deliberate exceptions called out under
   `asyncio.Queue()` binds to the current loop at construction and raised
   when built outside one, so an `Interpreter` could not previously be
   instantiated in synchronous code on that version.
+- **[wave 3] Hot-path work, both engines** -- roughly **+40-55% events/s**
+  on every machine shape, measured on the same laptop: sync flat 23.5k ->
+  35k ev/s, sync nested 25k -> 38k, async fire-and-forget 21k -> 29.5k,
+  `send(wait=True)` 15k -> 18.5k. Four build-time answers replace per-event
+  work: transition targets are resolved once by the build-time validator
+  and memoised on the `TransitionDefinition` (the runtime re-ran the full
+  multi-strategy resolver per transition); `_record_history` is skipped on
+  machines that declare no history state; the transient-settle pass that
+  ran a full transition selection after EVERY event is skipped on
+  machines with no `always`; single-leaf configurations skip a sort. No
+  semantics change -- the full suite is unchanged and each fast path has a
+  pinned "slow path still taken when needed" test. Consequences visible in
+  Production Characteristics: per-process budget ~20k -> ~30k trivial ev/s,
+  `after` lateness at 500 busy machines ~63 ms -> ~46 ms.
 - **[wave 3] `OverflowPolicy.BLOCK` self-send deadlock** (#38). A
   `send()` issued from inside an action while the bounded inbox was full
   suspended the run loop -- the only consumer of that inbox -- forever,

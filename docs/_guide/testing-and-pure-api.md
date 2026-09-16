@@ -15,6 +15,11 @@ Sometimes you want to compute the next state *without running anything* — no
 timers start, no services fire, nothing mutates. That is what the pure API is
 for: unit tests, planning, and "preview the next step" UI.
 
+> **Pure means pure, not fast.** Every call deep-copies context in and out so
+> the snapshot you passed is never mutated. That isolation costs about 40% versus
+> `SyncInterpreter.send()` on the same machine. Reach for it when you want
+> side-effect-free steps; for throughput, drive a `SyncInterpreter`.
+
 ```python
 from xstate_statemachine import (
     create_machine, initial_transition, pure_transition, get_next_snapshot,

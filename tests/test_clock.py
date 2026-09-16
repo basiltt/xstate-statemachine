@@ -287,6 +287,13 @@ class TestTimerPriority(_Quiet):
         }
 
         def tick(i, c, e, a):
+            # 🐢 Each TICK costs real time so the backlog CERTAINLY outlives
+            #    the 20 ms deadline: 2,000 x 0.1 ms = 200 ms of work. After
+            #    the 0.8.0 hot-path work a trivial TICK drains at ~30k/s, so
+            #    2,000 free ones finished in <20 ms on a fast CI runner and
+            #    the timer was not due until the backlog was already gone --
+            #    which made the position assertion meaningless, not wrong.
+            time.sleep(0.0001)
             c["order"].append("T")
 
         def fired(i, c, e, a):
@@ -302,8 +309,7 @@ class TestTimerPriority(_Quiet):
             # Flood the inbox with work, then wait past the deadline.
             for _ in range(2000):
                 i.send("TICK")
-            await asyncio.sleep(0.05)
-            for _ in range(400):
+            for _ in range(2000):
                 if "AFTER" in i.context["order"]:
                     break
                 await asyncio.sleep(0.005)
@@ -312,10 +318,11 @@ class TestTimerPriority(_Quiet):
             return pos
 
         pos = asyncio.run(main())
-        # The timer fired while ~2000 TICKs were still queued: it must land
-        # well before the tail of that backlog, not after all of it.
+        # The timer came due ~20 ms into a ~200 ms backlog. Without the
+        # priority lane it would be processed only after all 2,000 TICKs
+        # (position 2000); with it, it lands in the first fraction.
         self.assertLess(
-            pos, 1900, f"AFTER processed at position {pos} of 2000+"
+            pos, 1000, f"AFTER processed at position {pos} of 2000+"
         )
 
     def test_timer_drift_is_reported_on_after_event(self) -> None:
