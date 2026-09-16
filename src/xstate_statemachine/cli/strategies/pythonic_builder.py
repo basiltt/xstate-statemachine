@@ -16,6 +16,7 @@ from ..ir import parse_machine
 from .base import BaseStrategy, GenerationContext
 from ..naming import docstring_safe
 from ._shared import (
+    decorator_for,
     escape_for_string,
     generate_action_docstring,
     generate_error_handling,
@@ -456,7 +457,10 @@ class PythonicBuilderStrategy(BaseStrategy):
                 fn_name = f"{fn_name}_"
 
             # -- decorator --------------------------------------------
-            code_lines.append(f"@{component_type}")
+            # The builder binds by explicit string below, so the decorator
+            # name never matters here -- but emit the same form as the other
+            # templates so a reader sees one convention.
+            code_lines.append(decorator_for(component_type, original, fn_name))
 
             # -- signature (no self) ----------------------------------
             async_kw = (

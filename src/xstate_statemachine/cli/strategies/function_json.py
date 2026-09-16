@@ -14,6 +14,7 @@ from ._shared import (
     generate_imports,
     generate_logger_setup,
     generate_section_header,
+    needs_explicit_name,
     snake_case_name,
 )
 
@@ -49,6 +50,8 @@ class FunctionJsonStrategy(BaseStrategy):
             generate_imports(
                 is_async=ctx.is_async,
                 services=ctx.services,
+                actions=ctx.actions,
+                guards=ctx.guards,
                 template_type="function-json",
                 log=ctx.log,
             )
@@ -531,6 +534,12 @@ class FunctionJsonStrategy(BaseStrategy):
                 ret_type = "None"
 
             signature_lines = [
+                # 🏷️ Lossy name -> explicit marker the LogicLoader keys on.
+                *(
+                    [f'@{component_type}("{escape_for_string(original)}")']
+                    if needs_explicit_name(original)
+                    else []
+                ),
                 f"{async_kw}def {fn_name}(",
                 *args,
                 f") -> {ret_type}:",

@@ -305,6 +305,24 @@ Open `checkout_logic.py` and you'll find a `StateMachine` subclass with:
 - `@guard` decorated method for `cartNotEmpty`
 - `@service` decorated method for `processPayment`
 
+> **Stately exports and other non-identifier names.** Stately names anonymous
+> actions like `inline:checkout.payment#entry[0]`; hand-written configs
+> sometimes use dots or dashes (`audit.log-v2`). Such a name cannot become a
+> Python method name and still be matched back by convention, so the
+> generator emits the explicit form for it:
+>
+> <!-- doc-fragment -->
+> ```python
+> @action("inline:checkout.payment#entry[0]")
+> def inline_checkout_payment_entry_0(self, interpreter, context, event, action_def) -> None:
+>     ...
+> ```
+>
+> The `LogicLoader` honours that declared name, so `create_machine(config,
+> logic_providers=[...])` and `logic_modules=[...]` bind it correctly. Rename
+> the method freely; keep the string in the decorator. Ordinary camelCase
+> names keep the bare `@action` -- the method name round-trips on its own.
+
 ### Step 4: Implement Your Business Logic
 
 Fill in the `# TODO` stubs with your actual business logic:

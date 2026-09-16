@@ -14,6 +14,7 @@ from ._shared import (
     generate_imports,
     generate_logger_setup,
     generate_section_header,
+    needs_explicit_name,
     pascal_case_name,
     snake_case_name,
 )
@@ -44,6 +45,8 @@ class ClassJsonStrategy(BaseStrategy):
             generate_imports(
                 is_async=ctx.is_async,
                 services=ctx.services,
+                actions=ctx.actions,
+                guards=ctx.guards,
                 template_type="class-json",
                 log=ctx.log,
             )
@@ -536,6 +539,14 @@ class ClassJsonStrategy(BaseStrategy):
                 ret_type = "None"
 
             signature_lines = [
+                # 🏷️ Lossy name -> explicit marker the LogicLoader keys on.
+                *(
+                    [
+                        f'{indent}@{component_type}("{escape_for_string(original)}")'
+                    ]
+                    if needs_explicit_name(original)
+                    else []
+                ),
                 f"{indent}{async_kw}def {fn_name}(",
                 self_arg,
                 *args,

@@ -267,6 +267,18 @@ preserves 0.7.x semantics, with two deliberate exceptions called out under
   stops running or a link that 404s on the site fails the build. 34
   runnable feature examples now live under `examples/*/features/`, one per
   capability, all executed by `tests/test_examples.py`.
+- **[wave 3] Generated code binds Stately `inline:` action names** (CLI).
+  Stately exports anonymous actions as `inline:machine.state#entry[0]`;
+  every template turned that into an identifier-safe method name and then
+  relied on name matching (`@action` -> camelCase; `LogicLoader` -> method
+  name / camelCase), which can never reproduce a name with `:`, `.`, `#`
+  or `[`. The generated code compiled and imported, but `start()` raised
+  `ImplementationMissingError` on 26 of the 104 real-world corpus
+  machines. All five templates now emit `@action("<original>")` when the
+  name does not round-trip (ordinary camelCase names are unchanged), and
+  `LogicLoader` honours that marker for both `logic_modules` and
+  `logic_providers` -- so a hand-written provider can implement such a
+  name too. Found by executing, not just importing, every generated file.
 - **[wave 3] `RestoredError` is exported** from the package root. It is what
   `interpreter.error` holds after restoring a snapshot taken in the `error`
   status, and the docs showed it as importable, but it was missing from
