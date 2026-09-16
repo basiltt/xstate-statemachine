@@ -94,6 +94,14 @@ This machine has:
 | `initial` | `string` | **Yes** | The name of the starting state. Must match a key in `states`. |
 | `context` | `object` | No | Initial mutable data. Accessible in actions, guards, and services. Deep-copied on each interpreter start. |
 | `states` | `object` | **Yes** | A map of state name → state configuration. At least one state is required. |
+| `strict` | `bool` | No | Default `false`. When `true`, sending an event type the machine has never declared anywhere raises `UnknownEventError`. See [Strict Mode](#strict-mode-unknown-events-and-payload-schemas). |
+| `strictTargets` | `bool` | No | Default `false`. When `true`, a plain (non-dotted) transition target must name a sibling or ancestor-scope state — it will no longer fall back to matching an unrelated state elsewhere in the tree that happens to share the same trailing id segment. |
+| `maxIterations` | `int` | No | Default `1000`. Upper bound on eventless (`always`) microsteps evaluated while a machine settles after a transition — guards against an accidental infinite loop of transient transitions. |
+| `spawnBlockingTimeout` | `number` | No | Milliseconds a `spawn_blocking_<key>` action waits for the child to reach a final state before giving up, on both engines. Default `30000` (30 s) — never unbounded, so a child that never finishes cannot wedge the parent mid-transition. |
+| `actionErrorPolicy` | `"continue" \| "rollback" \| "fail"` | No | Default `"continue"`. What happens when an `entry`/`exit`/transition action raises: `"continue"` logs and proceeds (the 0.7.x behavior, and the current default — planned to change to `"rollback"` in 1.0), `"rollback"` undoes the transition, `"fail"` puts the interpreter into the terminal `"error"` status. |
+| `guardErrorPolicy` | `"false" \| "true" \| "raise"` | No | Default `"false"`. What happens when a guard function raises: `"false"` treats the guard as not passing, `"true"` as passing, `"raise"` propagates the exception. Every outcome fires the `on_guard_error` plugin hook first. |
+| `onUnhandled` | `"ignore" \| "defer" \| "error"` | No | Default `"ignore"`. Policy applied when a **known** event (declared somewhere in the machine) matches no transition in the currently active state(s). See [`onUnhandled`: what happens to a known-but-unmatched event](#onunhandled-what-happens-to-a-known-but-unmatched-event) below. |
+| `output` | `any` | No | Machine-level output value, resolved when a top-level `final` state is reached. Surfaced on the generated `done.state.*` event. |
 
 **Example — minimal machine:**
 
@@ -144,11 +152,16 @@ Every value in the `states` object is a **state configuration** with the followi
 | `exit` | `string \| string[]` | Action(s) to run when leaving this state. |
 | `invoke` | `object \| object[]` | Service(s) to start when entering this state. |
 | `after` | `object` | Delayed transitions: `{ "milliseconds": target_or_transition }`. |
-| `type` | `string` | One of `"atomic"`, `"compound"`, `"parallel"`, or `"final"`. Default: `"atomic"`. |
+| `type` | `string` | One of `"atomic"`, `"compound"`, `"parallel"`, `"final"`, or `"history"`. Default: `"atomic"`. |
 | `initial` | `string` | Initial child state name (required for compound states). |
 | `states` | `object` | Nested child state configurations (makes this a compound state). |
 | `onDone` | `string \| object` | Transition when a compound state's child reaches a final state. |
 | `always` | `object \| object[]` | Eventless (transient) transitions — evaluated immediately on entry. |
+| `tags` | `string \| string[]` | Arbitrary labels for this state, queryable at runtime via `interpreter.has_tag(tag)` and `interpreter.tags`. Useful for UI concerns like "is a spinner showing" without hardcoding state names. |
+| `meta` | `object` | Arbitrary metadata attached to the state, retrievable via `interpreter.get_meta()` (returns a `{state_id: meta}` map for every currently active state that declares one). |
+| `description` | `string` | Free-text documentation for the state. Not used by the runtime — purely informational, e.g. for tooling or generated docs. |
+| `history` | `"shallow" \| "deep"` | Only meaningful on a state with `"type": "history"` (see below). Default `"shallow"`. |
+| `output` | `any` | Only meaningful on a `"type": "final"` state. The value surfaced on the `done.state.*` / `done.invoke.*` event when this final state is reached. |
 
 **Example — state with all fields:**
 
@@ -169,6 +182,35 @@ Every value in the `states` object is a **state configuration** with the followi
   }
 }
 ```
+
+**Example — `tags`, `meta`, and `description`:**
+
+`tags` and `meta` are queryable at runtime through the interpreter; `description` is documentation only.
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter
+
+config = {
+    "id": "order",
+    "initial": "pending",
+    "states": {
+        "pending": {
+            "tags": ["active", "billable"],
+            "meta": {"ui": {"color": "blue"}},
+            "description": "Waiting for payment confirmation.",
+            "on": {"FILL": "filled"},
+        },
+        "filled": {"type": "final"},
+    },
+}
+
+machine = create_machine(config)
+interp = SyncInterpreter(machine).start()
+print(interp.has_tag("billable"))  # True
+print(interp.tags)                 # {'active', 'billable'}
+print(interp.get_meta())           # {'order.pending': {'ui': {'color': 'blue'}}}
+```
+
 
 ---
 
@@ -326,7 +368,9 @@ The `invoke` field starts an async operation (service) when a state is entered. 
 | `src` | `string` | **Yes** | The name of the service function to call. |
 | `onDone` | `string \| object` | No | Transition when the service resolves successfully. |
 | `onError` | `string \| object` | No | Transition when the service throws an error. |
-| `id` | `string` | No | Optional identifier for the invoked service. |
+| `id` | `string` | No | Optional identifier for the invoked service. Defaults to the hosting state's id if omitted (so give anonymous invokes in the same state distinct ids if you need to address them uniquely). |
+| `input` | `any` | No | Static data — or a callable resolved per-spawn — passed to the invoked child as its `input`. |
+| `systemId` | `string` | No | Registers the spawned child in the actor system under this name, so `sendTo`/`forward_to` can address it from anywhere in the tree. |
 
 ### Basic Invoke
 
@@ -473,6 +517,7 @@ Every state has a `type` that determines its behavior:
 | `"compound"` | Parent state with nested children. Automatically inferred when `states` is present. | Yes | Yes |
 | `"parallel"` | All child regions active simultaneously. | Yes | Yes |
 | `"final"` | Terminal state — the machine (or region) is done. | No | No |
+| `"history"` | Pseudo-state that, when targeted, restores a previously-active child configuration of its parent instead of being entered itself. | No | No |
 
 ### Atomic (default)
 
@@ -516,6 +561,40 @@ When a final state is entered inside a compound state, it triggers a `done.state
     }
   }
 }
+```
+
+### History
+
+A `history` state is never entered itself — targeting it restores whichever child of its parent was active when the parent was last exited. `history` (the config key, default `"shallow"`) controls the depth: `"shallow"` restores only the immediate child, `"deep"` restores the full nested configuration. If the parent has never been exited before, the parent's own `initial` state is entered instead.
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter
+
+config = {
+    "id": "player",
+    "initial": "off",
+    "states": {
+        "off": {"on": {"POWER": "on.hist"}},
+        "on": {
+            "type": "compound",
+            "initial": "playing",
+            "on": {"POWER": "off"},
+            "states": {
+                "playing": {"on": {"PAUSE": "paused"}},
+                "paused": {"on": {"PLAY": "playing"}},
+                "hist": {"type": "history", "history": "shallow"},
+            },
+        },
+    },
+}
+
+machine = create_machine(config)
+interp = SyncInterpreter(machine).start()
+interp.send("POWER")  # off -> on.playing
+interp.send("PAUSE")  # on.playing -> on.paused
+interp.send("POWER")  # on.paused -> off
+interp.send("POWER")  # off -> on.hist -> restores on.paused
+print(interp.current_state_ids)  # {'player.on.paused'}
 ```
 
 ---
@@ -790,7 +869,7 @@ print(interp.context)
 
 ## Strict Mode: Unknown Events and Payload Schemas
 
-By default, sending an event type that no state in the machine ever declares is a silent no-op — this is XState's actor semantics, and it stays correct for events a particular state simply doesn't care about. But it makes a second, very different case invisible too: an event that NOTHING in the machine has ever heard of, which is almost always a typo or an outdated producer. `strict` mode turns that second case into an exception raised at the `send()` call site.
+By default, sending an event type that no state in the machine ever declares is a silent no-op — this is XState's actor semantics, and it stays correct for events a particular state simply doesn't care about (the same default, `onUnhandled: "ignore"`, also governs known-but-unmatched events; see below). But it makes a second, very different case invisible too: an event that NOTHING in the machine has ever heard of, which is almost always a typo or an outdated producer. `strict` mode turns that second case into an exception raised at the `send()` call site.
 
 ### Enabling strict mode
 
@@ -862,18 +941,65 @@ machine.is_known_event("xstate.init")     # True: engine event, always known
 machine.is_known_event("nope")            # False
 ```
 
-### Declared-but-unhandled events are still ignored
+### Declared-but-unhandled events are still ignored (by default)
 
-`strict` only rejects events the machine has **never** declared anywhere. An event that's declared in one state but not handled by the state currently active is still a normal, silent no-op — that's correct XState behavior, not a bug:
+`strict` only rejects events the machine has **never** declared anywhere. An event that's declared in one state but not handled by the state currently active is a separate case, governed by the `onUnhandled` policy described below — whose default (`"ignore"`) is a normal, silent no-op:
 
 ```python
+config = {
+    "id": "order",
+    "initial": "pending",
+    "states": {
+        "pending": {"on": {"FILL": "filled", "CANCEL": "cancelled"}},
+        "filled": {"on": {"SHIP": "shipped"}},
+        "shipped": {"type": "final"},
+        "cancelled": {"type": "final"},
+    },
+}
+
 interp = SyncInterpreter(create_machine(config)).start()  # strict via config
 interp.send("FILL")     # pending -> filled
 interp.send("CANCEL")   # known (declared in `pending`), but `filled` has no handler -> ignored
 print(interp.current_state_ids)  # {'order.filled'}
 ```
 
+> **Note:** `filled` is given an unrelated `on: {"SHIP": ...}` handler here (rather than being a bare `"type": "final"` state) so the example actually demonstrates "declared elsewhere, not handled here." A `final` state has no `on` at all, and `SyncInterpreter` auto-stops once the machine reaches a top-level final state — so sending `CANCEL` to an already-final `filled` would be a no-op because the interpreter had stopped, not because of any unhandled-event policy.
+
 An internally-raised event (e.g. from a `{"type": "raise", ...}` action) is checked the same way, so a typo in an internal `raise` is caught too.
+
+### `onUnhandled`: what happens to a known-but-unmatched event
+
+This silent ignore is itself the default of a separate, configurable policy: `onUnhandled`, a top-level config key distinct from `strict`. Where `strict` governs events the machine has **never** declared, `onUnhandled` governs events that **are** declared somewhere but don't match any transition in the state(s) currently active. It accepts three values:
+
+| Value | Behavior |
+|-------|----------|
+| `"ignore"` (default) | Silent no-op — the 0.7.x behavior shown above. |
+| `"defer"` | The event is held in a bounded FIFO buffer (`DEFER_MAX = 1000`) and replayed at the head of the queue after the next state change. If the buffer is full, the oldest deferred event is evicted to make room. |
+| `"error"` | Puts the interpreter into the terminal `"error"` status with a `UnhandledEventError` on `interpreter.error`. |
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter
+
+config = {
+    "id": "order",
+    "initial": "pending",
+    "onUnhandled": "defer",
+    "states": {
+        "pending": {"on": {"START_SHIP": "filled"}},
+        "filled": {"on": {"SHIP": "shipped"}},
+        "shipped": {"type": "final"},
+    },
+}
+
+machine = create_machine(config)
+interp = SyncInterpreter(machine).start()
+interp.send("SHIP")           # unmatched in 'pending' -> deferred, not lost
+print(interp.deferred_count)  # 1
+interp.send("START_SHIP")     # pending -> filled; deferred SHIP replays here
+print(interp.current_state_ids)  # {'order.shipped'}
+```
+
+Switching the same config's `onUnhandled` to `"error"` and sending an unmatched event instead sets `interpreter.status == "error"` and `interpreter.error` to a `UnhandledEventError`.
 
 ### Opt-in payload schemas
 
@@ -930,14 +1056,17 @@ machine = create_machine(config, event_schemas={"FILL": check_qty})
 ## Quick Reference Cheat Sheet
 
 ```
-Top level:       id, initial, context, states, strict
-State fields:    on, entry, exit, invoke, after, type, initial, states, onDone, always
+Top level:       id, initial, context, states, strict, strictTargets, maxIterations,
+                 spawnBlockingTimeout, actionErrorPolicy, guardErrorPolicy,
+                 onUnhandled, output
+State fields:    on, entry, exit, invoke, after, type, initial, states, onDone, always,
+                 tags, meta, description, history, output
 Transition:      "EVENT": "target"                         (string shorthand)
                  "EVENT": { target, guard, actions }       (object form)
                  "EVENT": [ { ... }, { ... } ]             (array — first guard wins)
-Invoke:          { src, onDone, onError, id }
+Invoke:          { src, onDone, onError, id, input, systemId }
 After:           { "ms": "target" } or { "ms": { target, guard, actions } }
-Types:           "atomic" (default), "compound", "parallel", "final"
+Types:           "atomic" (default), "compound", "parallel", "final", "history"
 Eventless:       "always": [ { target, guard }, ... ]
 Strict mode:     "strict": true  or  create_machine(..., ) / Interpreter(..., strict=True)
                  create_machine(config, event_schemas={"EVENT": schema_or_callable})

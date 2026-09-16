@@ -114,10 +114,15 @@ print(mermaid)
 ```
 stateDiagram-v2
 [*] --> red
+state "trafficLight" as trafficLight {
+    [*] --> red
+}
 red --> green : TIMER
 green --> yellow : TIMER
 yellow --> red : TIMER
 ```
+
+The top-level machine is always wrapped in its own `state "<id>" as <id> { [*] --> ... }` block (the same is true for any nested compound state), alongside a leading `[*] --> red` line for the overall diagram.
 
 ### Embedding in GitHub README
 
@@ -127,6 +132,9 @@ Mermaid diagrams render natively in GitHub Markdown. Wrap the output in a fenced
 ```mermaid
 stateDiagram-v2
 [*] --> red
+state "trafficLight" as trafficLight {
+    [*] --> red
+}
 red --> green : TIMER
 green --> yellow : TIMER
 yellow --> red : TIMER
@@ -189,8 +197,53 @@ print(machine.to_mermaid())
 ```
 stateDiagram-v2
 [*] --> locked
+state "doorLock" as doorLock {
+    [*] --> locked
+}
 locked --> unlocked : UNLOCK
 unlocked --> locked : LOCK
+```
+
+The functional `build_machine()` and fluent `MachineBuilder` produce the same kind of `MachineNode`:
+
+```python
+from xstate_statemachine import State, build_machine
+
+idle = State("idle", initial=True)
+running = State("running")
+
+machine = build_machine(
+    id="switch",
+    states=[idle, running],
+    transitions=[idle.to(running, event="START")],
+)
+
+print(machine.to_mermaid())
+```
+
+```python
+from xstate_statemachine import MachineBuilder
+
+machine = (
+    MachineBuilder("switch")
+    .state("idle", initial=True)
+    .state("running")
+    .transition("idle", "START", "running")
+    .build()
+)
+
+print(machine.to_mermaid())
+```
+
+Both produce:
+
+```
+stateDiagram-v2
+[*] --> idle
+state "switch" as switch {
+    [*] --> idle
+}
+idle --> running : START
 ```
 
 ## Nested State Diagrams
@@ -255,7 +308,7 @@ editor_editing --> editor_idle : CLOSE
 
 ## Parallel State Diagrams
 
-Parallel states are also exported with their concurrent regions visible:
+Parallel states are also exported, but both exporters render each parallel region as an ordinary nested composite state — there is no parallel-specific visual marker (no Mermaid `--` region divider, no distinct styling in PlantUML). The nesting itself is what shows you the regions:
 
 ```python
 from xstate_statemachine import create_machine
@@ -290,6 +343,29 @@ config = {
 
 machine = create_machine(config)
 print(machine.to_mermaid())
+```
+
+**Mermaid output:**
+
+```
+stateDiagram-v2
+[*] --> playing
+state "player" as player {
+    [*] --> playing
+    state "playing" as playing {
+        state "video" as video {
+            [*] --> loading
+        }
+        state "audio" as audio {
+            [*] --> muted
+        }
+    }
+}
+playing --> stopped : STOP
+loading --> streaming : VIDEO_READY
+streaming --> loading : BUFFER
+muted --> audible : UNMUTE
+audible --> muted : MUTE
 ```
 
 ## Using Diagrams for Documentation

@@ -610,7 +610,12 @@ The behavior above is one of three policies, controlled by the machine-config ke
 }
 ```
 
-Whichever policy is set, `interpreter.last_transition_ok` reports whether the most recent transition's actions all ran to completion, and the `on_transition_failed(interpreter, transition, failed_actions)` plugin hook fires with the list of `(action_def, exception)` pairs that failed. See [Plugins](../plugins/#on_transition_failedinterpreter-transition-failed_actions).
+Guards have an analogous `guardErrorPolicy` (`"false"`/`"true"`/`"raise"`, see
+[Guards](../guards/)) and unhandled events have their own `onUnhandled`
+(`"ignore"`/`"defer"`/`"error"`, see [JSON Configuration](../json-config/)) —
+these are siblings of `actionErrorPolicy`, not alternatives to it.
+
+Whichever policy is set, `interpreter.last_transition_ok` reports whether the most recent transition's actions all ran to completion, and the `on_transition_failed(interpreter, transition, failed_actions)` plugin hook fires with the list of `(action_def, exception)` pairs that failed. See [Plugins](../plugins/#plugin-hooks-reference).
 
 ## Best Practices
 
@@ -666,8 +671,14 @@ class Logic(MachineLogic):
 
 A comprehensive form machine demonstrating entry, exit, and transition actions working together:
 
+> **Note:** As of 0.8.0, a `MachineLogic` subclass method with ambiguous
+> arity — e.g. a 2-arg method that could be a guard or a 2-arg service —
+> is still registered by arity, but now emits a `UserWarning` recommending
+> explicit `@action`/`@guard`/`@service` decoration. The example below
+> decorates `hasRequiredFields` with `@guard` for exactly this reason.
+
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
+from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic, guard
 
 config = {
     "id": "contactForm",
@@ -785,6 +796,7 @@ class ContactFormLogic(MachineLogic):
         context["draft"] = None
 
     # ---- Guards ----
+    @guard
     def hasRequiredFields(self, context, event):
         fd = context["formData"]
         return bool(fd.get("name") and fd.get("email") and fd.get("message"))

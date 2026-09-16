@@ -171,7 +171,7 @@ interp.stop()
 Guards receive `(context, event)` and can read context values to make routing decisions:
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
+from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic, guard
 
 config = {
     "id": "purchaseGate",
@@ -192,6 +192,7 @@ config = {
 }
 
 class PurchaseLogic(MachineLogic):
+    @guard
     def hasEnoughBalance(self, context, event):
         return context["balance"] >= context["itemPrice"]
 
@@ -350,7 +351,7 @@ class SharedContextLogic(MachineLogic):
 A full shopping cart machine demonstrating context usage across multiple states and transitions:
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
+from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic, guard
 
 config = {
     "id": "shoppingCart",
@@ -417,6 +418,7 @@ class CartLogic(MachineLogic):
         print(f"Order placed! {len(context['items'])} items, total: ${context['total']:.2f}")
 
     # ---- Guards ----
+    @guard
     def hasItems(self, context, event):
         return len(context["items"]) > 0
 
@@ -438,6 +440,61 @@ interp.send("CONFIRM")
 
 print(interp.context["total"])         # 40.47
 print(interp.context["appliedCoupon"]) # SAVE10
+interp.stop()
+```
+
+## Updating Context Declaratively with `assign`
+
+Every example above mutates context imperatively inside a `MachineLogic` action method. XState v5's idiomatic alternative is `assign`, a built-in action creator that declares context updates without a hand-written action method — each value can be a plain value or a callable of `{context, event}`:
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic, assign
+
+config = {
+    "id": "counter",
+    "initial": "counting",
+    "context": {"count": 0},
+    "states": {
+        "counting": {
+            "on": {
+                "INCREMENT": {
+                    "actions": assign({"count": lambda args: args["context"]["count"] + 1})
+                }
+            }
+        }
+    }
+}
+
+machine = create_machine(config, logic=MachineLogic())
+interp = SyncInterpreter(machine).start()
+
+interp.send("INCREMENT")
+interp.send("INCREMENT")
+
+print(interp.context["count"])  # 2
+interp.stop()
+```
+
+See [Actions](../actions/) for the full list of built-in action creators, including `assign`.
+
+## Interpreter `input` and Context
+
+When you construct an interpreter with `input=`, that value is exposed to the running machine under `context["input"]` — but only if the initial context doesn't already declare an `"input"` key (an explicit `context` key always wins, so `input` can never overwrite declared context):
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
+
+config = {
+    "id": "m",
+    "initial": "idle",
+    "context": {"count": 0},
+    "states": {"idle": {}},
+}
+
+machine = create_machine(config, logic=MachineLogic())
+interp = SyncInterpreter(machine, input={"userId": 42}).start()
+
+print(interp.context)  # {"count": 0, "input": {"userId": 42}}
 interp.stop()
 ```
 

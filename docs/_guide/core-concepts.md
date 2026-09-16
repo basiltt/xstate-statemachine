@@ -53,6 +53,9 @@ is_authenticated = True
 # State is "loading" OR "error" OR "authenticated" — never multiple.
 ```
 
+> [!NOTE]
+> **Error & unhandled-event policies.** By default (`strict: False`, `onUnhandled: "ignore"`) an event with no matching transition is dropped silently — no crash. You can tighten this: set `strict: True` to raise `UnknownEventError` for event types the machine never declares, or set `onUnhandled` to `"error"`/`"defer"` to change how known-but-unhandled events are treated. Similar knobs exist for action/guard failures via `actionErrorPolicy` and `guardErrorPolicy`. See the [JSON Configuration Reference](../json-config/) and [Troubleshooting](../troubleshooting/).
+
 ---
 
 ## How Events Work
@@ -78,6 +81,48 @@ interpreter.send_events(["STEP_1", "STEP_2", "STEP_3"])
 ```
 
 > **Tip:** Event names are conventionally UPPER_CASE (`"TOGGLE"`, `"SUBMIT"`, `"FETCH"`). State names are lowercase (`"idle"`, `"loading"`, `"done"`). This makes it easy to tell them apart at a glance.
+
+---
+
+## Error & Unhandled-Event Policies
+
+By default, an event that doesn't match any transition from the current state is dropped silently, and an action or guard that raises an exception propagates as-is. For most apps that's the right default, but a few config keys let you change this per machine:
+
+- **`strict`** (bool, default `False`) — when `True`, sending an event *type* the machine never declares anywhere in its config raises `UnknownEventError` instead of being ignored. Useful for catching typos in event names during development.
+- **`onUnhandled`** (`"ignore"` | `"defer"` | `"error"`, default `"ignore"`) — controls what happens when a *known* event has no transition from the current state. `"ignore"` drops it (the default), `"error"` raises `UnhandledEventError`, and `"defer"` queues it for later instead of discarding it.
+- **`actionErrorPolicy`** / **`guardErrorPolicy`** — control whether an exception raised inside an action or guard callback is swallowed, logged, or re-raised, instead of always propagating.
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter
+
+config = {
+    "id": "strictDemo",
+    "strict": True,
+    "onUnhandled": "error",
+    "initial": "idle",
+    "states": {
+        "idle": {"on": {"START": "running"}},
+        "running": {},
+    },
+}
+
+machine = create_machine(config)
+interp = SyncInterpreter(machine).start()
+interp.send("START")   # idle -> running
+
+interp.send("START")   # known event, no transition from "running"
+print(interp.status)    # "error" -- onUnhandled: "error" fails the machine
+print(type(interp.error).__name__)  # UnhandledEventError
+
+try:
+    machine2 = create_machine({**config, "onUnhandled": "ignore"})
+    interp2 = SyncInterpreter(machine2).start()
+    interp2.send("NOT_A_REAL_EVENT")  # never declared anywhere in config
+except Exception as exc:
+    print(type(exc).__name__)  # UnknownEventError -- raised by `strict`
+```
+
+See the [JSON Configuration Reference](../json-config/) for the full list of config keys, and [Troubleshooting](../troubleshooting/) for how these errors surface in practice.
 
 ---
 
@@ -176,10 +221,12 @@ idle    = State("idle", initial=True)
 loading = State("loading")
 done    = State("done")
 
-idle.to(loading, event="FETCH")
-loading.to(done, event="SUCCESS")
+t1 = idle.to(loading, event="FETCH")
+t2 = loading.to(done, event="SUCCESS")
 
-machine = build_machine(id="fetcher", states=[idle, loading, done])
+machine = build_machine(
+    id="fetcher", states=[idle, loading, done], transitions=[t1, t2]
+)
 interp = SyncInterpreter(machine).start()
 interp.send("FETCH")     # idle -> loading
 interp.send("SUCCESS")   # loading -> done
@@ -197,14 +244,16 @@ submitting = State("submitting")
 form = State("form", initial=True, states=[editing, submitting])
 success = State("success")
 
-editing.to(submitting, event="SUBMIT")
-form.to(success, event="DONE")
+t1 = editing.to(submitting, event="SUBMIT")
+t2 = form.to(success, event="DONE")
 
-machine = build_machine(id="wizard", states=[form, success])
+machine = build_machine(
+    id="wizard", states=[form, success], transitions=[t1, t2]
+)
 interp = SyncInterpreter(machine).start()
-# Active: {'wizard.form', 'wizard.form.editing'}
+# active_state_ids: {'wizard.form.editing'}
 interp.send("SUBMIT")
-# Active: {'wizard.form', 'wizard.form.submitting'}
+# active_state_ids: {'wizard.form.submitting'}
 interp.stop()
 ```
 
@@ -223,12 +272,14 @@ color_region = State("fontColor", parallel=False, states=[red, blue])
 
 editor = State("editor", parallel=True, initial=True, states=[bold_region, color_region])
 
-bold.to(normal, event="TOGGLE_BOLD")
-normal.to(bold,  event="TOGGLE_BOLD")
-red.to(blue, event="TOGGLE_COLOR")
-blue.to(red, event="TOGGLE_COLOR")
+t1 = bold.to(normal, event="TOGGLE_BOLD")
+t2 = normal.to(bold,  event="TOGGLE_BOLD")
+t3 = red.to(blue, event="TOGGLE_COLOR")
+t4 = blue.to(red, event="TOGGLE_COLOR")
 
-machine = build_machine(id="textEditor", states=[editor])
+machine = build_machine(
+    id="textEditor", states=[editor], transitions=[t1, t2, t3, t4]
+)
 interp = SyncInterpreter(machine).start()
 # Active: editor.fontWeight.bold AND editor.fontColor.red
 interp.send("TOGGLE_BOLD")
@@ -248,12 +299,16 @@ loading  = State("loading")
 success  = State("success", final=True)
 failure  = State("failure")
 
-idle.to(loading, event="FETCH")
-loading.to(success, event="RESOLVE")
-loading.to(failure, event="REJECT")
-failure.to(loading, event="RETRY")
+t1 = idle.to(loading, event="FETCH")
+t2 = loading.to(success, event="RESOLVE")
+t3 = loading.to(failure, event="REJECT")
+t4 = failure.to(loading, event="RETRY")
 
-machine = build_machine(id="dataLoader", states=[idle, loading, success, failure])
+machine = build_machine(
+    id="dataLoader",
+    states=[idle, loading, success, failure],
+    transitions=[t1, t2, t3, t4],
+)
 interp = SyncInterpreter(machine).start()
 interp.send("FETCH")
 interp.send("RESOLVE")
@@ -416,11 +471,13 @@ from xstate_statemachine import State, build_machine, SyncInterpreter
 
 idle   = State("idle", initial=True)
 active = State("active")
-idle.to(active, event="ACTIVATE")
-active.to(idle,  event="DEACTIVATE")
+t1 = idle.to(active, event="ACTIVATE")
+t2 = active.to(idle,  event="DEACTIVATE")
 
 # 1. CREATE — define the machine
-machine = build_machine(id="lifecycle", states=[idle, active])
+machine = build_machine(
+    id="lifecycle", states=[idle, active], transitions=[t1, t2]
+)
 
 # 2. START — enter the initial state
 interp = SyncInterpreter(machine).start()
@@ -497,12 +554,16 @@ closed   = State("closed", initial=True)
 opened   = State("opened")
 locked   = State("locked")
 
-closed.to(opened, event="OPEN")
-closed.to(locked, event="LOCK")
-opened.to(closed, event="CLOSE")
-locked.to(closed, event="UNLOCK")
+t1 = closed.to(opened, event="OPEN")
+t2 = closed.to(locked, event="LOCK")
+t3 = opened.to(closed, event="CLOSE")
+t4 = locked.to(closed, event="UNLOCK")
 
-machine = build_machine(id="door", states=[closed, opened, locked])
+machine = build_machine(
+    id="door",
+    states=[closed, opened, locked],
+    transitions=[t1, t2, t3, t4],
+)
 interp = SyncInterpreter(machine).start()
 
 interp.send("OPEN")     # closed -> opened

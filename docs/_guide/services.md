@@ -41,8 +41,28 @@ The `invoke` property on a state defines which service to call and how to handle
 |-----|------|-------------|
 | `src` | `string` | The service name (must match a registered service function) |
 | `id` | `string` | Optional unique identifier (defaults to the state's ID) |
+| `input` | `any` \| `callable` | Static data (or a `fn(context, event)` / `fn({"context": ..., "event": ...})` callable, resolved fresh on every spawn) forwarded to the invoked service or child. A callable service receives it at `event.payload["input"]`; a spawned child machine receives it at `context["input"]`. |
+| `systemId` | `string` | Registers the invocation under a global actor address so it can be addressed from anywhere in the tree with `send_to` — see [Actors](../actors/). |
 | `onDone` | `object` | Transition to take on successful completion |
 | `onError` | `object` | Transition to take on failure (exception) |
+
+For example, to pass a per-spawn value to a service:
+
+```json
+{
+  "invoke": {
+    "src": "fetchUser",
+    "input": {"userId": 42},
+    "onDone": {"target": "loaded", "actions": "storeUser"}
+  }
+}
+```
+
+```python
+def fetch_user(interpreter, context, event):
+    user_id = event.payload["input"]["userId"]
+    return {"id": user_id, "name": "Ada"}
+```
 
 ## Basic Invoke Example
 
@@ -146,7 +166,7 @@ class UserLogicAsync(MachineLogic):
             return await resp.json()
 ```
 
-> **Warning:** The `SyncInterpreter` raises `NotSupportedError` if you attempt to invoke an `async def` service. Use the async `Interpreter` for async services.
+> **Warning:** The `SyncInterpreter` raises `NotSupportedError` when the state that invokes an `async def` service is entered (e.g. on the `send()` call that triggers the transition) — not when the machine is created or started. Use the async `Interpreter` for async services.
 
 ## onDone Handling
 
@@ -767,6 +787,18 @@ print(interp.context["receipt"])
 interp.stop()
 ```
 
+## Services and Snapshots
+
+Restoring an interpreter from a snapshot (`from_snapshot()`) is, by default, a **static restoration**: entry actions are not re-run and no invoked service or `after` timer is restarted. If the snapshot was taken while a state had an active `invoke`, the restored machine comes back parked in that state with the service *not* running.
+
+Use `interpreter.pending_invocations()` to see what's parked — it lists every `invoke` in the active configuration that has no live service behind it. To re-drive them, pass `restart_services=True` to `from_snapshot()`, which makes `start()` re-invoke every pending service **from scratch, not resumed**. For a side-effecting service (e.g. placing an order or charging a card), that means the service call happens again, so pair it with a client-supplied idempotency key.
+
+```python
+interp = SyncInterpreter.from_snapshot(snapshot_str, machine, restart_services=True).start()
+```
+
+See [Snapshots](../snapshots/) for the full persistence model.
+
 ## See Also
 
 - **[Context](../context/)** — services often populate context via `onDone` actions
@@ -776,3 +808,4 @@ interp.stop()
 - **[Actors](../actors/)** — spawn child machines as invoked services
 - **[Interpreters](../interpreters/)** — sync vs async interpreter behavior with services
 - **[Pythonic API](../pythonic-api/)** — `@service` decorator and `State(invoke=...)` syntax
+- **[Snapshots](../snapshots/)** — persisting and restoring interpreters, and how invoked services behave across a restore

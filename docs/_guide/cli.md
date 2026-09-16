@@ -32,7 +32,7 @@ my_machine_logic.py    # Action, guard, and service stubs
 my_machine_runner.py   # Interpreter bootstrap + event simulation
 ```
 
-> **Tip:** If the `xsm` command is not found after installing the package, use `python -m xstate_statemachine.cli` instead. See [CLI Troubleshooting](#using-python--m-if-xsm-is-not-found) below.
+> **Tip:** If the `xsm` command is not found after installing the package, use `python -m xstate_statemachine.cli` instead. See [CLI Troubleshooting](#using-with-python--m-if-xsm-not-found) below.
 
 ## What Gets Generated
 
@@ -110,7 +110,7 @@ Five templates are available:
 | `class-json` | Class with camelCase methods, JSON loaded at runtime *(default)* |
 | `function-json` | Module-level functions, JSON loaded at runtime |
 
-> **Note:** The `--style` flag (`class` / `function`) is deprecated and maps to `class-json` / `function-json`. It will be removed in v0.8.0. Use `--template` instead.
+> **Note:** The `--style` flag (`class` / `function`) is deprecated and maps to `class-json` / `function-json`. It is still present in 0.8.0 and will be removed in a future release. Use `--template` instead.
 
 #### Async Mode (`-am` / `--async-mode`)
 
@@ -366,17 +366,32 @@ xsm lt
 Output:
 
 ```
-Available Templates:
+Available code generation templates:
 
-  Template                Description
-  ----------------------  -------------------------------------------------------
-  class-json              Class-based logic with JSON config loaded at runtime
-  function-json           Function-based logic with JSON config loaded at runtime
-  pythonic-class          StateMachine subclass with @action/@guard decorators
-  pythonic-builder        MachineBuilder fluent API with decorated functions
-  pythonic-functional     build_machine() with State objects and decorators
+  Template ID              Style                Description
+  -----------------------  ------------------- -------------------------------------------------------
+  class-json               Class + JSON         OOP logic class with MachineLogic, bound to a JSON config loaded at runtime.
+  function-json            Functions + JSON     Module-level functions with LogicLoader auto-discovery, JSON config at runtime.
+  pythonic-class           Class-Based          StateMachine subclass with @action, @guard, @service decorators. Pure Python.
+  pythonic-builder         Builder Pattern      Fluent MachineBuilder API for dynamic, programmatic machine construction.
+  pythonic-functional      Functional           Simple build_machine() call with explicit state and transition definitions.
 
-Use: xsm gt <json_file> --template <template_name>
+Feature support:
+
+  Template ID              Machine built   Verified   Config needed at runtime
+  -----------------------  -------------- ---------  ------------------------
+  class-json               from JSON       syntax     yes -- ship the .json
+  function-json            from JSON       syntax     yes -- ship the .json
+  pythonic-class           in Python       structural no
+  pythonic-builder         in Python       structural no
+  pythonic-functional      in Python       structural no
+
+  All templates support nesting, parallel regions, history, guards,
+  timers (numeric and named delays), invoke, tags and meta.
+  'Verified' is what the generator proves before writing: templates that
+  build the machine in Python are executed and compared against the source.
+
+Usage: xsm generate-template <file.json> --template <template-id>
 ```
 
 ## Validate
@@ -401,13 +416,12 @@ The validator checks:
 Example output for a valid file:
 
 ```
-Validating: checkout.json
-  Machine ID:  checkout
-  States:      cart, payment, confirmed
-  Actions:     calculateTotal, clearCart, showError
-  Guards:      cartNotEmpty
-  Services:    processPayment
-  Result:      ok
+  ok checkout.json
+      Machine: checkout
+      States:  3
+      Actions: calculateTotal, clearCart, showError
+      Guards:  cartNotEmpty
+      Services: processPayment
 
 All 1 file(s) are valid.
 ```
@@ -423,17 +437,29 @@ xsm info
 Example output:
 
 ```
-xstate-statemachine info
-  Version:     0.7.0
-  Python:      3.12.0
-  Platform:    Windows-11
-  Install:     C:\...\xstate_statemachine
-  Features:    Hierarchical states, Parallel states, Guards,
-               Actions, Invoke/Services, Delayed transitions,
-               Context, Snapshots, Plugins, Diagram export,
-               Pythonic API, CLI code generator
-  Homepage:    https://github.com/basiltt/xstate-statemachine
-  Docs:        https://basiltt.github.io/xstate-statemachine/
+  XState-StateMachine CLI
+  ----------------------------------
+  Version:      0.7.0
+  Python:       3.12.0
+  Platform:     Windows-11
+  Install path: C:\...\xstate_statemachine
+
+  Features:
+    * Async + Sync interpreters
+    * XState JSON compatibility
+    * Pythonic API (class, builder, functional)
+    * Hierarchical & parallel states
+    * Guards, actions, services, delayed transitions
+    * Actor model (spawn child machines)
+    * Plugin system & LoggingInspector
+    * Snapshot save/restore
+    * Diagram export (Mermaid, PlantUML)
+    * CLI code generator (5 templates)
+    * Zero external dependencies
+
+  Documentation: https://basiltt.github.io/xstate-statemachine/
+  PyPI:          https://pypi.org/project/xstate-statemachine/
+  GitHub:        https://github.com/basiltt/xstate-statemachine
 ```
 
 ## Version and Help
@@ -495,7 +521,7 @@ disable syntax checking.
 > **Why this exists:** before v0.7.0 nothing checked. Three templates shipped
 > code that produced a *different machine* than the source described, and two of
 > them did it silently with exit code 0. See the
-> [changelog](changelog.md) for the details.
+> [changelog](../changelog/) for the details.
 
 ---
 

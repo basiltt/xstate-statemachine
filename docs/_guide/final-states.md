@@ -91,6 +91,8 @@ When a final state is entered, several things happen:
 4. **All `after` timers are cancelled** — any pending delayed transitions in the machine/region are cleaned up
 
 ```python
+# Note: `DoneEvent` is not re-exported from the top-level package — import it
+# from the `xstate_statemachine.events` submodule, as shown below.
 from xstate_statemachine.events import DoneEvent
 
 # When "confirmation" (a final state inside "checkout") is entered:
@@ -486,13 +488,14 @@ processing = State("processing")
 completed  = State("completed", final=True)
 cancelled  = State("cancelled", final=True)
 
-pending.to(processing, event="START")
-processing.to(completed, event="COMPLETE")
-pending.to(cancelled, event="CANCEL")
+t1 = pending.to(processing, event="START")
+t2 = processing.to(completed, event="COMPLETE")
+t3 = pending.to(cancelled, event="CANCEL")
 
 machine = build_machine(
     id="order",
     states=[pending, processing, completed, cancelled],
+    transitions=[t1, t2, t3],
 )
 
 interp = SyncInterpreter(machine).start()
@@ -762,3 +765,83 @@ This workflow demonstrates how final states compose with compound states:
 - The `evaluating` state uses an eventless transition (always) with guards to route to the correct outcome
 - `published` is the top-level final state for successful approvals
 - `returned` allows the document to be revised and resubmitted
+
+## Carrying Data Out with `output`
+
+A final state can declare an `output` value — the data it hands back to whatever consumes the completion. `output` may be a literal (dict, string, number) or a callable of `({context, event})`, matching XState's dynamic-output form. Whichever final state is entered, its resolved `output` becomes the machine's `interp.output`.
+
+This is the natural way to carry an outcome (a transaction ID, an error reason, a computed total) out of a machine, instead of inferring the outcome only by checking which state ID is active:
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter
+
+config = {
+    "id": "payment",
+    "initial": "processing",
+    "states": {
+        "processing": {
+            "on": {
+                "SUCCEED": "success",
+                "FAIL": "failed",
+            }
+        },
+        "success": {
+            "type": "final",
+            # Callable output: resolved from context/event when entered.
+            "output": lambda ev: {"transactionId": "TXN-001"},
+        },
+        "failed": {
+            "type": "final",
+            # Literal output also works.
+            "output": {"reason": "declined"},
+        },
+    },
+}
+
+machine = create_machine(config)
+interp = SyncInterpreter(machine).start()
+interp.send("SUCCEED")
+
+print(interp.status)
+# 'done'
+print(interp.output)
+# {'transactionId': 'TXN-001'}
+```
+
+See also: [Context](/guide/context/).
+
+## Detecting Completion Programmatically
+
+Besides checking `active_state_ids` for a known final-state ID, the interpreter exposes completion as first-class, checkable state:
+
+- **`interp.status`** — becomes `"done"` once the machine reaches its top-level final state (it starts as `"running"`).
+- **`interp.output`** — the resolved `output` (see above) from the final state that was entered, or `None` if none was declared.
+- **`await interp.wait_done()`** (async `Interpreter` only) — an `asyncio.Future` that resolves once the machine finishes.
+- **`to_promise(interp)`** — a standalone helper that awaits completion and returns `interp.output`, mirroring XState's `toPromise(actor)`.
+
+```python
+import asyncio
+from xstate_statemachine import create_machine, Interpreter, to_promise
+
+config = {
+    "id": "payment",
+    "initial": "processing",
+    "states": {
+        "processing": {"on": {"SUCCEED": "success"}},
+        "success": {"type": "final", "output": {"transactionId": "TXN-001"}},
+    },
+}
+
+async def main():
+    machine = create_machine(config)
+    interp = await Interpreter(machine).start()
+    interp.send("SUCCEED")
+
+    output = await to_promise(interp)
+    print(interp.status, output)
+    # done {'transactionId': 'TXN-001'}
+
+asyncio.run(main())
+```
+
+See also: [Interpreters](/guide/interpreters/), [Services & Invoke](/guide/services/).

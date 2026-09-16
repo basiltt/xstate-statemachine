@@ -143,7 +143,7 @@ Every compound state **must** specify which child to enter first using the `init
 
 When the machine transitions to `loggedIn`, it automatically enters `dashboard` (the initial child). The machine is never "just" in `loggedIn` — it's always in `loggedIn.dashboard`, `loggedIn.profile`, or `loggedIn.settings`.
 
-> **Warning:** Forgetting `initial` on a compound state will raise an `InvalidConfigError`.
+> **Warning:** Forgetting `initial` on a compound state emits a warning at `create_machine()` time and raises `InvalidConfigError` when the interpreter is started (`.start()`), because entering the compound state has no leaf state to resolve to.
 
 ## Nested Transitions
 
@@ -197,6 +197,83 @@ To target a state in another branch or region, use the absolute `#machine.path.t
   "target": "#myMachine.audit.archive.filled"
 }
 ```
+
+### History States
+
+A **history** pseudostate remembers which child of a compound state was last active, so a later transition back into the compound state re-enters that child instead of always falling back to the declared `initial` child. This is useful whenever "resume where you left off" matters more than "start from the top" — for example a media player that should stay paused/playing across a power cycle, or a wizard that should reopen on the step the user was last viewing.
+
+Declare a child with `"type": "history"` and target it explicitly. The `"history"` config key controls the depth:
+
+- `"shallow"` (the default) — remembers only the immediate child of the state that declares the history node.
+- `"deep"` — remembers the full chain of active descendants, all the way down to the leaf.
+
+```json
+{
+  "id": "player",
+  "initial": "off",
+  "states": {
+    "off": {
+      "on": { "POWER": "#player.playing.hist" }
+    },
+    "playing": {
+      "initial": "paused",
+      "states": {
+        "paused": { "on": { "PLAY": "running" } },
+        "running": { "on": { "PAUSE": "paused" } },
+        "hist": { "type": "history", "history": "shallow" }
+      },
+      "on": { "POWER": "off" }
+    }
+  }
+}
+```
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter
+
+config = {
+    "id": "player",
+    "initial": "off",
+    "states": {
+        "off": {
+            "on": {"POWER": "#player.playing.hist"}
+        },
+        "playing": {
+            "initial": "paused",
+            "states": {
+                "paused": {"on": {"PLAY": "running"}},
+                "running": {"on": {"PAUSE": "paused"}},
+                "hist": {"type": "history", "history": "shallow"}
+            },
+            "on": {"POWER": "off"}
+        }
+    }
+}
+
+machine = create_machine(config)
+interp = SyncInterpreter(machine).start()
+
+interp.send("POWER")
+print(interp.active_state_ids)
+# {'player.playing.paused'}
+
+interp.send("PLAY")
+print(interp.active_state_ids)
+# {'player.playing.running'}
+
+# Power off, then back on via the history pseudostate
+interp.send("POWER")
+print(interp.active_state_ids)
+# {'player.off'}
+
+interp.send("POWER")
+print(interp.active_state_ids)
+# {'player.playing.running'}  — resumed where we left off, not the declared initial ('paused')
+
+interp.stop()
+```
+
+A history node is never itself an active state — it is only ever a transition *target* that gets expanded into the remembered child (or the declared `initial` child, the first time the parent is entered). See [services.md](../services/) for another way to model "resume" behavior across invoked actors.
 
 ### Parent-Level Transitions (Catch-All)
 
@@ -329,7 +406,7 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
-> **Tip:** Keep nesting to 2-3 levels. Deeper than that usually means your machine should be split into separate machines using services/actors.
+> **Tip:** Keep nesting to 2-3 levels. Deeper than that usually means your machine should be split into separate machines using [services/actors](../services/).
 
 ## State ID Format
 
@@ -809,6 +886,8 @@ print(interp.context["orderId"])
 
 interp.stop()
 ```
+
+> **Note:** Methods like `cartNotEmpty`, `submitOrder`, and `validateAddress` above are undecorated and inferred by arity. As of 0.8.0, when the arity is ambiguous between roles (e.g. 2 args could be a guard or a 2-arg service; 3 args could be a service or an action), `create_machine()` emits a `UserWarning`. Decorate with `@guard`, `@service`, or `@action` to be explicit and silence the warning.
 
 ## Complete Example: Multi-Step Form Wizard
 

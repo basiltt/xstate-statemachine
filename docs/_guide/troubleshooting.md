@@ -19,10 +19,15 @@ XStateMachineError          ← Base class for ALL library errors
 ├── ActorSpawningError      ← Error creating child actor machine
 ├── NotSupportedError       ← Feature not available in current mode
 ├── UnhandledEventError     ← Event matched no transition and onUnhandled="error"
+├── UnknownEventError       ← strict=True and the event type isn't declared anywhere
+├── InvalidEventPayloadError ← Event payload failed its declared event_schemas validator
 ├── TransitionFailedError   ← Action raised and actionErrorPolicy="fail"
 ├── WrongThreadError        ← Interpreter.send() called from a foreign thread
+├── QueueOverflowError      ← send() refused: bounded inbox is full
+├── InterpreterStoppedError ← send(wait=True) receipt resolved after the interpreter stopped
 ├── SnapshotVersionError    ← Snapshot's version is newer than this library supports
-└── SnapshotDriftError      ← Snapshot doesn't belong to the machine restoring it
+├── SnapshotDriftError      ← Snapshot doesn't belong to the machine restoring it
+└── RestoredError           ← Wraps an error message recovered from a persisted snapshot
 ```
 
 ### Importing Exceptions
@@ -36,10 +41,15 @@ from xstate_statemachine import (
     ActorSpawningError,        # Actor creation failed
     NotSupportedError,         # Feature not supported in current mode
     UnhandledEventError,       # Unhandled event, onUnhandled="error"
+    UnknownEventError,         # strict=True and event type is undeclared
+    InvalidEventPayloadError,  # Event payload failed its event_schemas validator
     TransitionFailedError,     # Action raised, actionErrorPolicy="fail"
     WrongThreadError,          # send() called off the owning event loop's thread
+    QueueOverflowError,        # send() refused by a full bounded inbox
+    InterpreterStoppedError,   # send(wait=True) receipt after the interpreter stopped
     SnapshotVersionError,      # Snapshot version newer than SNAPSHOT_VERSION
     SnapshotDriftError,        # Snapshot machine_id/machine_hash mismatch
+    RestoredError,             # Error message recovered from a persisted snapshot
 )
 ```
 
@@ -295,6 +305,129 @@ interp.send_threadsafe("TICK")
 
 ---
 
+### `QueueOverflowError`
+
+**What it looks like:**
+
+```
+xstate_statemachine.exceptions.QueueOverflowError: Interpreter 'm' inbox is full (1/1); event refused. Shed load, slow the producer, or raise max_queue_size.
+```
+
+**Why it happens:** The async `Interpreter` was constructed with `max_queue_size` and the default `OverflowPolicy.RAISE`, and a `send()` arrived while the inbox already held `max_queue_size` unprocessed events. It carries `interpreter_id`, `depth`, and `maxsize` attributes for logging.
+
+**How to fix it:** Shed load, slow the producer, or raise the bound:
+
+```python
+import asyncio
+from xstate_statemachine import create_machine, Interpreter, QueueOverflowError, OverflowPolicy
+
+async def main():
+    config = {"id": "m", "initial": "a", "states": {"a": {"on": {"GO": "a"}}}}
+    machine = create_machine(config)
+    interp = Interpreter(machine, max_queue_size=1, overflow_policy=OverflowPolicy.RAISE)
+    await interp.start()
+    try:
+        for _ in range(5):
+            interp.send("GO")
+    except QueueOverflowError as e:
+        print(f"Dropped event: {e}")  # e.interpreter_id, e.depth, e.maxsize
+    await interp.stop()
+
+asyncio.run(main())
+```
+
+---
+
+### `InterpreterStoppedError`
+
+**What it looks like:**
+
+An exception on the `Future`/awaitable returned by `send(..., wait=True)`, raised because the interpreter stopped (or dropped the event) before it was processed.
+
+**Why it happens:** You awaited the receipt of a `send(wait=True)` call, but the interpreter was stopped — or the event was otherwise discarded — before it reached the front of the queue, so there is no result to resolve the receipt with.
+
+**How to fix it:** Catch it around the awaited receipt, and make sure you aren't racing a `stop()` against in-flight sends:
+
+```python
+import asyncio
+from xstate_statemachine import create_machine, Interpreter, InterpreterStoppedError
+
+async def main():
+    config = {"id": "m", "initial": "a", "states": {"a": {"on": {"GO": "b"}}, "b": {}}}
+    machine = create_machine(config)
+    interp = Interpreter(machine)
+    await interp.start()
+    receipt = interp.send("GO", wait=True)
+    await interp.stop()  # stops before the receipt is necessarily resolved
+    try:
+        await receipt
+    except InterpreterStoppedError as e:
+        print(f"Send never completed: {e}")
+
+asyncio.run(main())
+```
+
+---
+
+### `UnknownEventError`
+
+**What it looks like:**
+
+```
+xstate_statemachine.exceptions.UnknownEventError: Event 'GOO' is not declared by machine 'm'. Known events: GO. Did you mean 'GO'?
+```
+
+**Why it happens:** With `strict=True` (via the constructor or the machine config's `"strict"` key), `send()` rejects any event `type` that isn't declared anywhere in the machine — a typo or a stale producer. This is distinct from an event that *is* declared but not handled by the current state, which stays a normal, silent no-op. `UnknownEventError` carries `event_type`, `machine_id`, and the sorted `known` event types, plus a `difflib`-based "did you mean" suggestion.
+
+**How to fix it:** Fix the typo, or add the event to the machine's `on` handlers if it's genuinely new:
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter, UnknownEventError
+
+config = {"id": "m", "initial": "a", "states": {"a": {"on": {"GO": "a"}}}}
+machine = create_machine(config)
+interp = SyncInterpreter(machine, strict=True).start()
+
+try:
+    interp.send("GOO")  # Typo!
+except UnknownEventError as e:
+    print(e)  # ...Did you mean 'GO'?
+```
+
+---
+
+### `InvalidEventPayloadError`
+
+**What it looks like:**
+
+```
+xstate_statemachine.exceptions.InvalidEventPayloadError: payload for 'GO' failed validation: amount must be int
+```
+
+**Why it happens:** `create_machine()` was given `event_schemas`, a mapping of event `type` to a validator callable. When `send()` delivers an event whose type has a registered schema, the validator runs against the payload; if it raises, that exception is captured as `cause` and re-raised as `InvalidEventPayloadError`.
+
+**How to fix it:** Fix the payload at the call site, or relax/correct the validator:
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter, InvalidEventPayloadError
+
+def validate_go(payload):
+    if not isinstance(payload.get("amount"), int):
+        raise ValueError("amount must be int")
+
+config = {"id": "m", "initial": "a", "states": {"a": {"on": {"GO": "a"}}}}
+machine = create_machine(config, event_schemas={"GO": validate_go})
+interp = SyncInterpreter(machine).start()
+
+try:
+    interp.send({"type": "GO", "amount": "oops"})
+except InvalidEventPayloadError as e:
+    print(e)          # payload for 'GO' failed validation: amount must be int
+    print(e.cause)     # the original ValueError
+```
+
+---
+
 ### `SnapshotVersionError`
 
 **What it looks like:**
@@ -337,7 +470,26 @@ See [Snapshots — Snapshot Envelope](snapshots/#snapshot-envelope) for the full
 
 ---
 
+### `RestoredError`
 
+**What it looks like:**
+
+An interpreter restored via `from_snapshot()` sits in the `"error"` status, and `interp.error` is a `RestoredError` instance rather than the original exception.
+
+**Why it happens:** When a snapshot is taken from a machine that had stopped with an error, the original exception object can't survive JSON serialization. `from_snapshot()` wraps the recorded error message in `RestoredError` so the restored interpreter still exposes *what went wrong*, instead of leaving `error` as `None`.
+
+**How to fix it:** Treat `RestoredError` as a message-only diagnostic — check `interp.status` after restoring, and read `str(interp.error)` for the original failure text; don't rely on `isinstance` checks against the original exception type:
+
+```python
+from xstate_statemachine import SyncInterpreter, RestoredError
+
+restored = SyncInterpreter.from_snapshot(persisted_json, machine)
+if restored.status == "error":
+    assert isinstance(restored.error, RestoredError)
+    print(f"Restored in error state: {restored.error}")
+```
+
+---
 
 ### `ImplementationMissingError`
 
@@ -402,40 +554,80 @@ def my_guard(context, event):
 
 ---
 
-### `NotSupportedError` — `after` with `SyncInterpreter`
+### `NotSupportedError` — Async Action with `SyncInterpreter`
 
 **What it looks like:**
 
 ```
-xstate_statemachine.exceptions.NotSupportedError: `after` transitions are not supported by SyncInterpreter.
+xstate_statemachine.exceptions.NotSupportedError: Async action 'async_action' not supported by SyncInterpreter.
 ```
 
-**Why it happens:** You're using `SyncInterpreter` with a machine that has `after` (delayed) transitions. Delayed transitions require an async event loop.
+**Why it happens:** `SyncInterpreter` does support `after` (delayed) transitions as of 0.8.0 — it doesn't need an async event loop for those. What it *can't* do is run an `async def` action, guard, or service, since there's no event loop available to await the coroutine.
 
-**How to fix it:** Use the async `Interpreter` instead:
+**How to fix it:** Use a synchronous function for actions run under `SyncInterpreter`, or switch to the async `Interpreter` if you need async actions/services:
 
 ```python
-import asyncio
-from xstate_statemachine import create_machine, Interpreter
+from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic, NotSupportedError
+
+async def async_action(interpreter, context, event, action_def):
+    ...
+
+config = {
+    "id": "m", "initial": "a",
+    "states": {"a": {"entry": "async_action"}}
+}
+machine = create_machine(config, logic=MachineLogic(actions={"async_action": async_action}))
+
+try:
+    SyncInterpreter(machine).start()  # Raises NotSupportedError
+except NotSupportedError as e:
+    print(e)
+```
+
+---
+
+### `after` (Delayed) Transitions with `SyncInterpreter`
+
+`SyncInterpreter` fully supports `after` transitions. It has no background event loop, so timers are tracked on a `clock` (defaulting to `RealClock`) and only fire when something *pumps* the clock — either your own call to `interp.tick()`, or the next `send()`/`start()`, which pumps as a side effect.
+
+**Using the real clock**, sleep past the deadline and call `tick()` to fire it:
+
+```python
+import time
+from xstate_statemachine import create_machine, SyncInterpreter
 
 config = {
     "id": "timer", "initial": "idle",
     "states": {
-        "idle": { "after": { "1000": "timeout" } },
+        "idle": {"after": {"200": "timeout"}},
         "timeout": {}
     }
 }
+machine = create_machine(config)
+interp = SyncInterpreter(machine).start()
+print(interp.current_state_ids)  # {'timer.idle'}
 
-async def main():
-    machine = create_machine(config)
-    interp = Interpreter(machine)
-    await interp.start()
-    await asyncio.sleep(1.5)  # Wait for the delayed transition
-    print(interp.current_state_ids)  # Should show 'timeout'
-    await interp.stop()
-
-asyncio.run(main())
+time.sleep(0.3)
+interp.tick()                    # Pumps the clock and fires due timers
+print(interp.current_state_ids)  # {'timer.timeout'}
 ```
+
+**Using `SimulatedClock`** for deterministic tests — advance virtual time instead of sleeping:
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter
+from xstate_statemachine.clock import SimulatedClock
+
+machine = create_machine(config)
+clock = SimulatedClock()
+interp = SyncInterpreter(machine, clock=clock).start()
+print(interp.current_state_ids)  # {'timer.idle'}
+
+clock.increment(200)             # Advances virtual time and fires due timers
+print(interp.current_state_ids)  # {'timer.timeout'}
+```
+
+See [Testing & The Pure API](../testing-and-pure-api/#virtual-time-with-simulatedclock) for more on `SimulatedClock`.
 
 ---
 

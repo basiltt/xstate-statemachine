@@ -260,6 +260,10 @@ preserves 0.7.x semantics, with two deliberate exceptions called out under
   pinned "slow path still taken when needed" test. Consequences visible in
   Production Characteristics: per-process budget ~20k -> ~30k trivial ev/s,
   `after` lateness at 500 busy machines ~63 ms -> ~46 ms.
+- **[wave 3] `RestoredError` is exported** from the package root. It is what
+  `interpreter.error` holds after restoring a snapshot taken in the `error`
+  status, and the docs showed it as importable, but it was missing from
+  `__all__` -- found by executing every documentation sample.
 - **[wave 3] `OverflowPolicy.BLOCK` self-send deadlock** (#38). A
   `send()` issued from inside an action while the bounded inbox was full
   suspended the run loop -- the only consumer of that inbox -- forever,

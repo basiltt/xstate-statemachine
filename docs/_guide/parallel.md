@@ -106,6 +106,9 @@ print(interp.active_state_ids)
 # {'mediaPlayer.playing.video.loading',
 #  'mediaPlayer.playing.audio.muted',
 #  'mediaPlayer.playing.controls.visible'}
+# Note: active_state_ids is a set, so the printed order is not guaranteed
+# and may differ from run to run — compare with `==` against a set literal
+# (or use `sorted(...)`) rather than relying on printed order.
 
 # Events target specific regions independently
 interp.send("VIDEO_LOADED")
@@ -137,7 +140,7 @@ When the machine enters a parallel state:
 
 > **Note:** Parallel regions don't have an `initial` flag on the parent — there's no "first" child. All children start together. However, each region (which is a compound state) still needs its own `initial` child.
 
-> **Note:** A bare `target: "someState"` only resolves as a **sibling** within the same region — it cannot reach into another parallel region by name. Use an absolute `#machine.path.to.state` target to move a state in a different region. See [Hierarchical States — Bare Targets Are Sibling-Only](hierarchical/#bare-targets-are-sibling-only).
+> **Note:** A bare `target: "someState"` only resolves as a **sibling** within the same region — it cannot reach into another parallel region by name. Use an absolute `#machine.path.to.state` target to move a state in a different region. See [Hierarchical States — Bare Targets Are Sibling-Only](hierarchical/#bare-targets-are-sibling-only). Since 0.8.0, `create_machine()` runs with `strict_targets=True` by default, so an unresolvable cross-region bare target is rejected at **build time** (a clear error when the machine is created) rather than surfacing later as a silent no-op at runtime. Pass `create_machine(config, strict_targets=False)` to downgrade this to a `DeprecationWarning` instead. See the [JSON Config guide](json-config/) for the full `strictTargets` reference.
 
 ## Creating Parallel States
 
@@ -534,10 +537,29 @@ has_error = any("error" in sid for sid in active)
 regions = {sid.split(".")[2] for sid in active if sid.count(".") >= 2}
 ```
 
+## `interpreter.value` with Parallel
+
+`active_state_ids` is convenient but requires string-splitting to answer "which region is in which state?". Since 0.8.0, `interpreter.value` gives you the **hierarchical value** representation directly: a dict with one key per active region, mapping to that region's own value (a leaf state name, or a nested dict for a further-nested compound/parallel state):
+
+```python
+interp = SyncInterpreter(machine).start()
+
+print(interp.value)
+# {'playing': {'video': 'loading', 'audio': 'muted'}}
+```
+
+`matches()` also accepts a **partial** value dict, so you can check one region without building the whole structure:
+
+```python
+interp.matches({"playing": {"video": "loading"}})  # True — ignores the audio region
+```
+
+This is generally a nicer way to introspect parallel regions than manually parsing `active_state_ids` strings.
+
 ## Complete Example: Dashboard with Notifications, Data Feed, and User Activity
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
+from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic, service
 
 config = {
     "id": "dashboard",
@@ -638,6 +660,12 @@ config = {
 }
 
 class DashboardLogic(MachineLogic):
+    # As of 0.8.0, `@action` / `@guard` / `@service` markers win over
+    # arity-based auto-registration in `MachineLogic` subclasses; a 3-arg
+    # method with no marker is ambiguous (service, or a 3-arg action) and
+    # emits a `UserWarning`. `fetchNotifications` and `fetchFeedData` are
+    # invoked services, so they're decorated with `@service` explicitly.
+    @service
     def fetchNotifications(self, interpreter, context, event):
         return [{"id": 1, "msg": "New message"}, {"id": 2, "msg": "Update"}]
 
@@ -654,6 +682,7 @@ class DashboardLogic(MachineLogic):
     def clearNotifications(self, interpreter, context, event, action_def):
         context["notifications"] = []
 
+    @service
     def fetchFeedData(self, interpreter, context, event):
         return [{"metric": "cpu", "value": 42}, {"metric": "mem", "value": 78}]
 
@@ -674,6 +703,14 @@ interp = SyncInterpreter(machine).start()
 # All three regions start simultaneously
 print(interp.active_state_ids)
 # Shows one state from each of: notifications, dataFeed, userActivity
+
+# pending_invocations() lists invokes in the active configuration that have
+# NO live service — it's empty here (both services are actually running),
+# but becomes populated after `from_snapshot()` restores a state whose
+# `invoke` says work is in flight while nothing is really running it. Use
+# it as a health check after a restore, then re-drive what it reports.
+print(interp.pending_invocations())
+# []
 
 # User action resets the idle timer in userActivity,
 # without affecting notifications or dataFeed

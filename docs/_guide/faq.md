@@ -93,7 +93,7 @@ machine = build_machine(id="trafficLight", states=[green, yellow, red])
 |----------|-------------|-----|
 | Web servers (FastAPI, aiohttp) | `Interpreter` (async) | Works with async event loops |
 | `invoke` with async services | `Interpreter` (async) | Services need `await` |
-| `after` (delayed transitions) | `Interpreter` (async) | Timers need an event loop |
+| `after` (delayed transitions) | Either | Async runs timers on the event loop; `SyncInterpreter` fires due timers on `send()`/`tick()` |
 | CLI tools and scripts | `SyncInterpreter` | No event loop needed |
 | Django/Flask views | `SyncInterpreter` | Synchronous web frameworks |
 | Unit testing | `SyncInterpreter` | Deterministic, no timing issues |
@@ -114,6 +114,8 @@ async def main():
 
 asyncio.run(main())
 ```
+
+> **Note:** By default `send()` enqueues the event and returns immediately once it's queued — it does not wait for the event's macrostep to finish processing. Pass `await interp.send("EVENT", wait=True)` if you need to block until that event has been fully processed before reading `interp.current_state_ids`.
 
 **Sync example:**
 
@@ -177,13 +179,24 @@ Use `#machineId.stateName` syntax for absolute state references, or relative nam
 
 ### What happens if a guard raises an exception?
 
-If a guard function raises an exception, the transition is **blocked** (treated as if the guard returned `False`). If `LoggingInspector` is attached, the exception is logged:
+By default, if a guard function raises an exception, the transition is **blocked** (treated as if the guard returned `False`). This is controlled by the `guardErrorPolicy` config key, which accepts three values:
+
+- `"false"` (default) — block the transition, same as a guard returning `False`
+- `"true"` — allow the transition, as if the guard returned `True`
+- `"raise"` — propagate the guard's exception to the caller
 
 ```python
 def risky_guard(context, event):
-    # If this raises, the transition won't fire
+    # If this raises, behavior depends on guardErrorPolicy
     return context["user"]["role"] == "admin"  # KeyError if "user" not in context
+
+config = {
+    "guardErrorPolicy": "raise",  # or "false" (default) / "true"
+    # ...
+}
 ```
+
+Regardless of the chosen policy, any plugin's `on_guard_error` hook (e.g. `LoggingInspector`) fires so you can observe and log the failure. See [JSON Configuration](./json-config.md) for the full list of config keys.
 
 > **Tip:** Write guards defensively using `.get()` or try/except to avoid unexpected blocked transitions.
 
@@ -423,7 +436,7 @@ async def main():
     # Sending "ACTIVITY" resets the timer by re-entering "active"
 ```
 
-> **Warning:** `after` transitions are not supported by `SyncInterpreter`. Use the async `Interpreter` for delayed transitions.
+> **Note:** `after` transitions work with both interpreters. With the async `Interpreter`, timers run on the event loop. With `SyncInterpreter` (since 0.8.0), timers are thread-free deadlines that fire when you call `send()` or `tick()` — call `tick()` periodically (or after each `send()`) so due timers fire even when no new event arrives. See [Delayed Transitions](./delayed-transitions.md).
 
 ---
 

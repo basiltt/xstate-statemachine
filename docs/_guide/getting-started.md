@@ -268,6 +268,13 @@ Here's what XState-StateMachine supports — every feature you'd expect from a p
 - **LoggingInspector** plugin — built-in state transition logging
 - **Zero dependencies** — pure Python standard library
 
+### Production & Safety
+- **Bounded inbox** — `max_queue_size` with `OverflowPolicy.RAISE` / `BLOCK` / `DROP_NEWEST` caps how many events an interpreter will buffer. See [Interpreters](../interpreters/).
+- **Strict mode** — `strict=True` (and `strictTargets`) rejects unknown events or transition targets instead of silently ignoring them. See [Interpreters](../interpreters/).
+- **Unhandled-event policy** — `onUnhandled: "defer" | "error"` controls what happens to events the machine never declared a handler for. See [Core Concepts](../core-concepts/).
+- **Action/guard error policy** — `actionErrorPolicy` and `guardErrorPolicy` (e.g. `"rollback"`) control how a raising action or guard affects the in-flight transition. See [Actions](../actions/#error-handling-in-actions).
+- **Injectable Clock** — `Clock`, `RealClock`, and `SimulatedClock` let `after` timers and delayed sends run deterministically in tests. See [Delayed Transitions](../delayed-transitions/).
+
 ## Development Installation
 
 To contribute or work from source:
@@ -309,7 +316,7 @@ xstate-statemachine/
 │       ├── __main__.py       # Entry point (xsm command)
 │       ├── extractor.py      # JSON feature extraction
 │       └── strategies/       # 5 code generation templates
-├── tests/                    # 2,403+ tests
+├── tests/                    # 3,100+ tests
 ├── docs/                     # GitHub Pages documentation
 └── pyproject.toml
 ```
@@ -388,7 +395,7 @@ async def main():
     machine = create_machine(config)
     interp = await Interpreter(machine).start()
 
-    await interp.send("TOGGLE")
+    await interp.send("TOGGLE", wait=True)
     print(interp.active_state_ids)
     # {'asyncToggle.on'}
 
@@ -396,6 +403,11 @@ async def main():
 
 asyncio.run(main())
 ```
+
+> **Note:** Plain `await interp.send(...)` only awaits the event being
+> *enqueued* — it does not wait for the macrostep to run. Pass
+> `wait=True` to get back a `Receipt` that resolves once the transition
+> has actually been processed (see [Receipts and priority sends](../interpreters/#receipts-and-priority-sends-39)).
 
 > **Tip:** Use `SyncInterpreter` for scripts, CLI tools, and testing. Use `Interpreter` for web servers, event loops, and real-time applications.
 

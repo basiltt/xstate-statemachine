@@ -166,6 +166,7 @@ Every hook receives the `interpreter` instance as its first argument, giving plu
 | `on_event_received` | `(interpreter, event)` | Immediately after an event is received |
 | `on_transition` | `(interpreter, from_states, to_states, transition)` | After a state transition completes |
 | `on_action_execute` | `(interpreter, action)` | Right before an action executes |
+| `on_action_error` | `(interpreter, action, error)` | A user action raised, before `action_error_policy` is applied |
 | `on_guard_evaluated` | `(interpreter, guard_name, event, result)` | After a guard condition is checked |
 | `on_service_start` | `(interpreter, invocation)` | When an invoked service begins |
 | `on_service_done` | `(interpreter, invocation, result)` | When a service completes successfully |
@@ -173,10 +174,11 @@ Every hook receives the `interpreter` instance as its first argument, giving plu
 | `on_transition_failed` | `(interpreter, transition, failed_actions)` | A transition's action list did not run to completion |
 | `on_guard_error` | `(interpreter, guard_name, event, error)` | A guard raised instead of returning |
 | `on_unhandled_event` | `(interpreter, event, active_state_ids, disposition)` | An event selected no transition |
+| `on_event_dropped` | `(interpreter, event, reason)` | An event was discarded unprocessed (bounded inbox full, or sent to a stopped machine) |
 | `on_error` | `(interpreter, error)` | The interpreter enters the `"error"` status |
 | `on_done` | `(interpreter, output)` | The machine reaches a top-level final state |
 
-`LoggingInspector` implements all five of these in addition to the hooks above.
+`LoggingInspector` implements `on_event_received`, `on_transition`, `on_action_execute`, `on_guard_evaluated`, `on_service_start`/`on_service_done`/`on_service_error`, `on_transition_failed`, `on_guard_error`, `on_unhandled_event`, `on_error`, and `on_done`. It does **not** implement `on_interpreter_start`, `on_interpreter_stop`, `on_action_error`, or `on_event_dropped` — action failures and dropped events pass through silently unless you add your own plugin for them.
 
 ### Hook Details
 
@@ -230,6 +232,15 @@ Fires right before each action is executed. The `action` is an `ActionDefinition
 ```python
 def on_action_execute(self, interpreter, action):
     print(f"Executing: {action.type}")
+```
+
+#### `on_action_error(interpreter, action, error)`
+
+Fires when a user-supplied action raises, **before** the machine's `action_error_policy` (`"continue"` / `"rollback"` / `"fail"`) is applied — so it fires under every policy, regardless of how the machine recovers. Use it to route action failures to Sentry, a metrics counter, or a dead-letter queue. See [Actions — When an Action Raises](../actions/#when-an-action-raises).
+
+```python
+def on_action_error(self, interpreter, action, error):
+    print(f"Action '{action.type}' raised: {error!r}")
 ```
 
 #### `on_guard_evaluated(interpreter, guard_name, event, result)`
@@ -295,6 +306,15 @@ Fires when an event matches no transition in any active state, regardless of `on
 ```python
 def on_unhandled_event(self, interpreter, event, active_state_ids, disposition):
     print(f"'{event.type}' unhandled in {active_state_ids}: {disposition}")
+```
+
+#### `on_event_dropped(interpreter, event, reason)`
+
+Fires when an event is discarded unprocessed rather than being queued. `reason` is `"queue_full"` (the interpreter was constructed with a bounded `max_queue_size` and `OverflowPolicy.DROP_NEWEST`, and the inbox was full) or `"not_running"` (the event was sent to an interpreter that is already stopped/done/errored). The drop is also logged at `WARNING`. This hook is only meaningful on the async `Interpreter`, since `max_queue_size`/`overflow_policy` are its constructor arguments. See [Interpreters — Unhandled Events](../interpreters/#unhandled-events).
+
+```python
+def on_event_dropped(self, interpreter, event, reason):
+    print(f"Dropped '{event.type}': {reason}")
 ```
 
 #### `on_error(interpreter, error)`
