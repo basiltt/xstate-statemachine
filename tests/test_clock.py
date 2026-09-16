@@ -344,7 +344,13 @@ class TestTimerPriority(_Quiet):
 
         asyncio.run(main())
         e = got["event"]
-        self.assertGreaterEqual(e.fired_at, e.scheduled_for)
+        # `fired_at` may read a hair BEFORE `scheduled_for` on a platform
+        # whose monotonic clock is coarse (Windows + py3.9: 15.6 ms
+        # resolution; asyncio rounds the deadline to it). That is why
+        # `lateness_ms` clamps at zero -- assert the contract, not the raw
+        # stamps.
+        self.assertGreater(e.scheduled_for, 0.0)
+        self.assertGreater(e.fired_at, 0.0)
         self.assertGreaterEqual(e.lateness_ms, 0.0)
         self.assertLess(e.lateness_ms, 500.0)
 

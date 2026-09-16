@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import heapq
+import inspect
 import itertools
 import threading
 import time
@@ -318,9 +319,16 @@ class SimulatedClock:
         await self._settle()
 
     async def _settle(self) -> None:
-        """Let every attached interpreter process what the timers queued."""
+        """Let every attached interpreter process what the timers queued.
+
+        A clock may serve BOTH engines at once (an async parent with a sync
+        child); sync settlers are plain callables that return ``None``,
+        async ones return a coroutine. Await only what is awaitable.
+        """
         for settle in list(self._settlers):
-            await settle()
+            result = settle()
+            if inspect.isawaitable(result):
+                await result
         # One extra turn for anything the settlers themselves enqueued.
         await asyncio.sleep(0)
 

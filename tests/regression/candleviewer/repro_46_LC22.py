@@ -51,7 +51,12 @@ async def main() -> int:
     await i1.stop()
 
     m2 = create_machine(V2, logic=MachineLogic(actions={"book": book}))
-    i2 = Interpreter.from_snapshot(snap, m2)
+    # 0.8.0 (#45): V2 adds an ACTION to a transition, which is structural
+    # drift -- `from_snapshot` now refuses it by default (SnapshotDriftError)
+    # rather than half-restoring. The documented pattern for a known-
+    # compatible evolution is to opt out of the hash check; the #46 merge
+    # (defaults under persisted values) is what this repro then checks.
+    i2 = Interpreter.from_snapshot(snap, m2, verify_machine_hash=False)
     missing = sorted({"cum_qty", "venue"} - set(i2.context))
     print(f"OBSERVED restored context     = {i2.context}")
     print(
