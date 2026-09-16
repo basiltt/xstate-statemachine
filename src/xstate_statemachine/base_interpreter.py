@@ -2172,6 +2172,14 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         # 4. All other transitions are "external" and will cause a state change.
         snapshot_before = self._active_state_nodes.copy()
+        # 👶 #60 review: remember which actors already existed so a rollback
+        #    can tell which ones a `spawn_*` action in THIS transition's
+        #    action list created. Without this snapshot, a spawn that
+        #    succeeds and is followed by a later action that raises left the
+        #    child running and registered even after the whole transition was
+        #    undone -- orphaned from any active state and reachable only
+        #    until the parent itself eventually stopped.
+        actor_ids_before = set(self._actors.keys())
         # 🧷 Context is snapshotted only when a rollback could need it: a
         #    deepcopy per transition on the "continue" hot path would be a
         #    measurable tax for a feature the machine has opted out of.
@@ -2299,6 +2307,26 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             for node in snapshot_before:
                 if node in states_to_exit:
                     self._schedule_state_tasks(node)
+
+            # 👶 #60 review: stop and unregister any actor a `spawn_*`
+            #    action in THIS transition's action list created before a
+            #    LATER action raised. Left alone, the child interpreter's
+            #    event loop task kept running and it stayed reachable via
+            #    `self._actors`/the system registry even though the
+            #    transition that spawned it was fully undone -- an orphaned,
+            #    leaked actor unreachable from any active state.
+            spawned_ids = set(self._actors.keys()) - actor_ids_before
+            if spawned_ids:
+                registry = self._system_registry()
+                for actor_id in spawned_ids:
+                    actor = self._actors.pop(actor_id, None)
+                    self._actor_sources.pop(actor_id, None)
+                    for system_id, candidate in list(registry.items()):
+                        if candidate is actor:
+                            del registry[system_id]
+                    if actor is not None:
+                        await self._stop_actor_leaf(actor)
+
             if self._finish_rollback(
                 rollback_cause, transition, context_before
             ):

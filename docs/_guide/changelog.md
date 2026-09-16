@@ -163,6 +163,14 @@ preserves 0.7.x semantics, with two deliberate exceptions called out under
   regardless of the strict setting. Default (strict unset, no schemas) is
   unchanged.
 
+### Deprecated
+
+- **`actionErrorPolicy: "continue"` (the default)** (#27). Emits a one-shot
+  `DeprecationWarning`; it flips to `"rollback"` in 1.0.
+- **`create_machine(..., strict_targets=False)`** (#29, #30). Downgrades
+  unresolvable transition targets to a `DeprecationWarning` instead of
+  raising `InvalidConfigError`; that escape hatch is removed in 1.0.
+
 ### Fixed
 
 - `.child` targets resolve into the **source's** descendants, matching
@@ -244,6 +252,29 @@ preserves 0.7.x semantics, with two deliberate exceptions called out under
   `asyncio.Queue()` binds to the current loop at construction and raised
   when built outside one, so an `Interpreter` could not previously be
   instantiated in synchronous code on that version.
+- **[wave 3] `OverflowPolicy.BLOCK` self-send deadlock** (#38). A
+  `send()` issued from inside an action while the bounded inbox was full
+  suspended the run loop -- the only consumer of that inbox -- forever,
+  with `status` still `"running"`. A send issued during a macrostep is
+  now routed to the internal event queue (#36 semantics), so it is
+  processed before the next external event instead of blocking.
+- **[wave 3] Rollback now stops actors spawned by the failed
+  transition** (#27, #60). Under `actionErrorPolicy: "rollback"` a
+  `spawn_*` action that succeeded before a later action raised left its
+  child running and registered although the transition was undone.
+- **[wave 3] Children inherit the parent's `clock` and `strict`** (#49,
+  #51), spawned or invoked, on both engines. A child spawned by the sync
+  engine was built with a fresh `RealClock`, so a `SimulatedClock`-driven
+  parent could not advance its children's `after` timers; and on both
+  engines a child fell back to `machine.strict` even when the parent had
+  passed `strict=True` to its constructor.
+- **[wave 2] Pure API: history no longer leaks between calls** (#54).
+  The cached probe reset everything except `_history`, so a history
+  target in one `get_next_snapshot()` call resolved to wherever an
+  unrelated earlier call had exited. History now travels WITH the
+  `PureSnapshot`: chained calls keep resolving `p.hist` to where that
+  chain left `p`; an unrelated or hand-built snapshot resolves it to the
+  default child.
 - **[wave 3] One core algorithm, two execution strategies** (#60). The
   step, transition-execution, state-entry/exit, lifecycle-action, and
   built-in-action logic is now implemented once on `BaseInterpreter`;

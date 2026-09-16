@@ -25,15 +25,17 @@ built-in plugin for debugging state machine execution.
 from __future__ import (
     annotations,
 )  # Enables postponed evaluation of type annotations
+
 from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
-    List,
+    List,  # Core typing utilities
     Set,
     Tuple,
     TypeVar,
-)  # Core typing utilities
+    Union,
+)
 
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
@@ -48,13 +50,24 @@ from .logger import logger  # Centralized logger instance
 # practice for creating type-safe, decoupled modules.
 if TYPE_CHECKING:
     from .base_interpreter import BaseInterpreter
-    from .events import Event
+    from .events import AfterEvent, DoneEvent, Event
     from .models import (
         ActionDefinition,
         InvokeDefinition,
         StateNode,
         TransitionDefinition,
     )
+
+# -----------------------------------------------------------------------------
+# 🔹 Runtime Event Union (issue #60)
+# -----------------------------------------------------------------------------
+# 🐛 The interpreter's dispatch pipeline funnels three distinct event shapes
+# through the *same* call sites that invoke these hooks: user-sent `Event`s,
+# internally-synthesized `AfterEvent`s (delayed `after` transitions), and
+# `DoneEvent`s (`invoke`/child-machine completion). Typing hook parameters as
+# a plain `Event` therefore doesn't match what actually gets passed at
+# runtime, and silently hid real mypy `arg-type` errors at every call site.
+AnyEvent = Union["Event", "AfterEvent", "DoneEvent"]
 
 # -----------------------------------------------------------------------------
 # 🔹 Type Variable for Generic Plugin
@@ -116,7 +129,7 @@ class PluginBase(Generic[TInterpreter]):
         pass  # pragma: no cover
 
     def on_event_received(
-        self, interpreter: TInterpreter, event: "Event"
+        self, interpreter: TInterpreter, event: "AnyEvent"
     ) -> None:
         """Called immediately after an event is passed to the interpreter.
 
@@ -233,7 +246,7 @@ class PluginBase(Generic[TInterpreter]):
         self,
         interpreter: TInterpreter,
         guard_name: str,
-        event: "Event",
+        event: "AnyEvent",
         error: BaseException,
     ) -> None:
         """Called when a guard implementation raises instead of returning.
@@ -280,7 +293,7 @@ class PluginBase(Generic[TInterpreter]):
         pass  # pragma: no cover
 
     def on_event_dropped(
-        self, interpreter: TInterpreter, event: "Event", reason: str
+        self, interpreter: TInterpreter, event: "AnyEvent", reason: str
     ) -> None:
         """Called when an accepted-looking event is discarded unprocessed.
 
@@ -325,7 +338,7 @@ class PluginBase(Generic[TInterpreter]):
         self,
         interpreter: TInterpreter,
         guard_name: str,
-        event: "Event",
+        event: "AnyEvent",
         result: bool,
     ) -> None:
         """Called after a guard condition has been evaluated.
@@ -397,7 +410,7 @@ class LoggingInspector(PluginBase[Any]):
     """
 
     def on_event_received(
-        self, interpreter: "BaseInterpreter[Any, Any]", event: "Event"
+        self, interpreter: "BaseInterpreter[Any, Any]", event: "AnyEvent"
     ) -> None:
         """Logs received events in a type-safe manner.
 
@@ -480,7 +493,7 @@ class LoggingInspector(PluginBase[Any]):
         self,
         interpreter: "BaseInterpreter[Any, Any]",
         guard_name: str,
-        event: "Event",
+        event: "AnyEvent",
         result: bool,
     ) -> None:
         """Logs the result of a guard evaluation.
@@ -583,7 +596,7 @@ class LoggingInspector(PluginBase[Any]):
         self,
         interpreter: "BaseInterpreter[Any, Any]",
         guard_name: str,
-        event: "Event",
+        event: "AnyEvent",
         error: BaseException,
     ) -> None:
         """Logs a guard that raised instead of returning."""

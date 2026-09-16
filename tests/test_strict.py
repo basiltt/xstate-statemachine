@@ -337,5 +337,58 @@ class TestStrictSync(_Quiet):
         i.stop()
 
 
+class TestStrictPropagatesToChildren(_Quiet):
+    """#51 (0.8.0 audit): a parent that opted into `strict=True` at the
+    constructor must hand that down to every child it creates -- spawned
+    AND invoked -- on both engines. The sync engine was fixed first; this
+    pins the async engine's two child constructors to the same contract.
+    """
+
+    CHILD: Dict[str, Any] = {
+        "id": "child",
+        "initial": "wait",
+        "states": {"wait": {"on": {"KNOWN": "wait"}}},
+    }
+
+    def _parent(self, how: str) -> Any:
+        state = (
+            {"entry": ["spawn_kid"]}
+            if how == "spawn"
+            else {"invoke": {"src": "kid", "id": "k"}}
+        )
+        return create_machine(
+            {"id": "p", "initial": "a", "states": {"a": state}},
+            logic=MachineLogic(services={"kid": create_machine(self.CHILD)}),
+        )
+
+    def _async_child(self, how: str) -> Any:
+        async def main():
+            i = await Interpreter(self._parent(how), strict=True).start()
+            for _ in range(200):
+                if i._actors:
+                    break
+                await asyncio.sleep(0.002)
+            (child,) = i._actors.values()
+            out = (child.strict, child.machine.strict)
+            await i.stop()
+            return out
+
+        return _run(main())
+
+    def test_async_spawned_child_inherits_ctor_strict(self) -> None:
+        self.assertEqual(self._async_child("spawn"), (True, False))
+
+    def test_async_invoked_child_inherits_ctor_strict(self) -> None:
+        self.assertEqual(self._async_child("invoke"), (True, False))
+
+    def test_sync_invoked_child_inherits_ctor_strict(self) -> None:
+        i = SyncInterpreter(self._parent("invoke"), strict=True).start()
+        (child,) = i._actors.values()
+        self.assertTrue(child.strict)
+        with self.assertRaises(UnknownEventError):
+            child.send("UNDECLARED")
+        i.stop()
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

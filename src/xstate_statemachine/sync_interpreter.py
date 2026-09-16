@@ -55,17 +55,6 @@ from .exceptions import (
     NotSupportedError,
     StateNotFoundError,
 )
-from .actions import (
-    ESCALATE,
-    FORWARD_TO,
-    RAISE,
-    SEND_PARENT,
-    SEND_TO,
-    SPAWN_CHILD,
-    STOP_CHILD,
-    is_builtin,
-    resolve_builtin,
-)
 from .models import (
     ActionDefinition,
     InvokeDefinition,
@@ -78,7 +67,10 @@ from .models import (
     SPAWN_BLOCKING_PREFIX,
     spawn_service_key,
 )
-from .resolver import resolve_target_state
+
+# 🧹 #60: built-in action dispatch (.actions) and target resolution
+# (.resolver) now live entirely in base_interpreter.py after the "one
+# core algorithm" consolidation -- nothing here references them anymore.
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
@@ -823,7 +815,18 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # 📥 Input goes in at CONSTRUCTION so a child `context` factory
         #    receives `{input}` (#42); `_build_initial_context` also seeds
         #    declared keys and exposes `context["input"]`.
-        child = SyncInterpreter(actor_machine, input=spawn_params.get("input"))
+        # 🕰️ #60: propagate `clock` and `strict` to the child so it shares
+        #    the parent's timeline (SimulatedClock-driven `after` timers
+        #    fire deterministically instead of a fresh RealClock ticking
+        #    real wall-clock seconds) and its strict-mode setting (an
+        #    undeclared event sent to the child must raise, not silently
+        #    fall back to `machine.strict`).
+        child = SyncInterpreter(
+            actor_machine,
+            input=spawn_params.get("input"),
+            clock=self.clock,
+            strict=self.strict,
+        )
         child.parent = self
         child.id = actor_id
         # 🌐 Register under a systemId so siblings can address it.
@@ -832,9 +835,15 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         self._actor_sources[actor_id] = key
 
         # 🧹 Review F3: a child that finishes on its own leaves the map.
-        child._terminal_listeners.append(
-            lambda _s, aid=actor_id: self._actors.pop(aid, None)
-        )
+        # 🩹 mypy: an explicit statement body (rather than a lambda whose
+        #    expression value is `dict.pop`'s return) keeps this closure's
+        #    inferred type as `Callable[[str], None]`, matching
+        #    `_terminal_listeners`, instead of leaking the popped actor's
+        #    type into the lambda's return annotation.
+        def _on_child_terminal(_s: str, aid: str = actor_id) -> None:
+            self._actors.pop(aid, None)
+
+        child._terminal_listeners.append(_on_child_terminal)
 
         # --- Blocking Execution Path ---
         if blocking:
@@ -949,7 +958,10 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         self, state: StateNode
     ) -> "_Done[None]":
         """Leaf: cancel a state's timers; finished awaitable (#60)."""
-        return _Done(self._cancel_state_tasks_sync(state))
+        # 🧹 Fire-and-forget: helper returns None, no value to thread
+        # through `_Done` (#60 mypy func-returns-value cleanup).
+        self._cancel_state_tasks_sync(state)
+        return _Done(None)
 
     def _cancel_state_tasks_sync(self, state: StateNode) -> None:
         """Cancel every clock timer (`after`, delayed send) a state owns."""

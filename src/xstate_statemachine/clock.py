@@ -41,7 +41,7 @@ import inspect
 import itertools
 import threading
 import time
-from typing import Any, Awaitable, Callable, List, Optional, Tuple, Union
+from typing import Any, Awaitable, Callable, List, Optional, Union
 
 try:  # pragma: no cover - Python 3.8+ has Protocol; kept defensive
     from typing import Protocol, runtime_checkable

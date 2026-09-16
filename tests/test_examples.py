@@ -5,11 +5,11 @@
 # 🏛️ `examples/` is included in the sdist, so these files reach every user who
 # installs the package. They are also the first code most people read.
 #
-# Before v0.7.0 all 71 example modules imported `src.xstate_statemachine`, the
-# SOURCE-CHECKOUT path. That resolves when running from a clone of the repo and
-# fails with ModuleNotFoundError for anyone who pip-installed — so every shipped
-# example was broken for its actual audience, and nothing caught it because the
-# test suite never executed them.
+# Before v0.7.0 all 71 example modules imported `src.xstate_statemachine`,
+# the SOURCE-CHECKOUT path. That resolves when running from a clone of the
+# repo and fails with ModuleNotFoundError for anyone who pip-installed — so
+# every shipped example was broken for its actual audience, and nothing
+# caught it because the test suite never executed them.
 # -----------------------------------------------------------------------------
 """Every example runner must execute successfully."""
 

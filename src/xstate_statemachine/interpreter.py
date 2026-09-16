@@ -26,11 +26,11 @@ recommended choice for most modern applications.
 import asyncio
 import concurrent.futures
 import copy
-from collections import deque
-import threading
 import inspect
 import logging
+import threading
 import uuid
+from collections import deque
 from typing import (
     Any,
     Awaitable,
@@ -40,24 +40,10 @@ from typing import (
     Optional,
     Tuple,
     Union,
+    cast,
     overload,
 )
 
-# -----------------------------------------------------------------------------
-# 📥 Project-Specific Imports
-# -----------------------------------------------------------------------------
-from .base_interpreter import BaseInterpreter
-from .clock import Clock, SimulatedClock
-from .events import Receipt
-from .exceptions import InterpreterStoppedError, QueueOverflowError
-from .models import OverflowPolicy
-from .events import AfterEvent, DoneEvent, Event
-from .exceptions import (
-    WrongThreadError,
-    ActorSpawningError,
-    ImplementationMissingError,
-    InvalidConfigError,
-)
 from .actions import (
     ESCALATE,
     FORWARD_TO,
@@ -69,15 +55,31 @@ from .actions import (
     is_builtin,
     resolve_builtin,
 )
+
+# -----------------------------------------------------------------------------
+# 📥 Project-Specific Imports
+# -----------------------------------------------------------------------------
+from .base_interpreter import BaseInterpreter
+from .clock import Clock, SimulatedClock
+from .events import AfterEvent, DoneEvent, Event, Receipt
+from .exceptions import (
+    ActorSpawningError,
+    ImplementationMissingError,
+    InterpreterStoppedError,
+    InvalidConfigError,
+    QueueOverflowError,
+    WrongThreadError,
+)
 from .models import (
+    DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS,
+    SPAWN_BLOCKING_PREFIX,
     ActionDefinition,
     InvokeDefinition,
     MachineNode,
+    OverflowPolicy,
     StateNode,
     TContext,
     TEvent,
-    DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS,
-    SPAWN_BLOCKING_PREFIX,
     spawn_service_key,
 )
 from .task_manager import TaskManager
@@ -481,7 +483,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         self, event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent]
     ) -> Awaitable[None]: ...
 
-    def send(  # type: ignore[override]
+    def send(  # type: ignore[override, misc]
         self,
         event_or_type: Union[
             str, Dict[str, Any], Event, DoneEvent, AfterEvent
@@ -551,6 +553,19 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         elif self._overflow_policy is OverflowPolicy.BLOCK and (
             self._max_queue_size is not None
         ):
+            # 🔒 #38 (0.8.0 audit): a BLOCK send issued FROM AN ACTION runs
+            #    on the run-loop task itself. The run loop is the only
+            #    thing that ever drains the inbox, so suspending it in
+            #    `_enqueue_blocking` until the inbox has room is a
+            #    self-deadlock: `status` stays "running" while nothing
+            #    advances. A self-send during a macrostep is, semantically,
+            #    an internal event (#36) -- route it there. The internal
+            #    queue is unbounded by design and drained before the next
+            #    external event, so ordering matches SCXML `raise`.
+            if self._processing and not self._refuse_if_not_running(event_obj):
+                self._raise_depth += 1
+                self._internal_queue.append(event_obj)
+                return receipt if receipt is not None else _completed()
             # ⏸️ BLOCK is the one policy that must genuinely await.
             return self._enqueue_blocking(event_obj, receipt)
         else:
@@ -579,7 +594,12 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         always a question that needs its answer; pass ``wait=False`` for a
         fire-and-forget event that merely jumps the queue.
         """
-        return self.send(event_or_type, wait=wait, priority=True, **payload)
+        # 🧭 `send` is overloaded on the event's TYPE; mypy resolves this
+        #    forwarding call against the first (str) overload. Runtime
+        #    dispatch is by value, so the cast only silences the checker.
+        return self.send(
+            cast(str, event_or_type), wait=wait, priority=True, **payload
+        )
 
     # -------------------------------------------------------------------------
     # 🧾 Receipts (#39) and inbox bound (#38)
@@ -1348,8 +1368,15 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         # 📥 Input goes in at CONSTRUCTION so a child `context` factory
         #    receives `{input}` (#42); `_build_initial_context` also seeds
         #    declared keys and exposes `context["input"]`.
+        # 🕰️ A child shares the parent's `clock` (#49) -- one timeline for
+        #    a whole actor tree -- and its constructor-level `strict` (#51):
+        #    a parent that opted into strict mode must not get a child that
+        #    silently swallows typos because it fell back to `machine.strict`.
         child_interpreter = Interpreter(
-            actor_machine, input=spawn_params.get("input"), clock=self.clock
+            actor_machine,
+            input=spawn_params.get("input"),
+            clock=self.clock,
+            strict=self.strict,
         )
         child_interpreter.parent = self
         child_interpreter.id = actor_id
@@ -1697,8 +1724,12 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             #    `context` factory receives `{input}` exactly as in XState.
             #    A raising resolver is a child failure -> `onError`.
             child_input = invocation.resolve_input(self.context, None)
+            # 🕰️ Same inheritance as `_spawn_actor`: clock (#49) + strict (#51).
             child_interpreter = Interpreter(
-                actor_machine, input=child_input, clock=self.clock
+                actor_machine,
+                input=child_input,
+                clock=self.clock,
+                strict=self.strict,
             )
             child_interpreter.parent = self
             child_interpreter.id = actor_id

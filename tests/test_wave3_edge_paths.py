@@ -253,6 +253,60 @@ class TestAsyncEdges(_Quiet):
 
         self.assertEqual(_run(main()), (True, True))
 
+    def test_block_policy_self_send_from_action_does_not_deadlock(
+        self,
+    ) -> None:
+        """#60: `send()` from an action while BLOCK's inbox is full.
+
+        `_enqueue_blocking` spins until the inbox drains, but the run
+        loop -- the only thing that ever drains it -- is the very task
+        stuck inside that spin (it got there by running the action that
+        called `send()`). Before the fix this hung forever; the event
+        must instead go through the internal queue so the macrostep
+        completes.
+        """
+        from src.xstate_statemachine import OverflowPolicy
+
+        cfg = {
+            "id": "m",
+            "initial": "idle",
+            "context": {},
+            "states": {
+                "idle": {
+                    "on": {
+                        "GO": {"target": "idle", "actions": ["fill"]},
+                        "GO2": {"target": "idle", "actions": ["mark"]},
+                    }
+                }
+            },
+        }
+
+        async def main():
+            reached: List[str] = []
+
+            async def fill(i, c, e, a):
+                await i.send("GO2")
+
+            def mark(i, c, e, a):
+                reached.append("GO2")
+
+            logic = MachineLogic(actions={"fill": fill, "mark": mark})
+            i = Interpreter(
+                create_machine(cfg, logic=logic),
+                max_queue_size=1,
+                overflow_policy=OverflowPolicy.BLOCK,
+            )
+            await i.start()
+            i._event_queue.put_nowait(i._prepare_event("PAD"))  # fill inbox
+            await asyncio.wait_for(i.send("GO", priority=True, wait=True), 2.0)
+            # The GO2 self-send lands on the internal queue and is drained
+            # on the run loop's next turn; give it one to run.
+            await asyncio.sleep(0.05)
+            await i.stop()
+            return reached
+
+        self.assertEqual(_run(main()), ["GO2"])
+
     def test_delayed_send_to_another_actor_uses_the_clock(self) -> None:
         child = {
             "id": "kid",
@@ -424,6 +478,52 @@ class TestSyncEdges(_Quiet):
         i.send("CANCEL")
         clock.increment(50)
         self.assertEqual(kid.current_state_ids, {"kid.i"})  # cancelled
+        i.stop()
+
+    def test_delayed_send_to_child_fires_and_delivers(self) -> None:
+        """🔁 #60: a delayed `sendTo` targeting another actor (not self)
+        must actually deliver once the clock reaches the deadline -- this
+        covers the success branch of `_fire` in `_deliver_sync`, not just
+        the cancellation path exercised above."""
+        child = {
+            "id": "kid",
+            "initial": "i",
+            "states": {"i": {"on": {"PING": "pinged"}}, "pinged": {}},
+        }
+        parent = {
+            "id": "p",
+            "initial": "a",
+            "states": {
+                "a": {
+                    "entry": [
+                        {
+                            "type": "spawnChild",
+                            "params": {"src": "kid", "id": "k"},
+                        },
+                        {
+                            "type": "sendTo",
+                            "params": {
+                                "to": "k",
+                                "event": "PING",
+                                "delay": 50,
+                                "id": "s1",
+                            },
+                        },
+                    ],
+                }
+            },
+        }
+        clock = SimulatedClock()
+        i = SyncInterpreter(
+            create_machine(
+                parent,
+                logic=MachineLogic(services={"kid": create_machine(child)}),
+            ),
+            clock=clock,
+        ).start()
+        kid = i._actors["p:k"]
+        clock.increment(50)
+        self.assertEqual(kid.current_state_ids, {"kid.pinged"})  # delivered
         i.stop()
 
     def test_wait_for_child_terminal_returns_when_child_already_done(

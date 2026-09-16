@@ -707,7 +707,10 @@ class StateNode(Generic[TContext, TEvent]):
     initial: Optional[str]
     on: Dict[str, List[TransitionDefinition]]
     on_done: Optional[TransitionDefinition]
-    after: Dict[int, List[TransitionDefinition]]
+    # 🐛 [Issue #60] Keys may be int (ms delays) or str (named delays,
+    # e.g. "TIMEOUT"), matching what `_parse_after` actually returns and
+    # assigns to `self.after` below -- keeps this in sync with mypy.
+    after: Dict[Union[int, str], List[TransitionDefinition]]
     entry: List[ActionDefinition]
     exit: List[ActionDefinition]
     invoke: List[InvokeDefinition]
@@ -1437,7 +1440,10 @@ class MachineNode(StateNode[TContext, TEvent]):
         if self._known_events is None:
             from .validation import walk
 
-            found = set()
+            # 🏷️ #51: explicit element type avoids a mypy var-annotated
+            # error since the mixed .update()/.add() calls below don't
+            # let mypy infer the element type on their own.
+            found: Set[str] = set()
             for node in walk(self):
                 found.update(node.on.keys())
                 for group in node.after.values():

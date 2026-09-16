@@ -131,5 +131,24 @@ class TestCorrectedStatements(unittest.TestCase):
         self.assertIn("on an unloaded loop", body)
 
 
+class TestGuideChangelogMirrorsRoot(unittest.TestCase):
+    """The site's changelog page diverged from CHANGELOG.md for two waves
+    before anyone noticed. Pin the [Unreleased] body byte-for-byte."""
+
+    @staticmethod
+    def _unreleased(text: str) -> str:
+        start = text.index("## [Unreleased]")
+        end = text.index("\n## [0.7.0]")
+        body = text[start:end].split("\n", 1)[1]
+        # The guide page appends a "For full details" trailer + rule.
+        body = body.rsplit("For full details", 1)[0]
+        return body.strip().rstrip("-").strip()
+
+    def test_unreleased_sections_are_identical(self) -> None:
+        root = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        guide = (GUIDE / "changelog.md").read_text(encoding="utf-8")
+        self.assertEqual(self._unreleased(root), self._unreleased(guide))
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

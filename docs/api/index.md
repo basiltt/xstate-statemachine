@@ -17,7 +17,7 @@ from xstate_statemachine import create_machine, Interpreter, State  # etc.
 
 ## Factory Functions
 
-### `create_machine(config, *, logic=None, logic_modules=None, logic_providers=None, strict_targets=True)`
+### `create_machine(config, *, logic=None, logic_modules=None, logic_providers=None, strict_targets=True, event_schemas=None)`
 
 Creates, validates, and assembles a state machine instance from an
 XState-compatible JSON configuration dictionary. This is the **primary
@@ -39,6 +39,7 @@ target must resolve, and no `always` self-target may be a permanent dead end.
 | `logic_modules` | `List[Union[str, ModuleType]]` | No | `None` | Python modules (or their dotted import-path strings, e.g. `"my_app.logic.actions"`) to scan for logic functions. |
 | `logic_providers` | `List[object]` | No | `None` | Class instances whose public methods are scanned to satisfy the machine's logic requirements. Provider methods override module-level functions on name collision. |
 | `strict_targets` | `bool` | No | `True` | When `True`, an unresolvable transition target raises `InvalidConfigError` at build time. When `False`, it downgrades to a `DeprecationWarning` (0.7.x behavior; removed in 1.0). |
+| `event_schemas` | `Optional[Dict[str, Any]]` | No | `None` | Opt-in payload validation. Maps an event type to a validator -- a callable, a dataclass, or anything with a `model_validate`/`parse_obj`-style constructor -- that the event's `payload`/data is passed through before a transition runs. A validation failure raises `InvalidEventPayloadError` (#51). |
 
 **Returns:** `MachineNode` -- a fully constructed, validated machine ready for
 an interpreter.
@@ -49,6 +50,7 @@ an interpreter.
 |-----------|-----------|
 | `InvalidConfigError` | `config` is missing `"id"`, `"states"`, or `"id"` is not a non-empty string; a transition target does not resolve (when `strict_targets=True`); an `always` self-target can never make progress; or a built-in action is missing a required `params` key. |
 | `ImplementationMissingError` | Auto-discovery is active and a required action, guard, or service cannot be found. |
+| `InvalidEventPayloadError` | Raised later, at send-time (not by `create_machine()` itself), when `event_schemas` is set and an incoming event's payload fails its declared schema. Listed here because it is a direct consequence of the `event_schemas` parameter. |
 
 ### Machine-level policy keys
 
@@ -1676,6 +1678,8 @@ specific exception types.
 | `SnapshotDriftError` | A snapshot doesn't belong to the machine restoring it. | The snapshot's `machine_id` differs from the target machine's, or (when `verify_machine_hash=True`) `machine_hash` no longer matches `machine.structure_hash`. |
 | `QueueOverflowError` **[wave 3]** | `send()` refused an event because the bounded inbox is full. | `max_queue_size` is set, `overflow_policy=OverflowPolicy.RAISE` (the default once a bound is set), and the inbox is at capacity (#38). |
 | `UnknownEventError` **[wave 3]** | `send()` was called with an event type not declared anywhere in the machine. | `strict=True` on the interpreter and the event type matches no `on` key, `after` delay, or `invoke` completion descriptor (#51). |
+| `InvalidEventPayloadError` **[wave 3]** | An event's payload failed its declared schema. | `event_schemas` is set on `create_machine()` and an incoming event's payload does not satisfy the validator registered for its type (#51). |
+| `InterpreterStoppedError` **[wave 3]** | A `send(wait=True)` receipt cannot resolve because the interpreter stopped, or dropped the event, before it was processed. | `interpreter.send(event, wait=True)` is awaited/blocked on and the interpreter is stopped, or the event is dropped by an overflow policy, before that event is processed (#39). |
 
 ### `QueueOverflowError` attributes **[wave 3]**
 
@@ -1692,6 +1696,13 @@ specific exception types.
 | `event_type` | `str` | The offending type. |
 | `machine_id` | `str` | The machine that refused it. |
 | `known` | `list[str]` | The declared descriptor set, sorted. |
+
+### `InvalidEventPayloadError` attributes **[wave 3]**
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `event_type` | `str` | The event whose payload was rejected. |
+| `cause` | `BaseException` | The exception the validator raised. |
 
 ### `StateNotFoundError` attributes
 
@@ -1717,6 +1728,8 @@ Exception
       +-- SnapshotDriftError
       +-- QueueOverflowError
       +-- UnknownEventError
+      +-- InvalidEventPayloadError
+      +-- InterpreterStoppedError
 ```
 
 ### Error handling example
