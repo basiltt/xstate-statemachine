@@ -25,6 +25,8 @@ def my_guard(context: dict, event: Event) -> bool:
 
 > **Note:** Guard functions receive `(context, event)` — **NOT** `(interpreter, context, event, action_def)`. This is intentionally different from the action signature. Guards should be pure decision functions with no need for the interpreter.
 
+> **Params argument:** Guards may optionally accept a third `params` argument to receive parameters from a [parameterised guard](#parameterised-guards) config: `def my_guard(context, event, params): ...`. The interpreter arity-checks the callable, so existing 2-argument guards keep working unchanged.
+
 ## JSON Guards
 
 ### The `guard` Key (and Legacy `cond` Alias)
@@ -106,9 +108,193 @@ The last transition in the array has no `guard` key — it acts as a **fallback*
 
 > **Tip:** Always include a fallback transition as the last item. Without one, events may be silently discarded if no guard matches.
 
+## Composite Guards (`and` / `or` / `not`)
+
+Guards can be composed from other guards using the built-in `and`, `or`, and `not` operators — no user implementation is needed for the composition itself, only for the leaf guards it references:
+
+```json
+{
+  "target": "allowed",
+  "guard": {
+    "type": "and",
+    "params": { "guards": ["isAdult", "hasFunds"] }
+  }
+}
+```
+
+- **`and`** — passes only if *every* nested guard passes (short-circuits like Python's `all()`).
+- **`or`** — passes if *any* nested guard passes (short-circuits like Python's `any()`).
+- **`not`** — inverts a single nested guard; it requires **exactly one** child guard.
+
+```python
+from src.xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
+
+config = {
+    "id": "checkout",
+    "initial": "cart",
+    "context": {"age": 20, "hasFunds": True},
+    "states": {
+        "cart": {
+            "on": {
+                "SUBMIT": [
+                    {
+                        "target": "allowed",
+                        "guard": {
+                            "type": "and",
+                            "params": {"guards": ["isAdult", "hasFunds"]},
+                        },
+                    },
+                    {"target": "denied"},
+                ]
+            }
+        },
+        "allowed": {},
+        "denied": {},
+    },
+}
+
+
+class CheckoutLogic(MachineLogic):
+    def isAdult(self, context, event):
+        return context.get("age", 0) >= 18
+
+    def hasFunds(self, context, event):
+        return context.get("hasFunds", False)
+
+
+machine = create_machine(config, logic=CheckoutLogic())
+interp = SyncInterpreter(machine).start()
+interp.send("SUBMIT")
+print(interp.current_state_ids)  # {"checkout.allowed"}
+interp.stop()
+```
+
+Nested guards can also be declared inline under `children`, or (for `not`) under `params.guard` — the parser accepts whichever shape you emit.
+
+> **Note:** A *bare string* guard named `"and"`, `"or"`, or `"not"` is always treated as a user predicate, never as a composition — only the object form (`{"type": "and", ...}`) triggers composite behavior. This means you can still register a guard literally called `and` without conflict.
+
+## Built-in `stateIn` Guard
+
+`stateIn` is a built-in guard, satisfied when a given state is part of the machine's active configuration — either as an active leaf or as an ancestor of one. No implementation is required:
+
+```json
+{
+  "target": "step1",
+  "guard": {
+    "type": "stateIn",
+    "params": { "state": "#wizard.step2" }
+  }
+}
+```
+
+```python
+from src.xstate_statemachine import create_machine, SyncInterpreter
+
+config = {
+    "id": "wizard",
+    "initial": "step1",
+    "context": {},
+    "states": {
+        "step1": {"on": {"NEXT": "step2"}},
+        "step2": {
+            "on": {
+                "BACK_TO_ONE": [
+                    {
+                        "target": "step1",
+                        "guard": {
+                            "type": "stateIn",
+                            "params": {"state": "#wizard.step2"},
+                        },
+                    },
+                    {"target": "step2"},
+                ]
+            }
+        },
+    },
+}
+
+machine = create_machine(config)
+interp = SyncInterpreter(machine).start()
+interp.send("NEXT")
+print(interp.current_state_ids)  # {"wizard.step2"}
+interp.send("BACK_TO_ONE")
+print(interp.current_state_ids)  # {"wizard.step1"}
+interp.stop()
+```
+
+The state id accepts both the `#machine.a.b` and bare `machine.a.b` spellings.
+
+> **Note:** If you register your own guard named `stateIn` in `MachineLogic.guards`, your implementation takes precedence over the built-in — the same resolution order used for built-in actions.
+
+## Parameterised Guards
+
+A guard can be given a `params` object, which the interpreter resolves and passes to the guard function as an optional **third argument**:
+
+```json
+{
+  "target": "processing",
+  "guard": {
+    "type": "hasSufficientFunds",
+    "params": { "minAmount": 100 }
+  }
+}
+```
+
+```python
+from src.xstate_statemachine import create_machine, SyncInterpreter, MachineLogic, guard
+
+config = {
+    "id": "withdrawalMachine",
+    "initial": "idle",
+    "context": {"balance": 500.00},
+    "states": {
+        "idle": {
+            "on": {
+                "WITHDRAW": [
+                    {
+                        "target": "processing",
+                        "guard": {
+                            "type": "hasSufficientFunds",
+                            "params": {"minAmount": 100},
+                        },
+                    },
+                    {"target": "denied"},
+                ]
+            }
+        },
+        "processing": {},
+        "denied": {},
+    },
+}
+
+
+class BankLogic(MachineLogic):
+    @guard
+    def hasSufficientFunds(self, context, event, params):
+        min_amount = (params or {}).get("minAmount", 0)
+        amount = event.payload.get("amount", 0)
+        return amount >= min_amount and context["balance"] >= amount
+
+
+machine = create_machine(config, logic=BankLogic())
+interp = SyncInterpreter(machine).start()
+interp.send("WITHDRAW", amount=200.00)
+print(interp.current_state_ids)  # {"withdrawalMachine.processing"}
+interp.stop()
+
+interp2 = SyncInterpreter(machine).start()
+interp2.send("WITHDRAW", amount=50.00)
+print(interp2.current_state_ids)  # {"withdrawalMachine.denied"} — below minAmount
+interp2.stop()
+```
+
+The interpreter arity-checks the guard callable, so a plain two-argument `(context, event)` guard keeps working unchanged even if it's never given `params`. `params` may also be a function of `{context, event}`, re-evaluated on every use, instead of a static dict.
+
 ## Guard Implementation with MachineLogic
 
 When using the JSON configuration approach, implement guards as methods on a `MachineLogic` subclass:
+
+> **Note:** A plain, undecorated method is auto-registered by its **arity** — 2 arguments (`self, context, event`) is registered as a guard. Because a 2-argument callable is also a valid service signature, this arity is ambiguous and `create_machine(...)` emits a `UserWarning` recommending an explicit decorator. The method still runs correctly; use `@guard` (see [Pythonic Guards](#pythonic-guards) below) on the method to silence the warning.
 
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
@@ -363,7 +549,7 @@ If a guard raises an exception, the interpreter substitutes a result and moves o
 }
 ```
 
-Whatever the policy, the raise is observable via the `on_guard_error(interpreter, guard_name, event, error)` plugin hook, fired *before* the substituted result is reported — previously a raising guard was indistinguishable from one that legitimately returned `False`. See [Plugins](../plugins/#on_guard_errorinterpreter-guard_name-event-error).
+Whatever the policy, the raise is observable via the `on_guard_error(interpreter, guard_name, event, error)` plugin hook, fired *before* the substituted result is reported — previously a raising guard was indistinguishable from one that legitimately returned `False`. See [Plugins](../plugins/#plugin-hooks-reference).
 
 ```python
 class Logic(MachineLogic):
@@ -511,5 +697,6 @@ interp.stop()
 - **[Context](../context/)** — guards often read context values to make decisions
 - **[Actions](../actions/)** — actions that run alongside guarded transitions
 - **[Pythonic API](../pythonic-api/)** — `@guard` decorator and the `|` operator for combining guarded transitions
+- **[JSON Configuration](../json-config/)** — full schema reference for the `guard`/`cond` keys and the `guardErrorPolicy` machine-level option
 - **[Core Concepts](../core-concepts/)** — guard evaluation order and how guards fit into the transition lifecycle
 - **[Troubleshooting](../troubleshooting/)** — common guard-related errors

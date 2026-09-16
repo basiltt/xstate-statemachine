@@ -17,6 +17,10 @@ The `xsm` CLI offers five code generation templates, each producing a different 
 | `class-json` | Class-based provider | Yes | Class methods (camelCase) | async |
 | `function-json` | Module functions | Yes | Module-level functions | async |
 
+Every example below assumes the default `-fc/--file-count 2` (separate `checkout_logic.py` and `checkout_runner.py` files). Pass `--file-count 1` (or `-fc 1`) to combine both into a single generated file instead.
+
+Generated files also always start with a `"""Generated state machine logic — DO NOT EDIT BY HAND."""` docstring banner that embeds the source JSON filename, the template name, and the generator version, plus a `Regenerate with::` snippet showing the exact command to reproduce the file. That banner is omitted from the code blocks on this page purely for brevity — the actual output on disk always includes it.
+
 ## Input JSON Example
 
 All examples below use this `checkout.json` as input:
@@ -58,6 +62,18 @@ This machine has:
 - **1 event**: `SUBMIT`
 
 ---
+
+## Additional `generate-template` flags
+
+The examples on this page focus on `--template`/`-t` and `--async-mode`/`-am`, but `generate-template` (alias `gt`) accepts several other flags worth knowing about:
+
+- `-fc`, `--file-count {1,2}` — Number of output files: `1` (combined) or `2` (logic/runner). Default: `2`. This page's "Generated Logic File" / "Generated Runner File" pairs all assume the default of `2`; pass `--file-count 1` to get a single combined file instead.
+- `--no-verify` — Skip the structural check that generated code rebuilds the source machine. Syntax is still validated. Use only to inspect output the generator would otherwise refuse to write.
+- `--check` — Do not write anything. Exit with status 1 if the files on disk differ from what would be generated. Intended for CI, so generated code can be committed and kept honest.
+- `--diff` — Like `--check`, but also print a unified diff of the differences. Implies `--check`.
+- `--log LOG` — Include logging statements in the generated code: `yes` or `no`. Default: `yes`.
+- `--sleep SLEEP` — Add a sleep call between events in the generated runner's simulation: `yes` or `no`. Default: `yes`.
+- `--sleep-time SLEEP_TIME` — Sleep duration in seconds for the simulation. Default: `2`.
 
 ## Template 1: `pythonic-class`
 
@@ -611,14 +627,16 @@ xsm gt checkout.json --template class-json --async-mode no
 ### Generated Logic File: `checkout_logic.py`
 
 ```python
+import logging
+import time
 from typing import Any, Dict, Union
+
 from xstate_statemachine import (
+    ActionDefinition,
+    Event,
     Interpreter,
     SyncInterpreter,
-    Event,
-    ActionDefinition,
 )
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -626,64 +644,77 @@ logger = logging.getLogger(__name__)
 # Class-based Logic
 # -----------------------------------------------------------------------
 
+
 class CheckoutLogic:
 
     # Actions
     def calculate_total(
         self,
-        interpreter: Union[Interpreter, SyncInterpreter],
+        interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
         context: Dict[str, Any],
         event: Event,
         action_def: ActionDefinition,
     ) -> None:
         """
-        Action handler for ``calculateTotal``.
+        Execute the ``calculateTotal`` action.
 
-        Implement the business logic for this action.
+        Args:
+            interpreter: The running interpreter instance.
+            context: Mutable machine context dictionary.
+            event: The event that triggered this action.
+            action_def: Metadata about the action being executed.
         """
         try:
             logger.info("Executing action calculateTotal")
             # TODO: implement
         except Exception:
-            logger.exception("Error in action calculateTotal")
+            logger.exception("Action 'calculateTotal' failed")
             raise
 
     def clear_cart(
         self,
-        interpreter: Union[Interpreter, SyncInterpreter],
+        interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
         context: Dict[str, Any],
         event: Event,
         action_def: ActionDefinition,
     ) -> None:
         """
-        Action handler for ``clearCart``.
+        Execute the ``clearCart`` action.
 
-        Implement the business logic for this action.
+        Args:
+            interpreter: The running interpreter instance.
+            context: Mutable machine context dictionary.
+            event: The event that triggered this action.
+            action_def: Metadata about the action being executed.
         """
         try:
             logger.info("Executing action clearCart")
             # TODO: implement
         except Exception:
-            logger.exception("Error in action clearCart")
+            logger.exception("Action 'clearCart' failed")
             raise
 
     def show_error(
         self,
-        interpreter: Union[Interpreter, SyncInterpreter],
+        interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
         context: Dict[str, Any],
         event: Event,
         action_def: ActionDefinition,
     ) -> None:
         """
-        Action handler for ``showError``.
+        Execute the ``showError`` action.
 
-        Implement the business logic for this action.
+        Args:
+            interpreter: The running interpreter instance.
+            context: Mutable machine context dictionary.
+            event: The event that triggered this action.
+            action_def: Metadata about the action being executed.
         """
         try:
             logger.info("Executing action showError")
             # TODO: implement
         except Exception:
-            logger.exception("Error in action showError")
+            logger.exception("Action 'showError' failed")
             raise
 
     # Guards
@@ -693,9 +724,11 @@ class CheckoutLogic:
         event: Event,
     ) -> bool:
         """
-        Guard for ``cartNotEmpty``.
+        Evaluate the ``cartNotEmpty`` guard.
 
-        Return True to allow the transition, False to block.
+        Args:
+            context: Current machine context dictionary.
+            event: The event being evaluated.
         """
         logger.info("Evaluating guard cartNotEmpty")
         # TODO: implement guard logic
@@ -704,23 +737,31 @@ class CheckoutLogic:
     # Services
     def process_payment(
         self,
-        interpreter: Union[Interpreter, SyncInterpreter],
+        interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
         context: Dict[str, Any],
         event: Event,
     ) -> Dict[str, Any]:
         """
-        Service handler for ``processPayment``.
+        Run the ``processPayment`` service.
 
-        Return a dict that becomes the onDone event data.
+        Args:
+            interpreter: The running interpreter instance.
+            context: Mutable machine context dictionary.
+            event: The event that triggered this service.
         """
         try:
             logger.info("Running service processPayment")
+            time.sleep(1)
             # TODO: implement service
-            return {'result': 'done'}
+            return {"result": "done"}
         except Exception:
-            logger.exception("Error in service processPayment")
+            logger.exception("Service 'processPayment' failed")
             raise
+
+    processPayment = process_payment  # alias for JSON name
 ```
+
+> **Note:** The trailing `processPayment = process_payment` line is a real alias, not a typo — `LogicLoader` looks up service/action names by their exact JSON key (`processPayment`), so the generator adds a class attribute alias from the `snake_case` method name to the `camelCase` JSON name. The `time.sleep(1)` call is a generated placeholder service body; replace it with real work. When `--async-mode yes` (the default for this template) is used instead, methods are `async def` and the placeholder becomes `await asyncio.sleep(1)`.
 
 ### Generated Runner File: `checkout_runner.py`
 
@@ -784,14 +825,16 @@ xsm gt checkout.json --template function-json --async-mode no
 ### Generated Logic File: `checkout_logic.py`
 
 ```python
+import logging
+import time
 from typing import Any, Dict, Union
+
 from xstate_statemachine import (
+    ActionDefinition,
+    Event,
     Interpreter,
     SyncInterpreter,
-    Event,
-    ActionDefinition,
 )
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -799,99 +842,129 @@ logger = logging.getLogger(__name__)
 # Actions
 # -----------------------------------------------------------------------
 
+
 def calculate_total(
-    interpreter: Union[Interpreter, SyncInterpreter],
+    interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
     context: Dict[str, Any],
     event: Event,
     action_def: ActionDefinition,
 ) -> None:
     """
-    Action handler for ``calculateTotal``.
+    Execute the ``calculateTotal`` action.
 
-    Implement the business logic for this action.
+    Args:
+        interpreter: The running interpreter instance.
+        context: Mutable machine context dictionary.
+        event: The event that triggered this action.
+        action_def: Metadata about the action being executed.
     """
     try:
         logger.info("Executing action calculateTotal")
         # TODO: implement
     except Exception:
-        logger.exception("Error in action calculateTotal")
+        logger.exception("Action 'calculateTotal' failed")
         raise
 
+
 def clear_cart(
-    interpreter: Union[Interpreter, SyncInterpreter],
+    interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
     context: Dict[str, Any],
     event: Event,
     action_def: ActionDefinition,
 ) -> None:
     """
-    Action handler for ``clearCart``.
+    Execute the ``clearCart`` action.
 
-    Implement the business logic for this action.
+    Args:
+        interpreter: The running interpreter instance.
+        context: Mutable machine context dictionary.
+        event: The event that triggered this action.
+        action_def: Metadata about the action being executed.
     """
     try:
         logger.info("Executing action clearCart")
         # TODO: implement
     except Exception:
-        logger.exception("Error in action clearCart")
+        logger.exception("Action 'clearCart' failed")
         raise
 
+
 def show_error(
-    interpreter: Union[Interpreter, SyncInterpreter],
+    interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
     context: Dict[str, Any],
     event: Event,
     action_def: ActionDefinition,
 ) -> None:
     """
-    Action handler for ``showError``.
+    Execute the ``showError`` action.
 
-    Implement the business logic for this action.
+    Args:
+        interpreter: The running interpreter instance.
+        context: Mutable machine context dictionary.
+        event: The event that triggered this action.
+        action_def: Metadata about the action being executed.
     """
     try:
         logger.info("Executing action showError")
         # TODO: implement
     except Exception:
-        logger.exception("Error in action showError")
+        logger.exception("Action 'showError' failed")
         raise
+
 
 # -----------------------------------------------------------------------
 # Guards
 # -----------------------------------------------------------------------
+
 
 def cart_not_empty(
     context: Dict[str, Any],
     event: Event,
 ) -> bool:
     """
-    Guard for ``cartNotEmpty``.
+    Evaluate the ``cartNotEmpty`` guard.
 
-    Return True to allow the transition, False to block.
+    Args:
+        context: Current machine context dictionary.
+        event: The event being evaluated.
     """
     logger.info("Evaluating guard cartNotEmpty")
     # TODO: implement guard logic
     return True
 
+
 # -----------------------------------------------------------------------
 # Services
 # -----------------------------------------------------------------------
 
+
 def process_payment(
-    interpreter: Union[Interpreter, SyncInterpreter],
+    interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
     context: Dict[str, Any],
     event: Event,
 ) -> Dict[str, Any]:
     """
-    Service handler for ``processPayment``.
+    Run the ``processPayment`` service.
 
-    Return a dict that becomes the onDone event data.
+    Args:
+        interpreter: The running interpreter instance.
+        context: Mutable machine context dictionary.
+        event: The event that triggered this service.
     """
     try:
         logger.info("Running service processPayment")
+        time.sleep(1)
         # TODO: implement service
-        return {'result': 'done'}
+        return {"result": "done"}
     except Exception:
-        logger.exception("Error in service processPayment")
+        logger.exception("Service 'processPayment' failed")
         raise
+
+
+processPayment = process_payment  # alias for JSON name
 ```
+
+> **Note:** The trailing `processPayment = process_payment` line is a real alias, not a typo — `LogicLoader` looks up service/action names by their exact JSON key (`processPayment`), so the generator adds a module-level alias from the `snake_case` function name to the `camelCase` JSON name. The `time.sleep(1)` call is a generated placeholder service body; replace it with real work. When `--async-mode yes` (the default for this template) is used instead, functions are `async def` and the placeholder becomes `await asyncio.sleep(1)`.
 
 ### Generated Runner File: `checkout_runner.py`
 

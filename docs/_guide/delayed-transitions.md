@@ -369,6 +369,40 @@ When `LOGOUT` fires, the machine exits `dashboard` (cancelling its 60-second ref
 
 > **`after` guarantees "not before", never "at".** Both engines route every timer through the same priority lane so a due `after` or delayed send does not queue behind a backlog of already-pending external events — see [Controlling Time](#controlling-time) below. It can still fire late while other machines on the same loop finish their macrosteps — measured in [Production Characteristics § 2](../production-characteristics/#2-after-timers-are-best-effort-and-starve-under-load). On the `SyncInterpreter`, timers now fire on the thread that calls `send()`/`tick()`, never on a background thread ([§ 3](../production-characteristics/#3-the-syncinterpreter-threading-contract)).
 
+### Measuring lateness with `event.lateness_ms`
+
+Every `after` and delayed-`send()` event delivered to your actions is an `AfterEvent`. It carries two raw clock readings — `scheduled_for` (when the timer was due) and `fired_at` (when it actually fired) — plus a convenience property, `lateness_ms`, that computes `max(0.0, (fired_at - scheduled_for) * 1000.0)`. Read it from inside the action that handles the fired timer to alarm on real drift instead of inferring timer starvation from symptoms:
+
+```python
+import asyncio
+from xstate_statemachine import create_machine, Interpreter, MachineLogic
+
+config = {
+    "id": "watchdog",
+    "initial": "waiting",
+    "states": {
+        "waiting": {
+            "after": {"50": {"target": "waiting", "actions": "checkLateness"}}
+        }
+    },
+}
+
+def check_lateness(interpreter, context, event, action_def):
+    print(f"lateness_ms={event.lateness_ms:.2f}")
+
+async def main():
+    machine = create_machine(
+        config, logic=MachineLogic(actions={"checkLateness": check_lateness})
+    )
+    interp = await Interpreter(machine).start()
+    await asyncio.sleep(0.2)
+    await interp.stop()
+
+asyncio.run(main())
+```
+
+If `lateness_ms` trends upward over time, the event loop (or, for the `SyncInterpreter`, the calling thread) isn't being given enough opportunities to `pump()` due timers — see [Production Characteristics § 2](../production-characteristics/#2-after-timers-are-best-effort-and-starve-under-load) for the underlying guarantee.
+
 ## Controlling Time
 
 Every timer in the library — `after` transitions and delayed `send()` — is scheduled through an injectable `Clock`, not called directly against `asyncio.sleep()` or a background thread. This is the same seam XState v5 uses (`createActor(machine, { clock })`), and it solves two problems at once:

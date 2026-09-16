@@ -696,11 +696,18 @@ ensuring clean cancellation when states are exited.
 | `await .start()` | `() -> Interpreter` | `Interpreter` | Starts the interpreter and its event loop. Enters the initial state(s). Returns `self` for chaining. Idempotent. |
 | `await .stop(drain=False, timeout=None)` | `(bool, Optional[float]) -> None` | `None` | Gracefully stops the event loop, cancels all tasks and child actors. `drain=True` processes the inbox to empty first, bounded by `timeout` seconds (`None` waits until empty). Idempotent; a no-op on an already-`"done"`/`"stopped"` interpreter. |
 | `await .send(event, *, wait=False, priority=False, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], bool, bool, **Any) -> Optional[Receipt]` | `Optional[Receipt]` | Sends an event to the queue. Accepts a string, dict, or `Event` object. Non-blocking unless `overflow_policy=OverflowPolicy.BLOCK`. `wait=True` **[wave 3]** (#39) makes the returned awaitable resolve to a `Receipt` once the event's macrostep has fully run; `False` (default) resolves immediately to `None`. `priority=True` **[wave 3]** (#39) delivers the event ahead of every already-queued external event and exempts it from `max_queue_size`. Raises `WrongThreadError` when called from a thread other than the one whose event loop owns this interpreter, and `QueueOverflowError` when the inbox is bounded, full, and the policy is `RAISE` **[wave 3]** (#38). |
+| `await .send_priority(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], **Any) -> Optional[Receipt]` | `Optional[Receipt]` | Shorthand for `send(event, wait=True, priority=True, **payload)` (#39) -- ask an urgent question and get a `Receipt` back once it settles, jumping ahead of any backlog. Pass `wait=False` for a fire-and-forget priority send. |
 | `.send_threadsafe(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], **Any) -> concurrent.futures.Future[None]` | `concurrent.futures.Future[None]` | Sends an event from **any** thread by routing the enqueue through the interpreter's owning event loop. Returns a `Future` you may `.result()` on to block until the event is queued (not processed). |
 | `await .send_events(events)` | `(List[Union[str, Dict, Event]]) -> None` | `None` | Sends a list of events to the queue. Non-blocking. |
 | `.matches(state)` | `(Union[str, Dict[str, Any]]) -> bool` | `bool` | Reports whether *state* is part of the active configuration. Accepts a string id (fully-qualified, `#`-prefixed, or trailing partial path) or a partial `.value` dict. |
+| `.can(event)` | `(Union[str, Event, Dict[str, Any]]) -> bool` | `bool` | Reports whether sending *event* right now would cause a transition. Guards are evaluated, so this predicts accurately rather than checking structure only; has no side effects. |
+| `.has_tag(tag)` | `(str) -> bool` | `bool` | Reports whether any currently active state declares the given tag. |
+| `.get_meta()` | `() -> Dict[str, Any]` | `Dict[str, Any]` | Collects the `meta` of every active state, keyed by state id. |
+| `.subscribe(listener)` | `(Callable[[BaseInterpreter], None]) -> Callable[[], None]` | `Callable[[], None]` | Registers a listener invoked after every settled change; mirrors XState's `actor.subscribe()`. The listener receives the interpreter itself. Returns an unsubscribe function. |
+| `.on(event_type, listener)` | `(str, Callable[[Event], None]) -> Callable[[], None]` | `Callable[[], None]` | Registers a listener for events published via the `emit` action. `event_type` may be `"*"` to catch every emitted event. Returns an unsubscribe function. |
 | `.use(plugin)` | `(PluginBase) -> Interpreter` | `Interpreter` | Registers a plugin. Returns `self` for chaining. |
 | `.get_snapshot()` | `() -> str` | `str` | Returns a JSON string snapshot of current state, context, and status. |
+| `.get_persisted_snapshot()` | `() -> Dict[str, Any]` | `Dict[str, Any]` | Returns a deep, JSON-serialisable snapshot as a dict, including the full actor hierarchy (child actors, history, output). Mirrors XState's `actor.getPersistedSnapshot()`; `get_snapshot()` above is the JSON-string convenience wrapper around this. |
 | `await .drain_pending()` | `() -> List[Union[Event, DoneEvent, AfterEvent]]` | `list` | Removes and returns every accepted-but-unprocessed event, without processing it. |
 | `await .wait_done()` | `() -> asyncio.Future[str]` | `Future[str]` | Resolves to `"done"`/`"error"` the instant the machine reaches a terminal status. Already-resolved if the machine is terminal now. |
 | `.pending_invocations()` | `() -> List[PendingInvocation]` | `list` | Invokes in the active configuration that have NO live service -- the truthful list of what a static `from_snapshot()` restore left dormant **[wave 3]** (#44). Empty on a live machine and after `restart_services=True`. |
@@ -716,15 +723,22 @@ ensuring clean cancellation when states are exited.
 | Property | Type | Description |
 |----------|------|-------------|
 | `.current_state_ids` | `Set[str]` | Set of fully qualified IDs of all currently active atomic/final states. |
+| `.active_state_ids` | `Set[str]` | Alias of `.current_state_ids`, kept for compatibility with docs/README examples that predate the canonical name. |
 | `.context` | `Dict[str, Any]` | The mutable machine context. Changes made to this dict persist across transitions. |
 | `.status` | `str` | One of `"uninitialized"`, `"running"`, `"done"`, `"error"`, or `"stopped"`. |
+| `.is_running` | `bool` | `True` between a successful `start()` and a `stop()`; a convenience wrapper over `.status == "running"`. |
 | `.id` | `str` | The interpreter's identifier (inherited from machine ID). |
 | `.parent` | `Optional[BaseInterpreter]` | Reference to parent interpreter (for spawned child actors), otherwise `None`. |
+| `.system` | `ActorSystem` | The actor system this interpreter belongs to; exposes `.get(id)` and `.get_all()` for looking up sibling/child actors registered under a `systemId`. |
+| `.plugins` | `List[PluginBase]` | The list of plugin instances attached to this interpreter. Assigning a new list replaces the whole set (the form `.use()` builds on). |
 | `.last_transition_ok` | `bool` | Whether the most recently processed transition's actions all ran to completion, given `actionErrorPolicy`. |
 | `.deferred_count` | `int` | Number of events currently buffered under `onUnhandled: "defer"`. |
 | `Interpreter.DEFER_MAX` | `int` | Class attribute bounding the deferral buffer's size; oldest entries are evicted once full. |
+| `Interpreter.MAX_ACTION_DEPTH` | `int` | Class attribute (default `50`) bounding nested action expansion (`pure` / `choose` / `enqueueActions` returning further actions), guarding against a callback that re-enqueues itself. |
 | `.value` | `str \| Dict[str, Any]` | The active configuration in hierarchical form: a string for an atomic state, `{parent: child}` for compound, one key per region for parallel, `{}` before `start()`. |
 | `.pending_events` | `Sequence[Union[Event, DoneEvent, AfterEvent]]` | Events accepted by `send()` but not yet processed, FIFO order. |
+| `.queue_depth` | `int` | Number of events accepted but not yet processed; `len(.pending_events)`. Read-only. |
+| `.tags` | `Set[str]` | The union of tags across every currently active state. |
 
 #### Full async example
 
@@ -804,8 +818,14 @@ injected `Clock` (thread-free; #49/#50) rather than a background thread.
 | `.send(event, *, wait=False, priority=False, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], bool, bool, **Any) -> Optional[Receipt]` | `Optional[Receipt]` | Sends an event for **immediate** synchronous processing. Blocks until the event and all resulting transitions are fully processed. `wait=True` **[wave 3]** (#39) returns a `Receipt` for API symmetry with the async engine's `send(wait=True)` (the sync engine already processes inline by the time `send()` returns). `priority` is accepted for signature symmetry but has no effect -- there is no backlog to jump. |
 | `.send_events(events)` | `(List[Union[str, Dict, Event]]) -> None` | `None` | Sends a list of events for immediate processing. |
 | `.matches(state)` | `(Union[str, Dict[str, Any]]) -> bool` | `bool` | Reports whether *state* is part of the active configuration. Accepts a string id or a partial `.value` dict. |
+| `.can(event)` | `(Union[str, Event, Dict[str, Any]]) -> bool` | `bool` | Reports whether sending *event* right now would cause a transition, per `Interpreter.can()` above. |
+| `.has_tag(tag)` | `(str) -> bool` | `bool` | Reports whether any currently active state declares the given tag. |
+| `.get_meta()` | `() -> Dict[str, Any]` | `Dict[str, Any]` | Collects the `meta` of every active state, keyed by state id. |
+| `.subscribe(listener)` | `(Callable[[BaseInterpreter], None]) -> Callable[[], None]` | `Callable[[], None]` | Registers a listener invoked after every settled change. Returns an unsubscribe function. |
+| `.on(event_type, listener)` | `(str, Callable[[Event], None]) -> Callable[[], None]` | `Callable[[], None]` | Registers a listener for events published via the `emit` action; `"*"` catches every emitted event. Returns an unsubscribe function. |
 | `.use(plugin)` | `(PluginBase) -> SyncInterpreter` | `SyncInterpreter` | Registers a plugin. Returns `self` for chaining. |
 | `.get_snapshot()` | `() -> str` | `str` | Returns a JSON string snapshot. |
+| `.get_persisted_snapshot()` | `() -> Dict[str, Any]` | `Dict[str, Any]` | Returns a deep, JSON-serialisable snapshot as a dict, including the full actor hierarchy, per `Interpreter.get_persisted_snapshot()` above. |
 | `.drain_pending()` | `() -> List[Union[Event, DoneEvent, AfterEvent]]` | `list` | Removes and returns every accepted-but-unprocessed event, without processing it. |
 | `.pending_invocations()` | `() -> List[PendingInvocation]` | `list` | Invokes in the active configuration that have NO live service, per `Interpreter.pending_invocations()` above **[wave 3]** (#44). |
 
@@ -822,12 +842,18 @@ Same as `Interpreter`:
 | Property | Type | Description |
 |----------|------|-------------|
 | `.current_state_ids` | `Set[str]` | Active atomic/final state IDs. |
+| `.active_state_ids` | `Set[str]` | Alias of `.current_state_ids`, per `Interpreter.active_state_ids` above. |
 | `.context` | `Dict[str, Any]` | Mutable machine context. |
 | `.status` | `str` | `"uninitialized"`, `"running"`, `"done"`, `"error"`, or `"stopped"`. |
+| `.is_running` | `bool` | `True` between a successful `start()` and a `stop()`. |
 | `.id` | `str` | Interpreter identifier. |
 | `.parent` | `Optional[BaseInterpreter]` | Parent interpreter reference. |
+| `.system` | `ActorSystem` | The actor system this interpreter belongs to, per `Interpreter.system` above. |
+| `.plugins` | `List[PluginBase]` | The list of plugin instances attached to this interpreter. |
 | `.value` | `str \| Dict[str, Any]` | The active configuration in hierarchical form. |
 | `.pending_events` | `Sequence[Union[Event, DoneEvent, AfterEvent]]` | Events accepted but not yet processed. |
+| `.queue_depth` | `int` | Number of events accepted but not yet processed. Read-only. |
+| `.tags` | `Set[str]` | The union of tags across every currently active state. |
 
 #### Sync limitations
 

@@ -150,5 +150,25 @@ class TestGuideChangelogMirrorsRoot(unittest.TestCase):
         self.assertEqual(self._unreleased(root), self._unreleased(guide))
 
 
+class TestPublicSurfaceMatchesDocs(unittest.TestCase):
+    def test_every_exception_class_is_exported(self) -> None:
+        """A user must be able to `isinstance` against every error the
+        library can hand them. `RestoredError` (what `interp.error` holds
+        after restoring an errored snapshot) was documented as importable
+        but missing from `__all__` -- found by executing the docs."""
+        import inspect
+
+        import src.xstate_statemachine as pkg
+        from src.xstate_statemachine import exceptions
+
+        public = {
+            n
+            for n, c in vars(exceptions).items()
+            if inspect.isclass(c)
+            and issubclass(c, exceptions.XStateMachineError)
+        }
+        self.assertEqual(sorted(public - set(pkg.__all__)), [])
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

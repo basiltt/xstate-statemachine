@@ -9,7 +9,7 @@
 [![PyPI](https://img.shields.io/pypi/v/xstate-statemachine?style=flat-square&logo=pypi&logoColor=white&color=3775A9)](https://pypi.org/project/xstate-statemachine/)
 [![Python](https://img.shields.io/pypi/pyversions/xstate-statemachine?style=flat-square&logo=python&logoColor=white&color=3776AB)](https://pypi.org/project/xstate-statemachine/)
 [![CI](https://img.shields.io/github/actions/workflow/status/basiltt/xstate-statemachine/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/basiltt/xstate-statemachine/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-2800%2B_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/tests-3100%2B_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-88%25-3fb950?style=flat-square&logo=codecov&logoColor=white)](.github/workflows/ci.yml)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-ff8c00?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/pypi/l/xstate-statemachine?style=flat-square&color=yellow)](LICENSE)
@@ -1671,6 +1671,7 @@ parent's clock (and its `strict` setting). `SyncInterpreter` never spawns an OS 
 | `Receipt(state_ids, changed, error=None)` | Returned by `send(wait=True)` once the macrostep for that event has run |
 | `OverflowPolicy` | `RAISE` (default once `max_queue_size` is set) · `BLOCK` · `DROP_NEWEST` |
 | `PendingInvocation(state_id, invoke_id, src)` | An active state with no live service/child actor |
+| `ActionDefinition(config)` | The 4th positional arg every action callable receives — `.type` (action name) and `.params` (static params from the config, if any) |
 
 **Exceptions:** `XStateMachineError` (base) · `InvalidConfigError` ·
 `StateNotFoundError` · `ImplementationMissingError` · `ActorSpawningError` ·
@@ -1678,6 +1679,9 @@ parent's clock (and its `strict` setting). `SyncInterpreter` never spawns an OS 
 `WrongThreadError` · `SnapshotDriftError` · `SnapshotVersionError` ·
 `QueueOverflowError` · `InterpreterStoppedError` · `UnknownEventError` ·
 `InvalidEventPayloadError`
+
+**Version:** `from xstate_statemachine import __version__` gives the installed
+version string — the same value `xsm -v` / `xsm info` report.
 
 </details>
 
@@ -1869,7 +1873,7 @@ Invoked **services** are different — their failures *are* routed back into the
 
 <br>
 
-2,800+ tests, 88% coverage, CI runs Python 3.9–3.14 on Linux, with spot-checks on macOS and Windows. The engine
+3,100+ tests, 88% coverage, CI runs Python 3.9–3.14 on Linux, with spot-checks on macOS and Windows. The engine
 implements the SCXML transition-selection algorithm and there's a dedicated test suite pinning
 that behaviour, plus one pinning XState v5 parity.
 

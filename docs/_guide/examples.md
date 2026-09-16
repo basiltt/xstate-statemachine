@@ -975,6 +975,95 @@ def test_checkout_from_payment():
     interp.stop()
 ```
 
+### Testing Timers with `SimulatedClock`
+
+Machines with `after` (delayed) transitions are otherwise hard to test deterministically — you'd have to actually sleep. Pass a `SimulatedClock` to the interpreter instead: virtual time never moves on its own, so timers only fire when you call `increment()` or `set()`.
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter, SimulatedClock
+
+config = {
+    "id": "trafficTimer",
+    "initial": "red",
+    "states": {
+        "red": {"after": {"5000": "green"}},
+        "green": {"after": {"3000": "red"}},
+    },
+}
+
+machine = create_machine(config)
+clock = SimulatedClock()
+interp = SyncInterpreter(machine, clock=clock).start()
+
+assert interp.current_state_ids == {"trafficTimer.red"}
+
+# No real time passes; nothing fires until we advance the clock ourselves.
+clock.increment(4000)
+assert interp.current_state_ids == {"trafficTimer.red"}
+
+clock.increment(1000)  # crosses the 5s deadline
+assert interp.current_state_ids == {"trafficTimer.green"}
+
+interp.stop()
+```
+
+`increment(ms)` advances by a relative amount and fires every timer that becomes due, in order; `set(ms)` jumps to an absolute virtual time and raises if that would move backwards. Inside a running asyncio loop both return an awaitable, so `await clock.increment(...)` is required there — in sync code (as above) they run to completion immediately.
+
+### Asserting Delivery with `send(wait=True)`
+
+A plain `send()` enqueues an event and returns immediately, so a test can't tell whether the event was actually processed, silently dropped, or caused a transition. Pass `wait=True` to get back a `Receipt` once the event's macrostep has finished:
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter
+
+config = {
+    "id": "toggle",
+    "initial": "off",
+    "states": {
+        "off": {"on": {"FLIP": "on"}},
+        "on": {"on": {"FLIP": "off"}},
+    },
+}
+machine = create_machine(config)
+interp = SyncInterpreter(machine).start()
+
+receipt = interp.send("FLIP", wait=True)
+assert receipt.changed is True
+assert receipt.state_ids == {"toggle.on"}
+assert receipt.error is None
+
+# An event with no matching transition still returns a receipt; changed=False.
+receipt = interp.send("NOPE", wait=True)
+assert receipt.changed is False
+
+interp.stop()
+```
+
+`Receipt` is a `NamedTuple` with `state_ids` (the active leaf ids once processing finished), `changed` (whether this event actually caused a transition), and `error` (the exception raised while processing this event, or `None`). This is the async `Interpreter`'s `send(..., wait=True)` API too — see [Testing & the Pure API](../testing-and-pure-api/) for the fully synchronous, no-interpreter-needed alternative (`pure_transition`, `get_next_snapshot`, etc.).
+
+## Feature examples (0.8.0)
+
+Each of these is a small, self-contained, runnable script under `examples/`
+demonstrating one 0.8.0 capability end to end (`python <file>_runner.py`
+from its own directory, exits `0`):
+
+- [`examples/async/features/escalate/escalate_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/escalate/escalate_runner.py) — `escalate()`: a child actor propagates an error to its parent.
+- [`examples/async/features/send_parent/send_parent_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/send_parent/send_parent_runner.py) — `send_parent()`: a child notifies its parent of completion.
+- [`examples/async/features/spawn_child/spawn_child_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/spawn_child/spawn_child_runner.py) — `spawn_child()`: dynamically spawning an actor from an action.
+- [`examples/async/features/send_priority/send_priority_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/send_priority/send_priority_runner.py) — `send(priority=True)` / `send_priority()`: jumping the event queue.
+- [`examples/async/features/drain_on_stop/drain_on_stop_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/drain_on_stop/drain_on_stop_runner.py) — `drain_pending()` and `stop(drain=True)`: inbox durability on shutdown.
+- [`examples/async/features/send_threadsafe/send_threadsafe_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/send_threadsafe/send_threadsafe_runner.py) — `send_threadsafe()`: delivering an event from a plain background thread.
+- [`examples/sync/features/pure_api/pure_api_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/pure_api/pure_api_runner.py) — `initial_transition`, `pure_transition`, `get_initial_snapshot`, `get_next_snapshot`.
+- [`examples/async/features/to_promise/to_promise_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/to_promise/to_promise_runner.py) — `to_promise()` and `wait_for_sync()`: awaiting completion.
+- [`examples/sync/features/spawn_blocking_timeout/spawn_blocking_timeout_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/spawn_blocking_timeout/spawn_blocking_timeout_runner.py) — `spawnBlockingTimeout`: bounding a blocking spawn.
+- [`examples/sync/features/snapshot_drift/snapshot_drift_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/snapshot_drift/snapshot_drift_runner.py) — `SnapshotDriftError` and `verify_machine_hash=False`.
+- [`examples/sync/features/guard_error_policy/guard_error_policy_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/guard_error_policy/guard_error_policy_runner.py) — `guardErrorPolicy` and the `on_guard_error` plugin hook.
+- [`examples/sync/features/enqueue_actions/enqueue_actions_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/enqueue_actions/enqueue_actions_runner.py) — `enqueue_actions()`: imperatively building an action list.
+- [`examples/sync/features/choose/choose_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/choose/choose_runner.py) — `choose()`: the first matching branch runs.
+- [`examples/async/features/forward_to/forward_to_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/forward_to/forward_to_runner.py) — `forward_to()`: relaying the triggering event to another actor.
+
+Not yet covered (lower priority, tracked for a follow-up pass): `spawn_child` composed with `stop_child`, `send_to`, `wait_done`, `pure`, `raise_`, `subscribe`, `get_persisted_snapshot`, `strict_targets`/`strictTargets`, `history` (shallow/deep), `has_tag`, `get_meta`, `active_state_ids`, `RestoredError`.
+
 ### Running Tests
 
 ```bash

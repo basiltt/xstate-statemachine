@@ -16,9 +16,10 @@ timers start, no services fire, nothing mutates. That is what the pure API is
 for: unit tests, planning, and "preview the next step" UI.
 
 > **Pure means pure, not fast.** Every call deep-copies context in and out so
-> the snapshot you passed is never mutated. That isolation costs about 40% versus
-> `SyncInterpreter.send()` on the same machine. Reach for it when you want
-> side-effect-free steps; for throughput, drive a `SyncInterpreter`.
+> the snapshot you passed is never mutated. As of 0.8.0 that isolation costs
+> roughly one real `send()` plus one context copy (see below); reach for it
+> when you want side-effect-free steps, and drive a `SyncInterpreter` directly
+> when you need raw throughput.
 
 ```python
 from xstate_statemachine import (
@@ -58,7 +59,7 @@ print(get_next_snapshot(machine, snapshot, "GO").state_ids)   # {'fetch.done'}
 |:--|:--|
 | `.state_ids` | Set of active state ids |
 | `.context` | The context dict |
-| `.status` | `'running'`, `'done'` or `'error'` |
+| `.status` | `'active'`, `'done'` or `'error'` |
 | `.output` | Machine output, once a top-level final state is reached |
 | `.configuration` | The active `StateNode` objects |
 | `.matches(id)` | Test a state id, supporting nested paths |
@@ -117,6 +118,47 @@ wait_for_sync(interp, lambda s: s.matches("job.done"), timeout=5)
 
 Both accept `timeout` (seconds, default `10.0`) and `poll_interval`
 (default `0.005`).
+
+### `send(wait=True)` — synchronous settlement
+
+When you already know which single event you're waiting on, `wait_for` /
+`wait_for_sync` are more than you need. Both `Interpreter.send` and
+`SyncInterpreter.send` accept `wait=True`, which blocks/awaits until that
+event's own macrostep — including anything it triggers — has fully settled,
+and returns a `Receipt` describing the resulting state:
+
+```python
+import asyncio
+from xstate_statemachine import create_machine, Interpreter, SyncInterpreter
+
+config = {
+    "id": "fetch",
+    "initial": "idle",
+    "context": {},
+    "states": {
+        "idle": {"on": {"GO": "done"}},
+        "done": {"type": "final"},
+    },
+}
+
+async def main():
+    machine = create_machine(config)
+    interp = await Interpreter(machine).start()
+    receipt = await interp.send("GO", wait=True)
+    assert receipt.state_ids == {"fetch.done"}
+    await interp.stop()
+
+asyncio.run(main())
+
+# SyncInterpreter already answers inline; `wait=True` just returns the
+# Receipt too, for API symmetry with the async engine.
+sync_interp = SyncInterpreter(create_machine(config)).start()
+receipt = sync_interp.send("GO", wait=True)
+assert receipt.state_ids == {"fetch.done"}
+```
+
+Pass `priority=True` alongside `wait=True` (or use `send_priority()`) to jump
+the queue for a bounded-latency question under backlog.
 
 ### `to_promise` — await completion
 

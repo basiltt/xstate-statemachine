@@ -286,6 +286,10 @@ The `system` registry is reachable from any interpreter in the tree:
 `systemId` registrations survive a snapshot round-trip, so `sendTo("pool", ...)`
 still resolves after `from_snapshot()`.
 
+Registering a second live actor under a `systemId` that is already taken raises
+`ActorSpawningError` — `systemId`s must be unique among currently-running
+actors.
+
 ### `sendTo`, `sendParent`, `stopChild`
 
 | Action | Purpose |
@@ -311,7 +315,9 @@ still resolves after `from_snapshot()`.
 
 > **Note:** A child invoked with `invoke` fires the parent's `onDone` only when
 > it reaches a **top-level final state**, and `onError` if it ends in an error.
-> Stopping a child early does not fire either.
+> Stopping a child early does not fire either. As of 0.8.0, invoked child
+> completion is detected immediately via a terminal-listener callback, not by
+> polling — the old `_ACTOR_POLL_INTERVAL` no longer exists.
 
 ---
 
@@ -380,7 +386,7 @@ interp.send("START")  # Spawns the processor actor
 interp.stop()
 ```
 
-> **Note:** Communication between parent and child actors happens through the event system. The parent sends events that trigger child transitions, and child completion emits `done` events back to the parent.
+> **Note:** Communication between parent and child actors happens through the event system. The parent sends events that trigger child transitions. Actors created via `invoke` automatically fire the parent's `onDone`/`onError` when they finish. Actors created via the `spawn_`/`spawn_blocking_` action-prefix convention — as in the example above — do **not** auto-notify the parent; the child must explicitly `sendParent` a completion event (as this example's `DONE` transition assumes) for the parent to react.
 
 ## Actors with the Async Interpreter
 
@@ -523,7 +529,7 @@ interp.stop()
 
 2. **Use factory functions** for dynamic actors — When child machines depend on runtime data, use factory functions in `services` rather than pre-built `MachineNode` instances.
 
-3. **Prefer `spawn_` (non-blocking)** for concurrent work — Non-blocking actors run in background threads, ideal for parallel processing.
+3. **Prefer `spawn_` (non-blocking)** for concurrent work — Non-blocking actors run in a background OS thread under `SyncInterpreter`; under the async `Interpreter` they run concurrently as another coroutine on the same event loop.
 
 4. **Use `spawn_blocking_` sparingly** — Blocking actors halt the parent's event processing. Only use them when sequential completion is required.
 
@@ -532,3 +538,62 @@ interp.stop()
 6. **Error handling** — If the service lookup fails or the factory returns a non-`MachineNode` value, an `ActorSpawningError` is raised. Always ensure your service keys match your `spawn_` action names.
 
 > **Warning:** Async actions and services are not supported in `SyncInterpreter`. If you need async actors, use the async `Interpreter` instead.
+
+## Spawn Failures and Rollback
+
+If a later action in the same transition raises after a `spawn_` /
+`spawn_blocking_` action (or an `invoke`) has already succeeded, the interpreter
+rolls back the transition — and stops the child it just created. This applies
+on both the async `Interpreter` and `SyncInterpreter`, so a failed transition
+never leaves an orphaned actor running in the background.
+
+This only happens when `actionErrorPolicy` is `"rollback"` (or `"fail"`); under
+the default `"continue"` policy the transition still commits and the spawned
+child keeps running.
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
+
+child_config = {"id": "child", "initial": "idle", "states": {"idle": {}}}
+child_machine = create_machine(child_config)
+
+
+def boom(interpreter, ctx, event, action):
+    raise RuntimeError("boom")
+
+
+parent_config = {
+    "id": "parent",
+    "initial": "idle",
+    "context": {},
+    "actionErrorPolicy": "rollback",
+    "states": {
+        "idle": {
+            "on": {
+                "GO": {
+                    "target": "running",
+                    # spawn_child succeeds, then boom raises
+                    "actions": ["spawn_child", "boom"]
+                }
+            }
+        },
+        "running": {}
+    }
+}
+
+logic = MachineLogic(
+    actions={"boom": boom},
+    services={"child": child_machine}
+)
+
+interp = SyncInterpreter(create_machine(parent_config, logic=logic)).start()
+try:
+    interp.send("GO")
+except RuntimeError:
+    pass
+
+print(interp.current_state_ids)  # still {'parent.idle'} -- the transition rolled back
+print(interp._actors)             # {} -- the spawned child was stopped, not orphaned
+```
+
+See also [Interpreters — Lifecycle: completion and teardown](interpreters/#lifecycle-completion-and-teardown).

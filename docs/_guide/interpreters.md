@@ -145,7 +145,7 @@ config = {
 class ToggleLogic(MachineLogic):
     def logToggle(self, interpreter, context, event, action_def):
         context["toggles"] += 1
-        print(f"Toggle #{context['toggles']} → {interpreter.active_state_ids}")
+        print(f"Toggle #{context['toggles']} fired")
 
 
 machine = create_machine(config, logic=ToggleLogic())
@@ -157,16 +157,26 @@ print(interp.active_state_ids)
 # {'toggleMachine.inactive'}
 
 interp.send("ACTIVATE")
-# Toggle #1 → {'toggleMachine.active'}
+print(interp.active_state_ids)
+# Toggle #1 fired
+# {'toggleMachine.active'}
 
 interp.send("DEACTIVATE")
-# Toggle #2 → {'toggleMachine.inactive'}
+print(interp.active_state_ids)
+# Toggle #2 fired
+# {'toggleMachine.inactive'}
 
 print(interp.context)
 # {'toggles': 2}
 
 interp.stop()
 ```
+
+> 📝 **Note:** `active_state_ids` reflects the *settled* configuration. Reading
+> it from inside an action (e.g. `logToggle` above) will not yet show the
+> target state — the active-state set only updates once the transition's
+> actions phase finishes. Read it after `.send()` returns if you need the
+> post-transition value.
 
 ### Key Points
 
@@ -202,6 +212,77 @@ interp.stop()
 | `.drain_pending()` | method | Remove and return every pending event without processing it. |
 | `.wait_done()` | method | *(async `Interpreter` only)* A future resolved with `"done"`/`"error"` the instant the machine reaches a terminal status. |
 | `.stop(drain=False, timeout=None)` | method | Stop the interpreter; `drain=True` processes the inbox to empty first (`timeout` bounds this on the async engine). |
+| `.can(event)` | method | Dry-run check — reports whether sending `event` right now would trigger a transition (guards included), without any side effects. |
+| `.on(event_type, listener)` | method | Registers a listener for events published via the `emit` action. Pass `"*"` to listen to every emitted event. Returns an unsubscribe callable. |
+| `.subscribe(listener)` | method | Registers a listener invoked after every settled transition (mirrors XState's `actor.subscribe()`). Returns an unsubscribe callable. |
+| `.system` | `ActorSystem` | The actor-system registry used to look up other actors by `system_id`, e.g. for `send_to`/`forward_to` targets. |
+| `.tags` | `set[str]` | The union of tags declared by every currently active state. |
+| `.has_tag(tag)` | method | `True` if any active state carries `tag`. |
+| `.get_meta()` | method | Returns a `{state_id: meta_dict}` mapping merged from every active state's `meta`. |
+| `.pending_invocations()` | method | Lists in-flight `invoke`s from the active configuration that have no live service backing them — most relevant right after `from_snapshot()`. |
+| `.MAX_ACTION_DEPTH` | `int` | The recursion guard rail for self-triggered actions (default `50`) — raised when actions keep re-sending events into the same transition. |
+
+### Checking Transitions, Tags, and Metadata
+
+Beyond `.send()`, the interpreter exposes read-only helpers for querying the
+active configuration without mutating it — handy for disabling a UI button
+before an event is actually sent, or for driving UI purely off `tags`/`meta`
+instead of hardcoding state IDs.
+
+```python
+from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
+
+config = {
+    "id": "door",
+    "initial": "closed",
+    "states": {
+        "closed": {
+            "tags": ["safe"],
+            "meta": {"description": "Door is closed"},
+            "on": {"OPEN": "open"},
+        },
+        "open": {
+            "tags": ["unsafe"],
+            "meta": {"description": "Door is open"},
+            "on": {"CLOSE": "closed"},
+        },
+    },
+}
+
+machine = create_machine(config, logic=MachineLogic())
+interp = SyncInterpreter(machine)
+
+unsubscribe = interp.subscribe(
+    lambda i: print(f"[subscriber] now in {i.active_state_ids}")
+)
+
+interp.start()
+
+print("can OPEN?", interp.can("OPEN"))
+# True
+print("can CLOSE?", interp.can("CLOSE"))
+# False
+print("tags:", interp.tags)
+# {'safe'}
+print("has_tag safe?", interp.has_tag("safe"))
+# True
+print("meta:", interp.get_meta())
+# {'door.closed': {'description': 'Door is closed'}}
+print("pending_invocations:", interp.pending_invocations())
+# []
+print("MAX_ACTION_DEPTH:", interp.MAX_ACTION_DEPTH)
+# 50
+
+interp.send("OPEN")
+# [subscriber] now in {'door.open'}
+
+unsubscribe()
+interp.stop()
+```
+
+See also [Plugins](../plugins/) for heavier-weight introspection (logging,
+persistence hooks) and [Snapshots](../snapshots/) for `pending_invocations()`
+in the context of `from_snapshot()`.
 
 ---
 
@@ -900,7 +981,7 @@ Per XState, an event that selects no transition in any active state is silently 
 
 `"defer"` is library-owned: a still-unhandled event is re-deferred, the buffer survives `get_snapshot()` / `from_snapshot()`, and it is bounded by `Interpreter.DEFER_MAX` — once full, the oldest entry is evicted. `interpreter.deferred_count` reports how many events are currently buffered.
 
-Whatever the policy, every unhandled event fires the `on_unhandled_event(interpreter, event, active_state_ids, disposition)` plugin hook, with `disposition` one of `"ignored"`, `"deferred"`, `"errored"`, or `"dropped"` (buffer was full). See [Plugins](../plugins/#on_unhandled_eventinterpreter-event-active_state_ids-disposition).
+Whatever the policy, every unhandled event fires the `on_unhandled_event(interpreter, event, active_state_ids, disposition)` plugin hook, with `disposition` one of `"ignored"`, `"deferred"`, `"errored"`, or `"dropped"` (buffer was full). See [Plugins](../plugins/#plugin-hooks-reference).
 
 ---
 

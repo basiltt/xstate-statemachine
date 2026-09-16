@@ -513,6 +513,8 @@ interp.stop()
 
 > **Tip:** The `|` operator creates a `TransitionGroup` internally. The transitions are evaluated **in order** — put the most specific guards first, and leave the fallback (no guard) last.
 
+> **Note:** `Transition` and `TransitionGroup` are the classes that back `.to()`, `transition()`, and the `|` operator. Import them from `xstate_statemachine.pythonic` for type hints or introspection, e.g. `isinstance(login | login_via_sso, TransitionGroup)`.
+
 ---
 
 ## Internal Transitions
@@ -616,7 +618,7 @@ interp = SyncInterpreter(machine).start()
 
 interp.send("LOGIN")
 print(interp.active_state_ids)
-# {'auth.loggedIn', 'auth.loggedIn.dashboard'}
+# {'auth.loggedIn.dashboard'}
 
 interp.send("LOGOUT")
 print(interp.active_state_ids)
@@ -672,10 +674,9 @@ machine = MediaPlayer.create_machine()
 interp = SyncInterpreter(machine).start()
 
 print(interp.active_state_ids)
-# All three regions are active simultaneously:
-# {'player.player', 'player.player.video', 'player.player.video.loading',
-#  'player.player.audio', 'player.player.audio.muted',
-#  'player.player.controls', 'player.player.controls.visible'}
+# All three regions are active simultaneously (leaf/atomic states only):
+# {'player.player.video.loading', 'player.player.audio.muted',
+#  'player.player.controls.visible'}
 interp.stop()
 ```
 
@@ -858,7 +859,7 @@ class Pipeline(StateMachine):
 machine = Pipeline.create_machine()
 interp = SyncInterpreter(machine).start()
 print(interp.active_state_ids)
-# {'pipeline.step1', 'pipeline.step1.working'}
+# {'pipeline.step1.working'}
 interp.stop()
 ```
 

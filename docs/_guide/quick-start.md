@@ -28,27 +28,34 @@ from xstate_statemachine import (
 off = State("off", initial=True)
 on  = State("on")
 
-# 2. Define transitions
-off.to(on,  event="TOGGLE")
-on.to(off, event="TOGGLE")
+# 2. Define transitions — capture the Transition objects so they can be
+#    passed to build_machine(); State.to() only *creates* a transition,
+#    it does not register it anywhere on its own.
+t1 = off.to(on,  event="TOGGLE", actions=["logToggle"])
+t2 = on.to(off, event="TOGGLE", actions=["logToggle"])
 
 # 3. Define actions
 @action
 def log_toggle(interpreter, context, event, action_def):
-    print(f"Light is now: {interpreter.active_state_ids}")
+    context["flips"] = context.get("flips", 0) + 1
 
-# 4. Build the machine
+# 4. Build the machine — pass the transitions explicitly via `transitions=`
 machine = build_machine(
     id="lightSwitch",
     states=[off, on],
+    transitions=[t1, t2],
     actions=[log_toggle],
+    context={"flips": 0},
 )
 
 # 5. Run it
 interpreter = SyncInterpreter(machine).start()
 interpreter.send("TOGGLE")  # off -> on
+print(f"Light is now: {interpreter.active_state_ids}")
 interpreter.send("TOGGLE")  # on -> off
+print(f"Light is now: {interpreter.active_state_ids}")
 interpreter.stop()
+print(f"Total flips: {interpreter.context['flips']}")
 ```
 
 **Output:**
@@ -56,6 +63,7 @@ interpreter.stop()
 ```
 Light is now: {'lightSwitch.on'}
 Light is now: {'lightSwitch.off'}
+Total flips: 2
 ```
 
 ---
