@@ -282,15 +282,19 @@ def _make_probe_class() -> type:
 
         _recorded: List[ActionDefinition]
 
-        def _execute_actions(self, actions: Any, event: Any) -> List[Any]:
+        def _execute_actions(  # type: ignore[override]
+            self, actions: Any, event: Any
+        ) -> Any:
             """Records actions without running their side effects.
 
             `assign` is still applied, because context updates are part of
             the computed next state rather than an external side effect.
-            Returns an empty failure list so the action-error machinery
-            (#27) sees a clean run.
+            Returns an (already finished) awaitable of an empty failure
+            list -- the shared base algorithm `await`s this leaf (#60) and
+            the action-error machinery (#27) sees a clean run.
             """
             from .actions import ASSIGN, resolve_builtin
+            from .sync_interpreter import _Done
 
             for action_def in actions or []:
                 self._recorded.append(action_def)
@@ -299,7 +303,7 @@ def _make_probe_class() -> type:
                         self._resolve_params(action_def.params, event) or {},
                         event,
                     )
-            return []
+            return _Done([])
 
         def _schedule_state_tasks(self, state: Any) -> None:
             """Suppresses timers and invoked services entirely."""

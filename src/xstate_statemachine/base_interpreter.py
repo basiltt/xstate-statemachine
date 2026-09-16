@@ -24,6 +24,7 @@ synchronous, blocking operations.
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
+import asyncio
 import functools
 import copy
 import inspect
@@ -53,6 +54,7 @@ from typing import (
 # -----------------------------------------------------------------------------
 from .events import AfterEvent, DoneEvent, Event
 from .exceptions import (
+    NotSupportedError,
     InvalidEventPayloadError,
     UnknownEventError,
     ActorSpawningError,
@@ -64,6 +66,15 @@ from .exceptions import (
     UnhandledEventError,
 )
 from .actions import (
+    SPAWN_CHILD,
+    STOP_CHILD,
+    ESCALATE,
+    FORWARD_TO,
+    SEND_PARENT,
+    SEND_TO,
+    RAISE,
+    is_builtin,
+    resolve_builtin,
     ASSIGN,
     CANCEL,
     CHOOSE,
@@ -74,6 +85,7 @@ from .actions import (
     ActionEnqueuer,
 )
 from .models import (
+    SPAWN_BLOCKING_PREFIX,
     ActionDefinition,
     GuardDefinition,
     InvokeDefinition,
@@ -1391,26 +1403,6 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             "Subclasses must implement the 'send_events' method."
         )
 
-    def _execute_actions(
-        self, actions: List[ActionDefinition], event: Event
-    ) -> Union[
-        List[Tuple[ActionDefinition, BaseException]],
-        Awaitable[List[Tuple[ActionDefinition, BaseException]]],
-    ]:
-        """Executes a list of action definitions.
-
-        Returns:
-            The ``(action, exception)`` pairs for actions that raised, in
-            execution order. Empty when every action succeeded.
-
-        Raises:
-            NotImplementedError: This method must be implemented by a concrete
-                subclass to handle sync/async execution.
-        """
-        raise NotImplementedError(
-            "Subclasses must implement the '_execute_actions' method."
-        )
-
     def _cancel_state_tasks(
         self, state: StateNode
     ) -> Union[None, Awaitable[None]]:
@@ -1452,23 +1444,6 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         raise NotImplementedError(
             "Subclasses must implement the '_invoke_service' method."
         )
-
-    def _spawn_actor(
-        self, action_def: ActionDefinition, event: Event
-    ) -> Union[None, Awaitable[None]]:
-        """Handles the spawning of a child state machine actor.
-
-        Raises:
-            NotImplementedError: This method must be implemented by a concrete
-                subclass.
-        """
-        raise NotImplementedError(
-            "Subclasses must implement the '_spawn_actor' method."
-        )
-
-    # -------------------------------------------------------------------------
-    # ✉️ Event Preparation Helper
-    # -------------------------------------------------------------------------
 
     def _check_strict(self, event: Any) -> None:
         """Raise for an undeclared type or an invalid payload (#51).
@@ -2179,7 +2154,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         # 2. Resolve the target state node using a multi-stage process.
         target_state = self._resolve_target_state_node(transition)
         if target_state is None:
-            raise StateNotFoundError(transition.target_str, self.machine.id)
+            # Name the SOURCE too, so the failing transition is identifiable
+            # from the exception alone (the sync engine always did this).
+            raise StateNotFoundError(
+                transition.target_str, transition.source.id
+            )
 
         # 3. A self-transition without `reenter: True` is an "internal" transition.
         # It executes actions but does not exit or re-enter the source state.
@@ -2380,6 +2359,282 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 self._active_state_nodes,
                 transition,
             )
+
+    async def _execute_actions(
+        self, actions: List[ActionDefinition], event: Event
+    ) -> List[Tuple[ActionDefinition, BaseException]]:
+        """Run an action list; return the ``(action, exception)`` failures.
+
+        🏛️ Architecture decision (#60): this is the ONE implementation.
+        Each engine used to carry its own ~90-line copy, differing only in
+        how a single action is called (`await` vs inline) and in which
+        callables it refuses. Those two decisions are now the leaves
+        `_run_user_action` and `_execute_builtin_action`; everything else
+        -- spawn dispatch, built-in resolution, error containment, the
+        `on_action_execute` / `on_action_error` hooks, first-failure
+        short-circuit -- is written once here.
+
+        Returns the failures rather than swallowing them so the caller can
+        apply the machine's ``actionErrorPolicy``; before 0.8.0 this
+        returned ``None`` and a half-run list committed like a full one.
+        The first failure stops the remaining actions in the list.
+
+        Raises:
+            ImplementationMissingError: A named action has no implementation
+                and is not a built-in. Configuration errors stay fatal.
+        """
+        failed: List[Tuple[ActionDefinition, BaseException]] = []
+        if not actions:
+            return failed
+        for action_def in actions:
+            for plugin in self._plugins:
+                plugin.on_action_execute(self, action_def)
+
+            # 👶 Spawning is a built-in ACTION shape on both engines (#41:
+            #    `spawn_blocking_` is a distinct mode, not a longer prefix).
+            if action_def.type.startswith(
+                (SPAWN_BLOCKING_PREFIX, "spawn_")
+            ) and not is_builtin(action_def.type):
+                # A spawn that cannot be satisfied (unknown service, bad
+                # factory) is a CONFIGURATION error and stays fatal, like a
+                # missing action -- both engines behaved this way before.
+                await self._spawn_actor(action_def, event)
+                continue
+
+            impl = self.machine.logic.actions.get(action_def.type)
+
+            # 🎬 Built-in action creators. Resolved only when the user has
+            #    NOT supplied an action of the same name, so a machine that
+            #    legitimately defines its own `log` or `assign` keeps working.
+            if impl is None:
+                canonical = resolve_builtin(action_def.type)
+                if canonical is not None:
+                    try:
+                        await self._execute_builtin_action(
+                            canonical, action_def, event
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001 -- user params
+                        self._report_action_failure(action_def, event, exc)
+                        failed.append((action_def, exc))
+                        return failed
+                    continue
+                raise ImplementationMissingError(
+                    f"Action '{action_def.type}' is not implemented."
+                )
+
+            # 🏃 The one engine-specific line: HOW to call it.
+            #
+            # 🏛️ Exceptions from user actions are contained. `send()` is
+            #    fire-and-forget on the async engine, so an escaping error
+            #    would kill the run loop while callers saw "running". The
+            #    error is logged, reported via `on_action_error`, the rest of
+            #    the list is skipped, and the POLICY decides what happens.
+            try:
+                await self._run_user_action(impl, action_def, event)
+            except asyncio.CancelledError:
+                raise
+            except NotSupportedError:
+                raise  # configuration error (async action on sync engine)
+            except Exception as exc:  # noqa: BLE001 -- user code
+                self._report_action_failure(action_def, event, exc)
+                failed.append((action_def, exc))
+                return failed
+        return failed
+
+    def _report_action_failure(
+        self, action_def: ActionDefinition, event: Any, exc: BaseException
+    ) -> None:
+        """Log + `on_action_error` for one failed action (shared)."""
+        logger.exception(
+            "🔥 Action '%s' raised while handling event '%s'; skipping "
+            "remaining actions in this list.",
+            action_def.type,
+            getattr(event, "type", event),
+        )
+        for plugin in self._plugins:
+            plugin.on_action_error(self, action_def, exc)
+
+    async def _execute_builtin_action(
+        self,
+        canonical: str,
+        action_def: ActionDefinition,
+        event: Event,
+    ) -> None:
+        """Executes a built-in action creator asynchronously.
+
+        🏛️ #60: ONE implementation for both engines. Pure-state effects
+        (`assign`, `log`, `emit`, `pure`, `choose`, `enqueueActions`,
+        `cancel`) resolve in `_collect_builtin_followups`; delivery effects
+        (`raise`, `sendTo`, `sendParent`, `forwardTo`, `escalate`,
+        `stopChild`, `spawnChild`) go through the engine LEAVES `_deliver`,
+        `_spawn_actor` and `_stop_actor_leaf`, each of which the sync
+        engine implements as a finished awaitable.
+
+        Args:
+            canonical (str): The canonical built-in action name.
+            action_def (ActionDefinition): The action being executed.
+            event (Event): The triggering event.
+        """
+        # 🧮 Shared semantics first; may yield nested actions to run.
+        followups = self._collect_builtin_followups(
+            canonical, action_def, event
+        )
+        if followups:
+            self._action_depth += 1
+            try:
+                await self._execute_actions(
+                    [ActionDefinition(f) for f in followups], event
+                )
+            finally:
+                self._action_depth -= 1
+
+        params = self._resolve_params(action_def.params, event) or {}
+
+        if canonical == RAISE:
+            target_event = self._resolve_event_spec(params.get("event"), event)
+            self._check_strict(target_event)  # #51: internal typos too
+            delay = self._resolve_delay(params.get("delay"), event)
+            await self._deliver(self, target_event, delay, params.get("id"))
+
+        elif canonical == SEND_TO:
+            actor = self._resolve_actor_target(params.get("to"), event)
+            if actor is None:
+                logger.warning(
+                    "⚠️ sendTo could not resolve target %r; event dropped.",
+                    params.get("to"),
+                )
+                return
+            target_event = self._resolve_event_spec(params.get("event"), event)
+            delay = self._resolve_delay(params.get("delay"), event)
+            await self._deliver(actor, target_event, delay, params.get("id"))
+
+        elif canonical == SEND_PARENT:
+            if self.parent is None:
+                logger.warning("⚠️ sendParent called with no parent actor.")
+                return
+            target_event = self._resolve_event_spec(params.get("event"), event)
+            delay = self._resolve_delay(params.get("delay"), event)
+            await self._deliver(
+                self.parent, target_event, delay, params.get("id")
+            )
+
+        elif canonical == FORWARD_TO:
+            actor = self._resolve_actor_target(params.get("to"), event)
+            if actor is None:
+                logger.warning(
+                    "⚠️ forwardTo could not resolve target %r.",
+                    params.get("to"),
+                )
+                return
+            await self._deliver(actor, event, None, None)
+
+        elif canonical == ESCALATE:
+            error_payload = params.get("error")
+            escalate_event = Event(
+                type=f"xstate.error.actor.{self.id}",
+                payload={"error": error_payload},
+            )
+            if self.parent is not None:
+                await self._deliver(self.parent, escalate_event, None, None)
+            else:
+                logger.error(
+                    "🔥 escalate() with no parent actor: %r", error_payload
+                )
+
+        elif canonical == STOP_CHILD:
+            await self._stop_child_actor(params.get("id"), event)
+
+        elif canonical == SPAWN_CHILD:
+            await self._spawn_child_action(params, event)
+
+    async def _stop_child_actor(self, spec: Any, event: Event) -> None:
+        """Stops a spawned child actor by id.
+
+        Args:
+            spec (Any): The child's id, or a callable resolving one.
+            event (Event): The triggering event.
+        """
+        actor = self._resolve_actor_target(spec, event)
+        if actor is None:
+            logger.warning("⚠️ stopChild could not resolve %r.", spec)
+            return
+        for actor_id, candidate in list(self._actors.items()):
+            if candidate is actor:
+                del self._actors[actor_id]
+                self._actor_sources.pop(actor_id, None)
+                break
+        # 🌐 Also drop it from the actor-system registry, otherwise a stopped
+        #    actor stays addressable by systemId and silently swallows events.
+        registry = self._system_registry()
+        for system_id, candidate in list(registry.items()):
+            if candidate is actor:
+                del registry[system_id]
+        await self._stop_actor_leaf(actor)
+
+    async def _spawn_child_action(
+        self, params: Dict[str, Any], event: Event
+    ) -> None:
+        """Spawns an actor declaratively via the `spawnChild` action.
+
+        Args:
+            params (Dict[str, Any]): Params carrying `src`, `id`, `systemId`
+                and `input`.
+            event (Event): The triggering event.
+        """
+        src = params.get("src")
+        if not isinstance(src, str):
+            logger.warning("⚠️ spawnChild requires a string 'src'.")
+            return
+        synthetic = ActionDefinition(
+            {
+                "type": f"spawn_{src}",
+                "params": {
+                    "id": params.get("id"),
+                    "systemId": params.get("systemId"),
+                    "input": params.get("input"),
+                },
+            }
+        )
+        await self._spawn_actor(synthetic, event)
+
+    async def _dispatch_internal(self, event: Any) -> None:
+        """Leaf: queue an engine-generated event (``done.state.*``) on self.
+
+        Kept separate from the public `send()` so that method's return
+        contract stays clean on both engines (#60).
+        """
+        raise NotImplementedError  # pragma: no cover
+
+    async def _stop_actor_leaf(self, actor: Any) -> None:
+        """Leaf: stop a child actor (awaited on async; inline on sync)."""
+        raise NotImplementedError  # pragma: no cover
+
+    async def _deliver(
+        self,
+        actor: Any,
+        target_event: Event,
+        delay: Optional[float],
+        send_id: Optional[str],
+    ) -> None:
+        """Leaf: deliver an event to an actor, honouring an optional delay."""
+        raise NotImplementedError  # pragma: no cover
+
+    async def _run_user_action(
+        self,
+        impl: Callable[..., Any],
+        action_def: ActionDefinition,
+        event: Any,
+    ) -> None:
+        """Leaf: invoke ONE user action. Engine-specific (#60)."""
+        raise NotImplementedError  # pragma: no cover
+
+    async def _spawn_actor(
+        self, action_def: ActionDefinition, event: Any
+    ) -> None:
+        """Leaf: spawn a child actor. Engine-specific (#60)."""
+        raise NotImplementedError  # pragma: no cover
 
     async def _execute_lifecycle_actions(
         self, actions: List[ActionDefinition], event: Event
@@ -2760,7 +3015,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                     data=self._resolve_output(final_state),
                     src=ancestor.id,
                 )
-                await self.send(done_event)
+                await self._dispatch_internal(done_event)
                 # Per SCXML, only fire for the first completed ancestor.
                 return
             ancestor = ancestor.parent
@@ -3082,9 +3337,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             del registry[system_id]
 
     @staticmethod
-    def _matching_descriptors(
-        on_map: Dict[str, List[TransitionDefinition]], event_type: str
-    ) -> List[str]:
+    def _matching_descriptors(node: StateNode, event_type: str) -> List[str]:
         """Finds the `on` keys that match an event type, most specific first.
 
         Implements XState's event-descriptor matching:
@@ -3094,56 +3347,30 @@ class BaseInterpreter(Generic[TContext, TEvent]):
           (``"mouse.click.*"`` beats ``"mouse.*"``);
         - the bare wildcard ``"*"`` matches anything and is always last.
 
-        🏛️ Architecture decision: previously the lookup was a single exact
-        dict test, so ``"*"`` and ``"mouse.*"`` keys never matched anything —
-        a valid XState config that silently did nothing. Ordering matters:
-        SCXML and XState both require the most specific descriptor to win, and
-        the fallback ordering was itself a bug fixed upstream in v5.32.2.
+        🏛️ Architecture decision: ordering matters -- SCXML and XState both
+        require the most specific descriptor to win. Engine-synthesised
+        events (`done.*`, `error.*`, `after.*`, `xstate.*`) match ONLY an
+        exact key: a user's ``"*"`` means "any event I might receive", not
+        "swallow my own timers and service results".
 
-        Args:
-            on_map (Dict[str, List[TransitionDefinition]]): A state's `on` map.
-            event_type (str): The event type being dispatched.
-
-        Returns:
-            List[str]: Matching keys ordered most-specific first.
+        ⚡ #55 part 2: reads the index `StateNode` precompiles at build
+        time (`_on_partials`, `_on_has_wildcard`) instead of scanning the
+        `on` dict per event. For the common machine with no partial
+        descriptors the loop body never executes.
         """
+        on_map = node.on
         if not on_map or not event_type:
             return []
-
         matches: List[str] = []
-        # 🎯 Exact match is always the most specific.
         if event_type in on_map:
             matches.append(event_type)
-
-        # 🔒 Internal lifecycle events are NEVER caught by a wildcard or a
-        #    partial descriptor.
-        #
-        # 🏛️ Architecture decision: `done.invoke.*`, `done.state.*`,
-        # `error.platform.*` and `after.*` are synthetic events the engine
-        # raises to drive `onDone`, `onError` and `after`. A user writing
-        # `on: {"*": ...}` means "any event I might receive", not "also
-        # swallow my own timers and service results". Without this guard a
-        # single wildcard silently breaks every invoke and delayed transition
-        # in that state — XState draws the same line.
         if event_type.startswith(_SYSTEM_EVENT_PREFIXES):
             return matches
-
-        # 🌓 Partial descriptors: "a.b.*" matches "a.b.c" and "a.b".
-        partials: List[str] = []
-        for key in on_map:
-            if key == "*" or not key.endswith(".*"):
-                continue
-            prefix = key[:-2]
+        for key, prefix in node._on_partials:  # already longest-first
             if event_type == prefix or event_type.startswith(prefix + "."):
-                partials.append(key)
-        # 🔽 Longest prefix wins.
-        partials.sort(key=len, reverse=True)
-        matches.extend(partials)
-
-        # 🃏 The bare wildcard is the last resort.
-        if "*" in on_map:
+                matches.append(key)
+        if node._on_has_wildcard:
             matches.append("*")
-
         return matches
 
     def _collect_eligible_transitions(
@@ -3206,7 +3433,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             #    partial descriptors, most specific first.
             if not is_explicit_transient_event:
                 blocked = False
-                for key in self._matching_descriptors(current.on, event.type):
+                for key in self._matching_descriptors(current, event.type):
                     for t in current.on[key]:
                         # 🚫 A forbidden transition consumes the event here so
                         #    no ancestor handler can see it.

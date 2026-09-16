@@ -1190,220 +1190,29 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             else:
                 break  # No more transient transitions; state is stable.
 
-    async def _execute_actions(
-        self, actions: List[ActionDefinition], event: Event
-    ) -> List[Tuple[ActionDefinition, BaseException]]:
-        """Asynchronously executes a list of action definitions.
-
-        This implementation respects the asynchronous nature of actions,
-        `await`ing them if they are coroutine functions. It also handles the
-        special "spawn" action for creating child actors.
-
-        Args:
-            actions (List[ActionDefinition]): The list of `ActionDefinition`
-                objects to execute.
-            event (Event): The event that triggered these actions.
-
-        Returns:
-            The ``(action, exception)`` pairs for actions that raised, in
-            execution order. Empty when every action succeeded. The first
-            failure stops execution of the remaining actions in the list.
-
-            🏛️ Returning the failures rather than swallowing them is what
-            lets the caller apply the machine's ``action_error_policy``:
-            before 0.8.0 this method returned ``None`` unconditionally, so
-            `_execute_transition` could not tell a complete action list from
-            a partially executed one and committed the transition either way.
-
-        Raises:
-            ImplementationMissingError: If a named action is not defined in the
-                machine's logic dictionary.
-        """
-        failed: List[Tuple[ActionDefinition, BaseException]] = []
-        if not actions:
-            return failed
-
-        for action_def in actions:
-            # 🔔 Notify plugins before executing each action.
-            for plugin in self._plugins:
-                plugin.on_action_execute(self, action_def)
-
-            # 👶 Handle actor spawning as a special, built-in action type.
-            # 🏛️ #41: `spawn_blocking_` is a distinct MODE (see
-            #    `_spawn_actor`), not just a longer prefix of `spawn_`.
-            if action_def.type.startswith(
-                (SPAWN_BLOCKING_PREFIX, "spawn_")
-            ) and not is_builtin(action_def.type):
-                await self._spawn_actor(action_def, event)
-                continue
-
-            # 🔎 Find the implementation for the named action.
-            action_callable = self.machine.logic.actions.get(action_def.type)
-
-            # 🎬 Built-in action creators. Resolved only when the user has NOT
-            #    supplied an action of the same name, so a machine that
-            #    legitimately defines its own `log` or `assign` keeps working.
-            if action_callable is None:
-                canonical = resolve_builtin(action_def.type)
-                if canonical is not None:
-                    # 🛡️ Built-ins resolve user-supplied params/callables, so
-                    #    they can raise for exactly the same reasons a user
-                    #    action can. Containing them here keeps the documented
-                    #    contract - and stops an escaping error from killing
-                    #    the fire-and-forget run loop.
-                    try:
-                        await self._execute_builtin_action(
-                            canonical, action_def, event
-                        )
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as exc:
-                        logger.exception(
-                            "🔥 Built-in action '%s' raised while handling "
-                            "'%s'; skipping remaining actions.",
-                            action_def.type,
-                            event.type,
-                        )
-                        for plugin in self._plugins:
-                            plugin.on_action_error(self, action_def, exc)
-                        failed.append((action_def, exc))
-                        return failed
-                    continue
-
-            if not action_callable:
-                raise ImplementationMissingError(
-                    f"Action '{action_def.type}' is not implemented."
-                )
-
-            # 🏃‍♂️ Execute the action, awaiting if it's an async function.
-            #
-            # 🏛️ Architecture decision: exceptions from user-supplied actions
-            # are contained here. `send()` is fire-and-forget, so an escaping
-            # exception would tear down `_run_event_loop` while callers still
-            # observed `status == "running"` — a silently dead machine. Per
-            # the documented contract the error is logged, the remaining
-            # actions are skipped, and the run loop survives. Configuration
-            # errors (missing action) are raised above and remain fatal.
-            try:
-                if inspect.iscoroutinefunction(action_callable):
-                    await action_callable(
-                        self, self.context, event, action_def
-                    )
-                else:
-                    action_callable(self, self.context, event, action_def)
-            except asyncio.CancelledError:
-                # 🛑 Cooperative cancellation must always propagate.
-                raise
-            except Exception as exc:
-                logger.exception(
-                    "🔥 Action '%s' raised while handling event '%s'; "
-                    "skipping remaining actions in this list.",
-                    action_def.type,
-                    event.type,
-                )
-                # 🔔 Surface the failure programmatically. The hook fires
-                #    under every policy; what the caller DOES with the
-                #    failure is decided by `action_error_policy` upstream.
-                for plugin in self._plugins:
-                    plugin.on_action_error(self, action_def, exc)
-                failed.append((action_def, exc))
-                return failed
-        return failed
-
     # -------------------------------------------------------------------------
     # 🤖 Asynchronous Task Implementations (Actors, Timers, Services)
     # -------------------------------------------------------------------------
 
-    async def _execute_builtin_action(
+    async def _run_user_action(
         self,
-        canonical: str,
+        impl: Callable[..., Any],
         action_def: ActionDefinition,
-        event: Event,
+        event: Any,
     ) -> None:
-        """Executes a built-in action creator asynchronously.
+        """Leaf: call one action, awaiting it if it is a coroutine function."""
+        if inspect.iscoroutinefunction(impl):
+            await impl(self, self.context, event, action_def)
+        else:
+            impl(self, self.context, event, action_def)
 
-        Pure-state effects (`assign`, `log`, `emit`, `pure`, `choose`,
-        `enqueueActions`, `cancel`) are handled by the shared base
-        implementation. Delivery effects (`raise`, `sendTo`, `sendParent`,
-        `forwardTo`, `escalate`, `stopChild`, `spawnChild`) need the event
-        loop and are handled here.
+    async def _dispatch_internal(self, event: Any) -> None:
+        self._enqueue(event)
 
-        Args:
-            canonical (str): The canonical built-in action name.
-            action_def (ActionDefinition): The action being executed.
-            event (Event): The triggering event.
-        """
-        # 🧮 Shared semantics first; may yield nested actions to run.
-        followups = self._collect_builtin_followups(
-            canonical, action_def, event
-        )
-        if followups:
-            self._action_depth += 1
-            try:
-                await self._execute_actions(
-                    [ActionDefinition(f) for f in followups], event
-                )
-            finally:
-                self._action_depth -= 1
-
-        params = self._resolve_params(action_def.params, event) or {}
-
-        if canonical == RAISE:
-            target_event = self._resolve_event_spec(params.get("event"), event)
-            self._check_strict(target_event)  # #51: internal typos too
-            delay = self._resolve_delay(params.get("delay"), event)
-            await self._deliver(self, target_event, delay, params.get("id"))
-
-        elif canonical == SEND_TO:
-            actor = self._resolve_actor_target(params.get("to"), event)
-            if actor is None:
-                logger.warning(
-                    "⚠️ sendTo could not resolve target %r; event dropped.",
-                    params.get("to"),
-                )
-                return
-            target_event = self._resolve_event_spec(params.get("event"), event)
-            delay = self._resolve_delay(params.get("delay"), event)
-            await self._deliver(actor, target_event, delay, params.get("id"))
-
-        elif canonical == SEND_PARENT:
-            if self.parent is None:
-                logger.warning("⚠️ sendParent called with no parent actor.")
-                return
-            target_event = self._resolve_event_spec(params.get("event"), event)
-            delay = self._resolve_delay(params.get("delay"), event)
-            await self._deliver(
-                self.parent, target_event, delay, params.get("id")
-            )
-
-        elif canonical == FORWARD_TO:
-            actor = self._resolve_actor_target(params.get("to"), event)
-            if actor is None:
-                logger.warning(
-                    "⚠️ forwardTo could not resolve target %r.",
-                    params.get("to"),
-                )
-                return
-            await self._deliver(actor, event, None, None)
-
-        elif canonical == ESCALATE:
-            error_payload = params.get("error")
-            escalate_event = Event(
-                type=f"xstate.error.actor.{self.id}",
-                payload={"error": error_payload},
-            )
-            if self.parent is not None:
-                await self._deliver(self.parent, escalate_event, None, None)
-            else:
-                logger.error(
-                    "🔥 escalate() with no parent actor: %r", error_payload
-                )
-
-        elif canonical == STOP_CHILD:
-            await self._stop_child_actor(params.get("id"), event)
-
-        elif canonical == SPAWN_CHILD:
-            await self._spawn_child_action(params, event)
+    async def _stop_actor_leaf(self, actor: Any) -> None:
+        result = actor.stop()
+        if inspect.isawaitable(result):
+            await result
 
     async def _deliver(
         self,
@@ -1486,58 +1295,6 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         result = actor.send(target_event)
         if inspect.isawaitable(result):
             await result
-
-    async def _stop_child_actor(self, spec: Any, event: Event) -> None:
-        """Stops a spawned child actor by id.
-
-        Args:
-            spec (Any): The child's id, or a callable resolving one.
-            event (Event): The triggering event.
-        """
-        actor = self._resolve_actor_target(spec, event)
-        if actor is None:
-            logger.warning("⚠️ stopChild could not resolve %r.", spec)
-            return
-        for actor_id, candidate in list(self._actors.items()):
-            if candidate is actor:
-                del self._actors[actor_id]
-                self._actor_sources.pop(actor_id, None)
-                break
-        # 🌐 Also drop it from the actor-system registry, otherwise a stopped
-        #    actor stays addressable by systemId and silently swallows events.
-        registry = self._system_registry()
-        for system_id, candidate in list(registry.items()):
-            if candidate is actor:
-                del registry[system_id]
-        result = actor.stop()
-        if inspect.isawaitable(result):
-            await result
-
-    async def _spawn_child_action(
-        self, params: Dict[str, Any], event: Event
-    ) -> None:
-        """Spawns an actor declaratively via the `spawnChild` action.
-
-        Args:
-            params (Dict[str, Any]): Params carrying `src`, `id`, `systemId`
-                and `input`.
-            event (Event): The triggering event.
-        """
-        src = params.get("src")
-        if not isinstance(src, str):
-            logger.warning("⚠️ spawnChild requires a string 'src'.")
-            return
-        synthetic = ActionDefinition(
-            {
-                "type": f"spawn_{src}",
-                "params": {
-                    "id": params.get("id"),
-                    "systemId": params.get("systemId"),
-                    "input": params.get("input"),
-                },
-            }
-        )
-        await self._spawn_actor(synthetic, event)
 
     async def _spawn_actor(
         self, action_def: ActionDefinition, event: Event

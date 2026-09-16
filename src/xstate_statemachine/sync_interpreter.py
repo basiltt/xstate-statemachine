@@ -20,6 +20,8 @@
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import copy
+import functools
+import inspect
 import logging
 import threading
 import time
@@ -30,10 +32,12 @@ from typing import (
     Callable,
     Deque,
     Dict,
+    Generic,
     List,
     Optional,
     Set,
     Tuple,
+    TypeVar,
     Union,
     overload,
 )
@@ -85,6 +89,45 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # ⛓️ SyncInterpreter Class Definition
 # -----------------------------------------------------------------------------
+_T = TypeVar("_T")
+
+
+class _Done(Generic[_T]):
+    """An already-finished awaitable.
+
+    🏛️ #60: the base algorithm is written once, as coroutines that `await`
+    only the interpreter's own LEAF methods. On the sync engine every leaf
+    has finished by the time it returns, so it returns one of these:
+    `await _Done(v)` yields `v` immediately, never suspending. `_drive()`
+    can therefore run any base coroutine to completion in a single
+    `send(None)`, and if some leaf ever does suspend, that is a bug the
+    driver reports instead of silently hanging.
+
+    Also truthy/falsy like its value for callers that never await it
+    (`if interp.send(...)`), which keeps `send()`'s return usable both
+    ways.
+    """
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: _T) -> None:
+        self.value = value
+
+    def __await__(self):  # type: ignore[no-untyped-def]
+        if False:  # pragma: no cover - makes this a generator
+            yield
+        return self.value
+
+    def __bool__(self) -> bool:
+        return bool(self.value)
+
+    def __eq__(self, other: object) -> bool:
+        return self.value == other
+
+    def __repr__(self) -> str:
+        return repr(self.value)
+
+
 class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     """Brings a state machine definition to life by interpreting its behavior synchronously.
 
@@ -158,6 +201,29 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         #    are gone. Timers no longer own threads; see `_after_timer`.
 
         logger.info("✅ Synchronous Interpreter '%s' initialized. 🎉", self.id)
+
+    # -------------------------------------------------------------------------
+    # 🚗 Driving the shared algorithm (#60)
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _drive(coro: Any) -> Any:
+        """Run a base-algorithm coroutine to completion, synchronously.
+
+        The base steps await only leaves that return `_Done`, so the very
+        first `send(None)` must raise `StopIteration`. If it does not, a
+        leaf genuinely suspended -- an async action slipped through, or a
+        new leaf awaits real I/O -- and that is reported loudly rather
+        than left to hang.
+        """
+        try:
+            coro.send(None)
+        except StopIteration as stop:
+            return stop.value
+        coro.close()
+        raise RuntimeError(
+            "SyncInterpreter: a core-algorithm coroutine suspended. A leaf "
+            "method awaited real I/O; every sync leaf must return `_Done`."
+        )
 
     # -------------------------------------------------------------------------
     # 🌐 Public API
@@ -254,7 +320,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # after which the queue is drained normally.
         self._is_processing = True
         try:
-            self._enter_states([self.machine])
+            self._drive(self._enter_states([self.machine]))
         finally:
             self._is_processing = False
         # 📬 Drain anything an entry action raised during that descent.
@@ -514,7 +580,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     plugin.on_event_received(self, current_event)
 
                 before = frozenset(self._active_state_nodes)
-                self._process_event(current_event)
+                self._drive(self._process_event(current_event))
                 self._process_transient_transitions()
 
                 # 📨 Replay deferred events at the HEAD of the queue, ahead of
@@ -534,248 +600,6 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     # -------------------------------------------------------------------------
     # ⚙️ Core State Transition Logic (Private)
     # -------------------------------------------------------------------------
-
-    def _process_event(
-        self, event: Union[Event, DoneEvent, AfterEvent]
-    ) -> None:
-        """Finds and executes the optimal transition set for a given event.
-
-        Mirrors the asynchronous `BaseInterpreter._process_event`: one
-        transition is selected per orthogonal region and each is executed in
-        turn.
-
-        Args:
-            event: The event object to process.
-        """
-        # 1. Select every transition this event triggers (one per region).
-        transitions = self._select_transitions(event)
-        if not transitions:
-            self._handle_unhandled_event(event)
-            return
-
-        # 2. Execute each in turn, skipping any invalidated by an earlier one.
-        for transition in transitions:
-            if (
-                len(transitions) > 1
-                and transition.source not in self._active_state_nodes
-            ):
-                logger.debug(
-                    "⏭️  Skipping stale transition from '%s'.",
-                    transition.source.id,
-                )
-                continue
-            self._execute_transition_sync(transition, event)
-
-    def _execute_transition_sync(
-        self,
-        transition: TransitionDefinition,
-        event: Union[Event, DoneEvent, AfterEvent],
-    ) -> None:
-        """Executes one selected transition synchronously.
-
-        Args:
-            transition: The transition to execute.
-            event: The event that triggered this transition.
-        """
-        # 1. A "targetless" transition only executes actions without changing state.
-        if not transition.target_str:
-            logger.debug("🔄 Executing internal transition actions.")
-            self._execute_internal_transition(transition, event)
-            return
-
-        # 2. Resolve the target state node.
-        target_state = self._resolve_target_state_robustly(transition)
-
-        # 3. A self-transition without `reenter: True` is also internal.
-        if target_state == transition.source and not transition.reenter:
-            logger.debug("🔄 Executing internal transition actions.")  # 📉 #55
-            self._execute_internal_transition(transition, event)
-            return
-
-        # 4. All other transitions are external; process the state change.
-        self._process_single_transition(transition, event, target_state)
-
-    def _execute_internal_transition(
-        self, transition: TransitionDefinition, event: Event
-    ) -> None:
-        """Sync mirror of `BaseInterpreter._execute_internal_transition`.
-
-        Context-only transaction for targetless / internal self-transitions
-        so `actionErrorPolicy` applies to action-only handlers (#27 review).
-        """
-        context_before: Optional[TContext] = (
-            copy.deepcopy(self.context)
-            if self.machine.action_error_policy != "continue"
-            else None
-        )
-        try:
-            failed = self._execute_actions(transition.actions, event)
-            if failed:
-                self._apply_action_error_policy(transition, failed)
-        except _RollbackRequested as cause:
-            logger.warning(
-                "💥 Internal transition on '%s' failed; restoring context.",
-                transition.source.id,
-            )
-            self._finish_rollback(cause, transition, context_before)
-            return
-        if not failed:
-            self.last_transition_ok = True
-        for plugin in self._plugins:
-            plugin.on_transition(
-                self,
-                self._active_state_nodes,
-                self._active_state_nodes,
-                transition,
-            )
-
-    def _execute_lifecycle_actions(
-        self, actions: List[ActionDefinition], event: Event
-    ) -> None:
-        """Sync mirror of `BaseInterpreter._execute_lifecycle_actions`."""
-        failed = self._execute_actions(actions, event)
-        if not failed:
-            return
-        if self._lifecycle_failures:
-            self._lifecycle_failures[-1][1].extend(failed)
-            return
-        self._report_start_failure(failed)
-
-    def _process_single_transition(
-        self,
-        transition: TransitionDefinition,
-        event: Event,
-        target_state: StateNode,
-    ) -> None:
-        """Processes a single, specific external transition.
-
-        Args:
-            transition: The external `TransitionDefinition` to execute.
-            event: The event that triggered this transition.
-            target_state: The pre-resolved target `StateNode`.
-        """
-        # For external transitions, prepare for state changes.
-        snapshot_before_transition = self._active_state_nodes.copy()
-        # 🧷 See BaseInterpreter._execute_transition: context is only
-        #    snapshotted when a rollback could need it.
-        context_before: Optional[TContext] = (
-            copy.deepcopy(self.context)
-            if self.machine.action_error_policy != "continue"
-            else None
-        )
-        domain = self._find_transition_domain(transition, target_state)
-
-        # Determine the full path of states to exit and enter.
-        path_to_enter = self._get_path_to_state(target_state, stop_at=domain)
-        states_to_exit: Set[StateNode] = self._compute_states_to_exit(
-            domain, target_state
-        )
-
-        # 🕰️ A history pseudo-state is never entered itself; expand it to the
-        #    remembered configuration. Mirrors BaseInterpreter._execute_transition.
-        history_targets: List[StateNode] = []
-        if target_state.type == "history":
-            history_targets = self._resolve_history_target(target_state)
-            path_to_enter = []
-
-        # Execute the transition sequence (Exit -> Actions -> Enter)
-        #
-        # 🏛️ Architecture decision: `_exit_states`/`_enter_states` own all
-        # mutation of `_active_state_nodes`. A previous implementation also ran
-        # `difference_update(states_to_exit)` after entry, which deleted the
-        # initial children just entered by the recursive descent and left the
-        # machine with no active leaf. See `BaseInterpreter._execute_transition`.
-        #
-        # ⚛️ ATOMICITY: the three steps below are one transaction. If a user
-        #    action raises between exit and enter, the source has already been
-        #    left and the target was never reached, so the machine would be
-        #    holding an EMPTY configuration while still reporting "running" —
-        #    permanently dead and advertising itself as healthy. Restoring the
-        #    pre-transition configuration keeps the interpreter in a state that
-        #    actually exists, then re-raises so the caller still learns of the
-        #    failure. A torn configuration is strictly worse than a rolled-back
-        #    one: it is unrecoverable and silently swallows every later event.
-        # 🧾 Entry/exit failures are collected here and judged once the whole
-        #    sequence has run -- see `BaseInterpreter._execute_lifecycle_actions`.
-        self._lifecycle_failures.append((transition, []))
-        try:
-            self._exit_states(
-                sorted(
-                    list(states_to_exit),
-                    # 🔀 Depth alone leaves ties between sibling parallel
-                    #    regions, so set iteration order decided which exited
-                    #    first — the same machine and event could emit exit
-                    #    actions in a different order between runs, which is
-                    #    untestable and makes cleanup logic subtly unreliable.
-                    #    `id` is a stable secondary key.
-                    key=lambda s: (s.depth, s.id),
-                    reverse=True,
-                ),
-                event,
-            )
-            failed_actions = self._execute_actions(transition.actions, event)
-            if failed_actions:
-                self._apply_action_error_policy(transition, failed_actions)
-            self._enter_states(path_to_enter, event)
-
-            # 🕰️ Restore the remembered configuration for a history target.
-            #    ONE combined call — see `BaseInterpreter._execute_transition`.
-            #    Entering each remembered leaf separately let every ancestor
-            #    run its default `initial` descent as well, activating two
-            #    leaves in one region.
-            if target_state.type == "history":
-                combined_path: List[StateNode] = []
-                for node in history_targets:
-                    for step in self._get_path_to_state(node, stop_at=domain):
-                        if step not in combined_path:
-                            combined_path.append(step)
-                if combined_path:
-                    self._enter_states(combined_path, event)
-            lifecycle_failed = self._lifecycle_failures[-1][1]
-            if lifecycle_failed:
-                self._apply_action_error_policy(transition, lifecycle_failed)
-            failed_actions = failed_actions or lifecycle_failed
-        except Exception as rollback_cause:
-            requested = isinstance(rollback_cause, _RollbackRequested)
-            logger.log(
-                logging.WARNING if requested else logging.ERROR,
-                "💥 Transition on '%s' failed; rolling back to the "
-                "pre-transition configuration.",
-                transition.source.id,
-                exc_info=not requested,
-            )
-            # ⏱️ Cancel timers/invokes armed by the PARTIAL entry -- see the
-            #    matching comment in `BaseInterpreter._execute_transition`.
-            for node in self._active_state_nodes - snapshot_before_transition:
-                self._cancel_state_tasks(node)
-            self._active_state_nodes.clear()
-            self._active_state_nodes.update(snapshot_before_transition)
-
-            # ⏱️ Re-arm cancelled timers/services — see the matching comment
-            #    in `BaseInterpreter._execute_transition`. Without this the
-            #    restored configuration is inert.
-            for node in snapshot_before_transition:
-                if node in states_to_exit:
-                    self._schedule_state_tasks(node)
-            if self._finish_rollback(
-                rollback_cause, transition, context_before
-            ):
-                return
-            raise
-        finally:
-            self._lifecycle_failures.pop()
-
-        # Notify plugins and subscribers of the completed transition.
-        if not failed_actions:
-            self.last_transition_ok = True
-        self._notify_subscribers()
-        for plugin in self._plugins:
-            plugin.on_transition(
-                self,
-                snapshot_before_transition,
-                self._active_state_nodes.copy(),
-                transition,
-            )
 
     def _process_transient_transitions(self) -> None:
         """Continuously processes event-less ("always") transitions until stable.
@@ -817,7 +641,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                     "🚀 Processing transient transition(s) in '%s'", self.id
                 )
                 # 🔄 Directly process the *found* transition, which is more efficient.
-                self._process_event(transient_event)
+                self._drive(self._process_event(transient_event))
             else:
                 # ✅ No more transient transitions found. The state is stable.
                 logger.debug(
@@ -829,439 +653,50 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     # ➡️⬅️ State Lifecycle Hooks (Private)
     # -------------------------------------------------------------------------
 
-    def _enter_states(
-        self, states_to_enter: List[StateNode], event: Optional[Event] = None
-    ) -> None:
-        """Synchronously enters a list of states and executes their entry logic.
-
-        This method handles adding states to the active set, executing 'on_entry'
-        actions, invoking services, scheduling timers, and recursively entering
-        initial states for compound/parallel states.
-
-        Args:
-            states_to_enter: A list of `StateNode` objects to enter,
-                ordered from parent to child.
-            event: The optional event that triggered the state entry.
-        """
-        # 🗺️ Index the remaining path so a compound state can tell whether the
-        #    caller already named which child to descend into. See the matching
-        #    comment in `BaseInterpreter._enter_states`: descending into
-        #    `initial` unconditionally, in addition to walking the explicit
-        #    path, leaves two simultaneously active leaves in one region.
-        explicit_children = {
-            node.parent.id
-            for node in states_to_enter
-            if node.parent is not None
-        }
-        explicit_child_ids = {
-            node.id for node in states_to_enter if node.parent is not None
-        }
-
-        for state in states_to_enter:
-            logger.debug("➡️ Entering state: '%s'", state.id)  # 📉 #55
-            self._active_state_nodes.add(state)
-            # 📨 Pass the REAL triggering event through. Synthesising an
-            #    `entry.<id>` event here discarded the payload, so an entry
-            #    action reading `event.payload` — the normal way to seed state
-            #    from an event — silently received nothing. The async engine
-            #    always forwarded the real event, so this also made the two
-            #    engines disagree. `event` may be None during initial entry,
-            #    which is why the fallback is retained.
-            self._execute_lifecycle_actions(
-                state.entry,
-                event if event is not None else Event(f"entry.{state.id}"),
-            )
-
-            # 🏁 Handle final state logic by firing a `done` event if applicable.
-            if state.type == "final":
-                logger.debug(
-                    "🏁 Final state '%s' entered. Checking parent for 'on_done'.",
-                    state.id,
-                )
-                self._check_and_fire_on_done(state)
-
-            # 🌳 For compound states, recursively enter their initial child state.
-            if state.type == "compound" and state.initial:
-                # ⏭️ Skip the default descent when the entry path already
-                #    specifies which child of this state to enter.
-                if state.id in explicit_children:
-                    self._schedule_state_tasks(state)
-                    logger.debug(
-                        "✅ State '%s' entered successfully.", state.id
-                    )
-                    continue
-                initial_child = state.states.get(state.initial)
-                if initial_child:
-                    logger.debug(
-                        "🌲 Entering initial child '%s' for compound state '%s'.",
-                        initial_child.id,
-                        state.id,
-                    )
-                    self._enter_states([initial_child])
-                else:
-                    raise InvalidConfigError(
-                        f"❌ Initial state '{state.initial}' not found in "
-                        f"compound state '{state.id}'."
-                    )
-
-            elif state.type == "compound" and state.states:
-                # 🚨 A compound state with children but no resolvable
-                #    `initial` cannot produce an active leaf. Left unchecked
-                #    the machine starts "successfully" with an empty
-                #    configuration and silently drops every event.
-                raise InvalidConfigError(
-                    f"❌ Compound state '{state.id}' has no 'initial' state, "
-                    "so entering it yields no active leaf. Declare "
-                    "'initial' explicitly."
-                )
-
-            # 🌐 For parallel states, recursively enter all child regions.
-            elif state.type == "parallel":
-                logger.debug(
-                    "🌐 Entering all regions for parallel state '%s'.",
-                    state.id,
-                )
-                # 🌐 Enter every region EXCEPT one already named by the entry
-                #    path (that region is walked explicitly, and entering
-                #    it again would trigger its default `initial` descent
-                #    and activate the wrong child alongside the target).
-                #    History pseudo-states are never entered as regions.
-                regions = [
-                    child
-                    for child in state.states.values()
-                    if child.type != "history"
-                    and child.id not in explicit_child_ids
-                ]
-                if regions:
-                    self._enter_states(regions)
-
-            # ⚙️ Schedule any tasks (invokes, timers).
-            self._schedule_state_tasks(state)
-            logger.debug("✅ State '%s' entered successfully.", state.id)
-
-    def _exit_states(
-        self, states_to_exit: List[StateNode], event: Optional[Event] = None
-    ) -> None:
-        """Synchronously exits a list of states and executes their exit logic.
-
-        This handles canceling any tasks associated with the state, executing
-        'on_exit' actions, and removing states from the active set.
-
-        Args:
-            states_to_exit: A list of `StateNode` objects to exit,
-                ordered from child to parent.
-            event: The optional event that triggered the state exit.
-        """
-        # 🕰️ Record history *before* anything is removed, so the
-        #    remembered configuration reflects the pre-transition state.
-        self._record_history(states_to_exit)
-
-        # 🧹 Cancel tasks BEFORE any other processing to prevent race conditions.
-        for state in states_to_exit:
-            self._cancel_state_tasks(state)
-
-        # 🏃‍♂️ Then proceed with normal exit processing.
-        for state in states_to_exit:
-            logger.debug("⬅️ Exiting state: '%s'", state.id)  # 📉 #55
-            # 📨 Forward the real triggering event; see `_enter_states`.
-            self._execute_lifecycle_actions(
-                state.exit,
-                event if event is not None else Event(f"exit.{state.id}"),
-            )
-            self._active_state_nodes.discard(state)
-            logger.debug("✅ State '%s' exited successfully.", state.id)
-
-    def _check_and_fire_on_done(self, final_state: StateNode) -> None:
-        """Checks if an ancestor state is "done" and queues a `done.state.*` event.
-
-        Triggered when a final state is entered. It checks if the parent
-        state has met its completion criteria (e.g., all parallel regions
-        are in final states). If so, it queues the corresponding `on_done` event.
-
-        Args:
-            final_state: The final state that was just entered.
-        """
-        ancestor = final_state.parent
-        logger.debug(
-            "🔍 Checking 'done' status for ancestors of final state '%s'.",
-            final_state.id,
-        )
-        while ancestor:
-            # 🧐 Check if the ancestor has an `on_done` handler and is fully completed.
-            if ancestor.on_done and self._is_state_done(ancestor):
-                done_event_type = f"done.state.{ancestor.id}"
-                logger.info(
-                    "🥳 State '%s' is done! Queuing onDone event: '%s'",
-                    ancestor.id,
-                    done_event_type,
-                )
-                # 📬 Send the `done.state.*` event for the next processing
-                #    cycle, carrying the final state's `output` as done data.
-                self.send(
-                    DoneEvent(
-                        type=done_event_type,
-                        data=self._resolve_output(final_state),
-                        src=ancestor.id,
-                    )
-                )
-                return  # 🛑 Only fire the event for the nearest completed ancestor.
-
-            ancestor = ancestor.parent
-
-        # 🏁 A top-level final state completes the machine itself.
-        if final_state.parent is self.machine or final_state.parent is None:
-            # 📝 A machine-level `output` wins over the final state's own,
-            #    matching XState. See BaseInterpreter._check_and_fire_on_done.
-            machine_output = getattr(self.machine, "machine_output", None)
-            if machine_output is not None:
-                self._complete(self._resolve_output_value(machine_output))
-            else:
-                self._complete(self._resolve_output(final_state))
-
     # -------------------------------------------------------------------------
     # ⚡ Action & Service Execution (Private Overrides)
     # -------------------------------------------------------------------------
 
-    def _execute_actions(
-        self, actions: List[ActionDefinition], event: Event
-    ) -> List[Tuple[ActionDefinition, BaseException]]:
-        """Synchronously executes a list of actions.
-
-        This method iterates through action definitions, validates them, and
-        executes the corresponding implementation from the machine's logic.
-        It specifically handles spawning actors and raises errors for async actions.
-
-        Args:
-            actions: The list of `ActionDefinition` objects to execute.
-            event: The event that triggered these actions.
-
-        Returns:
-            The ``(action, exception)`` pairs for actions that raised, in
-            execution order; empty when all succeeded. Mirrors
-            `Interpreter._execute_actions` so both engines feed the same
-            ``action_error_policy`` logic in `BaseInterpreter`.
-
-        Raises:
-            ImplementationMissingError: If an action implementation is not found.
-            NotSupportedError: If an async action is encountered.
-        """
-        failed: List[Tuple[ActionDefinition, BaseException]] = []
-        if not actions:
-            return failed
-
-        for action_def in actions:
-            # 🔌 Notify plugins before execution
-            for plugin in self._plugins:
-                plugin.on_action_execute(self, action_def)
-
-            # 🎭 Handle actor spawning actions
-            if action_def.type.startswith(
-                (SPAWN_BLOCKING_PREFIX, "spawn_")
-            ) and not is_builtin(action_def.type):
-                self._spawn_actor(action_def, event)
-                continue
-
-            # ⚙️ Handle normal actions
-            action_impl = self.machine.logic.actions.get(action_def.type)
-
-            # 🎬 Built-in action creators, resolved only when the user has NOT
-            #    supplied an action of the same name so a machine defining its
-            #    own `log` or `assign` keeps working.
-            if action_impl is None:
-                canonical = resolve_builtin(action_def.type)
-                if canonical is not None:
-                    # 🛡️ See Interpreter._execute_actions: built-ins resolve
-                    #    user callables and can raise like any user action.
-                    try:
-                        self._execute_builtin_action(
-                            canonical, action_def, event
-                        )
-                    except Exception as exc:
-                        logger.exception(
-                            "🔥 Built-in action '%s' raised while handling "
-                            "'%s'; skipping remaining actions.",
-                            action_def.type,
-                            event.type,
-                        )
-                        # 🔔 The async engine already fired this hook for
-                        #    built-in failures; the sync engine did not, so
-                        #    the same machine reported different things on
-                        #    the two engines. Aligned in 0.8.0.
-                        for plugin in self._plugins:
-                            plugin.on_action_error(self, action_def, exc)
-                        failed.append((action_def, exc))
-                        return failed
-                    continue
-
-            if not action_impl:
-                raise ImplementationMissingError(
-                    f"Action '{action_def.type}' not implemented."
-                )
-            # 🚫 Reject async actions
-            if self._is_async_callable(action_impl):
-                raise NotSupportedError(
-                    f"Async action '{action_def.type}' not supported by SyncInterpreter."
-                )
-            # ▶️ Execute the synchronous action.
-            #
-            # 🏛️ Architecture decision: an exception raised *inside* a
-            # user-supplied action is contained. Per the documented contract
-            # the error is logged, the remaining actions in this list are
-            # skipped, and the state change still completes — a buggy side
-            # effect must not corrupt the configuration or kill the machine.
-            # Configuration errors (missing/async action) are raised above and
-            # deliberately remain fatal.
-            try:
-                action_impl(self, self.context, event, action_def)
-            except Exception as exc:
-                logger.exception(
-                    "🔥 Action '%s' raised while handling event '%s'; "
-                    "skipping remaining actions in this list.",
-                    action_def.type,
-                    event.type,
-                )
-                # 🔔 Surface the failure programmatically. Containment keeps
-                #    the machine alive, but it also makes the error invisible:
-                #    the transition completes as though the action succeeded.
-                #    A log line is not something an application can act on, so
-                #    this hook is the supported way to route the failure to
-                #    Sentry, a metric, or a dead-letter queue.
-                for plugin in self._plugins:
-                    plugin.on_action_error(self, action_def, exc)
-                failed.append((action_def, exc))
-                return failed
-        return failed
-
-    def _execute_builtin_action(
+    def _run_user_action(  # type: ignore[override]
         self,
-        canonical: str,
+        impl: Callable[..., Any],
         action_def: ActionDefinition,
-        event: Event,
-    ) -> None:
-        """Executes a built-in action creator synchronously.
-
-        Mirrors `Interpreter._execute_builtin_action`. Delayed sends are
-        backed by `threading.Timer` rather than asyncio tasks, matching how
-        this engine already implements `after`.
-
-        Args:
-            canonical (str): The canonical built-in action name.
-            action_def (ActionDefinition): The action being executed.
-            event (Event): The triggering event.
-        """
-        followups = self._collect_builtin_followups(
-            canonical, action_def, event
-        )
-        if followups:
-            self._action_depth += 1
-            try:
-                self._execute_actions(
-                    [ActionDefinition(f) for f in followups], event
-                )
-            finally:
-                self._action_depth -= 1
-
-        params = self._resolve_params(action_def.params, event) or {}
-
-        if canonical == RAISE:
-            raised = self._resolve_event_spec(params.get("event"), event)
-            self._check_strict(raised)  # #51: internal typos too
-            self._deliver(
-                self,
-                raised,
-                self._resolve_delay(params.get("delay"), event),
-                params.get("id"),
+        event: Any,
+    ) -> "_Done[None]":
+        """Leaf: call one action inline; refuse every async shape (LC-58)."""
+        if self._is_async_callable(impl):
+            raise NotSupportedError(
+                f"Async action '{action_def.type}' not supported by "
+                f"SyncInterpreter."
             )
+        impl(self, self.context, event, action_def)
+        return _Done(None)
 
-        elif canonical == SEND_TO:
-            actor = self._resolve_actor_target(params.get("to"), event)
-            if actor is None:
-                logger.warning(
-                    "⚠️ sendTo could not resolve target %r; event dropped.",
-                    params.get("to"),
-                )
-                return
-            self._deliver(
-                actor,
-                self._resolve_event_spec(params.get("event"), event),
-                self._resolve_delay(params.get("delay"), event),
-                params.get("id"),
-            )
+    def _dispatch_internal(  # type: ignore[override]
+        self, event: Any
+    ) -> "_Done[None]":
+        # Onto our own queue; the macrostep loop already running will take
+        # it (a `done.state.*` is raised from INSIDE `_enter_states`).
+        self._event_queue.append(event)
+        return _Done(None)
 
-        elif canonical == SEND_PARENT:
-            if self.parent is None:
-                logger.warning("⚠️ sendParent called with no parent actor.")
-                return
-            self._deliver(
-                self.parent,
-                self._resolve_event_spec(params.get("event"), event),
-                self._resolve_delay(params.get("delay"), event),
-                params.get("id"),
-            )
+    def _stop_actor_leaf(  # type: ignore[override]
+        self, actor: Any
+    ) -> "_Done[None]":
+        actor.stop()
+        return _Done(None)
 
-        elif canonical == FORWARD_TO:
-            actor = self._resolve_actor_target(params.get("to"), event)
-            if actor is None:
-                logger.warning(
-                    "⚠️ forwardTo could not resolve target %r.",
-                    params.get("to"),
-                )
-                return
-            self._deliver(actor, event, None, None)
+    def _deliver(  # type: ignore[override]
+        self,
+        actor: Any,
+        target_event: Event,
+        delay: Optional[float],
+        send_id: Optional[str],
+    ) -> "_Done[None]":
+        self._deliver_sync(actor, target_event, delay, send_id)
+        return _Done(None)
 
-        elif canonical == ESCALATE:
-            escalate_event = Event(
-                type=f"xstate.error.actor.{self.id}",
-                payload={"error": params.get("error")},
-            )
-            if self.parent is not None:
-                self._deliver(self.parent, escalate_event, None, None)
-            else:
-                logger.error(
-                    "🔥 escalate() with no parent actor: %r",
-                    params.get("error"),
-                )
-
-        elif canonical == STOP_CHILD:
-            actor = self._resolve_actor_target(params.get("id"), event)
-            if actor is None:
-                logger.warning(
-                    "⚠️ stopChild could not resolve %r.", params.get("id")
-                )
-                return
-            for actor_id, candidate in list(self._actors.items()):
-                if candidate is actor:
-                    del self._actors[actor_id]
-                    self._actor_sources.pop(actor_id, None)
-                    break
-            # 🌐 Also drop it from the actor-system registry, otherwise a
-            #    stopped actor stays addressable by systemId.
-            registry = self._system_registry()
-            for system_id, candidate in list(registry.items()):
-                if candidate is actor:
-                    del registry[system_id]
-            actor.stop()
-
-        elif canonical == SPAWN_CHILD:
-            src = params.get("src")
-            if not isinstance(src, str):
-                logger.warning("⚠️ spawnChild requires a string 'src'.")
-                return
-            self._spawn_actor(
-                ActionDefinition(
-                    {
-                        "type": f"spawn_{src}",
-                        "params": {
-                            "id": params.get("id"),
-                            "systemId": params.get("systemId"),
-                            "input": params.get("input"),
-                        },
-                    }
-                ),
-                event,
-            )
-
-    def _deliver(
+    def _deliver_sync(
         self,
         actor: Any,
         target_event: Event,
@@ -1325,7 +760,17 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 previous()
             self._scheduled_sends[key] = _cancel
 
-    def _spawn_actor(
+    def _spawn_actor(  # type: ignore[override]
+        self,
+        action_def: ActionDefinition,
+        event: Event,
+        on_complete: Optional[str] = None,
+    ) -> "_Done[None]":
+        """Leaf: spawn inline, hand back a finished awaitable (#60)."""
+        self._spawn_actor_sync(action_def, event, on_complete)
+        return _Done(None)
+
+    def _spawn_actor_sync(
         self,
         action_def: ActionDefinition,
         event: Event,
@@ -1500,12 +945,14 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         logger.info("🏁 Child actor '%s' completed; firing onDone.", child.id)
         self.send(done_event)
 
-    def _cancel_state_tasks(self, state: StateNode) -> None:
-        """Cancel every clock timer (`after`, delayed send) a state owns.
+    def _cancel_state_tasks(  # type: ignore[override]
+        self, state: StateNode
+    ) -> "_Done[None]":
+        """Leaf: cancel a state's timers; finished awaitable (#60)."""
+        return _Done(self._cancel_state_tasks_sync(state))
 
-        Args:
-            state (StateNode): The state being exited.
-        """
+    def _cancel_state_tasks_sync(self, state: StateNode) -> None:
+        """Cancel every clock timer (`after`, delayed send) a state owns."""
         handles = self._timer_handles.pop(state.id, [])
         for handle in handles:
             self.clock.clear_timeout(handle)
@@ -1646,7 +1093,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 return
             if child_input is not None:
                 params["input"] = child_input
-            self._spawn_actor(
+            self._spawn_actor_sync(
                 ActionDefinition(
                     {"type": f"spawn_{invocation.src}", "params": params}
                 ),
@@ -1716,33 +1163,6 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     # 🛠️ Helper & Utility Methods (Private)
     # -------------------------------------------------------------------------
 
-    def _resolve_target_state_robustly(
-        self, transition: TransitionDefinition
-    ) -> StateNode:
-        """Resolve a transition's target or raise `StateNotFoundError`.
-
-        🏛️ Architecture decision (#34, #60): this used to be a 100-line copy
-        of `BaseInterpreter._resolve_target_state_node` -- including the
-        three fuzzy fallbacks that bound typos to unrelated states. Two
-        copies of one algorithm is how the engines drifted apart. It now
-        delegates to the single shared implementation and only adds the
-        sync engine's raise-instead-of-None contract.
-
-        Raises:
-            StateNotFoundError: The target resolves to nothing. The message
-                names the target AND the source state so the failing
-                transition is identifiable from the exception alone.
-            ValueError: Empty target on an external transition.
-        """
-        if not transition.target_str:
-            raise ValueError("Target string cannot be empty for resolution.")
-        state = self._resolve_target_state_node(transition)
-        if state is None:
-            raise StateNotFoundError(
-                transition.target_str, transition.source.id
-            )
-        return state
-
     # -------------------------------------------------------------------------
     # 🛠️ Static Helper Methods
     # -------------------------------------------------------------------------
@@ -1760,7 +1180,23 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         Returns:
             True if the callable is an awaitable coroutine, False otherwise.
         """
-        # A coroutine function's code object has the CO_COROUTINE flag set.
-        return hasattr(callable_obj, "__code__") and (
-            callable_obj.__code__.co_flags & 0x80  # noqa
-        )
+        # 🏛️ #60 / LC-58: the old check read `__code__.co_flags` directly,
+        #    which sees only a bare `async def`. `functools.partial(async_fn)`,
+        #    an object with `async def __call__`, and an async generator all
+        #    slipped through and were CALLED -- the coroutine object was then
+        #    silently discarded, so the action never ran and nobody was told.
+        #    Unwrap partials and decorators, then check every async shape.
+        fn: Any = callable_obj
+        while isinstance(fn, functools.partial):
+            fn = fn.func
+        fn = inspect.unwrap(fn)
+        if inspect.iscoroutinefunction(fn) or inspect.isasyncgenfunction(fn):
+            return True
+        call = getattr(type(fn), "__call__", None)
+        if call is not None and not inspect.isfunction(fn):
+            call = inspect.unwrap(call)
+            if inspect.iscoroutinefunction(call) or inspect.isasyncgenfunction(
+                call
+            ):
+                return True
+        return False

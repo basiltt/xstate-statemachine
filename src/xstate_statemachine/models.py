@@ -857,6 +857,20 @@ class StateNode(Generic[TContext, TEvent]):
         self.entry = self._parse_actions(config.get("entry"))
         self.exit = self._parse_actions(config.get("exit"))
         self.on = self._parse_on(config)
+        # ⚡ #55 part 2: precompiled descriptor index. `_matching_descriptors`
+        #    used to scan every `on` key per event to find partials; for a
+        #    typical machine there are none, so the scan was pure overhead
+        #    on the hottest path. Built ONCE here.
+        self._on_partials: List[Tuple[str, str]] = sorted(
+            (
+                (key, key[:-2])
+                for key in self.on
+                if key != "*" and key.endswith(".*")
+            ),
+            key=lambda kv: len(kv[0]),
+            reverse=True,
+        )
+        self._on_has_wildcard: bool = "*" in self.on
         self.on_done = self._parse_on_done(config)
         self.after = self._parse_after(config)
         self.invoke = self._parse_invoke(config)
