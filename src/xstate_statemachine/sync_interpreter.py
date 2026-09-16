@@ -192,6 +192,15 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
                 f"restarted. Create a new interpreter, or restore one with "
                 f"`SyncInterpreter.from_snapshot(...)`."
             )
+        if self.status == "running" and self._restart_services_on_start:
+            # 🔁 #44: restored with restart_services=True. Sync services run
+            #    inline, so this both re-invokes and processes their results.
+            self._restart_services_on_start = False
+            logger.info("♻️ Resuming restored interpreter '%s'...", self.id)
+            self._restart_dormant_invocations()
+            self._process_event_queue()
+            self._process_transient_transitions()
+            return self
         if self.status == "running" and self._event_queue:
             # ♻️ Restored from a snapshot WITH a persisted inbox (review F8):
             #    `from_snapshot` sets status "running" and re-enqueues the
@@ -1541,6 +1550,17 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         handle = self.clock.set_timeout(_fire, delay_sec, owner=owner_id)
         self._timer_handles.setdefault(owner_id, []).append(handle)
+
+    def _invocation_is_live(
+        self, state: StateNode, invocation: InvokeDefinition
+    ) -> bool:
+        # Sync services complete inline, so the only long-lived invoke is a
+        # child ACTOR; a callable service is never "live" between sends.
+        if f"{self.id}:{invocation.id}" in self._actors:
+            return True
+        return any(
+            src == invocation.src for src in self._actor_sources.values()
+        )
 
     def _pump_timers(self) -> int:
         """Fire every due clock deadline onto the queue (the timer pump).

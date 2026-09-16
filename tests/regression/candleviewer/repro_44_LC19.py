@@ -52,8 +52,11 @@ async def main() -> int:
     )
 
     calls["place"] = calls["entry"] = 0
+    # 0.8.0 (#44): per this issue's acceptance criteria the script passes
+    # `restart_services=True`; the default remains a static restore because
+    # re-invoking a non-idempotent placement is worse than parking.
     restored = Interpreter.from_snapshot(
-        snapshot, create_machine(CFG, logic=LOGIC)
+        snapshot, create_machine(CFG, logic=LOGIC), restart_services=True
     )
     await restored.start()
     await asyncio.sleep(0.3)

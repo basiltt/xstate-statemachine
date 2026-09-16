@@ -73,6 +73,7 @@ Example:
 # ⚙️ Core Components
 # -----------------------------------------------------------------------------
 from .factory import create_machine
+from .base_interpreter import PendingInvocation
 from .interpreter import Interpreter
 from .sync_interpreter import SyncInterpreter
 from .machine_logic import MachineLogic
@@ -211,6 +212,7 @@ __all__ = [
     "Receipt",
     "OverflowPolicy",
     "MachineNode",
+    "PendingInvocation",
     # ⏱️ Clock
     "Clock",
     "RealClock",

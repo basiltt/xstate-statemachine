@@ -330,6 +330,10 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 self._event_loop_task = asyncio.create_task(
                     self._run_event_loop()
                 )
+                # 🔁 #44: opt-in re-drive of invokes the snapshot left parked.
+                if self._restart_services_on_start:
+                    self._restart_services_on_start = False
+                    self._restart_dormant_invocations()
             # 👶 Resume restored child actors too, so a whole hierarchy comes
             #    back alive rather than just its root.
             for actor in list(self._actors.values()):
@@ -1712,6 +1716,23 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                     return
             await asyncio.sleep(0)
         # Something is looping; leave it to the runaway guard.
+
+    def _invocation_is_live(
+        self, state: StateNode, invocation: InvokeDefinition
+    ) -> bool:
+        # A service invoke runs as a task owned by the state; a machine
+        # invoke as a child actor addressed `<self.id>:<invoke id>` (or a
+        # uuid-suffixed anonymous id recorded in `_actor_sources`).
+        if any(
+            not t.done()
+            for t in self.task_manager.get_tasks_by_owner(state.id)
+        ):
+            return True
+        if f"{self.id}:{invocation.id}" in self._actors:
+            return True
+        return any(
+            src == invocation.src for src in self._actor_sources.values()
+        )
 
     def _after_timer(
         self, delay_sec: float, event: AfterEvent, owner_id: str
