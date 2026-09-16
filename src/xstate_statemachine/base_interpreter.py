@@ -362,6 +362,8 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         #: so a state built by a half-executed action list is never written
         #: as truth.
         self.last_transition_ok: bool = True
+        #: The exception behind the most recent `last_transition_ok=False`.
+        self._last_action_error: Optional[BaseException] = None
         # 🧾 Stack of open action-error transactions; see
         #    `_execute_lifecycle_actions`. Each entry is
         #    ``(transition, failures_collected_so_far)``.
@@ -1235,6 +1237,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     # the inbox first-class: readable, drainable and part of the snapshot.
 
     @property
+    def queue_depth(self) -> int:
+        """Events accepted but not yet processed (#38). Read-only."""
+        return len(self._snapshot_pending_events())
+
+    @property
     def pending_events(
         self,
     ) -> Tuple[Union[Event, DoneEvent, AfterEvent], ...]:
@@ -1367,6 +1374,26 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     # -------------------------------------------------------------------------
     # ✉️ Event Preparation Helper
     # -------------------------------------------------------------------------
+
+    #: Keyword arguments of `send()` that are NOT payload (#39). A dict-form
+    #: event carrying one of these keys is honoured but warns, because the
+    #: string-form `send("E", wait=True)` cannot express it as payload.
+    _RESERVED_SEND_KWARGS: Tuple[str, ...] = ("wait", "priority")
+
+    def _warn_reserved_payload_keys(self, event: Any) -> None:
+        payload = getattr(event, "payload", None)
+        if isinstance(payload, dict):
+            clash = [k for k in self._RESERVED_SEND_KWARGS if k in payload]
+            if clash:
+                warnings.warn(
+                    f"Event '{event.type}' payload uses reserved send() "
+                    f"keyword(s) {clash}. They are kept in the payload for "
+                    f"this dict-form send, but `send('{event.type}', "
+                    f"{clash[0]}=...)` would be read as a send() option. "
+                    f"Rename the key.",
+                    DeprecationWarning,
+                    stacklevel=4,
+                )
 
     @staticmethod
     def _prepare_event(
@@ -2792,6 +2819,9 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         which the caller's atomic block turns into a restore.
         """
         self.last_transition_ok = False
+        # 🧾 Remember the first failure so a `send(wait=True)` receipt can
+        #    carry it (#39). Overwritten per failing action list.
+        self._last_action_error = failed_actions[0][1]
         for plug in self._plugins:
             plug.on_transition_failed(self, transition, failed_actions)
         if self.machine.action_error_policy_is_default:

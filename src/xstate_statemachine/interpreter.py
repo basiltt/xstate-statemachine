@@ -25,6 +25,7 @@ recommended choice for most modern applications.
 # -----------------------------------------------------------------------------
 import asyncio
 import concurrent.futures
+import copy
 from collections import deque
 import threading
 import inspect
@@ -47,6 +48,9 @@ from typing import (
 # -----------------------------------------------------------------------------
 from .base_interpreter import BaseInterpreter
 from .clock import Clock, SimulatedClock
+from .events import Receipt
+from .exceptions import InterpreterStoppedError, QueueOverflowError
+from .models import OverflowPolicy
 from .events import AfterEvent, DoneEvent, Event
 from .exceptions import (
     WrongThreadError,
@@ -177,8 +181,22 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         machine: MachineNode[TContext, TEvent],
         input: Optional[Any] = None,
         clock: Optional[Clock] = None,
+        max_queue_size: Optional[int] = None,
+        overflow_policy: "OverflowPolicy" = OverflowPolicy.RAISE,
     ) -> None:
         """Initializes a new asynchronous Interpreter instance.
+
+        Args:
+            machine: The machine to run.
+            input: Creation input for a `context` factory.
+            clock: Source of time (#49).
+            max_queue_size: Bound on the inbox (#38). ``None`` (default)
+                keeps today's unbounded queue. When set, `overflow_policy`
+                decides what a full inbox does to `send()`.
+            overflow_policy: ``RAISE`` (default) / ``BLOCK`` /
+                ``DROP_NEWEST``; see `OverflowPolicy`. Ignored when no
+                bound is set. The priority lane is never bounded: an urgent
+                decision must get through a full inbox.
 
         Args:
             machine (MachineNode[TContext, TEvent]): The `MachineNode` instance
@@ -207,6 +225,16 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         #: Wakes the run loop when a priority event arrives while it is
         #: blocked on the (empty) inbox.
         self._wakeup: Optional[asyncio.Event] = None
+        #: 📏 #38: inbox bound and overflow policy.
+        if max_queue_size is not None and max_queue_size < 1:
+            raise InvalidConfigError("max_queue_size must be >= 1 or None")
+        self._max_queue_size: Optional[int] = max_queue_size
+        self._overflow_policy: OverflowPolicy = OverflowPolicy(overflow_policy)
+        #: 🧾 #39: receipts awaiting the macrostep of a specific event,
+        #: keyed by the event object's identity (events are NamedTuples and
+        #: may compare equal; identity is what distinguishes two sends of
+        #: "TICK"). Resolved by the run loop; failed by `_teardown`.
+        self._receipts: Dict[int, "asyncio.Future[Receipt]"] = {}
         logger.info(
             "🚀 Initializing Asynchronous Interpreter for '%s'...", self.id
         )
@@ -449,8 +477,11 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         event_or_type: Union[
             str, Dict[str, Any], Event, DoneEvent, AfterEvent
         ],
+        *,
+        wait: bool = False,
+        priority: bool = False,
         **payload: Any,
-    ) -> Awaitable[None]:
+    ) -> "Awaitable[Optional[Receipt]]":
         """Sends an event to the machine's internal queue for processing.
 
         This is the primary method for interacting with a running state machine.
@@ -480,16 +511,155 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             **payload: Keyword arguments that become the event's payload if
                 `event_or_type` is a string.
 
+            wait: (#39) When ``True``, the returned awaitable resolves to a
+                :class:`Receipt` only AFTER the macrostep caused by this
+                event has run to completion -- state, whether anything
+                changed, and any error. Default ``False`` resolves
+                immediately to ``None``, exactly as before.
+            priority: (#39) When ``True``, the event goes to the head of
+                processing, ahead of every already-queued external event
+                (FIFO among priority events) and exempt from
+                ``max_queue_size``. Use for decisions that must not wait
+                behind routine traffic; it REORDERS events relative to
+                non-priority sends.
+
         Raises:
             WrongThreadError: Called from a thread other than the one whose
                 event loop owns this interpreter. Use
                 :meth:`send_threadsafe` from other threads.
+            QueueOverflowError: The inbox is bounded, full, and the policy
+                is ``RAISE`` (#38).
         """
         self._assert_owning_thread("send")
         # 📦 Normalise eagerly so a malformed event also fails at the call site.
         event_obj = self._prepare_event(event_or_type, **payload)
-        self._enqueue(event_obj)
-        return _completed()
+        self._warn_reserved_payload_keys(event_obj)
+        receipt = self._make_receipt(event_obj) if wait else None
+        if priority:
+            if not self._refuse_if_not_running(event_obj):
+                self._deliver_priority(event_obj)
+        elif self._overflow_policy is OverflowPolicy.BLOCK and (
+            self._max_queue_size is not None
+        ):
+            # ⏸️ BLOCK is the one policy that must genuinely await.
+            return self._enqueue_blocking(event_obj, receipt)
+        else:
+            self._enqueue(event_obj)
+        return receipt if receipt is not None else _completed()
+
+    def send_priority(
+        self,
+        event_or_type: Union[
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+        ],
+        *,
+        wait: bool = True,
+        **payload: Any,
+    ) -> "Awaitable[Optional[Receipt]]":
+        """``send(..., priority=True, wait=True)`` -- ask an urgent question.
+
+        The discoverable spelling of the two `send()` options that together
+        give a bounded-latency decision under any backlog (#39)::
+
+            receipt = await interp.send_priority("CHECK", order_id=oid)
+            if "risk.halted" in receipt.state_ids:
+                ...
+
+        `wait` defaults to ``True`` here because a priority send is almost
+        always a question that needs its answer; pass ``wait=False`` for a
+        fire-and-forget event that merely jumps the queue.
+        """
+        return self.send(event_or_type, wait=wait, priority=True, **payload)
+
+    # -------------------------------------------------------------------------
+    # 🧾 Receipts (#39) and inbox bound (#38)
+    # -------------------------------------------------------------------------
+    def _make_receipt(self, event_obj: Any) -> "asyncio.Future[Receipt]":
+        loop = asyncio.get_running_loop()
+        fut: "asyncio.Future[Receipt]" = loop.create_future()
+        self._receipts[id(event_obj)] = fut
+        return fut
+
+    def _resolve_receipt(
+        self, event_obj: Any, changed: bool, error: Optional[BaseException]
+    ) -> None:
+        fut = self._receipts.pop(id(event_obj), None)
+        if fut is not None and not fut.done():
+            fut.set_result(
+                Receipt(frozenset(self.current_state_ids), changed, error)
+            )
+
+    def _fail_receipt(self, event_obj: Any, message: str) -> None:
+        fut = self._receipts.pop(id(event_obj), None)
+        if fut is not None and not fut.done():
+            fut.set_result(
+                Receipt(
+                    frozenset(self.current_state_ids),
+                    False,
+                    InterpreterStoppedError(message),
+                )
+            )
+
+    def _fail_all_receipts(self) -> None:
+        """`_teardown`: nobody awaiting a receipt may hang on shutdown."""
+        for key in list(self._receipts):
+            fut = self._receipts.pop(key)
+            if not fut.done():
+                fut.set_result(
+                    Receipt(
+                        frozenset(self.current_state_ids),
+                        False,
+                        InterpreterStoppedError(
+                            f"Interpreter '{self.id}' stopped before the "
+                            f"event was processed."
+                        ),
+                    )
+                )
+
+    def _refuse_if_not_running(self, event_obj: Any) -> bool:
+        """Drop + report an event sent to a stopped/done/errored machine.
+
+        Returns ``True`` if the event was refused.
+        """
+        if self.status not in ("stopped", "done", "error"):
+            return False
+        logger.warning(
+            "⚠️ Interpreter '%s' is %s; dropping event '%s'. Nothing drains "
+            "the queue after shutdown, so queuing here would leak.",
+            self.id,
+            self.status,
+            event_obj.type,
+        )
+        for plugin in self._plugins:
+            plugin.on_event_dropped(self, event_obj, "not_running")
+        self._fail_receipt(
+            event_obj,
+            f"Interpreter '{self.id}' is {self.status}; event "
+            f"'{event_obj.type}' was dropped.",
+        )
+        return True
+
+    def _inbox_is_full(self) -> bool:
+        return (
+            self._max_queue_size is not None
+            and self._event_queue.qsize() >= self._max_queue_size
+        )
+
+    async def _enqueue_blocking(
+        self, event_obj: Any, receipt: "Optional[asyncio.Future[Receipt]]"
+    ) -> Optional[Receipt]:
+        """`OverflowPolicy.BLOCK`: suspend the producer until there is room."""
+        if self._refuse_if_not_running(event_obj):
+            return await receipt if receipt is not None else None
+        while self._inbox_is_full():
+            if self.status != "running":
+                self._fail_receipt(
+                    event_obj, "stopped while blocked on a full inbox"
+                )
+                return await receipt if receipt is not None else None
+            await asyncio.sleep(0)
+        self._put_inbox(event_obj)
+        return await receipt if receipt is not None else None
 
     def _enqueue(self, event_obj: Union[Event, DoneEvent, AfterEvent]) -> None:
         """Put *event_obj* on the queue, or drop it if the machine is over.
@@ -503,14 +673,27 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         #    forever — a slow memory leak in any long-lived process that keeps
         #    a reference to a finished machine. Dropping with a warning also
         #    surfaces the mistake instead of hiding it.
-        if self.status in ("stopped", "done", "error"):
-            logger.warning(
-                "⚠️ Interpreter '%s' is %s; dropping event. Nothing drains "
-                "the queue after shutdown, so queuing here would leak.",
-                self.id,
-                self.status,
-            )
+        if self._refuse_if_not_running(event_obj):
             return
+        # 📏 #38: bounded inbox. RAISE and DROP_NEWEST are decided here,
+        #    synchronously; BLOCK is handled by `_enqueue_blocking`.
+        if self._inbox_is_full():
+            depth = self._event_queue.qsize()
+            if self._overflow_policy is OverflowPolicy.DROP_NEWEST:
+                logger.warning(
+                    "📉 Interpreter '%s' inbox full (%d/%d); event '%s' "
+                    "dropped (OverflowPolicy.DROP_NEWEST).",
+                    self.id,
+                    depth,
+                    self._max_queue_size,
+                    event_obj.type,
+                )
+                for plugin in self._plugins:
+                    plugin.on_event_dropped(self, event_obj, "queue_full")
+                self._fail_receipt(event_obj, "dropped: inbox full")
+                return
+            self._fail_receipt(event_obj, "refused: inbox full")
+            raise QueueOverflowError(self.id, depth, self._max_queue_size or 0)
         # 📥 Place the standardized event object into the async queue.
         self._put_inbox(event_obj)
 
@@ -627,6 +810,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         self._timer_handles.clear()
         self._priority_queue.clear()
         self._internal_queue.clear()  # mid-macrostep state; never persisted
+        self._fail_all_receipts()
         self._unregister_from_system()
         if self._event_loop_task and self.status != "running":
             self._event_loop_task.cancel()
@@ -763,7 +947,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             return
 
         for event in events:
-            self._put_inbox(self._prepare_event(event))
+            self._enqueue(self._prepare_event(event))
 
     # -------------------------------------------------------------------------
     # ⚙️ Internal Event Loop & Execution Logic
@@ -836,6 +1020,17 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 #    The transition itself is already atomic (see
                 #    `_execute_transition`), so the configuration is intact
                 #    here; we log and carry on with the next event.
+                # 🧾 #39: what a receipt reports is decided by comparing
+                #    the configuration + context before and after, and by
+                #    the action-failure signal the policy machinery records.
+                config_before = frozenset(self._active_state_nodes)
+                context_before = (
+                    copy.deepcopy(self.context)
+                    if id(event) in self._receipts
+                    else None
+                )
+                step_error: Optional[BaseException] = None
+                self.last_transition_ok = True
                 try:
                     self._processing = True
                     depth_before = self._raise_depth
@@ -846,6 +1041,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
+                    step_error = exc
                     logger.error(
                         "💥 Error processing event '%s' on '%s'; the "
                         "interpreter remains running. %s",
@@ -856,6 +1052,14 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                     )
                 finally:
                     self._processing = False
+                if id(event) in self._receipts:
+                    if step_error is None and not self.last_transition_ok:
+                        step_error = self._last_action_error
+                    changed = (
+                        frozenset(self._active_state_nodes) != config_before
+                        or self.context != context_before
+                    )
+                    self._resolve_receipt(event, changed, step_error)
 
                 if from_inbox:
                     self._event_queue.task_done()

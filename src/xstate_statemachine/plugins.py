@@ -279,6 +279,24 @@ class PluginBase(Generic[TInterpreter]):
         """
         pass  # pragma: no cover
 
+    def on_event_dropped(
+        self, interpreter: TInterpreter, event: "Event", reason: str
+    ) -> None:
+        """Called when an accepted-looking event is discarded unprocessed.
+
+        Fires under ``OverflowPolicy.DROP_NEWEST`` when the bounded inbox is
+        full (``reason == "queue_full"``), and when a send reaches a
+        machine that is stopped/done/errored (``reason == "not_running"``).
+        The drop is also logged at WARNING. This is the observability hook
+        for load shedding (#38).
+
+        Args:
+            interpreter: The interpreter instance.
+            event: The event that was not queued.
+            reason: Why -- ``"queue_full"`` or ``"not_running"``.
+        """
+        pass  # pragma: no cover
+
     def on_error(
         self, interpreter: TInterpreter, error: BaseException
     ) -> None:

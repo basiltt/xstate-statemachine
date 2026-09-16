@@ -81,8 +81,8 @@ from .logic_loader import LogicLoader
 # -----------------------------------------------------------------------------
 # ✉️ Event & Model Definitions
 # -----------------------------------------------------------------------------
-from .events import Event
-from .models import ActionDefinition, MachineNode
+from .events import Event, Receipt
+from .models import ActionDefinition, MachineNode, OverflowPolicy
 
 # -----------------------------------------------------------------------------
 # 🔌 Extensibility & Plugins
@@ -101,6 +101,8 @@ from .exceptions import (
     TransitionFailedError,
     SnapshotDriftError,
     SnapshotVersionError,
+    QueueOverflowError,
+    InterpreterStoppedError,
     UnhandledEventError,
     WrongThreadError,
     XStateMachineError,
@@ -204,6 +206,10 @@ __all__ = [
     "WrongThreadError",
     "SnapshotDriftError",
     "SnapshotVersionError",
+    "QueueOverflowError",
+    "InterpreterStoppedError",
+    "Receipt",
+    "OverflowPolicy",
     "MachineNode",
     # ⏱️ Clock
     "Clock",

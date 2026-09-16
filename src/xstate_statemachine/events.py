@@ -30,7 +30,7 @@ would affect all subsequently created events.
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 from dataclasses import dataclass, field
-from typing import Any, Dict, NamedTuple
+from typing import Any, Dict, FrozenSet, NamedTuple, Optional
 
 # -----------------------------------------------------------------------------
 # 📨 Event Definitions
@@ -131,6 +131,25 @@ class DoneEvent(NamedTuple):
 
     # 📍 The ID of the invoked service or state that completed.
     src: str
+
+
+class Receipt(NamedTuple):
+    """What ``send(..., wait=True)`` resolves to once the event's macrostep
+    has run to completion (#39).
+
+    Attributes:
+        state_ids: The active leaf ids the instant processing finished.
+        changed: ``True`` if a transition was taken (configuration or
+            context changed) for THIS event.
+        error: The exception raised while processing this event -- an
+            action that raised, an unresolvable target -- or ``None``. The
+            machine may still be ``running`` (see ``actionErrorPolicy``);
+            the receipt tells the CALLER its request did not run cleanly.
+    """
+
+    state_ids: FrozenSet[str]
+    changed: bool
+    error: Optional[BaseException] = None
 
 
 class AfterEvent(NamedTuple):

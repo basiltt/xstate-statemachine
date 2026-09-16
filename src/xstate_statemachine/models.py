@@ -32,6 +32,7 @@ and invoked services.
 import copy
 import inspect
 import logging
+from enum import Enum
 from typing import (
     Any,
     Dict,
@@ -122,6 +123,23 @@ def _validated_policy(
 #
 # ⚠️ Order matters: `spawn_blocking_` must be tested before `spawn_`, since the
 # latter is a prefix of the former.
+class OverflowPolicy(str, Enum):
+    """What ``send()`` does when a bounded inbox is full (#38).
+
+    * ``RAISE`` -- default once a bound is set. `send()` raises
+      `QueueOverflowError`; the gateway sheds load and alarms.
+    * ``BLOCK`` -- `await send()` suspends until the consumer frees a slot.
+      For trusted in-process producers that can be slowed.
+    * ``DROP_NEWEST`` -- the incoming event is discarded with a WARNING and
+      `PluginBase.on_event_dropped`. The only policy that can lose an event;
+      never the default. For telemetry where staleness beats backlog.
+    """
+
+    RAISE = "raise"
+    BLOCK = "block"
+    DROP_NEWEST = "drop_newest"
+
+
 SPAWN_BLOCKING_PREFIX = "spawn_blocking_"
 #: Default upper bound (ms) a `spawn_blocking_<key>` waits for its child
 #: when the machine sets no `spawnBlockingTimeout`. Generous enough for any

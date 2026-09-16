@@ -300,6 +300,36 @@ class SnapshotDriftError(XStateMachineError):
     pass
 
 
+class QueueOverflowError(XStateMachineError):
+    """Raised by ``send()`` when a BOUNDED inbox is full (#38).
+
+    Only when the interpreter was built with ``max_queue_size`` and the
+    ``OverflowPolicy.RAISE`` policy (the default once a bound is set).
+
+    Attributes:
+        interpreter_id: Which machine refused the event.
+        depth: Events queued at the moment of refusal.
+        maxsize: The configured bound.
+    """
+
+    def __init__(self, interpreter_id: str, depth: int, maxsize: int):
+        self.interpreter_id = interpreter_id
+        self.depth = depth
+        self.maxsize = maxsize
+        super().__init__(
+            f"Interpreter '{interpreter_id}' inbox is full ({depth}/"
+            f"{maxsize}); event refused. Shed load, slow the producer, or "
+            f"raise max_queue_size."
+        )
+
+
+class InterpreterStoppedError(XStateMachineError):
+    """Resolves a ``send(wait=True)`` receipt when the machine stopped, or
+    dropped the event, before that event was processed (#39)."""
+
+    pass
+
+
 class WrongThreadError(XStateMachineError):
     """Raised when a loop-affine method is called from a foreign thread.
 

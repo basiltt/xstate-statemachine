@@ -43,7 +43,7 @@ from typing import (
 # -----------------------------------------------------------------------------
 from .base_interpreter import BaseInterpreter, _RollbackRequested
 from .clock import Clock, SimulatedClock
-from .events import AfterEvent, DoneEvent, Event
+from .events import AfterEvent, DoneEvent, Event, Receipt
 from .exceptions import (
     ActorSpawningError,
     ImplementationMissingError,
@@ -330,19 +330,48 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         event_or_type: Union[
             str, Dict[str, Any], Event, DoneEvent, AfterEvent
         ],
+        *,
+        wait: bool = False,
+        priority: bool = False,
         **payload: Any,
-    ) -> None:
-        """Sends an event to the machine for immediate, synchronous processing."""
+    ) -> Optional[Receipt]:
+        """Sends an event to the machine for immediate, synchronous processing.
+
+        The sync engine already answers inline: by the time `send()`
+        returns, the macrostep has run. `wait=True` therefore returns a
+        :class:`Receipt` for API symmetry with the async engine (#39);
+        `priority` is accepted and irrelevant (there is no backlog to
+        jump -- the queue is drained before `send()` returns).
+        """
         if self.status != "running":
             logger.warning("🚫 Cannot send event. Interpreter is not running.")
-            return
+            return None
 
         event_obj = self._prepare_event(event_or_type, **payload)
+        self._warn_reserved_payload_keys(event_obj)
+        config_before = frozenset(self._active_state_nodes)
+        context_before = copy.deepcopy(self.context) if wait else None
+        self.last_transition_ok = True
+        step_error: Optional[BaseException] = None
         # ⏰ #50: deliver every deadline that has elapsed BEFORE this event,
         #    on this thread, in due order -- the pump.
         self._pump_timers()
         self._event_queue.append(event_obj)
-        self._process_event_queue()
+        try:
+            self._process_event_queue()
+        except Exception as exc:
+            if not wait:
+                raise
+            step_error = exc
+        if not wait:
+            return None
+        if step_error is None and not self.last_transition_ok:
+            step_error = self._last_action_error
+        changed = (
+            frozenset(self._active_state_nodes) != config_before
+            or self.context != context_before
+        )
+        return Receipt(frozenset(self.current_state_ids), changed, step_error)
 
     # -------------------------------------------------------------------------
     # 🏁 Reaping (#57)

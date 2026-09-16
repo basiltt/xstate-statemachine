@@ -13,7 +13,12 @@ import logging
 import sys
 import time
 
-from xstate_statemachine import Interpreter, MachineLogic, create_machine
+from xstate_statemachine import (
+    Interpreter,
+    MachineLogic,
+    QueueOverflowError,
+    create_machine,
+)
 
 logging.disable(logging.CRITICAL)
 
@@ -34,7 +39,13 @@ async def work(interp, ctx, event, action_def):  # noqa: ANN001
 async def main() -> int:
     ok = True
     logic = MachineLogic(actions={"work": work})
-    interp = await Interpreter(create_machine(CFG, logic=logic)).start()
+    # 0.8.0 (#38): the default queue stays unbounded (the issue's own design
+    # note: `max_queue_size=None` reproduces 0.7.x byte-for-byte). The
+    # acceptance criteria are about the OPT-IN bound + policy, so build the
+    # interpreter with one and expect backpressure.
+    interp = await Interpreter(
+        create_machine(CFG, logic=logic), max_queue_size=1000
+    ).start()
 
     # 1) No public queue-depth API of any kind.
     public = [n for n in dir(interp) if not n.startswith("_")]
@@ -53,13 +64,17 @@ async def main() -> int:
 
     # 2) A burst of 20,000 events is accepted with zero backpressure.
     t0 = time.monotonic()
+    raised = 0
     for i in range(BURST):
-        await interp.send("TICK", i=i)
+        try:
+            await interp.send("TICK", i=i)
+        except QueueOverflowError:
+            raised += 1
     enqueue_ms = (time.monotonic() - t0) * 1000
-    backlog = interp._event_queue.qsize()  # private: the only way to see it
+    backlog = interp.queue_depth  # public since 0.8.0
     print(
         f"OBSERVED {BURST} send() calls accepted in {enqueue_ms:.1f} ms, "
-        f"0 dropped, 0 raised; private backlog = {backlog}"
+        f"0 dropped, {raised} raised (QueueOverflowError); backlog = {backlog}"
     )
     print(
         "EXPECTED either a bounded queue that applies backpressure/raises, "
@@ -71,7 +86,10 @@ async def main() -> int:
     # 3) The latency an event enqueued now will experience is unbounded and
     #    invisible: nothing in the public API predicts it.
     t1 = time.monotonic()
-    await interp.send("TICK", i=-1)
+    try:
+        await interp.send("TICK", i=-1)
+    except QueueOverflowError:
+        pass  # saturation IS detectable now -- that is the point
     submit_ms = (time.monotonic() - t1) * 1000
     print(
         f"OBSERVED send() of one more event returned in {submit_ms:.3f} ms "
