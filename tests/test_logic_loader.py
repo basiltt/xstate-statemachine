@@ -736,5 +736,92 @@ class TestLogicLoader(unittest.TestCase):
             )
 
 
+class TestLoaderHonoursExplicitNames(unittest.TestCase):
+    """The loader matches config names by Python name and its camelCase
+    form. A name that cannot be a Python identifier -- Stately's
+    ``inline:machine.state#entry[0]`` -- can never match that way. The
+    ``@action("<original>")`` decorator already records the original on the
+    function as ``_xsm_name``; the loader must key on it too, or every
+    Stately export with an anonymous action fails at ``create_machine``."""
+
+    def tearDown(self) -> None:
+        from src.xstate_statemachine.logic_loader import LogicLoader
+
+        LogicLoader._instance = None
+
+    CFG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "a",
+        "states": {
+            "a": {
+                "entry": [{"type": "inline:m.a#entry[0]"}],
+                "on": {"GO": {"target": "b", "guard": "Weird-Guard.v2"}},
+            },
+            "b": {"invoke": {"src": "inline:m.b#invoke[0]", "onDone": "c"}},
+            "c": {"type": "final"},
+        },
+    }
+
+    def test_provider_instance_with_marked_methods(self) -> None:
+        from src.xstate_statemachine import (
+            SyncInterpreter,
+            action,
+            guard,
+            service,
+        )
+
+        hits: list = []
+
+        class Provider:
+            @action("inline:m.a#entry[0]")
+            def entry_zero(self, i, c, e, a):
+                hits.append("entry")
+
+            @guard("Weird-Guard.v2")
+            def weird(self, c, e):
+                return True
+
+            @service("inline:m.b#invoke[0]")
+            def invoke_zero(self, i, c, e):
+                return 1
+
+        machine = create_machine(self.CFG, logic_providers=[Provider()])
+        self.assertIn("inline:m.a#entry[0]", machine.logic.actions)
+        self.assertIn("Weird-Guard.v2", machine.logic.guards)
+        self.assertIn("inline:m.b#invoke[0]", machine.logic.services)
+        interp = SyncInterpreter(machine).start()
+        self.assertEqual(hits, ["entry"])
+        interp.stop()
+
+    def test_module_functions_with_marked_names(self) -> None:
+        import types
+
+        from src.xstate_statemachine import action, guard, service
+
+        mod = types.ModuleType("xsm_marked_logic")
+
+        @action("inline:m.a#entry[0]")
+        def entry_zero(i, c, e, a):
+            pass
+
+        @guard("Weird-Guard.v2")
+        def weird(c, e):
+            return True
+
+        @service("inline:m.b#invoke[0]")
+        def invoke_zero(i, c, e):
+            return 1
+
+        mod.entry_zero, mod.weird, mod.invoke_zero = (
+            entry_zero,
+            weird,
+            invoke_zero,
+        )
+        machine = create_machine(self.CFG, logic_modules=[mod])
+        self.assertIn("inline:m.a#entry[0]", machine.logic.actions)
+        self.assertIn("Weird-Guard.v2", machine.logic.guards)
+        self.assertIn("inline:m.b#invoke[0]", machine.logic.services)
+
+
 if __name__ == "__main__":
     unittest.main()

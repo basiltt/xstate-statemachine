@@ -19,6 +19,7 @@ from ..ir import MachineIR, parse_machine
 from .base import BaseStrategy, GenerationContext
 from ..naming import docstring_safe
 from ._shared import (
+    decorator_for,
     escape_for_string,
     generate_action_docstring,
     generate_error_handling,
@@ -506,7 +507,9 @@ class PythonicClassStrategy(BaseStrategy):
                 fn_name = f"{fn_name}_"
 
             # -- decorator ------------------------------------------------
-            code_lines.append(f"{indent}@{decorator}")
+            code_lines.append(
+                f"{indent}{decorator_for(decorator, original, fn_name)}"
+            )
 
             # -- signature ------------------------------------------------
             # Guards are never async; actions/services may be

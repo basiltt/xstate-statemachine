@@ -107,6 +107,26 @@ def _snake_to_camel(snake_str: str) -> str:
 # -----------------------------------------------------------------------------
 
 
+def _register_explicit_name(
+    logic_map: Dict[str, Callable[..., Any]], func: Callable[..., Any]
+) -> None:
+    """Also key *func* under the name its decorator declared, if any.
+
+    🏛️ Architecture decision: name matching is by Python identifier and
+    its camelCase form -- that is the convention-over-configuration promise.
+    But a config name need not BE an identifier: Stately exports anonymous
+    actions as ``inline:machine.state#entry[0]``, and hand-written configs
+    use dots and dashes. ``@action("<original>")`` records the declared
+    name as ``_xsm_name``; honouring it here is what lets a generated or
+    hand-written provider implement such a name at all. A bound method
+    carries the marker on its ``__func__``.
+    """
+    target = getattr(func, "__func__", func)
+    explicit = getattr(target, "_xsm_name", None)
+    if isinstance(explicit, str) and explicit:
+        logic_map[explicit] = func
+
+
 class LogicLoader:
     """Manages the dynamic discovery and building of `MachineLogic`.
 
@@ -334,6 +354,7 @@ class LogicLoader:
                 if not name.startswith("_"):
                     logic_map[name] = func
                     logic_map[_snake_to_camel(name)] = func
+                    _register_explicit_name(logic_map, func)
 
         # 🔎 Scan all provider instances for methods (overrides module functions)
         if logic_providers:
@@ -349,6 +370,7 @@ class LogicLoader:
                     if not name.startswith("_"):
                         logic_map[name] = method
                         logic_map[_snake_to_camel(name)] = method
+                        _register_explicit_name(logic_map, method)
 
         # ---------------------------------------------------------------------
         # 📋 Step 2: Extract all required logic names from the config.

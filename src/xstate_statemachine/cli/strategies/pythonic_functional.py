@@ -17,6 +17,7 @@ from ..ir import parse_machine
 from .base import BaseStrategy, GenerationContext
 from ..naming import docstring_safe
 from ._shared import (
+    decorator_for,
     escape_for_string,
     generate_action_docstring,
     generate_error_handling,
@@ -457,7 +458,7 @@ class PythonicFunctionalStrategy(BaseStrategy):
                 fn_name = f"{fn_name}_"
 
             # -- decorator --------------------------------------------
-            code_lines.append(f"@{component_type}")
+            code_lines.append(decorator_for(component_type, original, fn_name))
 
             # -- signature (no self) ----------------------------------
             async_kw = (

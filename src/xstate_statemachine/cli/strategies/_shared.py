@@ -5,6 +5,7 @@ import keyword
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from ...pythonic import _snake_to_camel
 from ..naming import docstring_safe
 from ..utils import camel_to_snake
 
@@ -153,6 +154,8 @@ def generate_imports(
     services: Set[str],
     template_type: str,
     log: bool = True,
+    actions: Set[str] = frozenset(),
+    guards: Set[str] = frozenset(),
 ) -> str:
     """Generate import statements for the template type.
 
@@ -228,10 +231,25 @@ def generate_imports(
             lines.append("import time")
         lines.append("from typing import Any, Dict, Union")
         lines.append("")
+        # 🏷️ Config names that do not round-trip through snake_case ->
+        #    camelCase (Stately `inline:...`, dotted/dashed names) are bound
+        #    with `@action("<original>")`, so the decorators are imported
+        #    only when at least one such name exists -- keeps ordinary
+        #    generated files free of unused imports.
+        markers = sorted(
+            kind
+            for kind, names in (
+                ("action", actions),
+                ("guard", guards),
+                ("service", services),
+            )
+            if any(needs_explicit_name(n) for n in names)
+        )
+        extra = "".join(f", {m}" for m in markers)
         lines.append(
             "from xstate_statemachine import "
             "Interpreter, SyncInterpreter, Event, "
-            "ActionDefinition"
+            f"ActionDefinition{extra}"
         )
 
     lines.append("")
@@ -241,6 +259,35 @@ def generate_imports(
 def snake_case_name(camel_name: str) -> str:
     """Convert camelCase to snake_case."""
     return camel_to_snake(camel_name)
+
+
+def needs_explicit_name(original: str) -> bool:
+    """True when *original* cannot be recovered from its snake_case form."""
+    fn_name = snake_case_name(original)
+    if keyword.iskeyword(fn_name):
+        fn_name = f"{fn_name}_"
+    return _snake_to_camel(fn_name) != original
+
+
+def decorator_for(component_type: str, original: str, fn_name: str) -> str:
+    """The ``@action`` / ``@guard`` / ``@service`` line for one stub.
+
+    🏛️ Architecture decision: the bare decorator registers a method under
+    ``_snake_to_camel(fn.__name__)``. For a config name that is itself a
+    plain camelCase identifier that round-trips exactly, so ``@action`` on
+    ``def fetch_data`` binds ``fetchData`` -- the generated code stays as
+    clean as hand-written. But Stately exports anonymous actions as
+    ``inline:machine.state#entry[0]``, and names with dots, dashes, digits
+    or leading capitals do not survive snake_case -> camelCase either.
+    Emitting the bare decorator for those bound the method under a name
+    the config never uses, and every such machine raised
+    ``ImplementationMissingError`` at ``start()`` -- 26 of the 104
+    real-world corpus machines. When the round-trip is lossy, emit the
+    explicit-name form the decorators already accept.
+    """
+    if _snake_to_camel(fn_name) == original:
+        return f"@{component_type}"
+    return f'@{component_type}("{escape_for_string(original)}")'
 
 
 def safe_identifier(name: str) -> str:
