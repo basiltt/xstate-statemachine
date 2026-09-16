@@ -109,6 +109,32 @@ machine before writing it.
 
 </td>
 </tr>
+<tr>
+<td valign="top">
+
+**🛡️ Production hardening**
+
+Per-machine `actionErrorPolicy` and `strict` mode turn silent failure into a
+raised, observable error instead of a half-built state.
+
+</td>
+<td valign="top">
+
+**⏱️ Deterministic tests**
+
+Inject `SimulatedClock` and `after` fires on your schedule, not the wall
+clock. `send(wait=True)` returns a `Receipt` — no polling.
+
+</td>
+<td valign="top">
+
+**📮 Bounded inbox**
+
+`max_queue_size` + `overflow_policy` (`RAISE` / `BLOCK` / `DROP_NEWEST`) cap
+memory under a slow consumer instead of growing the queue forever.
+
+</td>
+</tr>
 </table>
 
 ---
@@ -776,6 +802,13 @@ State, context and `systemId` registrations all round-trip.
 > waiting on a 30-minute timeout will wait indefinitely after restore. If a deadline must
 > survive a restart, store it in context and re-arm it yourself on resume.
 
+Every snapshot carries an envelope (`version`, `machine_id`, `machine_hash`) so
+`from_snapshot()` refuses a structurally different machine with `SnapshotDriftError`
+instead of silently resuming into it; pass `verify_machine_hash=False` after a deliberate
+migration. Invokes are not restarted either — pass `from_snapshot(..., restart_services=True)`
+to re-invoke every service `pending_invocations()` reports, or leave them stopped and
+re-trigger manually.
+
 ---
 
 ## 🧪 The Pure API — No Interpreter
@@ -953,6 +986,8 @@ Python has good state machine libraries. Here's an honest read on when to pick w
 | Sync **and** async runtimes | ✅ two engines | ✅ | ✅ |
 | Diagram export | ✅ no binaries | ⚙️ needs graphviz | ✅ |
 | CLI code generator | ✅ | ❌ | ❌ |
+| Virtual clock for tests | ✅ `SimulatedClock` | ❌ | ❌ |
+| Bounded inbox / backpressure | ✅ `max_queue_size` | — | — |
 | Runtime dependencies | **0** | 0 (core) | few |
 
 **Pick `transitions`** if you want the most battle-tested option and a simple FSM bolted onto
@@ -1387,7 +1422,7 @@ Everything above is the happy path. Here is what matters once real traffic arriv
 
 ### Throughput, timers and threads — read this before sizing
 
-All async interpreters in a process share **one** event loop on **one** thread: throughput is a per-process budget (~20k trivial ev/s on a laptop), divided among your machines. `after` timers fire *late* under load (~+60 ms at 500 busy machines, even with the 0.8.0 priority timer lane), and a `SyncInterpreter` timer only fires when someone calls `send()` or `tick()`. The measured tables and a sizing rule are in **[Production Characteristics](https://basiltt.github.io/xstate-statemachine/guide/production-characteristics/)** — the one page to read before deploying.
+All async interpreters in a process share **one** event loop on **one** thread: throughput is a per-process budget (~20k trivial ev/s on a laptop), divided among your machines. `after` timers now fire through a **priority lane** the run loop checks ahead of its inbox — ~63 ms late at 500 busy machines, down from ~180 ms before 0.8.0 — and a `SyncInterpreter` timer only fires when someone calls `send()` or `tick()`, on the caller's thread. In fact, neither engine spawns an OS thread per timer anymore; the only thread work either one does is running a non-blocking `spawn_*` child. Pass `Interpreter(clock=SimulatedClock())` in tests to fire an `after` timer without sleeping — see **Testing** below. The measured tables and a sizing rule are in **[Production Characteristics](https://basiltt.github.io/xstate-statemachine/guide/production-characteristics/)** — the one page to read before deploying.
 
 ### Failure semantics — know what is contained
 
@@ -1400,6 +1435,8 @@ Each is a **per-machine policy**. The default preserves the historical behaviour
 | An invoked **service** raises | Routed to `onError` — a normal transition, not a crash | — | `onError` target, `on_service_error` |
 | An **unknown event** arrives | Ignored (XState semantics) | `onUnhandled`: `"defer"` replays it after the next state change · `"error"` stops with `UnhandledEventError` | `on_unhandled_event` fires under *every* policy |
 | A **transition target** does not resolve | Rejected at `create_machine()` | `strict_targets=False` downgrades to a `DeprecationWarning` (removed in 1.0) | `InvalidConfigError` lists every bad target at once |
+| The **inbox is full** | Unbounded (no limit) | `max_queue_size=`, `overflow_policy=OverflowPolicy.RAISE` (default once bounded) · `BLOCK` · `DROP_NEWEST` | `RAISE` raises `QueueOverflowError`; `DROP_NEWEST` calls `on_event_dropped`; `interpreter.queue_depth` |
+| An **undeclared event** is sent under `strict` | N/A — `strict` is opt-in | Machine config `strict: true` or `Interpreter(strict=True)` | `UnknownEventError` at the `send()` call site, before queueing; `event_schemas=` on `create_machine()` raises `InvalidEventPayloadError` for a bad payload regardless of `strict` |
 
 Containment by default is deliberate: a long-lived machine should not die because one
 side effect had a bad day. The cost is that failures are **invisible unless you look**, so
@@ -1414,6 +1451,24 @@ class ErrorReporter(PluginBase):
 
 interp.use(ErrorReporter())
 ```
+
+> **Note** — `actionErrorPolicy` defaults to `"continue"` today (with a one-shot
+> `DeprecationWarning`); it flips to `"rollback"` in 1.0. Pin it explicitly if you need
+> today's behaviour to survive the upgrade.
+
+### Asking the machine a question
+
+`send()` normally fires and forgets. Pass `wait=True` to get a `Receipt` once that exact
+event's macrostep has run — no polling, no `wait_for()`:
+
+```python
+receipt = await interp.send("SUBMIT", wait=True)
+# Receipt(state_ids=frozenset({'checkout.paying'}), changed=True, error=None)
+
+await interp.send_priority("CANCEL")   # ahead of the inbox, exempt from its bound
+```
+
+`priority=True` on `send()` does the same as `send_priority()`.
 
 ### Waiting for a machine to settle
 
@@ -1438,7 +1493,10 @@ wait_for_sync(interp, lambda i: i.matches("job.done"), timeout=30)
 | `SyncInterpreter` | Django views, Celery tasks, CLI tools, scripts, tests |
 
 Same machine JSON, same semantics, same guarantees. Timers, services and actors all work
-on both; the sync engine runs them on threads.
+on both engines; neither spawns an OS thread per timer — the sync engine delivers a due
+`after` timer on the caller's own thread inside `send()` or `tick()`, and the async engine
+delivers it through the priority lane described above. A `spawn_*` (non-blocking) child is
+the one thing either engine runs off-thread.
 
 ### Long-running machines
 
@@ -1447,6 +1505,15 @@ on both; the sync engine runs them on threads.
 - **`after` timers do not survive a snapshot.** Restoring a machine that was mid-timeout
   will not re-arm it; re-send the triggering event, or model the deadline as data in
   context and compare against wall-clock on resume.
+- **Invokes do not restart on restore either** — `from_snapshot()` is a static rebuild
+  that starts nothing by default. Call `pending_invocations()` on the restored
+  interpreter to see every `PendingInvocation(state_id, invoke_id, src)` with no live
+  service, and `from_snapshot(..., restart_services=True)` to re-invoke each of them
+  from scratch through the same path a fresh `enter` uses.
+- **Snapshots carry an envelope** (`version`, `machine_id`, `machine_hash`) so a restore
+  against a machine that no longer matches the one that produced the snapshot fails loud
+  with `SnapshotDriftError` instead of resuming into undefined behaviour. Pass
+  `from_snapshot(..., verify_machine_hash=False)` after a deliberate migration.
 - **Always `stop()`** — it cancels timers and stops spawned actors. In a web app, tie it
   to request teardown; in a worker, to the task's `finally`.
 
@@ -1464,6 +1531,16 @@ assert snap.matches("checkout.paying")
 ```
 
 Use a real interpreter for integration tests, where you want the actions to actually run.
+For an `after` timer, don't sleep — inject a `SimulatedClock` and jump virtual time:
+
+```python
+from xstate_statemachine import SyncInterpreter, SimulatedClock
+
+clock = SimulatedClock()
+interp = SyncInterpreter(machine, clock=clock).start()
+clock.increment(30_000)             # fires a 30 s `after` with no real delay
+assert interp.matches("job.timedout")
+```
 
 ---
 
@@ -1476,12 +1553,18 @@ Use a real interpreter for integration tests, where you want the actions to actu
 
 | Name | Purpose |
 |:--|:--|
-| `create_machine(config, logic=..., logic_modules=[...])` | Build a machine from a dict/JSON config |
+| `create_machine(config, logic=, logic_modules=[...], strict_targets=True, event_schemas=None)` | Build a machine from a dict/JSON config. `strict_targets=False` downgrades unresolvable transition targets to a `DeprecationWarning` (removed in 1.0). `event_schemas={'FILL': Fill}` adds opt-in payload validation — any object with `validate(payload)` or `__call__`, raising `InvalidEventPayloadError` at the `send()` call site regardless of `strict` |
 | `MachineLogic(actions=, guards=, services=, delays=)` | Bind names in the config to Python callables |
-| `Interpreter(machine)` | **Async** engine — `await .start()`, `.send()`, `.stop()` |
-| `SyncInterpreter(machine)` | **Sync** engine — no event loop anywhere |
+| `Interpreter(machine, input=None, clock=None, max_queue_size=None, overflow_policy=OverflowPolicy.RAISE, strict=None)` | **Async** engine — `await .start()`, `.send()`, `.stop()` |
+| `SyncInterpreter(machine, input=None, clock=None, strict=None)` | **Sync** engine — no event loop anywhere |
 | `LogicLoader` | Auto-discover logic by name from modules |
 | `MachineNode` | The parsed machine; has `.to_mermaid()` / `.to_plantuml()` |
+
+`strict` (constructor arg, wins over the machine's `strict` config key) makes `send()` raise
+`UnknownEventError` synchronously — before the event is queued — for any event type the machine
+has never declared, with a difflib suggestion (`'Did you mean FILL?'`).
+`max_queue_size` bounds the inbox; once set, `overflow_policy` decides what happens when it's
+full — see `OverflowPolicy` below.
 
 You can also subclass `MachineLogic` and define actions, guards and services as methods —
 they're registered automatically by arity: `(ctx, event)` is a guard,
@@ -1496,19 +1579,30 @@ they're registered automatically by arity: `(ctx, event)` is a guard,
 
 | Member | Purpose |
 |:--|:--|
-| `.start()` / `.stop()` | Lifecycle (await both on `Interpreter`) |
-| `.send(event, **payload)` | Send an event; kwargs become `event.payload` |
+| `.start()` / `.stop(drain=False, timeout=None)` | Lifecycle (await both on `Interpreter`). `stop(drain=True)` processes the inbox to empty first (async also takes `timeout=`) |
+| `.send(event, *, wait=False, priority=False, **payload)` | Send an event; kwargs become `event.payload`. `wait=True` returns (async: awaits) a `Receipt`; `priority=True` delivers ahead of the inbox, exempt from its bound |
+| `.send_priority(event, **payload)` | **Async only** — shorthand for `send(event, priority=True, wait=True, **payload)` |
+| `.send_threadsafe(event, **payload)` | **Async only** — send from a foreign OS thread; returns a `concurrent.futures.Future`. `send()` from a foreign thread raises `WrongThreadError` instead |
+| `.tick()` | **Sync only** — deliver any timer that has come due since the last call, outside of `send()` |
 | `.current_state_ids` / `.active_state_ids` | Set of active leaf state ids |
+| `.value` | Active configuration in XState's hierarchical form — a leaf key, `{parent: child}`, or one key per parallel region; `{}` before `start()` |
 | `.context` | The live context dict |
 | `.status` / `.is_running` | `"running"` / `"stopped"`, and a liveness check |
-| `.matches(id)` | Is this state active? Supports nested paths |
+| `.matches(id_or_value)` | Is this state active? Accepts a string path or a partial `.value`-shaped dict |
 | `.can(event)` | Would this event cause anything? |
 | `.has_tag(tag)` / `.get_meta()` | Tags and merged `meta` of active states |
 | `.subscribe(fn)` | Observe every transition |
 | `.use(plugin)` / `.plugins` | Register plugins |
 | `.system` | Actor registry — `.get(system_id)`, `.get_all()` |
-| `.get_snapshot()` / `.get_persisted_snapshot()` | Serialize (JSON string / dict) |
-| `.from_snapshot(snap, machine)` | Restore (classmethod) |
+| `.queue_depth` | Current inbox depth (0 for an unbounded queue with nothing pending) |
+| `.pending_events` | Accepted-but-unprocessed events, FIFO |
+| `.deferred_count` | Events buffered by `onUnhandled: "defer"`, awaiting replay |
+| `.last_transition_ok` | `False` after `actionErrorPolicy: "rollback"`/`"fail"` undid the last transition |
+| `.pending_invocations()` | `List[PendingInvocation]` — every active state with no live service/child actor (e.g. after a static restore) |
+| `.drain_pending()` | Remove every pending/deferred event without processing it |
+| `.wait_done()` | **Async only** — a future that resolves the instant the machine reaches `done`/`error` |
+| `.get_snapshot()` / `.get_persisted_snapshot()` | Serialize (JSON string / dict) — envelope carries `version`, `machine_id`, `machine_hash`, `taken_at`, `value`, `pending_events` |
+| `.from_snapshot(snap, machine, *, verify_machine_hash=True, restart_services=False)` | Restore (classmethod). Raises `SnapshotVersionError`/`SnapshotDriftError` on a newer version or a machine id/hash mismatch. `restart_services=True` re-invokes every `PendingInvocation` from scratch |
 
 </details>
 
@@ -1520,6 +1614,24 @@ they're registered automatically by arity: `(ctx, event)` is a guard,
 `assign` · `log` · `raise_` · `send_to` · `send_parent` · `choose` · `pure` ·
 `enqueue_actions` · `ActionEnqueuer` · `spawn_child` · `stop_child` · `cancel` · `emit` ·
 `escalate` · `forward_to`
+
+</details>
+
+<details>
+<summary><b>Clock</b></summary>
+
+<br>
+
+| Name | Purpose |
+|:--|:--|
+| `Clock` | Protocol every clock implements: `.now()`, `.set_timeout(fn, delay_sec, owner=)`, `.clear_timeout(handle)`, `.pending` |
+| `RealClock()` | Wall-clock time (default). Delivers a fired `after` timer through a priority lane the async run loop checks ahead of the inbox, so a due timer can't be starved behind a burst of external events |
+| `SimulatedClock()` | Virtual time — nothing advances until you do. `.now()`, `await .set(ms)`, `await .increment(ms)`, `.pump()` (fire everything due, returns the count fired), `.pending` (count of armed timers) |
+
+Pass `Interpreter(clock=)` / `SyncInterpreter(clock=)`; spawned and invoked children inherit the
+parent's clock (and its `strict` setting). `SyncInterpreter` never spawns an OS thread for an
+`after` timer or delayed send — a due deadline is delivered on the caller's thread at the top of
+`send()`, in the macrostep loop, or by `.tick()`.
 
 </details>
 
@@ -1542,15 +1654,30 @@ they're registered automatically by arity: `(ctx, event)` is a guard,
 </details>
 
 <details>
-<summary><b>Plugins & exceptions</b></summary>
+<summary><b>Plugins, data classes & exceptions</b></summary>
 
 <br>
 
-**Plugins:** `PluginBase`, `LoggingInspector`
+**Plugins — `PluginBase` hooks** (all implemented by `LoggingInspector`):
+`on_interpreter_start` · `on_interpreter_stop` · `on_transition` · `on_event_received` ·
+`on_action_execute` · `on_action_error` · `on_guard_evaluated` · `on_guard_error` ·
+`on_service_start` · `on_service_done` · `on_service_error` · `on_transition_failed` ·
+`on_unhandled_event` · `on_event_dropped` · `on_error` · `on_done`
+
+**Data classes:**
+
+| Name | Purpose |
+|:--|:--|
+| `Receipt(state_ids, changed, error=None)` | Returned by `send(wait=True)` once the macrostep for that event has run |
+| `OverflowPolicy` | `RAISE` (default once `max_queue_size` is set) · `BLOCK` · `DROP_NEWEST` |
+| `PendingInvocation(state_id, invoke_id, src)` | An active state with no live service/child actor |
 
 **Exceptions:** `XStateMachineError` (base) · `InvalidConfigError` ·
 `StateNotFoundError` · `ImplementationMissingError` · `ActorSpawningError` ·
-`NotSupportedError`
+`NotSupportedError` · `UnhandledEventError` · `TransitionFailedError` ·
+`WrongThreadError` · `SnapshotDriftError` · `SnapshotVersionError` ·
+`QueueOverflowError` · `InterpreterStoppedError` · `UnknownEventError` ·
+`InvalidEventPayloadError`
 
 </details>
 
