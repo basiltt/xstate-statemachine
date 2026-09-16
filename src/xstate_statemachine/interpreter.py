@@ -167,7 +167,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
     📏 Every `Interpreter` in a process shares ONE event loop on ONE thread.
     Concurrency between machines is interleaving, not parallelism, so
     throughput is a per-process budget divided among all live interpreters
-    (~20k trivial events/s on a laptop; ~18 ev/s each at 1,000 machines),
+    (~30k trivial events/s on a laptop; ~22 ev/s each at 1,000 machines),
     and `after` timers fire late under load. Blocking work inside an action
     stalls every machine. Measured tables and a sizing rule:
     https://basiltt.github.io/xstate-statemachine/guide/production-characteristics/
@@ -1182,6 +1182,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         # 🛟 Bound the microstep loop. A pair of `always` transitions that
         #    target each other spins forever; XState added the same guard in
         #    v5.31.0. `max_iterations` is configurable on the machine.
+        if not self.machine.has_always_transitions:
+            return  # ⚡ nothing to settle; see MachineNode.has_always_transitions
         iterations = 0
         limit = getattr(self.machine, "max_iterations", 1000)
         while True:

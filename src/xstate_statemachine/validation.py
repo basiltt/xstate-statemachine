@@ -160,6 +160,8 @@ def _collect_findings(
             #    last-segment fallbacks, which are what let a typo bind to an
             #    unrelated state (#34).
             target = resolve_strict(t.target_str, t.source, machine)
+            # ⚡ Memoise for the runtime (see TransitionDefinition.resolved_target).
+            t.resolved_target = target
             if target is None:
                 unresolved.append(
                     f"  {node.id}: {label} -> target {t.target_str!r} "

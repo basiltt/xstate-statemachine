@@ -1422,7 +1422,7 @@ Everything above is the happy path. Here is what matters once real traffic arriv
 
 ### Throughput, timers and threads — read this before sizing
 
-All async interpreters in a process share **one** event loop on **one** thread: throughput is a per-process budget (~20k trivial ev/s on a laptop), divided among your machines. `after` timers now fire through a **priority lane** the run loop checks ahead of its inbox — ~63 ms late at 500 busy machines, down from ~180 ms before 0.8.0 — and a `SyncInterpreter` timer only fires when someone calls `send()` or `tick()`, on the caller's thread. In fact, neither engine spawns an OS thread per timer anymore; the only thread work either one does is running a non-blocking `spawn_*` child. Pass `Interpreter(clock=SimulatedClock())` in tests to fire an `after` timer without sleeping — see **Testing** below. The measured tables and a sizing rule are in **[Production Characteristics](https://basiltt.github.io/xstate-statemachine/guide/production-characteristics/)** — the one page to read before deploying.
+All async interpreters in a process share **one** event loop on **one** thread: throughput is a per-process budget (~30k trivial ev/s on a laptop), divided among your machines. `after` timers now fire through a **priority lane** the run loop checks ahead of its inbox — ~45 ms late at 500 busy machines, down from ~180 ms before 0.8.0 — and a `SyncInterpreter` timer only fires when someone calls `send()` or `tick()`, on the caller's thread. In fact, neither engine spawns an OS thread per timer anymore; the only thread work either one does is running a non-blocking `spawn_*` child. Pass `Interpreter(clock=SimulatedClock())` in tests to fire an `after` timer without sleeping — see **Testing** below. The measured tables and a sizing rule are in **[Production Characteristics](https://basiltt.github.io/xstate-statemachine/guide/production-characteristics/)** — the one page to read before deploying.
 
 ### Failure semantics — know what is contained
 
@@ -1519,7 +1519,7 @@ the one thing either engine runs off-thread.
 
 ### Testing
 
-The [pure API](#-the-pure-api--no-interpreter) is the fastest way to test machine
+The [pure API](#-the-pure-api--no-interpreter) is the simplest way to test machine
 *logic* — no event loop, no mocks, no sleeping:
 
 ```python

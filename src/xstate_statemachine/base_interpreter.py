@@ -2151,8 +2151,14 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             await self._execute_internal_transition(transition, event)
             return
 
-        # 2. Resolve the target state node using a multi-stage process.
-        target_state = self._resolve_target_state_node(transition)
+        # 2. Resolve the target state node. ⚡ Build-time validation already
+        #    resolved and memoised it on the transition; only a target the
+        #    validator could not resolve (`strict_targets=False`) takes the
+        #    slow multi-strategy path here.
+        target_state = (
+            transition.resolved_target
+            or self._resolve_target_state_node(transition)
+        )
         if target_state is None:
             # Name the SOURCE too, so the failing transition is identifiable
             # from the exception alone (the sync engine always did this).
@@ -2822,6 +2828,8 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         Args:
             states_to_exit (List[StateNode]): The states about to be exited.
         """
+        if not self.machine.has_history_states:
+            return  # ⚡ nothing to remember for; see MachineNode.has_history_states
         exiting = set(states_to_exit)
         # 🕰️ Candidates are the exiting states *and* their ancestors: a
         #    transition out of a nested leaf exits the leaf and its parents,
@@ -3556,7 +3564,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         guard_cache: Dict[int, bool] = {}
 
         # 🔽 Deterministic ordering: deepest leaves first, then by id.
-        for leaf in sorted(leaves, key=lambda s: (-s.depth, s.id)):
+        #    ⚡ A non-parallel machine has exactly one leaf; skip the sort.
+        if len(leaves) > 1:
+            leaves.sort(key=lambda s: (-s.depth, s.id))
+        for leaf in leaves:
             eligible = self._collect_eligible_transitions(
                 leaf, event, guard_cache
             )

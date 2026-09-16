@@ -602,6 +602,8 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         continues until no more "always" transitions are available and the
         state configuration is stable.
         """
+        if not self.machine.has_always_transitions:
+            return  # ⚡ nothing to settle; see MachineNode.has_always_transitions
         logger.debug("🔍 Checking for transient ('always') transitions...")
         # 🛟 Bound the microstep loop. A pair of `always` transitions that
         #    target each other spins forever; XState added the same guard in

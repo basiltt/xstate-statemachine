@@ -19,10 +19,10 @@ The consequence: **throughput is a per-process budget, not a per-machine capacit
 
 | Interpreters | Aggregate ev/s | Per-interpreter ev/s |
 |---:|---:|---:|
-| 1 | ~26,000 | ~26,000 |
-| 10 | ~20,500 | ~2,000 |
-| 100 | ~19,000 | ~190 |
-| 1,000 | ~18,400 | ~18 |
+| 1 | ~31,000 | ~31,000 |
+| 10 | ~32,500 | ~3,250 |
+| 100 | ~22,500 | ~225 |
+| 1,000 | ~22,000 | ~22 |
 
 The aggregate barely moves across three orders of magnitude; the per-machine share collapses. This is the correct and unavoidable behaviour of a single-threaded core — it is how XState's actor system behaves too, and it is not something a library change can "fix" without a different architecture.
 
@@ -53,14 +53,14 @@ On the async engine a timer is scheduled through the interpreter's [`Clock`](../
 |---:|---:|
 | 0 | ~0.2 ms |
 | 10 | ~1 ms |
-| 100 | ~12 ms |
-| 500 | ~63 ms |
+| 100 | ~8 ms |
+| 500 | ~46 ms |
 
-(Before 0.8.0 the timer's continuation shared the inbox and the same run measured ~35 ms and ~180 ms; the priority lane cut the lateness by roughly a factor of three. `AfterEvent.lateness_ms` reports the actual figure for each firing.)
+(Before 0.8.0 the timer's continuation shared the inbox and the same run measured ~35 ms and ~180 ms; the priority lane and the 0.8.0 hot-path work together cut the lateness by roughly 4x. Lateness tracks per-event cost -- every event the loop processes faster is a timer that fires sooner -- so it will keep moving with throughput. `AfterEvent.lateness_ms` reports the actual figure for each firing.)
 
 Two properties of that curve matter for design:
 
-- **The error is roughly constant in absolute terms across delay sizes.** A 10 ms timer and a 10 s timer are each ~60 ms late at 500 busy machines — so *short* deadlines degrade worst *relatively*. A 10 ms timeout at 500 machines is meaningless; a 30 s one is fine.
+- **The error is roughly constant in absolute terms across delay sizes.** A 10 ms timer and a 10 s timer are each ~45 ms late at 500 busy machines — so *short* deadlines degrade worst *relatively*. A 10 ms timeout at 500 machines is meaningless; a 30 s one is fine.
 - **The OS floor.** On Windows the default timer resolution is ~15.6 ms; an `after: 5` cannot fire at 5 ms on an idle loop there. Linux and macOS are ~1 ms.
 
 ### What to use `after` for
