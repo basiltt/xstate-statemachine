@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Optional, Type, Union, overload
 from .exceptions import InvalidConfigError
 from .logic_loader import LogicLoader
 from .logger import logger
-from .machine_logic import MachineLogic
+from .machine_logic import MachineLogic, resolve_aliases
 from ._typing import TContext
 from .models import MachineNode
 from .validation import validate_machine
@@ -209,6 +209,10 @@ def create_machine(
     # entire statechart configuration.
     logger.info("🏭 Assembling final MachineNode for '%s'...", machine_id)
     machine = MachineNode(config, final_logic)
+    # 🔤 Bind snake_case implementations to the camelCase names the config
+    #    uses (and vice versa) once, here, so every interpreter lookup stays
+    #    a plain dict hit. Exact-name entries are never overridden.
+    _alias_logic_names(machine)
     # 🛡️ #51: payload validators. Any object exposing `validate(payload)`
     #    or being callable works -- pydantic models, TypedDict adapters,
     #    hand-written functions -- so the library takes no dependency.
@@ -233,3 +237,22 @@ def create_machine(
     #    default and reject every legitimate `.sibling` machine.
     validate_machine(machine, strict_targets=strict_targets)
     return machine
+
+
+def _alias_logic_names(machine: MachineNode[Any]) -> None:
+    """Resolve case/separator-insensitive aliases for a built machine."""
+    actions: set = set()
+    guards: set = set()
+    services: set = set()
+    LogicLoader._extract_logic_from_node(machine, actions, guards, services)
+    logic = machine.logic
+    # 🦆 `logic` is duck-typed by contract (any object exposing the three
+    #    registries); skip a registry that is absent or not a dict.
+    for attr, required in (
+        ("actions", actions),
+        ("guards", guards),
+        ("services", services),
+    ):
+        registry = getattr(logic, attr, None)
+        if isinstance(registry, dict):
+            resolve_aliases(registry, required)

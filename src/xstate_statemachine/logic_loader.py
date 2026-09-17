@@ -48,7 +48,7 @@ from typing import (
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from .exceptions import ImplementationMissingError, InvalidConfigError
-from .machine_logic import MachineLogic
+from .machine_logic import MachineLogic, normalize_logic_name
 from .actions import is_builtin as is_builtin_action
 from .models import (
     MachineNode,
@@ -401,10 +401,21 @@ class LogicLoader:
             ("Service", required_services, discovered_logic["services"]),
         ]
 
+        # 🔤 Normalised index so `log_http_status` satisfies `logHTTPStatus`
+        #    (the camelCase forward conversion is lossy for acronyms and
+        #    undefined for non-identifier names; see `normalize_logic_name`).
+        normalized_map: Dict[str, Callable[..., Any]] = {}
+        for key, impl in logic_map.items():
+            normalized_map.setdefault(normalize_logic_name(key), impl)
+
         for logic_type, required_set, discovered_dict in logic_definitions:
             for name in required_set:
                 if name in logic_map:
                     discovered_dict[name] = logic_map[name]
+                elif normalize_logic_name(name) in normalized_map:
+                    discovered_dict[name] = normalized_map[
+                        normalize_logic_name(name)
+                    ]
                 else:
                     # 💥 Fail-fast if an implementation is missing.
                     raise ImplementationMissingError(

@@ -31,6 +31,7 @@ import inspect
 import warnings
 import logging
 from typing import (
+    Iterable,
     Mapping,
     Any,
     Awaitable,
@@ -99,6 +100,86 @@ ServiceCallable = Callable[[Any, Any, Any], Any]
 
 # A `delays` entry: a number of milliseconds, or (context, event) -> ms.
 DelayCallable = Callable[[Any, Any], Union[int, float]]
+
+
+# -----------------------------------------------------------------------------
+# 🔤 Name normalisation
+# -----------------------------------------------------------------------------
+
+
+def normalize_logic_name(name: str) -> str:
+    """Return the case- and separator-insensitive key for a logic name.
+
+    🏛️ Architecture decision: the library promises that a Python function
+    written in PEP 8 ``snake_case`` implements the ``camelCase`` name an
+    XState JSON config uses. Two spellings of the same word must therefore
+    resolve to ONE key, and the simplest total function with that property
+    is "drop every separator, fold case":
+
+        ``logHTTPStatus`` / ``log_http_status`` / ``logHttpStatus``
+        -> ``loghttpstatus``
+
+    A forward conversion (``snake -> camel``) cannot do this: acronyms are
+    lossy (``log_http_status`` becomes ``logHttpStatus``, which is not the
+    ``logHTTPStatus`` the config says) and non-identifier names such as
+    ``fetch-data`` or Stately's ``inline:machine.state#entry[0]`` have no
+    snake form at all. Normalising BOTH sides instead makes every one of
+    those match, and it is what the CLI's ``camel_to_snake`` output rounds
+    back to.
+
+    Separators: ``_``, ``-``, ``.``, ``:``, ``#``, ``[``, ``]``, ``/`` and
+    whitespace. Everything else (letters, digits, other Unicode) is kept.
+    """
+    return "".join(ch for ch in name if ch not in _NAME_SEPARATORS).casefold()
+
+
+_NAME_SEPARATORS = frozenset("_-.:#[]/ \t\n")
+
+
+def resolve_aliases(
+    registry: Dict[str, Any], required: "Iterable[str]"
+) -> None:
+    """Bind every *required* config name that has a normalised match.
+
+    For each name the machine references but *registry* lacks, look for a
+    registered key with the same :func:`normalize_logic_name` and alias it
+    in place. Exact keys are never touched, so an explicit
+    ``{"logHTTPStatus": fn}`` always wins over a discovered ``log_http_status``.
+
+    Called once when a machine is assembled (``create_machine``), so the
+    runtime lookup remains a plain ``dict.get`` on the hot path.
+
+    Raises:
+        InvalidConfigError: when two *different* registered callables
+            normalise to the same key a required name needs — e.g. both
+            ``fetch_data`` and ``fetchData`` are registered — because
+            picking one silently would hide a real defect.
+    """
+    if not registry:
+        return
+    by_key: Dict[str, "list[str]"] = {}
+    for key in registry:
+        by_key.setdefault(normalize_logic_name(key), []).append(key)
+    for name in required:
+        if name in registry:
+            continue
+        candidates = by_key.get(normalize_logic_name(name))
+        if not candidates:
+            continue
+        distinct = {id(registry[c]) for c in candidates}
+        if len(distinct) > 1:
+            from .exceptions import InvalidConfigError
+
+            raise InvalidConfigError(
+                f"Logic name '{name}' is ambiguous: "
+                f"{sorted(candidates)} are all registered and differ only "
+                "by case or separators. Keep one, or register the exact "
+                f"name '{name}' explicitly."
+            )
+        registry[name] = registry[candidates[0]]
+        logger.debug(
+            "🔤 Aliased logic name '%s' -> '%s'.", name, candidates[0]
+        )
 
 
 # -----------------------------------------------------------------------------
