@@ -1,0 +1,8 @@
+{
+  "//": "Second opinion on the library's own annotations. mypy is the reference checker (CI); pyright must also report zero errors so users of either tool get the same experience.",
+  "include": ["src/xstate_statemachine"],
+  "exclude": ["**/__pycache__", "src/xstate_statemachine/cli"],
+  "typeCheckingMode": "standard",
+  "pythonVersion": "3.9",
+  "reportMissingImports": false
+}
