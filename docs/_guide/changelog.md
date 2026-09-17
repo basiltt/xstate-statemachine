@@ -15,8 +15,87 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 **Naming, and the site.**
 
+### Fixed
+
+- **`send(event, wait=True)` no longer hangs when one `Event` instance is
+  in flight twice** (#75, #39). Receipts were keyed on `id(event)`, so two
+  concurrent sends of the same pre-built `Event` collided and the first
+  awaiter never resolved — no error, no timeout, and `stop()` could not
+  reach it. The queued envelope now gets its own identity; the caller's
+  object is never mutated and reuse as a template is fine.
+- **`SyncInterpreter` `after` deadlines are reachable by `tick()` even when
+  the interpreter is constructed inside a running asyncio loop** (#76, #50).
+  `RealClock.set_timeout` chose its lane by whether a loop happened to be
+  running on the calling thread; a sync machine built inside one parked
+  its timers on `loop.call_later`, where its own pump could not see them.
+  The lane now follows the *owning engine* (`sync=` on `set_timeout`);
+  third-party clocks written against the 0.8.0 `Clock` protocol still work.
+- **`SyncInterpreter` no longer discards a batch of more than
+  `maxIterations` external events** (#77). The runaway guard counted every
+  dequeued event and `clear()`ed the inbox on overflow, so
+  `send_events(["T"] * 1501)` processed 1000 and silently dropped 501. It
+  now budgets only *self-generated* work — events that arrive while the
+  drain is running (a `raise`, an action calling `send()` on its own
+  interpreter, a `done.invoke` from a sync service, a due timer). Every
+  event that was in the inbox when the drain began, or is replayed from the
+  defer buffer, is processed in full regardless of count; a self-feeding
+  loop is still broken, and only the generated tail is discarded — never
+  events the caller was told were accepted. The 0.8.0 note claiming the two
+  engines already agreed was wrong; they do now.
+- **`send_threadsafe()` applies `strict` and `event_schemas`** (#78, #51).
+  It skipped `_check_strict`, so the *recommended* cross-thread path was the
+  one without the guardrail — a typo'd event was accepted and dropped, and a
+  payload the schema rejects drove a real transition. It now raises
+  `UnknownEventError` / `InvalidEventPayloadError` on the calling thread
+  before anything is queued, exactly like `send()`.
+- **`actionErrorPolicy: "rollback"` / `"fail"` withdraws events `raise`d by
+  the failed action list** (#27). Rollback restores configuration and
+  context; it cannot un-send a `sendTo` (that effect has left the machine),
+  but a `raise` is an event the machine queued *for itself* and had not yet
+  processed, so it is now dropped instead of being delivered into a
+  configuration the undone transition never reached. Events raised by
+  *earlier* transitions are untouched.
+- **The `actionErrorPolicy` default-flip `DeprecationWarning` fires once per
+  process, not once per `MachineNode`** (#27). A service building
+  interpreters from one module-level machine used to see it exactly once,
+  ever — typically in a warm-up path nobody reads.
+- **`rollback` no longer checkpoints context on transitions that run no
+  actions** (#27). The per-transition deep copy cost ~22 % throughput on an
+  idle `rollback` machine; it is now skipped when neither the transition,
+  the exited states nor the entered subtree declare any action
+  (≈ 0.98× of the default on the same benchmark).
+
 ### Added
 
+- **`has_dormant_invocations`** on both engines (#44). After a static
+  `from_snapshot()` the machine reports `status == "running"` — it *is*
+  processing events — while every `invoke` in the configuration is parked.
+  `status` is therefore not a liveness signal after a restore; this boolean
+  (and `pending_invocations()`) is. A new `status` value was rejected
+  because it would break every consumer switching on the existing four.
+- **`MachineLogic(strict=True)`** (#52). Refuses to register an undecorated
+  public method: `InvalidConfigError` at construction instead of an
+  arity-based guess plus a `UserWarning`. Decorated methods and `_private`
+  helpers are unaffected. Default `False`; behaviour unchanged unless set.
+- **Static `raise` targets are validated at build time on `strict`
+  machines** (#51). `_check_strict` already ran on the `raise` built-in, but
+  under the default `actionErrorPolicy: "continue"` that failure was
+  contained like any action error — logged, hooked, transition committed —
+  so a typo'd internal event never *raised* to anyone. A literal event name
+  in the config is a configuration error; `create_machine()` now rejects it
+  with a `Did you mean …?` suggestion. Dynamic (callable) `raise` events are
+  still checked at runtime.
+- **`events.SYSTEM_EVENT_PREFIXES`** is the single, importable list of
+  reserved event namespaces (`done.`, `error.`, `after.`, `xstate.`,
+  `___xstate`) consulted by the wildcard matcher, `onUnhandled` and strict
+  mode (#79). `create_machine()` now emits a `UserWarning` for an `on` key
+  in a reserved namespace that the engine will never synthesise
+  (`done.review`, `error.validation`), explaining that such an event is
+  matched *only* by exact key — invisible to `"*"` and `prefix.*`, exempt
+  from `onUnhandled`, never rejected by `strict`. Engine-shaped keys
+  (`done.invoke.<id>`, `error.platform.<id>`, `after.<ms>`, …) do not warn.
+  Provenance-tagged system events, which would lift the restriction
+  entirely, are planned for 0.9.
 - **snake_case ↔ camelCase logic names, everywhere.** A PEP 8 Python
   function now implements the camelCase name in an XState config through
   *every* entry point — `MachineLogic(actions={"store_user": fn})`,
@@ -35,12 +114,29 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Changed
 
+- **`WrongThreadError` message corrected** (#37). It claimed events sent
+  from a foreign thread "would be silently lost", which was false for the
+  correct 0.7.x idiom `asyncio.run_coroutine_threadsafe(interp.send(…),
+  loop)` — that form *worked* in 0.7.x and is rejected since 0.8.0 because
+  the thread check runs before the coroutine is scheduled. The message now
+  names that idiom explicitly and points to `send_threadsafe()`. **This is a
+  0.8.0 behavioural break for previously-correct code** that the 0.8.0 notes
+  omitted; see *Sending from Another Thread* in the interpreters guide.
 - **Ambiguous logic registrations are rejected.** Registering two
   *different* callables whose names differ only by case or separators
   (`fetch_data` and `fetchData`) for a name the machine requires now raises
   `InvalidConfigError` at build time instead of silently picking one.
 - Every Python snippet in the guides and README now uses snake_case
   implementations against camelCase JSON, matching what `xsm gt` generates.
+
+### Deprecated
+
+- **The 0.7.x sibling reading of a leading-dot target now warns** (#31).
+  `{"target": ".b"}` on a state with no child `b` still resolves to the
+  sibling, but emits a `DeprecationWarning` (once per source/target pair)
+  naming the unambiguous `#machine.path` spelling and the `strictTargets`
+  switch. This was acceptance criterion 2 of #31 and did not ship in 0.8.0.
+  The fallback is removed in 1.0.
 
 ### Documentation
 
@@ -251,7 +347,9 @@ preserves 0.7.x semantics, with two deliberate exceptions called out under
 - `SyncInterpreter`: replayed deferred events no longer count against the
   macrostep runaway budget, so replaying a full `DEFER_MAX` buffer cannot
   trigger the overflow guard and discard live events queued behind it.
-  The async engine already behaved correctly; the two now agree.
+  The async engine already behaved correctly. *(0.8.1 note: plain
+  external events were still counted and could be discarded — see
+  #77 above; the two engines agree as of 0.8.1.)*
 - Two tests in the suite declared a target as a sibling of `"states"`; the
   new validator caught them.
 - **[wave 2]** Runtime target resolution no longer falls back to a

@@ -242,9 +242,54 @@ class TestRelativeChildTargets(_Quiet):
             "initial": "a",
             "states": {"a": {"on": {"GO": ".b"}}, "b": {}},
         }
-        i = SyncInterpreter(create_machine(cfg)).start()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            i = SyncInterpreter(create_machine(cfg)).start()
         i.send("GO")
         self.assertEqual(i.current_state_ids, {"m.b"})
+
+    def test_sibling_fallback_emits_deprecation_warning(self) -> None:
+        """#31 acceptance criterion 2: the fallback is observable and
+        names the unambiguous spelling."""
+        from src.xstate_statemachine import resolver
+
+        resolver._SIBLING_FALLBACKS_WARNED.clear()
+        cfg = {
+            "id": "m31",
+            "initial": "a",
+            "states": {"a": {"on": {"GO": ".b"}}, "b": {}},
+        }
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            create_machine(cfg)
+        msgs = [
+            str(w.message)
+            for w in caught
+            if w.category is DeprecationWarning and "SIBLING" in str(w.message)
+        ]
+        self.assertEqual(len(msgs), 1, caught)
+        self.assertIn("'.b'", msgs[0])
+        self.assertIn("'#m31.b'", msgs[0])
+        self.assertIn("strictTargets", msgs[0])
+
+    def test_child_reading_does_not_warn(self) -> None:
+        cfg = {
+            "id": "m",
+            "initial": "A",
+            "states": {
+                "A": {
+                    "initial": "A1",
+                    "states": {"A1": {}, "A2": {}},
+                    "on": {"GO": ".A2"},
+                }
+            },
+        }
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            create_machine(cfg)
+        self.assertFalse(
+            [w for w in caught if "SIBLING" in str(w.message)], caught
+        )
 
     def test_strict_targets_config_disables_sibling_fallback(self) -> None:
         cfg = {

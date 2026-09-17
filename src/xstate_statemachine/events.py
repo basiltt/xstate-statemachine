@@ -30,7 +30,27 @@ would affect all subsequently created events.
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 from dataclasses import dataclass, field
-from typing import Any, Dict, FrozenSet, NamedTuple, Optional
+from typing import Any, Dict, FrozenSet, NamedTuple, Optional, Tuple
+
+# -----------------------------------------------------------------------------
+# 🏛️ Reserved event namespaces
+# -----------------------------------------------------------------------------
+#: Prefixes of events the ENGINE synthesises: ``done.invoke.*`` /
+#: ``done.state.*``, ``error.platform.*``, ``after.*``, ``xstate.*`` (from
+#: `escalate`) and the ``___xstate`` init/exit sentinels. Events in these
+#: namespaces are exempt from ``"*"`` / partial-descriptor matching, from the
+#: ``onUnhandled`` policy and from strict-mode name checks, so the engine's
+#: own traffic is never mistaken for a user event the machine forgot to
+#: handle. Consequently a USER event named ``done.review`` is only ever
+#: matched by an exact ``on`` key (#79). `create_machine()` warns about
+#: ``on`` keys declared in these namespaces.
+SYSTEM_EVENT_PREFIXES: Tuple[str, ...] = (
+    "done.",
+    "error.",
+    "after.",
+    "xstate.",
+    "___xstate",
+)
 
 # -----------------------------------------------------------------------------
 # 📨 Event Definitions

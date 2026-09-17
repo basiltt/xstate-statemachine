@@ -26,6 +26,7 @@ recommended choice for most modern applications.
 import asyncio
 import concurrent.futures
 import copy
+import dataclasses
 import inspect
 import logging
 import threading
@@ -599,6 +600,11 @@ class Interpreter(BaseInterpreter[TContext]):
         event_obj = self._prepare_event(event_or_type, **payload)
         self._warn_reserved_payload_keys(event_obj)
         self._check_strict(event_obj)  # #51: at the call site, pre-queue
+        if wait and event_obj is event_or_type:
+            # 🧾 #75: the caller handed us its own object; give the queued
+            #    envelope a distinct identity so a reused instance cannot
+            #    collide in the receipt map.
+            event_obj = self._detach(event_obj)
         receipt = self._make_receipt(event_obj) if wait else None
         if priority:
             if not self._refuse_if_not_running(event_obj):
@@ -686,6 +692,23 @@ class Interpreter(BaseInterpreter[TContext]):
     # -------------------------------------------------------------------------
     # 🧾 Receipts (#39) and inbox bound (#38)
     # -------------------------------------------------------------------------
+    @staticmethod
+    def _detach(event_obj: Any) -> Any:
+        """Return an equal-but-distinct copy of *event_obj* (#75).
+
+        Receipts are keyed on the identity of the QUEUED envelope. If the
+        caller passes one pre-built `Event` instance to two concurrent
+        ``send(ev, wait=True)`` calls, keying on the caller's object makes
+        the second receipt overwrite the first, which then hangs forever.
+        Copying at the boundary means caller-side reuse is irrelevant by
+        construction: every queued envelope has its own identity for as
+        long as it is in flight, because the receipt map holds it.
+        """
+        if isinstance(event_obj, Event):
+            return dataclasses.replace(event_obj)
+        replace = getattr(event_obj, "_replace", None)  # NamedTuple events
+        return replace() if callable(replace) else copy.copy(event_obj)
+
     def _make_receipt(self, event_obj: Any) -> "asyncio.Future[Receipt]":
         loop = asyncio.get_running_loop()
         fut: "asyncio.Future[Receipt]" = loop.create_future()
@@ -711,6 +734,30 @@ class Interpreter(BaseInterpreter[TContext]):
                     InterpreterStoppedError(message),
                 )
             )
+
+    def _on_internal_events_withdrawn(self, events: List[Any]) -> None:
+        """#27 rollback withdrew self-queued events: keep the books straight.
+
+        * Each was counted into `_raise_depth` when queued; un-count it, or
+          rollbacks would accumulate into a false runaway trip that drops
+          an unrelated external event.
+        * A `BLOCK`-policy `send(..., wait=True)` issued from an action is
+          routed to the internal queue too. Its receipt must resolve, not
+          hang: report the rollback the same way a receipt on the failing
+          event itself does.
+        """
+        self._raise_depth = max(0, self._raise_depth - len(events))
+        for ev in events:
+            fut = self._receipts.pop(id(ev), None)
+            if fut is not None and not fut.done():
+                fut.set_result(
+                    Receipt(
+                        frozenset(self.current_state_ids),
+                        False,
+                        self._last_action_error
+                        or RuntimeError("withdrawn by transition rollback"),
+                    )
+                )
 
     def _fail_all_receipts(self) -> None:
         """`_teardown`: nobody awaiting a receipt may hang on shutdown."""
@@ -826,6 +873,10 @@ class Interpreter(BaseInterpreter[TContext]):
         Raises:
             RuntimeError: The interpreter has not been started, or the loop
                 that owned it has since been closed.
+            UnknownEventError: `strict` and the type is undeclared (#78).
+                Raised on the calling thread, before anything is queued.
+            InvalidEventPayloadError: a registered `event_schemas` validator
+                rejected the payload (#78). Same guardrail as `send()`.
         """
         if self._loop is None:
             raise RuntimeError(
@@ -838,6 +889,12 @@ class Interpreter(BaseInterpreter[TContext]):
                 f"has been closed; it can no longer accept events."
             )
         event_obj = self._prepare_event(event_or_type, **payload)
+        # 🛡️ #78: the SAME guardrail as `send()`, on the calling thread. It
+        #    reads only immutable machine data, so it is safe off-loop, and
+        #    raising here -- not inside the returned future -- is what a
+        #    foreign-thread caller can actually act on. Without this the
+        #    recommended cross-thread path was the one without validation.
+        self._check_strict(event_obj)
 
         async def _deliver() -> None:
             self._enqueue(event_obj)
@@ -1031,12 +1088,21 @@ class Interpreter(BaseInterpreter[TContext]):
                 f"a new interpreter (or restore one with from_snapshot) "
                 f"inside the new event loop."
             )
+        # 📝 #37: the check runs at the CALL SITE, before any coroutine is
+        #    created, so it cannot tell a bare `interp.send()` (whose events
+        #    WERE silently lost in 0.7.x) from
+        #    `run_coroutine_threadsafe(interp.send(...), loop)` (which was
+        #    the correct 0.7.x idiom). Name both, and do not claim the
+        #    caller's code was always broken.
         raise WrongThreadError(
-            f"Interpreter '{self.id}' is bound to the event loop on "
-            f"thread '{self._loop_thread_name}'; {method}() was called "
-            f"from thread '{threading.current_thread().name}'. Events "
-            f"sent this way would be silently lost. Use "
-            f"send_threadsafe() from other threads."
+            f"Interpreter '{self.id}' is bound to the event loop on thread "
+            f"'{self._loop_thread_name}'; {method}() was called from thread "
+            f"'{threading.current_thread().name}'. {method}() must run on "
+            f"the interpreter's own loop thread. From another thread use "
+            f"send_threadsafe(). Note that "
+            f"asyncio.run_coroutine_threadsafe(interp.{method}(...), loop) "
+            f"is also rejected since 0.8.0, because this check runs before "
+            f"the coroutine is scheduled; replace it with send_threadsafe()."
         )
 
     async def send_events(
@@ -1102,6 +1168,12 @@ class Interpreter(BaseInterpreter[TContext]):
                         self.id,
                     )
                     self._raise_depth = 0
+                    # 🧾 The dropped event may carry a receipt; never hang it.
+                    self._fail_receipt(
+                        event,
+                        f"dropped: '{event.type}' exceeded the {limit}-event "
+                        f"self-raised chain budget on '{self.id}'",
+                    )
                     if from_inbox:
                         self._event_queue.task_done()
                     continue
@@ -1368,7 +1440,7 @@ class Interpreter(BaseInterpreter[TContext]):
             else:
                 asyncio.ensure_future(self._send_to_actor(actor, target_event))
 
-        handle = self.clock.set_timeout(_fire, delay / 1000.0, owner=self.id)
+        handle = self._set_timeout(_fire, delay / 1000.0, owner=self.id)
         self._timer_handles.setdefault(self.id, []).append(handle)
 
         def _cancel() -> None:
@@ -1642,7 +1714,7 @@ class Interpreter(BaseInterpreter[TContext]):
             )
             self._deliver_priority(fired)
 
-        handle = self.clock.set_timeout(_fire, delay_sec, owner=owner_id)
+        handle = self._set_timeout(_fire, delay_sec, owner=owner_id)
         self._timer_handles.setdefault(owner_id, []).append(handle)
 
     async def _invoke_service_task(

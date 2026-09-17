@@ -119,6 +119,9 @@ class TestContinueIsDefault(_Quiet):
     """`continue` keeps 0.7.x behaviour, but now REPORTS the failure."""
 
     def test_continue_is_default_and_reports_failed_actions(self) -> None:
+        from src.xstate_statemachine import base_interpreter
+
+        base_interpreter._WARNED_ACTION_ERROR_POLICY_DEFAULT = False
         spy = Spy()
         interp = SyncInterpreter(create_machine(_config(), logic=_logic()))
         interp.use(spy)
@@ -144,6 +147,30 @@ class TestContinueIsDefault(_Quiet):
         ]
         self.assertEqual(len(deprecations), 1)
         self.assertIn("actionErrorPolicy", str(deprecations[0].message))
+
+    def test_default_flip_warning_is_once_per_process_not_per_machine(
+        self,
+    ) -> None:
+        """#27 follow-up: a service that builds interpreters from one
+        module-level machine used to warn once EVER (the latch lived on the
+        `MachineNode`); it now latches per process, so it fires for the
+        first failure regardless of which machine object was hit -- and
+        stays quiet afterwards, across machines."""
+        from src.xstate_statemachine import base_interpreter
+
+        base_interpreter._WARNED_ACTION_ERROR_POLICY_DEFAULT = False
+        m1 = create_machine(_config(), logic=_logic())
+        m2 = create_machine(_config(), logic=_logic())
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            for m in (m1, m2, m1):
+                i = SyncInterpreter(m)
+                i.start()
+                i.send("GO")
+        deprecations = [
+            w for w in caught if issubclass(w.category, DeprecationWarning)
+        ]
+        self.assertEqual(len(deprecations), 1)
 
     def test_explicit_continue_emits_no_deprecation(self) -> None:
         interp = SyncInterpreter(
@@ -282,6 +309,187 @@ class TestValidation(_Quiet):
             create_machine(_config("rollbak"), logic=_logic())
         self.assertIn("actionErrorPolicy", str(cm.exception))
         self.assertIn("rollbak", str(cm.exception))
+
+
+# -----------------------------------------------------------------------------
+# #27 follow-up: rollback withdraws `raise`d events from the failed list
+# -----------------------------------------------------------------------------
+class TestRollbackWithdrawsRaisedEvents(_Quiet):
+    """`rollback` restores configuration + context. It cannot un-send a
+    `sendTo` (the effect has left the machine) but a `raise` is an event
+    the machine queued for ITSELF and has not yet processed -- so it is
+    withdrawn. Pinned on both engines, for both transition shapes."""
+
+    @staticmethod
+    def _cfg(policy: str, targetless: bool) -> Dict[str, Any]:
+        go: Dict[str, Any] = {
+            "actions": [{"type": "raise", "params": {"event": "PING"}}, "boom"]
+        }
+        if not targetless:
+            go["target"] = "b"
+        return {
+            "id": "rs",
+            "initial": "a",
+            "actionErrorPolicy": policy,
+            "context": {"seen": []},
+            "states": {
+                "a": {"on": {"GO": go, "PING": {"actions": ["note"]}}},
+                "b": {"on": {"PING": {"actions": ["note"]}}},
+            },
+        }
+
+    @staticmethod
+    def _lg() -> MachineLogic:
+        def boom(i, c, e, a):
+            raise RuntimeError("x")
+
+        def note(i, c, e, a):
+            c["seen"].append(e.type)
+
+        return MachineLogic(actions={"boom": boom, "note": note})
+
+    def test_sync_rollback_withdraws_raise(self) -> None:
+        for targetless in (False, True):
+            i = SyncInterpreter(
+                create_machine(
+                    self._cfg("rollback", targetless), logic=self._lg()
+                )
+            )
+            i.start()
+            i.send("GO")
+            self.assertEqual(sorted(i.current_state_ids), ["rs.a"], targetless)
+            self.assertEqual(i.context["seen"], [], targetless)
+            self.assertFalse(i.last_transition_ok)
+            i.stop()
+
+    def test_async_rollback_withdraws_raise(self) -> None:
+        async def main(targetless: bool):
+            i = await Interpreter(
+                create_machine(
+                    self._cfg("rollback", targetless), logic=self._lg()
+                )
+            ).start()
+            r = await i.send("GO", wait=True)
+            await asyncio.sleep(0.02)
+            out = (
+                sorted(i.current_state_ids),
+                list(i.context["seen"]),
+                r.error,
+            )
+            await i.stop()
+            return out
+
+        for targetless in (False, True):
+            state, seen, err = asyncio.run(main(targetless))
+            self.assertEqual(state, ["rs.a"], targetless)
+            self.assertEqual(seen, [], targetless)
+            self.assertIsInstance(err, RuntimeError)
+
+    def test_continue_still_delivers_the_raise(self) -> None:
+        """Under the default policy the transition commits, so its raise
+        is delivered too -- unchanged 0.7.x behaviour."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            i = SyncInterpreter(
+                create_machine(self._cfg("continue", False), logic=self._lg())
+            )
+            i.start()
+            i.send("GO")
+        self.assertEqual(sorted(i.current_state_ids), ["rs.b"])
+        self.assertEqual(i.context["seen"], ["PING"])
+        i.stop()
+
+    def test_raise_queued_by_an_earlier_event_survives(self) -> None:
+        """Only events raised by the FAILED transition are withdrawn."""
+        cfg = self._cfg("rollback", False)
+        cfg["states"]["a"]["on"]["PRE"] = {
+            "actions": [{"type": "raise", "params": {"event": "PING"}}]
+        }
+        i = SyncInterpreter(create_machine(cfg, logic=self._lg()))
+        i.start()
+        i.send("PRE")
+        self.assertEqual(i.context["seen"], ["PING"])
+        i.send("GO")
+        self.assertEqual(
+            i.context["seen"], ["PING"]
+        )  # nothing else, nothing lost
+        i.stop()
+
+    def test_async_withdrawn_raises_do_not_inflate_runaway_depth(self) -> None:
+        """Review finding: each withdrawn raise had been counted into
+        `_raise_depth`. Left inflated, N independent failing sends tripped
+        the runaway breaker and silently dropped an unrelated event."""
+        cfg = self._cfg("rollback", False)
+        cfg["maxIterations"] = 3
+        cfg["states"]["a"]["on"]["OK"] = {"actions": ["note"]}
+
+        async def main():
+            i = await Interpreter(
+                create_machine(cfg, logic=self._lg())
+            ).start()
+            for _ in range(8):
+                await i.send("GO", wait=True)
+            r = await asyncio.wait_for(i.send("OK", wait=True), timeout=2)
+            out = (i._raise_depth, list(i.context["seen"]), r.changed)
+            await i.stop()
+            return out
+
+        depth, seen, changed = asyncio.run(main())
+        self.assertEqual(depth, 0)
+        self.assertEqual(seen, ["OK"])
+        self.assertTrue(changed)
+
+    def test_async_block_self_send_receipt_resolves_on_rollback(self) -> None:
+        """Review finding: under `OverflowPolicy.BLOCK` a `send(wait=True)`
+        from inside an action is routed to the internal queue. If the
+        transition then rolls back, that receipt must resolve, not hang."""
+        from src.xstate_statemachine import OverflowPolicy
+
+        holder: Dict[str, Any] = {}
+
+        def self_send(i, c, e, a):
+            holder["fut"] = asyncio.ensure_future(i.send("PING", wait=True))
+
+        def boom(i, c, e, a):
+            raise RuntimeError("x")
+
+        cfg = {
+            "id": "bk",
+            "initial": "a",
+            "actionErrorPolicy": "rollback",
+            "states": {
+                "a": {
+                    "on": {
+                        "GO": {
+                            "target": "b",
+                            "actions": ["self_send", "boom"],
+                        },
+                        "PING": {},
+                    }
+                },
+                "b": {},
+            },
+        }
+
+        async def main():
+            i = await Interpreter(
+                create_machine(
+                    cfg,
+                    logic=MachineLogic(
+                        actions={"self_send": self_send, "boom": boom}
+                    ),
+                ),
+                max_queue_size=8,
+                overflow_policy=OverflowPolicy.BLOCK,
+            ).start()
+            await i.send("GO", wait=True)
+            r = await asyncio.wait_for(holder["fut"], timeout=2)
+            await i.stop()
+            return r
+
+        r = asyncio.run(main())
+        self.assertIsNotNone(r.error)
+        self.assertFalse(r.changed)
 
 
 if __name__ == "__main__":  # pragma: no cover

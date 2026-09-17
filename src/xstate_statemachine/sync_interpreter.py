@@ -176,6 +176,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             clock=clock,
             strict=strict,
         )
+        #: ⏱️ #76: the sync engine only ever drains the clock's heap (via
+        #: `tick()` and the pump in `send()`), so its deadlines must land
+        #: there even when it is constructed inside a running asyncio loop.
+        self._clock_sync_lane = True
         #: ⏱️ Live clock handles per owning state id, so exiting a state
         #: cancels its timers on any Clock (#49/#50).
         self._timer_handles: Dict[str, List[Any]] = {}
@@ -580,32 +584,26 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    path, leaving this loop unbounded: `send()` never returned, with
         #    no timeout and no way to interrupt it. The same ceiling now
         #    applies to both paths.
-        processed = 0
+        #
+        # 🏛️ #77: measure SELF-GENERATED work, not throughput. The sync
+        #    caller is blocked for the whole drain, so every event that was
+        #    already in the inbox when the drain began -- or is replayed
+        #    from the defer buffer -- is a user event and is never counted.
+        #    Anything that ARRIVES during the drain (a `raise`, an action
+        #    calling `send()` on its own interpreter, a `done.invoke` from a
+        #    sync service, a due timer) was produced by the machine itself
+        #    and counts against `max_iterations`. A 5,000-event batch is
+        #    processed in full; a self-feeding loop -- via `raise` OR via an
+        #    external self-send -- is still broken. On overflow the external
+        #    budget is, by construction, already spent, so everything left in
+        #    both queues is self-generated and dropping it loses nothing the
+        #    caller was told was accepted.
+        external_budget = len(self._event_queue)
+        generated = 0
+        tripped = False
         limit = getattr(self.machine, "max_iterations", 1000)
-        # 📨 Replayed deferred events are NOT new work the machine generated
-        #    for itself; they are user events that already waited their turn.
-        #    Counting them against the runaway-`raise` budget let a full
-        #    `DEFER_MAX` replay exhaust it and `clear()` live events behind
-        #    it -- data loss the async engine did not have (#28 review).
-        replay_credit = 0
         try:
             while self._event_queue or self._internal_queue:
-                if replay_credit:
-                    replay_credit -= 1
-                else:
-                    processed += 1
-                if processed > limit:
-                    logger.error(
-                        "🛑 Exceeded %d queued events in a single macrostep on "
-                        "'%s'. This usually means an action raises the event "
-                        "that triggers it. Discarding %d pending event(s).",
-                        limit,
-                        self.id,
-                        len(self._event_queue),
-                    )
-                    self._event_queue.clear()
-                    break
-
                 # ⏰ #50: a deadline that elapsed while THIS macrostep was
                 #    busy is delivered in-loop, in due order, rather than
                 #    waiting for the next external send(). Due timers land
@@ -613,10 +611,45 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 #    and drained in the same loop", which this satisfies.
                 self._pump_timers()
                 # 🔁 #36: internal (self-raised) events first, in order.
+                is_generated = True
                 if self._internal_queue:
                     current_event = self._internal_queue.popleft()
+                elif external_budget > 0:
+                    external_budget -= 1
+                    is_generated = False
+                    current_event = self._event_queue.popleft()
                 else:
                     current_event = self._event_queue.popleft()
+                if is_generated:
+                    generated += 1
+                if is_generated and generated > limit:
+                    # ✂️ Internal events drain first, so the user's own
+                    #    events may still sit at the HEAD of the inbox with
+                    #    self-generated ones appended behind them. Drop the
+                    #    overflowing event and the generated tail; keep
+                    #    processing the user's. The budget is NOT reset: the
+                    #    drain stays tripped, so a machine that keeps
+                    #    regenerating has each new self-event dropped on
+                    #    arrival instead of earning a fresh 1,000.
+                    self._internal_queue.clear()
+                    dropped = 1 + max(
+                        0, len(self._event_queue) - external_budget
+                    )
+                    for _ in range(dropped - 1):
+                        self._event_queue.pop()
+                    logger.log(
+                        logging.ERROR if not tripped else logging.DEBUG,
+                        "🛑 Exceeded %d self-generated events in a single "
+                        "macrostep on '%s'. This means an action raises or "
+                        "sends the event that triggers it. Discarded %d "
+                        "pending self-generated event(s); every event the "
+                        "caller queued is still processed.",
+                        limit,
+                        self.id,
+                        dropped,
+                    )
+                    tripped = True
+                    continue
                 logger.debug(
                     "⚙️ Processing event: '%s'", current_event.type
                 )  # 📉 #55: hot path, DEBUG
@@ -637,7 +670,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                     held = self._take_deferred_for_replay()
                     if held:
                         self._event_queue.extendleft(reversed(held))
-                        replay_credit += len(held)
+                        external_budget += len(held)
         finally:
             self._is_processing = False
             logger.debug("🎉 Event processing cycle completed. Queue empty.")
@@ -798,7 +831,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                         "🔥 Delayed send of '%s' failed.", target_event.type
                     )
 
-        handle = self.clock.set_timeout(_fire, delay / 1000.0, owner=self.id)
+        handle = self._set_timeout(_fire, delay / 1000.0, owner=self.id)
         self._timer_handles.setdefault(self.id, []).append(handle)
 
         # 🔁 Reusing a send id supersedes the earlier send. Without this the
@@ -1070,7 +1103,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 return
             self._event_queue.append(event._replace(fired_at=self.clock.now()))
 
-        handle = self.clock.set_timeout(_fire, delay_sec, owner=owner_id)
+        handle = self._set_timeout(_fire, delay_sec, owner=owner_id)
         self._timer_handles.setdefault(owner_id, []).append(handle)
 
     def _invocation_is_live(

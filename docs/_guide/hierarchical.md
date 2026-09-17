@@ -178,7 +178,7 @@ Children can transition between each other freely:
 
 A target beginning with a dot, such as `".child"`, resolves into the **source** state's own children — matching XState v5. So `{target: ".profile"}` on `dashboard` means "my own child `profile`", not a sibling of `dashboard`.
 
-The 0.7.x reading — resolving `.child` as a sibling of the source, i.e. a child of the source's *parent* — is kept as a fallback for machines written against that behavior. Set `"strictTargets": true` on the machine to disable the fallback and get a hard error at `create_machine()` time instead of a silent mismatch:
+The 0.7.x reading — resolving `.child` as a sibling of the source, i.e. a child of the source's *parent* — is kept as a fallback for machines written against that behavior. Since 0.8.1 every resolution that takes the fallback emits a **`DeprecationWarning`** (once per source/target pair) naming the target, the sibling it bound to, and the unambiguous `#machine.path` spelling — so an existing codebase can find its own ambiguous targets without a flag day. The fallback is removed in 1.0. Set `"strictTargets": true` on the machine to disable it today and get a hard `InvalidConfigError` at `create_machine()` time instead:
 
 ```json
 {

@@ -223,6 +223,8 @@ class MachineLogic(Generic[TContext]):
         delays: Optional[
             Mapping[str, Union[int, float, DelayCallable]]
         ] = None,
+        *,
+        strict: bool = False,
     ) -> None:
         """Initializes the MachineLogic instance.
 
@@ -247,8 +249,15 @@ class MachineLogic(Generic[TContext]):
                 one. This is what lets `after: {"TIMEOUT": ...}` and
                 `send_to(..., delay="TIMEOUT")` resolve a symbolic delay
                 instead of raising.
+            strict: (#52) When ``True``, a subclass method that is NOT
+                decorated with `@action` / `@guard` / `@service` raises
+                `InvalidConfigError` at construction instead of being
+                filed by arity with a `UserWarning`. Use this to make a
+                misclassified method a build-time error rather than a
+                warning that can be missed in a long-lived process.
         """
         logger.info("🧠 Initializing MachineLogic container...")
+        self.strict: bool = bool(strict)
 
         # ✅ Use `or {}` as a robust way to default to an empty dictionary
         #    if None is passed.
@@ -335,6 +344,19 @@ class MachineLogic(Generic[TContext]):
             explicit = getattr(member, "_xsm_type", None)
             if explicit is not None:
                 self._register_by_marker(name, bound, explicit)
+            elif self.strict:
+                # 🛑 #52: `strict=True` refuses to guess. An undecorated
+                #    public method is a build-time error, not a warning.
+                from .exceptions import InvalidConfigError
+
+                raise InvalidConfigError(
+                    f"MachineLogic subclass '{type(self).__name__}' is "
+                    f"strict, but method '{name}' carries no @action / "
+                    f"@guard / @service decorator. Decorate it to state "
+                    f"its role, prefix it with '_' to mark it as a helper, "
+                    f"or construct with strict=False to fall back to "
+                    f"arity-based classification."
+                )
             else:
                 self._register_by_arity(name, bound)
 

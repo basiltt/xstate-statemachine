@@ -227,5 +227,196 @@ class TestParityOnSharedAlgorithm(_Quiet):
         )
 
 
+# -----------------------------------------------------------------------------
+# #77 -- the sync macrostep budget bounds the RAISE CHAIN, not throughput
+# -----------------------------------------------------------------------------
+class TestSyncMacrostepBudget(_Quiet):
+    """External batches of any size are processed in full; only a
+    self-feeding `raise` chain trips `maxIterations`, and tripping it
+    never discards events the caller was told were accepted."""
+
+    @staticmethod
+    def _counter(extra_actions=None, **cfg_extra) -> Dict[str, Any]:
+        return {
+            "id": "bud",
+            "initial": "a",
+            "context": {"seen": 0},
+            **cfg_extra,
+            "states": {
+                "a": {
+                    "on": {
+                        "T": {
+                            "target": "a",
+                            "reenter": True,
+                            "actions": ["bump", *(extra_actions or [])],
+                        }
+                    }
+                }
+            },
+        }
+
+    @staticmethod
+    def _logic(trace=None) -> MachineLogic:
+        def bump(i, c, e, a):
+            c["seen"] += 1
+            if trace is not None:
+                trace.append(e.type)
+
+        return MachineLogic(actions={"bump": bump})
+
+    def test_sync_large_batch_is_not_truncated(self) -> None:
+        i = SyncInterpreter(
+            create_machine(self._counter(), logic=self._logic())
+        )
+        i.start()
+        i.send_events(["T"] * 5000)
+        self.assertEqual(i.context["seen"], 5000)
+        self.assertEqual(i.queue_depth, 0)
+        i.stop()
+
+    def test_sync_runaway_raise_chain_is_still_bounded(self) -> None:
+        cfg = self._counter(
+            [{"type": "raise", "params": {"event": "T"}}], maxIterations=50
+        )
+        i = SyncInterpreter(create_machine(cfg, logic=self._logic()))
+        i.start()
+        i.send("T")  # must return, not spin forever
+        self.assertLessEqual(i.context["seen"], 60)
+        self.assertEqual(i.status, "running")
+        i.stop()
+
+    def test_sync_runaway_does_not_discard_external_events(self) -> None:
+        """The chain is broken; the inbox behind it is preserved."""
+        cfg = {
+            "id": "bud",
+            "initial": "a",
+            "maxIterations": 20,
+            "context": {"seen": 0, "ok": 0},
+            "states": {
+                "a": {
+                    "on": {
+                        "LOOP": {
+                            "actions": [
+                                "bump",
+                                {"type": "raise", "params": {"event": "LOOP"}},
+                            ]
+                        },
+                        "OK": {"actions": ["ok"]},
+                    }
+                }
+            },
+        }
+
+        def bump(i, c, e, a):
+            c["seen"] += 1
+
+        def ok(i, c, e, a):
+            c["ok"] += 1
+
+        i = SyncInterpreter(
+            create_machine(
+                cfg, logic=MachineLogic(actions={"bump": bump, "ok": ok})
+            )
+        )
+        i.start()
+        i.send_events(["LOOP"] + ["OK"] * 30)
+        self.assertLessEqual(i.context["seen"], 25)
+        self.assertEqual(i.context["ok"], 30)
+        i.stop()
+
+    def test_sync_external_self_send_loop_is_still_bounded(self) -> None:
+        """Review finding: a loop via `interp.send()` from an action (an
+        EXTERNAL self-send, not a `raise`) must also terminate."""
+        cfg = {
+            "id": "pp",
+            "initial": "a",
+            "maxIterations": 40,
+            "context": {"n": 0},
+            "states": {
+                "a": {"on": {"P": {"target": "b", "actions": ["bounce"]}}},
+                "b": {"on": {"P": {"target": "a", "actions": ["bounce"]}}},
+            },
+        }
+
+        def bounce(i, c, e, a):
+            c["n"] += 1
+            i.send("P")
+
+        i = SyncInterpreter(
+            create_machine(cfg, logic=MachineLogic(actions={"bounce": bounce}))
+        )
+        i.start()
+        i.send("P")  # must return
+        self.assertLessEqual(i.context["n"], 45)
+        self.assertEqual(i.queue_depth, 0)
+        i.stop()
+
+    def test_sync_rollback_rearming_invoke_does_not_hang(self) -> None:
+        """Review finding: `onDone` action fails -> rollback re-arms the
+        invoke -> fresh `done.invoke` -> repeat. The generated-event budget
+        must break this cycle; `send()` must return."""
+        cfg = {
+            "id": "rl",
+            "initial": "A",
+            "maxIterations": 30,
+            "actionErrorPolicy": "rollback",
+            "states": {
+                "A": {"on": {"GO": "B"}},
+                "B": {
+                    "invoke": {
+                        "src": "svc",
+                        "onDone": {"target": "C", "actions": ["boom"]},
+                    }
+                },
+                "C": {},
+            },
+        }
+
+        def svc(i, c, e):
+            return 1
+
+        def boom(i, c, e, a):
+            raise RuntimeError("x")
+
+        i = SyncInterpreter(
+            create_machine(
+                cfg,
+                logic=MachineLogic(
+                    services={"svc": svc}, actions={"boom": boom}
+                ),
+            )
+        )
+        i.start()
+        i.send("GO")  # must return
+        self.assertEqual(sorted(i.current_state_ids), ["rl.B"])
+        i.stop()
+
+    def test_engine_trace_parity_large_batch(self) -> None:
+        sync_trace: list = []
+        s = SyncInterpreter(
+            create_machine(self._counter(), logic=self._logic(sync_trace))
+        )
+        s.start()
+        s.send_events(["T"] * 2000)
+        s.stop()
+
+        async_trace: list = []
+
+        async def main():
+            i = await Interpreter(
+                create_machine(self._counter(), logic=self._logic(async_trace))
+            ).start()
+            await i.send_events(["T"] * 2000)
+            for _ in range(2000):
+                if i.context["seen"] == 2000:
+                    break
+                await asyncio.sleep(0.002)
+            await i.stop()
+
+        asyncio.run(main())
+        self.assertEqual(len(sync_trace), 2000)
+        self.assertEqual(sync_trace, async_trace)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

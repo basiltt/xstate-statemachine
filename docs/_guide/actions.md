@@ -626,6 +626,30 @@ these are siblings of `actionErrorPolicy`, not alternatives to it.
 
 Whichever policy is set, `interpreter.last_transition_ok` reports whether the most recent transition's actions all ran to completion, and the `on_transition_failed(interpreter, transition, failed_actions)` plugin hook fires with the list of `(action_def, exception)` pairs that failed. See [Plugins](../plugins/#plugin-hooks-reference).
 
+### What `rollback` does — and does not — undo
+
+`rollback` is a **configuration + context** transaction. It is *not* an effect transaction:
+
+| Effect of an earlier action in the same list | After rollback |
+|---|---|
+| Context mutation | ✅ restored |
+| State configuration (entered / exited states, their `after` timers and `invoke`s) | ✅ restored, timers re-armed |
+| Actor created by `spawn_*` | ✅ stopped and unregistered |
+| Event queued by the `raise` built-in | ✅ withdrawn *(0.8.1)* — it was queued for the machine itself and not yet processed |
+| `sendTo` / `send_to` to **another** actor | ❌ **delivered** — the event has already left this machine |
+| Anything your own code did (HTTP call, database write, log line) | ❌ **happened** |
+
+A rolled-back machine can therefore leave a *remote* side effect behind: if a failing entry action runs after a `sendTo` that told a risk actor "order is live", this machine returns to `idle` while the risk actor believes an order exists. Two design rules keep that from mattering:
+
+1. **Put the outward-facing action last** in its list — or on the `entry` of the state the transition commits to — so it only runs once everything that could fail has succeeded.
+2. Treat any cross-actor message as **at-least-once** and make the receiver idempotent, exactly as you would with a network.
+
+Under `"continue"` the `on_transition_failed` hook fires **once per action slot** that failed — a transition whose own action *and* the target's entry action both raise reports two calls. Under `"rollback"` / `"fail"` the first failure aborts the transition, so there is exactly one.
+
+### Cost of arming `rollback`
+
+`rollback` and `fail` checkpoint the context (a `deepcopy`) before a transition that can run actions. Since 0.8.1 the checkpoint is **skipped when no action can run** — the transition has no `actions`, no exited state has `exit`, and no entered subtree has `entry`/`exit` — so an idle machine on `rollback` runs at ≈ 0.98× of the default. For action-bearing transitions the cost scales with the size of your context; see [Production Characteristics](../production-characteristics/#cost-of-the-failure-policies). Keep large, immutable reference data out of `context` (pass it via `input` or close over it in your logic) if this matters to you.
+
 ## Best Practices
 
 ### Keep Actions Simple

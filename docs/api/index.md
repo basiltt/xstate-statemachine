@@ -924,7 +924,7 @@ children (which may be either engine) share one timeline.
 @runtime_checkable
 class Clock(Protocol):
     def now(self) -> float: ...
-    def set_timeout(self, fn, delay_sec: float, *, owner: Any = None) -> Any: ...
+    def set_timeout(self, fn, delay_sec: float, *, owner: Any = None, sync: bool | None = None) -> Any: ...
     def clear_timeout(self, handle: Any) -> None: ...
     def pump(self) -> int: ...
 ```
@@ -932,7 +932,7 @@ class Clock(Protocol):
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `.now()` | `() -> float` | Current time in seconds (monotonic; origin is clock-specific). |
-| `.set_timeout(fn, delay_sec, *, owner=None)` | `(Callable[[], Any], float, Any) -> Any` | Schedule `fn` after `delay_sec`; returns a cancellation handle. |
+| `.set_timeout(fn, delay_sec, *, owner=None, sync=None)` | `(Callable[[], Any], float, Any, bool \| None) -> Any` | Schedule `fn` after `delay_sec`; returns a cancellation handle. Engines pass `sync=True` (`SyncInterpreter`) or `sync=False` (`Interpreter`) so the clock picks the lane the caller can drain (0.8.1, #76); `RealClock` falls back to the ambient-loop heuristic when `sync` is `None`. A clock written against the 0.8.0 protocol (no `sync` parameter) is still accepted — the engine retries without it. |
 | `.clear_timeout(handle)` | `(Any) -> None` | Cancel a scheduled callback. Idempotent. |
 | `.pump()` | `() -> int` | Run every callback whose deadline has passed; returns how many fired. |
 
