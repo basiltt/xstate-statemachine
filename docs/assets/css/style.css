@@ -1015,6 +1015,41 @@ body {
   text-align: center;
 }
 
+/* --- Performance table (below the feature comparison) --- */
+.perf-title {
+  text-align: center;
+  font-size: 1.5rem;
+  margin: 56px 0 8px;
+}
+
+.perf-table td:not(:first-child) {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding-right: 28px;
+}
+
+.perf-table td.perf-best {
+  font-weight: 700;
+  color: var(--color-success, #3fb950);
+}
+
+.perf-unit {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 400;
+  opacity: 0.6;
+}
+
+.perf-note {
+  max-width: 820px;
+  margin: 16px auto 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  opacity: 0.85;
+  text-align: center;
+}
+
 /* --- Signature Blocks --- */
 .signature {
   font-family: var(--font-mono);

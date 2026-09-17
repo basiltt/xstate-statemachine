@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Nothing yet.
 
-## [0.8.0] - 2026-09-17
+## [0.8.0] - 2026-09-17 — Fortify
 
 **Adoption-readiness.** A production adoption audit (tracking issue
 [#26](https://github.com/basiltt/xstate-statemachine/issues/26)) filed 34

@@ -11,7 +11,7 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ---
 
-## [0.8.0] — 2026-09-17 *(Current Release)*
+## [0.8.0] — 2026-09-17 — Fortify *(Current Release)*
 
 **Adoption-readiness, parts 1–3.**
 
