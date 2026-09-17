@@ -6,7 +6,7 @@ title: Home
 <!-- Hero Section -->
 <section class="hero">
   <div class="hero-content">
-    <div class="hero-badge">v0.8.0 &mdash; Production Hardened</div>
+    <div class="hero-badge">v0.8.0 &mdash; Fortify</div>
     <h1>
       State Machines for Python,<br>
       <span class="gradient-text">Done Right.</span>
@@ -375,6 +375,41 @@ interp.stop()</code></pre>
       </tbody>
     </table>
   </div>
+
+  <h3 class="perf-title">How It Performs</h3>
+  <p class="section-subtitle">Same machine shape, each library through its own idiomatic API. Higher is better; <strong>bold</strong> is fastest in the row.</p>
+
+  <div class="comparison-table perf-table">
+    <table>
+      <thead>
+        <tr>
+          <th>Scenario</th>
+          <th>XState-StateMachine</th>
+          <th>transitions</th>
+          <th>python-statemachine</th>
+          <th>sismic</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Flat toggle <span class="perf-unit">events/s</span></td><td>50,033</td><td class="perf-best">98,196</td><td>9,575</td><td>10,965</td></tr>
+        <tr><td>Guard + action <span class="perf-unit">events/s</span></td><td>64,851</td><td class="perf-best">77,860</td><td>7,604</td><td>10,009</td></tr>
+        <tr><td>3-level nested <span class="perf-unit">events/s</span></td><td class="perf-best">20,923</td><td>6,609</td><td>2,619</td><td>3,659</td></tr>
+        <tr><td>Parallel regions <span class="perf-unit">events/s</span></td><td class="perf-best">38,314</td><td>4,891</td><td>2,721</td><td>4,595</td></tr>
+        <tr><td>Delayed transitions <span class="perf-unit">timers/s</span></td><td class="perf-best">7,245</td><td>77</td><td>2,843</td><td>4,332</td></tr>
+        <tr><td>1,000 instances <span class="perf-unit">instances/s</span></td><td class="perf-best">25,726</td><td>23,765</td><td>2,817</td><td>5,781</td></tr>
+        <tr><td>Construction <span class="perf-unit">machines/s</span></td><td>6,496</td><td class="perf-best">7,357</td><td>866</td><td>182</td></tr>
+        <tr><td>Native asyncio <span class="perf-unit">events/s</span></td><td>21,985</td><td class="perf-best">34,739</td><td>5,389</td><td>&mdash;</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="perf-note">
+    <code>transitions</code> is faster on <em>flat</em> machines because it is a transition table, not a statechart
+    engine &mdash; no configuration set, no entry/exit ordering, no internal queue. The moment states nest or run in
+    parallel, that algorithm is what the others have to emulate, and XState-StateMachine is 3&ndash;8&times; faster
+    than every library that actually implements statecharts. Python 3.14, median of 7 runs, GC disabled, setup excluded.
+    Reproduce with <code>benchmarks/competitors/run.py</code>; method and caveats in
+    <a href="{{ '/guide/production-characteristics/' | relative_url }}">Production Characteristics</a>.
+  </p>
 </section>
 
 <!-- Workflow -->
