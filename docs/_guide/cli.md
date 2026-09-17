@@ -457,7 +457,7 @@ Example output:
 ```
   XState-StateMachine CLI
   ----------------------------------
-  Version:      0.7.0
+  Version:      0.8.0
   Python:       3.12.0
   Platform:     Windows-11
   Install path: C:\...\xstate_statemachine

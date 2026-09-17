@@ -352,10 +352,15 @@
       // Guard against duplicate initialization
       if (pre.querySelector('.code-copy-btn')) return;
 
-      // Ensure the pre is positioned so the button can be placed absolutely
-      var prePosition = window.getComputedStyle(pre).position;
-      if (prePosition === 'static') {
-        pre.style.position = 'relative';
+      // Wrap the <pre> in a non-scrolling frame and hang the controls off the
+      // frame. An absolutely-positioned child *inside* a scroll container
+      // extends its scrollable area, which painted a scrollbar on every block.
+      var frame = pre.parentElement;
+      if (!frame || !frame.classList.contains('code-frame')) {
+        frame = document.createElement('div');
+        frame.className = 'code-frame';
+        pre.parentNode.insertBefore(frame, pre);
+        frame.appendChild(pre);
       }
 
       // --- Language Label (only for .content pre, not homepage showcase) ---
@@ -371,7 +376,7 @@
           var label = document.createElement('span');
           label.className = 'code-label';
           label.textContent = langName;
-          pre.insertBefore(label, pre.firstChild);
+          frame.appendChild(label);
         }
       }
 
@@ -381,7 +386,7 @@
       btn.type = 'button';
       btn.textContent = 'Copy';
       btn.setAttribute('aria-label', 'Copy code to clipboard');
-      pre.appendChild(btn);
+      frame.appendChild(btn);
 
       btn.addEventListener('click', function () {
         var codeEl = qs('code', pre);

@@ -100,15 +100,23 @@ button { font: inherit; color: inherit; }
 ::selection { background: rgba(124,92,255,.35); color: #fff; }
 :focus-visible { outline: 2px solid var(--a2); outline-offset: 3px; border-radius: var(--r-sm); }
 
-/* custom scrollbar */
-* { scrollbar-width: thin; scrollbar-color: rgba(124,92,255,.5) transparent; }
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, var(--a1), var(--a2)); border-radius: 999px;
-  border: 3px solid var(--ink); background-clip: padding-box;
-}
-::-webkit-scrollbar-thumb:hover { border-width: 2px; }
+/* scrollbars: the page gets the gradient thumb; everything inside stays quiet */
+html { scrollbar-width: thin; scrollbar-color: rgba(124,92,255,.55) transparent; }
+html::-webkit-scrollbar { width: 10px; }
+html::-webkit-scrollbar-track { background: transparent; }
+html::-webkit-scrollbar-thumb { background: linear-gradient(180deg, var(--a1), var(--a2)); border-radius: 999px; border: 3px solid var(--ink); background-clip: padding-box; }
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background-color: var(--fg-faint); }
+/* sub-pixel rounding makes <pre> report 1-2px of phantom overflow; let code wrap-free but never show a bar for that */
+pre > code { display: block; width: max-content; min-width: 100%; }
+/* main.js wraps every <pre> in .code-frame and hangs the copy button + label off the frame */
+.code-frame { position: relative; }
+.code-frame > pre { margin: 0; }
+.content .code-frame, .content .highlighter-rouge .code-frame { margin: 1.3em 0; }
+.content .highlighter-rouge > .code-frame, .content .highlight > .code-frame { margin: 0; }
 
 .skip-link { position: absolute; left: 12px; top: -48px; padding: 8px 14px; background: var(--signal); color: #fff; border-radius: var(--r-sm); z-index: 1000; transition: top var(--fast); }
 .skip-link:focus { top: 12px; }
@@ -298,7 +306,7 @@ button { font: inherit; color: inherit; }
 .card h3 { margin: 0 0 8px; font-size: var(--text-lg); font-weight: 700; letter-spacing: -.02em; position: relative; }
 .card p { margin: 0; color: var(--fg-dim); font-size: var(--text-sm); line-height: 1.6; position: relative; }
 .card-icon { width: 40px; height: 40px; display: grid; place-items: center; margin-bottom: 14px; border-radius: 12px; background: var(--signal-soft); border: 1px solid var(--line); font-size: 18px; position: relative; }
-.mini { margin: auto 0 0; margin-top: 18px; padding: 14px 16px; border-radius: 12px; background: var(--code-bg); color: var(--code-fg); font-size: 12.5px; line-height: 1.6; overflow-x: auto; position: relative; border: 1px solid rgba(255,255,255,.06); }
+.mini { margin: auto 0 0; margin-top: 18px; padding: 14px 16px; border-radius: 12px; background: var(--code-bg); color: var(--code-fg); font-size: 12.5px; line-height: 1.6; overflow: auto hidden; position: relative; border: 1px solid rgba(255,255,255,.06); }
 .mini code { background: none; border: 0; padding: 0; color: inherit; }
 .receipt { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; font-family: var(--font-mono); font-size: 12px; position: relative; }
 .receipt span { padding: 5px 10px; border-radius: 8px; background: var(--code-bg); color: var(--code-fg); border: 1px solid rgba(255,255,255,.06); }
@@ -316,7 +324,7 @@ button { font: inherit; color: inherit; }
 .code-tab-panel { display: none; }
 .code-tab-panel.active { display: block; animation: fadeUp 300ms var(--ease); }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } }
-.code-tabs .code-tab-panel pre, .code-tabs .code-tab-panel .highlight pre { margin: 0; border: 0; border-radius: 0; background: transparent; max-height: 520px; overflow: auto; }
+.code-tabs .code-tab-panel pre, .code-tabs .code-tab-panel .highlight pre { margin: 0; border: 0; border-radius: 0; background: transparent; overflow: auto hidden; }
 
 /* ----------------------------------------------------------------------------
    9. Comparison + performance
@@ -327,6 +335,7 @@ button { font: inherit; color: inherit; }
 .comparison-table thead th { text-align: left; font-weight: 600; color: var(--fg-dim); font-size: var(--text-xs); background: rgba(255,255,255,.02); }
 .comparison-table thead th:nth-child(2) { color: var(--fg); position: relative; }
 .comparison-table thead th:nth-child(2)::after { content: ""; position: absolute; left: 18px; right: 18px; bottom: 0; height: 2px; background: var(--grad); border-radius: 2px; }
+.comparison-table thead th:not(:first-child) { text-align: center; }
 .comparison-table tbody tr { transition: background var(--fast); }
 .comparison-table tbody tr:hover { background: var(--signal-soft); }
 .comparison-table tbody tr:last-child td { border-bottom: 0; }
@@ -337,7 +346,9 @@ button { font: inherit; color: inherit; }
 .mark-no { color: var(--fg-faint); background: var(--panel); border: 1px solid var(--line); }
 .mark-partial { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
 .perf-title { margin: 56px 0 10px; font-size: var(--text-xl); font-weight: 700; letter-spacing: -.02em; }
-.perf-table td:not(:first-child) { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+.perf-table th:not(:first-child), .perf-table td:not(:first-child) { text-align: right; width: 15%; }
+.perf-table td:not(:first-child) { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.perf-table td:first-child { font-weight: 600; }
 .perf-table td.perf-best { color: var(--a2); font-weight: 700; }
 .perf-unit { display: block; font-size: var(--text-xs); font-weight: 400; color: var(--fg-faint); }
 .perf-note { margin: 14px 0 0; max-width: var(--measure); font-size: var(--text-sm); color: var(--fg-dim); }
@@ -398,7 +409,7 @@ button { font: inherit; color: inherit; }
 .heading-anchor { position: absolute; left: -1.1em; opacity: 0; color: var(--fg-faint); font-weight: 400; transition: opacity var(--fast); }
 .content h2:hover .heading-anchor, .content h3:hover .heading-anchor, .content h4:hover .heading-anchor, .heading-anchor:focus-visible { opacity: 1; }
 
-.content table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); display: block; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r); }
+.content table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); display: block; overflow: auto hidden; border: 1px solid var(--line); border-radius: var(--r); }
 .content th, .content td { padding: 10px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 .content thead th { font-weight: 600; color: var(--fg-dim); font-size: var(--text-xs); background: var(--panel); }
 .content tbody tr:last-child td { border-bottom: 0; }
@@ -415,13 +426,13 @@ button { font: inherit; color: inherit; }
 /* code blocks */
 .content pre, .highlight pre, pre.highlight, .code-tab-panel pre {
   position: relative; margin: 1.3em 0; padding: 16px 18px; background: var(--code-bg); color: var(--code-fg);
-  border: 1px solid var(--line-strong); border-radius: var(--r); overflow-x: auto; line-height: 1.6; font-size: var(--text-xs);
+  border: 1px solid var(--line-strong); border-radius: var(--r); overflow: auto hidden; line-height: 1.6; font-size: var(--text-xs);
 }
 .content .highlight, .highlighter-rouge { position: relative; }
 .content pre code, .highlight pre code, pre.highlight code { background: none; border: 0; padding: 0; font-size: inherit; color: var(--code-fg); }
-.code-label { position: absolute; top: 8px; right: 44px; font-family: var(--font-mono); font-size: 10.5px; color: rgba(231,233,246,.45); text-transform: lowercase; pointer-events: none; }
+.code-label { position: absolute; top: 8px; right: 44px; z-index: 1; font-family: var(--font-mono); font-size: 10.5px; color: rgba(231,233,246,.45); text-transform: lowercase; pointer-events: none; }
 .code-copy-btn { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; display: grid; place-items: center; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); border-radius: 8px; color: var(--code-fg); cursor: pointer; opacity: 0; transition: opacity var(--fast), background var(--fast); }
-.highlight:hover .code-copy-btn, .highlighter-rouge:hover .code-copy-btn, pre:hover .code-copy-btn, .code-copy-btn:focus-visible { opacity: 1; }
+.code-frame:hover .code-copy-btn, .code-copy-btn:focus-visible { opacity: 1; }
 .code-copy-btn:hover { background: rgba(255,255,255,.12); }
 .code-copy-btn.copied { color: var(--ok); opacity: 1; }
 
