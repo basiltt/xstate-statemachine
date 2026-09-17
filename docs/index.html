@@ -3,174 +3,175 @@ layout: home
 title: Home
 ---
 
-<!-- Hero Section -->
+<!-- ambient aurora + grid, fixed behind everything -->
+<div class="bg" aria-hidden="true">
+  <div class="bg-grid"></div>
+  <div class="bg-orb bg-orb-1"></div>
+  <div class="bg-orb bg-orb-2"></div>
+  <div class="bg-orb bg-orb-3"></div>
+  <div class="bg-noise"></div>
+</div>
+
+<!-- ============================ HERO ============================ -->
 <section class="hero">
-  <div class="hero-content">
-    <div class="hero-badge">v0.8.0 &mdash; Fortify</div>
-    <h1>
-      State Machines for Python,<br>
-      <span class="gradient-text">Done Right.</span>
-    </h1>
-    <p class="hero-subtitle">
-      Run your XState / Stately.ai JSON unmodified, or define machines in pure Python.
-      Async <em>and</em> sync interpreters. The CLI generates typed code and
-      <strong>proves</strong> it rebuilds your machine before writing it. Zero dependencies.
-    </p>
-    <div class="hero-actions">
-      <a href="{{ '/guide/getting-started/' | relative_url }}" class="btn btn-primary">Get Started</a>
-      <a href="{{ '/api/' | relative_url }}" class="btn btn-outline">API Reference</a>
+  <div class="hero-grid">
+    <div class="hero-copy reveal">
+      <a class="pill" href="https://github.com/basiltt/xstate-statemachine/releases/tag/v{{ site.version }}">
+        <span class="pill-dot"></span>
+        v{{ site.version }} &mdash; Fortify is out
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg>
+      </a>
+      <h1>
+        <span class="h1-line">State machines</span>
+        <span class="h1-line">for Python,</span>
+        <span class="h1-line h1-grad">done right.</span>
+      </h1>
+      <p class="hero-lede">
+        Run your XState or Stately JSON unmodified, or define machines in plain Python.
+        Async and sync engines share one algorithm. A CLI that proves its generated code
+        rebuilds your machine before it writes a file. Zero dependencies.
+      </p>
+      <div class="hero-actions">
+        <a href="{{ '/guide/getting-started/' | relative_url }}" class="btn btn-primary">
+          Get started
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
+        </a>
+        <a href="{{ '/api/' | relative_url }}" class="btn btn-glass">Read the API</a>
+      </div>
+      <div class="hero-install" role="group" aria-label="Install command">
+        <code><span class="prompt">$</span> pip install xstate-statemachine</code>
+        <button class="copy-btn" type="button" data-copy="pip install xstate-statemachine" aria-label="Copy install command">
+          <svg class="ic-copy" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25zM5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25z"/></svg>
+          <svg class="ic-check" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8.5l3 3 7-7"/></svg>
+        </button>
+      </div>
+      <ul class="hero-trust" aria-label="At a glance">
+        <li><strong>3,183</strong> tests</li>
+        <li><strong>3.9&ndash;3.14</strong> Python</li>
+        <li><strong>0</strong> dependencies</li>
+        <li><strong>MIT</strong> licensed</li>
+      </ul>
     </div>
-    <div class="hero-install">
-      <span>$</span> <code>pip install xstate-statemachine</code>
-      <button class="copy-btn" onclick="navigator.clipboard.writeText('pip install xstate-statemachine')" title="Copy to clipboard">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25zM5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25z"/></svg>
-      </button>
-    </div>
-    <div class="hero-stats">
-      <div class="hero-stat">
-        <span class="hero-stat-value">3,156+</span>
-        <span class="hero-stat-label">Tests Passing</span>
+
+    <figure class="hero-machine reveal reveal-delay" id="heroMachine" aria-label="An order-lifecycle state machine, animating through its states">
+      <div class="machine-chrome">
+        <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+        <span class="machine-title">order.machine.json</span>
+        <span class="machine-live"><span class="live-dot"></span>live</span>
       </div>
-      <div class="hero-stat">
-        <span class="hero-stat-value">6</span>
-        <span class="hero-stat-label">Python Versions</span>
-      </div>
-      <div class="hero-stat">
-        <span class="hero-stat-value">0</span>
-        <span class="hero-stat-label">Dependencies</span>
-      </div>
-      <div class="hero-stat">
-        <span class="hero-stat-value">5</span>
-        <span class="hero-stat-label">CLI Templates</span>
-      </div>
-    </div>
+      <svg viewBox="0 0 520 320" xmlns="http://www.w3.org/2000/svg" role="img">
+        <defs>
+          <linearGradient id="gEdge" x1="0" x2="1"><stop offset="0" stop-color="#7C5CFF"/><stop offset="1" stop-color="#22D3EE"/></linearGradient>
+          <radialGradient id="gNode" cx="50%" cy="40%" r="60%"><stop offset="0" stop-color="#A78BFA"/><stop offset="1" stop-color="#7C5CFF"/></radialGradient>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" class="edge-arrow"/></marker>
+          <marker id="arrowOn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" fill="#22D3EE"/></marker>
+          <filter id="glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        </defs>
+
+        <path class="edge" data-edge="pending-submitted"  d="M118 80 H 202" marker-end="url(#arrow)"/>
+        <path class="edge" data-edge="submitted-open"     d="M318 80 H 402" marker-end="url(#arrow)"/>
+        <path class="edge" data-edge="open-filled"        d="M460 108 V 212" marker-end="url(#arrow)"/>
+        <path class="edge" data-edge="open-cancelled"     d="M402 98 L 318 212" marker-end="url(#arrow)"/>
+        <path class="edge" data-edge="submitted-rejected" d="M260 108 V 212" marker-end="url(#arrow)"/>
+
+        <text class="edge-event" id="heroEvent" x="0" y="0" text-anchor="middle"></text>
+        <circle class="edge-pulse" id="heroPulse" r="5"/>
+
+        <g class="node" data-state="pending"   transform="translate(60,80)"><circle class="halo" r="38"/><circle r="30"/><text dy="4">pending</text></g>
+        <g class="node" data-state="submitted" transform="translate(260,80)"><circle class="halo" r="38"/><circle r="30"/><text dy="4">submitted</text></g>
+        <g class="node" data-state="open"      transform="translate(460,80)"><circle class="halo" r="38"/><circle r="30"/><text dy="4">open</text></g>
+        <g class="node node-final" data-state="filled"    transform="translate(460,240)"><circle class="halo" r="38"/><circle r="30"/><circle r="24" class="final-ring"/><text dy="4">filled</text></g>
+        <g class="node node-final" data-state="cancelled" transform="translate(300,240)"><circle class="halo" r="38"/><circle r="30"/><circle r="24" class="final-ring"/><text dy="4">cancelled</text></g>
+        <g class="node node-final" data-state="rejected"  transform="translate(260,240)" style="display:none"><circle class="halo" r="38"/><circle r="30"/><circle r="24" class="final-ring"/><text dy="4">rejected</text></g>
+      </svg>
+      <figcaption>
+        <span>state <code id="heroState">pending</code></span>
+        <span>event <code id="heroLastEvent">—</code></span>
+      </figcaption>
+    </figure>
   </div>
 </section>
 
-<!-- Why State Machines? -->
-<section class="why-section">
-  <div class="why-inner">
-    <h2 class="section-title">Why State Machines?</h2>
-    <p class="section-subtitle">Replace brittle boolean flags and tangled conditionals with predictable, testable state logic.</p>
+<!-- ============================ BENTO ============================ -->
+<section class="bento-section">
+  <div class="section-head reveal">
+    <h2>Everything a statechart runtime should do.<br><span class="muted">Nothing it shouldn't.</span></h2>
+  </div>
 
-    <div class="why-grid">
-      <div class="why-card why-before">
-        <div class="why-label">
-          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>
-          Without State Machines
-        </div>
-<pre><code>is_loading = True
-has_error = False
-is_authenticated = True
-is_submitting = False
+  <div class="bento">
+    <article class="card card-lg reveal">
+      <div class="card-glow" style="--gx:20%;--gy:0%"></div>
+      <h3>XState JSON, unmodified</h3>
+      <p>Export from Stately and run it. Nested, parallel, history, guards, delays, invoke, actors, tags, meta.</p>
+      <pre class="mini"><code><span class="k">from</span> xstate_statemachine <span class="k">import</span> create_machine, Interpreter
+machine = create_machine(<span class="nf">json</span>.load(<span class="nb">open</span>(<span class="s">"order.json"</span>)))
+interp  = <span class="k">await</span> Interpreter(machine).start()</code></pre>
+    </article>
 
-# What state are we actually in?
-# Can we have is_loading AND has_error?
-# Who resets is_submitting?
-# 🤯 16 possible boolean combinations</code></pre>
+    <article class="card reveal">
+      <div class="card-glow" style="--gx:80%;--gy:0%"></div>
+      <div class="card-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg></div>
+      <h3>One algorithm, two engines</h3>
+      <p><code>Interpreter</code> for asyncio, <code>SyncInterpreter</code> for everything else. Same core; cannot drift.</p>
+    </article>
+
+    <article class="card reveal">
+      <div class="card-glow" style="--gx:50%;--gy:100%"></div>
+      <div class="card-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="m9 12 2 2 4-4"/></svg></div>
+      <h3>Failure you can see</h3>
+      <p><code>actionErrorPolicy: "rollback"</code> restores state <em>and</em> context. <code>strict</code> mode raises at the call site.</p>
+    </article>
+
+    <article class="card reveal">
+      <div class="card-glow" style="--gx:0%;--gy:50%"></div>
+      <div class="card-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l3 2M9 2h6"/></svg></div>
+      <h3>Time you control</h3>
+      <p>Inject a <code>Clock</code>. <code>SimulatedClock</code> fires a 30&#8209;second timeout in microseconds.</p>
+    </article>
+
+    <article class="card card-wide reveal">
+      <div class="card-glow" style="--gx:100%;--gy:50%"></div>
+      <h3>Ask, don't poll</h3>
+      <p><code>await send("SUBMIT", wait=True)</code> hands you a <code>Receipt</code> the moment the step has run. <code>send_priority</code> jumps the queue; the inbox is bounded with backpressure.</p>
+      <div class="receipt">
+        <span class="receipt-k">Receipt</span>
+        <span>state_ids=<b>{'submitted'}</b></span>
+        <span>changed=<b>True</b></span>
+        <span>error=<b>None</b></span>
       </div>
-      <div class="why-card why-after">
-        <div class="why-label">
-          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>
-          With XState-StateMachine
-        </div>
-<pre><code>machine = create_machine({
-    "id": "app",
-    "initial": "idle",
-    "states": {
-        "idle":       {"on": {"FETCH": "loading"}},
-        "loading":    {"on": {"SUCCESS": "ready",
-                              "ERROR": "error"}},
-        "ready":      {"on": {"REFRESH": "loading"}},
-        "error":      {"on": {"RETRY": "loading"}}
-    }
-})
-# ✅ Exactly ONE state at a time. Always.</code></pre>
-      </div>
-    </div>
+    </article>
+
+    <article class="card reveal">
+      <div class="card-glow" style="--gx:50%;--gy:0%"></div>
+      <div class="card-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></div>
+      <h3>Persistence that resumes</h3>
+      <p>Versioned snapshots that refuse a structurally different machine. Pending events survive restarts.</p>
+    </article>
+
+    <article class="card reveal">
+      <div class="card-glow" style="--gx:50%;--gy:100%"></div>
+      <div class="card-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16M4 20h16M7 4c0 8 10 8 10 16M17 4c0 8-10 8-10 16"/></svg></div>
+      <h3>Typed context</h3>
+      <p><code>context_type=MyCtx</code> flows a <code>TypedDict</code> to <code>interp.context</code>. A typo'd key is a checker error.</p>
+    </article>
+
+    <article class="card reveal">
+      <div class="card-glow" style="--gx:100%;--gy:100%"></div>
+      <div class="card-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6l-5.5 9A2 2 0 0 0 6.2 21h11.6a2 2 0 0 0 1.7-3L14 9V3"/><path d="M8 15h8"/></svg></div>
+      <h3>Docs that run</h3>
+      <p>Every Python block in this site is executed in CI. Every link is resolved. 34 runnable examples.</p>
+    </article>
   </div>
 </section>
 
-<!-- Features -->
-<section class="features-section">
-  <h2 class="section-title">Everything You Need</h2>
-  <p class="section-subtitle">A complete state machine runtime with no compromises. From simple toggles to complex multi-actor workflows.</p>
-
-  <div class="feature-grid">
-    <div class="feature-card">
-      <span class="feature-icon">&#x1F40D;</span>
-      <h3>Pythonic API</h3>
-      <p>Define machines in pure Python with class-based, builder, or functional styles. No JSON required. Full type safety with decorators.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">&#x1F4CB;</span>
-      <h3>XState Compatible</h3>
-      <p>Load machines from XState JSON &mdash; the universal state machine format. Design visually in Stately.ai, run in Python.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">&#x26A1;</span>
-      <h3>Dual Interpreters</h3>
-      <p>Async interpreter for web servers and event loops. Sync interpreter for scripts, CLI tools, and Django views.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">&#x1F6E0;&#xFE0F;</span>
-      <h3>CLI Code Generator</h3>
-      <p>Generate production-ready Python from XState JSON with 5 templates. Full type hints, docstrings, error handling, and logging.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">&#x1F6E1;&#xFE0F;</span>
-      <h3>Verified Output</h3>
-      <p>The generator compiles its own output, builds the machine, and compares it against your JSON <em>before writing</em>. A mismatch exits non-zero and writes nothing. Add <code>--check</code> to catch drift in CI.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">&#x1F50C;</span>
-      <h3>Plugin System</h3>
-      <p>Observe every event, transition, action, guard, and service with pluggable hooks. Built-in LoggingInspector included.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">&#x1F4F8;</span>
-      <h3>Snapshots</h3>
-      <p>Save and restore machine state with <code>get_snapshot()</code> and <code>from_snapshot()</code>. Perfect for persistence and crash recovery.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">&#x1F3D7;&#xFE0F;</span>
-      <h3>Hierarchical &amp; Parallel</h3>
-      <p>Nested compound states for complex flows. Parallel regions for concurrent activity. Full XState v5 compatibility.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">&#x1F3AD;</span>
-      <h3>Actor Model</h3>
-      <p>Spawn independent child machines from parent machines. Each actor has its own state, context, and lifecycle.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">&#x23F1;&#xFE0F;</span>
-      <h3>Delayed Transitions</h3>
-      <p>Timer-based <code>after</code> transitions for timeouts, polling, and auto-progression. Multiple timers per state supported.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">&#x1F6E1;&#xFE0F;</span>
-      <h3>Production Hardened</h3>
-      <p><code>actionErrorPolicy: "rollback"</code> restores configuration and context after a raising action, <code>onUnhandled</code> catches events nothing handles, <code>strict</code> mode raises on undeclared events at the call site, and a bounded inbox with <code>OverflowPolicy</code> gives you backpressure instead of unbounded memory.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">&#x23F2;&#xFE0F;</span>
-      <h3>Virtual Time</h3>
-      <p>Inject a <code>Clock</code> &mdash; <code>RealClock</code> in production, <code>SimulatedClock</code> in tests. Advance virtual time deterministically to fire <code>after</code> timers and delayed sends without sleeping, on either interpreter.</p>
-    </div>
-    <div class="feature-card">
-      <span class="feature-icon">&#x270B;</span>
-      <h3>Ask, Don&rsquo;t Poll</h3>
-      <p><code>send(wait=True)</code> returns a <code>Receipt</code> the moment the macrostep for that event has run &mdash; no polling for state to settle. <code>priority=True</code> jumps the inbox for decisions that cannot wait behind routine traffic.</p>
-    </div>
-  </div>
-</section>
-
-<!-- Code Showcase -->
+<!-- ============================ CODE ============================ -->
 <section class="code-showcase">
-  <h2 class="section-title">Four Ways to Define Machines</h2>
-  <p class="section-subtitle">Pick the style that matches your team. All compile to the same runtime.</p>
+  <div class="section-head reveal">
+    <h2>Four ways to define a machine</h2>
+    <p class="section-subtitle">Pick the style that matches your team. All compile to the same runtime.</p>
+  </div>
 
-  <div class="code-tabs">
+  <div class="code-tabs reveal">
     <div class="code-tab-buttons">
       <button class="code-tab-btn active" data-tab="class">Class-Based</button>
       <button class="code-tab-btn" data-tab="builder">Builder</button>
@@ -179,173 +180,107 @@ is_submitting = False
     </div>
 
     <div class="code-tab-panel active" data-tab="class">
-<pre><code><span style="color:#ff7b72">from</span> <span style="color:#d2a8ff">xstate_statemachine</span> <span style="color:#ff7b72">import</span> (
+<pre class="highlight"><code><span class="k">from</span> <span class="nc">xstate_statemachine</span> <span class="k">import</span> (
     State, StateMachine, SyncInterpreter, action, guard
 )
 
-<span style="color:#ff7b72">class</span> <span style="color:#d2a8ff">TrafficLight</span>(StateMachine):
-    machine_id = <span style="color:#a5d6ff">"trafficLight"</span>
+<span class="k">class</span> <span class="nc">TrafficLight</span>(StateMachine):
+    machine_id = <span class="s">"trafficLight"</span>
 
-    <span style="color:#8b949e"># States</span>
-    green  = State(<span style="color:#a5d6ff">"green"</span>,  initial=<span style="color:#79c0ff">True</span>)
-    yellow = State(<span style="color:#a5d6ff">"yellow"</span>)
-    red    = State(<span style="color:#a5d6ff">"red"</span>)
+    <span class="c1"># States</span>
+    green  = State(<span class="s">"green"</span>,  initial=<span class="mi">True</span>)
+    yellow = State(<span class="s">"yellow"</span>)
+    red    = State(<span class="s">"red"</span>)
 
-    <span style="color:#8b949e"># Transitions</span>
-    slow_down = green.to(yellow, event=<span style="color:#a5d6ff">"TIMER"</span>)
-    stop      = yellow.to(red,   event=<span style="color:#a5d6ff">"TIMER"</span>)
-    go        = red.to(green,    event=<span style="color:#a5d6ff">"TIMER"</span>)
+    <span class="c1"># Transitions</span>
+    slow_down = green.to(yellow, event=<span class="s">"TIMER"</span>)
+    stop      = yellow.to(red,   event=<span class="s">"TIMER"</span>)
+    go        = red.to(green,    event=<span class="s">"TIMER"</span>)
 
-    <span style="color:#ff7b72">@action</span>
-    <span style="color:#ff7b72">def</span> <span style="color:#d2a8ff">log_change</span>(self, interpreter, context, event, action_def):
-        print(f<span style="color:#a5d6ff">"Light: {interpreter.active_state_ids}"</span>)
+    <span class="k">@action</span>
+    <span class="k">def</span> <span class="nc">log_change</span>(self, interpreter, context, event, action_def):
+        print(f<span class="s">"Light: {interpreter.active_state_ids}"</span>)
 
-<span style="color:#8b949e"># Run it</span>
+<span class="c1"># Run it</span>
 machine = TrafficLight.create_machine()
 interp = SyncInterpreter(machine).start()
-interp.send(<span style="color:#a5d6ff">"TIMER"</span>)  <span style="color:#8b949e"># green &rarr; yellow</span>
-interp.send(<span style="color:#a5d6ff">"TIMER"</span>)  <span style="color:#8b949e"># yellow &rarr; red</span>
+interp.send(<span class="s">"TIMER"</span>)  <span class="c1"># green &rarr; yellow</span>
+interp.send(<span class="s">"TIMER"</span>)  <span class="c1"># yellow &rarr; red</span>
 interp.stop()</code></pre>
     </div>
 
     <div class="code-tab-panel" data-tab="builder">
-<pre><code><span style="color:#ff7b72">from</span> <span style="color:#d2a8ff">xstate_statemachine</span> <span style="color:#ff7b72">import</span> MachineBuilder, SyncInterpreter
+<pre class="highlight"><code><span class="k">from</span> <span class="nc">xstate_statemachine</span> <span class="k">import</span> MachineBuilder, SyncInterpreter
 
 machine = (
-    MachineBuilder(<span style="color:#a5d6ff">"trafficLight"</span>)
-    .state(<span style="color:#a5d6ff">"green"</span>,  initial=<span style="color:#79c0ff">True</span>)
-    .state(<span style="color:#a5d6ff">"yellow"</span>)
-    .state(<span style="color:#a5d6ff">"red"</span>)
-    .transition(<span style="color:#a5d6ff">"green"</span>,  <span style="color:#a5d6ff">"TIMER"</span>, <span style="color:#a5d6ff">"yellow"</span>)
-    .transition(<span style="color:#a5d6ff">"yellow"</span>, <span style="color:#a5d6ff">"TIMER"</span>, <span style="color:#a5d6ff">"red"</span>)
-    .transition(<span style="color:#a5d6ff">"red"</span>,    <span style="color:#a5d6ff">"TIMER"</span>, <span style="color:#a5d6ff">"green"</span>)
+    MachineBuilder(<span class="s">"trafficLight"</span>)
+    .state(<span class="s">"green"</span>,  initial=<span class="mi">True</span>)
+    .state(<span class="s">"yellow"</span>)
+    .state(<span class="s">"red"</span>)
+    .transition(<span class="s">"green"</span>,  <span class="s">"TIMER"</span>, <span class="s">"yellow"</span>)
+    .transition(<span class="s">"yellow"</span>, <span class="s">"TIMER"</span>, <span class="s">"red"</span>)
+    .transition(<span class="s">"red"</span>,    <span class="s">"TIMER"</span>, <span class="s">"green"</span>)
     .build()
 )
 
 interp = SyncInterpreter(machine).start()
-interp.send(<span style="color:#a5d6ff">"TIMER"</span>)  <span style="color:#8b949e"># green &rarr; yellow</span>
-interp.send(<span style="color:#a5d6ff">"TIMER"</span>)  <span style="color:#8b949e"># yellow &rarr; red</span>
+interp.send(<span class="s">"TIMER"</span>)  <span class="c1"># green &rarr; yellow</span>
+interp.send(<span class="s">"TIMER"</span>)  <span class="c1"># yellow &rarr; red</span>
 interp.stop()</code></pre>
     </div>
 
     <div class="code-tab-panel" data-tab="functional">
-<pre><code><span style="color:#ff7b72">from</span> <span style="color:#d2a8ff">xstate_statemachine</span> <span style="color:#ff7b72">import</span> State, build_machine, SyncInterpreter
+<pre class="highlight"><code><span class="k">from</span> <span class="nc">xstate_statemachine</span> <span class="k">import</span> State, build_machine, SyncInterpreter
 
-green  = State(<span style="color:#a5d6ff">"green"</span>,  initial=<span style="color:#79c0ff">True</span>,
-                on={<span style="color:#a5d6ff">"TIMER"</span>: <span style="color:#a5d6ff">"yellow"</span>})
-yellow = State(<span style="color:#a5d6ff">"yellow"</span>, on={<span style="color:#a5d6ff">"TIMER"</span>: <span style="color:#a5d6ff">"red"</span>})
-red    = State(<span style="color:#a5d6ff">"red"</span>,    on={<span style="color:#a5d6ff">"TIMER"</span>: <span style="color:#a5d6ff">"green"</span>})
+green  = State(<span class="s">"green"</span>,  initial=<span class="mi">True</span>,
+                on={<span class="s">"TIMER"</span>: <span class="s">"yellow"</span>})
+yellow = State(<span class="s">"yellow"</span>, on={<span class="s">"TIMER"</span>: <span class="s">"red"</span>})
+red    = State(<span class="s">"red"</span>,    on={<span class="s">"TIMER"</span>: <span class="s">"green"</span>})
 
 machine = build_machine(
-    id=<span style="color:#a5d6ff">"trafficLight"</span>,
+    id=<span class="s">"trafficLight"</span>,
     states=[green, yellow, red],
 )
 
 interp = SyncInterpreter(machine).start()
-interp.send(<span style="color:#a5d6ff">"TIMER"</span>)  <span style="color:#8b949e"># green &rarr; yellow</span>
-interp.send(<span style="color:#a5d6ff">"TIMER"</span>)  <span style="color:#8b949e"># yellow &rarr; red</span>
+interp.send(<span class="s">"TIMER"</span>)  <span class="c1"># green &rarr; yellow</span>
+interp.send(<span class="s">"TIMER"</span>)  <span class="c1"># yellow &rarr; red</span>
 interp.stop()</code></pre>
     </div>
 
     <div class="code-tab-panel" data-tab="json">
-<pre><code><span style="color:#ff7b72">from</span> <span style="color:#d2a8ff">xstate_statemachine</span> <span style="color:#ff7b72">import</span> create_machine, SyncInterpreter
+<pre class="highlight"><code><span class="k">from</span> <span class="nc">xstate_statemachine</span> <span class="k">import</span> create_machine, SyncInterpreter
 
 config = {
-    <span style="color:#a5d6ff">"id"</span>: <span style="color:#a5d6ff">"trafficLight"</span>,
-    <span style="color:#a5d6ff">"initial"</span>: <span style="color:#a5d6ff">"green"</span>,
-    <span style="color:#a5d6ff">"states"</span>: {
-        <span style="color:#a5d6ff">"green"</span>:  {<span style="color:#a5d6ff">"on"</span>: {<span style="color:#a5d6ff">"TIMER"</span>: <span style="color:#a5d6ff">"yellow"</span>}},
-        <span style="color:#a5d6ff">"yellow"</span>: {<span style="color:#a5d6ff">"on"</span>: {<span style="color:#a5d6ff">"TIMER"</span>: <span style="color:#a5d6ff">"red"</span>}},
-        <span style="color:#a5d6ff">"red"</span>:    {<span style="color:#a5d6ff">"on"</span>: {<span style="color:#a5d6ff">"TIMER"</span>: <span style="color:#a5d6ff">"green"</span>}},
+    <span class="s">"id"</span>: <span class="s">"trafficLight"</span>,
+    <span class="s">"initial"</span>: <span class="s">"green"</span>,
+    <span class="s">"states"</span>: {
+        <span class="s">"green"</span>:  {<span class="s">"on"</span>: {<span class="s">"TIMER"</span>: <span class="s">"yellow"</span>}},
+        <span class="s">"yellow"</span>: {<span class="s">"on"</span>: {<span class="s">"TIMER"</span>: <span class="s">"red"</span>}},
+        <span class="s">"red"</span>:    {<span class="s">"on"</span>: {<span class="s">"TIMER"</span>: <span class="s">"green"</span>}},
     }
 }
 
 machine = create_machine(config)
 interp = SyncInterpreter(machine).start()
-interp.send(<span style="color:#a5d6ff">"TIMER"</span>)  <span style="color:#8b949e"># green &rarr; yellow</span>
-interp.send(<span style="color:#a5d6ff">"TIMER"</span>)  <span style="color:#8b949e"># yellow &rarr; red</span>
+interp.send(<span class="s">"TIMER"</span>)  <span class="c1"># green &rarr; yellow</span>
+interp.send(<span class="s">"TIMER"</span>)  <span class="c1"># yellow &rarr; red</span>
 interp.stop()</code></pre>
     </div>
   </div>
 </section>
 
 <!-- Use Cases -->
-<section class="usecases-section">
-  <h2 class="section-title">Built for Real-World Use Cases</h2>
-  <p class="section-subtitle">From simple toggles to complex enterprise workflows.</p>
-
-  <div class="usecase-grid">
-    <div class="usecase-card">
-      <div class="usecase-icon">&#x1F6D2;</div>
-      <h4>E-Commerce</h4>
-      <p>Cart &rarr; checkout &rarr; payment &rarr; shipping &rarr; delivered. Never lose an order to an impossible state.</p>
-    </div>
-    <div class="usecase-card">
-      <div class="usecase-icon">&#x1F512;</div>
-      <h4>Authentication</h4>
-      <p>Login flows, MFA, session management, token refresh. Every auth state transition is explicit and auditable.</p>
-    </div>
-    <div class="usecase-card">
-      <div class="usecase-icon">&#x1F4DD;</div>
-      <h4>Form Wizards</h4>
-      <p>Multi-step forms with validation, back navigation, and conditional branching. Guards ensure data integrity.</p>
-    </div>
-    <div class="usecase-card">
-      <div class="usecase-icon">&#x1F504;</div>
-      <h4>CI/CD Pipelines</h4>
-      <p>Build &rarr; test &rarr; deploy &rarr; verify. With invoke for async steps, guards for approval gates, and retry on failure.</p>
-    </div>
-    <div class="usecase-card">
-      <div class="usecase-icon">&#x1F3AE;</div>
-      <h4>Game Logic</h4>
-      <p>Character states, turn management, quest progression. Parallel states for simultaneous systems.</p>
-    </div>
-    <div class="usecase-card">
-      <div class="usecase-icon">&#x1F916;</div>
-      <h4>IoT &amp; Devices</h4>
-      <p>Device lifecycle, connection management, sensor monitoring. Delayed transitions for timeouts and heartbeats.</p>
-    </div>
-  </div>
-</section>
-
-<!-- CLI Templates -->
-<section class="templates-section">
-  <h2 class="section-title">5 CLI Templates</h2>
-  <p class="section-subtitle">Generate production-ready Python from any XState JSON config.</p>
-
-  <div class="template-grid">
-    <a href="{{ '/guide/cli-templates/' | relative_url }}" class="template-card">
-      <span class="template-name">pythonic-class</span>
-      <h4>Class-Based</h4>
-      <p>StateMachine subclass with @action, @guard, @service decorators. OOP at its best.</p>
-    </a>
-    <a href="{{ '/guide/cli-templates/' | relative_url }}" class="template-card">
-      <span class="template-name">pythonic-builder</span>
-      <h4>Builder Pattern</h4>
-      <p>Fluent MachineBuilder API for dynamic, programmatic construction.</p>
-    </a>
-    <a href="{{ '/guide/cli-templates/' | relative_url }}" class="template-card">
-      <span class="template-name">pythonic-functional</span>
-      <h4>Functional</h4>
-      <p>Simple build_machine() with explicit state and transition definitions.</p>
-    </a>
-    <a href="{{ '/guide/cli-templates/' | relative_url }}" class="template-card">
-      <span class="template-name">class-json</span>
-      <h4>Class + JSON</h4>
-      <p>OOP logic class bound to JSON config loaded at runtime.</p>
-    </a>
-    <a href="{{ '/guide/cli-templates/' | relative_url }}" class="template-card">
-      <span class="template-name">function-json</span>
-      <h4>Functions + JSON</h4>
-      <p>Module-level functions with LogicLoader auto-discovery.</p>
-    </a>
-  </div>
-</section>
 
 <!-- Comparison -->
+
+<!-- ============================ COMPARE ============================ -->
 <section class="comparison-section">
-  <h2 class="section-title">How It Compares</h2>
-  <p class="section-subtitle">The most comprehensive Python state machine library available.</p>
+  <div class="section-head reveal">
+    <h2>How it compares</h2>
+    <p class="section-subtitle">Against the three other Python state-machine libraries in common use.</p>
+  </div>
+  <div class="reveal">
 
   <div class="comparison-table">
     <table>
@@ -359,19 +294,19 @@ interp.stop()</code></pre>
         </tr>
       </thead>
       <tbody>
-        <tr><td>Hierarchical States</td><td>&#x2705;</td><td>&#x26A0;&#xFE0F;</td><td>&#x274C;</td><td>&#x2705;</td></tr>
-        <tr><td>Parallel States</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x2705;</td></tr>
-        <tr><td>Delayed Transitions</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x274C;</td></tr>
-        <tr><td>Invoke / Services</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x274C;</td></tr>
-        <tr><td>Actor Model</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x274C;</td></tr>
-        <tr><td>XState JSON Compat</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x274C;</td></tr>
-        <tr><td>Pythonic API</td><td>&#x2705;</td><td>&#x2705;</td><td>&#x2705;</td><td>&#x274C;</td></tr>
-        <tr><td>Async + Sync</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x274C;</td></tr>
-        <tr><td>CLI Code Generator</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x274C;</td></tr>
-        <tr><td>Plugin System</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x2705;</td><td>&#x274C;</td></tr>
-        <tr><td>Snapshot/Restore</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x274C;</td></tr>
-        <tr><td>Diagram Export</td><td>&#x2705;</td><td>&#x2705;</td><td>&#x2705;</td><td>&#x2705;</td></tr>
-        <tr><td>Zero Dependencies</td><td>&#x2705;</td><td>&#x274C;</td><td>&#x274C;</td><td>&#x274C;</td></tr>
+        <tr><td>Hierarchical States</td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-partial" role="img" aria-label="Partial"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td></tr>
+        <tr><td>Parallel States</td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td></tr>
+        <tr><td>Delayed Transitions</td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td></tr>
+        <tr><td>Invoke / Services</td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td></tr>
+        <tr><td>Actor Model</td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td></tr>
+        <tr><td>XState JSON Compat</td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td></tr>
+        <tr><td>Pythonic API</td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td></tr>
+        <tr><td>Async + Sync</td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td></tr>
+        <tr><td>CLI Code Generator</td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td></tr>
+        <tr><td>Plugin System</td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td></tr>
+        <tr><td>Snapshot/Restore</td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td></tr>
+        <tr><td>Diagram Export</td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td></tr>
+        <tr><td>Zero Dependencies</td><td><span class="mark mark-yes" role="img" aria-label="Yes"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td><td><span class="mark mark-no" role="img" aria-label="No"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></td></tr>
       </tbody>
     </table>
   </div>
@@ -410,47 +345,22 @@ interp.stop()</code></pre>
     Reproduce with <code>benchmarks/competitors/run.py</code>; method and caveats in
     <a href="{{ '/guide/production-characteristics/' | relative_url }}">Production Characteristics</a>.
   </p>
-</section>
-
-<!-- Workflow -->
-<section class="workflow-section">
-  <h2 class="section-title">Design &rarr; Generate &rarr; Run</h2>
-  <p class="section-subtitle">Seamless workflow from visual design to production Python code.</p>
-
-  <div class="workflow-steps">
-    <div class="workflow-step">
-      <div class="workflow-number">1</div>
-      <h4>Design</h4>
-      <p>Design your machine visually at <a href="https://stately.ai" target="_blank" rel="noopener">stately.ai</a> or write XState JSON by hand.</p>
-    </div>
-    <div class="workflow-arrow">&#x2192;</div>
-    <div class="workflow-step">
-      <div class="workflow-number">2</div>
-      <h4>Generate</h4>
-      <p>Run <code>xsm gt machine.json --template pythonic-class</code> to generate Python code.</p>
-    </div>
-    <div class="workflow-arrow">&#x2192;</div>
-    <div class="workflow-step">
-      <div class="workflow-number">3</div>
-      <h4>Implement</h4>
-      <p>Fill in action, guard, and service stubs with your business logic.</p>
-    </div>
-    <div class="workflow-arrow">&#x2192;</div>
-    <div class="workflow-step">
-      <div class="workflow-number">4</div>
-      <h4>Run</h4>
-      <p>Execute with <code>SyncInterpreter</code> or <code>Interpreter</code>. Attach plugins for observability.</p>
-    </div>
   </div>
 </section>
 
-<!-- CTA -->
-<section class="cta-section">
-  <h2>Ready to Tame Complexity?</h2>
-  <p>Build reliable, predictable Python applications with formal state management.</p>
-  <div class="cta-actions">
-    <a href="{{ '/guide/getting-started/' | relative_url }}" class="btn btn-primary">Read the Guide</a>
-    <a href="{{ '/guide/quick-start/' | relative_url }}" class="btn btn-outline">Quick Start (5 min)</a>
-    <a href="https://github.com/basiltt/xstate-statemachine" class="btn btn-outline" target="_blank">View on GitHub</a>
+<!-- ============================ CLOSING ============================ -->
+<section class="closing reveal">
+  <div class="closing-card">
+    <div class="closing-glow"></div>
+    <h2>Ship state you can <span class="h1-grad">reason about.</span></h2>
+    <p>Start with the guide, or read the whole API on one page.</p>
+    <div class="hero-actions">
+      <a href="{{ '/guide/getting-started/' | relative_url }}" class="btn btn-primary">Get started</a>
+      <a href="{{ '/api/' | relative_url }}" class="btn btn-glass">API reference</a>
+      <a href="https://github.com/basiltt/xstate-statemachine" class="btn btn-glass" rel="noopener" target="_blank">
+        <svg height="16" width="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+    </div>
   </div>
 </section>

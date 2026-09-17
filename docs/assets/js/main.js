@@ -90,8 +90,8 @@
         userChose = true;
         return stored;
       }
-      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
-      return 'light';
+      // Dark-first: the design is built for it; light is an explicit choice.
+      return 'dark';
     }
 
     function applyTheme(theme) {
@@ -1059,6 +1059,197 @@
       if (e.key === 'Escape' && drawer.classList.contains('active')) {
         closeMobileToc();
       }
+    });
+  })();
+
+  // -----------------------------------------------------------------------
+  // 14. Hero: the live statechart
+  // -----------------------------------------------------------------------
+  // The one animated element on the site. It is a REAL machine -- an order
+  // lifecycle -- driven by a tiny interpreter in JS so the diagram is never
+  // out of step with a state it claims to be in. Each tick: pick a weighted
+  // random event valid in the current state, light the edge, ride the event
+  // name along it, then light the target. Final states rest a moment, then
+  // the machine restarts. Reduced-motion users get the initial state, still.
+  (function heroMachine() {
+    var root = qs('#heroMachine');
+    if (!root) return;
+
+    var MACHINE = {
+      initial: 'pending',
+      states: {
+        pending:   { on: { SUBMIT: 'submitted' } },
+        submitted: { on: { ACK: 'open', REJECT: 'rejected' } },
+        open:      { on: { FILL: 'filled', CANCEL: 'cancelled' } },
+        filled:    { final: true },
+        cancelled: { final: true },
+        rejected:  { final: true }
+      }
+    };
+    // Weighted so the happy path is the common one; still shows the others.
+    var WEIGHTS = { SUBMIT: 1, ACK: 0.8, REJECT: 0.2, FILL: 0.7, CANCEL: 0.3 };
+
+    var nodes = {};
+    qsa('.node', root).forEach(function (g) { nodes[g.getAttribute('data-state')] = g; });
+    var edges = {};
+    qsa('.edge', root).forEach(function (e) { edges[e.getAttribute('data-edge')] = e; });
+    var eventLabel = qs('#heroEvent', root);
+    var pulse = qs('#heroPulse', root);
+    var stateOut = qs('#heroState');
+    var lastEventOut = qs('#heroLastEvent');
+
+    var current = MACHINE.initial;
+
+    function setActive(state) {
+      Object.keys(nodes).forEach(function (s) {
+        nodes[s].classList.toggle('active', s === state);
+      });
+      if (nodes[state] && nodes[state].style.display === 'none') {
+        nodes[state].style.display = '';
+      }
+      if (stateOut) stateOut.textContent = state;
+    }
+
+    function pickEvent(state) {
+      var on = MACHINE.states[state].on || {};
+      var names = Object.keys(on);
+      var total = names.reduce(function (a, n) { return a + (WEIGHTS[n] || 1); }, 0);
+      var r = Math.random() * total;
+      for (var i = 0; i < names.length; i++) {
+        r -= WEIGHTS[names[i]] || 1;
+        if (r <= 0) return names[i];
+      }
+      return names[names.length - 1];
+    }
+
+    function midpoint(path) {
+      var len = path.getTotalLength();
+      var p = path.getPointAtLength(len / 2);
+      return { x: p.x, y: p.y - 10 };
+    }
+
+    function ridePulse(path, ms) {
+      var len = path.getTotalLength(), t0 = null;
+      pulse.classList.add('show');
+      function step(ts) {
+        if (t0 === null) t0 = ts;
+        var k = Math.min(1, (ts - t0) / ms);
+        var p = path.getPointAtLength(len * k);
+        pulse.setAttribute('cx', p.x); pulse.setAttribute('cy', p.y);
+        if (k < 1) requestAnimationFrame(step); else pulse.classList.remove('show');
+      }
+      requestAnimationFrame(step);
+    }
+
+    function fire(evt) {
+      var target = MACHINE.states[current].on[evt];
+      var edge = edges[current + '-' + target];
+      if (edge) {
+        edge.classList.add('firing');
+        var m = midpoint(edge);
+        eventLabel.setAttribute('x', m.x);
+        eventLabel.setAttribute('y', m.y);
+        eventLabel.textContent = evt;
+        eventLabel.classList.add('show');
+        if (pulse && !prefersReducedMotion()) ridePulse(edge, 600);
+      }
+      if (lastEventOut) lastEventOut.textContent = evt;
+      setTimeout(function () {
+        if (edge) edge.classList.remove('firing');
+        eventLabel.classList.remove('show');
+        nodes[current].classList.add('visited');
+        current = target;
+        setActive(current);
+      }, 700);
+    }
+
+    function reset() {
+      Object.keys(nodes).forEach(function (s) { nodes[s].classList.remove('visited'); });
+      if (nodes.rejected) nodes.rejected.style.display = 'none';
+      current = MACHINE.initial;
+      setActive(current);
+      if (lastEventOut) lastEventOut.textContent = '—';
+    }
+
+    function tick() {
+      if (document.hidden) { setTimeout(tick, 1500); return; }
+      var def = MACHINE.states[current];
+      if (def.final) {
+        setTimeout(function () { reset(); setTimeout(tick, 900); }, 2200);
+        return;
+      }
+      fire(pickEvent(current));
+      setTimeout(tick, 1900);
+    }
+
+    // Rejected is hidden by default (it would crowd the layout); reveal it
+    // only when the machine actually goes there, in the cancelled slot.
+    if (nodes.rejected && nodes.cancelled) {
+      nodes.rejected.setAttribute('transform', nodes.cancelled.getAttribute('transform'));
+    }
+    var origSetActive = setActive;
+    setActive = function (state) {
+      if (nodes.cancelled && nodes.rejected) {
+        nodes.cancelled.style.display = state === 'rejected' ? 'none' : '';
+        nodes.rejected.style.display = state === 'rejected' ? '' : 'none';
+      }
+      origSetActive(state);
+    };
+
+    reset();
+    if (!prefersReducedMotion()) setTimeout(tick, 1200);
+  })();
+
+  // -----------------------------------------------------------------------
+  // 15. Hero: install-command copy button
+  // -----------------------------------------------------------------------
+  (function installCopy() {
+    qsa('[data-copy]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var text = btn.getAttribute('data-copy');
+        if (!navigator.clipboard) return;
+        navigator.clipboard.writeText(text).then(function () {
+          btn.classList.add('copied');
+          setTimeout(function () { btn.classList.remove('copied'); }, 1400);
+        });
+      });
+    });
+  })();
+
+  // -----------------------------------------------------------------------
+  // 16. Scroll reveal (.reveal -> .in as it enters the viewport)
+  // -----------------------------------------------------------------------
+  (function scrollReveal() {
+    var els = qsa('.reveal');
+    if (!els.length) return;
+    if (prefersReducedMotion() || !('IntersectionObserver' in window)) {
+      els.forEach(function (el) { el.classList.add('in'); });
+      return;
+    }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+      });
+    }, { rootMargin: '0px 0px -10% 0px', threshold: 0.08 });
+    els.forEach(function (el) { io.observe(el); });
+  })();
+
+  // -----------------------------------------------------------------------
+  // 17. Cursor-tracked glow on bento cards
+  // -----------------------------------------------------------------------
+  (function cardGlow() {
+    if (prefersReducedMotion()) return;
+    qsa('.card').forEach(function (card) {
+      var glow = qs('.card-glow', card);
+      if (!glow) return;
+      card.addEventListener('pointermove', function (e) {
+        var r = card.getBoundingClientRect();
+        glow.style.setProperty('--mx', ((e.clientX - r.left) / r.width * 100) + '%');
+        glow.style.setProperty('--my', ((e.clientY - r.top) / r.height * 100) + '%');
+      });
+      card.addEventListener('pointerleave', function () {
+        glow.style.removeProperty('--mx'); glow.style.removeProperty('--my');
+      });
     });
   })();
 
