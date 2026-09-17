@@ -29,7 +29,9 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
   running on the calling thread; a sync machine built inside one parked
   its timers on `loop.call_later`, where its own pump could not see them.
   The lane now follows the *owning engine* (`sync=` on `set_timeout`);
-  third-party clocks written against the 0.8.0 `Clock` protocol still work.
+  third-party clocks written against the 0.8.0 `Clock` protocol still work
+  — the engine inspects `set_timeout`'s signature once at construction and
+  calls it exactly once, so a clock's own errors surface unchanged.
 - **`SyncInterpreter` no longer discards a batch of more than
   `maxIterations` external events** (#77). The runaway guard counted every
   dequeued event and `clear()`ed the inbox on overflow, so
@@ -38,10 +40,13 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
   drain is running (a `raise`, an action calling `send()` on its own
   interpreter, a `done.invoke` from a sync service, a due timer). Every
   event that was in the inbox when the drain began, or is replayed from the
-  defer buffer, is processed in full regardless of count; a self-feeding
-  loop is still broken, and only the generated tail is discarded — never
-  events the caller was told were accepted. The 0.8.0 note claiming the two
-  engines already agreed was wrong; they do now.
+  defer buffer, is processed in full regardless of count. The budget is
+  per *chain*, matching the async engine: it resets whenever a macrostep
+  generates nothing, so 3 000 independent one-deep `raise`s in one batch
+  are all delivered, while a self-feeding loop is still broken and only the
+  generated tail is discarded — never events the caller was told were
+  accepted. The 0.8.0 note claiming the two engines already agreed was
+  wrong; they do now, and an engine-parity test pins it.
 - **`send_threadsafe()` applies `strict` and `event_schemas`** (#78, #51).
   It skipped `_check_strict`, so the *recommended* cross-thread path was the
   one without the guardrail — a typo'd event was accepted and dropped, and a

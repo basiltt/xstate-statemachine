@@ -592,9 +592,12 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    Anything that ARRIVES during the drain (a `raise`, an action
         #    calling `send()` on its own interpreter, a `done.invoke` from a
         #    sync service, a due timer) was produced by the machine itself
-        #    and counts against `max_iterations`. A 5,000-event batch is
-        #    processed in full; a self-feeding loop -- via `raise` OR via an
-        #    external self-send -- is still broken. On overflow the external
+        #    and counts against `max_iterations`. The count is per CHAIN,
+        #    not per drain: it resets whenever a macrostep generates nothing
+        #    (see the reset below), so N independent one-deep raises never
+        #    trip it. A 5,000-event batch is processed in full; a
+        #    self-feeding loop -- via `raise` OR via an external self-send --
+        #    is still broken. On overflow the external
         #    budget is, by construction, already spent, so everything left in
         #    both queues is self-generated and dropping it loses nothing the
         #    caller was told was accepted.
@@ -658,8 +661,29 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                     plugin.on_event_received(self, current_event)
 
                 before = frozenset(self._active_state_nodes)
+                queued_before = len(self._internal_queue) + len(
+                    self._event_queue
+                )
                 self._drive(self._process_event(current_event))
                 self._process_transient_transitions()
+                # 🔗 Chain accounting -- parity with the async engine, which
+                #    resets `_raise_depth` when a macrostep raised nothing
+                #    (`interpreter.py`). A step that added NOTHING to either
+                #    queue ended the self-feeding chain, so the next user
+                #    event starts with a fresh budget. Without this, 3,000
+                #    independent one-deep raises in one `send_events()` batch
+                #    were truncated to 1,000 on this engine only -- no loop
+                #    anywhere -- while `send()` one at a time processed all of
+                #    them. `tripped` is deliberately NOT cleared: once a drain
+                #    has overflowed it stays in drop-on-arrival mode until the
+                #    caller returns, so a machine that keeps regenerating
+                #    cannot earn a fresh 1,000 per user event.
+                if (
+                    not tripped
+                    and len(self._internal_queue) + len(self._event_queue)
+                    <= queued_before
+                ):
+                    generated = 0
 
                 # 📨 Replay deferred events at the HEAD of the queue, ahead of
                 #    live traffic and in original order (LC-18). `extendleft`

@@ -451,6 +451,42 @@ class TestClockLaneFollowsOwner(_Quiet):
         self.assertEqual(set(i.current_state_ids), {"sy.b"})
         i.stop()
 
+    def test_clock_is_called_exactly_once_and_its_errors_surface(
+        self,
+    ) -> None:
+        """A clock that ACCEPTS ``sync=`` but raises TypeError inside its
+        body must not be retried without the kwarg: the engine decides the
+        call shape from the signature, so the clock runs once and its own
+        error surfaces unchanged (review of #76: the try/except fallback
+        called it twice and lost the lane)."""
+        calls = []
+
+        class BuggyClock(SimulatedClock):
+            def set_timeout(self, fn, delay_sec, *, owner=None, sync=None):
+                calls.append(sync)
+                raise TypeError("unsupported delay type")
+
+        i = SyncInterpreter(create_machine(self.CFG), clock=BuggyClock())
+        with self.assertRaisesRegex(TypeError, "unsupported delay type"):
+            i.start()
+        self.assertEqual(calls, [True], "clock must be invoked once, sync=")
+
+    def test_kwargs_catch_all_clock_receives_sync(self) -> None:
+        """``**kwargs`` in `set_timeout` counts as accepting ``sync=``."""
+        seen = {}
+
+        class Wide(SimulatedClock):
+            def set_timeout(self, fn, delay_sec, **kw):
+                seen.update(kw)
+                return super().set_timeout(
+                    fn, delay_sec, owner=kw.get("owner")
+                )
+
+        i = SyncInterpreter(create_machine(self.CFG), clock=Wide())
+        i.start()
+        self.assertIs(seen.get("sync"), True)
+        i.stop()
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

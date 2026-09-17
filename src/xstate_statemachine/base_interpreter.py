@@ -270,6 +270,25 @@ _SYSTEM_EVENT_PREFIXES: Tuple[str, ...] = SYSTEM_EVENT_PREFIXES
 _WARNED_ACTION_ERROR_POLICY_DEFAULT: bool = False
 
 
+def _accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
+    """``True`` if calling *fn* with keyword *name* is signature-legal.
+
+    Used to detect 0.8.0-era `Clock` implementations whose `set_timeout`
+    predates the ``sync=`` keyword (#76). A ``**kwargs`` catch-all counts.
+    Un-introspectable callables (C builtins, some mocks) are assumed to
+    accept it, matching the protocol they claim to implement.
+    """
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):  # pragma: no cover -- exotic callables
+        return True
+    if name in params:
+        return True
+    return any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+
+
 class PendingInvocation(NamedTuple):
     """An `invoke` that is part of the configuration but has no live task.
 
@@ -385,6 +404,14 @@ class BaseInterpreter(Generic[TContext]):
         #: uses it to pick heap vs `call_later` by owner, not by whether a
         #: loop happens to be running on the constructing thread.
         self._clock_sync_lane: bool = False
+        #: ⏱️ Does `self.clock.set_timeout` accept the 0.8.1 `sync=` kwarg?
+        #: Decided ONCE here by inspecting the signature, so `_set_timeout`
+        #: is a single call. The previous try/except-TypeError fallback
+        #: invoked a clock TWICE when its body raised TypeError for an
+        #: unrelated reason, and surfaced that error with the lane lost.
+        self._clock_accepts_sync: bool = _accepts_kwarg(
+            self.clock.set_timeout, "sync"
+        )
         #: 🛡️ #51: effective strictness -- the ctor flag wins over config.
         self.strict: bool = machine.strict if strict is None else bool(strict)
         self.parent: Optional["BaseInterpreter[Any]"] = None
@@ -3411,14 +3438,15 @@ class BaseInterpreter(Generic[TContext]):
         """Schedule on `self.clock`, telling it which lane we drain (#76).
 
         Third-party clocks written against the 0.8.0 `Clock` protocol take
-        no ``sync`` keyword; fall back to the bare call for them.
+        no ``sync`` keyword; `_clock_accepts_sync` (decided at construction)
+        selects the call shape, so the clock is invoked exactly once and any
+        exception it raises is its own.
         """
-        try:
+        if self._clock_accepts_sync:
             return self.clock.set_timeout(
                 fn, delay_sec, owner=owner, sync=self._clock_sync_lane
             )
-        except TypeError:
-            return self.clock.set_timeout(fn, delay_sec, owner=owner)
+        return self.clock.set_timeout(fn, delay_sec, owner=owner)
 
     def _fail(self, error: BaseException) -> None:
         """Puts the machine into the terminal `error` status.

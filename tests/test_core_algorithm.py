@@ -391,6 +391,145 @@ class TestSyncMacrostepBudget(_Quiet):
         self.assertEqual(sorted(i.current_state_ids), ["rl.B"])
         i.stop()
 
+    # -- chain accounting (review of #77) ----------------------------------
+
+    @staticmethod
+    def _one_deep_raise() -> Dict[str, Any]:
+        """Every `T` raises exactly one `R`: independent one-deep chains,
+        no loop anywhere. N of them must NEVER trip the runaway guard."""
+        return {
+            "id": "chain",
+            "initial": "a",
+            "context": {"t": 0, "r": 0},
+            "states": {
+                "a": {
+                    "on": {
+                        "T": {
+                            "actions": [
+                                "bump_t",
+                                {"type": "raise", "params": {"event": "R"}},
+                            ]
+                        },
+                        "R": {"actions": "bump_r"},
+                    }
+                }
+            },
+        }
+
+    @staticmethod
+    def _tr_logic() -> MachineLogic:
+        return MachineLogic(
+            actions={
+                "bump_t": lambda i, c, e, a: c.__setitem__("t", c["t"] + 1),
+                "bump_r": lambda i, c, e, a: c.__setitem__("r", c["r"] + 1),
+            }
+        )
+
+    def test_sync_independent_raises_in_one_batch_are_not_budgeted(
+        self,
+    ) -> None:
+        """3,000 one-deep raises in a single `send_events()` must all be
+        delivered. Before the chain reset only the first 1,000 were, on
+        this engine only -- `send()` one at a time processed all 3,000."""
+        i = SyncInterpreter(
+            create_machine(self._one_deep_raise(), logic=self._tr_logic())
+        )
+        i.start()
+        i.send_events(["T"] * 3000)
+        self.assertEqual((i.context["t"], i.context["r"]), (3000, 3000))
+        i.stop()
+
+    def test_engine_parity_independent_raises_in_one_batch(self) -> None:
+        """Both engines deliver every self-raised event of a batch of
+        independent one-deep chains. The 0.8.0 changelog claimed parity
+        here; this pins it."""
+        s = SyncInterpreter(
+            create_machine(self._one_deep_raise(), logic=self._tr_logic())
+        )
+        s.start()
+        s.send_events(["T"] * 3000)
+        sync_counts = (s.context["t"], s.context["r"])
+        s.stop()
+
+        async def main():
+            i = await Interpreter(
+                create_machine(self._one_deep_raise(), logic=self._tr_logic())
+            ).start()
+            await i.send_events(["T"] * 3000)
+            for _ in range(4000):
+                if i.context["r"] == 3000:
+                    break
+                await asyncio.sleep(0.002)
+            out = (i.context["t"], i.context["r"])
+            await i.stop()
+            return out
+
+        self.assertEqual(sync_counts, (3000, 3000))
+        self.assertEqual(asyncio.run(main()), sync_counts)
+
+    def test_sync_chain_reset_does_not_unbound_a_real_loop(self) -> None:
+        """The reset fires only when a step generated NOTHING. A step that
+        keeps regenerating never resets, so a genuine loop still trips
+        at `maxIterations` and returns promptly."""
+        cfg = self._counter(
+            extra_actions=[{"type": "raise", "params": {"event": "T"}}],
+            maxIterations=200,
+        )
+        i = SyncInterpreter(create_machine(cfg, logic=self._logic()))
+        i.start()
+        i.send("T")
+        # 1 external + 200 generated before the trip.
+        self.assertEqual(i.context["seen"], 201)
+        self.assertEqual(i.queue_depth, 0)
+        i.stop()
+
+    def test_sync_overflow_discards_generated_tail_larger_than_one(
+        self,
+    ) -> None:
+        """When the guard trips with several self-generated events already
+        appended BEHIND the user's remaining events, the whole generated
+        tail is discarded and every user event still runs (covers the
+        multi-pop branch of the overflow handler)."""
+        cfg = {
+            "id": "tail",
+            "initial": "a",
+            "context": {"t": 0, "r": 0, "u": 0},
+            "maxIterations": 50,
+            "states": {
+                "a": {
+                    "on": {
+                        # Each T / R sends THREE R's to itself via send(),
+                        # so the inbox tail grows faster than it drains.
+                        "T": {"actions": ["bump_t", "fan_out"]},
+                        "R": {"actions": ["bump_r", "fan_out"]},
+                        "U": {"actions": "bump_u"},
+                    }
+                }
+            },
+        }
+
+        def fan_out(i, c, e, a):
+            for _ in range(3):
+                i.send("R")
+
+        logic = MachineLogic(
+            actions={
+                "bump_t": lambda i, c, e, a: c.__setitem__("t", c["t"] + 1),
+                "bump_r": lambda i, c, e, a: c.__setitem__("r", c["r"] + 1),
+                "bump_u": lambda i, c, e, a: c.__setitem__("u", c["u"] + 1),
+                "fan_out": fan_out,
+            }
+        )
+        i = SyncInterpreter(create_machine(cfg, logic=logic))
+        i.start()
+        i.send_events(["T"] + ["U"] * 25)
+        # Every user event ran; generated work was capped, not unbounded.
+        self.assertEqual(i.context["t"], 1)
+        self.assertEqual(i.context["u"], 25)
+        self.assertEqual(i.context["r"], 50)
+        self.assertEqual(i.queue_depth, 0)
+        i.stop()
+
     def test_engine_trace_parity_large_batch(self) -> None:
         sync_trace: list = []
         s = SyncInterpreter(
