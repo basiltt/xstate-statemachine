@@ -133,21 +133,38 @@ class TestCorrectedStatements(unittest.TestCase):
 
 class TestGuideChangelogMirrorsRoot(unittest.TestCase):
     """The site's changelog page diverged from CHANGELOG.md for two waves
-    before anyone noticed. Pin the [Unreleased] body byte-for-byte."""
+    before anyone noticed. Pin the LATEST section body -- whatever heading
+    it carries ([Unreleased] before a release, [x.y.z] after) -- so the
+    two never drift again, across releases."""
 
-    @staticmethod
-    def _unreleased(text: str) -> str:
-        start = text.index("## [Unreleased]")
-        end = text.index("\n## [0.7.0]")
-        body = text[start:end].split("\n", 1)[1]
-        # The guide page appends a "For full details" trailer + rule.
-        body = body.rsplit("For full details", 1)[0]
-        return body.strip().rstrip("-").strip()
+    _HEAD = re.compile(r"^## \[([^\]]+)\].*$", re.M)
 
-    def test_unreleased_sections_are_identical(self) -> None:
+    def _latest(self, text: str) -> "tuple[str, str]":
+        heads = list(self._HEAD.finditer(text))
+        # Skip an empty [Unreleased] placeholder right after a release.
+        for k, h in enumerate(heads):
+            body = text[h.end() : heads[k + 1].start()]
+            if body.strip() and body.strip() != "Nothing yet.":
+                body = body.rsplit("For full details", 1)[0]
+                return h.group(1), body.strip().rstrip("-").strip()
+        raise AssertionError("no changelog section with content")
+
+    def test_latest_sections_are_identical(self) -> None:
         root = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         guide = (GUIDE / "changelog.md").read_text(encoding="utf-8")
-        self.assertEqual(self._unreleased(root), self._unreleased(guide))
+        rv, rb = self._latest(root)
+        gv, gb = self._latest(guide)
+        self.assertEqual(rv, gv, "guide changelog is on a different version")
+        # The guide page may add ONE intro line under the heading.
+        gb_lines = [ln for ln in gb.splitlines() if ln.strip()]
+        rb_lines = [ln for ln in rb.splitlines() if ln.strip()]
+        if (
+            gb_lines
+            and gb_lines[0].startswith("**")
+            and gb_lines[0] not in rb_lines
+        ):
+            gb_lines = gb_lines[1:]
+        self.assertEqual(rb_lines, gb_lines)
 
 
 class TestPublicSurfaceMatchesDocs(unittest.TestCase):

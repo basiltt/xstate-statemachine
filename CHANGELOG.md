@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.8.0] - 2026-09-17
+
 **Adoption-readiness.** A production adoption audit (tracking issue
 [#26](https://github.com/basiltt/xstate-statemachine/issues/26)) filed 34
 defects against 0.7.0 with a common theme: the library fails *silently* by
@@ -1182,7 +1186,9 @@ existing.
 <!-- Without these definitions they render as literal bracketed text.  -->
 <!-- ---------------------------------------------------------------- -->
 
-[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/basiltt/xstate-statemachine/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.4.3...v0.5.0

@@ -11,7 +11,9 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ---
 
-## [Unreleased] — Adoption-readiness, parts 1–3
+## [0.8.0] — 2026-09-17 *(Current Release)*
+
+**Adoption-readiness, parts 1–3.**
 
 **Adoption-readiness.** A production adoption audit (tracking issue
 [#26](https://github.com/basiltt/xstate-statemachine/issues/26)) filed 34
@@ -363,7 +365,7 @@ preserves 0.7.x semantics, with two deliberate exceptions called out under
   engine now raise `NotSupportedError` instead of having their coroutine
   silently discarded).
 
-For full details, see the [`[Unreleased]` section of CHANGELOG.md](https://github.com/basiltt/xstate-statemachine/blob/main/CHANGELOG.md#unreleased).
+For full details, see the [`[0.8.0]` section of CHANGELOG.md](https://github.com/basiltt/xstate-statemachine/blob/main/CHANGELOG.md#080---2026-09-17).
 
 ---
 
