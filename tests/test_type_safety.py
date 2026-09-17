@@ -30,7 +30,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -195,7 +195,26 @@ def _expected(src: str) -> Dict[int, Set[str]]:
     return out
 
 
+def _require_mypy() -> None:
+    """Fail LOUDLY if mypy is missing.
+
+    🛡️ Without this, a missing checker produced empty output, which the
+    assertions read as "nothing flagged" -- every real-bug check then
+    failed with a misleading "types too loose" message (CI, first run).
+    A tool that is not there must be a clear setup error, not a false
+    verdict about the library's types.
+    """
+    try:
+        import mypy  # noqa: F401
+    except ImportError as exc:  # pragma: no cover - environment
+        raise unittest.SkipTest(
+            "mypy is not installed; install the 'dev' or 'lint' group "
+            "(pip install mypy) to run the type-safety suite"
+        ) from exc
+
+
 def _mypy(path: pathlib.Path) -> Dict[int, Set[str]]:
+    _require_mypy()
     proc = subprocess.run(
         [
             sys.executable,
@@ -218,6 +237,13 @@ def _mypy(path: pathlib.Path) -> Dict[int, Set[str]]:
         },
         timeout=300,
     )
+    if proc.returncode not in (0, 1) or (
+        not proc.stdout.strip() and proc.stderr.strip()
+    ):
+        raise RuntimeError(
+            f"mypy did not run cleanly (exit {proc.returncode}): "
+            f"{proc.stderr[-1500:]}"
+        )
     found: Dict[int, Set[str]] = {}
     for line in proc.stdout.splitlines():
         m = re.match(r".*?:(\d+):(?:\d+:)? error: .*\[([a-z-]+)\]\s*$", line)

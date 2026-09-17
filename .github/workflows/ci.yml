@@ -130,7 +130,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
-          python -m pip install "pytest>=8.3.0"
+          # 🧷 mypy is a TEST dependency: tests/test_type_safety.py runs it
+          #    over representative user programs.
+          python -m pip install "pytest>=8.3.0" "mypy>=1.14"
 
       - name: 🧪 Run test suite
         run: pytest -qq --no-header
@@ -177,7 +179,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
-          python -m pip install "pytest>=8.3.0" "pytest-cov>=6.0.0"
+          # 🧷 mypy is a TEST dependency: tests/test_type_safety.py runs it
+          #    over representative user programs.
+          python -m pip install "pytest>=8.3.0" "mypy>=1.14" "pytest-cov>=6.0.0"
 
       - name: 📊 Run suite with coverage
         # 🚧 The threshold is a ratchet, not an aspiration. Raise it when
