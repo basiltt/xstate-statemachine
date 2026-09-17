@@ -125,7 +125,59 @@ class TestPendingInvocations(_Quiet):
         self.assertEqual(asyncio.run(main()), [])
 
 
-class TestRestartServices(_Quiet):
+class TestHasDormantInvocations(_Quiet):
+    """#44 follow-up: `status` is not a liveness signal after a restore;
+    `has_dormant_invocations` is."""
+
+    def test_true_after_static_restore_while_status_says_running(self) -> None:
+        async def main():
+            snap = await _snapshot_mid_invoke([])
+            r = Interpreter.from_snapshot(
+                snap, create_machine(OMS, logic=_logic([]))
+            )
+            await r.start()
+            out = (r.status, r.has_dormant_invocations)
+            await r.stop()
+            return out
+
+        status, dormant = asyncio.run(main())
+        self.assertEqual(status, "running")
+        self.assertTrue(dormant)
+
+    def test_false_on_a_live_machine(self) -> None:
+        async def main():
+            i = await Interpreter(
+                create_machine(OMS, logic=_logic([]))
+            ).start()
+            await asyncio.sleep(0.005)
+            out = i.has_dormant_invocations
+            await i.stop()
+            return out
+
+        self.assertFalse(asyncio.run(main()))
+
+    def test_false_after_restart_services(self) -> None:
+        async def main():
+            snap = await _snapshot_mid_invoke([])
+            r = Interpreter.from_snapshot(
+                snap,
+                create_machine(OMS, logic=_logic([])),
+                restart_services=True,
+            )
+            await r.start()
+            out = r.has_dormant_invocations
+            await r.stop()
+            return out
+
+        self.assertFalse(asyncio.run(main()))
+
+    def test_available_on_sync_engine(self) -> None:
+        cfg = {"id": "s", "initial": "a", "states": {"a": {}}}
+        i = SyncInterpreter(create_machine(cfg))
+        i.start()
+        self.assertFalse(i.has_dormant_invocations)
+        i.stop()
+
     def test_default_does_not_restart_services(self) -> None:
         calls: List[str] = []
 

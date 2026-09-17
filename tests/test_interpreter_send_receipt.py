@@ -20,7 +20,9 @@ import warnings
 from typing import Any, Dict, List
 
 from src.xstate_statemachine import (
+    Event,
     Interpreter,
+    InterpreterStoppedError,
     MachineLogic,
     OverflowPolicy,
     QueueOverflowError,
@@ -439,6 +441,76 @@ class TestQueueDepthAndBound(_Quiet):
             return r.changed
 
         self.assertTrue(_run(main()))
+
+
+# -----------------------------------------------------------------------------
+# #75 -- receipts keyed on the QUEUED envelope, not the caller's object
+# -----------------------------------------------------------------------------
+class TestReusedEventInstanceReceipts(_Quiet):
+    """A pre-built `Event` used as a template must never hang a receipt."""
+
+    def test_reused_event_instance_resolves_both_receipts(self) -> None:
+        async def main():
+            i = await Interpreter(create_machine(GOV, logic=_logic())).start()
+            ev = Event(type="TICK", payload={})
+            r1, r2 = await asyncio.wait_for(
+                asyncio.gather(i.send(ev, wait=True), i.send(ev, wait=True)),
+                timeout=2,
+            )
+            n = i.context["n"]
+            await i.stop()
+            return r1, r2, n
+
+        r1, r2, n = _run(main())
+        self.assertIsInstance(r1, Receipt)
+        self.assertIsInstance(r2, Receipt)
+        self.assertTrue(r1.changed and r2.changed)
+        self.assertEqual(n, 2)
+
+    def test_many_concurrent_receipts_on_one_instance(self) -> None:
+        async def main():
+            i = await Interpreter(create_machine(GOV, logic=_logic())).start()
+            ev = Event(type="TICK", payload={})
+            rs = await asyncio.wait_for(
+                asyncio.gather(*(i.send(ev, wait=True) for _ in range(150))),
+                timeout=5,
+            )
+            n = i.context["n"]
+            await i.stop()
+            return rs, n
+
+        rs, n = _run(main())
+        self.assertEqual(len(rs), 150)
+        self.assertTrue(all(isinstance(r, Receipt) for r in rs))
+        self.assertEqual(n, 150)
+
+    def test_stop_resolves_duplicate_instance_receipts(self) -> None:
+        async def main():
+            i = await Interpreter(create_machine(GOV, logic=_logic())).start()
+            ev = Event(type="TICK", payload={})
+            # Park the run loop so the sends stay queued, then stop.
+            i._processing = True
+            i._event_loop_task.cancel()
+            f1 = asyncio.ensure_future(i.send(ev, wait=True))
+            f2 = asyncio.ensure_future(i.send(ev, wait=True))
+            await asyncio.sleep(0)
+            await i.stop()
+            return await asyncio.wait_for(asyncio.gather(f1, f2), timeout=2)
+
+        r1, r2 = _run(main())
+        self.assertIsInstance(r1.error, InterpreterStoppedError)
+        self.assertIsInstance(r2.error, InterpreterStoppedError)
+
+    def test_caller_object_is_not_mutated_and_payload_preserved(self) -> None:
+        async def main():
+            i = await Interpreter(create_machine(GOV, logic=_logic())).start()
+            ev = Event(type="TICK", payload={"k": 1})
+            await i.send(ev, wait=True)
+            await i.stop()
+            return ev
+
+        ev = _run(main())
+        self.assertEqual(ev, Event(type="TICK", payload={"k": 1}))
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -26,7 +26,8 @@ within the statechart tree.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, List, Optional
+import warnings
+from typing import TYPE_CHECKING, List, Optional, Set, Tuple
 
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
@@ -81,6 +82,35 @@ def _machine_of(node: "StateNode") -> Optional["StateNode"]:
     while current is not None and current.parent is not None:
         current = current.parent
     return current
+
+
+#: (source id, target) pairs already warned about, so a hot transition
+#: does not warn on every event (#31).
+_SIBLING_FALLBACKS_WARNED: Set[Tuple[str, str]] = set()
+
+
+def _warn_sibling_fallback(
+    target: str, source: "StateNode", resolved: "StateNode"
+) -> None:
+    key = (source.id, target)
+    if key in _SIBLING_FALLBACKS_WARNED:
+        return
+    _SIBLING_FALLBACKS_WARNED.add(key)
+    root = _machine_of(source)
+    machine_id = root.id if root is not None else "?"
+    warnings.warn(
+        f"Target '{target}' on state '{source.id}' resolved to the SIBLING "
+        f"'{resolved.id}' via the pre-0.8.0 fallback (XState reads a "
+        f"leading dot as 'child of the source'). Write it unambiguously as "
+        f"'#{resolved.id}' -- or set 'strictTargets': true on machine "
+        f"'{machine_id}' to disable the fallback. The fallback is removed "
+        f"in 1.0.",
+        DeprecationWarning,
+        # 📍 Reached from several depths (build-time validation, runtime
+        #    resolution); the message names the source state and target, so
+        #    the frame attribution matters less than the text.
+        stacklevel=2,
+    )
 
 
 def _find_descendant(start_node: "StateNode", path: List[str]) -> "StateNode":
@@ -237,7 +267,14 @@ def resolve_target_state(
         if root is not None and getattr(root, "strict_targets", False):
             raise StateNotFoundError(target, reference_state.id)
         base = reference_state.parent or reference_state
-        return _find_descendant(base, segments)
+        resolved = _find_descendant(base, segments)
+        # 📢 #31 (0.8.1): the fallback succeeded, so the machine relies on
+        #    the pre-0.8.0 sibling reading. Say so, once per (source,
+        #    target) pair, and name the unambiguous spelling -- this is the
+        #    migration path that lets a 0.7.x codebase find its own
+        #    ambiguous targets without a flag day.
+        _warn_sibling_fallback(target, reference_state, resolved)
+        return resolved
 
     # -------------------------------------------------------------------------
     # 🏛️ Strategy 4: Plain ID resolution (e.g., 'myState')

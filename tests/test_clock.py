@@ -362,5 +362,131 @@ class TestTimerPriority(_Quiet):
         self.assertLess(e.lateness_ms, 500.0)
 
 
+# -----------------------------------------------------------------------------
+# #76 -- the delivery lane follows the OWNING ENGINE, not the ambient loop
+# -----------------------------------------------------------------------------
+class TestClockLaneFollowsOwner(_Quiet):
+    CFG: Dict[str, Any] = {
+        "id": "sy",
+        "initial": "a",
+        "states": {"a": {"after": {40: "b"}}, "b": {}},
+    }
+
+    def test_sync_after_fires_via_tick_inside_running_loop(self) -> None:
+        async def main():
+            i = SyncInterpreter(create_machine(self.CFG))
+            i.start()
+            pending = i.clock.pending
+            time.sleep(0.12)  # deadline is unambiguously due
+            i.tick()
+            out = (pending, set(i.current_state_ids))
+            i.stop()
+            return out
+
+        pending, state = asyncio.run(main())
+        self.assertEqual(pending, 1, "deadline must sit in the heap")
+        self.assertEqual(state, {"sy.b"}, "tick() must be authoritative")
+
+    def test_clock_lane_follows_owner_not_caller(self) -> None:
+        clock = RealClock()
+
+        async def main():
+            hits = []
+            # Sync owner inside a loop -> heap; async owner -> call_later.
+            clock.set_timeout(lambda: hits.append("sync"), 0.0, sync=True)
+            h = clock.set_timeout(
+                lambda: hits.append("async"), 0.0, sync=False
+            )
+            self.assertEqual(clock.pending, 1)
+            self.assertIsInstance(h, asyncio.TimerHandle)
+            self.assertEqual(clock.pump(), 1)
+            await asyncio.sleep(0.01)
+            return hits
+
+        self.assertEqual(asyncio.run(main()), ["sync", "async"])
+
+    def test_sync_timers_still_spawn_no_threads(self) -> None:
+        import threading
+
+        before = threading.active_count()
+        interps = []
+
+        async def main():
+            for _ in range(25):
+                i = SyncInterpreter(create_machine(self.CFG))
+                i.start()
+                interps.append(i)
+            return threading.active_count()
+
+        during = asyncio.run(main())
+        for i in interps:
+            i.stop()
+        self.assertEqual(during - before, 0)
+
+    def test_legacy_clock_without_sync_kwarg_still_works(self) -> None:
+        """A third-party clock written against the 0.8.0 protocol."""
+
+        class OldClock:
+            def __init__(self):
+                self.inner = SimulatedClock()
+
+            def now(self):
+                return self.inner.now()
+
+            def set_timeout(self, fn, delay_sec, *, owner=None):
+                return self.inner.set_timeout(fn, delay_sec, owner=owner)
+
+            def clear_timeout(self, h):
+                self.inner.clear_timeout(h)
+
+            def pump(self):
+                return self.inner.pump()
+
+        clk = OldClock()
+        i = SyncInterpreter(create_machine(self.CFG), clock=clk)
+        i.start()
+        self.assertEqual(clk.inner.pending, 1)
+        clk.inner.increment(50)
+        i.tick()
+        self.assertEqual(set(i.current_state_ids), {"sy.b"})
+        i.stop()
+
+    def test_clock_is_called_exactly_once_and_its_errors_surface(
+        self,
+    ) -> None:
+        """A clock that ACCEPTS ``sync=`` but raises TypeError inside its
+        body must not be retried without the kwarg: the engine decides the
+        call shape from the signature, so the clock runs once and its own
+        error surfaces unchanged (review of #76: the try/except fallback
+        called it twice and lost the lane)."""
+        calls = []
+
+        class BuggyClock(SimulatedClock):
+            def set_timeout(self, fn, delay_sec, *, owner=None, sync=None):
+                calls.append(sync)
+                raise TypeError("unsupported delay type")
+
+        i = SyncInterpreter(create_machine(self.CFG), clock=BuggyClock())
+        with self.assertRaisesRegex(TypeError, "unsupported delay type"):
+            i.start()
+        self.assertEqual(calls, [True], "clock must be invoked once, sync=")
+
+    def test_kwargs_catch_all_clock_receives_sync(self) -> None:
+        """``**kwargs`` in `set_timeout` counts as accepting ``sync=``."""
+        seen = {}
+
+        class Wide(SimulatedClock):
+            def set_timeout(self, fn, delay_sec, **kw):
+                seen.update(kw)
+                return super().set_timeout(
+                    fn, delay_sec, owner=kw.get("owner")
+                )
+
+        i = SyncInterpreter(create_machine(self.CFG), clock=Wide())
+        i.start()
+        self.assertIs(seen.get("sync"), True)
+        i.stop()
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

@@ -53,7 +53,7 @@ from typing import (
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from .actions import BUILTIN_ACTION_PARAM_SPEC, resolve_builtin
-from .events import Event
+from .events import SYSTEM_EVENT_PREFIXES, Event
 from .exceptions import InvalidConfigError, StateNotFoundError
 from .machine_logic import MachineLogic
 from .resolver import resolve_target_state
@@ -890,6 +890,10 @@ class StateNode(Generic[TContext]):
 
         self.entry = self._parse_actions(config.get("entry"))
         self.exit = self._parse_actions(config.get("exit"))
+        #: ⚡ #27: does this node OR any descendant declare entry/exit
+        #: actions? Set by `MachineNode._mark_subtree_actions` once the
+        #: tree is complete; conservatively True until then.
+        self.subtree_has_actions: bool = True
         self.on = self._parse_on(config)
         # ⚡ #55 part 2: precompiled descriptor index. `_matching_descriptors`
         #    used to scan every `on` key per event to find partials; for a
@@ -1474,6 +1478,23 @@ class MachineNode(StateNode[TContext]):
         self.has_history_states, self.has_always_transitions = (
             self._scan_tree_features(self)
         )
+        self._mark_subtree_actions(self)
+
+    @staticmethod
+    def _mark_subtree_actions(node: "StateNode") -> bool:
+        """Post-order walk setting `StateNode.subtree_has_actions` (#27).
+
+        True when *node* or any descendant declares `entry` / `exit`
+        actions. `_execute_transition` uses it to skip the rollback
+        context checkpoint when no user action can run -- the checkpoint
+        cost ~22% throughput on an idle `rollback` machine.
+        """
+        flag = bool(node.entry or node.exit)
+        for child in node.states.values():
+            if MachineNode._mark_subtree_actions(child):
+                flag = True
+        node.subtree_has_actions = flag
+        return flag
 
     @staticmethod
     def _scan_tree_features(root: "StateNode") -> Tuple[bool, bool]:
@@ -1531,9 +1552,7 @@ class MachineNode(StateNode[TContext]):
         known = self.known_events
         if "*" in known or event_type in known:
             return True
-        if event_type.startswith(
-            ("done.", "error.", "after.", "xstate.", "___xstate")
-        ):
+        if event_type.startswith(SYSTEM_EVENT_PREFIXES):
             return True
         for key in known:
             if key.endswith(".*"):

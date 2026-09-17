@@ -131,6 +131,58 @@ class TestMachineLogicMarkers(_Quiet):
         msgs = [str(w.message) for w in caught]
         self.assertTrue(any("matches no logic contract" in m for m in msgs))
 
+    # ---- #52 follow-up: `MachineLogic(strict=True)` ------------------------
+    def test_strict_rejects_undecorated_method(self) -> None:
+        class Logic(MachineLogic):
+            def three(self, i, c, e):  # would be filed as a service
+                pass
+
+        with self.assertRaises(InvalidConfigError) as cm:
+            Logic(strict=True)
+        self.assertIn("'three'", str(cm.exception))
+        self.assertIn("@action", str(cm.exception))
+
+    def test_strict_accepts_decorated_methods_and_private_helpers(
+        self,
+    ) -> None:
+        from src.xstate_statemachine import guard, service
+
+        class Logic(MachineLogic):
+            @action
+            def act(self, i, c, e):  # 3 args but DECORATED: an action
+                pass
+
+            @guard
+            def ok(self, c, e):
+                return True
+
+            @service
+            async def svc(self, i, c, e):
+                return 1
+
+            def _helper(self, x):
+                return x
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            logic = Logic(strict=True)
+        self.assertIn("act", logic.actions)
+        self.assertIn("ok", logic.guards)
+        self.assertIn("svc", logic.services)
+        self.assertEqual([w for w in caught if w.category is UserWarning], [])
+
+    def test_strict_defaults_to_false_and_is_exposed(self) -> None:
+        class Logic(MachineLogic):
+            def two(self, c, e):
+                return True
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            logic = Logic()
+        self.assertFalse(logic.strict)
+        self.assertIn("two", logic.guards)
+        self.assertTrue(MachineLogic(strict=True).strict)
+
 
 # -----------------------------------------------------------------------------
 # 🛡️ models.py — built-in param hint when keys sit at the top level

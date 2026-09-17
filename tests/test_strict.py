@@ -390,5 +390,139 @@ class TestStrictPropagatesToChildren(_Quiet):
         i.stop()
 
 
+# -----------------------------------------------------------------------------
+# #51 follow-up -- a strict machine cannot raise, from a literal, an event
+# it never handles. Caught at create_machine(), so `actionErrorPolicy` is
+# irrelevant.
+# -----------------------------------------------------------------------------
+class TestStrictStaticRaise(_Quiet):
+    @staticmethod
+    def _cfg(raised: Any, strict: bool = True) -> Dict[str, Any]:
+        return {
+            "id": "sr",
+            "initial": "a",
+            "strict": strict,
+            "states": {
+                "a": {
+                    "on": {
+                        "GO": {
+                            "target": "b",
+                            "actions": [
+                                {"type": "raise", "params": {"event": raised}}
+                            ],
+                        },
+                        "PING": "a",
+                    }
+                },
+                "b": {
+                    "entry": [{"type": "raise", "params": {"event": "PING"}}]
+                },
+            },
+        }
+
+    def test_typo_in_static_raise_is_a_build_time_error(self) -> None:
+        from src.xstate_statemachine import InvalidConfigError
+
+        with self.assertRaises(InvalidConfigError) as cm:
+            create_machine(self._cfg("PINK"))
+        msg = str(cm.exception)
+        self.assertIn("'PINK'", msg)
+        self.assertIn("Did you mean 'PING'", msg)
+
+    def test_dict_form_event_is_checked_too(self) -> None:
+        from src.xstate_statemachine import InvalidConfigError
+
+        with self.assertRaises(InvalidConfigError):
+            create_machine(self._cfg({"type": "PINK", "x": 1}))
+
+    def test_declared_raise_builds(self) -> None:
+        create_machine(self._cfg("PING"))
+        create_machine(self._cfg({"type": "PING"}))
+
+    def test_not_strict_is_unchanged(self) -> None:
+        create_machine(self._cfg("PINK", strict=False))
+
+    def test_wildcard_makes_every_raise_known(self) -> None:
+        cfg = self._cfg("ANYTHING")
+        cfg["states"]["b"]["on"] = {"*": "a"}
+        create_machine(cfg)
+
+
+# -----------------------------------------------------------------------------
+# #78 -- `send_threadsafe()` carries the same guardrail as `send()`
+# -----------------------------------------------------------------------------
+class TestSendThreadsafeStrict(_Quiet):
+    """The recommended cross-thread entry point must not be the one entry
+    point without validation."""
+
+    class Qty:
+        @staticmethod
+        def validate(payload: Dict[str, Any]) -> None:
+            qty = (payload or {}).get("qty")
+            if not isinstance(qty, int) or qty <= 0:
+                raise ValueError("qty must be a positive int")
+
+    def _run_from_thread(self, machine, strict: bool, *args, **kw):
+        """Start an interpreter, call `send_threadsafe` from a worker, and
+        return (exception-or-None, final state ids)."""
+        import threading
+
+        async def main():
+            i = await Interpreter(
+                create_machine(**machine), strict=strict
+            ).start()
+            box: Dict[str, Any] = {}
+
+            def worker():
+                try:
+                    i.send_threadsafe(*args, **kw).result(1)
+                except Exception as exc:  # noqa: BLE001
+                    box["exc"] = exc
+
+            t = threading.Thread(target=worker)
+            t.start()
+            for _ in range(30):
+                await asyncio.sleep(0.01)
+            t.join(1)
+            out = (box.get("exc"), set(i.current_state_ids))
+            await i.stop()
+            return out
+
+        return _run(main())
+
+    def test_send_threadsafe_rejects_unknown_event(self) -> None:
+        exc, _ = self._run_from_thread({"config": ORDER}, True, "FIL")
+        self.assertIsInstance(exc, UnknownEventError)
+        self.assertIn("FILL", str(exc))  # difflib suggestion
+
+    def test_send_threadsafe_validates_payload_schema(self) -> None:
+        exc, _ = self._run_from_thread(
+            {"config": ORDER, "event_schemas": {"FILL": self.Qty}},
+            False,
+            "FILL",
+            qty=-1,
+        )
+        self.assertIsInstance(exc, InvalidEventPayloadError)
+
+    def test_send_threadsafe_invalid_payload_does_not_transition(self) -> None:
+        _, state = self._run_from_thread(
+            {"config": ORDER, "event_schemas": {"FILL": self.Qty}},
+            False,
+            "FILL",
+            qty=-1,
+        )
+        self.assertNotIn("order.filled", state)
+
+    def test_send_threadsafe_valid_event_still_delivered(self) -> None:
+        exc, state = self._run_from_thread(
+            {"config": ORDER, "event_schemas": {"FILL": self.Qty}},
+            True,
+            "FILL",
+            qty=3,
+        )
+        self.assertIsNone(exc)
+        self.assertEqual(state, {"order.filled"})
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

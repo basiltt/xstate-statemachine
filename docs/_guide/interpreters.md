@@ -220,6 +220,7 @@ interp.stop()
 | `.has_tag(tag)` | method | `True` if any active state carries `tag`. |
 | `.get_meta()` | method | Returns a `{state_id: meta_dict}` mapping merged from every active state's `meta`. |
 | `.pending_invocations()` | method | Lists in-flight `invoke`s from the active configuration that have no live service backing them — most relevant right after `from_snapshot()`. |
+| `.has_dormant_invocations` | `bool` | `True` when `pending_invocations()` is non-empty. **`status` is not a liveness signal after a restore** — a statically restored machine reports `"running"` while its invokes are parked; check this in health checks instead. *(0.8.1)* |
 | `.MAX_ACTION_DEPTH` | `int` | The recursion guard rail for self-triggered actions (default `50`) — raised when actions keep re-sending events into the same transition. |
 
 ### Checking Transitions, Tags, and Metadata
@@ -1004,6 +1005,8 @@ Per XState, an event that selects no transition in any active state is silently 
 
 Whatever the policy, every unhandled event fires the `on_unhandled_event(interpreter, event, active_state_ids, disposition)` plugin hook, with `disposition` one of `"ignored"`, `"deferred"`, `"errored"`, or `"dropped"` (buffer was full). See [Plugins](../plugins/#plugin-hooks-reference).
 
+> **Exempt: engine events, by name prefix.** `onUnhandled` never applies to events in the reserved namespaces `done.`, `error.`, `after.`, `xstate.`, `___xstate` — the machine did not ask for a `done.invoke.fetch` it has no handler for and cannot be blamed for ignoring it. The exemption is a **prefix test on the name**, so a *user* event you happened to call `done.review` is exempt too, even under `"error"`. `create_machine()` warns about such `on` keys since 0.8.1; see [Core Concepts → How Events Work](../core-concepts/#how-events-work).
+
 ---
 
 ## Throughput and Scaling
@@ -1022,7 +1025,10 @@ To deliver an event from another thread, use `send_threadsafe()`:
 interp.send_threadsafe("TICK")
 ```
 
-It routes the enqueue through the interpreter's owning event loop via `run_coroutine_threadsafe` and returns a `concurrent.futures.Future` you may `.result()` on to block until the event is queued (not processed).
+It routes the enqueue through the interpreter's owning event loop and returns a `concurrent.futures.Future` you may `.result()` on to block until the event is queued (not processed). Since 0.8.1 it applies the same `strict` / `event_schemas` validation as `send()`, raising `UnknownEventError` / `InvalidEventPayloadError` on the **calling** thread before anything is queued.
+
+> **Changed in 0.8.0 — the manual idiom no longer works.** In 0.7.x the correct way to send across threads was
+> `asyncio.run_coroutine_threadsafe(interp.send("E"), loop).result()`. That pattern **raises `WrongThreadError` on 0.8.0+**, because the thread check runs eagerly inside `send()` on the calling thread, before the coroutine is ever handed to the loop. It is not possible to accept that form while still rejecting the bare `interp.send()` that silently lost events. Replace it with `send_threadsafe()`; the two are otherwise equivalent.
 
 > **Note:** `SyncInterpreter` has no owning event loop and is unaffected by this restriction.
 

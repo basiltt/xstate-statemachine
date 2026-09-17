@@ -83,7 +83,7 @@ from .logic_loader import LogicLoader
 # -----------------------------------------------------------------------------
 # ✉️ Event & Model Definitions
 # -----------------------------------------------------------------------------
-from .events import Event, Receipt
+from .events import SYSTEM_EVENT_PREFIXES, Event, Receipt
 from .models import ActionDefinition, MachineNode, OverflowPolicy
 
 # -----------------------------------------------------------------------------
@@ -196,6 +196,7 @@ __all__ = [
     "LogicLoader",
     # ✉️ Event & Model Definitions
     "Event",
+    "SYSTEM_EVENT_PREFIXES",
     "ActionDefinition",
     # 🔌 Extensibility & Plugins
     "PluginBase",

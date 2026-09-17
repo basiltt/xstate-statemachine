@@ -107,7 +107,7 @@ This machine has:
 | `states` | `object` | **Yes** | A map of state name → state configuration. At least one state is required. |
 | `strict` | `bool` | No | Default `false`. When `true`, sending an event type the machine has never declared anywhere raises `UnknownEventError`. See [Strict Mode](#strict-mode-unknown-events-and-payload-schemas). |
 | `strictTargets` | `bool` | No | Default `false`. When `true`, a plain (non-dotted) transition target must name a sibling or ancestor-scope state — it will no longer fall back to matching an unrelated state elsewhere in the tree that happens to share the same trailing id segment. |
-| `maxIterations` | `int` | No | Default `1000`. Upper bound on eventless (`always`) microsteps evaluated while a machine settles after a transition — guards against an accidental infinite loop of transient transitions. |
+| `maxIterations` | `int` | No | Default `1000`. Runaway guard for work the machine generates *for itself*: eventless (`always`) microsteps while settling, and unbroken chains of self-`raise` / self-`send()` / sync `done.invoke` events. Counted per **chain** — it resets whenever a step generates nothing — so a batch of any size of independent user events is always processed in full on both engines; only a genuinely self-feeding loop trips it, and only the generated tail is dropped. |
 | `spawnBlockingTimeout` | `number` | No | Milliseconds a `spawn_blocking_<key>` action waits for the child to reach a final state before giving up, on both engines. Default `30000` (30 s) — never unbounded, so a child that never finishes cannot wedge the parent mid-transition. |
 | `actionErrorPolicy` | `"continue" \| "rollback" \| "fail"` | No | Default `"continue"`. What happens when an `entry`/`exit`/transition action raises: `"continue"` logs and proceeds (the 0.7.x behavior, and the current default — planned to change to `"rollback"` in 1.0), `"rollback"` undoes the transition, `"fail"` puts the interpreter into the terminal `"error"` status. |
 | `guardErrorPolicy` | `"false" \| "true" \| "raise"` | No | Default `"false"`. What happens when a guard function raises: `"false"` treats the guard as not passing, `"true"` as passing, `"raise"` propagates the exception. Every outcome fires the `on_guard_error` plugin hook first. |
@@ -942,7 +942,7 @@ A machine's declared descriptor set (`MachineNode.known_events`, a `FrozenSet[st
 - Every `after` delay's generated timer event
 - Every `invoke`'s generated `done.invoke.<id>` and `error.platform.<id>`
 
-Engine-synthesised events are always known regardless of what the machine declares: anything starting with `done.`, `error.`, `after.`, `xstate.` (which includes `xstate.error.actor.*`), or the internal init sentinel.
+Engine-synthesised events are always known regardless of what the machine declares — see [Reserved namespaces are always "known"](#reserved-namespaces-are-always-known) below for the list and its one sharp edge.
 
 Use `Machine.is_known_event(event_type)` to run the same check yourself:
 
@@ -978,7 +978,24 @@ print(interp.current_state_ids)  # {'order.filled'}
 
 > **Note:** `filled` is given an unrelated `on: {"SHIP": ...}` handler here (rather than being a bare `"type": "final"` state) so the example actually demonstrates "declared elsewhere, not handled here." A `final` state has no `on` at all, and `SyncInterpreter` auto-stops once the machine reaches a top-level final state — so sending `CANCEL` to an already-final `filled` would be a no-op because the interpreter had stopped, not because of any unhandled-event policy.
 
-An internally-raised event (e.g. from a `{"type": "raise", ...}` action) is checked the same way, so a typo in an internal `raise` is caught too.
+### Internal `raise` events
+
+A `{"type": "raise", "params": {"event": "..."}}` action is checked in two places on a strict machine:
+
+- **At build time (0.8.1).** If the raised event is a *literal* — a string or a `{"type": ...}` dict — `create_machine()` verifies it against `known_events` and raises `InvalidConfigError` (with a *Did you mean …?* suggestion) when nothing handles it. A typo in your config is a configuration error and should never reach runtime.
+- **At runtime.** A *dynamic* event (a callable producing the event) is checked by the same `_check_strict` path as `send()` when the action executes. Be aware that under the default `actionErrorPolicy: "continue"` the resulting `UnknownEventError` is contained like any other action failure: it is logged, reported through `on_action_error` / `on_transition_failed`, sets `last_transition_ok = False` — and the transition **still commits**. If you want a runtime strict violation to abort the transition, pair `strict` with `actionErrorPolicy: "rollback"` or `"fail"`.
+
+### Reserved namespaces are always "known"
+
+Engine-synthesised events are always known regardless of what the machine declares: anything starting with `done.`, `error.`, `after.`, `xstate.`, or `___xstate`. Because this is a **prefix test on the name**, a *user* event you name `done.review` is also always known and will never be rejected by `strict`. `create_machine()` warns about such `on` keys since 0.8.1 — see [Core Concepts → How Events Work](../core-concepts/#how-events-work).
+
+### `send_threadsafe()` is covered too
+
+Since 0.8.1 `Interpreter.send_threadsafe()` applies the same `strict` and `event_schemas` checks as `send()`, raising on the **calling** thread before the event is queued. In 0.8.0 it bypassed both.
+
+### `MachineLogic(strict=True)` — a different `strict`
+
+Unrelated to event validation, `MachineLogic(strict=True)` (0.8.1) makes subclass auto-registration refuse any undecorated public method — `InvalidConfigError` at construction instead of an arity-based guess plus a `UserWarning`. Decorate every method with `@action` / `@guard` / `@service`, or prefix helpers with `_`.
 
 ### `onUnhandled`: what happens to a known-but-unmatched event
 

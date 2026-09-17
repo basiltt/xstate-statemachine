@@ -79,6 +79,8 @@ interpreter.send_events(["STEP_1", "STEP_2", "STEP_3"])
 
 > **Tip:** Event names are conventionally UPPER_CASE (`"TOGGLE"`, `"SUBMIT"`, `"FETCH"`). State names are lowercase (`"idle"`, `"loading"`, `"done"`). This makes it easy to tell them apart at a glance.
 
+> **Reserved namespaces — do not name your events `done.*`, `error.*`, `after.*`, `xstate.*` or `___xstate*`.** Those prefixes mark events the *engine* synthesises (`done.invoke.<id>`, `error.platform.<id>`, `after.<ms>`, `xstate.error.actor.<id>`, the init sentinel). Everywhere the library has to decide "is this the machine's own traffic, or a user event it forgot to handle?" it checks that prefix list — the `"*"` / `"prefix.*"` wildcard matcher, the `onUnhandled` policy and `strict` mode all consult it. A user event named `done.review` therefore gets *system-event* semantics: it is matched **only by an exact `on` key**, is invisible to `"*"`, is exempt from `onUnhandled: "error"`, and is never rejected by `strict`. Since 0.8.1 `create_machine()` warns when an `on` key sits in a reserved namespace without the engine's shape; the list itself is importable as `xstate_statemachine.events.SYSTEM_EVENT_PREFIXES`. Prefer `review.done`, `validation.error`, and so on.
+
 ---
 
 ## 🚨 Error & Unhandled-Event Policies

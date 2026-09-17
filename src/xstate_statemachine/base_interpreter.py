@@ -53,7 +53,7 @@ from typing import (
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
-from .events import AfterEvent, DoneEvent, Event
+from .events import SYSTEM_EVENT_PREFIXES, AfterEvent, DoneEvent, Event
 from .exceptions import (
     NotSupportedError,
     InvalidEventPayloadError,
@@ -260,16 +260,33 @@ class _SafePlugin:
 
 # 🏛️ Prefixes of events the ENGINE synthesises (`done.invoke.*`,
 #    `error.platform.*`, `after.*`, `xstate.error.actor.*` from `escalate`,
-#    and the init/exit sentinels). Shared by the wildcard matcher and the
-#    unhandled-event policy so the two can never disagree about what counts
-#    as a system event (#28 review).
-_SYSTEM_EVENT_PREFIXES: Tuple[str, ...] = (
-    "done.",
-    "error.",
-    "after.",
-    "xstate.",
-    "___xstate",
-)
+#    and the init/exit sentinels). Shared by the wildcard matcher, the
+#    unhandled-event policy and strict mode so the three can never disagree
+#    about what counts as a system event (#28 review, #79). The single
+#    source of truth lives in `events.py`.
+_SYSTEM_EVENT_PREFIXES: Tuple[str, ...] = SYSTEM_EVENT_PREFIXES
+
+#: Process-wide latch for the `actionErrorPolicy` default-flip warning (#27).
+_WARNED_ACTION_ERROR_POLICY_DEFAULT: bool = False
+
+
+def _accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
+    """``True`` if calling *fn* with keyword *name* is signature-legal.
+
+    Used to detect 0.8.0-era `Clock` implementations whose `set_timeout`
+    predates the ``sync=`` keyword (#76). A ``**kwargs`` catch-all counts.
+    Un-introspectable callables (C builtins, some mocks) are assumed to
+    accept it, matching the protocol they claim to implement.
+    """
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):  # pragma: no cover -- exotic callables
+        return True
+    if name in params:
+        return True
+    return any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
 
 
 class PendingInvocation(NamedTuple):
@@ -383,6 +400,18 @@ class BaseInterpreter(Generic[TContext]):
         #: ⏱️ Every timing path -- `after`, delayed `raise`/`sendTo` -- goes
         #: through this object and nothing else (#49). See `clock.py`.
         self.clock: Clock = clock if clock is not None else RealClock()
+        #: ⏱️ #76: which delivery lane THIS engine can drain. `RealClock`
+        #: uses it to pick heap vs `call_later` by owner, not by whether a
+        #: loop happens to be running on the constructing thread.
+        self._clock_sync_lane: bool = False
+        #: ⏱️ Does `self.clock.set_timeout` accept the 0.8.1 `sync=` kwarg?
+        #: Decided ONCE here by inspecting the signature, so `_set_timeout`
+        #: is a single call. The previous try/except-TypeError fallback
+        #: invoked a clock TWICE when its body raised TypeError for an
+        #: unrelated reason, and surfaced that error with the lane lost.
+        self._clock_accepts_sync: bool = _accepts_kwarg(
+            self.clock.set_timeout, "sync"
+        )
         #: 🛡️ #51: effective strictness -- the ctor flag wins over config.
         self.strict: bool = machine.strict if strict is None else bool(strict)
         self.parent: Optional["BaseInterpreter[Any]"] = None
@@ -1277,6 +1306,25 @@ class BaseInterpreter(Generic[TContext]):
             for inv in state.invoke
             if not self._invocation_is_live(state, inv)
         ]
+
+    @property
+    def has_dormant_invocations(self) -> bool:
+        """``True`` when the configuration claims work is in flight that
+        nothing is actually running (#44).
+
+        🏛️ Architecture decision: `status` stays ``"running"`` after a
+        static `from_snapshot()` -- the machine IS processing events; it is
+        the invokes that are parked. Introducing a new `status` value would
+        break every consumer that switches on the existing four, so the
+        liveness signal is a separate boolean instead. **`status` is not a
+        liveness signal after a restore; check this (or
+        :meth:`pending_invocations`) in health checks.**
+        """
+        return any(
+            not self._invocation_is_live(state, inv)
+            for state in self._active_state_nodes
+            for inv in state.invoke
+        )
 
     def _invocation_is_live(
         self, state: StateNode, invocation: InvokeDefinition
@@ -2208,19 +2256,31 @@ class BaseInterpreter(Generic[TContext]):
         #    undone -- orphaned from any active state and reachable only
         #    until the parent itself eventually stopped.
         actor_ids_before = set(self._actors.keys())
-        # 🧷 Context is snapshotted only when a rollback could need it: a
-        #    deepcopy per transition on the "continue" hot path would be a
-        #    measurable tax for a feature the machine has opted out of.
-        context_before: Optional[TContext] = (
-            copy.deepcopy(self.context)
-            if self.machine.action_error_policy != "continue"
-            else None
-        )
         domain = self._find_transition_domain(transition, target_state)
 
         states_to_exit = self._compute_states_to_exit(domain, target_state)
 
         path_to_enter = self._get_path_to_state(target_state, stop_at=domain)
+
+        # 🧷 Context is snapshotted only when a rollback could need it: a
+        #    deepcopy per transition on the "continue" hot path would be a
+        #    measurable tax for a feature the machine has opted out of.
+        # ⚡ #27 follow-up: ...and only when a user action can actually
+        #    RUN. The checkpoint cost ~22% throughput on an idle `rollback`
+        #    machine whose transitions had no actions at all. History
+        #    targets are conservatively treated as "may run actions".
+        context_before: Optional[TContext] = (
+            copy.deepcopy(self.context)
+            if self.machine.action_error_policy != "continue"
+            and (
+                transition.actions
+                or target_state.type == "history"
+                or any(s.exit for s in states_to_exit)
+                or any(s.subtree_has_actions for s in path_to_enter)
+            )
+            else None
+        )
+        internal_depth_before = self._internal_queue_depth()
 
         # 🕰️ A history pseudo-state is never entered itself. Replace it with
         #    the remembered configuration (or the default), computed *before*
@@ -2358,7 +2418,10 @@ class BaseInterpreter(Generic[TContext]):
                         await self._stop_actor_leaf(actor)
 
             if self._finish_rollback(
-                rollback_cause, transition, context_before
+                rollback_cause,
+                transition,
+                context_before,
+                internal_depth_before,
             ):
                 return
             raise
@@ -2395,8 +2458,10 @@ class BaseInterpreter(Generic[TContext]):
         context_before: Optional[TContext] = (
             copy.deepcopy(self.context)
             if self.machine.action_error_policy != "continue"
+            and transition.actions
             else None
         )
+        internal_depth_before = self._internal_queue_depth()
         try:
             failed = await self._execute_actions(transition.actions, event)
             if failed:
@@ -2406,7 +2471,9 @@ class BaseInterpreter(Generic[TContext]):
                 "💥 Internal transition on '%s' failed; restoring context.",
                 transition.source.id,
             )
-            self._finish_rollback(cause, transition, context_before)
+            self._finish_rollback(
+                cause, transition, context_before, internal_depth_before
+            )
             return
         if not failed:
             self.last_transition_ok = True
@@ -3267,16 +3334,23 @@ class BaseInterpreter(Generic[TContext]):
         self._last_action_error = failed_actions[0][1]
         for plug in self._plugins:
             plug.on_transition_failed(self, transition, failed_actions)
-        if self.machine.action_error_policy_is_default:
-            # 📢 The 1.0 default will be "rollback". Warn once per machine so
-            #    users relying on "continue" pin it explicitly before the flip.
-            self.machine.action_error_policy_is_default = False
+        global _WARNED_ACTION_ERROR_POLICY_DEFAULT
+        if (
+            self.machine.action_error_policy_is_default
+            and not _WARNED_ACTION_ERROR_POLICY_DEFAULT
+        ):
+            # 📢 The 1.0 default will be "rollback". Warn once per PROCESS
+            #    (#27 follow-up: per-MachineNode meant a service that built
+            #    interpreters from one module-level machine warned exactly
+            #    once, ever -- likely in a warm-up path nobody reads).
+            _WARNED_ACTION_ERROR_POLICY_DEFAULT = True
             warnings.warn(
                 f"Machine '{self.machine.id}': an action raised and the "
                 f"transition was committed anyway because "
                 f"'actionErrorPolicy' is unset (default 'continue'). This "
                 f"default becomes 'rollback' in 1.0. Set 'actionErrorPolicy' "
-                f"explicitly to silence this.",
+                f"explicitly on every machine to silence this "
+                f"(reported once per process).",
                 DeprecationWarning,
                 stacklevel=3,
             )
@@ -3284,15 +3358,52 @@ class BaseInterpreter(Generic[TContext]):
             action_def, exc = failed_actions[0]
             raise _RollbackRequested(action_def, exc)
 
+    def _internal_queue_depth(self) -> int:
+        """How many self-raised events are queued right now (#27)."""
+        queue = getattr(self, "_internal_queue", None)
+        return len(queue) if queue is not None else 0
+
+    def _discard_raised_since(self, depth_before: int) -> int:
+        """Drop internal events enqueued after *depth_before* (#27).
+
+        🏛️ Architecture decision: `rollback` restores configuration and
+        context. It cannot un-send a `sendTo` to another actor -- that
+        effect has left the machine -- but a `raise` is an event the
+        machine queued FOR ITSELF and has not yet processed, so it is
+        still ours to withdraw. Leaving it would deliver an event that
+        the (now undone) transition produced into a configuration that
+        never entered the state the event was meant for.
+
+        The internal queue is never drained mid-transition, so everything
+        appended since the checkpoint sits at the tail.
+        """
+        queue = getattr(self, "_internal_queue", None)
+        if queue is None:
+            return 0
+        excess = max(0, len(queue) - depth_before)
+        withdrawn = [queue.pop() for _ in range(excess)]
+        if withdrawn:
+            self._on_internal_events_withdrawn(withdrawn)
+        return excess
+
+    def _on_internal_events_withdrawn(self, events: List[Any]) -> None:
+        """Engine hook: bookkeeping for events removed by a rollback.
+
+        The async engine uses this to un-count them from its runaway-chain
+        depth and to resolve any receipt a blocked self-`send()` attached.
+        """
+
     def _finish_rollback(
         self,
         cause: BaseException,
         transition: TransitionDefinition,
         context_before: Optional[TContext],
+        internal_depth_before: Optional[int] = None,
     ) -> bool:
         """Common tail of both engines' rollback paths.
 
-        Restores context (when snapshotted), then decides what the caller
+        Restores context (when snapshotted), withdraws any `raise`d events
+        the failed action list queued (#27), then decides what the caller
         should do with *cause*.
 
         Returns:
@@ -3302,6 +3413,15 @@ class BaseInterpreter(Generic[TContext]):
         """
         if context_before is not None:
             self.context = context_before
+        if internal_depth_before is not None:
+            dropped = self._discard_raised_since(internal_depth_before)
+            if dropped:
+                logger.warning(
+                    "↩️ Rolled back %d self-raised event(s) queued by the "
+                    "failed transition on '%s'.",
+                    dropped,
+                    transition.source.id,
+                )
         if not isinstance(cause, _RollbackRequested):
             return False
         if self.machine.action_error_policy == "fail":
@@ -3311,6 +3431,22 @@ class BaseInterpreter(Generic[TContext]):
             err.__cause__ = cause.original
             self._fail(err)
         return True
+
+    def _set_timeout(
+        self, fn: Callable[[], Any], delay_sec: float, *, owner: Any
+    ) -> Any:
+        """Schedule on `self.clock`, telling it which lane we drain (#76).
+
+        Third-party clocks written against the 0.8.0 `Clock` protocol take
+        no ``sync`` keyword; `_clock_accepts_sync` (decided at construction)
+        selects the call shape, so the clock is invoked exactly once and any
+        exception it raises is its own.
+        """
+        if self._clock_accepts_sync:
+            return self.clock.set_timeout(
+                fn, delay_sec, owner=owner, sync=self._clock_sync_lane
+            )
+        return self.clock.set_timeout(fn, delay_sec, owner=owner)
 
     def _fail(self, error: BaseException) -> None:
         """Puts the machine into the terminal `error` status.

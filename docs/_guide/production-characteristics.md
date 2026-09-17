@@ -48,6 +48,23 @@ If the result is below the per-machine event rate you need, **scale by process**
 - **Blocking work inside an action stalls every machine in the process.** A `time.sleep(0.1)` or a synchronous HTTP call in one machine's action freezes the loop for all of them. Use `await` and async services; if you must call blocking code, run it with `asyncio.to_thread` inside a service.
 - **`tracemalloc` costs roughly 5× throughput.** Benchmark with it disabled, or your numbers will be badly pessimistic.
 
+### Cost of the failure policies
+
+Measured on a 5-state cycle machine, `SyncInterpreter`, 20 000 events, policy *armed but never triggered*:
+
+| Configuration | Relative throughput |
+|---|---:|
+| defaults | 1.00× |
+| `onUnhandled: "defer"` | ≈ 0.98× |
+| `actionErrorPolicy: "rollback"`, transitions with **no** actions | ≈ 0.98× *(0.8.1; was 0.78× in 0.8.0)* |
+| `actionErrorPolicy: "rollback"`, transitions with `entry` actions | ≈ 0.84× |
+
+`rollback` / `fail` take a `deepcopy` of `context` before any transition that can run an action. The cost is proportional to the size of your context — keep bulky, read-only reference data out of it. `defer` is nearly free when nothing defers. Because the 1.0 default flips to `rollback`, budget for the second-to-last row now.
+
+### Resource budget per invoked child (async engine)
+
+Each `invoke`d child machine costs **two asyncio tasks** while it is alive: its own run loop, and a manager task in the parent that awaits the child's completion future (to dispatch `onDone` / `onError`, apply `spawnBlockingTimeout`, and cancel the child on state exit). There are **no periodic wake-ups** — the 5 ms status poll was removed in 0.8.0 (#43) — so an idle child costs memory, not CPU. If you cap concurrent children on a task budget, the number to plan for is `2 × children + 1`.
+
 The `SyncInterpreter` is different in kind, not degree: it processes each `send()` to completion on the *calling* thread. Its throughput is whatever the calling thread can do, but two sync interpreters driven from two threads genuinely run in parallel (subject to the GIL) — see §3 for what that does and does not buy you.
 
 ---
@@ -85,7 +102,7 @@ On the `SyncInterpreter`, `after` timers are not on an event loop at all — the
 `SyncInterpreter` is single-threaded **for event processing only**.
 
 - `send()` runs the whole macrostep — guards, actions, entry/exit, `always` chains — synchronously on the **calling thread**, and returns when it is done. Two `send()` calls from one thread cannot overlap. That is the guarantee, and it is what makes the sync engine ideal for tests and step-through debugging.
-- **`after` timers and delayed sends do not own a thread.** Since 0.8.0 (#50) a delay is a deadline recorded on the interpreter's `Clock`; a due deadline is delivered on the **caller's thread** at the top of the next `send()`, inside the macrostep loop, or when you call `tick()` explicitly. Nothing fires between your own statements. (Before 0.8.0 each timer was a `threading.Thread` that re-entered the machine without a lock.)
+- **`after` timers and delayed sends do not own a thread.** Since 0.8.0 (#50) a delay is a deadline recorded on the interpreter's `Clock`; a due deadline is delivered on the **caller's thread** at the top of the next `send()`, inside the macrostep loop, or when you call `tick()` explicitly. Nothing fires between your own statements. (Before 0.8.0 each timer was a `threading.Thread` that re-entered the machine without a lock.) This holds **regardless of whether an asyncio loop is running on the constructing thread** — since 0.8.1 (#76) the clock lane follows the owning engine, so a sync machine built inside an async test or an async app's hot path still delivers its deadlines through `tick()`.
 - **Non-blocking `spawn_<key>` children still run on a background thread.** Each such child has a daemon runner thread that pumps its `tick()`; the child's actions execute on that thread. The parent is only re-entered through the child's completion event or `sendParent`, both of which go through the parent's inbox and are processed on the parent's next `send()`/`tick()`.
 
 So a machine that uses `after` and delayed sends is single-threaded end-to-end; only `spawn_<key>` (non-blocking) children introduce a second thread, and that thread runs the *child's* code, not the parent's.

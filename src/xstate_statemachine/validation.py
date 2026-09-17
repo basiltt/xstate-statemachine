@@ -24,11 +24,18 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING, Iterator, List, Optional, Tuple
 
+from .actions import RAISE, resolve_builtin
+from .events import SYSTEM_EVENT_PREFIXES
 from .exceptions import InvalidConfigError, StateNotFoundError
 from .resolver import resolve_target_state
 
 if TYPE_CHECKING:  # pragma: no cover
-    from .models import MachineNode, StateNode, TransitionDefinition
+    from .models import (
+        ActionDefinition,
+        MachineNode,
+        StateNode,
+        TransitionDefinition,
+    )
 
 
 def walk(node: "StateNode") -> Iterator["StateNode"]:
@@ -178,6 +185,107 @@ def _collect_findings(
     return unresolved, dead_loops
 
 
+#: Engine-generated event names a machine LEGITIMATELY declares an `on`
+#: handler for. Anything else under a reserved prefix is a user event that
+#: will only ever be matched by exact key (#79).
+_ENGINE_EVENT_SHAPES: Tuple[str, ...] = (
+    "done.invoke.",
+    "done.state.",
+    "error.platform.",
+    "after.",
+    "xstate.",
+    "___xstate",
+)
+
+
+def _warn_reserved_event_names(machine: "MachineNode") -> None:
+    """Warn about ``on`` keys in a reserved namespace that the engine will
+    never synthesise (#79).
+
+    A user event named ``done.review`` or ``error.validation`` is invisible
+    to ``"*"`` / ``"prefix.*"`` descriptors, exempt from ``onUnhandled`` and
+    from strict-mode name checks, because those prefixes mark engine
+    traffic. Declaring such a key in ``on`` is a strong signal the author
+    expects ordinary user-event semantics, so say so at build time rather
+    than let the event vanish at runtime.
+    """
+    offenders: List[str] = []
+    for node in walk(machine):
+        for key in node.on:
+            if not key.startswith(SYSTEM_EVENT_PREFIXES):
+                continue
+            if key.startswith(_ENGINE_EVENT_SHAPES):
+                continue
+            offenders.append(f"  - '{key}' on state '{node.id}'")
+    if not offenders:
+        return
+    warnings.warn(
+        f"Machine '{machine.id}' declares event(s) in a reserved namespace "
+        f"({', '.join(repr(p) for p in SYSTEM_EVENT_PREFIXES)}):\n"
+        + "\n".join(offenders)
+        + "\n  These prefixes mark engine-synthesised events. A user event "
+        "named this way is matched ONLY by an exact 'on' key: it is invisible "
+        "to '*' and 'prefix.*' descriptors, exempt from 'onUnhandled', and "
+        "never rejected by strict mode. Rename it (e.g. 'review.done') to get "
+        "ordinary event semantics.",
+        UserWarning,
+        stacklevel=4,
+    )
+
+
+def _static_raise_event_type(action: "ActionDefinition") -> Optional[str]:
+    """The event type a `raise` built-in will emit, if it is knowable now."""
+    if resolve_builtin(action.type) != RAISE or not action.params:
+        return None
+    event = action.params.get("event")
+    if isinstance(event, str):
+        return event
+    if isinstance(event, dict) and isinstance(event.get("type"), str):
+        return event["type"]
+    return None  # callable / dynamic -- checked at runtime by _check_strict
+
+
+def _collect_unknown_raises(machine: "MachineNode") -> List[str]:
+    """`strict` machines: every STATIC `raise` must name a declared event
+    (#51 follow-up).
+
+    `_check_strict` already runs on the `raise` built-in at runtime, but
+    under the default ``actionErrorPolicy: "continue"`` that exception is
+    contained like any other action failure -- logged, reported through
+    `on_action_error`, and the transition still commits -- so a typo'd
+    internal event never *raised* to anyone. A literal event name in the
+    config is a configuration error, and configuration errors belong at
+    `create_machine()`.
+    """
+    findings: List[str] = []
+
+    def check(actions, where: str) -> None:
+        for action in actions:
+            event_type = _static_raise_event_type(action)
+            if event_type is None or machine.is_known_event(event_type):
+                continue
+            findings.append(
+                f"  {where}: raise {event_type!r} names an event no state "
+                f"handles{_suggest_event(event_type, machine)}"
+            )
+
+    for node in walk(machine):
+        check(node.entry, f"{node.id} entry")
+        check(node.exit, f"{node.id} exit")
+        for label, t in transitions_of(node):
+            check(t.actions, f"{node.id}: {label}")
+    return findings
+
+
+def _suggest_event(event_type: str, machine: "MachineNode") -> str:
+    import difflib
+
+    close = difflib.get_close_matches(
+        event_type, sorted(machine.known_events), n=1, cutoff=0.6
+    )
+    return f". Did you mean {close[0]!r}?" if close else ""
+
+
 def validate_machine(machine: "MachineNode", *, strict_targets: bool) -> None:
     """Run every build-time check and raise once with all findings.
 
@@ -193,6 +301,17 @@ def validate_machine(machine: "MachineNode", *, strict_targets: bool) -> None:
             every finding.
     """
     unresolved, dead_loops = _collect_findings(machine)
+    _warn_reserved_event_names(machine)
+
+    # 🛡️ #51 follow-up: a strict machine must not be able to raise, from a
+    #    literal in its own config, an event it can never handle.
+    if machine.strict:
+        unknown_raises = _collect_unknown_raises(machine)
+        if unknown_raises:
+            raise InvalidConfigError(
+                f"Machine '{machine.id}' is strict but raises undeclared "
+                f"event(s):\n" + "\n".join(unknown_raises)
+            )
 
     # 🛑 Dead loops are never downgradable: unlike a missing target (a
     #    silent no-op), a parked machine is a hang.

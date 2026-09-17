@@ -141,6 +141,10 @@ restored.stop()
 
 `pending_invocations()` lists every `invoke` in the interpreter's active configuration that has no live service backing it. It's empty on a running (never-restored) machine, and empty again after a restore made with `restart_services=True`.
 
+> **`status` is not a liveness signal after a restore.** A statically restored machine reports `status == "running"` — it *is* processing events — while every invoke it lists is dormant. A health check that trusts `status` alone will say "healthy" about an order that sits unfilled. Check `interpreter.has_dormant_invocations` (a `bool`, 0.8.1) or `pending_invocations()` instead. There is deliberately no separate `"restored"` status value: it would break every consumer that switches on the existing four.
+>
+> Two properties the whole recovery design rests on: after a static restore **entry actions do not re-run** and **services are not re-invoked**. That is what makes it safe to reconcile each pending invocation against the outside world (the venue, the payment provider) *before* deciding whether to restart it.
+
 ```python
 import asyncio
 from xstate_statemachine import create_machine, MachineLogic, Interpreter

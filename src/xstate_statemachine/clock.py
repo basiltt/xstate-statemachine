@@ -64,9 +64,20 @@ class Clock(Protocol):
         ...
 
     def set_timeout(
-        self, fn: Callable[[], Any], delay_sec: float, *, owner: Any = None
+        self,
+        fn: Callable[[], Any],
+        delay_sec: float,
+        *,
+        owner: Any = None,
+        sync: Optional[bool] = None,
     ) -> Any:
-        """Schedule *fn* after *delay_sec*; return a cancellation handle."""
+        """Schedule *fn* after *delay_sec*; return a cancellation handle.
+
+        Engines pass ``sync=True|False`` (#76) to say which delivery lane
+        they can drain; a clock that does not care may ignore it. A clock
+        written against the 0.8.0 protocol (no ``sync`` parameter) is
+        still accepted at runtime -- the engine retries without it.
+        """
         ...
 
     def clear_timeout(self, handle: Any) -> None:
@@ -158,8 +169,13 @@ class RealClock:
       owner calls :meth:`pump` -- which `SyncInterpreter.send()` and
       `tick()` do -- on the caller's thread (#50).
 
-    One `RealClock` may serve a mixed tree (async parent, sync child): each
-    `set_timeout` picks the mechanism for the caller's context.
+    One `RealClock` may serve a mixed tree (async parent, sync child). The
+    lane is chosen by the ENGINE that owns the timer, not by whether a
+    loop happens to be running on the calling thread (#76): the sync
+    engine passes ``sync=True`` and always gets the heap, so `tick()` can
+    always reach its own deadlines; the async engine passes ``sync=False``
+    and always gets ``call_later``. A caller that passes neither (a
+    third-party scheduler) gets the ambient-context heuristic.
     """
 
     def __init__(self) -> None:
@@ -169,14 +185,23 @@ class RealClock:
         return time.monotonic()
 
     def set_timeout(
-        self, fn: Callable[[], Any], delay_sec: float, *, owner: Any = None
+        self,
+        fn: Callable[[], Any],
+        delay_sec: float,
+        *,
+        owner: Any = None,
+        sync: Optional[bool] = None,
     ) -> Any:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop is not None:
-            return loop.call_later(max(0.0, delay_sec), fn)
+        if sync is None:
+            try:
+                asyncio.get_running_loop()
+                sync = False
+            except RuntimeError:
+                sync = True
+        if not sync:
+            return asyncio.get_running_loop().call_later(
+                max(0.0, delay_sec), fn
+            )
         return self._heap.push(self.now() + max(0.0, delay_sec), fn, owner)
 
     def clear_timeout(self, handle: Any) -> None:
@@ -238,7 +263,12 @@ class SimulatedClock:
         return self._now
 
     def set_timeout(
-        self, fn: Callable[[], Any], delay_sec: float, *, owner: Any = None
+        self,
+        fn: Callable[[], Any],
+        delay_sec: float,
+        *,
+        owner: Any = None,
+        sync: Optional[bool] = None,
     ) -> Any:
         return self._heap.push(self._now + max(0.0, delay_sec), fn, owner)
 
