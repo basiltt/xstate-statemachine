@@ -270,7 +270,7 @@ class PureSnapshot:
 _PROBE_CACHE = threading.local()
 
 
-def _probes() -> "weakref.WeakKeyDictionary[MachineNode[Any, Any], Any]":
+def _probes() -> "weakref.WeakKeyDictionary[MachineNode[Any], Any]":
     """This thread's machine -> probe cache (created on first use)."""
     cache = getattr(_PROBE_CACHE, "probes", None)
     if cache is None:
@@ -337,7 +337,7 @@ def _probe_class() -> type:
 
 
 def _build_probe(
-    machine: MachineNode[Any, Any],
+    machine: MachineNode[Any],
     snapshot: Optional[PureSnapshot],
     input: Optional[Any] = None,
 ) -> Tuple[Any, List[ActionDefinition]]:
@@ -434,7 +434,7 @@ def _capture(probe: Any) -> PureSnapshot:
 
 
 def initial_transition(
-    machine: MachineNode[Any, Any], *, input: Optional[Any] = None
+    machine: MachineNode[Any], *, input: Optional[Any] = None
 ) -> Tuple[PureSnapshot, List[ActionDefinition]]:
     """Computes a machine's initial state without running it.
 
@@ -454,7 +454,7 @@ def initial_transition(
 
 
 def transition(
-    machine: MachineNode[Any, Any],
+    machine: MachineNode[Any],
     snapshot: PureSnapshot,
     event: Union[str, Dict[str, Any], Event, AfterEvent, DoneEvent],
 ) -> Tuple[PureSnapshot, List[ActionDefinition]]:
@@ -483,7 +483,7 @@ def transition(
 
 
 def get_initial_snapshot(
-    machine: MachineNode[Any, Any], *, input: Optional[Any] = None
+    machine: MachineNode[Any], *, input: Optional[Any] = None
 ) -> PureSnapshot:
     """Returns a machine's initial snapshot, discarding the actions.
 
@@ -498,7 +498,7 @@ def get_initial_snapshot(
 
 
 def get_next_snapshot(
-    machine: MachineNode[Any, Any],
+    machine: MachineNode[Any],
     snapshot: PureSnapshot,
     event: Union[str, Dict[str, Any], Event],
 ) -> PureSnapshot:

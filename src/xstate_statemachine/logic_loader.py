@@ -32,6 +32,7 @@ import inspect
 import logging
 from types import ModuleType
 from typing import (
+    cast,
     Any,
     Callable,
     Dict,
@@ -175,7 +176,7 @@ class LogicLoader:
             logger.info(
                 "📦 Initializing new LogicLoader instance (Singleton)."
             )
-        return cls._instance
+        return cast(_TLogicLoader, cls._instance)
 
     def register_logic_module(self, module: ModuleType) -> None:
         """Registers a Python module for global logic discovery.
@@ -375,13 +376,13 @@ class LogicLoader:
         # ---------------------------------------------------------------------
         # 📋 Step 2: Extract all required logic names from the config.
         # ---------------------------------------------------------------------
-        required_actions, required_guards, required_services = (
-            set(),
-            set(),
-            set(),
-        )
+        required_actions: Set[str] = set()
+        required_guards: Set[str] = set()
+        required_services: Set[str] = set()
         # Temporarily create a machine node to traverse its structure
-        temp_machine = MachineNode(config=machine_config, logic=MachineLogic())
+        temp_machine: MachineNode[Any] = MachineNode(
+            config=machine_config, logic=MachineLogic()
+        )
         LogicLoader._extract_logic_from_node(
             temp_machine, required_actions, required_guards, required_services
         )
@@ -416,4 +417,8 @@ class LogicLoader:
         logger.info(
             "✨ Logic discovery complete. Bound %d implementations.", total
         )
-        return MachineLogic(**discovered_logic)
+        return MachineLogic(
+            actions=discovered_logic["actions"],
+            guards=discovered_logic["guards"],
+            services=discovered_logic["services"],
+        )

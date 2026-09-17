@@ -34,6 +34,8 @@ import inspect
 import logging
 from enum import Enum
 from typing import (
+    cast,
+    Mapping,
     FrozenSet,
     Any,
     Dict,
@@ -64,13 +66,12 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # 🧬 Type Variables & Generics
 # -----------------------------------------------------------------------------
-# Using TypeVars for TContext and TEvent allows for creating generic machine
+# `TContext` (see _typing.py) allows for creating generic machine
 # definitions. This provides a foundation for full static type checking of a
 # machine's context and events, leading to more robust and self-documenting code.
 # -----------------------------------------------------------------------------
 
-TContext = TypeVar("TContext", bound=Dict[str, Any])
-TEvent = TypeVar("TEvent", bound=Dict[str, Any])
+from ._typing import TContext  # noqa: E402
 
 # Define a specific type for state types for clarity and reuse.
 StateType = Literal["atomic", "compound", "parallel", "final", "history"]
@@ -224,6 +225,9 @@ class ActionDefinition:
                 the action, defined directly in the JSON.
     """
 
+    type: str
+    params: Optional[Dict[str, Any]]
+
     def __init__(self, config: Union[str, Dict[str, Any]]):
         """Initializes the ActionDefinition from its configuration.
 
@@ -240,13 +244,13 @@ class ActionDefinition:
             logger.debug(
                 "🔧 Parsing action definition from string: '%s'", config
             )
-            self.type: str = config
-            self.params: Optional[Dict[str, Any]] = None
+            self.type = config
+            self.params = None
         elif isinstance(config, dict):
             # 📝 Handle object definition: {"type": "myAction", ...}
             logger.debug("🔧 Parsing action definition from dict: %s", config)
-            self.type: str = config.get("type", "UnknownAction")
-            self.params: Optional[Dict[str, Any]] = config.get("params")
+            self.type = config.get("type", "UnknownAction")
+            self.params = config.get("params")
             self._validate_builtin_params(config)
         else:
             # ❌ Reject invalid definitions
@@ -340,6 +344,12 @@ class GuardDefinition:
     """
 
     __slots__ = ("type", "params", "children", "is_composite", "is_state_in")
+
+    type: str
+    params: Optional[Dict[str, Any]]
+    children: List["GuardDefinition"]
+    is_composite: bool
+    is_state_in: bool
 
     def __init__(self, config: Union[str, Dict[str, Any], "GuardDefinition"]):
         """Normalises any supported guard configuration.
@@ -709,7 +719,7 @@ class InvokeDefinition:
 # -----------------------------------------------------------------------------
 
 
-class StateNode(Generic[TContext, TEvent]):
+class StateNode(Generic[TContext]):
     """Represents a single state in the state machine graph.
 
     A `StateNode` can be atomic, compound, parallel, or final. It encapsulates
@@ -1320,7 +1330,7 @@ class StateNode(Generic[TContext, TEvent]):
         return f"StateNode(id='{self.id}', type='{self.type}')"
 
 
-class MachineNode(StateNode[TContext, TEvent]):
+class MachineNode(StateNode[TContext]):
     """The root node of a state machine, with added machine-wide utilities.
 
     This class extends `StateNode` and acts as the entry point to the entire
@@ -1335,12 +1345,10 @@ class MachineNode(StateNode[TContext, TEvent]):
     """
 
     # ✅ FIX: Pre-declare instance attributes for this subclass as well.
-    logic: MachineLogic[TContext, TEvent]
+    logic: MachineLogic[TContext]
     initial_context: TContext
 
-    def __init__(
-        self, config: Dict[str, Any], logic: MachineLogic[TContext, TEvent]
-    ):
+    def __init__(self, config: Dict[str, Any], logic: MachineLogic[TContext]):
         """Initializes the root MachineNode and builds the state tree.
 
         Args:
@@ -1383,7 +1391,9 @@ class MachineNode(StateNode[TContext, TEvent]):
                 f"'{type(raw_context).__name__}'. Expected an object/dict, "
                 f"or a callable returning one."
             )
-        self.initial_context = raw_context
+        # 🧷 `raw_context` is whatever the config held (a dict, or the
+        #    factory's result); it IS the machine's TContext by construction.
+        self.initial_context = cast(TContext, raw_context)
         #: Lazily computed structural fingerprint; see `structure_hash`.
         self._structure_hash: Optional[str] = None
         #: Upper bound on microsteps when settling transient ("always")

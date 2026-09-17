@@ -31,6 +31,7 @@ import inspect
 import warnings
 import logging
 from typing import (
+    Mapping,
     Any,
     Awaitable,
     Callable,
@@ -59,8 +60,7 @@ logger = logging.getLogger(__name__)
 # runtime, which can occur when two modules depend on each other. The type
 # hints are only evaluated by static type checkers.
 if TYPE_CHECKING:
-    from .base_interpreter import BaseInterpreter  # noqa: F401
-    from .models import ActionDefinition  # noqa: F401
+    from .models import ActionDefinition, MachineNode  # noqa: F401
 
 # -----------------------------------------------------------------------------
 # 🧬 Type Variables & Callable Signatures
@@ -70,24 +70,35 @@ if TYPE_CHECKING:
 # They provide strong typing support for developers implementing machine logic.
 # -----------------------------------------------------------------------------
 
-TContext = TypeVar("TContext", bound=Dict[str, Any])
-TEvent = TypeVar("TEvent", bound=Dict[str, Any])
+from ._typing import TContext  # noqa: E402
 
-# A blueprint for any action function. It receives the interpreter instance,
-# the mutable context, the triggering event, and its own definition.
+# 🧷 Callable blueprints for user logic.
+#
+# 🏛️ Architecture decision: these pin the ARITY and the guard's `bool`
+#    return -- the two mistakes users actually make -- and leave every
+#    parameter as `Any`. Two reasons, both about contravariance:
+#      * A user who annotates `interp: SyncInterpreter[MyCtx]` on their
+#        action is doing the right thing; naming `BaseInterpreter` here
+#        would REJECT that narrower annotation.
+#      * A `TContext` in the context slot cannot be inferred from a dict of
+#        callables (mypy solves it to `Never`), so it would reject every
+#        correctly-typed action. The context type is bound where a user
+#        READS it -- `create_machine(context_type=)` -> `interp.context` --
+#        not where they write handlers for it.
+#    What `Callable[..., Any]` (the previous hint) let through: a
+#    two-argument action, a guard returning a string.
 ActionCallable = Callable[
-    ["BaseInterpreter", TContext, Event, "ActionDefinition"],
-    Union[None, Awaitable[None]],
+    [Any, Any, Any, "ActionDefinition"], Union[None, Awaitable[None]]
 ]
 
-# A blueprint for any guard function. It must be a pure, synchronous function
-# that returns a boolean.
-GuardCallable = Callable[[TContext, Event], bool]
+# A guard is a pure, synchronous predicate: (context, event) -> bool.
+GuardCallable = Callable[[Any, Any], bool]
 
-# A blueprint for any service function. It can be sync or async.
-ServiceCallable = Callable[
-    ["BaseInterpreter", TContext, Event], Union[Any, Awaitable[Any]]
-]
+# A service: (interpreter, context, event) -> result | awaitable result.
+ServiceCallable = Callable[[Any, Any, Any], Any]
+
+# A `delays` entry: a number of milliseconds, or (context, event) -> ms.
+DelayCallable = Callable[[Any, Any], Union[int, float]]
 
 
 # -----------------------------------------------------------------------------
@@ -103,7 +114,7 @@ _AMBIGUOUS_ARITY_ROLES: Dict[int, str] = {
 }
 
 
-class MachineLogic(Generic[TContext, TEvent]):
+class MachineLogic(Generic[TContext]):
     """A container for the implementation logic of a state machine.
 
     This class serves as a simple registry for custom actions, guards, and
@@ -123,23 +134,24 @@ class MachineLogic(Generic[TContext, TEvent]):
 
     def __init__(
         self,
-        actions: Optional[Dict[str, Callable[..., Any]]] = None,
-        guards: Optional[Dict[str, Callable[..., bool]]] = None,
+        actions: Optional[Mapping[str, ActionCallable]] = None,
+        guards: Optional[Mapping[str, GuardCallable]] = None,
         services: Optional[
-            Dict[str, Union[Callable[..., Any], "MachineNode"]]  # noqa: F821
+            Mapping[str, Union[ServiceCallable, "MachineNode[Any]"]]
         ] = None,
         delays: Optional[
-            Dict[str, Union[int, float, Callable[..., Any]]]
+            Mapping[str, Union[int, float, DelayCallable]]
         ] = None,
     ) -> None:
         """Initializes the MachineLogic instance.
 
-        This constructor accepts dictionaries of callables. Using a more
-        generic `Callable[..., Any]` hint makes the class flexible, allowing
-        users to provide functions with more specific interpreter type hints
-        (e.g., `SyncInterpreter` instead of `BaseInterpreter`) without causing
-        type-checking errors. It also accepts `MachineNode` as a service, which
-        is the pattern used for spawning actors.
+        This constructor accepts dictionaries of callables typed by the
+        aliases above: they pin each callable's ARITY and a guard's `bool`
+        return, while leaving the interpreter and event parameters open so
+        a user may annotate them as narrowly as they like
+        (`SyncInterpreter[MyCtx]`, a `TypedDict` event, ...). A service may
+        also be a `MachineNode`, which is the pattern used for spawning
+        actors.
 
         Args:
             actions: A dictionary mapping action names (str) to their
@@ -159,14 +171,16 @@ class MachineLogic(Generic[TContext, TEvent]):
 
         # ✅ Use `or {}` as a robust way to default to an empty dictionary
         #    if None is passed.
-        self.actions: Dict[str, Callable[..., Any]] = actions or {}
-        self.guards: Dict[str, Callable[..., bool]] = guards or {}
+        # 🧷 Accept any Mapping (a `Dict[str, ServiceCallable]` is not a
+        #    `Dict[str, ServiceCallable | MachineNode]` -- dict is invariant
+        #    in its value type -- but every Mapping of callables IS one);
+        #    store a real dict the interpreter can mutate.
+        self.actions: Dict[str, ActionCallable] = dict(actions or {})
+        self.guards: Dict[str, GuardCallable] = dict(guards or {})
         self.services: Dict[
-            str, Union[Callable[..., Any], "MachineNode"]  # noqa
-        ] = (  # noqa
-            services or {}
-        )
-        self.delays: Dict[str, Union[int, float, Callable[..., Any]]] = (
+            str, Union[ServiceCallable, "MachineNode[Any]"]
+        ] = dict(services or {})
+        self.delays: Dict[str, Union[int, float, DelayCallable]] = dict(
             delays or {}
         )
 

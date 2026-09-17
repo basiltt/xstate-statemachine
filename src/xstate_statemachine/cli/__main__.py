@@ -126,7 +126,11 @@ def _get_validated_json_paths(
 
     # 🔄 De-duplicate paths while preserving the specified order
     seen: Set[str] = set()
-    unique_paths = [p for p in json_paths if not (p in seen or seen.add(p))]
+    unique_paths: List[str] = []
+    for p in json_paths:
+        if p not in seen:
+            seen.add(p)
+            unique_paths.append(p)
 
     if not unique_paths:
         logger.error("❌ No JSON files provided. Aborting.")
@@ -1062,7 +1066,9 @@ def run_validate(args: argparse.Namespace) -> None:
 
         # Validate structure
         issues = []
-        actions, guards, services = set(), set(), set()
+        actions: Set[str] = set()
+        guards: Set[str] = set()
+        services: Set[str] = set()
         if not isinstance(conf, dict):
             issues.append("root must be a JSON object")
         else:

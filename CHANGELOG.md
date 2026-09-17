@@ -267,6 +267,28 @@ preserves 0.7.x semantics, with two deliberate exceptions called out under
   stops running or a link that 404s on the site fails the build. 34
   runnable feature examples now live under `examples/*/features/`, one per
   capability, all executed by `tests/test_examples.py`.
+- **[wave 3] Real type safety for users** (`py.typed` was already
+  shipped; now the types are worth having). Verified by
+  `tests/test_type_safety.py`, which type-checks representative USER
+  programs with mypy and pyright and asserts every real bug is flagged and
+  no correct line is:
+  - `create_machine(..., context_type=MyCtx)` -- a `TypedDict` or any
+    `Mapping` subtype -- flows through to `interp.context`, so a typo'd key
+    or wrong value type is a checker error. No runtime effect; without it
+    the context is `Dict[str, Any]` as before.
+  - `TContext` is bound to `Mapping[str, Any]`: `SyncInterpreter[MyCtx]`
+    with a `TypedDict` was a type ERROR under the old `Dict` bound.
+  - The unused `TEvent` type parameter is gone: `Interpreter[Ctx]`, not
+    `Interpreter[Ctx, Any]`. It appeared in zero signatures.
+  - `send(..., wait=True)` types as `Receipt` (sync) /
+    `Awaitable[Receipt]` (async); `wait=` and `priority=` are checked as
+    `bool` instead of being swallowed into `**payload`. `from_snapshot()`
+    and `SyncInterpreter.start()` return their own class, not the base.
+  - `MachineLogic` callables pin arity and the guard's `bool` return: a
+    two-argument action or a guard returning `str` is now a type error.
+  - `BaseInterpreter` is exported for annotating plugin hooks.
+  - The library itself is at **zero mypy errors** (was 61) and zero
+    pyright errors; mypy runs in the CI lint job.
 - **[wave 3] CLI: four more generated-code defects from executing the
   104-machine corpus.** (1) `"guard": "!name"` -- Stately's shorthand for a
   negated guard -- was taken literally and demanded a guard called `!name`;

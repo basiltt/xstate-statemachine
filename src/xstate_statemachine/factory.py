@@ -24,7 +24,7 @@ configuration dictionary and associated business logic.
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 from types import ModuleType
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Type, Union, overload
 
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
@@ -33,6 +33,7 @@ from .exceptions import InvalidConfigError
 from .logic_loader import LogicLoader
 from .logger import logger
 from .machine_logic import MachineLogic
+from ._typing import TContext
 from .models import MachineNode
 from .validation import validate_machine
 
@@ -41,16 +42,53 @@ from .validation import validate_machine
 # -----------------------------------------------------------------------------
 
 
+@overload
 def create_machine(
     config: Dict[str, Any],
     *,
-    logic: Optional[MachineLogic] = None,
+    logic: Optional[MachineLogic[Any]] = None,
     logic_modules: Optional[List[Union[str, ModuleType]]] = None,
     logic_providers: Optional[List[Any]] = None,
     strict_targets: bool = True,
     event_schemas: Optional[Dict[str, Any]] = None,
-) -> MachineNode:
+) -> MachineNode[Dict[str, Any]]:  # noqa: E704
+    ...
+
+
+@overload
+def create_machine(
+    config: Dict[str, Any],
+    *,
+    context_type: Type[TContext],
+    logic: Optional[MachineLogic[TContext]] = None,
+    logic_modules: Optional[List[Union[str, ModuleType]]] = None,
+    logic_providers: Optional[List[Any]] = None,
+    strict_targets: bool = True,
+    event_schemas: Optional[Dict[str, Any]] = None,
+) -> MachineNode[TContext]:  # noqa: E704
+    ...
+
+
+def create_machine(
+    config: Dict[str, Any],
+    *,
+    context_type: Optional[Type[Any]] = None,
+    logic: Optional[MachineLogic[Any]] = None,
+    logic_modules: Optional[List[Union[str, ModuleType]]] = None,
+    logic_providers: Optional[List[Any]] = None,
+    strict_targets: bool = True,
+    event_schemas: Optional[Dict[str, Any]] = None,
+) -> MachineNode[Any]:
     """Creates, validates, and assembles a state machine instance.
+
+    🧷 Type safety: pass ``context_type=MyCtx`` (a ``TypedDict`` or any
+    ``Mapping`` subtype) and the returned ``MachineNode[MyCtx]`` carries
+    that type into every interpreter built from it -- ``interp.context``
+    is then a ``MyCtx``, so a typo'd key or a wrong value type is a checker
+    error at the call site. The argument has NO runtime effect (the
+    machine's context is still the ``"context"`` in *config*); it exists
+    purely so the type flows. Without it the context is ``Dict[str, Any]``,
+    exactly as before.
 
     This function acts as a factory, providing a centralized and simplified
     way to construct a `MachineNode`. It intelligently handles the sourcing

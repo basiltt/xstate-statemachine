@@ -38,7 +38,12 @@ from typing import (
 # -------------------------------------------------------------------------
 from .exceptions import InvalidConfigError, NotSupportedError
 from .factory import create_machine as _original_create_machine
-from .machine_logic import MachineLogic
+from .machine_logic import (
+    ActionCallable,
+    GuardCallable,
+    MachineLogic,
+    ServiceCallable,
+)
 from .models import MachineNode
 
 # 📝 Decorators below return the SAME function, so a TypeVar keeps them
@@ -164,6 +169,11 @@ class State:
         """The list of exit action names for this state."""
         return self._exit_actions
 
+    # 🧷 Set by `__init_subclass__` for the `class MyState(State, ...)` form.
+    _xsm_initial: bool = False
+    _xsm_final: bool = False
+    _xsm_parallel: bool = False
+
     def __init_subclass__(
         cls,
         *,
@@ -174,9 +184,9 @@ class State:
     ) -> None:
         """Support ``class MyState(State, parallel=True):``."""
         super().__init_subclass__(**kwargs)
-        cls._xsm_initial = initial
-        cls._xsm_final = final
-        cls._xsm_parallel = parallel
+        setattr(cls, "_xsm_initial", initial)
+        setattr(cls, "_xsm_final", final)
+        setattr(cls, "_xsm_parallel", parallel)
 
     def __repr__(self) -> str:
         """Provide a readable representation for debugging."""
@@ -270,9 +280,9 @@ class State:
             ``_xsm_name`` markers attached.
         """
         name = _snake_to_camel(fn.__name__)
-        fn._xsm_type = "action"
-        fn._xsm_name = name
-        fn._xsm_state_enter = self
+        setattr(fn, "_xsm_type", "action")
+        setattr(fn, "_xsm_name", name)
+        setattr(fn, "_xsm_state_enter", self)
         self._enter_decorators.append(fn)
         if name not in self.entry:
             self.entry.append(name)
@@ -292,9 +302,9 @@ class State:
             ``_xsm_name`` markers attached.
         """
         name = _snake_to_camel(fn.__name__)
-        fn._xsm_type = "action"
-        fn._xsm_name = name
-        fn._xsm_state_exit = self
+        setattr(fn, "_xsm_type", "action")
+        setattr(fn, "_xsm_name", name)
+        setattr(fn, "_xsm_state_exit", self)
         self._exit_decorators.append(fn)
         if name not in self._exit_actions:
             self._exit_actions.append(name)
@@ -459,16 +469,16 @@ def action(fn_or_name: Any = None) -> Any:
     if callable(fn_or_name):
         # 📝 Used as @action (no parentheses)
         fn = fn_or_name
-        fn._xsm_type = "action"
-        fn._xsm_name = _snake_to_camel(fn.__name__)
+        setattr(fn, "_xsm_type", "action")
+        setattr(fn, "_xsm_name", _snake_to_camel(fn.__name__))
         return fn
     else:
         # 📝 Used as @action("customName")
         name = fn_or_name
 
         def decorator(fn: _DecoratedF) -> _DecoratedF:
-            fn._xsm_type = "action"
-            fn._xsm_name = name
+            setattr(fn, "_xsm_type", "action")
+            setattr(fn, "_xsm_name", name)
             return fn
 
         return decorator
@@ -511,8 +521,8 @@ def guard(fn_or_name: Any = None) -> Any:
                 f"Guard '{fn.__name__}' must be synchronous "
                 f"(guards cannot be async)"
             )
-        fn._xsm_type = "guard"
-        fn._xsm_name = _snake_to_camel(fn.__name__)
+        setattr(fn, "_xsm_type", "guard")
+        setattr(fn, "_xsm_name", _snake_to_camel(fn.__name__))
         return fn
     else:
         name = fn_or_name
@@ -523,8 +533,8 @@ def guard(fn_or_name: Any = None) -> Any:
                     f"Guard '{fn.__name__}' must be "
                     f"synchronous (guards cannot be async)"
                 )
-            fn._xsm_type = "guard"
-            fn._xsm_name = name
+            setattr(fn, "_xsm_type", "guard")
+            setattr(fn, "_xsm_name", name)
             return fn
 
         return decorator
@@ -558,15 +568,15 @@ def service(fn_or_name: Any = None) -> Any:
     """
     if callable(fn_or_name):
         fn = fn_or_name
-        fn._xsm_type = "service"
-        fn._xsm_name = _snake_to_camel(fn.__name__)
+        setattr(fn, "_xsm_type", "service")
+        setattr(fn, "_xsm_name", _snake_to_camel(fn.__name__))
         return fn
     else:
         name = fn_or_name
 
         def decorator(fn: _DecoratedF) -> _DecoratedF:
-            fn._xsm_type = "service"
-            fn._xsm_name = name
+            setattr(fn, "_xsm_type", "service")
+            setattr(fn, "_xsm_name", name)
             return fn
 
         return decorator
@@ -960,21 +970,23 @@ def _compile_logic_from_functions(
             with ``@state.enter`` or ``@state.exit``, which
             are only valid inside a ``StateMachine`` class.
     """
-    action_dict: Dict[str, Callable] = {}
-    guard_dict: Dict[str, Callable] = {}
-    service_dict: Dict[str, Callable] = {}
+    action_dict: Dict[str, ActionCallable] = {}
+    guard_dict: Dict[str, GuardCallable] = {}
+    service_dict: Dict[str, ServiceCallable] = {}
 
     all_fns = list(actions) + list(guards) + list(services)
     for fn in all_fns:
         if hasattr(fn, "_xsm_state_enter"):
+            owner = getattr(fn, "_xsm_state_enter").name
             raise InvalidConfigError(
-                f"@{fn._xsm_state_enter.name}.enter "
+                f"@{owner}.enter "
                 f"decorator is only valid inside a "
                 f"StateMachine class"
             )
         if hasattr(fn, "_xsm_state_exit"):
+            owner = getattr(fn, "_xsm_state_exit").name
             raise InvalidConfigError(
-                f"@{fn._xsm_state_exit.name}.exit "
+                f"@{owner}.exit "
                 f"decorator is only valid inside a "
                 f"StateMachine class"
             )
@@ -1020,8 +1032,8 @@ def _compile_logic_from_instance(
     service_dict: Dict[str, Any] = {}
 
     for fn in decorated:
-        name = fn._xsm_name
-        xsm_type = fn._xsm_type
+        name = getattr(fn, "_xsm_name")
+        xsm_type = getattr(fn, "_xsm_type")
         bound = functools.partial(fn, instance)
         if xsm_type == "action":
             action_dict[name] = bound
@@ -1120,9 +1132,9 @@ class MachineBuilder:
         self._initial_state: Optional[str] = None
         self._transitions: List[Dict[str, Any]] = []
         self._root: Dict[str, Any] = {}
-        self._actions: Dict[str, Callable] = {}
-        self._guards: Dict[str, Callable] = {}
-        self._services: Dict[str, Callable] = {}
+        self._actions: Dict[str, ActionCallable] = {}
+        self._guards: Dict[str, GuardCallable] = {}
+        self._services: Dict[str, ServiceCallable] = {}
 
     def __repr__(self) -> str:
         """Provide a readable representation for debugging."""
@@ -1386,7 +1398,7 @@ class MachineBuilder:
         if self._root:
             config.update(copy.deepcopy(self._root))
 
-        logic = MachineLogic(
+        logic: MachineLogic[Any] = MachineLogic(
             actions=dict(self._actions),
             guards=dict(self._guards),
             services=dict(self._services),
@@ -1410,7 +1422,7 @@ class _StateMachineMeta(type):
             hasattr(b, "_xsm_is_base") for b in bases
         ):
             cls = super().__new__(mcs, name, bases, namespace)
-            cls._xsm_is_base = True
+            setattr(cls, "_xsm_is_base", True)
             return cls
 
         states: List[State] = []
@@ -1493,9 +1505,9 @@ class _StateMachineMeta(type):
                 decorated.append(attr_value)
 
         cls = super().__new__(mcs, name, bases, namespace)
-        cls._xsm_states = states
-        cls._xsm_transitions = transitions
-        cls._xsm_decorated = decorated
+        setattr(cls, "_xsm_states", states)
+        setattr(cls, "_xsm_transitions", transitions)
+        setattr(cls, "_xsm_decorated", decorated)
         return cls
 
 
@@ -1526,6 +1538,11 @@ class StateMachine(metaclass=_StateMachineMeta):
     machine_id: Optional[str] = None
     initial_context: Optional[Dict] = None
     machine_root: Optional[State] = None
+
+    # 🧷 Collected by `_StateMachineMeta` when the subclass body runs.
+    _xsm_states: List[State]
+    _xsm_transitions: List[Union[Transition, TransitionGroup]]
+    _xsm_decorated: List[Callable]
 
     @classmethod
     def create_machine(cls, context=None):

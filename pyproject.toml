@@ -56,11 +56,13 @@ dev = [
     "pytest-cov>=6.0.0",
     "pytest-asyncio>=0.24.0",
     "pre-commit>=4.0.0",
+    "mypy>=1.14",
 ]
 lint = [
     "black>=25.1.0",
     "flake8>=7.1.0",
     "flake8-isort>=6.1.0",
+    "mypy>=1.14",
 ]
 test = [
     "pytest>=8.3.0",
@@ -107,6 +109,19 @@ exclude = [
 #    without the file the claim was false and every hint was invisible to mypy.
 [tool.hatch.build.targets.wheel.force-include]
 "src/xstate_statemachine/py.typed" = "xstate_statemachine/py.typed"
+
+[tool.mypy]
+# 🧷 The library ships `py.typed`; these are the settings under which its
+#    own source is kept at zero errors (enforced by tests/test_type_safety.py
+#    and the CI lint job). `strict` is the goal for 1.0; the incremental
+#    flags below are the ones already satisfied.
+python_version = "3.9"
+files = ["src/xstate_statemachine"]
+ignore_missing_imports = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+no_implicit_optional = true
+check_untyped_defs = true
 
 [tool.black]
 line-length = 79

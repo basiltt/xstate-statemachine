@@ -33,6 +33,7 @@ import logging
 import time
 import warnings
 from typing import (
+    cast,
     Any,
     Awaitable,
     NamedTuple,
@@ -92,7 +93,6 @@ from .models import (
     MachineNode,
     StateNode,
     TContext,
-    TEvent,
     TransitionDefinition,
 )
 from .plugins import PluginBase
@@ -109,6 +109,9 @@ TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter")
 # Establishes a logger for this module, allowing for detailed, context-aware
 # logging that can be configured by the end-user's application.
 logger = logging.getLogger(__name__)
+
+#: Every event kind the core algorithm can be asked to process.
+AnyEvent = Union[Event, DoneEvent, AfterEvent]
 
 
 # -----------------------------------------------------------------------------
@@ -129,7 +132,7 @@ class ActorSystem:
 
     __slots__ = ("_registry",)
 
-    def __init__(self, registry: Dict[str, "BaseInterpreter[Any, Any]"]):
+    def __init__(self, registry: Dict[str, "BaseInterpreter[Any]"]):
         """Initializes the view.
 
         Args:
@@ -137,7 +140,7 @@ class ActorSystem:
         """
         self._registry = registry
 
-    def get(self, system_id: str) -> Optional["BaseInterpreter[Any, Any]"]:
+    def get(self, system_id: str) -> Optional["BaseInterpreter[Any]"]:
         """Looks up an actor by its `systemId`.
 
         Args:
@@ -148,7 +151,7 @@ class ActorSystem:
         """
         return self._registry.get(system_id)
 
-    def get_all(self) -> Dict[str, "BaseInterpreter[Any, Any]"]:
+    def get_all(self) -> Dict[str, "BaseInterpreter[Any]"]:
         """Returns every registered actor.
 
         Returns:
@@ -301,7 +304,7 @@ class _RollbackRequested(Exception):
         self.original = original
 
 
-class BaseInterpreter(Generic[TContext, TEvent]):
+class BaseInterpreter(Generic[TContext]):
     """Provides the foundational logic for state machine interpretation.
 
     This abstract base class implements the "Template Method" design pattern.
@@ -316,7 +319,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     or `SyncInterpreter` (sync).
 
     Attributes:
-        machine (MachineNode[TContext, TEvent]): The static `MachineNode`
+        machine (MachineNode[TContext]): The static `MachineNode`
             definition that represents the statechart's structure.
         context (TContext): The current extended state (context) of the
             machine, holding all dynamic data.
@@ -324,7 +327,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             'uninitialized', 'running', or 'stopped'.
         id (str): A unique identifier for this interpreter instance, inherited
             from the machine's ID.
-        parent (Optional[BaseInterpreter[Any, Any]]): A reference to the parent
+        parent (Optional[BaseInterpreter[Any]]): A reference to the parent
             interpreter if this instance was spawned as part of an actor model,
             otherwise `None`.
     """
@@ -336,7 +339,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
     def __init__(
         self,
-        machine: MachineNode[TContext, TEvent],
+        machine: MachineNode[TContext],
         interpreter_class: Optional[Type["BaseInterpreter"]] = None,
         input: Optional[Any] = None,
         clock: Optional[Clock] = None,
@@ -345,7 +348,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         """Initializes the BaseInterpreter instance.
 
         Args:
-            machine (MachineNode[TContext, TEvent]): The `MachineNode` instance
+            machine (MachineNode[TContext]): The `MachineNode` instance
                 that defines the statechart's structure, transitions, and
                 logic references.
             interpreter_class (Optional[Type["BaseInterpreter"]]): The concrete
@@ -370,7 +373,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             "🧠 Initializing BaseInterpreter for machine '%s'...", machine.id
         )
         # 🧍‍♂️ Core Properties
-        self.machine: MachineNode[TContext, TEvent] = machine
+        self.machine: MachineNode[TContext] = machine
         #: Input supplied at creation, available to context factories and
         #: readable afterwards as `interpreter.input`.
         self.input: Optional[Any] = input
@@ -382,7 +385,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         self.clock: Clock = clock if clock is not None else RealClock()
         #: 🛡️ #51: effective strictness -- the ctor flag wins over config.
         self.strict: bool = machine.strict if strict is None else bool(strict)
-        self.parent: Optional["BaseInterpreter[Any, Any]"] = None
+        self.parent: Optional["BaseInterpreter[Any]"] = None
 
         # 🌳 State & Actor Management
         self._active_state_nodes: Set[StateNode] = set()
@@ -422,7 +425,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         self._scheduled_sends: Dict[str, Callable[[], None]] = {}
         #: Actor-system registry. Only the ROOT interpreter's copy is used;
         #: children reach it by walking up `parent`.
-        self._system: Dict[str, "BaseInterpreter[Any, Any]"] = {}
+        self._system: Dict[str, "BaseInterpreter[Any]"] = {}
         #: Callbacks to run the moment `status` becomes terminal
         #: ("done" / "error"). The async engine registers one that resolves
         #: its completion future; the parent awaits that instead of polling
@@ -441,11 +444,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         self._actor_sources: Dict[str, str] = {}
         #: Current nesting depth of action expansion.
         self._action_depth: int = 0
-        self._actors: Dict[str, "BaseInterpreter[Any, Any]"] = {}
+        self._actors: Dict[str, "BaseInterpreter[Any]"] = {}
 
         # 🔗 Extensibility & Introspection
-        self._plugins: List[PluginBase["BaseInterpreter[Any, Any]"]] = []
-        self._interpreter_class: Type["BaseInterpreter[Any, Any]"] = (
+        self._plugins: List[PluginBase["BaseInterpreter[Any]"]] = []
+        self._interpreter_class: Type["BaseInterpreter[Any]"] = (
             interpreter_class or self.__class__
         )
 
@@ -457,7 +460,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
     @staticmethod
     def _build_initial_context(
-        machine: MachineNode[Any, Any], input: Optional[Any]
+        machine: MachineNode[Any], input: Optional[Any]
     ) -> Any:
         """Builds the starting context, resolving a factory if one is given.
 
@@ -739,7 +742,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         raise TypeError(f"❌ Unsupported event type: {type(event).__name__}")
 
     def subscribe(
-        self, listener: Callable[["BaseInterpreter[Any, Any]"], None]
+        self, listener: Callable[["BaseInterpreter[Any]"], None]
     ) -> Callable[[], None]:
         """Registers a listener invoked after every settled change.
 
@@ -780,7 +783,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 )
 
     @property
-    def plugins(self) -> List[PluginBase["BaseInterpreter[Any, Any]"]]:
+    def plugins(self) -> List[PluginBase["BaseInterpreter[Any]"]]:
         """The list of plugin instances attached to this interpreter.
 
         Assigning to this property replaces the whole set of plugins, which is
@@ -807,9 +810,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         ]
 
     @plugins.setter
-    def plugins(
-        self, value: List[PluginBase["BaseInterpreter[Any, Any]"]]
-    ) -> None:
+    def plugins(self, value: List[PluginBase["BaseInterpreter[Any]"]]) -> None:
         """Replaces the registered plugins.
 
         Args:
@@ -843,10 +844,17 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                     f"interface (e.g. subclass PluginBase); got "
                     f"{type(item).__name__}."
                 )
-        self._plugins = [_SafePlugin(item) for item in value]
+        # 🧷 `_SafePlugin` is a `__getattr__` proxy that forwards every hook
+        #    with error containment; it cannot subclass `PluginBase` (the
+        #    base's real no-op methods would shadow the proxy). It IS
+        #    plugin-shaped, so the cast records that fact for the checker.
+        self._plugins = [
+            cast(PluginBase["BaseInterpreter[Any]"], _SafePlugin(item))
+            for item in value
+        ]
 
     def use(
-        self: TInterpreter, plugin: PluginBase["BaseInterpreter[Any, Any]"]
+        self: TInterpreter, plugin: PluginBase["BaseInterpreter[Any]"]
     ) -> TInterpreter:
         """Registers a plugin with the interpreter via the Observer pattern.
 
@@ -862,7 +870,9 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             The interpreter instance (`self`) with the correct subclass type
             to allow for convenient and type-safe method chaining.
         """
-        self._plugins.append(_SafePlugin(plugin))
+        self._plugins.append(
+            cast(PluginBase["BaseInterpreter[Any]"], _SafePlugin(plugin))
+        )
         logger.info(
             "🔌 Plugin '%s' registered with interpreter '%s'.",
             type(plugin).__name__,
@@ -1015,7 +1025,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
     def _resolve_actor_machine(
         self, service_key: Optional[str]
-    ) -> Optional[MachineNode[Any, Any]]:
+    ) -> Optional[MachineNode[Any]]:
         """Finds the machine definition for a persisted child actor.
 
         Args:
@@ -1026,6 +1036,8 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             Optional[MachineNode]: The child's machine definition, or `None`
             when the service is not registered on this interpreter.
         """
+        if service_key is None:
+            return None
         source = self.machine.logic.services.get(service_key)
         if source is None:
             return None
@@ -1048,13 +1060,13 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
     @classmethod
     def from_snapshot(
-        cls: Type["BaseInterpreter[Any, Any]"],
+        cls: Type[TInterpreter],
         snapshot_str: str,
-        machine: MachineNode[TContext, TEvent],
+        machine: MachineNode[Any],
         *,
         verify_machine_hash: bool = True,
         restart_services: bool = False,
-    ) -> "BaseInterpreter[TContext, TEvent]":
+    ) -> TInterpreter:
         """Creates and restores an interpreter instance from a saved snapshot.
 
         This factory method reconstructs an interpreter's state from a JSON
@@ -1072,7 +1084,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         Args:
             snapshot_str (str): The JSON string previously generated by
                 `get_snapshot()`.
-            machine (MachineNode[TContext, TEvent]): The corresponding
+            machine (MachineNode[TContext]): The corresponding
                 `MachineNode` definition that the snapshot belongs to.
             verify_machine_hash (bool): When `True` (default) refuse a
                 snapshot whose recorded ``machine_hash`` differs from
@@ -1088,7 +1100,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
                 that reason. Default `False` keeps the static restore.
 
         Returns:
-            BaseInterpreter[TContext, TEvent]: A new interpreter instance
+            BaseInterpreter[TContext]: A new interpreter instance
                 restored to the snapshot's state.
 
         Raises:
@@ -1197,9 +1209,9 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         #    state still resolves after a restart.
         for parent_id, node_ids in (snapshot.get("history") or {}).items():
             nodes = [
-                machine.get_state_by_id(nid)
-                for nid in node_ids
-                if machine.get_state_by_id(nid)
+                node
+                for node in (machine.get_state_by_id(nid) for nid in node_ids)
+                if node is not None
             ]
             if nodes:
                 interpreter._history[parent_id] = nodes
@@ -1285,7 +1297,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             for invocation in state.invoke:
                 if invocation.id != pending.invoke_id:
                     continue
-                service = self.machine.logic.services.get(invocation.src)
+                service = (
+                    self.machine.logic.services.get(invocation.src)
+                    if invocation.src
+                    else None
+                )
                 if service is None:
                     raise ImplementationMissingError(
                         f"Service '{invocation.src}' referenced by state "
@@ -1309,8 +1325,8 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     def start(
         self,
     ) -> Union[
-        "BaseInterpreter[TContext, TEvent]",
-        Awaitable["BaseInterpreter[TContext, TEvent]"],
+        "BaseInterpreter[TContext]",
+        Awaitable["BaseInterpreter[TContext]"],
     ]:
         """Starts the interpreter by entering the initial state.
 
@@ -1365,22 +1381,24 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         """Place a persisted inbox event back on the queue (restore path)."""
         raise NotImplementedError  # pragma: no cover
 
-    @overload
-    def send(self, event_type: str, **payload: Any) -> Any: ...  # noqa
-
-    @overload
-    def send(  # noqa
-        self, event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent]
-    ) -> Any: ...
-
     def send(
         self,
         event_or_type: Union[
             str, Dict[str, Any], Event, DoneEvent, AfterEvent
         ],
+        /,
+        *,
+        wait: bool = False,
+        priority: bool = False,
         **payload: Any,
     ) -> Any:
         """Sends an event to the running interpreter for processing.
+
+        🧷 The engines refine the return type with overloads (`wait=True`
+        gives a :class:`Receipt`, sync inline / async awaited). This base
+        signature carries the same keyword flags so those overloads are
+        true refinements, and an actor addressed as a `BaseInterpreter`
+        can still be sent `wait=`/`priority=` without a checker error.
 
         Raises:
             NotImplementedError: This method must be implemented by a concrete
@@ -1432,10 +1450,10 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     def _invoke_service(
         self,
         invocation: InvokeDefinition,
-        service: Callable[..., Any],
+        service: Union[Callable[..., Any], "MachineNode[Any]"],
         owner_id: str,
     ) -> Union[None, Awaitable[None]]:
-        """Handles an invoked service.
+        """Handles an invoked service -- a callable, or a child MACHINE.
 
         Raises:
             NotImplementedError: This method must be implemented by a concrete
@@ -1708,7 +1726,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
     def _resolve_actor_target(
         self, spec: Any, event: Union[Event, AfterEvent, DoneEvent]
-    ) -> Optional["BaseInterpreter[Any, Any]"]:
+    ) -> Optional["BaseInterpreter[Any]"]:
         """Resolves a `sendTo`/`forwardTo` target to a live interpreter.
 
         Lookup order: the actor system registry (`system_id`), then this
@@ -1778,7 +1796,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             return self.parent
         return None
 
-    def _system_registry(self) -> Dict[str, "BaseInterpreter[Any, Any]"]:
+    def _system_registry(self) -> Dict[str, "BaseInterpreter[Any]"]:
         """Returns the actor-system registry shared by the whole hierarchy.
 
         🏛️ Architecture decision: the registry lives on the *root* interpreter
@@ -1788,7 +1806,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         Returns:
             Dict[str, BaseInterpreter]: Mapping of `system_id` to actor.
         """
-        root: "BaseInterpreter[Any, Any]" = self
+        root: "BaseInterpreter[Any]" = self
         while root.parent is not None:
             root = root.parent
         return root._system
@@ -1803,7 +1821,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         return ActorSystem(self._system_registry())
 
     def _register_in_system(
-        self, system_id: Optional[str], actor: "BaseInterpreter[Any, Any]"
+        self, system_id: Optional[str], actor: "BaseInterpreter[Any]"
     ) -> None:
         """Registers an actor under a `system_id`, if one was declared.
 
@@ -1981,14 +1999,18 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         if assignment is None:
             return
         args = {"context": self.context, "event": event}
+        # 🧷 `TContext` is bound to `Mapping` so a user's TypedDict qualifies;
+        #    at runtime the context is always the mutable dict the machine
+        #    built, and `assign` is the one place the ENGINE writes to it.
+        ctx = cast(Dict[str, Any], self.context)
         if callable(assignment):
             produced = assignment(args)
             if isinstance(produced, dict):
-                self.context.update(produced)
+                ctx.update(produced)
             return
         if isinstance(assignment, dict):
             for key, value in assignment.items():
-                self.context[key] = value(args) if callable(value) else value
+                ctx[key] = value(args) if callable(value) else value
 
     def _collect_builtin_followups(
         self,
@@ -2300,7 +2322,9 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             #    machine has rolled out of would later fire and drive a
             #    transition from a configuration that no longer exists.
             for node in self._active_state_nodes - snapshot_before:
-                await self._cancel_state_tasks(node)
+                _maybe = self._cancel_state_tasks(node)
+                if _maybe is not None:
+                    await _maybe
             self._active_state_nodes.clear()
             self._active_state_nodes.update(snapshot_before)
 
@@ -2395,7 +2419,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             )
 
     async def _execute_actions(
-        self, actions: List[ActionDefinition], event: Event
+        self, actions: List[ActionDefinition], event: AnyEvent
     ) -> List[Tuple[ActionDefinition, BaseException]]:
         """Run an action list; return the ``(action, exception)`` failures.
 
@@ -2494,7 +2518,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         self,
         canonical: str,
         action_def: ActionDefinition,
-        event: Event,
+        event: AnyEvent,
     ) -> None:
         """Executes a built-in action creator asynchronously.
 
@@ -2583,7 +2607,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         elif canonical == SPAWN_CHILD:
             await self._spawn_child_action(params, event)
 
-    async def _stop_child_actor(self, spec: Any, event: Event) -> None:
+    async def _stop_child_actor(self, spec: Any, event: AnyEvent) -> None:
         """Stops a spawned child actor by id.
 
         Args:
@@ -2608,7 +2632,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         await self._stop_actor_leaf(actor)
 
     async def _spawn_child_action(
-        self, params: Dict[str, Any], event: Event
+        self, params: Dict[str, Any], event: AnyEvent
     ) -> None:
         """Spawns an actor declaratively via the `spawnChild` action.
 
@@ -2648,7 +2672,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     async def _deliver(
         self,
         actor: Any,
-        target_event: Event,
+        target_event: AnyEvent,
         delay: Optional[float],
         send_id: Optional[str],
     ) -> None:
@@ -2671,7 +2695,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         raise NotImplementedError  # pragma: no cover
 
     async def _execute_lifecycle_actions(
-        self, actions: List[ActionDefinition], event: Event
+        self, actions: List[ActionDefinition], event: AnyEvent
     ) -> None:
         """Run a state's ``entry``/``exit`` list and record any failures.
 
@@ -2719,7 +2743,9 @@ class BaseInterpreter(Generic[TContext, TEvent]):
     # -------------------------------------------------------------------------
 
     async def _enter_states(
-        self, states_to_enter: List[StateNode], event: Optional[Event] = None
+        self,
+        states_to_enter: List[StateNode],
+        event: Optional[AnyEvent] = None,
     ) -> None:
         """Enters a list of states in order, running actions and tasks.
 
@@ -2933,7 +2959,7 @@ class BaseInterpreter(Generic[TContext, TEvent]):
             return None
 
     async def _exit_states(
-        self, states_to_exit: List[StateNode], event: Optional[Event] = None
+        self, states_to_exit: List[StateNode], event: Optional[AnyEvent] = None
     ) -> None:
         """Exits a list of states in order, canceling tasks and running actions.
 
@@ -2957,7 +2983,9 @@ class BaseInterpreter(Generic[TContext, TEvent]):
         for state in states_to_exit:
             logger.debug("⬅️  Exiting state: '%s'.", state.id)
             # 🛑 Crucially, cancel tasks before running exit actions.
-            await self._cancel_state_tasks(state)
+            _pending = self._cancel_state_tasks(state)
+            if _pending is not None:
+                await _pending
             # ⚙️ Then, run the synchronous exit actions.
             await self._execute_lifecycle_actions(state.exit, trigger_event)
             # 🗑️ Finally, remove from the active set.
@@ -3803,7 +3831,11 @@ class BaseInterpreter(Generic[TContext, TEvent]):
 
         # 📞 Schedule `invoke` services.
         for invocation in state.invoke:
-            service_callable = self.machine.logic.services.get(invocation.src)
+            service_callable = (
+                self.machine.logic.services.get(invocation.src)
+                if invocation.src
+                else None
+            )
             # 💥 Fail-fast if the service implementation is missing.
             if service_callable is None:
                 # FIX: Reverted error message to match test suite expectations.

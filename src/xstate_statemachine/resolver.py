@@ -233,8 +233,8 @@ def resolve_target_state(
             return _find_descendant(reference_state, segments)
         except StateNotFoundError:
             pass
-        machine = _machine_of(reference_state)
-        if machine is not None and getattr(machine, "strict_targets", False):
+        root = _machine_of(reference_state)
+        if root is not None and getattr(root, "strict_targets", False):
             raise StateNotFoundError(target, reference_state.id)
         base = reference_state.parent or reference_state
         return _find_descendant(base, segments)

@@ -154,8 +154,8 @@ def generate_imports(
     services: Set[str],
     template_type: str,
     log: bool = True,
-    actions: Set[str] = frozenset(),
-    guards: Set[str] = frozenset(),
+    actions: Optional[Set[str]] = None,
+    guards: Optional[Set[str]] = None,
 ) -> str:
     """Generate import statements for the template type.
 
@@ -239,8 +239,8 @@ def generate_imports(
         markers = sorted(
             kind
             for kind, names in (
-                ("action", actions),
-                ("guard", guards),
+                ("action", actions or set()),
+                ("guard", guards or set()),
                 ("service", services),
             )
             if any(needs_explicit_name(n) for n in names)
