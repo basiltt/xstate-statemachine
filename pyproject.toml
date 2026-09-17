@@ -115,7 +115,10 @@ exclude = [
 #    own source is kept at zero errors (enforced by tests/test_type_safety.py
 #    and the CI lint job). `strict` is the goal for 1.0; the incremental
 #    flags below are the ones already satisfied.
-python_version = "3.9"
+# 🐍 No `python_version` pin: mypy 2.x refuses 3.9 (it is past EOL for the
+#    checker) while our runtime floor is still 3.9. The 3.9 CI test job
+#    IS the compatibility gate; here we check against the checker's own
+#    default, which is the interpreter running it.
 files = ["src/xstate_statemachine"]
 ignore_missing_imports = true
 warn_redundant_casts = true

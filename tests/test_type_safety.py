@@ -237,9 +237,8 @@ def _mypy(path: pathlib.Path) -> Dict[int, Set[str]]:
         },
         timeout=300,
     )
-    if proc.returncode not in (0, 1) or (
-        not proc.stdout.strip() and proc.stderr.strip()
-    ):
+    # mypy: 0 = clean, 1 = type errors reported, 2 = crashed / bad config.
+    if proc.returncode not in (0, 1):
         raise RuntimeError(
             f"mypy did not run cleanly (exit {proc.returncode}): "
             f"{proc.stderr[-1500:]}"
