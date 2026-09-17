@@ -2,12 +2,13 @@
 """Strategy for function-based JSON code generation."""
 
 import keyword
-from typing import List, Set
+from typing import Dict, List, Set
 
 from ..extractor import extract_events
 from ..simulation import demo_events
 from .base import BaseStrategy, GenerationContext
 from ._shared import (
+    logic_bindings,
     escape_for_string,
     generate_action_docstring,
     generate_error_handling,
@@ -44,6 +45,7 @@ class FunctionJsonStrategy(BaseStrategy):
         configuration.  No class wrapper is emitted.
         """
         parts: List[str] = []
+        bindings = logic_bindings(ctx.actions, ctx.guards, ctx.services)
 
         # -- imports --------------------------------------------------
         parts.append(
@@ -67,6 +69,7 @@ class FunctionJsonStrategy(BaseStrategy):
                 self._generate_component(
                     items=ctx.actions,
                     component_type="action",
+                    bindings=bindings,
                     is_async=ctx.is_async,
                     log=ctx.log,
                 )
@@ -78,6 +81,7 @@ class FunctionJsonStrategy(BaseStrategy):
                 self._generate_component(
                     items=ctx.guards,
                     component_type="guard",
+                    bindings=bindings,
                     is_async=ctx.is_async,
                     log=ctx.log,
                 )
@@ -89,6 +93,7 @@ class FunctionJsonStrategy(BaseStrategy):
                 self._generate_component(
                     items=ctx.services,
                     component_type="service",
+                    bindings=bindings,
                     is_async=ctx.is_async,
                     log=ctx.log,
                 )
@@ -478,6 +483,7 @@ class FunctionJsonStrategy(BaseStrategy):
     def _generate_component(
         items: Set[str],
         component_type: str,
+        bindings: Dict[str, str],
         is_async: bool,
         log: bool,
     ) -> str:
@@ -500,9 +506,7 @@ class FunctionJsonStrategy(BaseStrategy):
         )
 
         for original in sorted(items):
-            fn_name = snake_case_name(original)
-            if keyword.iskeyword(fn_name):
-                fn_name = f"{fn_name}_"
+            fn_name = bindings[original]
 
             async_kw = (
                 "async " if is_async and component_type != "guard" else ""
@@ -537,7 +541,7 @@ class FunctionJsonStrategy(BaseStrategy):
                 # 🏷️ Lossy name -> explicit marker the LogicLoader keys on.
                 *(
                     [f'@{component_type}("{escape_for_string(original)}")']
-                    if needs_explicit_name(original)
+                    if needs_explicit_name(original, fn_name)
                     else []
                 ),
                 f"{async_kw}def {fn_name}(",

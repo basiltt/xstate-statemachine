@@ -261,11 +261,47 @@ def snake_case_name(camel_name: str) -> str:
     return camel_to_snake(camel_name)
 
 
-def needs_explicit_name(original: str) -> bool:
-    """True when *original* cannot be recovered from its snake_case form."""
-    fn_name = snake_case_name(original)
-    if keyword.iskeyword(fn_name):
-        fn_name = f"{fn_name}_"
+def logic_bindings(
+    actions: Set[str], guards: Set[str], services: Set[str]
+) -> Dict[str, str]:
+    """Map every logic name to a unique Python identifier for one module.
+
+    🏛️ Architecture decision: the identifier for a config name is decided
+    ONCE here and read everywhere -- the `def`, the decorator, and every
+    reference (`builder.action(name, fn)`, `actions=[fn, ...]`). Each site
+    used to call `snake_case_name` independently, which agreed by luck and
+    could not de-duplicate: `fetch-data` and `fetch.data` both became
+    `fetch_data`, so the second `def` silently replaced the first and one
+    config name had no implementation at runtime. Allocation is over the
+    sorted union of all three kinds, in one namespace, because they share
+    one module. Deterministic: same input, same identifiers.
+    """
+    taken: Set[str] = set()
+    out: Dict[str, str] = {}
+    for name in sorted(actions | guards | services):
+        base = snake_case_name(name)
+        if keyword.iskeyword(base):
+            base = f"{base}_"
+        candidate, suffix = base, 2
+        while candidate in taken:
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+        taken.add(candidate)
+        out[name] = candidate
+    return out
+
+
+def needs_explicit_name(original: str, fn_name: Optional[str] = None) -> bool:
+    """True when *original* cannot be recovered from *fn_name*.
+
+    The bare decorator registers `_snake_to_camel(fn_name)`; if that is
+    not the config name, the explicit `@action("<original>")` form is
+    required. *fn_name* defaults to the plain snake_case form.
+    """
+    if fn_name is None:
+        fn_name = snake_case_name(original)
+        if keyword.iskeyword(fn_name):
+            fn_name = f"{fn_name}_"
     return _snake_to_camel(fn_name) != original
 
 
@@ -285,7 +321,7 @@ def decorator_for(component_type: str, original: str, fn_name: str) -> str:
     real-world corpus machines. When the round-trip is lossy, emit the
     explicit-name form the decorators already accept.
     """
-    if _snake_to_camel(fn_name) == original:
+    if not needs_explicit_name(original, fn_name):
         return f"@{component_type}"
     return f'@{component_type}("{escape_for_string(original)}")'
 

@@ -17,6 +17,7 @@ from ..ir import parse_machine
 from .base import BaseStrategy, GenerationContext
 from ..naming import docstring_safe
 from ._shared import (
+    logic_bindings,
     decorator_for,
     escape_for_string,
     generate_action_docstring,
@@ -54,6 +55,7 @@ class PythonicFunctionalStrategy(BaseStrategy):
         """
         config = ctx.configs[0]
         parts: List[str] = []
+        bindings = logic_bindings(ctx.actions, ctx.guards, ctx.services)
 
         # -- imports --------------------------------------------------
         parts.append(
@@ -75,6 +77,7 @@ class PythonicFunctionalStrategy(BaseStrategy):
                 self._generate_component(
                     items=ctx.actions,
                     component_type="action",
+                    bindings=bindings,
                     is_async=ctx.is_async,
                     log=ctx.log,
                 )
@@ -86,6 +89,7 @@ class PythonicFunctionalStrategy(BaseStrategy):
                 self._generate_component(
                     items=ctx.guards,
                     component_type="guard",
+                    bindings=bindings,
                     is_async=ctx.is_async,
                     log=ctx.log,
                 )
@@ -97,6 +101,7 @@ class PythonicFunctionalStrategy(BaseStrategy):
                 self._generate_component(
                     items=ctx.services,
                     component_type="service",
+                    bindings=bindings,
                     is_async=ctx.is_async,
                     log=ctx.log,
                 )
@@ -431,6 +436,7 @@ class PythonicFunctionalStrategy(BaseStrategy):
     def _generate_component(
         items: Set[str],
         component_type: str,
+        bindings: Dict[str, str],
         is_async: bool,
         log: bool,
     ) -> str:
@@ -453,9 +459,7 @@ class PythonicFunctionalStrategy(BaseStrategy):
         )
 
         for original in sorted(items):
-            fn_name = snake_case_name(original)
-            if keyword.iskeyword(fn_name):
-                fn_name = f"{fn_name}_"
+            fn_name = bindings[original]
 
             # -- decorator --------------------------------------------
             code_lines.append(decorator_for(component_type, original, fn_name))
@@ -602,15 +606,16 @@ class PythonicFunctionalStrategy(BaseStrategy):
         if not machine.id:
             machine.id = ctx.machine_id
 
+        bindings = logic_bindings(ctx.actions, ctx.guards, ctx.services)
         logic_args: List[str] = []
         if ctx.actions:
-            names = ", ".join(sorted(snake_case_name(a) for a in ctx.actions))
+            names = ", ".join(sorted(bindings[a] for a in ctx.actions))
             logic_args.append(f"actions=[{names}]")
         if ctx.guards:
-            names = ", ".join(sorted(snake_case_name(g) for g in ctx.guards))
+            names = ", ".join(sorted(bindings[g] for g in ctx.guards))
             logic_args.append(f"guards=[{names}]")
         if ctx.services:
-            names = ", ".join(sorted(snake_case_name(s) for s in ctx.services))
+            names = ", ".join(sorted(bindings[s] for s in ctx.services))
             logic_args.append(f"services=[{names}]")
 
         return "\n" + render_functional_build(

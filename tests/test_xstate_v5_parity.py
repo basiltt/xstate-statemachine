@@ -304,6 +304,50 @@ class TestGuardForms(unittest.IsolatedAsyncioTestCase):
         # Assert
         self.assertEqual({"m.b"}, interpreter.current_state_ids)
 
+    def test_bang_prefix_is_sugar_for_not(self) -> None:
+        """`"guard": "!name"` is the shorthand Stately's editor emits for a
+        negated guard (`{"type": "not", "children": ["name"]}`). Three of
+        the 104 real-world corpus machines use it. It must bind to the
+        POSITIVE implementation `name`, inverted -- not demand a guard
+        literally called `!name`."""
+        config = {
+            "id": "m",
+            "initial": "a",
+            "states": {
+                "a": {
+                    "on": {
+                        "E": {"target": "b", "guard": "!blocked"},
+                        "F": {"target": "c", "guard": "!open"},
+                    }
+                },
+                "b": {},
+                "c": {},
+            },
+        }
+        interpreter = start(
+            config,
+            guards={"blocked": lambda c, e: False, "open": lambda c, e: True},
+        )
+        interpreter.send("E")  # !blocked -> True: fires
+        self.assertEqual({"m.b"}, interpreter.current_state_ids)
+        interpreter.send("F")  # from b: no F transition; stays
+        self.assertEqual({"m.b"}, interpreter.current_state_ids)
+
+    def test_bang_prefix_still_requires_the_positive_guard(self) -> None:
+        from src.xstate_statemachine import ImplementationMissingError
+
+        config = {
+            "id": "m",
+            "initial": "a",
+            "states": {
+                "a": {"on": {"E": {"target": "b", "guard": "!ghost"}}},
+                "b": {},
+            },
+        }
+        with self.assertRaises(ImplementationMissingError) as cm:
+            start(config).send("E")
+        self.assertIn("ghost", str(cm.exception))
+
     def test_composite_not_inverts(self) -> None:
         """`not` must invert its single child."""
         # Arrange

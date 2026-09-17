@@ -53,7 +53,7 @@ from .validation import (
     format_refusal,
     verify_generated,
 )
-from .utils import camel_to_snake, normalize_bool
+from .utils import camel_to_snake, module_safe_name, normalize_bool
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
@@ -412,7 +412,7 @@ def _process_all_configurations(
             # ➕ Aggregate results
             configs.append(conf)
             machine_ids.append(raw_name)
-            machine_names.append(camel_to_snake(raw_name))
+            machine_names.append(module_safe_name(camel_to_snake(raw_name)))
             json_filenames.append(path.name)
             all_actions.update(actions)
             all_guards.update(guards)

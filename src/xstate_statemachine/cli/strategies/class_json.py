@@ -2,12 +2,13 @@
 """Strategy for class-based JSON code generation."""
 
 import keyword
-from typing import List, Set
+from typing import Dict, List, Set
 
 from ..extractor import extract_events
 from ..simulation import demo_events
 from .base import BaseStrategy, GenerationContext
 from ._shared import (
+    logic_bindings,
     escape_for_string,
     generate_action_docstring,
     generate_error_handling,
@@ -39,6 +40,7 @@ class ClassJsonStrategy(BaseStrategy):
         the state machine configuration.
         """
         parts: List[str] = []
+        bindings = logic_bindings(ctx.actions, ctx.guards, ctx.services)
 
         # -- imports --------------------------------------------------
         parts.append(
@@ -70,6 +72,7 @@ class ClassJsonStrategy(BaseStrategy):
                 self._generate_component(
                     items=ctx.actions,
                     component_type="action",
+                    bindings=bindings,
                     is_async=ctx.is_async,
                     log=ctx.log,
                     indent=indent,
@@ -82,6 +85,7 @@ class ClassJsonStrategy(BaseStrategy):
                 self._generate_component(
                     items=ctx.guards,
                     component_type="guard",
+                    bindings=bindings,
                     is_async=ctx.is_async,
                     log=ctx.log,
                     indent=indent,
@@ -94,6 +98,7 @@ class ClassJsonStrategy(BaseStrategy):
                 self._generate_component(
                     items=ctx.services,
                     component_type="service",
+                    bindings=bindings,
                     is_async=ctx.is_async,
                     log=ctx.log,
                     indent=indent,
@@ -485,6 +490,7 @@ class ClassJsonStrategy(BaseStrategy):
     def _generate_component(
         items: Set[str],
         component_type: str,
+        bindings: Dict[str, str],
         is_async: bool,
         log: bool,
         indent: str,
@@ -502,9 +508,7 @@ class ClassJsonStrategy(BaseStrategy):
         code_lines.append(f"{indent}# {section_titles[component_type]}")
 
         for original in sorted(items):
-            fn_name = snake_case_name(original)
-            if keyword.iskeyword(fn_name):
-                fn_name = f"{fn_name}_"
+            fn_name = bindings[original]
 
             async_kw = (
                 "async " if is_async and component_type != "guard" else ""
@@ -544,7 +548,7 @@ class ClassJsonStrategy(BaseStrategy):
                     [
                         f'{indent}@{component_type}("{escape_for_string(original)}")'
                     ]
-                    if needs_explicit_name(original)
+                    if needs_explicit_name(original, fn_name)
                     else []
                 ),
                 f"{indent}{async_kw}def {fn_name}(",

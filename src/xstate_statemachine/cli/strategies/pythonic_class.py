@@ -19,6 +19,7 @@ from ..ir import MachineIR, parse_machine
 from .base import BaseStrategy, GenerationContext
 from ..naming import docstring_safe
 from ._shared import (
+    logic_bindings,
     decorator_for,
     escape_for_string,
     generate_action_docstring,
@@ -57,6 +58,7 @@ class PythonicClassStrategy(BaseStrategy):
         """
         config = ctx.configs[0]
         parts: List[str] = []
+        bindings = logic_bindings(ctx.actions, ctx.guards, ctx.services)
 
         # -- module header / imports ----------------------------------
         parts.append(
@@ -113,6 +115,7 @@ class PythonicClassStrategy(BaseStrategy):
                 self._generate_decorated_methods(
                     items=ctx.actions,
                     component_type="action",
+                    bindings=bindings,
                     is_async=ctx.is_async,
                     log=ctx.log,
                     indent=indent,
@@ -126,6 +129,7 @@ class PythonicClassStrategy(BaseStrategy):
                 self._generate_decorated_methods(
                     items=ctx.guards,
                     component_type="guard",
+                    bindings=bindings,
                     is_async=ctx.is_async,
                     log=ctx.log,
                     indent=indent,
@@ -139,6 +143,7 @@ class PythonicClassStrategy(BaseStrategy):
                 self._generate_decorated_methods(
                     items=ctx.services,
                     component_type="service",
+                    bindings=bindings,
                     is_async=ctx.is_async,
                     log=ctx.log,
                     indent=indent,
@@ -479,6 +484,7 @@ class PythonicClassStrategy(BaseStrategy):
     def _generate_decorated_methods(
         items: Set[str],
         component_type: str,
+        bindings: Dict[str, str],
         is_async: bool,
         log: bool,
         indent: str,
@@ -502,9 +508,7 @@ class PythonicClassStrategy(BaseStrategy):
         code_lines: List[str] = []
 
         for original in sorted(items):
-            fn_name = snake_case_name(original)
-            if keyword.iskeyword(fn_name):
-                fn_name = f"{fn_name}_"
+            fn_name = bindings[original]
 
             # -- decorator ------------------------------------------------
             code_lines.append(
