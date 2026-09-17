@@ -291,8 +291,8 @@ with open("checkout.json") as f:          # ← straight from the frontend repo
     config = json.load(f)
 
 machine = create_machine(config, logic=MachineLogic(
-    actions={"chargeCard": charge_card},   # you supply the Python side
-    guards={"hasStock": has_stock},
+    actions={"charge_card": charge_card},   # you supply the Python side
+    guards={"has_stock": has_stock},
 ))
 
 checkout = SyncInterpreter(machine).start()
@@ -589,7 +589,7 @@ async def fetch_user(interpreter, ctx, event):
     return {"id": 1, "name": "Ada"}
 
 async def main():
-    machine = create_machine(config, logic=MachineLogic(services={"fetchUser": fetch_user}))
+    machine = create_machine(config, logic=MachineLogic(services={"fetch_user": fetch_user}))
     svc = await Interpreter(machine).start()
 
     await svc.send("FETCH")
@@ -1072,7 +1072,7 @@ logic = MachineLogic(
         "hasItems": lambda ctx, e: ctx["items"] > 0,
         "canRetry": lambda ctx, e: ctx["attempts"] < 3,
     },
-    services={"chargeCard": charge_card},
+    services={"charge_card": charge_card},
 )
 
 order = SyncInterpreter(create_machine(ORDER, logic=logic)).start()
@@ -1131,7 +1131,7 @@ config = {
 }
 
 logic = MachineLogic(
-    services={"callApi": call_api},
+    services={"call_api": call_api},
     guards={"canRetry": lambda ctx, e: ctx["attempt"] < 5},
     delays={"BACKOFF": lambda ctx, e: 2 ** ctx["attempt"] * 1000},
 )

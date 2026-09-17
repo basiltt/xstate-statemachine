@@ -7,7 +7,16 @@ description: "All 5 code generation templates explained with complete generated 
 
 The `xsm` CLI offers five code generation templates, each producing a different code structure and API style. This guide shows the **complete generated output** for each template using the same input JSON, so you can compare them side-by-side and choose the best fit for your project.
 
-## Template Overview
+## 🧩 Template Overview
+
+```mermaid
+flowchart LR
+    J["📄 machine.json"] --> T{"--template"}
+    T --> A["pythonic-class"] & B["pythonic-builder"] & C["pythonic-functional"]
+    T --> D["class-json"] & E["function-json"]
+    A & B & C --> P["🐍 pure Python — JSON discarded"]
+    D & E --> Q["📎 Python + JSON kept side-by-side"]
+```
 
 | Template | API Style | JSON at Runtime? | Logic Pattern | Default Mode |
 |----------|-----------|:-----------------:|---------------|:------------:|
@@ -21,7 +30,7 @@ Every example below assumes the default `-fc/--file-count 2` (separate `checkout
 
 Generated files also always start with a `"""Generated state machine logic — DO NOT EDIT BY HAND."""` docstring banner that embeds the source JSON filename, the template name, and the generator version, plus a `Regenerate with::` snippet showing the exact command to reproduce the file. That banner is omitted from the code blocks on this page purely for brevity — the actual output on disk always includes it.
 
-## Input JSON Example
+## 📄 Input JSON Example
 
 All examples below use this `checkout.json` as input:
 
@@ -63,7 +72,7 @@ This machine has:
 
 ---
 
-## Additional `generate-template` flags
+## 🚩 Additional `generate-template` flags
 
 The examples on this page focus on `--template`/`-t` and `--async-mode`/`-am`, but `generate-template` (alias `gt`) accepts several other flags worth knowing about:
 
@@ -75,7 +84,7 @@ The examples on this page focus on `--template`/`-t` and `--async-mode`/`-am`, b
 - `--sleep SLEEP` — Add a sleep call between events in the generated runner's simulation: `yes` or `no`. Default: `yes`.
 - `--sleep-time SLEEP_TIME` — Sleep duration in seconds for the simulation. Default: `2`.
 
-## Template 1: `pythonic-class`
+## 🏛️ Template 1: `pythonic-class`
 
 The `pythonic-class` template generates a `StateMachine` subclass whose `State()` attributes carry their own transitions via `on=`, plus `@action` / `@guard` / `@service` decorated methods. **No JSON is needed at runtime** — the machine definition is compiled directly into Python.
 
@@ -268,7 +277,7 @@ if __name__ == "__main__":
 
 ---
 
-## Template 2: `pythonic-builder`
+## 🔗 Template 2: `pythonic-builder`
 
 The `pythonic-builder` template generates module-level `@action`, `@guard`, `@service` decorated functions (no `self` parameter) and a `build()` function that uses the `MachineBuilder` fluent API to construct the machine.
 
@@ -434,7 +443,7 @@ if __name__ == "__main__":
 
 ---
 
-## Template 3: `pythonic-functional`
+## 🐍 Template 3: `pythonic-functional`
 
 The `pythonic-functional` template generates module-level decorated functions and a `build()` function that creates `State` objects — each carrying its own transitions via `on=` — and assembles the machine with `build_machine()`.
 
@@ -617,7 +626,7 @@ if __name__ == "__main__":
 
 ---
 
-## Template 4: `class-json`
+## 📎 Template 4: `class-json`
 
 The `class-json` template generates a class-based logic provider with method stubs. **The JSON config is loaded at runtime** — the machine definition stays in JSON. The `LogicLoader` auto-discovers methods by matching `snake_case` function names to `camelCase` JSON names.
 
@@ -816,7 +825,7 @@ if __name__ == '__main__':
 
 ---
 
-## Template 5: `function-json`
+## 📎 Template 5: `function-json`
 
 The `function-json` template generates module-level function stubs (no class wrapper). **The JSON config is loaded at runtime**, and logic is bound via `logic_modules=[module]`.
 

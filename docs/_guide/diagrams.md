@@ -7,7 +7,13 @@ description: "Generate PlantUML and Mermaid diagrams from any machine definition
 
 Every `MachineNode` can export its structure as a **PlantUML** or **Mermaid** diagram. This lets you visualize your state machines, generate documentation, and keep diagrams in sync with your code automatically.
 
-## Overview
+## 🖼️ Overview
+
+```mermaid
+flowchart LR
+    M["🧠 machine<br/><small>JSON or Pythonic</small>"] --> A["to_mermaid()"] --> R1["GitHub · docs · Notion render it live"]
+    M --> B["to_plantuml()"] --> R2["PlantUML server · IDE plugins → PNG / SVG"]
+```
 
 The library provides two export methods on every `MachineNode`:
 
@@ -18,7 +24,7 @@ The library provides two export methods on every `MachineNode`:
 
 Both methods return a string that you can print, save to a file, or embed in documentation.
 
-## PlantUML Export
+## 🌿 PlantUML Export
 
 ### Basic Example
 
@@ -87,7 +93,7 @@ Paste the output at [https://www.plantuml.com/plantuml/uml/](https://www.plantum
 
 Install the "PlantUML" extension and preview `.puml` files directly in the editor.
 
-## Mermaid Export
+## 🧜 Mermaid Export
 
 ### Basic Example
 
@@ -143,7 +149,7 @@ yellow --> red : TIMER
 
 > **Tip:** You can automate this by writing a script that regenerates your README's diagram section from your machine definition. This ensures your documentation always matches your code.
 
-## Export from JSON Machines
+## 📄 Export from JSON Machines
 
 Both export methods work with any machine created via `create_machine()`:
 
@@ -168,7 +174,7 @@ with open("docs/machine.mmd", "w") as f:
 print("Diagrams exported!")
 ```
 
-## Export from Pythonic API Machines
+## 🐍 Export from Pythonic API Machines
 
 Machines built with the Pythonic API export diagrams the same way — `StateMachine.create_machine()`, `build_machine()`, and `MachineBuilder.build()` all return a `MachineNode`:
 
@@ -247,7 +253,7 @@ state "switch" as switch {
 idle --> running : START
 ```
 
-## Nested State Diagrams
+## 🪆 Nested State Diagrams
 
 Both exporters handle hierarchical (compound) states with proper nesting:
 
@@ -307,7 +313,7 @@ editor_editing --> editor_idle : CLOSE
 @enduml
 ```
 
-## Parallel State Diagrams
+## 🎛️ Parallel State Diagrams
 
 Parallel states are also exported, but both exporters render each parallel region as an ordinary nested composite state — there is no parallel-specific visual marker (no Mermaid `--` region divider, no distinct styling in PlantUML). The nesting itself is what shows you the regions:
 
@@ -369,7 +375,7 @@ muted --> audible : UNMUTE
 audible --> muted : MUTE
 ```
 
-## Using Diagrams for Documentation
+## 📚 Using Diagrams for Documentation
 
 ### Auto-Generate Documentation Script
 

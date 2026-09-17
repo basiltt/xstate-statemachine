@@ -5,20 +5,23 @@ description: "Timer-based auto-transitions with after — timeouts, polling, and
 
 Delayed transitions let a state **automatically transition** after a specified time delay. No event needed — the machine moves on its own when the timer expires. This is perfect for session timeouts, polling loops, auto-save debouncing, and any workflow that involves waiting.
 
-## What Are Delayed Transitions?
+## ⏱️ What Are Delayed Transitions?
 
 In a normal state machine, transitions only fire when an **event** arrives. Delayed transitions break that rule: they fire after a **timer** expires. You configure them with the `after` property on a state, mapping millisecond delays to target states.
 
-```
-           5 min              30 sec
-  active ─────────► warning ──────────► expired
-    ▲                  │
-    └── ACTIVITY ──────┘   (user clicks EXTEND → back to active)
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> active
+    active --> warning : after 5 min
+    warning --> expired : after 30 s
+    warning --> active : EXTEND
+    active --> active : ACTIVITY (timer resets)
 ```
 
 When the machine enters a state with `after` timers, those timers start immediately. If the machine leaves that state before a timer fires (because of an event), the timer is **cancelled automatically**.
 
-## JSON After Syntax
+## 📄 JSON After Syntax
 
 The `after` property is a dictionary mapping **millisecond delays** (as strings in JSON) to transition targets:
 
@@ -32,7 +35,7 @@ The `after` property is a dictionary mapping **millisecond delays** (as strings 
 
 After 3000 ms (3 seconds) in this state, the machine transitions to `"nextState"`.
 
-## Basic Example: Session Timeout
+## ⌛ Basic Example: Session Timeout
 
 A session that warns the user before expiring:
 
@@ -106,7 +109,7 @@ This machine:
 3. The user gets 30 seconds to click "EXTEND" or it moves to `expired`
 4. Any `ACTIVITY` event re-enters `active`, **resetting** the 5-minute timer
 
-## After with Actions
+## 🎬 After with Actions
 
 Delayed transitions can trigger actions, just like event-driven transitions:
 
@@ -143,16 +146,16 @@ config = {
 }
 
 class TimedLogic(MachineLogic):
-    def logTimeout(self, interpreter, context, event, action_def):
+    def log_timeout(self, interpreter, context, event, action_def):
         print("Timer expired — transitioning to done")
 
 machine = create_machine(config, logic=TimedLogic())
 interp = SyncInterpreter(machine).start()
-# After 5 seconds, "logTimeout" fires and machine moves to "done"
+# After 5 seconds, "log_timeout" fires and machine moves to "done"
 interp.stop()
 ```
 
-## After with Guards
+## 🛡️ After with Guards
 
 You can conditionally block a delayed transition using a guard:
 
@@ -197,11 +200,11 @@ config = {
 }
 
 class MonitorLogic(MachineLogic):
-    def noRecentData(self, context, event):
+    def no_recent_data(self, context, event):
         """Returns True if no PING has ever been received (lastPing is still 0)."""
         return context.get("lastPing", 0) == 0
 
-    def recordPing(self, interpreter, context, event, action_def):
+    def record_ping(self, interpreter, context, event, action_def):
         import time
         context["lastPing"] = time.time()
 
@@ -219,7 +222,7 @@ interp.stop()
 
 > **Note:** Guard functions receive `(context, event)` and must return a `bool`. They must be synchronous.
 
-## Multiple Timers per State
+## ⏲️ Multiple Timers per State
 
 A single state can have **multiple** `after` timers running simultaneously:
 
@@ -243,7 +246,16 @@ All three timers start when `monitoring` is entered:
 
 > **Tip:** The shortest timer fires first. If the 5-second heartbeat re-enters the state, **all** timers reset — so the 60s and 300s timers effectively restart too.
 
-## Timer Reset
+## 🔄 Timer Reset
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> active
+    active --> active : ACTIVITY (re-enter → timer restarts)
+    active --> idle : after 60 s
+    idle --> active : ACTIVITY
+```
 
 When a state is **re-entered** (via an event transition or a self-transition), all `after` timers for that state are **cancelled and restarted**. This is key to implementing patterns like "idle timeout" — every user action resets the clock.
 
@@ -264,7 +276,7 @@ Every `ACTIVITY` event re-enters `active`, which cancels the existing 5-minute t
 
 > **Warning:** Self-transitions (targeting the same state) will cause exit actions, timer cancellation, entry actions, and timer restart. This is intentional — it's how XState works.
 
-## Pythonic After
+## 🐍 Pythonic After
 
 The `State` class accepts an `after` parameter — a dict mapping millisecond delays to targets:
 
@@ -328,7 +340,7 @@ interp = SyncInterpreter(machine).start()
 interp.stop()
 ```
 
-## After in Nested States
+## 🪆 After in Nested States
 
 Delayed transitions work inside compound (hierarchical) states. Timers in a child state are cancelled when the parent state is exited:
 
@@ -358,7 +370,7 @@ Delayed transitions work inside compound (hierarchical) states. Timers in a chil
 
 When `LOGOUT` fires, the machine exits `dashboard` (cancelling its 60-second refresh timer) and then exits `loggedIn`.
 
-## Sync vs Async Timers
+## ⚖️ Sync vs Async Timers
 
 | Interpreter | Timer Behavior |
 |-------------|----------------|
@@ -392,7 +404,7 @@ def check_lateness(interpreter, context, event, action_def):
 
 async def main():
     machine = create_machine(
-        config, logic=MachineLogic(actions={"checkLateness": check_lateness})
+        config, logic=MachineLogic(actions={"check_lateness": check_lateness})
     )
     interp = await Interpreter(machine).start()
     await asyncio.sleep(0.2)
@@ -403,7 +415,7 @@ asyncio.run(main())
 
 If `lateness_ms` trends upward over time, the event loop (or, for the `SyncInterpreter`, the calling thread) isn't being given enough opportunities to `pump()` due timers — see [Production Characteristics § 2](../production-characteristics/#2-after-timers-are-best-effort-and-starve-under-load) for the underlying guarantee.
 
-## Controlling Time
+## 🕹️ Controlling Time
 
 Every timer in the library — `after` transitions and delayed `send()` — is scheduled through an injectable `Clock`, not called directly against `asyncio.sleep()` or a background thread. This is the same seam XState v5 uses (`createActor(machine, { clock })`), and it solves two problems at once:
 
@@ -515,7 +527,7 @@ One `increment()` call fires timers for **every** interpreter attached to the cl
 
 Before 0.8.0, a fired async timer's continuation had to queue behind every external event already sitting in the inbox, which could add measurable lateness on top of the OS timer floor under heavy load. Both engines now run clock-fired callbacks through a dedicated priority lane, so a due `after` or delayed send is processed promptly even while thousands of `send()` calls are backlogged. This is what makes `after` usable as a watchdog alongside high event volume.
 
-## Complete Example: Polling Machine
+## 📡 Complete Example: Polling Machine
 
 A machine that polls an API at regular intervals, with error handling and backoff:
 
@@ -568,20 +580,20 @@ config = {
 }
 
 class PollerLogic(MachineLogic):
-    def fetchData(self, interpreter, context, event):
+    def fetch_data(self, interpreter, context, event):
         return {"status": "ok", "value": 42}
 
-    def storeData(self, interpreter, context, event, action_def):
+    def store_data(self, interpreter, context, event, action_def):
         context["data"] = event.data
         context["errors"] = 0
 
-    def incrementErrors(self, interpreter, context, event, action_def):
+    def increment_errors(self, interpreter, context, event, action_def):
         context["errors"] += 1
 
-    def belowMaxErrors(self, context, event):
+    def below_max_errors(self, context, event):
         return context["errors"] < context["maxErrors"]
 
-    def atMaxErrors(self, context, event):
+    def at_max_errors(self, context, event):
         return context["errors"] >= context["maxErrors"]
 
 machine = create_machine(config, logic=PollerLogic())
@@ -589,7 +601,7 @@ interp = SyncInterpreter(machine).start()
 
 interp.send("START")
 print(interp.active_state_ids)
-# {'poller.waiting'}  (fetchData succeeded, now waiting 10s to poll again)
+# {'poller.waiting'}  (fetch_data succeeded, now waiting 10s to poll again)
 
 print(interp.context["data"])
 # {'status': 'ok', 'value': 42}
@@ -601,7 +613,7 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
-## Complete Example: Auto-Save with Debounce
+## 💾 Complete Example: Auto-Save with Debounce
 
 A document editor that auto-saves 2 seconds after the last edit:
 
@@ -648,15 +660,15 @@ config = {
 }
 
 class AutoSaveLogic(MachineLogic):
-    def updateContent(self, interpreter, context, event, action_def):
+    def update_content(self, interpreter, context, event, action_def):
         context["content"] = event.data.get("text", context["content"])
         print(f"Content updated: {context['content']!r}")
 
-    def saveDocument(self, interpreter, context, event):
+    def save_document(self, interpreter, context, event):
         print(f"Saving: {context['content']!r}")
         return {"saved": True}
 
-    def markSaved(self, interpreter, context, event, action_def):
+    def mark_saved(self, interpreter, context, event, action_def):
         import time
         context["lastSaved"] = time.time()
         print("Document saved!")

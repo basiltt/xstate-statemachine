@@ -5,6 +5,16 @@ description: Build your first state machine in 5 minutes with five different app
 
 Pick the style that fits your project. All five approaches produce the same result — a running state machine.
 
+```mermaid
+flowchart LR
+    A["🐍 Functional<br/><small>build_machine()</small>"] --> M
+    B["📄 JSON<br/><small>create_machine(dict)</small>"] --> M
+    C["⚙️ CLI<br/><small>xsm gt machine.json</small>"] --> M
+    D["🏛️ Class-based<br/><small>class Door(StateMachine)</small>"] --> M
+    E["🔗 Builder<br/><small>MachineBuilder().state()…</small>"] --> M
+    M["🧠 one MachineNode"] --> I["▶️ Interpreter · SyncInterpreter"]
+```
+
 | Option | Best For | Lines of Code |
 |--------|----------|:---:|
 | [A: Pure Python (Functional)](#option-a-pure-python-functional) | New projects, simple machines | ~20 |
@@ -15,7 +25,7 @@ Pick the style that fits your project. All five approaches produce the same resu
 
 ---
 
-## Option A: Pure Python (Functional)
+## 🐍 Option A: Pure Python (Functional)
 
 > **Recommended for new projects.** No JSON, no boilerplate — just Python.
 
@@ -68,7 +78,7 @@ Total flips: 2
 
 ---
 
-## Option B: JSON Configuration (XState Compatible)
+## 📄 Option B: JSON Configuration (XState Compatible)
 
 Use this approach when you have an existing XState JSON file, or when you want to share machine definitions across JavaScript and Python.
 
@@ -106,7 +116,7 @@ Use this approach when you have an existing XState JSON file, or when you want t
 from xstate_statemachine import MachineLogic
 
 class LightSwitchLogic(MachineLogic):
-    def incrementFlips(self, interpreter, context, event, action_def):
+    def increment_flips(self, interpreter, context, event, action_def):
         context["flips"] += 1
         print(f"Flipped! Total: {context['flips']}")
 ```
@@ -140,7 +150,7 @@ Total flips: 2
 
 ---
 
-## Option C: Generate Boilerplate with CLI
+## ⚙️ Option C: Generate Boilerplate with CLI
 
 Already have an XState JSON file? Generate production-ready Python in one command:
 
@@ -175,7 +185,7 @@ xsm gt machine.json --template function-json          # Functions with JSON
 
 ---
 
-## Option D: Class-Based Style
+## 🏛️ Option D: Class-Based Style
 
 Best for larger machines where you want everything organized in a single class:
 
@@ -237,7 +247,7 @@ GO! Green light.
 
 ---
 
-## Option E: Builder Style
+## 🔗 Option E: Builder Style
 
 Fluent API for dynamic or programmatic machine construction:
 
@@ -281,7 +291,7 @@ interp.stop()
 
 ---
 
-## What Just Happened?
+## 🤔 What Just Happened?
 
 In every example above, the same pattern plays out:
 
@@ -296,7 +306,7 @@ In every example above, the same pattern plays out:
 
 ---
 
-## Next Steps
+## ➡️ Next Steps
 
 - [Core Concepts](../core-concepts/) — Understand states, events, transitions, guards, and actions in depth
 - [Pythonic API](../pythonic-api/) — Full reference for all three Python styles

@@ -7,7 +7,17 @@ description: "Generate parent-child machine code with the CLI — actor model co
 
 When your system involves a **parent machine** that orchestrates one or more **child machines** (the actor model), the CLI can generate wiring code that creates and manages all interpreters together. This page explains when and how to use hierarchical generation.
 
-## When to Use Hierarchical Generation
+## 🌳 When to Use Hierarchical Generation
+
+```mermaid
+flowchart LR
+    P["📄 order.json<br/><small>--json-parent</small>"] --> G["⚙️ xsm gt"]
+    C1["📄 payment.json<br/><small>--json-child</small>"] --> G
+    C2["📄 shipping.json<br/><small>--json-child</small>"] --> G
+    G --> O1["order.py<br/><small>spawns payment and shipping</small>"]
+    G --> O2["payment.py"]
+    G --> O3["shipping.py"]
+```
 
 Use hierarchical generation when:
 
@@ -17,7 +27,7 @@ Use hierarchical generation when:
 
 > **Note:** Hierarchical generation is about code generation structure — it does not change how the state machine library handles actors internally. The generated runner simply creates multiple interpreters and orchestrates them.
 
-## Setup with `--json-parent` and `--json-child`
+## ⚙️ Setup with `--json-parent` and `--json-child`
 
 The most explicit way to declare hierarchy is with the `-jp` and `-jc` flags:
 
@@ -38,7 +48,7 @@ The generated runner will:
 4. Simulate events on the parent, then on each child
 5. Shut down children first, then the parent
 
-## Auto-Detection: How the CLI Guesses Hierarchy
+## 🔍 Auto-Detection: How the CLI Guesses Hierarchy
 
 When you pass multiple JSON files **without** explicit `-jp` / `-jc` flags, the CLI uses a heuristic to guess which machine is the parent:
 
@@ -63,7 +73,7 @@ Is this correct? [Y/n]
 
 > **Tip:** To skip the interactive prompt entirely, use explicit `--json-parent` and `--json-child` flags.
 
-## Complete Example: Order Processing System
+## 📦 Complete Example: Order Processing System
 
 ### JSON Files
 
@@ -263,7 +273,7 @@ xsm gt payment.json --template class-json --async-mode no
 xsm gt shipping.json --template class-json --async-mode no
 ```
 
-## Output File Naming
+## 🏷️ Output File Naming
 
 When generating hierarchical code, the output files are named after the **parent** machine:
 
@@ -279,7 +289,7 @@ auth_profile_settings_logic.py
 auth_profile_settings_runner.py
 ```
 
-## Pythonic Templates with Hierarchy
+## 🐍 Pythonic Templates with Hierarchy
 
 All 5 templates support hierarchical generation. The Pythonic templates use their native API for the parent machine, while child machines are always loaded from JSON via `create_machine()`:
 
@@ -304,7 +314,7 @@ While children are created via:
 machine_child = create_machine(child_cfg)
 ```
 
-## Tips for Hierarchical Generation
+## 💡 Tips for Hierarchical Generation
 
 1. **Use explicit flags for CI/CD:** In automated pipelines, always use `--json-parent` and `--json-child` to avoid interactive prompts.
 

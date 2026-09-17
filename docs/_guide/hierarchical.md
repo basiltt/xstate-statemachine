@@ -5,37 +5,29 @@ description: "Nested compound states — organize complex flows without spaghett
 
 Hierarchical (compound) states let you **nest states inside other states**, creating a tree structure. Instead of a flat explosion of states with duplicated transitions, you organize related states under a parent — and the parent's transitions automatically apply to **all** its children.
 
-## What Are Hierarchical States?
+## 🌳 What Are Hierarchical States?
 
 A **compound state** is a state that contains its own child states. When the machine is "in" the parent state, it is always in exactly one of its children. The parent can define transitions that catch events from _any_ child, eliminating repetitive transition definitions.
 
 Think of it like folders in a file system: a file is always inside a folder, and operations on the folder affect everything inside it.
 
-```
-┌──────────────────── loggedIn ────────────────────┐
-│                                                   │
-│   ┌───────────┐   VIEW_PROFILE   ┌────────────┐  │
-│   │ dashboard │ ──────────────► │   profile   │  │
-│   │  (init)   │ ◄────────────── │            │  │
-│   └───────────┘      BACK       └────────────┘  │
-│        │                                          │
-│   VIEW_SETTINGS                                   │
-│        ▼                                          │
-│   ┌──────────┐                                    │
-│   │ settings │                                    │
-│   └──────────┘                                    │
-│                                                   │
-└────────── LOGOUT ─────────────────────────────────┘
-                │
-                ▼
-┌──────────────────┐
-│    loggedOut      │
-└──────────────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> loggedIn
+    state loggedIn {
+        [*] --> dashboard
+        dashboard --> profile : VIEW_PROFILE
+        profile --> dashboard : BACK
+        dashboard --> settings : VIEW_SETTINGS
+        settings --> dashboard : BACK
+    }
+    loggedIn --> loggedOut : LOGOUT
+    loggedOut --> loggedIn : LOGIN
 ```
 
 The `LOGOUT` event on the parent `loggedIn` catches the event **no matter which child** is active — `dashboard`, `profile`, or `settings`. This is the power of hierarchy.
 
-## JSON Example: Authentication Flow
+## 🔐 JSON Example: Authentication Flow
 
 ```json
 {
@@ -124,7 +116,7 @@ interp.stop()
 
 **Key behavior:** The `LOGOUT` event is defined on the parent `loggedIn` — it fires regardless of whether the user is on `dashboard`, `profile`, or `settings`. Without hierarchy, you'd need a `LOGOUT` transition on every single child state.
 
-## Initial Child State
+## 🎯 Initial Child State
 
 Every compound state **must** specify which child to enter first using the `initial` field:
 
@@ -145,7 +137,22 @@ When the machine transitions to `loggedIn`, it automatically enters `dashboard` 
 
 > **Warning:** Forgetting `initial` on a compound state emits a warning at `create_machine()` time and raises `InvalidConfigError` when the interpreter is started (`.start()`), because entering the compound state has no leaf state to resolve to.
 
-## Nested Transitions
+## 🔀 Nested Transitions
+
+```mermaid
+stateDiagram-v2
+    state app {
+        state loggedIn {
+            [*] --> dashboard
+            dashboard --> profile : GO_PROFILE
+            profile --> dashboard : BACK
+        }
+        loggedIn --> loggedOut : LOGOUT
+        loggedOut --> loggedIn.profile : DEEP_LINK
+    }
+```
+
+Three kinds of edge above: **child → child** (`GO_PROFILE`), **parent-level** (`LOGOUT`, caught from any child), and **deep target** (`DEEP_LINK` lands directly on a grandchild).
 
 ### Child-to-Child Transitions
 
@@ -329,7 +336,7 @@ From outside the hierarchy, you can target a specific child directly by name:
 
 > **Note:** When targeting a child state directly, the machine still enters the parent first (firing its entry actions), then enters the specified child.
 
-## Deep Nesting (3+ Levels)
+## 🪆 Deep Nesting (3+ Levels)
 
 Hierarchical states can be nested to any depth:
 
@@ -408,7 +415,7 @@ interp.stop()
 
 > **Tip:** Keep nesting to 2-3 levels. Deeper than that usually means your machine should be split into separate machines using [services/actors](../services/).
 
-## State ID Format
+## 🏷️ State ID Format
 
 Every state gets a fully qualified ID: `"machineId.parent.child.grandchild"`. This dot-separated path uniquely identifies each state in the tree:
 
@@ -432,7 +439,7 @@ is_logged_in = any(
 print(is_logged_in)  # True
 ```
 
-## Pythonic Hierarchical States
+## 🐍 Pythonic Hierarchical States
 
 ### Using `State` with `states=[]`
 
@@ -528,7 +535,7 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
-## onDone for Compound States
+## 🏁 onDone for Compound States
 
 When a compound state's child reaches a **final** state, a `done.state.*` event fires on the parent. Use `onDone` to react:
 
@@ -594,7 +601,7 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
-## Mixing Hierarchy with Guards
+## 🛡️ Mixing Hierarchy with Guards
 
 Guards work normally inside nested states:
 
@@ -648,10 +655,10 @@ config = {
 }
 
 class ShopLogic(MachineLogic):
-    def cartNotEmpty(self, context, event):
+    def cart_not_empty(self, context, event):
         return len(context.get("items", [])) > 0
 
-    def showEmptyError(self, interpreter, context, event, action_def):
+    def show_empty_error(self, interpreter, context, event, action_def):
         print("Cart is empty!")
 
 machine = create_machine(config, logic=ShopLogic())
@@ -664,7 +671,7 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
-## Mixing Hierarchy with Actions
+## 🎬 Mixing Hierarchy with Actions
 
 Entry and exit actions fire in the correct order when entering/exiting nested states:
 
@@ -702,7 +709,7 @@ When transitioning via `LOGOUT`:
 1. Exit current child (e.g., `profile`)
 2. `cleanupSession` (exit on `loggedIn`)
 
-## Mixing Hierarchy with Services
+## 📞 Mixing Hierarchy with Services
 
 Services (invoked operations) work inside nested states:
 
@@ -732,7 +739,7 @@ Services (invoked operations) work inside nested states:
 
 The service `fetchUserData` is invoked when `loading` is entered. On success, the machine moves to `dashboard` (within `loggedIn`). On failure, it moves to `error` (also within `loggedIn`).
 
-## Complete Example: E-Commerce Checkout Flow
+## 🛒 Complete Example: E-Commerce Checkout Flow
 
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
@@ -823,36 +830,36 @@ config = {
 }
 
 class CheckoutLogic(MachineLogic):
-    def addItem(self, interpreter, context, event, action_def):
+    def add_item(self, interpreter, context, event, action_def):
         context["items"].append(event.data.get("item", "unknown"))
 
-    def removeItem(self, interpreter, context, event, action_def):
+    def remove_item(self, interpreter, context, event, action_def):
         item = event.data.get("item")
         if item in context["items"]:
             context["items"].remove(item)
 
-    def cartNotEmpty(self, context, event):
+    def cart_not_empty(self, context, event):
         return len(context["items"]) > 0
 
-    def setAddress(self, interpreter, context, event, action_def):
+    def set_address(self, interpreter, context, event, action_def):
         context["shippingAddress"] = event.data.get("address")
 
-    def validateAddress(self, interpreter, context, event):
+    def validate_address(self, interpreter, context, event):
         return {"valid": True}
 
-    def showAddressError(self, interpreter, context, event, action_def):
+    def show_address_error(self, interpreter, context, event, action_def):
         print("Invalid shipping address")
 
-    def setPayment(self, interpreter, context, event, action_def):
+    def set_payment(self, interpreter, context, event, action_def):
         context["paymentMethod"] = event.data.get("method")
 
-    def submitOrder(self, interpreter, context, event):
+    def submit_order(self, interpreter, context, event):
         return {"orderId": "ORD-12345"}
 
-    def storeOrderId(self, interpreter, context, event, action_def):
+    def store_order_id(self, interpreter, context, event, action_def):
         context["orderId"] = event.data.get("orderId")
 
-    def showPaymentError(self, interpreter, context, event, action_def):
+    def show_payment_error(self, interpreter, context, event, action_def):
         print("Payment failed, please try again")
 
 machine = create_machine(config, logic=CheckoutLogic())
@@ -871,13 +878,13 @@ print(interp.active_state_ids)
 
 # Set shipping address
 interp.send({"type": "SET_ADDRESS", "address": "123 Main St"})
-# validateAddress runs → succeeds → confirmed (final) → onDone → payment
+# validate_address runs → succeeds → confirmed (final) → onDone → payment
 print(interp.active_state_ids)
 # {'checkout.payment.selecting'}
 
 # Set payment
 interp.send({"type": "SET_PAYMENT", "method": "credit_card"})
-# ready (final) → onDone → processing → submitOrder → confirmation
+# ready (final) → onDone → processing → submit_order → confirmation
 print(interp.active_state_ids)
 # {'checkout.confirmation'}
 
@@ -889,7 +896,7 @@ interp.stop()
 
 > **Note:** Methods like `cartNotEmpty`, `submitOrder`, and `validateAddress` above are undecorated and inferred by arity. As of 0.8.0, when the arity is ambiguous between roles (e.g. 2 args could be a guard or a 2-arg service; 3 args could be a service or an action), `create_machine()` emits a `UserWarning`. Decorate with `@guard`, `@service`, or `@action` to be explicit and silence the warning.
 
-## Complete Example: Multi-Step Form Wizard
+## 🧙 Complete Example: Multi-Step Form Wizard
 
 ```python
 from xstate_statemachine import State, StateMachine, SyncInterpreter, action, guard

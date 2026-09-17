@@ -9,6 +9,14 @@ The Pythonic API lets you define states, transitions, actions, guards, and servi
 
 Three styles, same result. Pick the one that matches your team:
 
+```mermaid
+flowchart LR
+    C["🏛️ class Door(StateMachine)<br/><small>decorators for actions and guards</small>"] --> N
+    B["🔗 MachineBuilder(&quot;door&quot;)<br/><small>.state().transition().build()</small>"] --> N
+    F["🐍 build_machine(...)<br/><small>plain functions and dicts</small>"] --> N
+    N["MachineNode<br/><small>identical to create_machine(json)</small>"] --> J["📄 .to_json() · .to_mermaid()"]
+```
+
 | Style | Best For | Entry Point | Pros |
 |-------|----------|-------------|------|
 | **Class-Based** | OOP teams, large machines | `class MyMachine(StateMachine)` | Self-contained, IDE-friendly, decorators for logic |
@@ -19,7 +27,7 @@ All three compile to the same internal `MachineNode` and work with both `Interpr
 
 ---
 
-## Style 1: Class-Based (`StateMachine`)
+## 🏛️ Style 1: Class-Based (`StateMachine`)
 
 The class-based style is the most expressive. States are class attributes, transitions use `.to()`, and logic is defined with `@action`, `@guard`, and `@service` decorators.
 
@@ -93,7 +101,7 @@ interp.stop()
 
 ---
 
-## Style 2: Builder (`MachineBuilder`)
+## 🔗 Style 2: Builder (`MachineBuilder`)
 
 The builder style uses a fluent API with method chaining. Great for constructing machines dynamically or in configuration-driven scenarios.
 
@@ -234,7 +242,7 @@ machine = (
 
 ---
 
-## Style 3: Functional (`build_machine`)
+## 🐍 Style 3: Functional (`build_machine`)
 
 The functional style defines states and transitions at module level, then assembles them with a single `build_machine()` call. It's the most explicit — nothing is hidden in class magic.
 
@@ -311,7 +319,7 @@ interp.stop()
 
 ---
 
-## Decorator Details
+## 🎀 Decorator Details
 
 The `@action`, `@guard`, and `@service` decorators mark functions for automatic registration. They work in all three API styles.
 
@@ -408,7 +416,7 @@ class MyMachine(StateMachine):
 
 ---
 
-## Entry/Exit Actions (Class-Based)
+## 🚪 Entry/Exit Actions (Class-Based)
 
 Use the `@state.enter` and `@state.exit` decorators to bind actions to state entry and exit:
 
@@ -465,7 +473,7 @@ interp.stop()
 
 ---
 
-## Multiple Guarded Transitions
+## 🛡️ Multiple Guarded Transitions
 
 Use the `|` (pipe) operator to combine multiple transitions for the same event. The first matching guard wins:
 
@@ -517,7 +525,7 @@ interp.stop()
 
 ---
 
-## Internal Transitions
+## ↩️ Internal Transitions
 
 Internal transitions run actions **without exiting and re-entering** the current state. Entry and exit actions do NOT fire:
 
@@ -563,7 +571,7 @@ interp.stop()
 
 ---
 
-## Reenter Transitions
+## 🔁 Reenter Transitions
 
 By default, a self-transition (same source and target) is treated as internal — no exit/entry actions fire. Use `reenter=True` to force a full exit and re-entry:
 

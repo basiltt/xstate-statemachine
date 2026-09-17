@@ -90,13 +90,13 @@
         userChose = true;
         return stored;
       }
-      // Dark-first: the design is built for it; light is an explicit choice.
-      return 'dark';
+      // Light by default. Dark is an explicit choice, remembered once made.
+      return 'light';
     }
 
-    function applyTheme(theme) {
+    function applyTheme(theme, persist) {
       html.setAttribute('data-theme', theme);
-      storage.set(STORAGE_KEY, theme);
+      if (persist) storage.set(STORAGE_KEY, theme);
 
       // Update the existing toggle button's icon visibility via CSS classes
       var toggleBtn = qs('#themeToggle');
@@ -114,19 +114,10 @@
       toggleBtn.addEventListener('click', function () {
         userChose = true;
         var current = html.getAttribute('data-theme') || 'light';
-        applyTheme(current === 'dark' ? 'light' : 'dark');
+        applyTheme(current === 'dark' ? 'light' : 'dark', true);
       });
     }
 
-    // Listen for system-preference changes while page is open
-    if (window.matchMedia) {
-      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (e) {
-        // Only follow system if user hasn't manually chosen
-        if (!userChose) {
-          applyTheme(e.matches ? 'dark' : 'light');
-        }
-      });
-    }
   })();
 
   // ---------------------------------------------------------------------------

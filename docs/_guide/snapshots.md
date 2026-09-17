@@ -7,7 +7,14 @@ description: "Save and restore machine state — persistence, crash recovery, an
 
 Snapshots let you **capture** and **restore** a machine's state at any point in time. This implements the **Memento pattern**, enabling persistence, crash recovery, workflow checkpointing, and targeted testing.
 
-## What are Snapshots?
+## 📸 What are Snapshots?
+
+```mermaid
+flowchart LR
+    R1["▶️ running<br/><small>state · context · inbox</small>"] -- "get_snapshot()" --> J["💾 JSON<br/><small>version · machine_hash · state_ids · context</small>"]
+    J -- "from_snapshot()" --> R2["▶️ running again<br/><small>same machine, later — or another process</small>"]
+    J -. "SnapshotDriftError if the machine changed" .-> X["⛔ refused"]
+```
 
 A snapshot is a JSON string that captures the essential runtime state of an interpreter:
 
@@ -17,7 +24,7 @@ A snapshot is a JSON string that captures the essential runtime state of an inte
 
 You create a snapshot with `get_snapshot()` and restore from one with `from_snapshot()`.
 
-## `get_snapshot()` — Capturing State
+## 📸 `get_snapshot()` — Capturing State
 
 The `get_snapshot()` method returns a JSON string representing the interpreter's current state. Call it on any running interpreter at any time.
 
@@ -81,7 +88,7 @@ The snapshot is a standard JSON string — you can store it anywhere: files, dat
 interp.stop()
 ```
 
-## `from_snapshot()` — Restoring State
+## ♻️ `from_snapshot()` — Restoring State
 
 The `from_snapshot()` class method creates a **new** interpreter instance pre-configured with the saved state. You provide the snapshot JSON string and the **same machine definition** that was used to create the original interpreter.
 
@@ -116,7 +123,7 @@ restored.stop()
 > restored_async = Interpreter.from_snapshot(snapshot_json, machine)
 > ```
 
-## Important Limitations
+## ⚠️ Important Limitations
 
 > **Warning:** `from_snapshot()` performs a **static restoration**. Be aware of these constraints:
 >
@@ -126,7 +133,7 @@ restored.stop()
 > - **Context is restored by value** — The context dictionary is deserialized from JSON. Non-serializable values (functions, class instances, file handles) will be lost or converted to strings.
 > - **Machine definition must match** — The `machine` argument to `from_snapshot()` must have the same structure as the original. If state IDs have changed, restoration will fail with `StateNotFoundError`.
 
-## Restoring Dormant Invocations
+## 🔌 Restoring Dormant Invocations
 
 `from_snapshot()`'s static restore means a machine snapshotted mid-`invoke` comes back parked: the restored configuration says the work is in flight, but no task is actually running it. That default is deliberate — restarting a non-idempotent action (an order placement, a charge) from scratch can be worse than leaving it parked — but it is no longer silent.
 
@@ -207,7 +214,20 @@ except ImplementationMissingError as exc:
     print(exc)  # "Service 'place' referenced by state 'oms.submitting' is not registered."
 ```
 
-## Snapshot Envelope
+## ✉️ Snapshot Envelope
+
+```mermaid
+flowchart LR
+    subgraph env["snapshot envelope (v1)"]
+        direction TB
+        H["version · machine_id · machine_hash · taken_at"]
+        B["status · state_ids · context"]
+        Q["inbox · deferred · pending invocations"]
+    end
+    env -- "from_snapshot()" --> C{"hash matches<br/>machine?"}
+    C -- yes --> R["✅ restored"]
+    C -- no --> D["⛔ SnapshotDriftError"]
+```
 
 As of 0.8.0, `get_snapshot()` writes a versioned **envelope** around the fields described above. In addition to `status`, `context`, and `state_ids`, the JSON now carries:
 
@@ -251,7 +271,7 @@ except SnapshotDriftError:
     )
 ```
 
-## The Inbox: pending events
+## 📥 The Inbox: pending events
 
 The mailbox is now part of the snapshot. `interpreter.pending_events` exposes every event that was **accepted** (by `send()`) but not yet **processed**, in FIFO order; the same list is persisted under the snapshot's `pending_events` key and re-enqueued, in order, on restore. Child actors' inboxes are captured and restored **recursively**, so a parent's snapshot carries its children's queued-but-unprocessed events too.
 
@@ -281,7 +301,7 @@ There are two shutdown patterns, depending on what you want:
 
 By default (`drain=False`), a non-empty inbox at `stop()` time is now logged as a warning instead of being silently discarded.
 
-## Persistence: Save to File
+## 💾 Persistence: Save to File
 
 The simplest persistence pattern writes the snapshot to a JSON file:
 
@@ -328,7 +348,7 @@ restored.context["steps_completed"].append("profile")
 restored.stop()
 ```
 
-## Database Persistence: SQLite Example
+## 🗄️ Database Persistence: SQLite Example
 
 For production systems, store snapshots in a database:
 
@@ -406,7 +426,7 @@ if saved_json:
 conn.close()
 ```
 
-## Async Snapshots
+## ⚡ Async Snapshots
 
 Snapshots work identically with the async `Interpreter`:
 
@@ -445,7 +465,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## Testing with Snapshots
+## 🧪 Testing with Snapshots
 
 Snapshots are powerful for testing because they let you jump directly to a specific state without replaying the full event sequence:
 
@@ -533,7 +553,7 @@ test_payment_flow()
 test_payment_failure_retry()
 ```
 
-## Complete Example: Long-Running Workflow with Checkpointing
+## 🏁 Complete Example: Long-Running Workflow with Checkpointing
 
 This pattern saves a snapshot after each step, enabling crash recovery:
 
@@ -632,7 +652,7 @@ if CHECKPOINT_FILE.exists():
     print("Checkpoint cleaned up.")
 ```
 
-## Complete Example: Crash Recovery Pattern
+## 🛟 Complete Example: Crash Recovery Pattern
 
 ```python
 import json

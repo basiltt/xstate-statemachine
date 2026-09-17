@@ -61,28 +61,28 @@ title: Home
       </div>
       <svg viewBox="0 0 520 320" xmlns="http://www.w3.org/2000/svg" role="img">
         <defs>
-          <linearGradient id="gEdge" x1="0" x2="1"><stop offset="0" stop-color="#7C5CFF"/><stop offset="1" stop-color="#22D3EE"/></linearGradient>
-          <radialGradient id="gNode" cx="50%" cy="40%" r="60%"><stop offset="0" stop-color="#A78BFA"/><stop offset="1" stop-color="#7C5CFF"/></radialGradient>
+          <linearGradient id="gEdge" x1="0" x2="1"><stop offset="0" stop-color="#10B981"/><stop offset="1" stop-color="#2DD4BF"/></linearGradient>
+          <radialGradient id="gNode" cx="50%" cy="40%" r="60%"><stop offset="0" stop-color="#6EE7B7"/><stop offset="1" stop-color="#10B981"/></radialGradient>
           <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" class="edge-arrow"/></marker>
-          <marker id="arrowOn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" fill="#22D3EE"/></marker>
+          <marker id="arrowOn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5 0 10z" class="edge-arrow-on"/></marker>
           <filter id="glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
         </defs>
 
-        <path class="edge" data-edge="pending-submitted"  d="M118 80 H 202" marker-end="url(#arrow)"/>
-        <path class="edge" data-edge="submitted-open"     d="M318 80 H 402" marker-end="url(#arrow)"/>
-        <path class="edge" data-edge="open-filled"        d="M460 108 V 212" marker-end="url(#arrow)"/>
-        <path class="edge" data-edge="open-cancelled"     d="M402 98 L 318 212" marker-end="url(#arrow)"/>
-        <path class="edge" data-edge="submitted-rejected" d="M260 108 V 212" marker-end="url(#arrow)"/>
+        <path class="edge" data-edge="pending-submitted"  d="M100 80 H 220" marker-end="url(#arrow)"/>
+        <path class="edge" data-edge="submitted-open"     d="M300 80 H 420" marker-end="url(#arrow)"/>
+        <path class="edge" data-edge="open-filled"        d="M460 120 V 200" marker-end="url(#arrow)"/>
+        <path class="edge" data-edge="open-cancelled"     d="M432 106 L 328 214" marker-end="url(#arrow)"/>
+        <path class="edge" data-edge="submitted-rejected" d="M260 120 V 200" marker-end="url(#arrow)"/>
 
         <text class="edge-event" id="heroEvent" x="0" y="0" text-anchor="middle"></text>
-        <circle class="edge-pulse" id="heroPulse" r="5"/>
+        <circle class="edge-pulse" id="heroPulse" r="6"/>
 
-        <g class="node" data-state="pending"   transform="translate(60,80)"><circle class="halo" r="38"/><circle r="30"/><text dy="4">pending</text></g>
-        <g class="node" data-state="submitted" transform="translate(260,80)"><circle class="halo" r="38"/><circle r="30"/><text dy="4">submitted</text></g>
-        <g class="node" data-state="open"      transform="translate(460,80)"><circle class="halo" r="38"/><circle r="30"/><text dy="4">open</text></g>
-        <g class="node node-final" data-state="filled"    transform="translate(460,240)"><circle class="halo" r="38"/><circle r="30"/><circle r="24" class="final-ring"/><text dy="4">filled</text></g>
-        <g class="node node-final" data-state="cancelled" transform="translate(300,240)"><circle class="halo" r="38"/><circle r="30"/><circle r="24" class="final-ring"/><text dy="4">cancelled</text></g>
-        <g class="node node-final" data-state="rejected"  transform="translate(260,240)" style="display:none"><circle class="halo" r="38"/><circle r="30"/><circle r="24" class="final-ring"/><text dy="4">rejected</text></g>
+        <g class="node" data-state="pending"   transform="translate(60,80)"><circle class="halo" r="46"/><circle r="38"/><text dy="4">pending</text></g>
+        <g class="node" data-state="submitted" transform="translate(260,80)"><circle class="halo" r="46"/><circle r="38"/><text dy="4">submitted</text></g>
+        <g class="node" data-state="open"      transform="translate(460,80)"><circle class="halo" r="46"/><circle r="38"/><text dy="4">open</text></g>
+        <g class="node node-final" data-state="filled"    transform="translate(460,240)"><circle class="halo" r="46"/><circle r="38"/><circle r="31" class="final-ring"/><text dy="4">filled</text></g>
+        <g class="node node-final" data-state="cancelled" transform="translate(300,240)"><circle class="halo" r="46"/><circle r="38"/><circle r="31" class="final-ring"/><text dy="4">cancelled</text></g>
+        <g class="node node-final" data-state="rejected"  transform="translate(260,240)" style="display:none"><circle class="halo" r="46"/><circle r="38"/><circle r="31" class="final-ring"/><text dy="4">rejected</text></g>
       </svg>
       <figcaption>
         <span>state <code id="heroState">pending</code></span>
@@ -118,8 +118,8 @@ interp  = <span class="k">await</span> Interpreter(machine).start()</code></pre>
     <article class="card reveal">
       <div class="card-glow" style="--gx:50%;--gy:100%"></div>
       <div class="card-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="m9 12 2 2 4-4"/></svg></div>
-      <h3>Failure you can see</h3>
-      <p><code>actionErrorPolicy: "rollback"</code> restores state <em>and</em> context. <code>strict</code> mode raises at the call site.</p>
+      <h3><a href="{{ '/guide/reliability/' | relative_url }}">Failure you can see</a></h3>
+      <p><code>actionErrorPolicy: "rollback"</code> restores state <em>and</em> context. <code>strict</code> mode raises at the call site. <a href="{{ '/guide/reliability/' | relative_url }}">Every policy, with a runnable example →</a></p>
     </article>
 
     <article class="card reveal">

@@ -11,7 +11,16 @@ Three facts, each with the measurement behind it. Every number below was produce
 
 ---
 
-## 1. Concurrency is interleaving, not parallelism
+## 🔀 1. Concurrency is interleaving, not parallelism
+
+```mermaid
+flowchart LR
+    L(("asyncio loop<br/><small>one thread</small>"))
+    A["machine A"] <--> L
+    B["machine B"] <--> L
+    C["machine C … N"] <--> L
+    L -. "a blocking action here stalls every machine" .-> X["⛔"]
+```
 
 Every async `Interpreter` you create in a process runs on **one asyncio event loop on one OS thread**. Concurrency between machines is *logical* — events from different machines are interleaved on that thread — never *parallel*. The GIL would prevent parallelism anyway; the single loop makes it structural.
 
@@ -43,7 +52,7 @@ The `SyncInterpreter` is different in kind, not degree: it processes each `send(
 
 ---
 
-## 2. `after` timers are best-effort, and starve under load
+## ⏱️ 2. `after` timers are best-effort, and starve under load
 
 An `after` delay guarantees **not before** — never **at**.
 
@@ -71,7 +80,7 @@ On the `SyncInterpreter`, `after` timers are not on an event loop at all — the
 
 ---
 
-## 3. The `SyncInterpreter` threading contract
+## 🧵 3. The `SyncInterpreter` threading contract
 
 `SyncInterpreter` is single-threaded **for event processing only**.
 

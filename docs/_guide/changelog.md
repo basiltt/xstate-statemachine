@@ -11,6 +11,56 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ---
 
+## [Unreleased] — targeting 0.8.1
+
+**Naming, and the site.**
+
+### Added
+
+- **snake_case ↔ camelCase logic names, everywhere.** A PEP 8 Python
+  function now implements the camelCase name in an XState config through
+  *every* entry point — `MachineLogic(actions={"store_user": fn})`,
+  `MachineLogic` subclass methods, `logic_modules`, `logic_providers`, and
+  the Pythonic decorators. Matching is case- and separator-insensitive on
+  both sides (`normalize_logic_name`), so acronyms (`logHTTPStatus` ↔
+  `log_http_status`), digits (`fetchUserV2` ↔ `fetch_user_v2`) and Stately's
+  non-identifier names (`inline:m.a#entry[0]` ↔ `inline_m_a_entry_0`,
+  `fetch-data` ↔ `fetch_data`) all bind without an `@action("…")`
+  decorator. Previously only `logic_modules`/`logic_providers` mapped names,
+  via a forward snake→camel conversion that was lossy for acronyms and
+  undefined for non-identifiers; an explicit `MachineLogic` dict with
+  snake_case keys raised `ImplementationMissingError`. Aliases are resolved
+  once in `create_machine()` (`resolve_aliases`) so the interpreter hot path
+  is unchanged. An exact-name entry always wins over an alias.
+
+### Changed
+
+- **Ambiguous logic registrations are rejected.** Registering two
+  *different* callables whose names differ only by case or separators
+  (`fetch_data` and `fetchData`) for a name the machine requires now raises
+  `InvalidConfigError` at build time instead of silently picking one.
+- Every Python snippet in the guides and README now uses snake_case
+  implementations against camelCase JSON, matching what `xsm gt` generates.
+
+### Documentation
+
+- **Site redesign, round two.** Light theme by default (dark is remembered
+  once chosen — the previous build forced dark and persisted it on first
+  load), emerald→teal→blue accent, darker dark mode, readable sidebar and
+  table-of-contents active states, zebra-striped tables, theme-aware code
+  blocks and code tabs, an orange event pulse on the landing statechart.
+- **Every hand-drawn ASCII diagram replaced with a live Mermaid statechart**
+  (43 across the guides) with a full-screen viewer, zoom, and consistent
+  padding; edge labels are legible in both themes.
+- New **Reliability & Failure Policies** guide collecting the 0.8.0 hardening
+  surface with a runnable example per policy; FAQ grown from 19 to 36
+  questions; a *Naming* section in Core Concepts; emoji signposting on
+  section headings throughout.
+- Two pre-existing broken in-page anchors fixed (`cli`, `troubleshooting`);
+  the docs link checker now models kramdown and GitHub slugging separately.
+
+---
+
 ## [0.8.0] — 2026-09-17 — Fortify *(Current Release)*
 
 **Adoption-readiness, parts 1–3.**

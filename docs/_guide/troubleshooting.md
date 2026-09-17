@@ -7,28 +7,48 @@ description: "Common errors, their causes, and how to fix them."
 
 This page covers common errors you may encounter when using XState-StateMachine, their causes, and how to fix them. It also includes CLI troubleshooting, debugging tips, and common pitfalls.
 
-## Exception Hierarchy
+## 🧨 Exception Hierarchy
 
 XState-StateMachine provides a clean exception hierarchy so you can catch errors at the right level of specificity:
 
+```mermaid
+flowchart TB
+    root["XStateMachineError<br/><small>base class for every library error</small>"]
+    root --> build & run & snap
+    subgraph build["🏗️ build time"]
+        direction TB
+        InvalidConfigError --- StateNotFoundError --- ImplementationMissingError --- NotSupportedError
+    end
+    subgraph run["⚡ runtime"]
+        direction TB
+        UnhandledEventError --- UnknownEventError --- InvalidEventPayloadError --- TransitionFailedError
+        TransitionFailedError --- ActorSpawningError --- WrongThreadError --- QueueOverflowError --- InterpreterStoppedError
+    end
+    subgraph snap["💾 snapshots"]
+        direction TB
+        SnapshotVersionError --- SnapshotDriftError --- RestoredError
+    end
+    linkStyle default stroke-width:0px
+    linkStyle 0,1,2 stroke-width:1.5px
 ```
-XStateMachineError          ← Base class for ALL library errors
-├── InvalidConfigError      ← Machine configuration is structurally invalid
-├── StateNotFoundError      ← Target state ID doesn't exist
-├── ImplementationMissingError ← Action/guard/service function not provided
-├── ActorSpawningError      ← Error creating child actor machine
-├── NotSupportedError       ← Feature not available in current mode
-├── UnhandledEventError     ← Event matched no transition and onUnhandled="error"
-├── UnknownEventError       ← strict=True and the event type isn't declared anywhere
-├── InvalidEventPayloadError ← Event payload failed its declared event_schemas validator
-├── TransitionFailedError   ← Action raised and actionErrorPolicy="fail"
-├── WrongThreadError        ← Interpreter.send() called from a foreign thread
-├── QueueOverflowError      ← send() refused: bounded inbox is full
-├── InterpreterStoppedError ← send(wait=True) receipt resolved after the interpreter stopped
-├── SnapshotVersionError    ← Snapshot's version is newer than this library supports
-├── SnapshotDriftError      ← Snapshot doesn't belong to the machine restoring it
-└── RestoredError           ← Wraps an error message recovered from a persisted snapshot
-```
+
+| Exception | Raised when |
+|---|---|
+| `InvalidConfigError` | Machine configuration is structurally invalid |
+| `StateNotFoundError` | Target state ID doesn't exist |
+| `ImplementationMissingError` | Action/guard/service function not provided |
+| `NotSupportedError` | Feature not available in current mode (e.g. async action in `SyncInterpreter`) |
+| `ActorSpawningError` | Error creating a child actor machine |
+| `UnhandledEventError` | Event matched no transition and `onUnhandled="error"` |
+| `UnknownEventError` | `strict=True` and the event type isn't declared anywhere |
+| `InvalidEventPayloadError` | Event payload failed its declared `event_schemas` validator |
+| `TransitionFailedError` | Action raised and `actionErrorPolicy="fail"` |
+| `WrongThreadError` | `Interpreter.send()` called from a foreign thread |
+| `QueueOverflowError` | `send()` refused: bounded inbox is full |
+| `InterpreterStoppedError` | `send(wait=True)` receipt resolved after the interpreter stopped |
+| `SnapshotVersionError` | Snapshot's version is newer than this library supports |
+| `SnapshotDriftError` | Snapshot doesn't belong to the machine restoring it |
+| `RestoredError` | Wraps an error message recovered from a persisted snapshot |
 
 ### Importing Exceptions
 
@@ -200,7 +220,7 @@ xstate_statemachine.exceptions.StateNotFoundError: Could not resolve target stat
 
 **Why it happens:** A transition `target` references a state name that doesn't exist. This is usually a typo.
 
-> **Note:** As of 0.8.0, `create_machine()` walks the finished tree and rejects unresolvable targets at build time by default (`strict_targets=True`), raising `InvalidConfigError` — see [`InvalidConfigError` — Unresolvable transition target](#invalidconfigerror--unresolvable-transition-target) below. `StateNotFoundError` still fires for a target that only becomes invalid at runtime, e.g. one restored from an outdated snapshot, or when `strict_targets=False` and the runtime resolver's fuzzy fallback still fails.
+> **Note:** As of 0.8.0, `create_machine()` walks the finished tree and rejects unresolvable targets at build time by default (`strict_targets=True`), raising `InvalidConfigError` — see [`InvalidConfigError` — Unresolvable transition target](#invalidconfigerror-unresolvable-transition-target) below. `StateNotFoundError` still fires for a target that only becomes invalid at runtime, e.g. one restored from an outdated snapshot, or when `strict_targets=False` and the runtime resolver's fuzzy fallback still fails.
 
 **How to fix it:** Check the spelling of your target state names:
 
@@ -520,7 +540,7 @@ config = {
 def user_is_admin(context, event):
     return context.get("role") == "admin"
 
-logic = MachineLogic(guards={"userIsAdmin": user_is_admin})
+logic = MachineLogic(guards={"user_is_admin": user_is_admin})
 machine = create_machine(config, logic=logic)
 ```
 

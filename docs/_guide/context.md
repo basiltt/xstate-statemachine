@@ -5,7 +5,19 @@ description: "Mutable data that travels with the machine — the machine's memor
 
 Context is a **mutable dictionary** that travels with the machine across every transition. Think of it as the machine's memory — it stores data that actions can read, guards can inspect, and services can populate.
 
-## What is Context?
+## 🧠 What is Context?
+
+```mermaid
+flowchart LR
+    subgraph machine["🧠 one interpreter"]
+        direction TB
+        S["state<br/><small>finite · one of: idle / editing / saved</small>"]
+        C["context<br/><small>open-ended · { draft: '…', saves: 3 }</small>"]
+    end
+    EV["📨 event"] --> S
+    S -- "actions mutate" --> C
+    C -- "guards read" --> S
+```
 
 Every state machine can carry an arbitrary Python dictionary alongside its current state. This dictionary is called the **context**. Unlike the machine's state (which is one of a finite set of named values), context is open-ended — it can hold counters, user profiles, error messages, timestamps, or anything else your application needs.
 
@@ -16,7 +28,7 @@ Key characteristics:
 - **Deep-copied** — each interpreter instance gets its own copy of the initial context, so multiple interpreters from the same machine definition never interfere.
 - **Serializable** — the context is included in snapshots (`get_snapshot()`), so keep it JSON-friendly.
 
-## JSON Definition
+## 📄 JSON Definition
 
 Define context at the top level of your machine config:
 
@@ -43,7 +55,7 @@ Define context at the top level of your machine config:
 
 > **Tip:** Keep context values JSON-serializable (strings, numbers, booleans, `null`, lists, dicts). This ensures snapshots and persistence work smoothly.
 
-## Modifying Context in Actions (JSON Style)
+## 📝 Modifying Context in Actions (JSON Style)
 
 Actions receive the context as a mutable dictionary and can modify it freely. Here is a complete, runnable example using a `MachineLogic` subclass:
 
@@ -65,11 +77,11 @@ config = {
 }
 
 class CounterLogic(MachineLogic):
-    def addOne(self, interpreter, context, event, action_def):
+    def add_one(self, interpreter, context, event, action_def):
         context["count"] += 1
         context["history"].append(f"+1 -> {context['count']}")
 
-    def subtractOne(self, interpreter, context, event, action_def):
+    def subtract_one(self, interpreter, context, event, action_def):
         context["count"] -= 1
         context["history"].append(f"-1 -> {context['count']}")
 
@@ -88,7 +100,7 @@ interp.stop()
 
 > **Note:** Actions mutate context directly — there is no immutable update pattern. The interpreter passes the same dictionary reference to every action.
 
-## Pythonic API Context
+## 🐍 Pythonic API Context
 
 All three Pythonic API styles support setting initial context.
 
@@ -166,7 +178,7 @@ print(interp.context)  # {"count": 0, "lastUpdated": None}
 interp.stop()
 ```
 
-## Context in Guards
+## 🛡️ Context in Guards
 
 Guards receive `(context, event)` and can read context values to make routing decisions:
 
@@ -193,7 +205,7 @@ config = {
 
 class PurchaseLogic(MachineLogic):
     @guard
-    def hasEnoughBalance(self, context, event):
+    def has_enough_balance(self, context, event):
         return context["balance"] >= context["itemPrice"]
 
 machine = create_machine(config, logic=PurchaseLogic())
@@ -203,7 +215,7 @@ print(interp.current_state_ids)  # {"purchaseGate.approved"}
 interp.stop()
 ```
 
-## Context with Nested Objects
+## 🪆 Context with Nested Objects
 
 Context can hold deeply nested structures. Actions access them with standard Python dictionary operations:
 
@@ -229,7 +241,7 @@ config = {
 }
 
 class UserLogic(MachineLogic):
-    def setUser(self, interpreter, context, event, action_def):
+    def set_user(self, interpreter, context, event, action_def):
         context["user"]["name"] = event.payload.get("name", "Unknown")
         context["user"]["role"] = event.payload.get("role", "member")
 
@@ -241,7 +253,7 @@ print(interp.context["user"])
 interp.stop()
 ```
 
-## Context with Arrays
+## 📚 Context with Arrays
 
 Lists in context are useful for tracking history, queued items, or collected data:
 
@@ -261,13 +273,13 @@ config = {
 }
 
 class CollectorLogic(MachineLogic):
-    def addItem(self, interpreter, context, event, action_def):
+    def add_item(self, interpreter, context, event, action_def):
         item = event.payload.get("item")
         if item:
             context["items"].append(item)
             context["history"].append(f"Added: {item}")
 
-    def removeItem(self, interpreter, context, event, action_def):
+    def remove_item(self, interpreter, context, event, action_def):
         item = event.payload.get("item")
         if item and item in context["items"]:
             context["items"].remove(item)
@@ -285,7 +297,7 @@ print(interp.context["history"])  # ["Added: apple", "Added: banana", "Removed: 
 interp.stop()
 ```
 
-## Context with Mixed Types
+## 🎨 Context with Mixed Types
 
 Context supports all JSON-compatible Python types:
 
@@ -306,23 +318,23 @@ context = {
 
 > **Warning:** Avoid storing non-serializable objects (class instances, file handles, database connections) in context. They will break snapshot serialization and make debugging harder.
 
-## Context Scope
+## 🔭 Context Scope
 
 Context is **shared across ALL states** in the machine. There is no per-state context — any action in any state can read and modify any key:
 
 ```python
 class SharedContextLogic(MachineLogic):
-    def actionInStateA(self, interpreter, context, event, action_def):
+    def action_in_state_a(self, interpreter, context, event, action_def):
         context["sharedCounter"] += 1  # Incremented in state A
 
-    def actionInStateB(self, interpreter, context, event, action_def):
+    def action_in_state_b(self, interpreter, context, event, action_def):
         # Can read the value set by state A's action
         print(f"Counter from state A: {context['sharedCounter']}")
 ```
 
 > **Tip:** This shared scope is by design — it enables communication between states without events. Use naming conventions (e.g., `form_errors`, `auth_token`) to avoid accidental key collisions in large machines.
 
-## Context vs Event Data
+## ⚖️ Context vs Event Data
 
 | | Context | Event Data |
 |--|---------|------------|
@@ -334,7 +346,7 @@ class SharedContextLogic(MachineLogic):
 
 **Rule of thumb:** If you need the data in a *future* transition, store it in context. If it is only relevant to the *current* transition, use event data.
 
-## Best Practices for Context
+## ✅ Best Practices for Context
 
 1. **Initialize every key** — always declare all keys in the initial context, even if their values are `None` or `[]`. This prevents `KeyError` in actions and makes the context shape self-documenting.
 
@@ -346,7 +358,7 @@ class SharedContextLogic(MachineLogic):
 
 5. **Name keys consistently** — use `camelCase` to match JSON convention, or `snake_case` to match Python convention. Pick one and stick with it.
 
-## Complete Example: Shopping Cart
+## 🛒 Complete Example: Shopping Cart
 
 A full shopping cart machine demonstrating context usage across multiple states and transitions:
 
@@ -389,7 +401,7 @@ config = {
 
 class CartLogic(MachineLogic):
     # ---- Actions ----
-    def addItem(self, interpreter, context, event, action_def):
+    def add_item(self, interpreter, context, event, action_def):
         item = {
             "name": event.payload.get("name", "Unknown"),
             "price": event.payload.get("price", 0.0),
@@ -397,29 +409,29 @@ class CartLogic(MachineLogic):
         }
         context["items"].append(item)
 
-    def removeItem(self, interpreter, context, event, action_def):
+    def remove_item(self, interpreter, context, event, action_def):
         name = event.payload.get("name")
         context["items"] = [i for i in context["items"] if i["name"] != name]
 
-    def applyCoupon(self, interpreter, context, event, action_def):
+    def apply_coupon(self, interpreter, context, event, action_def):
         code = event.payload.get("code", "")
         coupons = {"SAVE10": 0.10, "SAVE20": 0.20}
         if code in coupons:
             context["discount"] = coupons[code]
             context["appliedCoupon"] = code
 
-    def calculateTotal(self, interpreter, context, event, action_def):
+    def calculate_total(self, interpreter, context, event, action_def):
         subtotal = sum(
             i["price"] * i["qty"] for i in context["items"]
         )
         context["total"] = round(subtotal * (1 - context["discount"]), 2)
 
-    def placeOrder(self, interpreter, context, event, action_def):
+    def place_order(self, interpreter, context, event, action_def):
         print(f"Order placed! {len(context['items'])} items, total: ${context['total']:.2f}")
 
     # ---- Guards ----
     @guard
-    def hasItems(self, context, event):
+    def has_items(self, context, event):
         return len(context["items"]) > 0
 
 
@@ -443,7 +455,7 @@ print(interp.context["appliedCoupon"]) # SAVE10
 interp.stop()
 ```
 
-## Updating Context Declaratively with `assign`
+## 📝 Updating Context Declaratively with `assign`
 
 Every example above mutates context imperatively inside a `MachineLogic` action method. XState v5's idiomatic alternative is `assign`, a built-in action creator that declares context updates without a hand-written action method — each value can be a plain value or a callable of `{context, event}`:
 
@@ -509,7 +521,7 @@ machine = create_machine(
         "context": {"items": [], "total": 0.0, "coupon": None},
         "states": {"browsing": {"on": {"ADD": {"actions": ["addItem"]}}}},
     },
-    logic=MachineLogic(actions={"addItem": add_item}),
+    logic=MachineLogic(actions={"add_item": add_item}),
     context_type=Cart,
 )
 

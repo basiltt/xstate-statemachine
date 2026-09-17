@@ -5,7 +5,17 @@ description: "Frequently asked questions about XState-StateMachine for Python."
 
 # Frequently Asked Questions
 
-## General
+Short answers with links to the deep dive. If your question isn't here, [open a discussion](https://github.com/basiltt/xstate-statemachine/discussions) — the good ones end up on this page.
+
+```mermaid
+flowchart LR
+    Q["❓ I want to…"] --> A["…define a machine"] --> A1["Compatibility · Pythonic API · Stately"]
+    Q --> B["…understand behaviour"] --> B1["Nesting · guards · always · ordering"]
+    Q --> C["…run it for real"] --> C1["Async vs sync · threads · web frameworks · persistence"]
+    Q --> D["…make it not break"] --> D1["Reliability · testing · debugging"]
+```
+
+## 🧭 General
 
 ### Is this compatible with XState v5?
 
@@ -145,7 +155,7 @@ The CLI reads the XState JSON format that Stately.ai exports and generates compl
 
 ---
 
-## State Machine Behavior
+## 🔄 State Machine Behavior
 
 ### How do I handle nested state transitions?
 
@@ -244,7 +254,70 @@ For parent-child relationships (actor model), use `invoke` in the parent machine
 
 ---
 
-## Testing
+### How do I check which state the machine is in?
+
+Three ways, from loosest to strictest:
+
+<!-- doc-fragment -->
+```python
+interp.value                           # "idle"  or  {"loggedIn": "dashboard"} for nested
+interp.matches("loggedIn.dashboard")   # True/False — dotted path, works for nested states
+interp.active_state_ids                # {"app.loggedIn", "app.loggedIn.dashboard"} — every active node
+```
+
+Prefer `matches()` in tests: it survives you renaming a parent state.
+
+---
+
+### How do I know if an event will do anything before I send it?
+
+Use `interp.can("SUBMIT")`. It evaluates guards against the *current* context and returns `True` only if some transition would fire. This is what you want for enabling/disabling a button — no need to send and check what happened.
+
+---
+
+### What is an `always` (eventless) transition, and when does it fire?
+
+An `always` transition has no event. It is evaluated the moment its state is entered and re-evaluated after every transition while that state is active. Use it for *decision* states:
+
+<!-- doc-fragment -->
+```python
+"checking": {
+    "always": [
+        {"target": "approved", "guard": "isValid"},
+        {"target": "rejected"},
+    ]
+}
+```
+
+Since 0.8.0 both interpreters settle `always` transitions *before* `send()` returns, so you never observe the intermediate state.
+
+---
+
+### In what order do actions run when a transition fires?
+
+Exit actions of the source, then transition actions, then entry actions of the target — always, in every interpreter. For nested states the exits run innermost-first and the entries outermost-first. See [Actions → Execution Order](../actions/#execution-order).
+
+---
+
+### Two transitions match the same event — which one wins?
+
+The **first one listed** whose guard passes. Order your transitions from most specific to least specific and put the unguarded fallback last. If a child and a parent both handle the event, the **child** wins (it is the more specific listener).
+
+---
+
+### What happens to an event nobody handles?
+
+By default it is dropped silently (`onUnhandled: "ignore"`, the 0.7 behaviour). Set `"onUnhandled": "error"` to raise `UnhandledEventError`, or `"defer"` to buffer it and replay it once the machine reaches a state that can handle it. Whatever you pick, the `on_unhandled_event` plugin hook fires. See [Reliability](../reliability/).
+
+---
+
+### Can I send an event from inside an action?
+
+Yes, but the event is **queued**, not processed immediately — the current transition finishes first. Use `interp.send(...)` from the action, or the declarative `send` / `raise_` action helpers in JSON. Never call `interp.stop()` from inside an action; return and let the caller do it.
+
+---
+
+## 🧪 Testing
 
 ### How do I test state machines?
 
@@ -307,7 +380,7 @@ def test_guard_blocks_transition():
     def has_key(context, event):
         return context.get("hasKey", False)
 
-    logic = MachineLogic(guards={"hasKey": has_key})
+    logic = MachineLogic(guards={"has_key": has_key})
     machine = create_machine(config, logic=logic)
     interp = SyncInterpreter(machine)
     interp.start()
@@ -326,7 +399,7 @@ def test_guard_blocks_transition():
 
 ---
 
-## Environment & Setup
+## 🛠️ Environment & Setup
 
 ### What Python versions are supported?
 
@@ -409,7 +482,31 @@ async def checkout():
 
 ---
 
-## Advanced
+### Is the interpreter thread-safe?
+
+The async `Interpreter` is bound to its event loop: calling `send()` from another thread raises `WrongThreadError`. From a plain thread, use `interp.send_threadsafe("EVENT")`, which schedules delivery onto the loop. `SyncInterpreter.send()` takes an internal lock, so it is safe to call from multiple threads, but a machine is fundamentally a single sequential thing — one producer per machine keeps your reasoning simple.
+
+---
+
+### Can I run thousands of machines at once?
+
+Yes — the async `Interpreter` uses no threads, so 10,000 idle machines cost only memory. The constraint is **throughput**: every machine shares one asyncio loop, so total events/second is a fixed budget divided among active machines. Never block inside an action. See [Production Characteristics](../production-characteristics/) for measured numbers.
+
+---
+
+### What happens if a producer sends events faster than the machine can process them?
+
+By default the inbox is unbounded. Set `max_queue_size` and an `OverflowPolicy` — `RAISE` (fail loudly), `BLOCK` (apply backpressure to the producer), or `DROP_NEWEST` (shed load and fire `on_event_dropped`). `interp.queue_depth` is observable either way.
+
+---
+
+### How do I use this with Pydantic or dataclasses for context?
+
+Context is a plain `dict` because snapshots serialise it as JSON. The idiom is to validate at the boundary: build your Pydantic model, call `.model_dump()` into the initial context, and in actions mutate the dict. If you want typed access inside actions, wrap `ctx` in your model at the top of the action and write back the fields you changed.
+
+---
+
+## 🚀 Advanced
 
 ### How do I handle timeouts?
 
@@ -509,3 +606,59 @@ interp.use(MetricsPlugin())
 ```
 
 You can also subclass `MachineLogic` for custom logic loading, or create your own `LogicLoader` subclass for alternative discovery strategies.
+
+---
+
+### How do I test timers without waiting?
+
+Inject a `SimulatedClock`. `after` delays and delayed sends run against it, so `clock.increment(30_000)` fires a 30-second timeout instantly and deterministically:
+
+<!-- doc-fragment -->
+```python
+from xstate_statemachine import SimulatedClock, SyncInterpreter
+
+clock = SimulatedClock()
+interp = SyncInterpreter(machine, clock=clock).start()
+clock.increment(30_000)                 # 30 s pass in zero wall-clock time
+assert interp.matches("expired")
+```
+
+---
+
+### What if an action raises halfway through a transition?
+
+Controlled by `actionErrorPolicy` on the machine: `"continue"` (0.7 default — the transition is committed with whatever mutations already happened), `"rollback"` (state *and* context restored, error reported on the `Receipt`), or `"fail"` (interpreter enters `error` status). `"rollback"` becomes the default in 1.0. See [Reliability](../reliability/).
+
+---
+
+### How do I get a diagram of my machine?
+
+Every machine can export itself: `machine.to_mermaid()` or `machine.to_plantuml()`. Paste Mermaid output straight into GitHub Markdown or a docs page — this site renders them live. See [Diagram Export](../diagrams/).
+
+---
+
+### Can I catch a typo in an event name at the call site?
+
+Yes: `Interpreter(machine, strict=True)` raises `UnknownEventError` for any event type the machine never declares, with a did-you-mean suggestion. Combine it with `event_schemas` to validate payload shape too.
+
+---
+
+### How do I wait for a machine to reach a state in a test?
+
+Use the helpers instead of sleeping:
+
+<!-- doc-fragment -->
+```python
+from xstate_statemachine import wait_for, wait_for_sync
+
+await wait_for(interp, "loaded", timeout=2.0)      # async Interpreter
+wait_for_sync(interp, "loaded", timeout=2.0)        # SyncInterpreter
+```
+
+Or send with `wait=True` and assert on the returned `Receipt`, which tells you the resulting state and any error in one object.
+
+---
+
+### Is this production-ready?
+
+0.8.0 ("Fortify") is the release aimed squarely at that question: 34 silent-failure defects closed, every failure path now has a policy and a plugin hook, snapshots are versioned and drift-checked, and 31 audit reproduction scripts run in CI. The remaining 1.0 work is defaults flipping (`actionErrorPolicy → rollback`, `strict_targets` mandatory), not new surface. See [Reliability](../reliability/) and the [Changelog](../changelog/).

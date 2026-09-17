@@ -3,7 +3,7 @@ title: Getting Started
 description: Install XState-StateMachine, verify your setup, build your first machine, and understand the full feature set.
 ---
 
-## Installation
+## 📦 Installation
 
 Install from PyPI with pip:
 
@@ -60,7 +60,7 @@ options:
   -v, --version         Show program's version number and exit.
 ```
 
-## Requirements
+## 📋 Requirements
 
 | Requirement | Details |
 |-------------|---------|
@@ -70,15 +70,16 @@ options:
 
 > **Tip:** The library uses only the Python standard library, so it works anywhere Python runs — containers, serverless, embedded systems, CI pipelines.
 
-## Your First State Machine (60 seconds)
+## ⚡ Your First State Machine (60 seconds)
 
 Let's build a simple toggle switch. It has two states (`off` and `on`) and toggles between them:
 
-```
-  ┌─────┐  TOGGLE  ┌────┐
-  │ off │ ──────►  │ on │
-  └─────┘  ◄────── └────┘
-            TOGGLE
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> off
+    off --> on : TOGGLE
+    on --> off : TOGGLE
 ```
 
 ### Using JSON (XState-compatible):
@@ -173,7 +174,7 @@ interp.stop()
 
 > **All four approaches produce identical runtime behavior.** Choose the style that fits your project.
 
-## Your Second Machine: With Actions and Context
+## 2️⃣ Your Second Machine: With Actions and Context
 
 Let's add logic — a counter that tracks how many times the switch is toggled:
 
@@ -225,7 +226,7 @@ print(interp.context["count"])
 interp.stop()
 ```
 
-## What's Included
+## 📦 What's Included
 
 | Component | Description |
 |-----------|-------------|
@@ -237,7 +238,7 @@ interp.stop()
 | **Snapshot System** | Save and restore machine state for persistence, testing, and time-travel debugging |
 | **Diagram Export** | Generate Mermaid or PlantUML diagrams from machine definitions |
 
-## Feature Overview
+## 🗺️ Feature Overview
 
 Here's what XState-StateMachine supports — every feature you'd expect from a production statechart library:
 
@@ -275,7 +276,7 @@ Here's what XState-StateMachine supports — every feature you'd expect from a p
 - **Action/guard error policy** — `actionErrorPolicy` and `guardErrorPolicy` (e.g. `"rollback"`) control how a raising action or guard affects the in-flight transition. See [Actions](../actions/#error-handling-in-actions).
 - **Injectable Clock** — `Clock`, `RealClock`, and `SimulatedClock` let `after` timers and delayed sends run deterministically in tests. See [Delayed Transitions](../delayed-transitions/).
 
-## Development Installation
+## 🧑‍💻 Development Installation
 
 To contribute or work from source:
 
@@ -300,7 +301,7 @@ python -m pytest tests/tests_pythonic/ -v
 python -m pytest tests/ --cov=xstate_statemachine --cov-report=html
 ```
 
-### Project Structure
+### 🗂️ Project Structure
 
 ```
 xstate-statemachine/
@@ -321,7 +322,7 @@ xstate-statemachine/
 └── pyproject.toml
 ```
 
-## Upgrading from Older Versions
+## ⬆️ Upgrading from Older Versions
 
 ```bash
 pip install --upgrade xstate-statemachine
@@ -374,7 +375,7 @@ New in this release: built-in [action creators](../actions/#built-in-action-crea
 - `after` transition support added to `SyncInterpreter`
 - No breaking changes
 
-## Async Support
+## ⚡ Async Support
 
 If your project uses `asyncio`, you can use the async `Interpreter` instead:
 
@@ -411,7 +412,7 @@ asyncio.run(main())
 
 > **Tip:** Use `SyncInterpreter` for scripts, CLI tools, and testing. Use `Interpreter` for web servers, event loops, and real-time applications.
 
-## What's New in 0.8.0
+## 🆕 What's New in 0.8.0
 
 The 0.8.0 release closes a production-adoption audit spanning 34 defects
 across three waves. Highlights:
@@ -440,7 +441,7 @@ across three waves. Highlights:
 
 See the [full changelog](../changelog/) for every change in this release.
 
-## Next Steps
+## ➡️ Next Steps
 
 Now that you're set up, explore the features:
 

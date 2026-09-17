@@ -103,10 +103,16 @@ class TestDocCodeBlocksExecute(unittest.TestCase):
 
 def _slug(heading: str, github: bool = False) -> str:
     h = re.sub(r"[`*_]", "", heading).strip().lower()
-    if github:  # GitHub drops emoji variation selectors when slugging
+    if github:
+        # GitHub: drop variation selectors, strip punctuation, keep every
+        # hyphen (so "Actions & Side Effects" -> "actions--side-effects").
         h = h.replace("️", "")
-    h = re.sub(r"[^\w\- ]", "", h)
-    return h.replace(" ", "-")
+        h = re.sub(r"[^\w\- ]", "", h)
+        return h.replace(" ", "-")
+    # Jekyll/kramdown and main.js keep only ASCII alphanumerics and collapse
+    # runs of hyphens, so "## 🔢 Execution Order" -> "execution-order".
+    h = re.sub(r"[^a-z0-9\- ]", "", h).strip()
+    return re.sub(r"-+", "-", h.replace(" ", "-"))
 
 
 class TestDocLinksResolve(unittest.TestCase):

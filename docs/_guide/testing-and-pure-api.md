@@ -9,7 +9,19 @@ Two toolkits make state machines pleasant to test: a **pure, side-effect-free
 API** for asking "what would happen if…", and **waiting helpers** that replace
 arbitrary `sleep()` calls with real conditions.
 
-## The Pure API
+## 🧪 The Pure API
+
+```mermaid
+flowchart LR
+    subgraph pure["🔬 pure — nothing runs"]
+        direction LR
+        S0["state + context"] -- "machine.transition(state, event)" --> S1["next state + would-run actions"]
+    end
+    subgraph live["▶️ interpreter — actions execute"]
+        direction LR
+        I0["interp.send(event)"] --> I1["Receipt · plugins fire · services start"]
+    end
+```
 
 Sometimes you want to compute the next state *without running anything* — no
 timers start, no services fire, nothing mutates. That is what the pure API is
@@ -79,7 +91,7 @@ As of 0.8.0, the pure API caches one probe interpreter per machine **per thread*
 
 ---
 
-## Waiting Helpers
+## ⏳ Waiting Helpers
 
 Tests that `sleep(0.5)` and hope are slow and flaky. These helpers poll a real
 predicate with a timeout instead.
@@ -178,7 +190,7 @@ output = await to_promise(interp)    # resolves when the machine is done
 
 ---
 
-## Testing with `SyncInterpreter`
+## 🧵 Testing with `SyncInterpreter`
 
 For most tests the sync interpreter is the simplest option — no event loop, no
 `async def`, no fixtures:
@@ -210,7 +222,7 @@ def test_double_submit_cannot_double_charge():
 
 ---
 
-## Virtual Time with `SimulatedClock`
+## ⏱️ Virtual Time with `SimulatedClock`
 
 Machines with `after` timers or delayed sends don't have to make your tests slow. Every timer is scheduled through an injectable `Clock` (mirroring XState v5's `createActor(machine, { clock })`); swap in a `SimulatedClock` and advance virtual time instead of waiting on the wall clock.
 
