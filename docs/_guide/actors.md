@@ -7,7 +7,18 @@ description: "Spawn independent child machines from parent machines — isolated
 
 The **Actor Model** lets you spawn independent child state machines from a parent machine. Each actor runs in isolation with its own state, context, and lifecycle. This is essential for modeling concurrent workflows, delegation patterns, and task distribution.
 
-## What is the Actor Model?
+## 🎭 What is the Actor Model?
+
+```mermaid
+flowchart TB
+    P["👑 parent machine<br/><small>orchestrates</small>"]
+    P -- "spawn_worker" --> A["🧵 worker #1<br/><small>own state · own context</small>"]
+    P -- "spawn_worker" --> B["🧵 worker #2<br/><small>own state · own context</small>"]
+    P -- "spawn_worker" --> C["🧵 worker #3<br/><small>own state · own context</small>"]
+    A -. "send to parent" .-> P
+    B -. "send to parent" .-> P
+    C -. "send to parent" .-> P
+```
 
 In the actor model, a running state machine (the **parent**) can create one or more child state machines (the **actors**). Each actor:
 
@@ -18,7 +29,7 @@ In the actor model, a running state machine (the **parent**) can create one or m
 
 This pattern is ideal for scenarios where a parent orchestrates multiple independent units of work, such as a task manager dispatching workers or an order system processing multiple items.
 
-## Spawning Actors with the `spawn_` Prefix
+## 🐣 Spawning Actors with the `spawn_` Prefix
 
 To spawn an actor, define an action whose name starts with `spawn_`. The interpreter recognizes this prefix and treats it as a special built-in action. The suffix after `spawn_` becomes the **actor key**, which must match a key in your `MachineLogic.services` dictionary.
 
@@ -76,7 +87,7 @@ interp.stop()
 
 > **Note:** The action name `spawn_worker` maps to the service key `worker`. The interpreter strips the `spawn_` prefix to look up the service.
 
-## Spawning with a Factory Function
+## 🏭 Spawning with a Factory Function
 
 Instead of providing a pre-built `MachineNode`, you can provide a factory function. This is useful when the child machine's configuration depends on the parent's context or the triggering event.
 
@@ -122,7 +133,7 @@ interp.send("DISPATCH", type="sms")    # Creates worker-sms
 interp.stop()
 ```
 
-## Blocking Actors with `spawn_blocking_`
+## ⏸️ Blocking Actors with `spawn_blocking_`
 
 The `SyncInterpreter` supports **blocking actors** using the `spawn_blocking_` prefix. A blocking actor starts immediately and the parent interpreter waits for it to reach a final state before continuing.
 
@@ -222,7 +233,7 @@ If the resolver callable itself raises, the invocation routes to `onError` rathe
 
 > A completed parent now stops its children too — see [Interpreters — Lifecycle: completion and teardown](interpreters/#lifecycle-completion-and-teardown).
 
-## Built-in Actor Actions (v0.6.0)
+## 🧰 Built-in Actor Actions (v0.6.0)
 
 Alongside the `spawn_` naming convention above, XState v5's built-in action
 creators are supported. These are declared as objects in the config, so they
@@ -321,7 +332,18 @@ actors.
 
 ---
 
-## Actor Communication
+## 💬 Actor Communication
+
+```mermaid
+sequenceDiagram
+    participant P as parent
+    participant W as worker (actor)
+    P->>W: spawn_worker
+    P->>W: send_to("worker", "START")
+    W->>W: runs its own machine
+    W-->>P: send_parent("DONE", result)
+    P->>P: on DONE → next state
+```
 
 Actors and parents communicate through events. After spawning, the parent can interact with the child through actions that reference the child via the interpreter's actor management:
 
@@ -388,7 +410,7 @@ interp.stop()
 
 > **Note:** Communication between parent and child actors happens through the event system. The parent sends events that trigger child transitions. Actors created via `invoke` automatically fire the parent's `onDone`/`onError` when they finish. Actors created via the `spawn_`/`spawn_blocking_` action-prefix convention — as in the example above — do **not** auto-notify the parent; the child must explicitly `sendParent` a completion event (as this example's `DONE` transition assumes) for the parent to react.
 
-## Actors with the Async Interpreter
+## ⚡ Actors with the Async Interpreter
 
 Actors work seamlessly with the async `Interpreter`. The child machine is spawned as another `Interpreter` instance running its own event loop:
 
@@ -431,7 +453,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## Complete Example: Task Manager with Worker Actors
+## 🧵 Complete Example: Task Manager with Worker Actors
 
 This example demonstrates a task manager that spawns worker actors to process tasks concurrently:
 
@@ -506,7 +528,7 @@ manager_config = {
 }
 
 manager_logic = MachineLogic(
-    actions={"logSpawn": log_spawn},
+    actions={"log_spawn": log_spawn},
     services={"taskWorker": create_task_worker}
 )
 
@@ -523,7 +545,7 @@ interp.send("SHUTDOWN")
 interp.stop()
 ```
 
-## Best Practices for Actor Design
+## ✅ Best Practices for Actor Design
 
 1. **Keep actors self-contained** — Each actor should have its own complete logic. Avoid tight coupling between parent and child.
 
@@ -539,7 +561,7 @@ interp.stop()
 
 > **Warning:** Async actions and services are not supported in `SyncInterpreter`. If you need async actors, use the async `Interpreter` instead.
 
-## Spawn Failures and Rollback
+## ↩️ Spawn Failures and Rollback
 
 If a later action in the same transition raises after a `spawn_` /
 `spawn_blocking_` action (or an `invoke`) has already succeeded, the interpreter

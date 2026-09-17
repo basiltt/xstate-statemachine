@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% if page.title %}{{ page.title }} | {% endif %}{{ site.title }}</title>
   <meta name="description" content="{{ page.description | default: site.description }}">
-  <meta name="theme-color" content="#4361ee">
+  <meta name="theme-color" content="#10B981">
 
   <!-- Canonical URL -->
   <link rel="canonical" href="{{ page.url | absolute_url }}">
@@ -27,21 +27,20 @@
   <!-- Preload critical fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
   <!-- Styles -->
   <link rel="stylesheet" href="{{ '/assets/css/style.css' | relative_url }}">
 
   <!-- Favicon -->
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x2699;&#xFE0F;</text></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%2310B981'/><stop offset='1' stop-color='%232DD4BF'/></linearGradient></defs><rect width='64' height='64' rx='16' fill='url(%23g)'/><g fill='none' stroke='%2306110B' stroke-width='5.5' stroke-linecap='round' stroke-linejoin='round'><circle cx='18' cy='40' r='8' fill='%2306110B'/><circle cx='46' cy='24' r='8'/><path d='M25 36l14-8'/><path d='M34 22l6 4-6.5 3.5'/></g></svg>">
 
   <!-- Dark mode: prevent flash -->
   <script>
     (function() {
-      var theme = localStorage.getItem('theme');
-      if (theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-        document.documentElement.setAttribute('data-theme', 'dark');
-      }
+      var theme = null;
+      try { theme = localStorage.getItem('theme'); } catch (_) {}
+      if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
     })();
   </script>
 </head>
@@ -56,7 +55,7 @@
   <nav class="top-nav" id="topNav" role="navigation" aria-label="Main navigation">
     <div class="nav-inner">
       <a href="{{ '/' | relative_url }}" class="nav-brand" aria-label="XState-StateMachine Home">
-        <span class="nav-logo">&#x2699;&#xFE0F;</span>
+        <span class="nav-logo"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="6" cy="15" r="3.2" fill="currentColor"/><circle cx="18" cy="9" r="3.2" stroke="currentColor" stroke-width="2.2"/><path d="M8.6 13.4 14.4 10.6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M13.2 8.2l2.3 1.7-2.6 1.3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
         <span class="nav-title">XState-StateMachine</span>
         <span class="version-badge">v{{ site.version }}</span>
       </a>
@@ -139,6 +138,7 @@
           <a href="{{ '/guide/actors/' | relative_url }}" class="sidebar-link">Actor Model</a>
           <a href="{{ '/guide/plugins/' | relative_url }}" class="sidebar-link">Plugins</a>
           <a href="{{ '/guide/snapshots/' | relative_url }}" class="sidebar-link">Snapshots</a>
+          <a href="{{ '/guide/reliability/' | relative_url }}" class="sidebar-link">Reliability &amp; Failure Policies</a>
           <a href="{{ '/guide/testing-and-pure-api/' | relative_url }}" class="sidebar-link">Testing &amp; Pure API</a>
           <a href="{{ '/guide/diagrams/' | relative_url }}" class="sidebar-link">Diagram Export</a>
           <a href="{{ '/guide/examples/' | relative_url }}" class="sidebar-link">Advanced Patterns</a>
@@ -207,7 +207,7 @@
         </div>
 
         <!-- Previous / Next Navigation -->
-        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,diagrams,examples,cli,cli-templates,cli-hierarchy,production-characteristics,troubleshooting,faq,changelog" | split: "," %}
+        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,reliability,diagrams,examples,cli,cli-templates,cli-hierarchy,production-characteristics,troubleshooting,faq,changelog" | split: "," %}
         {% assign current_name = page.url | remove: "/guide/" | remove: "/" %}
         {% assign prev_page = nil %}
         {% assign next_page = nil %}
@@ -261,7 +261,7 @@
       <footer class="page-footer">
         <div class="footer-inner">
           <p>XState-StateMachine for Python &mdash; MIT License</p>
-          <p>Built with precision. Tested with 3,156 tests across Python 3.9&ndash;3.14.</p>
+          <p>3,183 tests across Python 3.9&ndash;3.14 on Linux, macOS and Windows.</p>
           <div class="footer-links">
             <a href="https://github.com/basiltt/xstate-statemachine" target="_blank">GitHub</a>
             <a href="https://pypi.org/project/xstate-statemachine/" target="_blank">PyPI</a>
@@ -299,5 +299,92 @@
   {% endif %}
 
   <script src="{{ '/assets/js/main.js' | relative_url }}"></script>
+  <!-- Mermaid statecharts: ```mermaid blocks become live SVG diagrams in the site theme -->
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    // Runs after main.js (which wraps <pre> in .code-frame) — module scripts are deferred.
+    const isMermaid = c => c.classList.contains('language-mermaid') ||
+      /^\s*(stateDiagram(-v2)?|flowchart|graph|sequenceDiagram)\b/.test(c.textContent);
+    const blocks = [...document.querySelectorAll('pre > code')].filter(isMermaid);
+    if (blocks.length) {
+      const dark = document.documentElement.getAttribute('data-theme') !== 'light';
+      const fg = dark ? '#EEF0FA' : '#0F1222', dim = dark ? '#9AA1BD' : '#545B73';
+      const bkg = dark ? '#141833' : '#EEF0F7', line = dark ? 'rgba(255,255,255,.14)' : 'rgba(16,18,36,.14)';
+      mermaid.initialize({
+        startOnLoad: false, theme: 'base', securityLevel: 'loose',
+        state: { padding: 18, nodeSpacing: 40, rankSpacing: 48, useMaxWidth: true },
+        flowchart: { padding: 14, nodeSpacing: 36, rankSpacing: 44, useMaxWidth: true, htmlLabels: true },
+        themeVariables: {
+          fontFamily: 'Space Grotesk, ui-sans-serif, system-ui', fontSize: '14px',
+          primaryColor: bkg, primaryTextColor: fg, primaryBorderColor: '#10B981',
+          lineColor: dim, tertiaryColor: dark ? '#0C0D18' : '#FFFFFF', tertiaryBorderColor: line, tertiaryTextColor: dim,
+          background: 'transparent', mainBkg: bkg, nodeBorder: '#10B981',
+          clusterBkg: dark ? 'rgba(45,212,191,.07)' : 'rgba(15,143,107,.05)', clusterBorder: line,
+          edgeLabelBackground: dark ? '#0D0F1C' : '#FFFFFF', labelTextColor: fg,
+          transitionColor: dim, transitionLabelColor: dark ? '#34D399' : '#0F8F6B',
+          stateBkg: bkg, stateLabelColor: fg, altBackground: dark ? '#0C0D18' : '#F6F7FB',
+          compositeBackground: dark ? 'rgba(45,212,191,.07)' : 'rgba(15,143,107,.05)',
+          compositeTitleBackground: dark ? 'rgba(45,212,191,.14)' : 'rgba(15,143,107,.10)',
+          noteBkgColor: dark ? '#0D0F1C' : '#FFFFFF', noteBorderColor: line, noteTextColor: dim
+        }
+      });
+      let i = 0;
+      for (const code of blocks) {
+        const pre = code.closest('pre');
+        // Replace the outermost wrapper Jekyll/main.js put around the <pre>.
+        let host = pre;
+        for (const sel of ['.code-frame', '.highlighter-rouge', '.highlight']) {
+          const w = pre.closest(sel); if (w && w.contains(pre)) host = w;
+        }
+        const fig = document.createElement('figure');
+        fig.className = 'statechart';
+        fig.innerHTML = '<button type="button" class="statechart-expand" aria-label="View diagram full screen">'
+          + '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg>Full screen</button>'
+          + '<div class="statechart-canvas"></div><figcaption>statechart</figcaption>';
+        const src = code.textContent;
+        host.replaceWith(fig);
+        try {
+          const { svg } = await mermaid.render('sc-' + (i++), src);
+          fig.querySelector('.statechart-canvas').innerHTML = svg;
+        } catch (e) {
+          fig.querySelector('.statechart-canvas').innerHTML = '<pre></pre>';
+          fig.querySelector('pre').textContent = src;
+          fig.querySelector('.statechart-expand').remove();
+        }
+      }
+
+      // Full-screen viewer: one shared lightbox, zoom with buttons / wheel, Esc closes.
+      const lb = document.createElement('div');
+      lb.className = 'statechart-lightbox'; lb.setAttribute('role', 'dialog'); lb.setAttribute('aria-modal', 'true'); lb.setAttribute('aria-label', 'Diagram');
+      lb.innerHTML = '<div class="statechart-lightbox-bar"><span class="lb-title">statechart</span><div class="actions">'
+        + '<button type="button" data-zoom="-1" aria-label="Zoom out">−</button><button type="button" data-zoom="0" aria-label="Reset zoom">100%</button>'
+        + '<button type="button" data-zoom="1" aria-label="Zoom in">+</button><button type="button" data-close aria-label="Close">Close · Esc</button>'
+        + '</div></div><div class="statechart-lightbox-canvas"></div>';
+      document.body.appendChild(lb);
+      const canvas = lb.querySelector('.statechart-lightbox-canvas'), zoomLabel = lb.querySelector('[data-zoom="0"]');
+      let scale = 1, lastFocus = null;
+      const apply = () => { const s = canvas.querySelector('svg'); if (s) s.style.transform = 'scale(' + scale + ')'; zoomLabel.textContent = Math.round(scale * 100) + '%'; };
+      const close = () => { lb.classList.remove('open'); document.body.style.overflow = ''; canvas.innerHTML = ''; if (lastFocus) lastFocus.focus(); };
+      lb.addEventListener('click', e => {
+        const b = e.target.closest('button');
+        if (!b) { if (e.target === lb || e.target === canvas) close(); return; }
+        if (b.hasAttribute('data-close')) return close();
+        const z = +b.dataset.zoom; scale = z === 0 ? 1 : Math.min(4, Math.max(.4, scale * (z > 0 ? 1.25 : .8))); apply();
+      });
+      canvas.addEventListener('wheel', e => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); scale = Math.min(4, Math.max(.4, scale * (e.deltaY < 0 ? 1.1 : .9))); apply(); }, { passive: false });
+      document.addEventListener('keydown', e => { if (e.key === 'Escape' && lb.classList.contains('open')) close(); });
+      document.addEventListener('click', e => {
+        const btn = e.target.closest('.statechart-expand'); if (!btn) return;
+        const fig = btn.closest('.statechart'), svg = fig.querySelector('.statechart-canvas svg'); if (!svg) return;
+        lastFocus = btn; scale = 1;
+        const clone = svg.cloneNode(true); clone.removeAttribute('width'); clone.removeAttribute('height'); clone.style.maxWidth = 'none';
+        const vb = (svg.getAttribute('viewBox') || '').split(/\s+/).map(Number);
+        if (vb.length === 4 && vb[2]) { const fit = Math.min((innerWidth - 80) / vb[2], (innerHeight - 140) / vb[3]); clone.style.width = Math.round(vb[2] * Math.max(1, fit)) + 'px'; }
+        canvas.innerHTML = ''; canvas.appendChild(clone);
+        lb.querySelector('.lb-title').textContent = (fig.closest('.content')?.querySelector('h1')?.textContent.trim() || document.title.split(' | ')[0] || 'statechart');
+        lb.classList.add('open'); document.body.style.overflow = 'hidden'; apply(); lb.querySelector('[data-close]').focus();
+      });
+    }
+  </script>
 </body>
 </html>

@@ -5,9 +5,19 @@ description: "Conditional transitions — control flow with boolean guard functi
 
 Guards are **boolean functions** that control whether a transition is allowed to fire. When an event arrives, the interpreter evaluates each candidate transition's guard in order — the first transition whose guard returns `True` (or has no guard) wins. If every guard returns `False`, the event is discarded.
 
-## What are Guards?
+## 🛡️ What are Guards?
 
 A guard is a pure, synchronous function that answers one question: *"Should this transition happen right now?"* Guards inspect the machine's context and the incoming event data to make that decision.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "guard: canCheckout?" as g <<choice>>
+    [*] --> cart
+    cart --> g : CHECKOUT
+    g --> payment : ✅ items > 0
+    g --> cart : ❌ empty (stays put)
+```
 
 Key characteristics:
 
@@ -16,7 +26,7 @@ Key characteristics:
 - **Side-effect-free** — guards should only *read* context, never *modify* it. Use actions for mutations.
 - **Short-circuiting** — the first matching transition wins; remaining guards are not evaluated.
 
-## Guard Signature
+## ✍️ Guard Signature
 
 ```python
 def my_guard(context: dict, event: Event) -> bool:
@@ -27,7 +37,7 @@ def my_guard(context: dict, event: Event) -> bool:
 
 > **Params argument:** Guards may optionally accept a third `params` argument to receive parameters from a [parameterised guard](#parameterised-guards) config: `def my_guard(context, event, params): ...`. The interpreter arity-checks the callable, so existing 2-argument guards keep working unchanged.
 
-## JSON Guards
+## 📄 JSON Guards
 
 ### The `guard` Key (and Legacy `cond` Alias)
 
@@ -108,7 +118,15 @@ The last transition in the array has no `guard` key — it acts as a **fallback*
 
 > **Tip:** Always include a fallback transition as the last item. Without one, events may be silently discarded if no guard matches.
 
-## Composite Guards (`and` / `or` / `not`)
+## 🧩 Composite Guards (`and` / `or` / `not`)
+
+```mermaid
+flowchart LR
+    A["isAdult"] --> AND(("and"))
+    B["hasFunds"] --> AND
+    AND --> T["allowed"]
+    N["isBanned"] --> NOT(("not")) --> AND
+```
 
 Guards can be composed from other guards using the built-in `and`, `or`, and `not` operators — no user implementation is needed for the composition itself, only for the leaf guards it references:
 
@@ -132,7 +150,7 @@ from src.xstate_statemachine import create_machine, SyncInterpreter, MachineLogi
 config = {
     "id": "checkout",
     "initial": "cart",
-    "context": {"age": 20, "hasFunds": True},
+    "context": {"age": 20, "has_funds": True},
     "states": {
         "cart": {
             "on": {
@@ -155,10 +173,10 @@ config = {
 
 
 class CheckoutLogic(MachineLogic):
-    def isAdult(self, context, event):
+    def is_adult(self, context, event):
         return context.get("age", 0) >= 18
 
-    def hasFunds(self, context, event):
+    def has_funds(self, context, event):
         return context.get("hasFunds", False)
 
 
@@ -197,7 +215,7 @@ interp.send("OPEN")
 assert interp.matches("door.open")
 ```
 
-## Built-in `stateIn` Guard
+## 📍 Built-in `stateIn` Guard
 
 `stateIn` is a built-in guard, satisfied when a given state is part of the machine's active configuration — either as an active leaf or as an ancestor of one. No implementation is required:
 
@@ -250,7 +268,7 @@ The state id accepts both the `#machine.a.b` and bare `machine.a.b` spellings.
 
 > **Note:** If you register your own guard named `stateIn` in `MachineLogic.guards`, your implementation takes precedence over the built-in — the same resolution order used for built-in actions.
 
-## Parameterised Guards
+## 🎛️ Parameterised Guards
 
 A guard can be given a `params` object, which the interpreter resolves and passes to the guard function as an optional **third argument**:
 
@@ -294,7 +312,7 @@ config = {
 
 class BankLogic(MachineLogic):
     @guard
-    def hasSufficientFunds(self, context, event, params):
+    def has_sufficient_funds(self, context, event, params):
         min_amount = (params or {}).get("minAmount", 0)
         amount = event.payload.get("amount", 0)
         return amount >= min_amount and context["balance"] >= amount
@@ -314,7 +332,7 @@ interp2.stop()
 
 The interpreter arity-checks the guard callable, so a plain two-argument `(context, event)` guard keeps working unchanged even if it's never given `params`. `params` may also be a function of `{context, event}`, re-evaluated on every use, instead of a static dict.
 
-## Guard Implementation with MachineLogic
+## 🧠 Guard Implementation with MachineLogic
 
 When using the JSON configuration approach, implement guards as methods on a `MachineLogic` subclass:
 
@@ -344,10 +362,10 @@ config = {
 }
 
 class AgeLogic(MachineLogic):
-    def isAdult(self, context, event):
+    def is_adult(self, context, event):
         return context.get("age", 0) >= 18
 
-    def isTeen(self, context, event):
+    def is_teen(self, context, event):
         return 13 <= context.get("age", 0) < 18
 
 machine = create_machine(config, logic=AgeLogic())
@@ -358,7 +376,7 @@ print(interp.current_state_ids)  # {"ageGate.teen"} — age is 16
 interp.stop()
 ```
 
-## Pythonic Guards
+## 🐍 Pythonic Guards
 
 ### `@guard` Decorator
 
@@ -426,7 +444,16 @@ print(interp.current_state_ids)  # {"ageGate.rejected"} — age is 16
 interp.stop()
 ```
 
-## Guard Evaluation Order
+## 🥇 Guard Evaluation Order
+
+```mermaid
+flowchart LR
+    E["ENTER"] --> G1{"isVIP?"}
+    G1 -- yes --> A["vip_lounge"]
+    G1 -- no --> G2{"hasTicket?"}
+    G2 -- yes --> B["main_hall"]
+    G2 -- no --> C["denied<br/><small>unguarded fallback</small>"]
+```
 
 **The FIRST matching guard wins.** Order matters. The interpreter evaluates candidate transitions from top to bottom (in arrays) or first to last (in `|` chains):
 
@@ -443,7 +470,7 @@ If a user is both VIP *and* adult, they go to `vip_lounge` because `isVIP` is ev
 
 > **Warning:** Placing the fallback (no-guard) transition before guarded transitions means the fallback always wins and the guards are never checked. Always put fallbacks last.
 
-## Guards with Context
+## 🧠 Guards with Context
 
 Guards commonly read context to make decisions:
 
@@ -469,7 +496,7 @@ config = {
 }
 
 class BankLogic(MachineLogic):
-    def hasSufficientFunds(self, context, event):
+    def has_sufficient_funds(self, context, event):
         amount = event.payload.get("amount", 0)
         return context["balance"] >= amount
 
@@ -481,17 +508,17 @@ print(interp.current_state_ids)  # {"withdrawalMachine.processing"}
 interp.stop()
 ```
 
-## Guards with Event Data
+## 📨 Guards with Event Data
 
 Guards can also inspect the incoming event payload:
 
 ```python
 class RegistrationLogic(MachineLogic):
-    def isValidAge(self, context, event):
+    def is_valid_age(self, context, event):
         age = event.payload.get("age", 0)
         return isinstance(age, int) and 0 < age < 150
 
-    def hasAcceptedTerms(self, context, event):
+    def has_accepted_terms(self, context, event):
         return event.payload.get("termsAccepted", False) is True
 ```
 
@@ -499,7 +526,7 @@ class RegistrationLogic(MachineLogic):
 interp.send("REGISTER", age=25, termsAccepted=True)
 ```
 
-## Combining Guards
+## 🔗 Combining Guards
 
 When you need to check multiple conditions, you have two approaches:
 
@@ -507,7 +534,7 @@ When you need to check multiple conditions, you have two approaches:
 
 ```python
 class Logic(MachineLogic):
-    def canPurchase(self, context, event):
+    def can_purchase(self, context, event):
         has_funds = context["balance"] >= event.payload.get("price", 0)
         is_in_stock = context.get("stock", 0) > 0
         return has_funds and is_in_stock
@@ -525,7 +552,7 @@ class Logic(MachineLogic):
 
 > **Tip:** Use approach 1 when conditions are closely related. Use approach 2 when each failure case needs a different target state.
 
-## Guards Must Be Synchronous
+## ⛔ Guards Must Be Synchronous
 
 Guards **cannot** be `async def`. Attempting to register an async guard raises `NotSupportedError` immediately:
 
@@ -577,7 +604,7 @@ Whatever the policy, the raise is observable via the `on_guard_error(interpreter
 
 ```python
 class Logic(MachineLogic):
-    def isValid(self, context, event):
+    def is_valid(self, context, event):
         # If "data" key is missing, KeyError is raised
         # guardErrorPolicy="false" (the default) treats this guard as False
         return context["data"]["value"] > 0
@@ -587,7 +614,7 @@ class Logic(MachineLogic):
 
 ```python
 class Logic(MachineLogic):
-    def isValid(self, context, event):
+    def is_valid(self, context, event):
         data = context.get("data")
         if data is None:
             return False
@@ -626,19 +653,19 @@ config = {
 }
 
 class AgeVerificationLogic(MachineLogic):
-    def isSenior(self, context, event):
+    def is_senior(self, context, event):
         age = event.payload.get("age", -1)
         return age >= 65
 
-    def isAdult(self, context, event):
+    def is_adult(self, context, event):
         age = event.payload.get("age", -1)
         return 18 <= age < 65
 
-    def isTeen(self, context, event):
+    def is_teen(self, context, event):
         age = event.payload.get("age", -1)
         return 13 <= age < 18
 
-    def isChild(self, context, event):
+    def is_child(self, context, event):
         age = event.payload.get("age", -1)
         return 0 <= age < 13
 

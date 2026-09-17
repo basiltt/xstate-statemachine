@@ -7,7 +7,15 @@ description: "Observe every event, transition, action, guard, and service with p
 
 Plugins are **observers** that watch machine execution without modifying behavior. They hook into the interpreter's lifecycle to add cross-cutting concerns like logging, metrics, debugging, auditing, and performance monitoring.
 
-## What are Plugins?
+## 🔌 What are Plugins?
+
+```mermaid
+flowchart LR
+    I["⚙️ interpreter"] -- on_transition --> L["🪵 LoggingInspector"]
+    I -- on_action_execute --> M["📈 MetricsPlugin"]
+    I -- on_guard_error / on_action_error --> A["🚨 AlertPlugin"]
+    L -. "observe only — never mutate" .-> I
+```
 
 A plugin implements the **Observer pattern**: it subscribes to lifecycle events in the interpreter and reacts to them. Plugins never alter the machine's state or transitions — they only observe. This makes them safe to add or remove without affecting business logic.
 
@@ -27,7 +35,7 @@ interp.use(MyPlugin())  # Register the plugin
 interp.start()
 ```
 
-## Built-in: LoggingInspector
+## 🪵 Built-in: LoggingInspector
 
 The library ships with `LoggingInspector`, a ready-to-use plugin that emits detailed, emoji-prefixed log messages for every significant machine event. It is invaluable for debugging complex state machines.
 
@@ -109,7 +117,7 @@ Guard evaluation messages include pass/fail indicators:
 
 > **Tip:** Set `logging.basicConfig(level=logging.INFO)` at the top of your script to see `LoggingInspector` output. Without this, Python's default logging level (`WARNING`) will suppress the messages.
 
-## Custom Plugins with PluginBase
+## 🧩 Custom Plugins with PluginBase
 
 Create custom plugins by subclassing `PluginBase` and overriding any hooks you need:
 
@@ -156,7 +164,7 @@ metrics.report()
 # Event frequencies: {'START': 1, 'PROCESS': 1, 'FINISH': 1}
 ```
 
-## Plugin Hooks Reference
+## 🪝 Plugin Hooks Reference
 
 Every hook receives the `interpreter` instance as its first argument, giving plugins full read access to the machine's current state, context, and configuration.
 
@@ -336,7 +344,7 @@ def on_done(self, interpreter, output):
     print(f"Machine '{interpreter.id}' done. Output: {output!r}")
 ```
 
-## Multiple Plugins
+## 🧬 Multiple Plugins
 
 You can attach multiple plugins to a single interpreter. They execute in registration order:
 
@@ -360,7 +368,7 @@ interp.start()
 > interp = SyncInterpreter(machine).use(LoggingInspector()).use(MetricsPlugin())
 > ```
 
-## Complete Example: Custom Audit Logger
+## 📜 Complete Example: Custom Audit Logger
 
 ```python
 import json
@@ -449,7 +457,7 @@ print(audit.export_json())
 # ]
 ```
 
-## Complete Example: Performance Monitoring
+## 📈 Complete Example: Performance Monitoring
 
 ```python
 import time
@@ -523,7 +531,7 @@ interp.stop()
 #   increment: 1
 ```
 
-## Complete Example: State History Tracker
+## 🕰️ Complete Example: State History Tracker
 
 ```python
 from xstate_statemachine import PluginBase
@@ -614,7 +622,7 @@ print(tracker.current_state)  # ['nav.home']
 print(tracker.previous_state)  # ['nav.contact']
 ```
 
-## Plugins with the Async Interpreter
+## ⚡ Plugins with the Async Interpreter
 
 Plugins work identically with both `SyncInterpreter` and `Interpreter`. The hooks themselves are always **synchronous** — they are called by the interpreter before/after async operations, but the hooks do not need to be `async def`.
 

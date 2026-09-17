@@ -5,13 +5,23 @@ description: "Terminal completion states — signal that a machine or region has
 
 A final state is a **terminal** state — the machine (or a compound state region) has completed its work. No outgoing transitions are allowed. When a final state is entered, it signals **done** to its parent, enabling powerful composition patterns.
 
-## What Are Final States?
+## 🏁 What Are Final States?
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> draft
+    draft --> review : SUBMIT
+    review --> approved : APPROVE
+    review --> draft : REJECT
+    approved --> [*] : ✅ done · onDone fires in the parent
+```
 
 Final states represent the **end** of a workflow. Once a machine (or a nested region) enters a final state, it stops processing events for that branch. There are no outgoing transitions — the machine is finished.
 
 Final states are the statechart equivalent of a function's `return` statement. They tell the parent "I'm done" and optionally pass data back.
 
-## JSON: `"type": "final"`
+## 📄 JSON: `"type": "final"`
 
 ```json
 {
@@ -21,7 +31,7 @@ Final states are the statechart equivalent of a function's `return` statement. T
 }
 ```
 
-## Pythonic: `State("done", final=True)`
+## 🐍 Pythonic: `State("done", final=True)`
 
 ```python
 from xstate_statemachine import State
@@ -31,7 +41,7 @@ done = State("done", final=True)
 
 > **Warning:** A final state cannot have outgoing transitions (`on`), child states (`states`), or be marked as `parallel`. Attempting any of these will raise an `InvalidConfigError`.
 
-## Basic Example: Checkout Flow
+## 🛒 Basic Example: Checkout Flow
 
 A simple checkout that progresses through three stages:
 
@@ -81,7 +91,18 @@ interp.stop()
 
 Once the machine reaches `confirmation`, it stays there. No event can move it out — that's the guarantee of a final state.
 
-## What Happens When a Final State Is Entered
+## 🎬 What Happens When a Final State Is Entered
+
+```mermaid
+sequenceDiagram
+    participant C as child region
+    participant F as final state
+    participant P as parent state
+    C->>F: transition
+    F->>F: ① entry actions
+    F-->>P: ② done.state.parent (+ output)
+    P->>P: ③ onDone transition
+```
 
 When a final state is entered, several things happen:
 
@@ -100,7 +121,7 @@ from xstate_statemachine.events import DoneEvent
 # This fires on the parent compound state
 ```
 
-## Final States in Compound States
+## 🪆 Final States in Compound States
 
 The most powerful use of final states is inside **compound (hierarchical) states**. When a child reaches a final state, the parent receives a `done.state.*` event and can react via `onDone`:
 
@@ -181,7 +202,7 @@ The flow:
 
 > **Tip:** `onDone` is the key mechanism for composing sub-workflows. Each compound state can encapsulate a multi-step process, and the parent only needs to know "when it's done."
 
-## onDone with Actions
+## 🎬 onDone with Actions
 
 The `onDone` transition can include actions, just like any other transition:
 
@@ -226,7 +247,7 @@ config = {
 }
 
 class CompletionLogic(MachineLogic):
-    def logCompletion(self, interpreter, context, event, action_def):
+    def log_completion(self, interpreter, context, event, action_def):
         print("Processing complete! Moving to finished state.")
 
 machine = create_machine(config, logic=CompletionLogic())
@@ -240,7 +261,7 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
-## Final States in Parallel Regions
+## 🎛️ Final States in Parallel Regions
 
 In a parallel state, each region can have its own final state. Important rules:
 
@@ -334,7 +355,7 @@ interp.stop()
 
 > **Note:** The `onDone` on `processing` only fires when **both** `upload` and `validate` have reached their final states. This is how parallel states enable "wait for all" patterns.
 
-## Multiple Final States: Success/Failure Patterns
+## 🔀 Multiple Final States: Success/Failure Patterns
 
 A machine can have **multiple** final states to represent different outcomes:
 
@@ -376,7 +397,7 @@ config = {
 }
 
 class PaymentLogic(MachineLogic):
-    def chargeCard(self, interpreter, context, event):
+    def charge_card(self, interpreter, context, event):
         # Simulate successful payment
         return {"transactionId": "TXN-9876"}
 
@@ -423,7 +444,7 @@ This pattern is useful when a parent needs to distinguish between different comp
 }
 ```
 
-## Pythonic Final States
+## 🐍 Pythonic Final States
 
 ### In StateMachine Class
 
@@ -507,7 +528,7 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
-## Complete Example: Order Processing with Multiple Final Outcomes
+## 📦 Complete Example: Order Processing with Multiple Final Outcomes
 
 An order processing system with three possible terminal states:
 
@@ -596,38 +617,38 @@ config = {
 }
 
 class OrderLogic(MachineLogic):
-    def assignOrderId(self, interpreter, context, event, action_def):
+    def assign_order_id(self, interpreter, context, event, action_def):
         import random
         context["orderId"] = f"ORD-{random.randint(10000, 99999)}"
         print(f"Order created: {context['orderId']}")
 
-    def setRejectionReason(self, interpreter, context, event, action_def):
+    def set_rejection_reason(self, interpreter, context, event, action_def):
         context["reason"] = event.data.get("reason", "Unknown")
 
-    def setStockFailure(self, interpreter, context, event, action_def):
+    def set_stock_failure(self, interpreter, context, event, action_def):
         context["reason"] = "Out of stock"
 
-    def setShipFailure(self, interpreter, context, event, action_def):
+    def set_ship_failure(self, interpreter, context, event, action_def):
         context["reason"] = "Shipping failed"
 
-    def shipOrder(self, interpreter, context, event):
+    def ship_order(self, interpreter, context, event):
         print(f"Shipping order {context['orderId']}...")
         return {"trackingNumber": "TRACK-12345"}
 
-    def wasShipped(self, context, event):
+    def was_shipped(self, context, event):
         return context.get("reason") is None
 
-    def calculateRefund(self, interpreter, context, event, action_def):
+    def calculate_refund(self, interpreter, context, event, action_def):
         context["refundAmount"] = 49.99
         print(f"Refund calculated: ${context['refundAmount']}")
 
-    def sendConfirmationEmail(self, interpreter, context, event, action_def):
+    def send_confirmation_email(self, interpreter, context, event, action_def):
         print(f"Order {context['orderId']} completed!")
 
-    def sendCancellationEmail(self, interpreter, context, event, action_def):
+    def send_cancellation_email(self, interpreter, context, event, action_def):
         print(f"Order {context['orderId']} cancelled: {context['reason']}")
 
-    def processRefund(self, interpreter, context, event, action_def):
+    def process_refund(self, interpreter, context, event, action_def):
         print(f"Refund of ${context['refundAmount']} processed for {context['orderId']}")
 
 machine = create_machine(config, logic=OrderLogic())
@@ -637,7 +658,7 @@ interp = SyncInterpreter(machine).start()
 interp.send("APPROVE")
 interp.send("PICKED")
 interp.send("PACKED")
-# shipOrder service runs → shipped (final) → onDone → evaluating → completed
+# ship_order service runs → shipped (final) → onDone → evaluating → completed
 
 print(interp.active_state_ids)
 # {'orderProcess.completed'}
@@ -645,7 +666,7 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
-## Complete Example: Multi-Step Approval Workflow
+## ✅ Complete Example: Multi-Step Approval Workflow
 
 A document approval process that requires multiple sign-offs:
 
@@ -766,7 +787,7 @@ This workflow demonstrates how final states compose with compound states:
 - `published` is the top-level final state for successful approvals
 - `returned` allows the document to be revised and resubmitted
 
-## Carrying Data Out with `output`
+## 📤 Carrying Data Out with `output`
 
 A final state can declare an `output` value — the data it hands back to whatever consumes the completion. `output` may be a literal (dict, string, number) or a callable of `({context, event})`, matching XState's dynamic-output form. Whichever final state is entered, its resolved `output` becomes the machine's `interp.output`.
 

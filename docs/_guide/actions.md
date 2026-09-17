@@ -5,7 +5,7 @@ description: "Side effects on entry, exit, and transitions — logging, context 
 
 Actions are **side effects** that execute at specific moments in a state machine's lifecycle. They don't control flow — they *do* things: update context, log messages, send notifications, or trigger external systems.
 
-## What are Actions?
+## 🎬 What are Actions?
 
 An action is a callable that the interpreter invokes at a well-defined point during a transition. Actions are the primary mechanism for making your state machine *do* something beyond simply switching states.
 
@@ -16,7 +16,7 @@ Key characteristics:
 - **Deterministic ordering** — the interpreter runs actions in a predictable, documented order.
 - **Synchronous** (in `SyncInterpreter`) — async actions raise `NotSupportedError`.
 
-## Action Signature
+## ✍️ Action Signature
 
 ```python
 def my_action(interpreter, context, event, action_def) -> None:
@@ -32,7 +32,7 @@ def my_action(interpreter, context, event, action_def) -> None:
 
 > **Note:** The action signature `(interpreter, context, event, action_def)` is different from the guard signature `(context, event)`. Actions get the interpreter and action definition; guards do not.
 
-## When Actions Run
+## ⏰ When Actions Run
 
 | Trigger | When It Fires | Defined In |
 |---------|---------------|------------|
@@ -40,14 +40,22 @@ def my_action(interpreter, context, event, action_def) -> None:
 | **Exit actions** | When a state is exited | `"exit"` on the state |
 | **Transition actions** | During a transition (between exit and entry) | `"actions"` on the transition |
 
-## Execution Order
+## 🔢 Execution Order
 
 When a transition fires from state A to state B, actions execute in this strict order:
 
-```
-1. Exit actions on state A          ← source state's "exit"
-2. Transition actions               ← the transition's "actions"
-3. Entry actions on state B         ← target state's "entry"
+```mermaid
+sequenceDiagram
+    participant E as 📨 event
+    participant A as state A (source)
+    participant T as transition
+    participant B as state B (target)
+    E->>A: SUBMIT arrives
+    A->>A: ① exit actions
+    A->>T: leave A
+    T->>T: ② transition actions
+    T->>B: enter B
+    B->>B: ③ entry actions
 ```
 
 This order is guaranteed and consistent across all interpreter types.
@@ -60,7 +68,7 @@ This order is guaranteed and consistent across all interpreter types.
 # 4. showSpinner   (entry action on "submitting")
 ```
 
-## JSON Actions
+## 📄 JSON Actions
 
 ### Single Action (String)
 
@@ -125,7 +133,7 @@ Entry and exit support arrays too:
 }
 ```
 
-## Action Implementation with MachineLogic
+## 🧠 Action Implementation with MachineLogic
 
 When using JSON configuration, implement actions as methods on a `MachineLogic` subclass:
 
@@ -159,25 +167,25 @@ config = {
 }
 
 class FormLogic(MachineLogic):
-    def loadDraft(self, interpreter, context, event, action_def):
+    def load_draft(self, interpreter, context, event, action_def):
         context["draft"] = "Loaded from storage"
         print("Loading saved draft...")
 
-    def saveDraft(self, interpreter, context, event, action_def):
+    def save_draft(self, interpreter, context, event, action_def):
         print(f"Auto-saving draft: '{context['draft']}'")
 
     def validate(self, interpreter, context, event, action_def):
         context["isValid"] = len(context["draft"]) > 0
         print(f"Validating... valid={context['isValid']}")
 
-    def clearErrors(self, interpreter, context, event, action_def):
+    def clear_errors(self, interpreter, context, event, action_def):
         context["errors"] = []
         print("Errors cleared.")
 
-    def showSpinner(self, interpreter, context, event, action_def):
+    def show_spinner(self, interpreter, context, event, action_def):
         print("Showing loading spinner...")
 
-    def setError(self, interpreter, context, event, action_def):
+    def set_error(self, interpreter, context, event, action_def):
         error_msg = event.payload.get("message", "Unknown error")
         context["errors"].append(error_msg)
         print(f"Error: {error_msg}")
@@ -188,16 +196,16 @@ interp = SyncInterpreter(machine).start()
 
 interp.send("SUBMIT")
 # Output (in order):
-#   Auto-saving draft: 'Loaded from storage'   (exit: saveDraft)
+#   Auto-saving draft: 'Loaded from storage'   (exit: save_draft)
 #   Validating... valid=True                     (transition: validate)
-#   Errors cleared.                              (transition: clearErrors)
-#   Showing loading spinner...                   (entry: showSpinner)
+#   Errors cleared.                              (transition: clear_errors)
+#   Showing loading spinner...                   (entry: show_spinner)
 
 interp.send("SUCCESS")
 interp.stop()
 ```
 
-## Pythonic Actions
+## 🐍 Pythonic Actions
 
 ### `@action` Decorator
 
@@ -295,7 +303,7 @@ class FormMachine(StateMachine):
     )
 ```
 
-## Modifying Context in Actions
+## 📝 Modifying Context in Actions
 
 Actions are the designated place to mutate context. Modify the dictionary directly:
 
@@ -317,11 +325,11 @@ config = {
 }
 
 class TodoLogic(MachineLogic):
-    def addTodo(self, interpreter, context, event, action_def):
+    def add_todo(self, interpreter, context, event, action_def):
         title = event.payload.get("title", "Untitled")
         context["todos"].append({"title": title, "done": False})
 
-    def completeTodo(self, interpreter, context, event, action_def):
+    def complete_todo(self, interpreter, context, event, action_def):
         index = event.payload.get("index", 0)
         if 0 <= index < len(context["todos"]):
             context["todos"][index]["done"] = True
@@ -340,13 +348,13 @@ print(interp.context["completedCount"])  # 1
 interp.stop()
 ```
 
-## Accessing Event Data in Actions
+## 📨 Accessing Event Data in Actions
 
 The `event` parameter carries the payload that was sent with the event:
 
 ```python
 class Logic(MachineLogic):
-    def storeUser(self, interpreter, context, event, action_def):
+    def store_user(self, interpreter, context, event, action_def):
         # Access payload sent via: interp.send("LOGIN", username="alice", role="admin")
         context["username"] = event.payload.get("username", "unknown")
         context["role"] = event.payload.get("role", "guest")
@@ -356,12 +364,12 @@ For `DoneEvent` from services, the result is on `event.data`:
 
 ```python
 class Logic(MachineLogic):
-    def saveResult(self, interpreter, context, event, action_def):
+    def save_result(self, interpreter, context, event, action_def):
         # event.data holds the service's return value
         context["result"] = event.data
 ```
 
-## Multiple Actions on One Transition
+## 🔗 Multiple Actions on One Transition
 
 When multiple actions are defined on a single transition, they execute **in order**, left-to-right:
 
@@ -393,7 +401,7 @@ class Logic(MachineLogic):
 # 4. Submitting...
 ```
 
-## Action Definition (`action_def` Parameter)
+## 🧾 Action Definition (`action_def` Parameter)
 
 The `action_def` parameter is an `ActionDefinition` object that carries metadata about the action:
 
@@ -420,13 +428,13 @@ You can define static parameters in the JSON config:
 
 ```python
 class Logic(MachineLogic):
-    def showNotification(self, interpreter, context, event, action_def):
+    def show_notification(self, interpreter, context, event, action_def):
         msg = action_def.params.get("message", "")
         level = action_def.params.get("level", "info")
         print(f"[{level.upper()}] {msg}")
 ```
 
-## Built-in Action Creators (v0.6.0)
+## 🧰 Built-in Action Creators (v0.6.0)
 
 You rarely need to hand-write these. Import them and use them directly in a
 config — each returns a plain action definition, so they also work as raw JSON.
@@ -511,7 +519,7 @@ The `enqueue` object exposes `assign`, `raise_`, `send_to`, `send_parent`,
 
 ---
 
-## Error Handling in Actions
+## 🚨 Error Handling in Actions
 
 If an action raises, the interpreter **contains** the error: it is logged, the
 transition still completes, and the machine keeps running. A single buggy side
@@ -521,7 +529,7 @@ This means `.send()` does **not** re-raise your action's exception:
 
 ```python
 class Logic(MachineLogic):
-    def riskyAction(self, interpreter, context, event, action_def):
+    def risky_action(self, interpreter, context, event, action_def):
         raise ValueError("Something went wrong!")
 
 interp.send("GO")
@@ -535,7 +543,7 @@ with a guard:
 
 ```python
 class Logic(MachineLogic):
-    def saveToDatabase(self, interpreter, context, event, action_def):
+    def save_to_database(self, interpreter, context, event, action_def):
         try:
             # Simulate database save
             data = context.get("formData", {})
@@ -552,7 +560,7 @@ class Logic(MachineLogic):
 
 ```python
 class Logic(MachineLogic):
-    def hasError(self, context, event):
+    def has_error(self, context, event):
         return context.get("saveStatus") == "error"
 ```
 
@@ -592,7 +600,7 @@ creators alike.
 > the machine as `onError`, which is the idiomatic way to model expected errors.
 > See [Services & Invoke](../services/).
 
-## When an Action Raises
+## 💥 When an Action Raises
 
 The behavior above is one of three policies, controlled by the machine-config key **`actionErrorPolicy`**:
 
@@ -639,14 +647,14 @@ Pass data between actions through context, not through side channels:
 
 ```python
 class Logic(MachineLogic):
-    def validateForm(self, interpreter, context, event, action_def):
+    def validate_form(self, interpreter, context, event, action_def):
         # Store validation result in context
         context["validationResult"] = {
             "isValid": True,
             "errors": []
         }
 
-    def submitForm(self, interpreter, context, event, action_def):
+    def submit_form(self, interpreter, context, event, action_def):
         # Read from context — don't recompute
         if context["validationResult"]["isValid"]:
             print("Submitting valid form...")
@@ -660,7 +668,7 @@ Use the interpreter ID for traceable logs in multi-machine systems:
 import logging
 
 class Logic(MachineLogic):
-    def processPayment(self, interpreter, context, event, action_def):
+    def process_payment(self, interpreter, context, event, action_def):
         logging.info(
             "[%s] Processing payment of $%.2f",
             interpreter.id,
@@ -733,22 +741,22 @@ config = {
 
 class ContactFormLogic(MachineLogic):
     # ---- Entry Actions ----
-    def loadDraft(self, interpreter, context, event, action_def):
+    def load_draft(self, interpreter, context, event, action_def):
         if context["draft"]:
             context["formData"] = dict(context["draft"])
             print("Draft restored from auto-save.")
         else:
             print("Starting with empty form.")
 
-    def showSpinner(self, interpreter, context, event, action_def):
+    def show_spinner(self, interpreter, context, event, action_def):
         context["isLoading"] = True
         print("Loading...")
 
-    def showConfirmation(self, interpreter, context, event, action_def):
+    def show_confirmation(self, interpreter, context, event, action_def):
         sid = context["submissionId"]
         print(f"Thank you! Your submission ID is: {sid}")
 
-    def validateAll(self, interpreter, context, event, action_def):
+    def validate_all(self, interpreter, context, event, action_def):
         errors = []
         fd = context["formData"]
         if not fd.get("name"):
@@ -765,40 +773,40 @@ class ContactFormLogic(MachineLogic):
             interpreter.send("VALIDATION_PASS")
 
     # ---- Exit Actions ----
-    def saveDraft(self, interpreter, context, event, action_def):
+    def save_draft(self, interpreter, context, event, action_def):
         context["draft"] = dict(context["formData"])
         print("Draft auto-saved.")
 
-    def hideSpinner(self, interpreter, context, event, action_def):
+    def hide_spinner(self, interpreter, context, event, action_def):
         context["isLoading"] = False
 
     # ---- Transition Actions ----
-    def updateField(self, interpreter, context, event, action_def):
+    def update_field(self, interpreter, context, event, action_def):
         field = event.payload.get("field")
         value = event.payload.get("value", "")
         if field and field in context["formData"]:
             context["formData"][field] = value
 
-    def clearErrors(self, interpreter, context, event, action_def):
+    def clear_errors(self, interpreter, context, event, action_def):
         context["errors"] = []
 
-    def setErrors(self, interpreter, context, event, action_def):
+    def set_errors(self, interpreter, context, event, action_def):
         if event.payload.get("errors"):
             context["errors"] = event.payload["errors"]
 
-    def showFieldErrors(self, interpreter, context, event, action_def):
+    def show_field_errors(self, interpreter, context, event, action_def):
         context["errors"] = ["Please fill in all required fields"]
         print(f"Errors: {context['errors']}")
 
-    def storeSubmissionId(self, interpreter, context, event, action_def):
+    def store_submission_id(self, interpreter, context, event, action_def):
         context["submissionId"] = event.payload.get("id", "UNKNOWN")
 
-    def clearDraft(self, interpreter, context, event, action_def):
+    def clear_draft(self, interpreter, context, event, action_def):
         context["draft"] = None
 
     # ---- Guards ----
     @guard
-    def hasRequiredFields(self, context, event):
+    def has_required_fields(self, context, event):
         fd = context["formData"]
         return bool(fd.get("name") and fd.get("email") and fd.get("message"))
 
@@ -963,10 +971,16 @@ loader.register_logic_module(my_services)
 # without passing logic_modules every time
 ```
 
-> **Naming Convention:** The auto-discovery maps Python `snake_case` to JSON `camelCase`:
-> - `validate_input` → `validateInput`
-> - `is_admin` → `isAdmin`
-> - `fetch_user_data` → `fetchUserData`
+> **Naming Convention:** Write Python in PEP 8 `snake_case`; keep the JSON in XState's `camelCase`. Matching is **case- and separator-insensitive** on both sides — every entry point (`MachineLogic` dicts, subclass methods, `logic_modules`, `logic_providers`, the Pythonic decorators) resolves the same way:
+>
+> | JSON name | Python implementation |
+> |---|---|
+> | `validateInput` | `def validate_input(...)` |
+> | `logHTTPStatus` | `def log_http_status(...)` — acronyms are fine |
+> | `fetchUserV2` | `def fetch_user_v2(...)` — digits are fine |
+> | `fetch-data`, `inline:machine.state#entry[0]` | `def fetch_data(...)`, `def inline_machine_state_entry_0(...)` — Stately's non-identifier names need no decorator |
+>
+> An exact-name entry always wins over an alias, and registering two *different* callables that differ only by case/separators (`fetch_data` **and** `fetchData`) is rejected at `create_machine()` as ambiguous. This is exactly what `xsm gt` generates, so hand-written and generated logic look the same.
 
 ## See Also
 

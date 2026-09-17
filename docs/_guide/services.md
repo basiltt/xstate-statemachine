@@ -5,7 +5,7 @@ description: "Async operations — API calls, database queries, and external int
 
 Services represent **external operations** — API calls, database queries, file reads, computations — that a state invokes when it is entered. When the service completes, the machine automatically transitions via `onDone`; if it fails, the machine transitions via `onError`.
 
-## What are Services?
+## 📞 What are Services?
 
 A service is a callable that runs when a state is entered and produces a result (or an error). Services bridge the gap between your state machine's declarative flow and the imperative world of I/O operations.
 
@@ -16,7 +16,15 @@ Key characteristics:
 - **Error-aware** — exceptions are caught and routed to `onError` handlers.
 - **Sync or async** — `SyncInterpreter` requires sync services; `Interpreter` supports async.
 
-## JSON Invoke Structure
+## 🧱 JSON Invoke Structure
+
+```mermaid
+flowchart LR
+    S["state <b>loading</b>"] --> I["invoke<br/><small>src: fetchUser · id · input</small>"]
+    I -- "resolves" --> D["onDone<br/><small>event.data = return value</small>"]
+    I -- "raises" --> E["onError<br/><small>event.data = exception</small>"]
+    S -. "leave state early" .-> X["service cancelled"]
+```
 
 The `invoke` property on a state defines which service to call and how to handle the result:
 
@@ -64,7 +72,7 @@ def fetch_user(interpreter, context, event):
     return {"id": user_id, "name": "Ada"}
 ```
 
-## Basic Invoke Example
+## 🚀 Basic Invoke Example
 
 A complete example of a user-loading machine:
 
@@ -98,14 +106,14 @@ config = {
 }
 
 class UserLogic(MachineLogic):
-    def fetchUser(self, interpreter, context, event):
+    def fetch_user(self, interpreter, context, event):
         # Simulate an API call (sync version)
         return {"id": 1, "name": "Alice", "email": "alice@example.com"}
 
-    def storeUser(self, interpreter, context, event, action_def):
+    def store_user(self, interpreter, context, event, action_def):
         context["user"] = event.data
 
-    def storeError(self, interpreter, context, event, action_def):
+    def store_error(self, interpreter, context, event, action_def):
         context["error"] = str(event.data)
 
 machine = create_machine(config, logic=UserLogic())
@@ -119,7 +127,7 @@ print(interp.current_state_ids)
 interp.stop()
 ```
 
-## Service Implementation
+## 🧠 Service Implementation
 
 ### Service Signature
 
@@ -142,7 +150,7 @@ For use with `SyncInterpreter`:
 
 ```python
 class UserLogicSync(MachineLogic):
-    def fetchUser(self, interpreter, context, event):
+    def fetch_user(self, interpreter, context, event):
         import requests
         user_id = context.get("userId", 1)
         resp = requests.get(f"https://jsonplaceholder.typicode.com/users/{user_id}")
@@ -156,7 +164,7 @@ For use with the async `Interpreter`:
 
 ```python
 class UserLogicAsync(MachineLogic):
-    async def fetchUser(self, interpreter, context, event):
+    async def fetch_user(self, interpreter, context, event):
         import aiohttp
         user_id = context.get("userId", 1)
         async with aiohttp.ClientSession() as session:
@@ -168,7 +176,7 @@ class UserLogicAsync(MachineLogic):
 
 > **Warning:** The `SyncInterpreter` raises `NotSupportedError` when the state that invokes an `async def` service is entered (e.g. on the `send()` call that triggers the transition) — not when the machine is created or started. Use the async `Interpreter` for async services.
 
-## onDone Handling
+## ✅ onDone Handling
 
 When a service completes successfully, the interpreter:
 
@@ -194,7 +202,7 @@ The `onDone` transition can include both a target state and actions — just lik
 }
 ```
 
-## onError Handling
+## ❌ onError Handling
 
 When a service raises an exception, the interpreter:
 
@@ -212,33 +220,33 @@ When a service raises an exception, the interpreter:
 }
 ```
 
-## Accessing Service Results
+## 📦 Accessing Service Results
 
 In `onDone` actions, the service's return value is available on `event.data`:
 
 ```python
 class Logic(MachineLogic):
-    def fetchUser(self, interpreter, context, event):
+    def fetch_user(self, interpreter, context, event):
         return {"id": 1, "name": "Alice", "role": "admin"}
 
-    def storeUser(self, interpreter, context, event, action_def):
-        # event.data is the return value from fetchUser
+    def store_user(self, interpreter, context, event, action_def):
+        # event.data is the return value from fetch_user
         user = event.data
         context["user"] = user
         context["userName"] = user["name"]
         print(f"Loaded user: {user['name']}")
 ```
 
-## Accessing Error Info
+## 🐛 Accessing Error Info
 
 In `onError` actions, the exception object is available on `event.data`:
 
 ```python
 class Logic(MachineLogic):
-    def fetchUser(self, interpreter, context, event):
+    def fetch_user(self, interpreter, context, event):
         raise ConnectionError("API server unreachable")
 
-    def storeError(self, interpreter, context, event, action_def):
+    def store_error(self, interpreter, context, event, action_def):
         # event.data is the exception object
         error = event.data
         context["error"] = str(error)
@@ -247,7 +255,7 @@ class Logic(MachineLogic):
         # Output: Service failed: API server unreachable
 ```
 
-## Multiple Services (Array Form)
+## 🔗 Multiple Services (Array Form)
 
 A state can invoke multiple services simultaneously by using an array:
 
@@ -276,26 +284,26 @@ A state can invoke multiple services simultaneously by using an array:
 
 ```python
 class DataLogic(MachineLogic):
-    def fetchUser(self, interpreter, context, event):
+    def fetch_user(self, interpreter, context, event):
         return {"name": "Alice"}
 
-    def fetchOrders(self, interpreter, context, event):
+    def fetch_orders(self, interpreter, context, event):
         return [{"id": 1, "total": 29.99}]
 
-    def storeUser(self, interpreter, context, event, action_def):
+    def store_user(self, interpreter, context, event, action_def):
         context["user"] = event.data
 
-    def storeOrders(self, interpreter, context, event, action_def):
+    def store_orders(self, interpreter, context, event, action_def):
         context["orders"] = event.data
 
-    def storeUserError(self, interpreter, context, event, action_def):
+    def store_user_error(self, interpreter, context, event, action_def):
         context["userError"] = str(event.data)
 
-    def storeOrdersError(self, interpreter, context, event, action_def):
+    def store_orders_error(self, interpreter, context, event, action_def):
         context["ordersError"] = str(event.data)
 ```
 
-## Service with Guards
+## 🛡️ Service with Guards
 
 You can add guards to `onDone` transitions to route based on the service result:
 
@@ -318,19 +326,19 @@ You can add guards to `onDone` transitions to route based on the service result:
 
 ```python
 class Logic(MachineLogic):
-    def fetchUser(self, interpreter, context, event):
+    def fetch_user(self, interpreter, context, event):
         return {"name": "Alice", "role": "admin"}
 
-    def storeUser(self, interpreter, context, event, action_def):
+    def store_user(self, interpreter, context, event, action_def):
         context["user"] = event.data
 
-    def isAdmin(self, context, event):
+    def is_admin(self, context, event):
         # event.data holds the service result
         user = event.data
         return isinstance(user, dict) and user.get("role") == "admin"
 ```
 
-## Invoke with Timeout
+## ⏱️ Invoke with Timeout
 
 Combine `invoke` with `after` to implement service timeouts. If the service doesn't complete before the timer fires, the machine transitions to a timeout state:
 
@@ -351,7 +359,7 @@ Combine `invoke` with `after` to implement service timeouts. If the service does
 
 > **Tip:** The `after` timer is cancelled when the state is exited (e.g., when `onDone` fires first), so there is no conflict between the two.
 
-## Pythonic Services
+## 🐍 Pythonic Services
 
 ### `@service` Decorator
 
@@ -445,7 +453,7 @@ print(interp.context["user"])  # {"id": 1, "name": "Alice"}
 interp.stop()
 ```
 
-## Service Lifecycle
+## 🔁 Service Lifecycle
 
 When the interpreter enters a state with `invoke`, the following sequence occurs:
 
@@ -459,20 +467,19 @@ When the interpreter enters a state with `invoke`, the following sequence occurs
 5. Transition to onDone/onError target (run exit actions, transition actions, entry actions)
 ```
 
-```
-┌─────────────┐     ┌──────────────────┐     ┌──────────────┐
-│    idle      │────▶│     loading       │────▶│    loaded     │
-│             │LOAD │  invoke:fetchUser │Done │              │
-└─────────────┘     │                  │────▶│  (final)     │
-                    │                  │     └──────────────┘
-                    │                  │
-                    │                  │Error ┌──────────────┐
-                    │                  │────▶│    error      │
-                    └──────────────────┘     │  RETRY→loading│
-                                            └──────────────┘
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> idle
+    idle --> loading : LOAD
+    state "loading<br/>invoke: fetchUser" as loading
+    loading --> loaded : done.invoke.fetchUser
+    loading --> error : error.platform.fetchUser
+    error --> loading : RETRY
+    loaded --> [*]
 ```
 
-## Service Cancellation
+## ✂️ Service Cancellation
 
 When the machine **exits a state** that has an active invocation, the service is automatically cancelled:
 
@@ -498,7 +505,7 @@ This means you can safely combine `invoke` with `after` timeouts: if the service
 
 > **Note:** Cancellation is automatic and requires no cleanup code. This is one of the key benefits of using `invoke` over manual service management.
 
-## Event Naming for Done and Error
+## 🏷️ Event Naming for Done and Error
 
 The interpreter uses a specific naming convention for invoke-related events:
 
@@ -579,7 +586,7 @@ class UserDataLogic(MachineLogic):
         self._call_count = 0
 
     # ---- Service ----
-    def fetchUserData(self, interpreter, context, event):
+    def fetch_user_data(self, interpreter, context, event):
         self._call_count += 1
         user_id = context.get("userId", 1)
 
@@ -591,32 +598,32 @@ class UserDataLogic(MachineLogic):
         return {"id": user_id, "name": "Alice", "email": "alice@example.com"}
 
     # ---- Actions ----
-    def storeUser(self, interpreter, context, event, action_def):
+    def store_user(self, interpreter, context, event, action_def):
         context["user"] = event.data
         context["error"] = None
         print(f"User loaded: {event.data['name']}")
 
-    def incrementRetry(self, interpreter, context, event, action_def):
+    def increment_retry(self, interpreter, context, event, action_def):
         context["retryCount"] = context.get("retryCount", 0) + 1
         print(f"Loading attempt #{context['retryCount']}...")
 
-    def logRetry(self, interpreter, context, event, action_def):
+    def log_retry(self, interpreter, context, event, action_def):
         print(f"  Retrying... ({event.data})")
 
-    def storeFinalError(self, interpreter, context, event, action_def):
+    def store_final_error(self, interpreter, context, event, action_def):
         context["error"] = str(event.data)
         print(f"All retries exhausted. Error: {event.data}")
 
-    def resetRetryCount(self, interpreter, context, event, action_def):
+    def reset_retry_count(self, interpreter, context, event, action_def):
         context["retryCount"] = 0
 
-    def resetAll(self, interpreter, context, event, action_def):
+    def reset_all(self, interpreter, context, event, action_def):
         context["user"] = None
         context["error"] = None
         context["retryCount"] = 0
 
     # ---- Guards ----
-    def canRetry(self, context, event):
+    def can_retry(self, context, event):
         return context.get("retryCount", 0) < context.get("maxRetries", 3)
 
 
@@ -715,7 +722,7 @@ config = {
 
 class PaymentLogic(MachineLogic):
     # ---- Services ----
-    def validatePayment(self, interpreter, context, event):
+    def validate_payment(self, interpreter, context, event):
         amount = context.get("amount", 0)
         method = context.get("paymentMethod")
         if amount <= 0:
@@ -724,13 +731,13 @@ class PaymentLogic(MachineLogic):
             raise ValueError("Payment method is required")
         return {"valid": True, "method": method}
 
-    def chargePayment(self, interpreter, context, event):
+    def charge_payment(self, interpreter, context, event):
         amount = context["amount"]
         print(f"Charging ${amount:.2f}...")
         # Simulate a charge — returns a transaction ID
         return {"transactionId": "TXN-20260323-001", "charged": amount}
 
-    def generateReceipt(self, interpreter, context, event):
+    def generate_receipt(self, interpreter, context, event):
         txn_id = context.get("transactionId", "UNKNOWN")
         return {
             "receiptId": f"RCP-{txn_id}",
@@ -740,35 +747,35 @@ class PaymentLogic(MachineLogic):
         }
 
     # ---- Actions ----
-    def storePaymentDetails(self, interpreter, context, event, action_def):
+    def store_payment_details(self, interpreter, context, event, action_def):
         context["amount"] = event.payload.get("amount", 0)
         context["currency"] = event.payload.get("currency", "USD")
         context["paymentMethod"] = event.payload.get("method")
 
-    def storeTransactionId(self, interpreter, context, event, action_def):
+    def store_transaction_id(self, interpreter, context, event, action_def):
         context["transactionId"] = event.data.get("transactionId")
 
-    def storeReceipt(self, interpreter, context, event, action_def):
+    def store_receipt(self, interpreter, context, event, action_def):
         context["receipt"] = event.data
 
-    def storeError(self, interpreter, context, event, action_def):
+    def store_error(self, interpreter, context, event, action_def):
         context["error"] = str(event.data)
 
-    def clearError(self, interpreter, context, event, action_def):
+    def clear_error(self, interpreter, context, event, action_def):
         context["error"] = None
 
-    def logReceiptError(self, interpreter, context, event, action_def):
+    def log_receipt_error(self, interpreter, context, event, action_def):
         print(f"Receipt generation failed (non-critical): {event.data}")
 
-    def notifySuccess(self, interpreter, context, event, action_def):
+    def notify_success(self, interpreter, context, event, action_def):
         txn = context.get("transactionId", "N/A")
         amt = context.get("amount", 0)
         print(f"Payment complete! Transaction: {txn}, Amount: ${amt:.2f}")
 
-    def notifyValidationError(self, interpreter, context, event, action_def):
+    def notify_validation_error(self, interpreter, context, event, action_def):
         print(f"Validation failed: {context.get('error', 'Unknown')}")
 
-    def notifyChargeError(self, interpreter, context, event, action_def):
+    def notify_charge_error(self, interpreter, context, event, action_def):
         print(f"Charge failed: {context.get('error', 'Unknown')}")
 
 

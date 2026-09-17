@@ -5,24 +5,35 @@ description: "Concurrent state regions — multiple independent processes runnin
 
 Parallel states model **concurrent activity** — multiple independent processes running at the same time within the same machine. Instead of being in one child state at a time (like compound states), a parallel state is in **all** of its child regions simultaneously.
 
-## What Are Parallel States?
+## 🎛️ What Are Parallel States?
 
 In a compound state, the machine is in exactly one child at a time. In a **parallel** state, the machine is in one state from _every_ child region at the same time. Each region operates independently — events are delivered to all regions, and each region handles them according to its own transitions.
 
-```
-┌─────────────── playing (parallel) ───────────────┐
-│                                                   │
-│  ┌── video ──┐  ┌── audio ──┐  ┌── controls ──┐  │
-│  │  loading  │  │   muted   │  │   visible    │  │
-│  │  showing  │  │  playing  │  │   hidden     │  │
-│  │ buffering │  └───────────┘  └──────────────┘  │
-│  └───────────┘                                    │
-│                                                   │
-│  ALL regions are active simultaneously            │
-└───────────────────────────────────────────────────┘
+```mermaid
+stateDiagram-v2
+    state "playing (parallel — all three regions active at once)" as playing {
+        state video {
+            [*] --> loading
+            loading --> showing : READY
+            showing --> buffering : STALL
+            buffering --> showing : READY
+        }
+        --
+        state audio {
+            [*] --> muted
+            muted --> playing_audio : UNMUTE
+            playing_audio --> muted : MUTE
+        }
+        --
+        state controls {
+            [*] --> visible
+            visible --> hidden : IDLE
+            hidden --> visible : MOVE
+        }
+    }
 ```
 
-## JSON Example: Media Player
+## 🎬 JSON Example: Media Player
 
 ```json
 {
@@ -378,16 +389,16 @@ config = {
 }
 
 class ParallelLogic(MachineLogic):
-    def logParallelEntry(self, interpreter, context, event, action_def):
+    def log_parallel_entry(self, interpreter, context, event, action_def):
         print("Entered parallel state")
 
-    def logParallelExit(self, interpreter, context, event, action_def):
+    def log_parallel_exit(self, interpreter, context, event, action_def):
         print("Exiting parallel state — all regions stopping")
 
-    def initRegionA(self, interpreter, context, event, action_def):
+    def init_region_a(self, interpreter, context, event, action_def):
         print("Region A initialized")
 
-    def initRegionB(self, interpreter, context, event, action_def):
+    def init_region_b(self, interpreter, context, event, action_def):
         print("Region B initialized")
 
 machine = create_machine(config, logic=ParallelLogic())
@@ -663,38 +674,38 @@ class DashboardLogic(MachineLogic):
     # As of 0.8.0, `@action` / `@guard` / `@service` markers win over
     # arity-based auto-registration in `MachineLogic` subclasses; a 3-arg
     # method with no marker is ambiguous (service, or a 3-arg action) and
-    # emits a `UserWarning`. `fetchNotifications` and `fetchFeedData` are
+    # emits a `UserWarning`. `fetch_notifications` and `fetch_feed_data` are
     # invoked services, so they're decorated with `@service` explicitly.
     @service
-    def fetchNotifications(self, interpreter, context, event):
+    def fetch_notifications(self, interpreter, context, event):
         return [{"id": 1, "msg": "New message"}, {"id": 2, "msg": "Update"}]
 
-    def storeNotifications(self, interpreter, context, event, action_def):
+    def store_notifications(self, interpreter, context, event, action_def):
         context["notifications"] = event.data
         print(f"Loaded {len(event.data)} notifications")
 
-    def markAsRead(self, interpreter, context, event, action_def):
+    def mark_as_read(self, interpreter, context, event, action_def):
         nid = event.data.get("id")
         context["notifications"] = [
             n for n in context["notifications"] if n.get("id") != nid
         ]
 
-    def clearNotifications(self, interpreter, context, event, action_def):
+    def clear_notifications(self, interpreter, context, event, action_def):
         context["notifications"] = []
 
     @service
-    def fetchFeedData(self, interpreter, context, event):
+    def fetch_feed_data(self, interpreter, context, event):
         return [{"metric": "cpu", "value": 42}, {"metric": "mem", "value": 78}]
 
-    def storeFeedData(self, interpreter, context, event, action_def):
+    def store_feed_data(self, interpreter, context, event, action_def):
         context["feedData"] = event.data
         print(f"Feed updated with {len(event.data)} entries")
 
-    def recordActivity(self, interpreter, context, event, action_def):
+    def record_activity(self, interpreter, context, event, action_def):
         import time
         context["lastActivity"] = time.time()
 
-    def dimDisplay(self, interpreter, context, event, action_def):
+    def dim_display(self, interpreter, context, event, action_def):
         print("User idle — dimming display")
 
 machine = create_machine(config, logic=DashboardLogic())

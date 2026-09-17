@@ -9,13 +9,13 @@ The `xsm` CLI tool generates production-ready Python code from XState JSON machi
 
 The generated code includes type hints, docstrings, error handling, logging, and is ready to run immediately.
 
-## What Is the CLI?
+## 🤖 What Is the CLI?
 
 The CLI is a code generator that reads one or more XState-compatible JSON machine definitions and produces Python source files. It bridges the gap between visual state machine design and production Python code.
 
 **What it does NOT do:** The CLI does not run your state machine. It generates the Python files that you then execute with `python`.
 
-## Basic Usage
+## 🚀 Basic Usage
 
 ```bash
 # Generate 2 files: logic + runner (default)
@@ -32,9 +32,9 @@ my_machine_logic.py    # Action, guard, and service stubs
 my_machine_runner.py   # Interpreter bootstrap + event simulation
 ```
 
-> **Tip:** If the `xsm` command is not found after installing the package, use `python -m xstate_statemachine.cli` instead. See [CLI Troubleshooting](#using-with-python--m-if-xsm-not-found) below.
+> **Tip:** If the `xsm` command is not found after installing the package, use `python -m xstate_statemachine.cli` instead. See [CLI Troubleshooting](#using-with-python-m-if-xsm-not-found) below.
 
-## What Gets Generated
+## 📂 What Gets Generated
 
 ### Logic File (`*_logic.py`)
 
@@ -67,7 +67,7 @@ You can run it immediately:
 python my_machine_runner.py
 ```
 
-## All CLI Options
+## ⚙️ All CLI Options
 
 ```
 xsm generate-template [JSON_FILES...] [OPTIONS]
@@ -137,7 +137,7 @@ xsm gt machine.json --template pythonic-class --async-mode yes
 xsm gt machine.json --file-count 1
 ```
 
-## Template Selection Guide
+## 🧭 Template Selection Guide
 
 Choosing the right template depends on your project needs:
 
@@ -159,7 +159,7 @@ Choosing the right template depends on your project needs:
 - **Existing JSON workflows** → `class-json` (keeps JSON as source of truth)
 - **Lightweight / prototyping** → `function-json` (no class overhead)
 
-## Common Recipes
+## 🍳 Common Recipes
 
 ### Sync Mode for Scripts
 
@@ -210,42 +210,20 @@ python -m xstate_statemachine.cli gt my_machine.json --template pythonic-class
 
 This is functionally identical to `xsm` and works even if the entry point script is not on your PATH.
 
-## Workflow: From Design to Running Code
+## 🛠️ Workflow: From Design to Running Code
 
 The recommended workflow integrates the CLI into a design-first approach:
 
-```
-┌─────────────────────┐
-│  1. Design machine  │  Use Stately.ai visual editor
-│     in Stately.ai   │  or write JSON by hand
-└────────┬────────────┘
-         │
-         ▼
-┌─────────────────────┐
-│  2. Export JSON      │  Download the XState JSON config
-│                      │  from Stately.ai
-└────────┬────────────┘
-         │
-         ▼
-┌─────────────────────┐
-│  3. Generate Python  │  xsm gt my_machine.json
-│     with CLI         │  --template pythonic-class
-└────────┬────────────┘
-         │
-         ▼
-┌─────────────────────┐
-│  4. Implement logic  │  Fill in TODO stubs in
-│                      │  my_machine_logic.py
-└────────┬────────────┘
-         │
-         ▼
-┌─────────────────────┐
-│  5. Run & iterate    │  python my_machine_runner.py
-│                      │
-└─────────────────────┘
+```mermaid
+flowchart LR
+    A["🎨 Design<br/><small>Stately.ai editor or JSON by hand</small>"] --> B["📦 Export JSON<br/><small>XState config</small>"]
+    B --> C["⚙️ Generate<br/><small>xsm gt machine.json</small>"]
+    C --> D["✍️ Implement<br/><small>fill TODO stubs in _logic.py</small>"]
+    D --> E["🚀 Run<br/><small>python machine_runner.py</small>"]
+    E -. iterate .-> A
 ```
 
-## Complete Walkthrough: From JSON to Running Machine
+## 🚶 Complete Walkthrough: From JSON to Running Machine
 
 Let's walk through the entire process end-to-end.
 
@@ -355,7 +333,7 @@ The runner will start the interpreter, send the `SUBMIT` event, invoke the payme
 
 > **Tip:** After initial generation, you only edit the logic file. The runner file rarely needs changes unless you want custom event sequences.
 
-## All Commands Overview
+## 📋 All Commands Overview
 
 The `xsm` CLI provides four commands:
 
@@ -371,7 +349,7 @@ xsm [-h] [-v]
 | `validate` | `val` | Validate an XState JSON config file |
 | `info` | — | Show library version, Python version, and feature summary |
 
-## List Templates
+## 📃 List Templates
 
 Shows all available code generation templates with descriptions:
 
@@ -412,7 +390,7 @@ Feature support:
 Usage: xsm generate-template <file.json> --template <template-id>
 ```
 
-## Validate
+## ✅ Validate
 
 Validates that JSON files are well-formed XState machine configurations:
 
@@ -444,7 +422,7 @@ Example output for a valid file:
 All 1 file(s) are valid.
 ```
 
-## Info
+## ℹ️ Info
 
 Displays library version, Python version, platform, and feature summary:
 
@@ -457,7 +435,7 @@ Example output:
 ```
   XState-StateMachine CLI
   ----------------------------------
-  Version:      0.7.0
+  Version:      0.8.0
   Python:       3.12.0
   Platform:     Windows-11
   Install path: C:\...\xstate_statemachine
@@ -480,7 +458,7 @@ Example output:
   GitHub:        https://github.com/basiltt/xstate-statemachine
 ```
 
-## Version and Help
+## ❓ Version and Help
 
 ```bash
 # Show version

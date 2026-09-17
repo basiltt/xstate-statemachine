@@ -13,6 +13,19 @@ This guide presents production-ready state machine patterns that solve common ar
 
 A service call that retries on failure with increasing delays. After exhausting retries, it transitions to a permanent failure state.
 
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> idle
+    idle --> attempting : START
+    attempting --> success : done · apiCall
+    attempting --> waiting : error · apiCall [canRetry]
+    attempting --> failed : error · apiCall
+    waiting --> attempting : after 1000ms
+    success --> [*]
+    failed --> [*]
+```
+
 ### JSON Configuration
 
 ```json
@@ -92,12 +105,12 @@ def api_call(interpreter, context, event):
 
 logic = MachineLogic(
     actions={
-        "incrementRetry": increment_retry,
-        "storeResult": store_result,
-        "storeError": store_error,
+        "increment_retry": increment_retry,
+        "store_result": store_result,
+        "store_error": store_error,
     },
-    guards={"canRetry": can_retry},
-    services={"apiCall": api_call},
+    guards={"can_retry": can_retry},
+    services={"api_call": api_call},
 )
 ```
 
@@ -110,6 +123,20 @@ logic = MachineLogic(
 ## Pattern 2: Form Wizard with Validation
 
 A multi-step form where forward navigation requires validation, but backward navigation is always permitted.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> step1
+    step1 --> step2 : NEXT [isStep1Valid]
+    step2 --> step3 : NEXT [isStep2Valid]
+    step3 --> review : NEXT
+    review --> submitted : SUBMIT
+    step2 --> step1 : BACK
+    step3 --> step2 : BACK
+    review --> step3 : BACK
+    submitted --> [*]
+```
 
 ### Pythonic API Implementation
 
@@ -203,6 +230,24 @@ interp.stop()
 ## Pattern 3: E-Commerce Checkout (Nested + Services + Guards)
 
 A realistic checkout flow with nested states for the checkout process, a payment service, and guard conditions.
+
+```mermaid
+stateDiagram-v2
+    [*] --> browsing
+    browsing --> checkout : CHECKOUT
+    state checkout {
+        direction LR
+        [*] --> shipping
+        shipping --> payment : SUBMIT_ADDRESS
+        payment --> processing : SUBMIT_PAYMENT
+        processing --> done : done · processPayment
+        processing --> payment : error · processPayment
+        done --> [*]
+    }
+    checkout --> browsing : CANCEL
+    checkout --> orderComplete : onDone
+    orderComplete --> [*]
+```
 
 ### JSON Configuration
 
@@ -311,15 +356,15 @@ def charge_card(interpreter, context, event):
 
 logic = MachineLogic(
     actions={
-        "addItem": add_item,
-        "removeItem": remove_item,
-        "saveAddress": save_address,
-        "savePaymentMethod": save_payment_method,
-        "saveReceipt": save_receipt,
-        "showPaymentError": show_payment_error,
+        "add_item": add_item,
+        "remove_item": remove_item,
+        "save_address": save_address,
+        "save_payment_method": save_payment_method,
+        "save_receipt": save_receipt,
+        "show_payment_error": show_payment_error,
     },
-    guards={"cartNotEmpty": cart_not_empty},
-    services={"chargeCard": charge_card},
+    guards={"cart_not_empty": cart_not_empty},
+    services={"charge_card": charge_card},
 )
 
 # Run the checkout flow
@@ -356,6 +401,31 @@ interp.stop()
 ## Pattern 4: Authentication Flow
 
 A hierarchical authentication system with session timeouts, token refresh, and protected sub-states.
+
+```mermaid
+stateDiagram-v2
+    [*] --> loggedOut
+    loggedOut --> authenticating : LOGIN
+    authenticating --> loggedOut : error · authenticate
+    authenticating --> loggedIn : done · authenticate
+    loggedIn --> loggedOut : LOGOUT · onDone
+    state loggedIn {
+        [*] --> dashboard
+        dashboard --> profile : GO_PROFILE
+        dashboard --> settings : GO_SETTINGS
+        profile --> dashboard : GO_DASHBOARD
+        settings --> dashboard : GO_DASHBOARD
+        profile --> settings : GO_SETTINGS
+        dashboard --> refreshing : REFRESH_TOKEN
+        refreshing --> dashboard : done · refreshToken
+        refreshing --> sessionExpired : error · refreshToken
+        sessionExpired --> [*]
+    }
+    note right of loggedIn
+        REFRESH_TOKEN, or after 1 h,
+        re-enters .refreshing from any child
+    end note
+```
 
 ```json
 {
@@ -479,6 +549,25 @@ logic = MachineLogic(
 
 A linear pipeline with error recovery and service invocations at each stage.
 
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> checkout
+    checkout --> build : done · gitCheckout
+    build --> test : done · buildProject
+    test --> approvalGate : done · runTests
+    approvalGate --> deploy : APPROVE [isApprover]
+    approvalGate --> failed : REJECT
+    deploy --> success : done · deployToProduction
+    deploy --> rollback : error · deployToProduction
+    rollback --> failed : done / error
+    checkout --> failed : error
+    build --> failed : error
+    test --> failed : error
+    success --> [*]
+    failed --> [*]
+```
+
 ```python
 from xstate_statemachine import create_machine, MachineLogic, SyncInterpreter
 
@@ -595,6 +684,19 @@ interp.stop()
 ## Pattern 6: Traffic Light Controller
 
 A timer-based state machine that cycles through light phases with an emergency override.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> green
+    green --> yellow : after 5000ms
+    yellow --> red : after 2000ms
+    red --> green : after 5000ms
+    green --> emergencyRed : EMERGENCY
+    yellow --> emergencyRed : EMERGENCY
+    red --> emergencyRed : EMERGENCY
+    emergencyRed --> red : RESUME
+```
 
 ```python
 from xstate_statemachine import create_machine, MachineLogic, SyncInterpreter
@@ -876,7 +978,7 @@ def test_action_modifies_context():
         context["total"] = 0
 
     logic = MachineLogic(
-        actions={"addItem": add_item, "clearCart": clear_cart}
+        actions={"add_item": add_item, "clear_cart": clear_cart}
     )
     machine = create_machine(config, logic=logic)
     interp = SyncInterpreter(machine).start()

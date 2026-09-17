@@ -12,7 +12,7 @@ Think of it this way:
 
 ---
 
-## What Is an Interpreter?
+## 🎛️ What Is an Interpreter?
 
 The interpreter manages the full lifecycle of a running state machine:
 
@@ -35,7 +35,7 @@ Both interpreters share the same API surface — the only difference is `async`/
 
 ---
 
-## Async Interpreter
+## ⚡ Async Interpreter
 
 Use `Interpreter` for `asyncio`-based applications — web servers (FastAPI, aiohttp), async background workers, or any codebase built on `async`/`await`.
 
@@ -70,16 +70,16 @@ config = {
 }
 
 class FetchLogic(MachineLogic):
-    async def fetchData(self, interpreter, context, event):
+    async def fetch_data(self, interpreter, context, event):
         import aiohttp
         async with aiohttp.ClientSession() as session:
             resp = await session.get("https://api.example.com/data")
             return await resp.json()
 
-    def storeData(self, interpreter, context, event, action_def):
+    def store_data(self, interpreter, context, event, action_def):
         context["data"] = event.data
 
-    def storeError(self, interpreter, context, event, action_def):
+    def store_error(self, interpreter, context, event, action_def):
         context["error"] = str(event.data)
 
 
@@ -119,7 +119,7 @@ asyncio.run(main())
 
 ---
 
-## Sync Interpreter
+## 🧵 Sync Interpreter
 
 Use `SyncInterpreter` for synchronous code — scripts, CLI tools, Django views, Flask handlers, or test suites.
 
@@ -143,7 +143,7 @@ config = {
 }
 
 class ToggleLogic(MachineLogic):
-    def logToggle(self, interpreter, context, event, action_def):
+    def log_toggle(self, interpreter, context, event, action_def):
         context["toggles"] += 1
         print(f"Toggle #{context['toggles']} fired")
 
@@ -195,7 +195,7 @@ interp.stop()
 
 ---
 
-## Key Properties and Methods
+## 🔑 Key Properties and Methods
 
 | Property / Method | Type | Description |
 |-------------------|------|-------------|
@@ -286,7 +286,7 @@ in the context of `from_snapshot()`.
 
 ---
 
-## Sending Events — All Formats
+## 📨 Sending Events — All Formats
 
 The `.send()` method accepts events in multiple formats. Use whichever is most convenient:
 
@@ -356,7 +356,20 @@ interp.send_events([
 
 ---
 
-## Event Ordering — Microsteps vs. Macrosteps (#36)
+## 🪜 Event Ordering — Microsteps vs. Macrosteps (#36)
+
+```mermaid
+flowchart LR
+    subgraph inbox["📥 inbox (external)"]
+        E1["send(A)"] --> E2["send(B)"]
+    end
+    E1 --> M
+    subgraph M["macrostep for A"]
+        direction LR
+        s1["transition"] --> s2["entry action raises X"] --> s3["microstep: handle X"] --> s4["settle · always"]
+    end
+    M --> E2
+```
 
 Each call to `send()` (or a delivered `after`/invocation event) starts a **macrostep**: the machine runs transitions, actions, and any events those actions `raise` on themselves, until it settles into a stable configuration with nothing left to do. SCXML calls a single one of those internal, self-raised events a **microstep** — and microsteps always finish before the next *external* event (the next `send()`) is looked at.
 
@@ -394,7 +407,7 @@ A runaway chain of self-raised events (a machine that keeps raising to itself fo
 
 ---
 
-## Bounded Inbox and Overflow Policy (#38)
+## 📦 Bounded Inbox and Overflow Policy (#38)
 
 By default an interpreter's inbox (the queue `send()` appends to) is unbounded — nothing on a hot path is ever refused, but nothing stops it from growing without limit if producers outrun the consumer. Pass `max_queue_size` to `Interpreter` (or `SyncInterpreter`) to put a ceiling on it, and `overflow_policy` to choose what happens once that ceiling is hit:
 
@@ -473,7 +486,7 @@ print(interp.pending_events)  # (Event(type='T', payload={}),)
 
 ---
 
-## Receipts and Priority Sends (#39)
+## 🧾 Receipts and Priority Sends (#39)
 
 ### `send(wait=True)` and `Receipt`
 
@@ -533,7 +546,7 @@ print(receipt.state_ids, receipt.changed, receipt.error)
 
 ---
 
-## Event Payloads — Accessing Event Data
+## 📦 Event Payloads — Accessing Event Data
 
 When you send an event with payload data, actions and guards can access it through the `event` parameter:
 
@@ -557,7 +570,7 @@ config = {
 }
 
 class UserLogic(MachineLogic):
-    def storeUser(self, interpreter, context, event, action_def):
+    def store_user(self, interpreter, context, event, action_def):
         # Access payload data from keyword arguments
         context["user"] = {
             "username": event.payload.get("username"),
@@ -565,7 +578,7 @@ class UserLogic(MachineLogic):
         }
         print(f"Logged in as {context['user']['username']}")
 
-    def clearUser(self, interpreter, context, event, action_def):
+    def clear_user(self, interpreter, context, event, action_def):
         context["user"] = None
 
 machine = create_machine(config, logic=UserLogic())
@@ -584,17 +597,19 @@ interp.stop()
 
 ---
 
-## Interpreter Lifecycle
+## 🔁 Interpreter Lifecycle
 
 The interpreter follows a strict lifecycle:
 
-```
-    create          start()         send()          stop()
-  ───────────► [Created] ─────► [Running] ─────► [Stopped]
-                                    │    ▲
-                                    │    │
-                                    └────┘
-                                  send() / process events
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Created : Interpreter(machine)
+    Created --> Running : start()
+    Running --> Running : send() · process events
+    Running --> Stopped : stop()
+    Running --> Error : actionErrorPolicy = fail
+    Stopped --> [*]
 ```
 
 ### Step-by-Step
@@ -695,7 +710,7 @@ config = {
 }
 
 class Logic(MachineLogic):
-    def isAdmin(self, context, event):
+    def is_admin(self, context, event):
         return context.get("role") == "admin"
 
 machine = create_machine(config, logic=Logic())
@@ -713,7 +728,7 @@ interp.stop()
 
 ---
 
-## Hierarchical State Value
+## 🪆 Hierarchical State Value
 
 `interpreter.value` reports the active configuration in XState's hierarchical `value` form — a tree instead of the flat `current_state_ids` set:
 
@@ -761,7 +776,7 @@ print(interp.matches("loggedIn.idle"))          # True — string form
 print(interp.matches({"loggedIn": "idle"}))      # True — dict form
 ```
 
-## Lifecycle: completion and teardown
+## 🏁 Lifecycle: completion and teardown
 
 As of 0.8.0, reaching a top-level final state tears the machine down immediately — the moment `status` becomes `"done"` or `"error"`, not later when `stop()` happens to be called. That teardown:
 
@@ -781,7 +796,7 @@ If the machine is already terminal when `wait_done()` is called, it returns an a
 
 ---
 
-## Plugin Attachment
+## 🔌 Plugin Attachment
 
 Plugins observe machine execution without modifying behavior. Attach them before calling `.start()`:
 
@@ -929,7 +944,7 @@ config = {
 }
 
 class RiskyLogic(MachineLogic):
-    def riskyAction(self, interpreter, context, event, action_def):
+    def risky_action(self, interpreter, context, event, action_def):
         raise ValueError("Something went wrong!")
 
 
@@ -950,13 +965,13 @@ and record it on `context`, then guard a transition on that flag:
 
 ```python
 class SafeLogic(MachineLogic):
-    def riskyAction(self, interpreter, context, event, action_def):
+    def risky_action(self, interpreter, context, event, action_def):
         try:
             do_the_risky_thing()
         except ValueError as exc:
             context["error"] = str(exc)
 
-    def hasError(self, context, event):
+    def has_error(self, context, event):
         return context.get("error") is not None
 ```
 

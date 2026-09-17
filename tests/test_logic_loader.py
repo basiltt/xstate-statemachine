@@ -500,8 +500,16 @@ class TestLogicLoader(unittest.TestCase):
         )
 
     def test_case_insensitivity_in_name_matching(self) -> None:
-        """Logic discovery should be case-sensitive for function names."""
-        logger.info("🧪 Testing that logic discovery is case-sensitive.")
+        """Matching ignores case and separators; different names still fail.
+
+        🏛️ The snake_case promise (`log_http_status` implements
+        `logHTTPStatus`) is only satisfiable by folding case, because a
+        forward snake→camel conversion cannot reconstruct acronyms. So
+        `myaction` / `MyAction` / `my_action` are one name. What must NOT
+        happen is a *different* name being bound: `myOtherAction` does not
+        satisfy `myaction`.
+        """
+        logger.info("🧪 Testing case/separator-insensitive name matching.")
         # 📋 Arrange
         logic_path = "case_logic.py"
         config = {
@@ -510,14 +518,24 @@ class TestLogicLoader(unittest.TestCase):
             "states": {"a": {"entry": "myaction"}},  # Lowercase
         }
         with open(logic_path, "w") as f:
-            f.write("def MyAction(): pass")  # CamelCase
+            f.write("def MyAction(): pass")  # PascalCase
 
-        # 🚀 Act & Assert: This should fail because 'myaction' != 'MyAction'.
-        with self.assertRaises(ImplementationMissingError):
-            create_machine(config, logic_modules=["case_logic"])
+        try:
+            # ✅ Same word, different casing: bound.
+            machine = create_machine(config, logic_modules=["case_logic"])
+            self.assertIn("myaction", machine.logic.actions)
 
-        # 🧹 Cleanup
-        os.remove(logic_path)
+            # ❌ A genuinely different name is still a hard failure.
+            with open(logic_path, "w") as f:
+                f.write("def myOtherAction(): pass")
+            sys.modules.pop("case_logic", None)
+            importlib.invalidate_caches()
+            with self.assertRaises(ImplementationMissingError):
+                create_machine(config, logic_modules=["case_logic"])
+        finally:
+            # 🧹 Cleanup
+            os.remove(logic_path)
+            sys.modules.pop("case_logic", None)
 
     # -------------------------------------------------------------------------
     # 🚫 Ignored Items and Methods

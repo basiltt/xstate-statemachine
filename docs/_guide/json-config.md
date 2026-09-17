@@ -9,7 +9,18 @@ This page documents **every field** in the configuration format, with complete, 
 
 ---
 
-## Complete JSON Structure
+## 🧱 Complete JSON Structure
+
+```mermaid
+flowchart TB
+    M["machine<br/><small>id · initial · context · policies</small>"]
+    M --> S1["state <b>idle</b><br/><small>entry · exit · on · after</small>"]
+    M --> S2["state <b>loading</b><br/><small>invoke: fetchUser → onDone / onError</small>"]
+    M --> S3["state <b>done</b><br/><small>type: final · output</small>"]
+    S1 -- "on: LOAD" --> S2
+    S2 -- "onDone" --> S3
+    S2 -- "onError" --> S1
+```
 
 Here is a fully annotated machine configuration showing all top-level and state-level fields:
 
@@ -84,7 +95,7 @@ This machine has:
 
 ---
 
-## Field-by-Field Reference
+## 📚 Field-by-Field Reference
 
 ### Top-Level Fields
 
@@ -214,7 +225,7 @@ print(interp.get_meta())           # {'order.pending': {'ui': {'color': 'blue'}}
 
 ---
 
-## Transition Formats
+## ➡️ Transition Formats
 
 Transitions are defined inside a state's `on` field. The library supports **four formats**, from simplest to most expressive.
 
@@ -303,7 +314,7 @@ Actions execute **in order** — `validateCart` first, then `captureAddress`, th
 
 ---
 
-## Eventless Transitions (`always`)
+## ♾️ Eventless Transitions (`always`)
 
 Eventless transitions fire **immediately** when a state is entered — no event needed. They are evaluated in order, and the **first matching guard wins**.
 
@@ -357,7 +368,7 @@ When the machine enters `"checking"`:
 
 ---
 
-## Invoke / Service Fields
+## 📞 Invoke / Service Fields
 
 The `invoke` field starts an async operation (service) when a state is entered. When the service resolves or rejects, the machine transitions via `onDone` or `onError`.
 
@@ -429,7 +440,7 @@ A state can invoke multiple services simultaneously using an array:
 
 ---
 
-## After (Delayed Transitions)
+## ⏱️ After (Delayed Transitions)
 
 The `after` field defines timer-based automatic transitions. Keys are **milliseconds** (as strings), values are target states or full transition objects.
 
@@ -507,7 +518,7 @@ This state:
 
 ---
 
-## State Types
+## 🏷️ State Types
 
 Every state has a `type` that determines its behavior:
 
@@ -599,7 +610,7 @@ print(interp.current_state_ids)  # {'player.on.paused'}
 
 ---
 
-## Nested (Compound) States
+## 🪆 Nested (Compound) States
 
 When a state has a `states` field, it becomes a **compound state**. It must also have an `initial` field to specify which child state is entered first.
 
@@ -797,59 +808,59 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 
 class FetchLogic(MachineLogic):
     # Actions
-    def resetError(self, interpreter, context, event, action_def):
+    def reset_error(self, interpreter, context, event, action_def):
         context["error"] = None
 
-    def showSpinner(self, interpreter, context, event, action_def):
+    def show_spinner(self, interpreter, context, event, action_def):
         print("⏳ Loading...")
 
-    def hideSpinner(self, interpreter, context, event, action_def):
+    def hide_spinner(self, interpreter, context, event, action_def):
         print("   Spinner hidden")
 
-    def storeData(self, interpreter, context, event, action_def):
+    def store_data(self, interpreter, context, event, action_def):
         context["data"] = event.data
 
-    def recordTimestamp(self, interpreter, context, event, action_def):
+    def record_timestamp(self, interpreter, context, event, action_def):
         from datetime import datetime
         context["lastFetchedAt"] = datetime.now().isoformat()
 
-    def storeError(self, interpreter, context, event, action_def):
+    def store_error(self, interpreter, context, event, action_def):
         context["error"] = str(event.data)
 
-    def incrementRetry(self, interpreter, context, event, action_def):
+    def increment_retry(self, interpreter, context, event, action_def):
         context["retries"] += 1
         print(f"🔄 Retry #{context['retries']}")
 
-    def logFetchStart(self, interpreter, context, event, action_def):
+    def log_fetch_start(self, interpreter, context, event, action_def):
         print("📡 Fetch started")
 
-    def logTimeout(self, interpreter, context, event, action_def):
+    def log_timeout(self, interpreter, context, event, action_def):
         context["error"] = "Request timed out"
 
-    def logCancellation(self, interpreter, context, event, action_def):
+    def log_cancellation(self, interpreter, context, event, action_def):
         print("❌ Fetch cancelled")
 
-    def logMaxRetries(self, interpreter, context, event, action_def):
+    def log_max_retries(self, interpreter, context, event, action_def):
         print("💀 Max retries reached")
 
-    def notifySuccess(self, interpreter, context, event, action_def):
+    def notify_success(self, interpreter, context, event, action_def):
         print(f"✅ Data loaded: {context['data']}")
 
-    def notifyError(self, interpreter, context, event, action_def):
+    def notify_error(self, interpreter, context, event, action_def):
         print(f"⚠️ Error: {context['error']}")
 
-    def clearData(self, interpreter, context, event, action_def):
+    def clear_data(self, interpreter, context, event, action_def):
         context["data"] = None
 
-    def resetRetries(self, interpreter, context, event, action_def):
+    def reset_retries(self, interpreter, context, event, action_def):
         context["retries"] = 0
 
     # Guards
-    def hasRetriesLeft(self, context, event):
+    def has_retries_left(self, context, event):
         return context["retries"] < context["maxRetries"]
 
     # Services
-    def fetchData(self, interpreter, context, event):
+    def fetch_data(self, interpreter, context, event):
         import requests
         resp = requests.get("https://api.example.com/data")
         return resp.json()
@@ -1057,19 +1068,23 @@ machine = create_machine(config, event_schemas={"FILL": check_qty})
 
 ## Quick Reference Cheat Sheet
 
-```
-Top level:       id, initial, context, states, strict, strictTargets, maxIterations,
-                 spawnBlockingTimeout, actionErrorPolicy, guardErrorPolicy,
-                 onUnhandled, output
-State fields:    on, entry, exit, invoke, after, type, initial, states, onDone, always,
-                 tags, meta, description, history, output
-Transition:      "EVENT": "target"                         (string shorthand)
-                 "EVENT": { target, guard, actions }       (object form)
-                 "EVENT": [ { ... }, { ... } ]             (array — first guard wins)
-Invoke:          { src, onDone, onError, id, input, systemId }
-After:           { "ms": "target" } or { "ms": { target, guard, actions } }
-Types:           "atomic" (default), "compound", "parallel", "final", "history"
-Eventless:       "always": [ { target, guard }, ... ]
-Strict mode:     "strict": true  or  create_machine(..., ) / Interpreter(..., strict=True)
-                 create_machine(config, event_schemas={"EVENT": schema_or_callable})
-```
+| Where | Keys |
+|---|---|
+| 🏠 **Top level** | `id` · `initial` · `context` · `states` · `strict` · `strictTargets` · `maxIterations` · `spawnBlockingTimeout` · `actionErrorPolicy` · `guardErrorPolicy` · `onUnhandled` · `output` |
+| 🔲 **State** | `on` · `entry` · `exit` · `invoke` · `after` · `type` · `initial` · `states` · `onDone` · `always` · `tags` · `meta` · `description` · `history` · `output` |
+| 🏷️ **State types** | `"atomic"` *(default)* · `"compound"` · `"parallel"` · `"final"` · `"history"` |
+| 📞 **Invoke** | `src` · `onDone` · `onError` · `id` · `input` · `systemId` |
+
+| Transition form | Example | Notes |
+|---|---|---|
+| String shorthand | `"EVENT": "target"` | just move |
+| Object | `"EVENT": { "target", "guard", "actions" }` | guard + actions |
+| Array | `"EVENT": [ { … }, { … } ]` | first passing guard wins |
+| Eventless | `"always": [ { "target", "guard" }, … ]` | evaluated on entry and after every transition |
+| Delayed | `"after": { "5000": "target" }` | or the object form with guard/actions |
+
+| Strictness | How |
+|---|---|
+| Unknown event types raise | `"strict": true` in JSON, or `Interpreter(machine, strict=True)` |
+| Payload validation | `create_machine(config, event_schemas={"EVENT": schema_or_callable})` |
+| Unresolvable targets rejected at build | `create_machine(config, strict_targets=True)` *(the only mode in 1.0)* |

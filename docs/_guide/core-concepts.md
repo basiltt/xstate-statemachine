@@ -5,25 +5,21 @@ description: States, events, transitions, guards, actions — the building block
 
 Every state machine is built from a small set of fundamental concepts. This page covers all of them.
 
-## The Big Picture
+## 🗺️ The Big Picture
 
-```
-                    ┌─────────────────────────────────────────┐
-                    │            STATE MACHINE                │
-                    │                                         │
-                    │   ┌─────────┐   TOGGLE   ┌─────────┐   │
-                    │   │         │ ─────────► │         │   │
-                    │   │   off   │             │   on    │   │
-                    │   │ (init)  │ ◄───────── │         │   │
-                    │   └─────────┘   TOGGLE   └─────────┘   │
-                    │                                         │
-                    │   context: { flips: 0 }                 │
-                    └─────────────────────────────────────────┘
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "toggle · context: { flips: 0 }" as machine {
+        [*] --> off
+        off --> on : TOGGLE
+        on --> off : TOGGLE
+    }
 ```
 
 This toggle switch has **2 states** (`off`, `on`), **1 event type** (`TOGGLE`), **2 transitions** (one in each direction), and a **context** tracking flip count.
 
-## Core Vocabulary
+## 📖 Core Vocabulary
 
 | Concept | What It Is | Example |
 |---------|-----------|---------|
@@ -36,7 +32,7 @@ This toggle switch has **2 states** (`off`, `on`), **1 event type** (`TOGGLE`), 
 | **Service** | An async operation invoked when entering a state | `"fetchUserData"` — API call, DB query |
 | **Final State** | A terminal state with no outgoing transitions | `"success"`, `"completed"` |
 
-## The Golden Rule
+## ⭐ The Golden Rule
 
 > **A state machine can only be in ONE state at a time** (unless using parallel states).
 > It can ONLY move to another state when it receives an event that matches a defined transition.
@@ -58,7 +54,7 @@ is_authenticated = True
 
 ---
 
-## How Events Work
+## 📨 How Events Work
 
 Events are the **only** way to trigger state changes. They come from the outside world — user clicks, API responses, timers, or your own code calling `send()`.
 
@@ -85,7 +81,7 @@ interpreter.send_events(["STEP_1", "STEP_2", "STEP_3"])
 
 ---
 
-## Error & Unhandled-Event Policies
+## 🚨 Error & Unhandled-Event Policies
 
 By default, an event that doesn't match any transition from the current state is dropped silently, and an action or guard that raises an exception propagates as-is. For most apps that's the right default, but a few config keys let you change this per machine:
 
@@ -127,7 +123,7 @@ See the [JSON Configuration Reference](../json-config/) for the full list of con
 
 ---
 
-## How Transitions Work
+## ➡️ How Transitions Work
 
 A transition answers one question: _"When event X happens while in state A, what should happen?"_
 
@@ -209,7 +205,7 @@ counting.to(counting, event="INCREMENT", actions="addOne")
 
 ---
 
-## State Types
+## 🏷️ State Types
 
 ### Atomic States
 
@@ -319,7 +315,20 @@ interp.stop()
 
 ---
 
-## Action Execution Order
+## 🐍 Naming: snake_case Python, camelCase JSON
+
+Your machine config follows XState (`"actions": "storeUser"`); your Python follows PEP 8 (`def store_user(...)`). You never write the bridge — the library matches names ignoring case and separators, so `storeUser`, `store_user`, and even `store-user` are the same name. Acronyms (`logHTTPStatus` ↔ `log_http_status`) and Stately's inline names (`inline:m.a#entry[0]` ↔ `inline_m_a_entry_0`) work too.
+
+```mermaid
+flowchart LR
+    J["📄 JSON<br/><small>&quot;actions&quot;: &quot;logHTTPStatus&quot;</small>"] --> N["normalise<br/><small>drop _ - . : # [ ] · fold case</small>"]
+    P["🐍 Python<br/><small>def log_http_status(...)</small>"] --> N
+    N --> K["loghttpstatus<br/><small>one key → one implementation</small>"]
+```
+
+Exact names still take precedence, and two *different* functions that collide (`fetch_data` and `fetchData`) are rejected when the machine is built. The CLI's `xsm gt` emits snake_case stubs for exactly this reason.
+
+## 🔢 Action Execution Order
 
 When a transition fires, actions execute in a **strict, predictable order**:
 
@@ -452,17 +461,16 @@ interp.stop()
 
 ---
 
-## The State Machine Lifecycle
+## 🔁 The State Machine Lifecycle
 
 Every machine follows the same lifecycle:
 
-```
-  create ──► start ──► send events ──► stop
-    │          │            │            │
-    │          │            │            │
-  Define     Enter       Process      Exit all
-  states     initial     events &     states,
-  & rules    state       transitions  clean up
+```mermaid
+flowchart LR
+    A["🧩 create<br/><small>define states & rules</small>"] --> B["▶️ start<br/><small>enter initial state</small>"]
+    B --> C["📨 send events<br/><small>process transitions</small>"]
+    C --> C
+    C --> D["⏹️ stop<br/><small>exit all states, clean up</small>"]
 ```
 
 In code:
