@@ -72,7 +72,7 @@ class DownloadManagerMachine(StateMachine):
     @action
     def count_retry(
         self,
-        interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
+        interpreter: Union[Interpreter[Any], SyncInterpreter[Any]],
         context: Dict[str, Any],
         event: Any,
         action_def: Any,
@@ -97,7 +97,7 @@ class DownloadManagerMachine(StateMachine):
     @action
     def log_start(
         self,
-        interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
+        interpreter: Union[Interpreter[Any], SyncInterpreter[Any]],
         context: Dict[str, Any],
         event: Any,
         action_def: Any,
@@ -122,7 +122,7 @@ class DownloadManagerMachine(StateMachine):
     @action
     def log_timeout(
         self,
-        interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
+        interpreter: Union[Interpreter[Any], SyncInterpreter[Any]],
         context: Dict[str, Any],
         event: Any,
         action_def: Any,
@@ -147,7 +147,7 @@ class DownloadManagerMachine(StateMachine):
     @action
     def reset_progress(
         self,
-        interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
+        interpreter: Union[Interpreter[Any], SyncInterpreter[Any]],
         context: Dict[str, Any],
         event: Any,
         action_def: Any,
@@ -172,7 +172,7 @@ class DownloadManagerMachine(StateMachine):
     @action
     def save_file(
         self,
-        interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
+        interpreter: Union[Interpreter[Any], SyncInterpreter[Any]],
         context: Dict[str, Any],
         event: Any,
         action_def: Any,
@@ -216,7 +216,7 @@ class DownloadManagerMachine(StateMachine):
     @service
     def fetch_file(
         self,
-        interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
+        interpreter: Union[Interpreter[Any], SyncInterpreter[Any]],
         context: Dict[str, Any],
         event: Any,
     ) -> Dict[str, Any]:

@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 @action
 def count_retry(
-    interpreter: SyncInterpreter[Dict[str, Any], Any],
+    interpreter: SyncInterpreter[Dict[str, Any]],
     context: Dict[str, Any],
     event: Any,
     action_def: Any,
@@ -56,7 +56,7 @@ def count_retry(
 
 @action
 def log_start(
-    interpreter: SyncInterpreter[Dict[str, Any], Any],
+    interpreter: SyncInterpreter[Dict[str, Any]],
     context: Dict[str, Any],
     event: Any,
     action_def: Any,
@@ -80,7 +80,7 @@ def log_start(
 
 @action
 def log_timeout(
-    interpreter: SyncInterpreter[Dict[str, Any], Any],
+    interpreter: SyncInterpreter[Dict[str, Any]],
     context: Dict[str, Any],
     event: Any,
     action_def: Any,
@@ -104,7 +104,7 @@ def log_timeout(
 
 @action
 def reset_progress(
-    interpreter: SyncInterpreter[Dict[str, Any], Any],
+    interpreter: SyncInterpreter[Dict[str, Any]],
     context: Dict[str, Any],
     event: Any,
     action_def: Any,
@@ -128,7 +128,7 @@ def reset_progress(
 
 @action
 def save_file(
-    interpreter: SyncInterpreter[Dict[str, Any], Any],
+    interpreter: SyncInterpreter[Dict[str, Any]],
     context: Dict[str, Any],
     event: Any,
     action_def: Any,
@@ -178,7 +178,7 @@ def can_retry(
 
 @service
 def fetch_file(
-    interpreter: SyncInterpreter[Dict[str, Any], Any],
+    interpreter: SyncInterpreter[Dict[str, Any]],
     context: Dict[str, Any],
     event: Any,
 ) -> Dict[str, Any]:

@@ -48,9 +48,11 @@ from .logger import logger  # Centralized logger instance
 # This `if TYPE_CHECKING:` block prevents circular import errors at runtime
 # by only importing types for static analysis. This is a standard Python
 # practice for creating type-safe, decoupled modules.
+from .events import Event  # noqa: E402
+
 if TYPE_CHECKING:
     from .base_interpreter import BaseInterpreter
-    from .events import AfterEvent, DoneEvent, Event
+    from .events import AfterEvent, DoneEvent
     from .models import (
         ActionDefinition,
         InvokeDefinition,
@@ -76,7 +78,7 @@ AnyEvent = Union["Event", "AfterEvent", "DoneEvent"]
 # to be defined for a specific `BaseInterpreter` subclass (e.g., `AsyncInterpreter`
 # or `SyncInterpreter`), enabling precise autocompletion and static analysis
 # in the developer's IDE.
-TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter[Any, Any]")
+TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter[Any]")
 
 
 # -----------------------------------------------------------------------------
@@ -410,7 +412,7 @@ class LoggingInspector(PluginBase[Any]):
     """
 
     def on_event_received(
-        self, interpreter: "BaseInterpreter[Any, Any]", event: "AnyEvent"
+        self, interpreter: "BaseInterpreter[Any]", event: "AnyEvent"
     ) -> None:
         """Logs received events in a type-safe manner.
 
@@ -425,7 +427,8 @@ class LoggingInspector(PluginBase[Any]):
         """
         # 1️⃣ Safely determine what data to log from the event.
         #    For a standard `Event`, the data is in the `payload` attribute.
-        if hasattr(event, "payload"):
+        data_to_log: Any
+        if isinstance(event, Event):
             data_to_log = event.payload
         #    For internal events like `DoneEvent` or `AfterEvent`, it's in `data`.
         else:
@@ -439,7 +442,7 @@ class LoggingInspector(PluginBase[Any]):
 
     def on_transition(
         self,
-        interpreter: "BaseInterpreter[Any, Any]",
+        interpreter: "BaseInterpreter[Any]",
         from_states: Set["StateNode"],
         to_states: Set["StateNode"],
         transition: "TransitionDefinition",
@@ -478,7 +481,7 @@ class LoggingInspector(PluginBase[Any]):
 
     def on_action_execute(
         self,
-        interpreter: "BaseInterpreter[Any, Any]",
+        interpreter: "BaseInterpreter[Any]",
         action: "ActionDefinition",
     ) -> None:
         """Logs the name of each action right before it is executed.
@@ -491,7 +494,7 @@ class LoggingInspector(PluginBase[Any]):
 
     def on_guard_evaluated(
         self,
-        interpreter: "BaseInterpreter[Any, Any]",
+        interpreter: "BaseInterpreter[Any]",
         guard_name: str,
         event: "AnyEvent",
         result: bool,
@@ -515,7 +518,7 @@ class LoggingInspector(PluginBase[Any]):
 
     def on_service_start(
         self,
-        interpreter: "BaseInterpreter[Any, Any]",
+        interpreter: "BaseInterpreter[Any]",
         invocation: "InvokeDefinition",
     ) -> None:
         """Logs when an invoked service is about to start.
@@ -532,7 +535,7 @@ class LoggingInspector(PluginBase[Any]):
 
     def on_service_done(
         self,
-        interpreter: "BaseInterpreter[Any, Any]",
+        interpreter: "BaseInterpreter[Any]",
         invocation: "InvokeDefinition",
         result: Any,
     ) -> None:
@@ -552,7 +555,7 @@ class LoggingInspector(PluginBase[Any]):
 
     def on_service_error(
         self,
-        interpreter: "BaseInterpreter[Any, Any]",
+        interpreter: "BaseInterpreter[Any]",
         invocation: "InvokeDefinition",
         error: Exception,
     ) -> None:
@@ -577,7 +580,7 @@ class LoggingInspector(PluginBase[Any]):
 
     def on_transition_failed(
         self,
-        interpreter: "BaseInterpreter[Any, Any]",
+        interpreter: "BaseInterpreter[Any]",
         transition: "TransitionDefinition",
         failed_actions: List[Tuple["ActionDefinition", BaseException]],
     ) -> None:
@@ -594,7 +597,7 @@ class LoggingInspector(PluginBase[Any]):
 
     def on_guard_error(
         self,
-        interpreter: "BaseInterpreter[Any, Any]",
+        interpreter: "BaseInterpreter[Any]",
         guard_name: str,
         event: "AnyEvent",
         error: BaseException,
@@ -610,7 +613,7 @@ class LoggingInspector(PluginBase[Any]):
 
     def on_unhandled_event(
         self,
-        interpreter: "BaseInterpreter[Any, Any]",
+        interpreter: "BaseInterpreter[Any]",
         event: "Event",
         active_state_ids: Set[str],
         disposition: str,
@@ -624,7 +627,7 @@ class LoggingInspector(PluginBase[Any]):
         )
 
     def on_error(
-        self, interpreter: "BaseInterpreter[Any, Any]", error: BaseException
+        self, interpreter: "BaseInterpreter[Any]", error: BaseException
     ) -> None:
         """Logs the interpreter entering the terminal error status."""
         logger.error(
@@ -634,7 +637,7 @@ class LoggingInspector(PluginBase[Any]):
         )
 
     def on_done(
-        self, interpreter: "BaseInterpreter[Any, Any]", output: Any
+        self, interpreter: "BaseInterpreter[Any]", output: Any
     ) -> None:
         """Logs the machine reaching a top-level final state."""
         logger.info(

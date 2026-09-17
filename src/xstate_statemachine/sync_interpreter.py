@@ -28,6 +28,7 @@ import time
 import uuid
 from collections import deque
 from typing import (
+    Literal,
     Any,
     Callable,
     Deque,
@@ -45,7 +46,7 @@ from typing import (
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
-from .base_interpreter import BaseInterpreter, _RollbackRequested
+from .base_interpreter import AnyEvent, BaseInterpreter, _RollbackRequested
 from .clock import Clock, SimulatedClock
 from .events import AfterEvent, DoneEvent, Event, Receipt
 from .exceptions import (
@@ -61,7 +62,6 @@ from .models import (
     MachineNode,
     StateNode,
     TContext,
-    TEvent,
     TransitionDefinition,
     DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS,
     SPAWN_BLOCKING_PREFIX,
@@ -120,7 +120,7 @@ class _Done(Generic[_T]):
         return repr(self.value)
 
 
-class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
+class SyncInterpreter(BaseInterpreter[TContext]):
     """Brings a state machine definition to life by interpreting its behavior synchronously.
 
     The `SyncInterpreter` manages the machine's state and processes events
@@ -154,7 +154,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
     def __init__(
         self,
-        machine: MachineNode[TContext, TEvent],
+        machine: MachineNode[TContext],
         input: Optional[Any] = None,
         clock: Optional[Clock] = None,
         strict: Optional[bool] = None,
@@ -221,7 +221,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     # 🌐 Public API
     # -------------------------------------------------------------------------
 
-    def start(self) -> "SyncInterpreter":
+    def start(self) -> "SyncInterpreter[TContext]":
         """Starts the interpreter and transitions it to its initial state.
 
         This method is idempotent; calling `start` on an already running or
@@ -385,20 +385,73 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
 
         logger.info("🕊️ Sync interpreter '%s' stopped successfully.", self.id)
 
+    # 🧷 Overloads: `wait=True` -> Receipt; otherwise None. The two
+    #    keyword flags are spelled in every overload so a checker rejects
+    #    `wait="yes"` / `priority="high"` instead of swallowing them into
+    #    `**payload` -- which is exactly what happened before, silently.
     @overload
-    def send(self, event_type: str, **payload: Any) -> None: ...  # noqa: E704
+    def send(  # noqa: E704
+        self,
+        event_type: str,
+        /,
+        *,
+        wait: Literal[True],
+        priority: bool = ...,
+        **payload: Any,
+    ) -> Receipt: ...
 
     @overload
-    def send(  # noqa: PyMethodOverriding
-        self, event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent]
-    ) -> None:  # noqa
-        ...
+    def send(  # noqa: E704
+        self,
+        event_type: str,
+        /,
+        *,
+        wait: Literal[False] = ...,
+        priority: bool = ...,
+        **payload: Any,
+    ) -> None: ...
 
-    def send(
+    @overload
+    def send(  # noqa: E704
+        self,
+        event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent],
+        /,
+        *,
+        wait: Literal[True],
+        priority: bool = ...,
+        **payload: Any,
+    ) -> Receipt: ...
+
+    @overload
+    def send(  # noqa: E704
+        self,
+        event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent],
+        /,
+        *,
+        wait: Literal[False] = ...,
+        priority: bool = ...,
+        **payload: Any,
+    ) -> None: ...
+
+    @overload
+    def send(  # noqa: E704
         self,
         event_or_type: Union[
             str, Dict[str, Any], Event, DoneEvent, AfterEvent
         ],
+        /,
+        *,
+        wait: bool = ...,
+        priority: bool = ...,
+        **payload: Any,
+    ) -> Optional[Receipt]: ...
+
+    def send(  # type: ignore[override, misc]
+        self,
+        event_or_type: Union[
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+        ],
+        /,
         *,
         wait: bool = False,
         priority: bool = False,
@@ -683,7 +736,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     def _deliver(  # type: ignore[override]
         self,
         actor: Any,
-        target_event: Event,
+        target_event: AnyEvent,
         delay: Optional[float],
         send_id: Optional[str],
     ) -> "_Done[None]":
@@ -693,7 +746,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     def _deliver_sync(
         self,
         actor: Any,
-        target_event: Event,
+        target_event: AnyEvent,
         delay: Optional[float],
         send_id: Optional[str],
     ) -> None:
@@ -721,6 +774,12 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
             return
 
         key = str(send_id) if send_id else None
+        # 🧷 Declared before `_fire` so the closure's reference resolves for
+        #    the type checker; bound below once the timer handle exists.
+        handle: Any = None
+
+        def _cancel() -> None:
+            self.clock.clear_timeout(handle)
 
         def _fire() -> None:
             if key is not None and self._scheduled_sends.get(key) is _cancel:
@@ -745,9 +804,6 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
         # 🔁 Reusing a send id supersedes the earlier send. Without this the
         #    first timer is orphaned: the registry entry is overwritten, so
         #    `cancel(id)` can no longer reach it and it fires anyway.
-        def _cancel() -> None:
-            self.clock.clear_timeout(handle)
-
         if key is not None:
             previous = self._scheduled_sends.get(key)
             if previous is not None:
@@ -1054,7 +1110,7 @@ class SyncInterpreter(BaseInterpreter[TContext, TEvent]):
     def _invoke_service(
         self,
         invocation: InvokeDefinition,
-        service: Callable[..., Any],
+        service: Union[Callable[..., Any], "MachineNode[Any]"],
         owner_id: str,
     ) -> None:
         """Handles invoked services, supporting only synchronous callables.

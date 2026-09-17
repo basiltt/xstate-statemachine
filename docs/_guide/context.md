@@ -477,6 +477,66 @@ interp.stop()
 
 See [Actions](../actions/) for the full list of built-in action creators, including `assign`.
 
+## Typed Context — Letting the Checker Catch Your Typos
+
+The library ships `py.typed`, and `interp.context` can be **your** type. Declare
+the context shape as a `TypedDict` (or any `Mapping` subtype) and pass it to
+`create_machine(context_type=...)`. It has no runtime effect — the machine's
+context is still the `"context"` in your config — it exists purely so the
+type flows through to every interpreter built from that machine:
+
+```python
+from typing import Optional, TypedDict
+
+from xstate_statemachine import MachineLogic, SyncInterpreter, create_machine
+
+
+class Cart(TypedDict):
+    items: list
+    total: float
+    coupon: Optional[str]
+
+
+def add_item(interp: "SyncInterpreter[Cart]", ctx: Cart, event, action_def) -> None:
+    ctx["items"].append(event.payload["sku"])
+    ctx["total"] += event.payload["price"]
+
+
+machine = create_machine(
+    {
+        "id": "shop",
+        "initial": "browsing",
+        "context": {"items": [], "total": 0.0, "coupon": None},
+        "states": {"browsing": {"on": {"ADD": {"actions": ["addItem"]}}}},
+    },
+    logic=MachineLogic(actions={"addItem": add_item}),
+    context_type=Cart,
+)
+
+interp = SyncInterpreter(machine).start()          # SyncInterpreter[Cart]
+interp.send("ADD", sku="A1", price=9.5)
+
+total: float = interp.context["total"]             # ✅ typed as float
+assert total == 9.5
+```
+
+With `context_type` set, mypy and pyright both report:
+
+<!-- doc-fragment -->
+```python
+interp.context["totl"]              # error: TypedDict "Cart" has no key "totl"
+label: str = interp.context["total"]  # error: "float" is not "str"
+```
+
+Without `context_type`, the context is `Dict[str, Any]` — everything is
+permitted, exactly as in 0.7.x. The other things the checker now verifies
+for you: `send(..., wait=True)` returns a `Receipt` (not `None`), `wait=` and
+`priority=` must be `bool`, every `MachineLogic` callable has the right
+**arity** (a two-argument action or a guard returning `str` is an error), and
+plugin hook overrides must keep the base signature. See
+[Testing & The Pure API](../testing-and-pure-api/) for running a type
+checker as part of your test suite.
+
 ## Interpreter `input` and Context
 
 When you construct an interpreter with `input=`, that value is exposed to the running machine under `context["input"]` — but only if the initial context doesn't already declare an `"input"` key (an explicit `context` key always wins, so `input` can never overwrite declared context):

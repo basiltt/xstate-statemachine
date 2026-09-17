@@ -475,7 +475,7 @@ class PythonicBuilderStrategy(BaseStrategy):
             #    `mypy --strict` with [type-arg]. Dict[str, Any] is
             #    the context type these stubs actually receive.
             base = "Interpreter" if is_async else "SyncInterpreter"
-            interpreter_type = f"{base}[Dict[str, Any], Any]"
+            interpreter_type = f"{base}[Dict[str, Any]]"
 
             if component_type == "guard":
                 args = [

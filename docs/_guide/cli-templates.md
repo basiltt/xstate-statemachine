@@ -653,7 +653,7 @@ class CheckoutLogic:
     # Actions
     def calculate_total(
         self,
-        interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
+        interpreter: Union[Interpreter[Any], SyncInterpreter[Any]],
         context: Dict[str, Any],
         event: Event,
         action_def: ActionDefinition,
@@ -676,7 +676,7 @@ class CheckoutLogic:
 
     def clear_cart(
         self,
-        interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
+        interpreter: Union[Interpreter[Any], SyncInterpreter[Any]],
         context: Dict[str, Any],
         event: Event,
         action_def: ActionDefinition,
@@ -699,7 +699,7 @@ class CheckoutLogic:
 
     def show_error(
         self,
-        interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
+        interpreter: Union[Interpreter[Any], SyncInterpreter[Any]],
         context: Dict[str, Any],
         event: Event,
         action_def: ActionDefinition,
@@ -740,7 +740,7 @@ class CheckoutLogic:
     # Services
     def process_payment(
         self,
-        interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
+        interpreter: Union[Interpreter[Any], SyncInterpreter[Any]],
         context: Dict[str, Any],
         event: Event,
     ) -> Dict[str, Any]:
@@ -848,7 +848,7 @@ logger = logging.getLogger(__name__)
 
 
 def calculate_total(
-    interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
+    interpreter: Union[Interpreter[Any], SyncInterpreter[Any]],
     context: Dict[str, Any],
     event: Event,
     action_def: ActionDefinition,
@@ -871,7 +871,7 @@ def calculate_total(
 
 
 def clear_cart(
-    interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
+    interpreter: Union[Interpreter[Any], SyncInterpreter[Any]],
     context: Dict[str, Any],
     event: Event,
     action_def: ActionDefinition,
@@ -894,7 +894,7 @@ def clear_cart(
 
 
 def show_error(
-    interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
+    interpreter: Union[Interpreter[Any], SyncInterpreter[Any]],
     context: Dict[str, Any],
     event: Event,
     action_def: ActionDefinition,
@@ -943,7 +943,7 @@ def cart_not_empty(
 
 
 def process_payment(
-    interpreter: Union[Interpreter[Any, Any], SyncInterpreter[Any, Any]],
+    interpreter: Union[Interpreter[Any], SyncInterpreter[Any]],
     context: Dict[str, Any],
     event: Event,
 ) -> Dict[str, Any]:

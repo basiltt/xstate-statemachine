@@ -32,6 +32,7 @@ import threading
 import uuid
 from collections import deque
 from typing import (
+    Literal,
     Any,
     Awaitable,
     Callable,
@@ -59,7 +60,7 @@ from .actions import (
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
-from .base_interpreter import BaseInterpreter
+from .base_interpreter import AnyEvent, BaseInterpreter
 from .clock import Clock, SimulatedClock
 from .events import AfterEvent, DoneEvent, Event, Receipt
 from .exceptions import (
@@ -79,7 +80,6 @@ from .models import (
     OverflowPolicy,
     StateNode,
     TContext,
-    TEvent,
     spawn_service_key,
 )
 from .task_manager import TaskManager
@@ -150,7 +150,7 @@ def _completed() -> "asyncio.Future[None]":
     return fut
 
 
-class Interpreter(BaseInterpreter[TContext, TEvent]):
+class Interpreter(BaseInterpreter[TContext]):
     """Brings a state machine to life by interpreting it asynchronously.
 
     The `Interpreter` is the core runtime engine for the state machine. It
@@ -180,7 +180,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
     def __init__(
         self,
-        machine: MachineNode[TContext, TEvent],
+        machine: MachineNode[TContext],
         input: Optional[Any] = None,
         clock: Optional[Clock] = None,
         max_queue_size: Optional[int] = None,
@@ -202,7 +202,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
                 decision must get through a full inbox.
 
         Args:
-            machine (MachineNode[TContext, TEvent]): The `MachineNode` instance
+            machine (MachineNode[TContext]): The `MachineNode` instance
                 that this interpreter will execute.
         """
         # 🏛️ Initialize the base class, passing our own class type so that
@@ -301,7 +301,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             and not self._event_loop_task.done()
         )
 
-    async def start(self) -> "Interpreter[TContext, TEvent]":
+    async def start(self) -> "Interpreter[TContext]":
         """Starts the interpreter and its main event-processing loop.
 
         This method initializes the machine by transitioning it to its initial
@@ -310,7 +310,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         interpreter has no effect and will simply return.
 
         Returns:
-            Interpreter[TContext, TEvent]: The interpreter instance (`self`),
+            Interpreter[TContext]: The interpreter instance (`self`),
             allowing for convenient method chaining (e.g., `await
             Interpreter(m).start()`).
 
@@ -473,21 +473,74 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         await self._teardown()
         logger.info("✅ Interpreter '%s' stopped successfully.", self.id)
 
+    # 🧷 Overloads: `wait=True` -> Awaitable[Receipt]; otherwise
+    #    Awaitable[None]. Both keyword flags are spelled out so a checker
+    #    rejects `wait="yes"` / `priority="high"` instead of swallowing
+    #    them into `**payload`, and so `r = await send(..., wait=True)`
+    #    is a Receipt (it typed as None before, making `r.error` an error).
     @overload
     def send(  # noqa: E704
-        self, event_type: str, **payload: Any
+        self,
+        event_type: str,
+        /,
+        *,
+        wait: Literal[True],
+        priority: bool = ...,
+        **payload: Any,
+    ) -> Awaitable[Receipt]: ...
+
+    @overload
+    def send(  # noqa: E704
+        self,
+        event_type: str,
+        /,
+        *,
+        wait: Literal[False] = ...,
+        priority: bool = ...,
+        **payload: Any,
     ) -> Awaitable[None]: ...
 
     @overload
     def send(  # noqa: E704
-        self, event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent]
+        self,
+        event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent],
+        /,
+        *,
+        wait: Literal[True],
+        priority: bool = ...,
+        **payload: Any,
+    ) -> Awaitable[Receipt]: ...
+
+    @overload
+    def send(  # noqa: E704
+        self,
+        event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent],
+        /,
+        *,
+        wait: Literal[False] = ...,
+        priority: bool = ...,
+        **payload: Any,
     ) -> Awaitable[None]: ...
+
+    @overload
+    def send(  # noqa: E704
+        self,
+        event_or_type: Union[
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+        ],
+        /,
+        *,
+        wait: bool = ...,
+        priority: bool = ...,
+        **payload: Any,
+    ) -> Awaitable[Optional[Receipt]]: ...
 
     def send(  # type: ignore[override, misc]
         self,
         event_or_type: Union[
             str, Dict[str, Any], Event, DoneEvent, AfterEvent
         ],
+        /,
         *,
         wait: bool = False,
         priority: bool = False,
@@ -572,11 +625,36 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
             self._enqueue(event_obj)
         return receipt if receipt is not None else _completed()
 
+    @overload
+    def send_priority(  # noqa: E704
+        self,
+        event_or_type: Union[
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+        ],
+        /,
+        *,
+        wait: Literal[True] = ...,
+        **payload: Any,
+    ) -> Awaitable[Receipt]: ...
+
+    @overload
+    def send_priority(  # noqa: E704
+        self,
+        event_or_type: Union[
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+        ],
+        /,
+        *,
+        wait: Literal[False],
+        **payload: Any,
+    ) -> Awaitable[None]: ...
+
     def send_priority(
         self,
         event_or_type: Union[
             str, Dict[str, Any], Event, DoneEvent, AfterEvent
         ],
+        /,
         *,
         wait: bool = True,
         **payload: Any,
@@ -597,8 +675,12 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         # 🧭 `send` is overloaded on the event's TYPE; mypy resolves this
         #    forwarding call against the first (str) overload. Runtime
         #    dispatch is by value, so the cast only silences the checker.
+        if wait:
+            return self.send(
+                cast(str, event_or_type), wait=True, priority=True, **payload
+            )
         return self.send(
-            cast(str, event_or_type), wait=wait, priority=True, **payload
+            cast(str, event_or_type), wait=False, priority=True, **payload
         )
 
     # -------------------------------------------------------------------------
@@ -831,7 +913,9 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         Shared by `stop()` and by reaching a terminal status (#57).
         """
         for actor in list(self._actors.values()):
-            await actor.stop()
+            _stopped = actor.stop()
+            if _stopped is not None:
+                await _stopped
         self._actors.clear()
         await self.task_manager.cancel_all()
         for handles in self._timer_handles.values():
@@ -1238,8 +1322,8 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
     async def _deliver(
         self,
-        actor: "BaseInterpreter[Any, Any]",
-        target_event: Event,
+        actor: "BaseInterpreter[Any]",
+        target_event: AnyEvent,
         delay: Optional[float],
         send_id: Optional[str],
     ) -> None:
@@ -1303,7 +1387,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
 
     @staticmethod
     async def _send_to_actor(
-        actor: "BaseInterpreter[Any, Any]", target_event: Event
+        actor: "BaseInterpreter[Any]", target_event: AnyEvent
     ) -> None:
         """Dispatches an event to an actor of either execution mode.
 
@@ -1388,13 +1472,15 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
         )
         self._actors[actor_id] = child_interpreter
         self._actor_sources[actor_id] = actor_machine_key
+
         # 🧹 #57 review F3: a spawned child that finishes on its own must
         #    leave the parent's map, or a supervisor that spawns per request
         #    grows without bound. (Invoked children are popped by their
         #    manager task; spawned ones had no owner watching.)
-        child_interpreter._terminal_listeners.append(
-            lambda _s, aid=actor_id: self._forget_actor(aid)
-        )
+        def _on_child_terminal(_status: str, aid: str = actor_id) -> None:
+            self._forget_actor(aid)
+
+        child_interpreter._terminal_listeners.append(_on_child_terminal)
         await child_interpreter.start()
 
         # ⏸️ #41: `spawn_blocking_<key>` -- the child runs to completion
@@ -1659,7 +1745,7 @@ class Interpreter(BaseInterpreter[TContext, TEvent]):
     def _invoke_service(
         self,
         invocation: InvokeDefinition,
-        service: Callable[..., Any],
+        service: Union[Callable[..., Any], "MachineNode[Any]"],
         owner_id: str,
     ) -> None:
         """Creates and registers a background task to run an invoked service or actor.

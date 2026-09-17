@@ -74,6 +74,7 @@ Example:
 # -----------------------------------------------------------------------------
 from .factory import create_machine
 from .base_interpreter import PendingInvocation
+from .base_interpreter import BaseInterpreter
 from .interpreter import Interpreter
 from .sync_interpreter import SyncInterpreter
 from .machine_logic import MachineLogic
@@ -188,6 +189,7 @@ __version__ = "0.7.0"
 __all__ = [
     # ⚙️ Core Components
     "create_machine",
+    "BaseInterpreter",
     "Interpreter",
     "SyncInterpreter",
     "MachineLogic",

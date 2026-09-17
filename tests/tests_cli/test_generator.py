@@ -382,8 +382,7 @@ class TestLogicCodeGenerator(unittest.TestCase):
         #    emitted hint now carries explicit parameters. The intent of this
         #    test -- that both variants appear -- is unchanged.
         expected_hint = (
-            "interpreter: Union[Interpreter[Any, Any], "
-            "SyncInterpreter[Any, Any]],"
+            "interpreter: Union[Interpreter[Any], " "SyncInterpreter[Any]],"
         )
         self.assertIn(expected_hint, code_sync)
         self.assertIn(expected_hint, code_async)

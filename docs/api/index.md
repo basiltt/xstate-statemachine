@@ -17,7 +17,7 @@ from xstate_statemachine import create_machine, Interpreter, State  # etc.
 
 ## Factory Functions
 
-### `create_machine(config, *, logic=None, logic_modules=None, logic_providers=None, strict_targets=True, event_schemas=None)`
+### `create_machine(config, *, context_type=None, logic=None, logic_modules=None, logic_providers=None, strict_targets=True, event_schemas=None)`
 
 Creates, validates, and assembles a state machine instance from an
 XState-compatible JSON configuration dictionary. This is the **primary
@@ -35,6 +35,7 @@ target must resolve, and no `always` self-target may be a permanent dead end.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `config` | `Dict[str, Any]` | Yes | -- | The machine's structural definition. Must contain top-level `"id"` (non-empty string) and `"states"` keys. Typically loaded from JSON or YAML. |
+| `context_type` | `Type[TContext]` | No | `None` | **[wave 3]** Type-only: the class (usually a `TypedDict`) that describes the context shape. The returned `MachineNode[TContext]` carries it to every interpreter, so `interp.context` is typed. No runtime effect. |
 | `logic` | `MachineLogic` | No | `None` | A pre-constructed `MachineLogic` instance containing all required actions, guards, and services. When provided, auto-discovery is skipped. |
 | `logic_modules` | `List[Union[str, ModuleType]]` | No | `None` | Python modules (or their dotted import-path strings, e.g. `"my_app.logic.actions"`) to scan for logic functions. |
 | `logic_providers` | `List[object]` | No | `None` | Class instances whose public methods are scanned to satisfy the machine's logic requirements. Provider methods override module-level functions on name collision. |
@@ -1398,14 +1399,26 @@ async def process(interpreter, context, event):
 ### `MachineLogic(actions=None, guards=None, services=None)`
 
 ```python
-class MachineLogic(Generic[TContext, TEvent]):
+class MachineLogic(Generic[TContext]):
     def __init__(
         self,
-        actions: Optional[Dict[str, Callable[..., Any]]] = None,
-        guards: Optional[Dict[str, Callable[..., bool]]] = None,
-        services: Optional[Dict[str, Union[Callable[..., Any], MachineNode]]] = None,
+        actions: Optional[Mapping[str, ActionCallable]] = None,
+        guards: Optional[Mapping[str, GuardCallable]] = None,
+        services: Optional[Mapping[str, Union[ServiceCallable, MachineNode]]] = None,
+        delays: Optional[Mapping[str, Union[int, float, DelayCallable]]] = None,
     ) -> None: ...
+
+# The callable blueprints pin ARITY and the guard's bool return:
+ActionCallable  = Callable[[Any, Any, Any, ActionDefinition], Union[None, Awaitable[None]]]
+GuardCallable   = Callable[[Any, Any], bool]
+ServiceCallable = Callable[[Any, Any, Any], Any]
+DelayCallable   = Callable[[Any, Any], Union[int, float]]
 ```
+
+**[wave 3]** A two-argument action or a guard returning `str` is now a type
+error at the `MachineLogic(...)` call. The interpreter/context/event slots are
+`Any` on purpose: annotate them as narrowly as you like on your own functions
+(`interp: SyncInterpreter[MyCtx]`) and they still fit.
 
 A container ("registry") for the implementation logic of a state machine.
 Separates the declarative machine definition (JSON) from the imperative
