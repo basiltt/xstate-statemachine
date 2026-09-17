@@ -176,7 +176,7 @@ from .helpers import transition as pure_transition
 # -----------------------------------------------------------------------------
 
 # 📦 The official version number for the library.
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 # -----------------------------------------------------------------------------
 # 🌐 Public API Definition

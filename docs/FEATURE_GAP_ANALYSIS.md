@@ -3,7 +3,7 @@
 **Subject**: `xstate-statemachine` (Python) v0.5.1 vs `xstate` (JS/TS) v5.32.5
 **Date**: 2026-08-07 (original analysis); superseded by two further releases since
 **Method**: 4 parallel research streams over the XState changelog, npm registry and Stately docs; every claimed gap then verified **empirically** by executing Python against this library. 73 features were individually probed.
-**Status**: ✅ All gaps resolved in v0.6.0. The library has since shipped v0.7.0 and is currently on the v0.8.0 release candidate; neither release reopened any gap tracked here.
+**Status**: ✅ All gaps resolved in v0.6.0. The library has since shipped v0.7.0 and v0.8.0; neither release reopened any gap tracked here.
 
 > ## ✅ STATUS: RESOLVED IN v0.6.0 — SUPERSEDED BY v0.7.0 / v0.8.0 (current)
 >
@@ -13,8 +13,8 @@
 > introduces.
 >
 > The library has since shipped **v0.7.0** (actor model, persistence, error
-> snapshots) and is now on the **v0.8.0** release candidate (modern
-> conveniences and testing tools). See the `[0.7.0]` and `[Unreleased]`
+> snapshots) and **v0.8.0** (production hardening, clock injection, strict mode,
+> typed context). See the `[0.7.0]` and `[0.8.0]`
 > entries in `CHANGELOG.md` for what changed in those releases. This document
 > is not being kept in sync feature-by-feature with those releases; treat it
 > purely as the historical record below.
