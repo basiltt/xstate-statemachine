@@ -420,6 +420,24 @@
     var content = qs('.content');
     if (!content) return;
 
+    // Wrap tables in a scroll container. `display:block` on <table> gives
+    // horizontal scroll but breaks `width:100%` (rows shrink to content);
+    // a wrapper keeps the table a real table and still scrolls on phones.
+    qsa('table', content).forEach(function (table) {
+      if (table.parentElement.classList.contains('table-scroll')) return;
+      var wrap = document.createElement('div');
+      wrap.className = 'table-scroll';
+      table.parentNode.insertBefore(wrap, table);
+      wrap.appendChild(table);
+      var mark = function () {
+        wrap.classList.toggle('is-scrollable', wrap.scrollWidth > wrap.clientWidth + 1);
+        wrap.classList.toggle('at-end', wrap.scrollLeft + wrap.clientWidth >= wrap.scrollWidth - 1);
+      };
+      wrap.addEventListener('scroll', mark, { passive: true });
+      window.addEventListener('resize', mark);
+      mark();
+    });
+
     // Generate IDs for headings that lack them
     qsa('h2, h3, h4', content).forEach(function (heading) {
       if (!heading.id) {

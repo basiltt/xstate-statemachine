@@ -50,6 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   section headings throughout.
 - Two pre-existing broken in-page anchors fixed (`cli`, `troubleshooting`);
   the docs link checker now models kramdown and GitHub slugging separately.
+- **Mobile pass.** Tables are wrapped in a scroll container with a sticky
+  first column (the old `display:block` table gave scroll but broke
+  `width:100%`, so rows shrank to content on every screen size); phone
+  breakpoint tightens the type scale and gutter, stacks the hero CTAs, and
+  separates the three floating controls that shared one corner. The
+  Requirements table now lists Python 3.9 – 3.14.
 
 ## [0.8.0] - 2026-09-17 — Fortify
 
