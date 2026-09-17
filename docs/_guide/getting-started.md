@@ -64,7 +64,7 @@ options:
 
 | Requirement | Details |
 |-------------|---------|
-| **Python** | 3.9 or higher (tested on 3.9, 3.10, 3.11, 3.12, 3.13) |
+| **Python** | 3.9 – 3.14 (CI runs every version on Linux, macOS and Windows) |
 | **Dependencies** | None — zero external dependencies beyond the standard library |
 | **OS** | Windows, macOS, Linux |
 
