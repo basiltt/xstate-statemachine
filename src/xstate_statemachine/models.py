@@ -361,7 +361,17 @@ class GuardDefinition:
             return
 
         children_cfg: List[Any] = []
-        if isinstance(config, str):
+        if isinstance(config, str) and config.startswith("!") and config[1:]:
+            # 🚫 `"!name"` is Stately's shorthand for a negated guard --
+            #    sugar for `{"type": "not", "children": ["name"]}`. Treated
+            #    literally it demanded a guard CALLED `!name`, which no
+            #    implementation can be registered under; three of the 104
+            #    real-world corpus machines failed at start() on it. It
+            #    desugars here, so the rest of the engine sees one shape.
+            self.type = "not"
+            self.params = None
+            children_cfg = [config[1:]]
+        elif isinstance(config, str):
             self.type = config
             self.params = None
         elif isinstance(config, dict):
@@ -403,8 +413,9 @@ class GuardDefinition:
         # (`{"type": "and", ...}`) declares composition. Without this a user
         # who legitimately names a guard `and`, `or` or `not` could not use
         # it at all — the parser demanded nested children it would never have.
-        self.is_composite = (
-            self.type in COMPOSITE_GUARD_TYPES and not isinstance(config, str)
+        self.is_composite = self.type in COMPOSITE_GUARD_TYPES and (
+            not isinstance(config, str)
+            or bool(children_cfg)  # the `"!name"` sugar desugared above
         )
         self.is_state_in = self.type == STATE_IN_GUARD_TYPE
         self.children = [GuardDefinition(c) for c in children_cfg]

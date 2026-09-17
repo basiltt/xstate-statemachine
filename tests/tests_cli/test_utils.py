@@ -140,3 +140,58 @@ class TestNormalizeBool(unittest.TestCase):
         # Negative checks (full word and abbreviation).
         self.assertFalse(normalize_bool("no"), "Failed on 'no'")
         self.assertFalse(normalize_bool("N"), "Failed on 'N'")
+
+
+class TestCamelToSnakeUnicode(unittest.TestCase):
+    """Python identifiers may contain Unicode letters (PEP 3131). The
+    sanitiser was ASCII-only, so every Cyrillic / CJK / accented name
+    collapsed to the empty-name fallback `machine` -- and a machine with
+    ten such actions generated ten methods all called `machine`, each
+    silently overriding the last (subscription_ru.json in the corpus)."""
+
+    def test_unicode_letters_are_kept(self) -> None:
+        from src.xstate_statemachine.cli.utils import camel_to_snake
+
+        out = camel_to_snake("Запомнить дату окончания подписки")
+        self.assertTrue(out.isidentifier(), out)
+        self.assertEqual(out, "запомнить_дату_окончания_подписки")
+        self.assertEqual(
+            camel_to_snake("überprüfen Status"), "überprüfen_status"
+        )
+
+    def test_distinct_unicode_names_stay_distinct(self) -> None:
+        from src.xstate_statemachine.cli.utils import camel_to_snake
+
+        names = ["Проверить статус", "Отправить письмо", "Закрыть"]
+        self.assertEqual(len({camel_to_snake(n) for n in names}), 3)
+
+    def test_ascii_behaviour_is_unchanged(self) -> None:
+        from src.xstate_statemachine.cli.utils import camel_to_snake
+
+        for raw, want in (
+            ("fetchUserData", "fetch_user_data"),
+            ("HTTPRequest", "http_request"),
+            ("inline:m.a#entry[0]", "inline_m_a_entry_0"),
+            ("  ", "machine"),
+            ("2fa", "_2fa"),
+        ):
+            self.assertEqual(camel_to_snake(raw), want, raw)
+
+
+class TestModuleSafeName(unittest.TestCase):
+    """A machine id that is also a stdlib module name must not become the
+    generated file's stem: `token.py` shadowed the stdlib `token` that
+    `logging` imports, and the runner died mid-import with a message that
+    named neither the cause nor the file (Token.json in the corpus)."""
+
+    def test_stdlib_names_get_a_suffix(self) -> None:
+        from src.xstate_statemachine.cli.utils import module_safe_name
+
+        for name in ("token", "queue", "email", "types", "json", "logging"):
+            self.assertEqual(module_safe_name(name), f"{name}_machine")
+
+    def test_ordinary_names_are_unchanged(self) -> None:
+        from src.xstate_statemachine.cli.utils import module_safe_name
+
+        for name in ("checkout", "traffic_light", "order_flow", "auth"):
+            self.assertEqual(module_safe_name(name), name)

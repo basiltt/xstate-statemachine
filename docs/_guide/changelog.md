@@ -273,6 +273,23 @@ preserves 0.7.x semantics, with two deliberate exceptions called out under
   stops running or a link that 404s on the site fails the build. 34
   runnable feature examples now live under `examples/*/features/`, one per
   capability, all executed by `tests/test_examples.py`.
+- **[wave 3] CLI: four more generated-code defects from executing the
+  104-machine corpus.** (1) `"guard": "!name"` -- Stately's shorthand for a
+  negated guard -- was taken literally and demanded a guard called `!name`;
+  the engine (`GuardDefinition`) and the CLI IR now desugar it to
+  `{"type": "not", "children": ["name"]}` so the stub emitted is `name`.
+  (2) `onDone` on a compound/parallel STATE was skipped by the logic
+  extractor, so its guard/actions were never stubbed. (3) A machine `id`
+  that is also a stdlib module name (`token`, `queue`, `email`, ...)
+  produced `token.py`, which shadowed the stdlib module `logging` imports
+  and died mid-import with an unrelated `AttributeError`; such stems get a
+  `_machine` suffix. (4) `camel_to_snake` was ASCII-only, so every
+  Cyrillic/CJK/accented name collapsed to the fallback `machine` and each
+  generated method overwrote the last; identifiers now keep Unicode
+  letters (PEP 3131). Also: two different config names that sanitise to
+  the same identifier (`fetch-data` / `fetch.data`) are de-duplicated
+  (`fetch_data`, `fetch_data_2`) by one shared allocator that every
+  emitter and every reference site read from.
 - **[wave 3] Generated code binds Stately `inline:` action names** (CLI).
   Stately exports anonymous actions as `inline:machine.state#entry[0]`;
   every template turned that into an identifier-safe method name and then

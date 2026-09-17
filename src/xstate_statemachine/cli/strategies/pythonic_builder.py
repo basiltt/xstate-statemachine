@@ -16,6 +16,7 @@ from ..ir import parse_machine
 from .base import BaseStrategy, GenerationContext
 from ..naming import docstring_safe
 from ._shared import (
+    logic_bindings,
     decorator_for,
     escape_for_string,
     generate_action_docstring,
@@ -53,6 +54,7 @@ class PythonicBuilderStrategy(BaseStrategy):
         """
         config = ctx.configs[0]
         parts: List[str] = []
+        bindings = logic_bindings(ctx.actions, ctx.guards, ctx.services)
 
         # -- imports --------------------------------------------------
         parts.append(
@@ -74,6 +76,7 @@ class PythonicBuilderStrategy(BaseStrategy):
                 self._generate_component(
                     items=ctx.actions,
                     component_type="action",
+                    bindings=bindings,
                     is_async=ctx.is_async,
                     log=ctx.log,
                 )
@@ -85,6 +88,7 @@ class PythonicBuilderStrategy(BaseStrategy):
                 self._generate_component(
                     items=ctx.guards,
                     component_type="guard",
+                    bindings=bindings,
                     is_async=ctx.is_async,
                     log=ctx.log,
                 )
@@ -96,6 +100,7 @@ class PythonicBuilderStrategy(BaseStrategy):
                 self._generate_component(
                     items=ctx.services,
                     component_type="service",
+                    bindings=bindings,
                     is_async=ctx.is_async,
                     log=ctx.log,
                 )
@@ -430,6 +435,7 @@ class PythonicBuilderStrategy(BaseStrategy):
     def _generate_component(
         items: Set[str],
         component_type: str,
+        bindings: Dict[str, str],
         is_async: bool,
         log: bool,
     ) -> str:
@@ -452,9 +458,7 @@ class PythonicBuilderStrategy(BaseStrategy):
         )
 
         for original in sorted(items):
-            fn_name = snake_case_name(original)
-            if keyword.iskeyword(fn_name):
-                fn_name = f"{fn_name}_"
+            fn_name = bindings[original]
 
             # -- decorator --------------------------------------------
             # The builder binds by explicit string below, so the decorator
@@ -579,21 +583,22 @@ class PythonicBuilderStrategy(BaseStrategy):
         if not machine.id:
             machine.id = ctx.machine_id
 
+        bindings = logic_bindings(ctx.actions, ctx.guards, ctx.services)
         logic_lines: List[str] = []
         for name in sorted(ctx.actions):
             logic_lines.append(
                 f'    builder.action("{escape_for_string(name)}", '
-                f"{snake_case_name(name)})"
+                f"{bindings[name]})"
             )
         for name in sorted(ctx.guards):
             logic_lines.append(
                 f'    builder.guard("{escape_for_string(name)}", '
-                f"{snake_case_name(name)})"
+                f"{bindings[name]})"
             )
         for name in sorted(ctx.services):
             logic_lines.append(
                 f'    builder.service("{escape_for_string(name)}", '
-                f"{snake_case_name(name)})"
+                f"{bindings[name]})"
             )
 
         code = render_builder_build(machine, context=machine.context)

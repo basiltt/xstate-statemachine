@@ -268,6 +268,12 @@ def parse_guard(raw: Any) -> Optional[GuardIR]:
     """
     if raw is None:
         return None
+    if isinstance(raw, str) and raw.startswith("!") and raw[1:]:
+        # 🚫 `"!name"` is Stately's shorthand for a negated guard. The
+        #    engine desugars it to `{"type": "not", "children": ["name"]}`
+        #    (models.GuardDefinition); mirror that here so the stub the
+        #    generator emits is for `name`, not for a guard called `!name`.
+        return GuardIR(type="not", children=(GuardIR(type=raw[1:]),))
     if isinstance(raw, str):
         return GuardIR(type=raw)
     if not isinstance(raw, dict):

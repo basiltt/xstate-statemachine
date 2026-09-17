@@ -173,6 +173,30 @@ Nested guards can also be declared inline under `children`, or (for `not`) under
 
 > **Note:** A *bare string* guard named `"and"`, `"or"`, or `"not"` is always treated as a user predicate, never as a composition — only the object form (`{"type": "and", ...}`) triggers composite behavior. This means you can still register a guard literally called `and` without conflict.
 
+
+### Shorthand: `"!name"`
+
+`"guard": "!isLocked"` is sugar for `{"type": "not", "children": ["isLocked"]}`
+-- the form Stately's editor emits for a negated guard. You implement the
+positive guard (`isLocked`) only; the engine inverts it.
+
+```python
+from xstate_statemachine import SyncInterpreter, MachineLogic, create_machine
+
+config = {
+    "id": "door",
+    "initial": "closed",
+    "states": {
+        "closed": {"on": {"OPEN": {"target": "open", "guard": "!isLocked"}}},
+        "open": {},
+    },
+}
+machine = create_machine(config, logic=MachineLogic(guards={"isLocked": lambda c, e: False}))
+interp = SyncInterpreter(machine).start()
+interp.send("OPEN")
+assert interp.matches("door.open")
+```
+
 ## Built-in `stateIn` Guard
 
 `stateIn` is a built-in guard, satisfied when a given state is part of the machine's active configuration — either as an active leaf or as an ancestor of one. No implementation is required:

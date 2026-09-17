@@ -156,6 +156,13 @@ def _traverse_and_extract(
                     if key in invoke:
                         _extract_from_transition(invoke[key], actions, guards)
 
+    # 🏁 `onDone` on a compound/parallel STATE. (An invoke's own onDone is
+    #    walked with the invoke above; this is the state-level one.)
+    #    Previously skipped, so a guard or action used only there was never
+    #    emitted and the generated machine failed to build.
+    if "onDone" in node:
+        _extract_from_transition(node["onDone"], actions, guards)
+
     # ⚡ Process eventless ("always") transitions. Previously skipped, so a
     #    guard used only by `always` was never emitted and the generated
     #    machine failed to build with ImplementationMissingError.

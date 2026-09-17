@@ -47,6 +47,13 @@ CONFIG: Dict[str, Any] = {
                 {"type": "inline:inl.a#entry[0]"},
                 {"type": "Already_Weird-Name.v2"},
                 {"type": "plainCamelCase"},
+                # 🇷🇺 Unicode letters are legal in identifiers; used to
+                #    collapse to the fallback `machine` and collide.
+                {"type": "Запомнить дату"},
+                # 💥 Two DIFFERENT names that sanitise to the same identifier
+                #    (`fetch_data`); the second used to overwrite the first.
+                {"type": "fetch-data"},
+                {"type": "fetch.data"},
             ],
             "on": {
                 "GO": {
@@ -158,9 +165,9 @@ class TestInlineNamesBindOnEveryPythonicTemplate(unittest.TestCase):
                 code = code.replace('if __name__ == "__main__":', "if False:")
                 module = exec_generated(code, label=template)
                 machine = find_machine(module)
-                expected = set(
-                    CONFIG["states"]["a"]["entry"][i]["type"] for i in range(3)
-                ) | {"inline:inl.a#GO[-1]#transition[0]"}
+                expected = {
+                    e["type"] for e in CONFIG["states"]["a"]["entry"]
+                } | {"inline:inl.a#GO[-1]#transition[0]"}
                 self.assertTrue(
                     expected <= set(machine.logic.actions),
                     f"{template}: unbound actions "

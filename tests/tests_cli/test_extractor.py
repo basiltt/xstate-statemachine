@@ -126,6 +126,46 @@ class TestLogicNamesExtractor(unittest.TestCase):
         actions, _, _ = extract_logic_names(config)
         self.assertEqual(actions, {"act_type"})
 
+    def test_extract_from_compound_state_on_done(self) -> None:
+        """`onDone` on a COMPOUND/PARALLEL state (not an invoke) carries a
+        transition too. It was skipped, so its guard/actions were never
+        emitted and the generated machine failed at create_machine() --
+        car_sales.json in the Stately corpus."""
+        config = {
+            "id": "m",
+            "initial": "p",
+            "states": {
+                "p": {
+                    "initial": "a",
+                    "states": {"a": {"type": "final"}},
+                    "onDone": {
+                        "target": "q",
+                        "guard": "regionCompleted",
+                        "actions": ["recordDone"],
+                    },
+                },
+                "q": {},
+            },
+        }
+        actions, guards, _ = extract_logic_names(config)
+        self.assertIn("recordDone", actions)
+        self.assertIn("regionCompleted", guards)
+
+    def test_bang_prefixed_guard_extracts_the_positive_name(self) -> None:
+        """`"guard": "!ready"` is a negated reference to `ready`; the stub
+        the generator must emit is `ready`, never a guard called `!ready`
+        (which is not an identifier and cannot be implemented)."""
+        config = {
+            "id": "m",
+            "initial": "a",
+            "states": {
+                "a": {"on": {"E": {"target": "b", "guard": "!ready"}}},
+                "b": {},
+            },
+        }
+        _, guards, _ = extract_logic_names(config)
+        self.assertEqual(guards, {"ready"})
+
     def test_extract_guards_from_cond_key(self) -> None:
         """
         🤔 Ensures guards are correctly extracted from the 'cond' key.
