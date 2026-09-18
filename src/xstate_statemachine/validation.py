@@ -25,7 +25,6 @@ import warnings
 from typing import TYPE_CHECKING, Iterator, List, Optional, Tuple
 
 from .actions import RAISE, resolve_builtin
-from .events import SYSTEM_EVENT_PREFIXES
 from .exceptions import InvalidConfigError, StateNotFoundError
 from .resolver import resolve_target_state
 
@@ -185,54 +184,6 @@ def _collect_findings(
     return unresolved, dead_loops
 
 
-#: Engine-generated event names a machine LEGITIMATELY declares an `on`
-#: handler for. Anything else under a reserved prefix is a user event that
-#: will only ever be matched by exact key (#79).
-_ENGINE_EVENT_SHAPES: Tuple[str, ...] = (
-    "done.invoke.",
-    "done.state.",
-    "error.platform.",
-    "after.",
-    "xstate.",
-    "___xstate",
-)
-
-
-def _warn_reserved_event_names(machine: "MachineNode") -> None:
-    """Warn about ``on`` keys in a reserved namespace that the engine will
-    never synthesise (#79).
-
-    A user event named ``done.review`` or ``error.validation`` is invisible
-    to ``"*"`` / ``"prefix.*"`` descriptors, exempt from ``onUnhandled`` and
-    from strict-mode name checks, because those prefixes mark engine
-    traffic. Declaring such a key in ``on`` is a strong signal the author
-    expects ordinary user-event semantics, so say so at build time rather
-    than let the event vanish at runtime.
-    """
-    offenders: List[str] = []
-    for node in walk(machine):
-        for key in node.on:
-            if not key.startswith(SYSTEM_EVENT_PREFIXES):
-                continue
-            if key.startswith(_ENGINE_EVENT_SHAPES):
-                continue
-            offenders.append(f"  - '{key}' on state '{node.id}'")
-    if not offenders:
-        return
-    warnings.warn(
-        f"Machine '{machine.id}' declares event(s) in a reserved namespace "
-        f"({', '.join(repr(p) for p in SYSTEM_EVENT_PREFIXES)}):\n"
-        + "\n".join(offenders)
-        + "\n  These prefixes mark engine-synthesised events. A user event "
-        "named this way is matched ONLY by an exact 'on' key: it is invisible "
-        "to '*' and 'prefix.*' descriptors, exempt from 'onUnhandled', and "
-        "never rejected by strict mode. Rename it (e.g. 'review.done') to get "
-        "ordinary event semantics.",
-        UserWarning,
-        stacklevel=4,
-    )
-
-
 def _static_raise_event_type(action: "ActionDefinition") -> Optional[str]:
     """The event type a `raise` built-in will emit, if it is knowable now."""
     if resolve_builtin(action.type) != RAISE or not action.params:
@@ -301,7 +252,6 @@ def validate_machine(machine: "MachineNode", *, strict_targets: bool) -> None:
             every finding.
     """
     unresolved, dead_loops = _collect_findings(machine)
-    _warn_reserved_event_names(machine)
 
     # 🛡️ #51 follow-up: a strict machine must not be able to raise, from a
     #    literal in its own config, an event it can never handle.

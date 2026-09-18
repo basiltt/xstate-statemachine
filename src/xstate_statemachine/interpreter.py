@@ -63,7 +63,7 @@ from .actions import (
 # -----------------------------------------------------------------------------
 from .base_interpreter import AnyEvent, BaseInterpreter
 from .clock import Clock, SimulatedClock
-from .events import AfterEvent, DoneEvent, Event, Receipt
+from .events import AfterEvent, DoneEvent, ErrorEvent, Event, Receipt
 from .exceptions import (
     ActorSpawningError,
     ImplementationMissingError,
@@ -90,10 +90,6 @@ from .task_manager import TaskManager
 # -----------------------------------------------------------------------------
 logger = logging.getLogger(__name__)
 
-# ⏱️ How often `_spawn_and_manage_actor` checks whether an invoked child
-#    machine has reached a final state. Small enough that `onDone` feels
-#    immediate, large enough not to busy-wait a core.
-
 
 # -----------------------------------------------------------------------------
 # 🚀 Interpreter Class Definition
@@ -113,12 +109,12 @@ class _PreStartQueue:
     """
 
     def __init__(self) -> None:
-        self._items: List[Union[Event, AfterEvent, DoneEvent]] = []
+        self._items: List[AnyEvent] = []
 
-    def put_nowait(self, item: Union[Event, AfterEvent, DoneEvent]) -> None:
+    def put_nowait(self, item: AnyEvent) -> None:
         self._items.append(item)
 
-    async def put(self, item: Union[Event, AfterEvent, DoneEvent]) -> None:
+    async def put(self, item: AnyEvent) -> None:
         self._items.append(item)
 
     def qsize(self) -> int:
@@ -127,11 +123,11 @@ class _PreStartQueue:
     def empty(self) -> bool:
         return not self._items
 
-    def drain(self) -> List[Union[Event, AfterEvent, DoneEvent]]:
+    def drain(self) -> List[AnyEvent]:
         items, self._items = self._items, []
         return items
 
-    def peek(self) -> List[Union[Event, AfterEvent, DoneEvent]]:
+    def peek(self) -> List[AnyEvent]:
         return list(self._items)
 
 
@@ -219,16 +215,12 @@ class Interpreter(BaseInterpreter[TContext]):
         #: cannot queue behind 2,000 external events. Checked first by the
         #: run loop. `_timer_handles` maps owner state id -> live handles so
         #: exiting a state cancels its timers on any Clock.
-        self._priority_queue: "deque[Union[Event, AfterEvent, DoneEvent]]" = (
-            deque()
-        )
+        self._priority_queue: "deque[AnyEvent]" = deque()
         #: 🔁 #36: the INTERNAL queue -- events this machine raised for
         #: itself mid-macrostep. Drained to completion before the next
         #: external event is taken, per SCXML. Distinct from the priority
         #: lane (timers) and the inbox (the outside world).
-        self._internal_queue: "deque[Union[Event, AfterEvent, DoneEvent]]" = (
-            deque()
-        )
+        self._internal_queue: "deque[AnyEvent]" = deque()
         self._timer_handles: Dict[str, List[Any]] = {}
         #: Wakes the run loop when a priority event arrives while it is
         #: blocked on the (empty) inbox.
@@ -249,6 +241,9 @@ class Interpreter(BaseInterpreter[TContext]):
 
         # 🗃️ Concurrency & Task Management
         self.task_manager: TaskManager = TaskManager()
+        #: 🎭 #43: invoked child actors by owning state id. They have no
+        #: manager task, so state exit stops them through this map.
+        self._invoked_children: Dict[str, List["Interpreter[Any]"]] = {}
         #: The asyncio loop that owns this interpreter, bound at start().
         #: Lets send() detect a foreign-thread call instead of silently
         #: discarding the coroutine (#37).
@@ -263,7 +258,7 @@ class Interpreter(BaseInterpreter[TContext]):
         #    constructed anywhere (module level, a sync test, a factory) and
         #    guarantees the queue belongs to the loop that actually drives it.
         #    3.10+ removed the binding, so this is behaviour-neutral there.
-        self._event_queue: "asyncio.Queue[Union[Event, AfterEvent, DoneEvent]]"
+        self._event_queue: "asyncio.Queue[AnyEvent]"
         self._event_queue = _PreStartQueue()  # type: ignore[assignment]
         self._event_loop_task: Optional[asyncio.Task[None]] = None
         #: Length of the current self-raised event chain. Incremented when an
@@ -504,7 +499,7 @@ class Interpreter(BaseInterpreter[TContext]):
     @overload
     def send(  # noqa: E704
         self,
-        event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent],
+        event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent, ErrorEvent],
         /,
         *,
         wait: Literal[True],
@@ -515,7 +510,7 @@ class Interpreter(BaseInterpreter[TContext]):
     @overload
     def send(  # noqa: E704
         self,
-        event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent],
+        event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent, ErrorEvent],
         /,
         *,
         wait: Literal[False] = ...,
@@ -527,7 +522,7 @@ class Interpreter(BaseInterpreter[TContext]):
     def send(  # noqa: E704
         self,
         event_or_type: Union[
-            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent, ErrorEvent
         ],
         /,
         *,
@@ -539,7 +534,7 @@ class Interpreter(BaseInterpreter[TContext]):
     def send(  # type: ignore[override, misc]
         self,
         event_or_type: Union[
-            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent, ErrorEvent
         ],
         /,
         *,
@@ -635,7 +630,7 @@ class Interpreter(BaseInterpreter[TContext]):
     def send_priority(  # noqa: E704
         self,
         event_or_type: Union[
-            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent, ErrorEvent
         ],
         /,
         *,
@@ -647,7 +642,7 @@ class Interpreter(BaseInterpreter[TContext]):
     def send_priority(  # noqa: E704
         self,
         event_or_type: Union[
-            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent, ErrorEvent
         ],
         /,
         *,
@@ -658,7 +653,7 @@ class Interpreter(BaseInterpreter[TContext]):
     def send_priority(
         self,
         event_or_type: Union[
-            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent, ErrorEvent
         ],
         /,
         *,
@@ -820,7 +815,7 @@ class Interpreter(BaseInterpreter[TContext]):
         self._put_inbox(event_obj)
         return await receipt if receipt is not None else None
 
-    def _enqueue(self, event_obj: Union[Event, DoneEvent, AfterEvent]) -> None:
+    def _enqueue(self, event_obj: AnyEvent) -> None:
         """Put *event_obj* on the queue, or drop it if the machine is over.
 
         Synchronous on purpose: see :meth:`send`. Must run on the owning
@@ -859,7 +854,7 @@ class Interpreter(BaseInterpreter[TContext]):
     def send_threadsafe(
         self,
         event_or_type: Union[
-            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent, ErrorEvent
         ],
         **payload: Any,
     ) -> "concurrent.futures.Future[None]":
@@ -1004,7 +999,7 @@ class Interpreter(BaseInterpreter[TContext]):
     # -------------------------------------------------------------------------
     def _snapshot_pending_events(
         self,
-    ) -> List[Union[Event, DoneEvent, AfterEvent]]:
+    ) -> List[AnyEvent]:
         q = self._event_queue
         if isinstance(q, _PreStartQueue):
             return q.peek()
@@ -1016,7 +1011,7 @@ class Interpreter(BaseInterpreter[TContext]):
     def _enqueue_restored(self, event: Event) -> None:
         self._put_inbox(event)
 
-    def _put_inbox(self, event: Union[Event, DoneEvent, AfterEvent]) -> None:
+    def _put_inbox(self, event: AnyEvent) -> None:
         """Enqueue on the inbox AND wake a run loop parked on an empty one.
 
         Every inbox write must go through here: `_next_event` blocks on
@@ -1027,7 +1022,7 @@ class Interpreter(BaseInterpreter[TContext]):
         if self._wakeup is not None:
             self._wakeup.set()
 
-    async def drain_pending(self) -> List[Union[Event, DoneEvent, AfterEvent]]:
+    async def drain_pending(self) -> List[AnyEvent]:
         """Remove and return every accepted-but-unprocessed event.
 
         The events are NOT processed. Intended for shutdown paths that must
@@ -1036,7 +1031,7 @@ class Interpreter(BaseInterpreter[TContext]):
         q = self._event_queue
         if isinstance(q, _PreStartQueue):
             return q.drain()
-        drained: List[Union[Event, DoneEvent, AfterEvent]] = []
+        drained: List[AnyEvent] = []
         while not q.empty():
             drained.append(q.get_nowait())
             q.task_done()
@@ -1289,7 +1284,7 @@ class Interpreter(BaseInterpreter[TContext]):
             logger.debug("⚓ Event loop for '%s' has exited.", self.id)
 
     async def _process_event_and_transient_transitions(
-        self, event: Union[Event, AfterEvent, DoneEvent]
+        self, event: AnyEvent
     ) -> None:
         """Processes a single event and any resulting event-less transitions.
 
@@ -1600,13 +1595,28 @@ class Interpreter(BaseInterpreter[TContext]):
         """
         # Encapsulation: Delegate cancellation to the dedicated TaskManager.
         await self.task_manager.cancel_by_owner(state.id)
+        # 🎭 #43: invoked children have no manager task to cancel; stop
+        #    them directly. Copy: `stop()` -> `_on_terminal` -> listener
+        #    would otherwise mutate the list we iterate. A child stopped
+        #    this way is "cancelled", not "done": its listener must NOT
+        #    fire `onDone` into a state we just left, so detach first.
+        for child in list(self._invoked_children.pop(state.id, [])):
+            child._terminal_listeners = [
+                fn
+                for fn in child._terminal_listeners
+                if getattr(fn, "__name__", "") != "_on_child_terminal"
+            ]
+            self._actors.pop(child.id, None)
+            self._actor_sources.pop(child.id, None)
+            if child.status == "running":
+                await child.stop()
         # ⏱️ And the clock-scheduled timers this state owns (#49).
         for handle in self._timer_handles.pop(state.id, []):
             self.clock.clear_timeout(handle)
 
     async def _next_event(
         self,
-    ) -> Tuple[Union[Event, AfterEvent, DoneEvent], bool]:
+    ) -> Tuple[AnyEvent, bool]:
         """Return ``(event, from_inbox)``: priority lane first, then inbox.
 
         `from_inbox` tells the caller whether it owes the inbox a
@@ -1651,9 +1661,7 @@ class Interpreter(BaseInterpreter[TContext]):
                 continue
             await self._wakeup.wait()
 
-    def _deliver_priority(
-        self, event: Union[Event, AfterEvent, DoneEvent]
-    ) -> None:
+    def _deliver_priority(self, event: AnyEvent) -> None:
         """Place *event* at the head of processing and wake the run loop."""
         self._priority_queue.append(event)
         if self._wakeup is not None:
@@ -1677,6 +1685,12 @@ class Interpreter(BaseInterpreter[TContext]):
         if any(
             not t.done()
             for t in self.task_manager.get_tasks_by_owner(state.id)
+        ):
+            return True
+        # 🎭 #43: an invoked child is live while it is running.
+        if any(
+            c.status == "running"
+            for c in self._invoked_children.get(state.id, [])
         ):
             return True
         if f"{self.id}:{invocation.id}" in self._actors:
@@ -1800,9 +1814,9 @@ class Interpreter(BaseInterpreter[TContext]):
                 exc_info=True,
             )
             # Send an 'error' event so the machine can transition to a failure state.
-            error_event = DoneEvent(
+            error_event = ErrorEvent(
                 type=f"error.platform.{invocation.id}",
-                data=e,
+                error=e,
                 src=invocation.id,
             )
             # 🚨 If nothing handles the error event, the failure is
@@ -1832,11 +1846,20 @@ class Interpreter(BaseInterpreter[TContext]):
             owner_id: The ID of the state that owns this invocation.
         """
         # 🎭 Case 1: The service is a MachineNode, so we spawn it as an actor.
+        #
+        # 🏛️ #43: NO manager task. The child's own run-loop task is the only
+        #    task an invoked child costs. Completion is pushed: the child's
+        #    terminal listener (fired the instant `status` flips) sends
+        #    `onDone` / `onError` to the parent. Bring-up itself is a short
+        #    coroutine that must run to completion before this state's
+        #    entry finishes, and a failure inside it (bad `input` resolver,
+        #    child `start()` raising) is a child failure -> `onError`.
         if isinstance(service, MachineNode):
-            # Create a task to manage the actor's lifecycle and handle onDone/onError.
             task = asyncio.create_task(
-                self._spawn_and_manage_actor(invocation, service)
+                self._start_invoked_actor(invocation, service, owner_id)
             )
+            # The bring-up task is transient (microseconds) and is tracked
+            # only so an exit racing the start cancels it cleanly.
             self.task_manager.add(owner_id, task)
             return
 
@@ -1852,37 +1875,48 @@ class Interpreter(BaseInterpreter[TContext]):
         # Register the task with its owner for lifecycle management.
         self.task_manager.add(owner_id, task)
 
-    async def _spawn_and_manage_actor(
-        self, invocation: InvokeDefinition, actor_machine: MachineNode
+    async def _start_invoked_actor(
+        self,
+        invocation: InvokeDefinition,
+        actor_machine: MachineNode,
+        owner_id: str,
     ) -> None:
-        """Spawns, starts, and manages an actor, sending events on completion.
+        """Create and start an invoked child; wire completion as a PUSH.
 
-        This coroutine wraps the entire lifecycle of a child actor that was
-        created via `invoke`. It waits for the child to finish and then sends
-        the appropriate `onDone` or `onError` event to the parent.
+        🏛️ #43: the previous design awaited `child.wait_done()` inside a
+        dedicated manager task, so every idle invoked child cost two
+        asyncio tasks (its run loop + the waiter). The waiter did nothing
+        but sleep on a future and then call `send()`. That is exactly what
+        a terminal listener does with no task at all, so the listener now
+        owns completion delivery and this coroutine returns as soon as the
+        child is running. N idle children cost N tasks and zero wake-ups.
+
+        Cancellation: exiting the owning state used to cancel the manager
+        task, whose `except CancelledError` stopped the child. With no task
+        to cancel, the child is registered in `_invoked_children[owner_id]`
+        and `_cancel_state_tasks` stops it directly. The "child finished
+        during start()" race is handled because `wait_done()` semantics are
+        preserved: a child already terminal when the listener is attached
+        fires it immediately.
 
         Args:
             invocation: The invoke definition containing the actor's config.
             actor_machine: The MachineNode definition for the actor.
+            owner_id: The id of the state that owns this invocation.
         """
-        child_interpreter = None
+        child_interpreter: Optional["Interpreter[Any]"] = None
         try:
-            # 🧬 Create, configure, and start the new child interpreter.
-            #
             # 🏛️ #40: mint the address from the DECLARED `id` when there is
             #    one, so `sendTo("kid")` reaches the child invoked as
             #    `{"src": ..., "id": "kid"}`. Anonymous invokes keep the uuid
-            #    suffix so two of them in one state stay distinct. Mirrors
-            #    the `spawn` path, which already honoured explicit ids.
+            #    suffix so two of them in one state stay distinct.
             actor_id = (
                 f"{self.id}:{invocation.id}"
                 if invocation.id_is_explicit
                 else f"{self.id}:{invocation.src}:{uuid.uuid4()}"
             )
-            # 📥 #42: resolve `input` against the PARENT's live context and
-            #    hand it to the child as its creation input, so a child
-            #    `context` factory receives `{input}` exactly as in XState.
-            #    A raising resolver is a child failure -> `onError`.
+            # 📥 #42: resolve `input` against the PARENT's live context. A
+            #    raising resolver is a child failure -> `onError`.
             child_input = invocation.resolve_input(self.context, None)
             # 🕰️ Same inheritance as `_spawn_actor`: clock (#49) + strict (#51).
             child_interpreter = Interpreter(
@@ -1894,9 +1928,10 @@ class Interpreter(BaseInterpreter[TContext]):
             child_interpreter.parent = self
             child_interpreter.id = actor_id
             self._actors[actor_id] = child_interpreter
-            # Record the source so the src-alias lookup covers invoked
-            # actors too (it only covered spawned ones before).
             self._actor_sources[actor_id] = invocation.src or ""
+            self._invoked_children.setdefault(owner_id, []).append(
+                child_interpreter
+            )
             self._register_in_system(invocation.system_id, child_interpreter)
 
             for plugin in self._plugins:
@@ -1907,93 +1942,131 @@ class Interpreter(BaseInterpreter[TContext]):
                 actor_id,
                 self.id,
             )
-            # 🚀 Start the child. NOTE: `start()` returns as soon as the
-            #    child's INITIAL state is entered — it does NOT block until the
-            #    machine finishes. Treating it as "run to completion" fired
-            #    `onDone` immediately with the child's initial context, so a
-            #    parent transitioned onward while the child was still working.
+
+            # 🔔 Completion is PUSHED. Attach BEFORE `start()` so a child
+            #    whose initial state is final (terminal during start) is
+            #    still observed exactly once -- `_on_terminal` fires the
+            #    listener synchronously as `status` flips.
+            child = child_interpreter
+            fired = False
+
+            def _on_child_terminal(status: str) -> None:
+                nonlocal fired
+                if fired:
+                    return
+                fired = True
+                # Deliver from a fresh task: `_on_terminal` runs inside the
+                # child's transition, and the parent's `send()` is async.
+                self._loop_create_task(
+                    self._deliver_invoked_completion(
+                        invocation, child, owner_id, status
+                    )
+                )
+
+            child_interpreter._terminal_listeners.append(_on_child_terminal)
+
+            # 🚀 `start()` returns once the child's INITIAL state is entered;
+            #    it does not run the child to completion.
             await child_interpreter.start()
 
-            # ⏳ Now actually wait for the child to finish. `status` flips to
-            #    "done" on completion, or "error" if the machine failed --
-            #    `wait_done()` resolves the instant that happens (#43), so
-            #    `onDone` means what XState says it means with no poll and
-            #    no latency floor.
-            await child_interpreter.wait_done()
-
-            # 💥 A child that FAILED must satisfy `onError`, not `onDone`.
-            #    Treating any non-running status as success reported a crashed
-            #    child as a clean completion, so a parent modelling failure
-            #    with `onError` silently took the happy path.
-            if child_interpreter.status == "error":
-                failure = getattr(
-                    child_interpreter,
-                    "error",
-                    None,
-                ) or RuntimeError(
-                    f"Invoked machine '{invocation.src}' failed."
-                )
-                logger.warning(
-                    "💥 Invoked machine '%s' ended in error; firing onError.",
-                    invocation.src,
-                )
-                error_event = DoneEvent(
-                    type=f"error.platform.{invocation.id}",
-                    data=failure,
-                    src=invocation.id,
-                )
-                await self.send(error_event)
-                for plugin in self._plugins:
-                    plugin.on_service_error(self, invocation, failure)
-                return
-
-            # ✅ Child finished cleanly (reached a top-level final state).
-            done_event = DoneEvent(
-                type=f"done.invoke.{invocation.id}",
-                data=child_interpreter.context,  # Return child's final context
-                src=invocation.id,
-            )
-            await self.send(done_event)
-            for plugin in self._plugins:
-                plugin.on_service_done(self, invocation, done_event.data)
-
         except asyncio.CancelledError:
-            # 🚫 Parent state was exited, cleanly cancel the actor.
-            logger.debug(
-                "🚫 Actor '%s' (ID: %s) was cancelled.",
-                invocation.src,
-                invocation.id,
-            )
-            if child_interpreter:
-                await child_interpreter.stop()
+            # 🚫 Owning state exited while we were still bringing the child
+            #    up; stop it so nothing is orphaned.
+            if child_interpreter is not None:
+                await self._retire_invoked_child(
+                    owner_id, child_interpreter, stop=True
+                )
             raise
-
-        except Exception as e:
-            # 💥 Child actor failed with an unhandled exception.
+        except Exception as e:  # noqa: BLE001 -- user code (input/start)
             logger.error(
-                "💥 Actor '%s' (ID: '%s') failed: %s",
+                "💥 Actor '%s' (ID: '%s') failed to start: %s",
                 invocation.src,
                 invocation.id,
                 e,
                 exc_info=True,
             )
-            error_event = DoneEvent(
-                type=f"error.platform.{invocation.id}",
-                data=e,
-                src=invocation.id,
+            if child_interpreter is not None:
+                await self._retire_invoked_child(
+                    owner_id, child_interpreter, stop=True
+                )
+            await self.send(
+                ErrorEvent(
+                    type=f"error.platform.{invocation.id}",
+                    error=e,
+                    src=invocation.id,
+                )
             )
-            await self.send(error_event)
             for plugin in self._plugins:
                 plugin.on_service_error(self, invocation, e)
-        finally:
-            # 🧹 ALWAYS tear the child down. Deleting the registry entry
-            #    without stopping the interpreter orphaned it: its run loop and every
-            #    `after` timer survived the parent's own `stop()` forever,
-            #    because `stop()` iterates `self._actors` and the entry was
-            #    already gone. Measured at +2 permanently live asyncio tasks
-            #    per invocation — an unbounded leak for any server that
-            #    invokes a child machine per request.
-            if child_interpreter is not None:
-                self._actors.pop(child_interpreter.id, None)
-                if child_interpreter.status == "running":
-                    await child_interpreter.stop()
+
+    async def _deliver_invoked_completion(
+        self,
+        invocation: InvokeDefinition,
+        child: "Interpreter[Any]",
+        owner_id: str,
+        status: str,
+    ) -> None:
+        """Send `onDone` / `onError` for a finished invoked child (#43).
+
+        Runs as a short task spawned by the child's terminal listener.
+        Retires the child from the parent's maps first so a parent that
+        transitions on `onDone` never sees a stale registry entry.
+        """
+        # 🧹 The child already tore itself down (#57); just forget it. Do
+        #    NOT `stop()` it -- that would clear the `output` / `error` the
+        #    parent is about to read.
+        await self._retire_invoked_child(owner_id, child, stop=False)
+        if status == "error":
+            failure = getattr(child, "error", None) or RuntimeError(
+                f"Invoked machine '{invocation.src}' failed."
+            )
+            logger.warning(
+                "💥 Invoked machine '%s' ended in error; firing onError.",
+                invocation.src,
+            )
+            await self.send(
+                ErrorEvent(
+                    type=f"error.platform.{invocation.id}",
+                    error=failure,
+                    src=invocation.id,
+                )
+            )
+            for plugin in self._plugins:
+                plugin.on_service_error(self, invocation, failure)
+            return
+        # ✅ Reached a top-level final state: `onDone` carries the child's
+        #    final context, as before.
+        done_event = DoneEvent(
+            type=f"done.invoke.{invocation.id}",
+            data=child.context,
+            src=invocation.id,
+        )
+        await self.send(done_event)
+        for plugin in self._plugins:
+            plugin.on_service_done(self, invocation, done_event.data)
+
+    async def _retire_invoked_child(
+        self,
+        owner_id: str,
+        child: "Interpreter[Any]",
+        *,
+        stop: bool,
+    ) -> None:
+        """Drop *child* from the parent's registries; optionally stop it."""
+        self._actors.pop(child.id, None)
+        self._actor_sources.pop(child.id, None)
+        siblings = self._invoked_children.get(owner_id)
+        if siblings is not None:
+            try:
+                siblings.remove(child)
+            except ValueError:
+                pass
+            if not siblings:
+                self._invoked_children.pop(owner_id, None)
+        if stop and child.status == "running":
+            await child.stop()
+
+    def _loop_create_task(self, coro: Any) -> "asyncio.Task[Any]":
+        """Schedule *coro* on this interpreter's loop (never the caller's)."""
+        loop = self._loop or asyncio.get_running_loop()
+        return loop.create_task(coro)

@@ -21,6 +21,8 @@ import warnings
 from typing import Any, Dict
 
 from src.xstate_statemachine import (
+    UnhandledEventError,
+    UnknownEventError,
     Interpreter,
     MachineLogic,
     SyncInterpreter,
@@ -58,40 +60,6 @@ class TestReservedPrefixList(_Quiet):
         )
 
 
-class TestBuildTimeWarning(_Quiet):
-    def _build(self, on: Dict[str, Any]):
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            create_machine(
-                {"id": "m", "initial": "a", "states": {"a": {"on": on}}}
-            )
-        return [str(w.message) for w in caught if w.category is UserWarning]
-
-    def test_user_event_in_reserved_namespace_warns_at_build_time(
-        self,
-    ) -> None:
-        msgs = self._build({"done.review": "a", "error.validation": "a"})
-        self.assertEqual(len(msgs), 1)
-        self.assertIn("'done.review'", msgs[0])
-        self.assertIn("'error.validation'", msgs[0])
-        self.assertIn("reserved namespace", msgs[0])
-
-    def test_engine_shaped_keys_do_not_warn(self) -> None:
-        msgs = self._build(
-            {
-                "done.invoke.fetch": "a",
-                "done.state.m.a": "a",
-                "error.platform.fetch": "a",
-                "after.500": "a",
-                "xstate.error.actor.kid": "a",
-            }
-        )
-        self.assertEqual(msgs, [])
-
-    def test_ordinary_dotted_names_do_not_warn(self) -> None:
-        self.assertEqual(self._build({"review.done": "a", "my.ns.x": "a"}), [])
-
-
 class TestPinnedRuntimeSemantics(_Quiet):
     """The behaviour the warning describes, pinned so it cannot drift
     silently in either direction."""
@@ -110,9 +78,11 @@ class TestPinnedRuntimeSemantics(_Quiet):
         self.assertEqual(set(i.current_state_ids), {"ex.b"})
         i.stop()
 
-    def test_wildcard_does_not_match_reserved_namespace_user_event(
-        self,
-    ) -> None:
+    def test_user_event_in_reserved_namespace_matches_wildcard(self) -> None:
+        """#79 acceptance: a USER-sent `error.myapp.validation` or
+        `done.review` is user traffic and reaches `"*"`. Only events the
+        engine minted are exempt -- provenance, not spelling."""
+
         async def main():
             i = await Interpreter(
                 create_machine(WILDCARD, logic=_note_logic())
@@ -129,7 +99,45 @@ class TestPinnedRuntimeSemantics(_Quiet):
             await i.stop()
             return out
 
-        self.assertEqual(asyncio.run(main()), ["PLAIN", "my.ns"])
+        self.assertEqual(
+            asyncio.run(main()),
+            ["PLAIN", "error.myapp.validation", "done.review", "my.ns"],
+        )
+
+    def test_user_event_in_reserved_namespace_trips_onunhandled_error(
+        self,
+    ) -> None:
+        """#79 acceptance: an unhandled user `done.review` is a policy
+        violation like any other unhandled user event."""
+        cfg = {
+            "id": "u",
+            "initial": "a",
+            "onUnhandled": "error",
+            "states": {"a": {"on": {"GO": "a"}}},
+        }
+        i = SyncInterpreter(create_machine(cfg))
+        i.start()
+        i.send("done.review")
+        # `onUnhandled: "error"` fails the machine (status/error), the same
+        # observable as for any other unhandled user event.
+        self.assertEqual(i.status, "error")
+        self.assertIsInstance(i.error, UnhandledEventError)
+
+    def test_user_event_in_reserved_namespace_is_checked_by_strict(
+        self,
+    ) -> None:
+        """#79: strict mode no longer treats a bare `done.` / `error.`
+        prefix as a free pass for user events."""
+        cfg = {
+            "id": "s",
+            "initial": "a",
+            "states": {"a": {"on": {"GO": "a"}}},
+        }
+        i = SyncInterpreter(create_machine(cfg), strict=True)
+        i.start()
+        with self.assertRaises(UnknownEventError):
+            i.send("done.typo")
+        i.stop()
 
     def test_engine_synthesised_events_remain_exempt_from_onunhandled(
         self,

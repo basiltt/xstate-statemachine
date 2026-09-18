@@ -942,7 +942,7 @@ A machine's declared descriptor set (`MachineNode.known_events`, a `FrozenSet[st
 - Every `after` delay's generated timer event
 - Every `invoke`'s generated `done.invoke.<id>` and `error.platform.<id>`
 
-Engine-synthesised events are always known regardless of what the machine declares — see [Reserved namespaces are always "known"](#reserved-namespaces-are-always-known) below for the list and its one sharp edge.
+Engine-synthesised events are always known regardless of what the machine declares — see [Engine events are always "known"; yours are checked](#engine-events-are-always-known-yours-are-checked) below.
 
 Use `Machine.is_known_event(event_type)` to run the same check yourself:
 
@@ -985,9 +985,9 @@ A `{"type": "raise", "params": {"event": "..."}}` action is checked in two place
 - **At build time (0.8.1).** If the raised event is a *literal* — a string or a `{"type": ...}` dict — `create_machine()` verifies it against `known_events` and raises `InvalidConfigError` (with a *Did you mean …?* suggestion) when nothing handles it. A typo in your config is a configuration error and should never reach runtime.
 - **At runtime.** A *dynamic* event (a callable producing the event) is checked by the same `_check_strict` path as `send()` when the action executes. Be aware that under the default `actionErrorPolicy: "continue"` the resulting `UnknownEventError` is contained like any other action failure: it is logged, reported through `on_action_error` / `on_transition_failed`, sets `last_transition_ok = False` — and the transition **still commits**. If you want a runtime strict violation to abort the transition, pair `strict` with `actionErrorPolicy: "rollback"` or `"fail"`.
 
-### Reserved namespaces are always "known"
+### Engine events are always "known"; yours are checked
 
-Engine-synthesised events are always known regardless of what the machine declares: anything starting with `done.`, `error.`, `after.`, `xstate.`, or `___xstate`. Because this is a **prefix test on the name**, a *user* event you name `done.review` is also always known and will never be rejected by `strict`. `create_machine()` warns about such `on` keys since 0.8.1 — see [Core Concepts → How Events Work](../core-concepts/#how-events-work).
+Events the engine synthesises are never "unknown" — `strict` is never tripped by a `done.invoke.<id>`, `error.platform.<id>`, `after.<ms>` or `xstate.*` event the machine produced for itself. Since 0.8.1 that exemption is by **provenance** (the engine flags the events it mints), so a *user*-sent event is checked whatever it is called: `interp.send("done.typo")` on a strict machine raises `UnknownEventError` exactly like `interp.send("TYPO")` (#79). `Machine.is_known_event()` mirrors this for names: only the exact engine **shapes** (`done.invoke.`, `done.state.`, `error.platform.`, `after.`, `xstate.`) are implicitly known; a bare `done.` prefix is not.
 
 ### `send_threadsafe()` is covered too
 

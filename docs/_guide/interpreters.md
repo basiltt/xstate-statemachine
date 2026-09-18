@@ -1005,7 +1005,7 @@ Per XState, an event that selects no transition in any active state is silently 
 
 Whatever the policy, every unhandled event fires the `on_unhandled_event(interpreter, event, active_state_ids, disposition)` plugin hook, with `disposition` one of `"ignored"`, `"deferred"`, `"errored"`, or `"dropped"` (buffer was full). See [Plugins](../plugins/#plugin-hooks-reference).
 
-> **Exempt: engine events, by name prefix.** `onUnhandled` never applies to events in the reserved namespaces `done.`, `error.`, `after.`, `xstate.`, `___xstate` — the machine did not ask for a `done.invoke.fetch` it has no handler for and cannot be blamed for ignoring it. The exemption is a **prefix test on the name**, so a *user* event you happened to call `done.review` is exempt too, even under `"error"`. `create_machine()` warns about such `on` keys since 0.8.1; see [Core Concepts → How Events Work](../core-concepts/#how-events-work).
+> **Exempt: engine events — by provenance.** `onUnhandled` never applies to events the engine minted for itself (`done.invoke.*`, `error.platform.*`, `after.*`, `xstate.*`, the init/exit sentinels) — the machine did not ask for a `done.invoke.fetch` it has no handler for and cannot be blamed for ignoring it. Since 0.8.1 the check is *who created the event*, not its name: a **user** event you happen to call `done.review` is user traffic and **does** trip `"error"` / get `"defer"`red like any other (#79). See [Core Concepts → How Events Work](../core-concepts/#how-events-work).
 
 ---
 

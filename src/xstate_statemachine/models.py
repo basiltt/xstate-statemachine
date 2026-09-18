@@ -53,7 +53,7 @@ from typing import (
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from .actions import BUILTIN_ACTION_PARAM_SPEC, resolve_builtin
-from .events import SYSTEM_EVENT_PREFIXES, Event
+from .events import ENGINE_EVENT_SHAPES, Event
 from .exceptions import InvalidConfigError, StateNotFoundError
 from .machine_logic import MachineLogic
 from .resolver import resolve_target_state
@@ -1552,7 +1552,12 @@ class MachineNode(StateNode[TContext]):
         known = self.known_events
         if "*" in known or event_type in known:
             return True
-        if event_type.startswith(SYSTEM_EVENT_PREFIXES):
+        # 🏛️ #79: only the exact SHAPES the engine emits are implicitly
+        #    known (`done.invoke.<id>`, `error.platform.<id>`, `after.<ms>`,
+        #    `xstate.*`, the sentinels). A bare `done.` prefix would make a
+        #    user's `done.typo` pass strict mode; that is a name the user
+        #    invented and it must be declared like any other.
+        if event_type.startswith(ENGINE_EVENT_SHAPES):
             return True
         for key in known:
             if key.endswith(".*"):

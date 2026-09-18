@@ -52,7 +52,7 @@ from .events import Event  # noqa: E402
 
 if TYPE_CHECKING:
     from .base_interpreter import BaseInterpreter
-    from .events import AfterEvent, DoneEvent
+    from .events import AfterEvent, DoneEvent, ErrorEvent
     from .models import (
         ActionDefinition,
         InvokeDefinition,
@@ -69,7 +69,7 @@ if TYPE_CHECKING:
 # `DoneEvent`s (`invoke`/child-machine completion). Typing hook parameters as
 # a plain `Event` therefore doesn't match what actually gets passed at
 # runtime, and silently hid real mypy `arg-type` errors at every call site.
-AnyEvent = Union["Event", "AfterEvent", "DoneEvent"]
+AnyEvent = Union["Event", "AfterEvent", "DoneEvent", "ErrorEvent"]
 
 # -----------------------------------------------------------------------------
 # 🔹 Type Variable for Generic Plugin
