@@ -1540,7 +1540,9 @@ class MachineNode(StateNode[TContext]):
             self._known_events = frozenset(found)
         return self._known_events
 
-    def is_known_event(self, event_type: str) -> bool:
+    def is_known_event(
+        self, event_type: str, *, user_sent: bool = False
+    ) -> bool:
         """True if *event_type* matches a declared descriptor (#51).
 
         Honours the same matching rules as dispatch: an exact key, a
@@ -1552,12 +1554,13 @@ class MachineNode(StateNode[TContext]):
         known = self.known_events
         if "*" in known or event_type in known:
             return True
-        # 🏛️ #79: only the exact SHAPES the engine emits are implicitly
-        #    known (`done.invoke.<id>`, `error.platform.<id>`, `after.<ms>`,
-        #    `xstate.*`, the sentinels). A bare `done.` prefix would make a
-        #    user's `done.typo` pass strict mode; that is a name the user
-        #    invented and it must be declared like any other.
-        if event_type.startswith(ENGINE_EVENT_SHAPES):
+        # 🏛️ #79/#98: engine shapes are implicitly known ONLY when the
+        #    caller is asking about a name in the abstract (`user_sent=False`,
+        #    e.g. build-time `raise` validation). A `strict` interpreter
+        #    passes `user_sent=True` because it already knows the event is
+        #    user traffic (provenance) -- and a user's `done.invoke.NEVER` or
+        #    `___xstate_forged` is then an undeclared name like any other.
+        if not user_sent and event_type.startswith(ENGINE_EVENT_SHAPES):
             return True
         for key in known:
             if key.endswith(".*"):

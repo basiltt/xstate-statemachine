@@ -48,11 +48,11 @@ from .logger import logger  # Centralized logger instance
 # This `if TYPE_CHECKING:` block prevents circular import errors at runtime
 # by only importing types for static analysis. This is a standard Python
 # practice for creating type-safe, decoupled modules.
-from .events import Event  # noqa: E402
+from .events import ErrorEvent, Event  # noqa: E402
 
 if TYPE_CHECKING:
     from .base_interpreter import BaseInterpreter
-    from .events import AfterEvent, DoneEvent, ErrorEvent
+    from .events import AfterEvent, DoneEvent
     from .models import (
         ActionDefinition,
         InvokeDefinition,
@@ -430,7 +430,12 @@ class LoggingInspector(PluginBase[Any]):
         data_to_log: Any
         if isinstance(event, Event):
             data_to_log = event.payload
-        #    For internal events like `DoneEvent` or `AfterEvent`, it's in `data`.
+        #    `ErrorEvent` carries the exception on `.error` (#80); reading
+        #    its deprecated `.data` alias here tripped the library's own
+        #    DeprecationWarning under `-W error` (#95).
+        elif isinstance(event, ErrorEvent):
+            data_to_log = event.error
+        #    For `DoneEvent` / `AfterEvent`, it's in `data`.
         else:
             data_to_log = getattr(event, "data", None)
 

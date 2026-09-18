@@ -222,7 +222,7 @@ except ImplementationMissingError as exc:
 
 ```mermaid
 flowchart LR
-    subgraph env["snapshot envelope (v1)"]
+    subgraph env["snapshot envelope (v2)"]
         direction TB
         H["version · machine_id · machine_hash · taken_at"]
         B["status · state_ids · context"]
@@ -239,7 +239,7 @@ As of 0.8.0, `get_snapshot()` writes a versioned **envelope** around the fields 
 - **`machine_id`** — the `id` of the machine the snapshot was taken from.
 - **`machine_hash`** — a 16-hex-character structural fingerprint of the machine (`MachineNode.structure_hash`). It covers states, transitions, guard/action **names**, invokes, and `after` delays — the parts of the machine that change *behavior*. It deliberately excludes `meta`, `description`, and key order, so editing a docstring or reordering a dict does not change the hash. Adding a guard, renaming a state, or changing a transition's target, on the other hand, does.
 - **`taken_at`** — a Unix timestamp of when the snapshot was captured.
-- **`pending_events`** — see [The Inbox: pending events](#the-inbox-pending-events) below.
+- **`pending_events`** — see [The Inbox: pending events](#the-inbox-pending-events) below. Since layout **v2** (0.8.1) every pending or deferred record carries a `kind` — `event`, `system`, `done`, `error` or `after` — so engine events (`DoneEvent`, `ErrorEvent`, a due `after`) and provenance round-trip instead of being silently dropped (#86, #87). An `ErrorEvent`'s exception is persisted as its `repr` and restored as a `RestoredError`. v1 snapshots restore unchanged; their engine-shaped plain events are re-derived by name at the restore boundary only.
 - **`value`** — the hierarchical [`interpreter.value`](interpreters/#hierarchical-state-value) at the time of capture, included for convenience. Restore ignores it; it is derived fresh from `state_ids` every time.
 
 **Unversioned 0.7.x snapshots restore unchanged.** A payload with no `version` key is treated as version 0 and accepted unconditionally — there is no breaking change for snapshots taken before 0.8.0.

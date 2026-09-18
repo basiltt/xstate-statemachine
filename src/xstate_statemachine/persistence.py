@@ -38,7 +38,12 @@ if TYPE_CHECKING:  # pragma: no cover
 #:   0 -- unversioned 0.7.x payload (implicit; no ``version`` key)
 #:   1 -- 0.8.0: adds ``version``, ``machine_id``, ``machine_hash``,
 #:        ``taken_at``, ``pending_events``, ``value``
-SNAPSHOT_VERSION: int = 1
+#:   2 -- 0.8.1: every ``pending_events`` / ``deferred`` record carries a
+#:        ``kind`` (``event`` | ``system`` | ``done`` | ``error`` | ``after``)
+#:        so engine events and provenance round-trip (#86, #87). ``done``
+#:        records add ``data`` + ``src``; ``error`` records add ``error``
+#:        (repr) + ``src``.
+SNAPSHOT_VERSION: int = 2
 
 
 # -----------------------------------------------------------------------------
@@ -169,9 +174,17 @@ def check_identity(
 def upcast(snapshot: Dict[str, Any], version: int) -> Dict[str, Any]:
     """Bring an older-version payload up to `SNAPSHOT_VERSION` in place.
 
-    Each step is a pure layout migration; there is exactly one so far.
+    Each step is a pure layout migration.
     """
     if version < 1:
         # 0 -> 1: the new keys are all optional on read, so nothing to move.
         snapshot.setdefault("pending_events", [])
+    if version < 2:
+        # 1 -> 2: records gain a `kind`. A v1 record never persisted engine
+        # events (they were dropped, #87) and never persisted provenance
+        # (#86), so the only thing to recover is the ENGINE-SHAPED plain
+        # `Event`s the 0.8.1 escalate/sentinel paths wrote. `restore_event`
+        # re-derives those by name when `kind` is absent; leave the records
+        # untouched and let it decide.
+        pass
     return snapshot

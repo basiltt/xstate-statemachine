@@ -471,20 +471,37 @@ class TestClockLaneFollowsOwner(_Quiet):
             i.start()
         self.assertEqual(calls, [True], "clock must be invoked once, sync=")
 
-    def test_kwargs_catch_all_clock_receives_sync(self) -> None:
-        """``**kwargs`` in `set_timeout` counts as accepting ``sync=``."""
+    def test_kwargs_catch_all_clock_is_called_with_legacy_shape(self) -> None:
+        """#89: ``**kwargs`` is NOT consent. A legacy wrapper that forwards
+        ``**kwargs`` to a backend which has never heard of ``sync`` must be
+        called exactly as a 0.8.0 clock is -- without the keyword."""
         seen = {}
 
         class Wide(SimulatedClock):
             def set_timeout(self, fn, delay_sec, **kw):
                 seen.update(kw)
+                assert "sync" not in kw, kw
                 return super().set_timeout(
                     fn, delay_sec, owner=kw.get("owner")
                 )
 
         i = SyncInterpreter(create_machine(self.CFG), clock=Wide())
         i.start()
-        self.assertIs(seen.get("sync"), True)
+        self.assertNotIn("sync", seen)
+        self.assertIn("owner", seen)
+        i.stop()
+
+    def test_explicit_sync_parameter_receives_it(self) -> None:
+        seen = {}
+
+        class Modern(SimulatedClock):
+            def set_timeout(self, fn, delay_sec, *, owner=None, sync=None):
+                seen["sync"] = sync
+                return super().set_timeout(fn, delay_sec, owner=owner)
+
+        i = SyncInterpreter(create_machine(self.CFG), clock=Modern())
+        i.start()
+        self.assertIs(seen["sync"], True)
         i.stop()
 
 

@@ -300,8 +300,8 @@ class TestPendingEventsAsync(_Quiet):
         self.assertEqual(
             asyncio.run(main()),
             [
-                {"type": "GO", "payload": {}},
-                {"type": "TICK", "payload": {"n": 9}},
+                {"kind": "event", "type": "GO", "payload": {}},
+                {"kind": "event", "type": "TICK", "payload": {"n": 9}},
             ],
         )
 
@@ -377,7 +377,7 @@ class TestPendingEventsAsync(_Quiet):
         snap = asyncio.run(main())
         self.assertEqual(
             snap["actors"]["p:k"]["snapshot"]["pending_events"],
-            [{"type": "PING", "payload": {}}],
+            [{"kind": "event", "type": "PING", "payload": {}}],
         )
 
         async def restore():
