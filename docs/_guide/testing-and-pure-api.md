@@ -171,8 +171,21 @@ receipt = sync_interp.send("GO", wait=True)
 assert receipt.state_ids == {"fetch.done"}
 ```
 
+A `Receipt` distinguishes **three** outcomes, not two (#84):
+
+| `changed` | `deferred` | `error` | Meaning |
+|---|---|---|---|
+| `True` | `False` | `None` | processed; a transition ran |
+| `False` | `False` | `None` | processed; a correct no-op (nothing handles it here) |
+| `False` | **`True`** | `None` | **held** by `onUnhandled: "defer"` — *not yet processed*; do not read `changed` as a no-op |
+| any | any | set | the step failed: an action raised, an unresolvable target, or a `RunawayChainError` |
+
 Pass `priority=True` alongside `wait=True` (or use `send_priority()`) to jump
 the queue for a bounded-latency question under backlog.
+
+Without `wait=True` the same per-step outcome is readable afterwards on both
+engines: `interp.last_transition_ok` and `interp.last_error` (0.8.1) report the
+most recent step, so a fire-and-forget caller can still detect a failed one.
 
 ### `to_promise` — await completion
 

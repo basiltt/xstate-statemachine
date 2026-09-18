@@ -387,3 +387,33 @@ class WrongThreadError(XStateMachineError):
     """
 
     pass
+
+
+class RunawayChainError(XStateMachineError):
+    """The self-generated event chain exceeded ``maxIterations`` (#77).
+
+    An action raised or sent the event that triggers it, or a service
+    completion re-armed the invoke that produced it, more than
+    ``maxIterations`` times without an external event in between. The
+    engine breaks the chain by discarding the offending tail; the machine
+    stays ``running`` and every event the caller queued is still
+    processed. This error is how the break is made OBSERVABLE: it is the
+    ``Receipt.error`` of the triggering ``send(..., wait=True)``,
+    ``interp.last_transition_ok`` is ``False``, and the
+    ``on_event_dropped`` plugin hook fires with ``reason="chain_budget"``
+    for each discarded event.
+
+    Attributes:
+        limit: The ``maxIterations`` that was exceeded.
+        dropped: How many self-generated events were discarded.
+    """
+
+    def __init__(self, machine_id: str, limit: int, dropped: int):
+        self.limit = limit
+        self.dropped = dropped
+        super().__init__(
+            f"Machine '{machine_id}' exceeded {limit} chained self-generated "
+            f"events in one macrostep and discarded {dropped} of them. An "
+            f"action raises or sends the event that triggers it; break the "
+            f"cycle or raise 'maxIterations'."
+        )

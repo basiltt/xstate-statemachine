@@ -165,7 +165,20 @@ class TestFactory(unittest.TestCase):
         # ✅ Assert: Verify the machine is created correctly and uses the exact logic object provided.
         self.assertIsInstance(machine, MachineNode)
         self.assertEqual(machine.id, "test_machine")
-        self.assertIs(machine.logic, self.explicit_logic)
+        # 🏛️ #92: the machine OWNS its logic container (a shallow copy of
+        #    the caller's) so alias resolution never mutates caller state.
+        #    The contract this test protects -- the explicit logic is what
+        #    the machine runs, not auto-discovery -- is checked by identity
+        #    of the CALLABLES and by the caller's object being untouched.
+        self.assertIsNot(machine.logic, self.explicit_logic)
+        self.assertEqual(
+            {
+                k: id(v)
+                for k, v in machine.logic.actions.items()
+                if k in self.explicit_logic.actions
+            },
+            {k: id(v) for k, v in self.explicit_logic.actions.items()},
+        )
 
     def test_create_machine_with_no_logic_falls_back_to_empty(self) -> None:
         """Should create an empty `MachineLogic` if none is provided."""
@@ -396,7 +409,8 @@ class TestFactory(unittest.TestCase):
         )
 
         # ✅ Assert: The machine should use the explicit logic object and its action.
-        self.assertIs(machine.logic, explicit_logic)
+        # #92: machine-owned copy; the explicit callable is what runs.
+        self.assertIsNot(machine.logic, explicit_logic)
         self.assertIs(machine.logic.actions["factory_action"], mock_action)
 
     def test_auto_discovery_last_provider_wins_on_conflict(self) -> None:

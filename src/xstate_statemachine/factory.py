@@ -23,6 +23,7 @@ configuration dictionary and associated business logic.
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
+import copy
 from types import ModuleType
 from typing import Any, Dict, List, Optional, Type, Union, overload
 
@@ -208,7 +209,16 @@ def create_machine(
     # The MachineNode constructor will handle the recursive parsing of the
     # entire statechart configuration.
     logger.info("🏭 Assembling final MachineNode for '%s'...", machine_id)
-    machine = MachineNode(config, final_logic)
+    # 🏛️ #92: give the MACHINE its own logic container so aliasing (below)
+    #    never touches the caller's object. `copy.copy` keeps the subclass
+    #    (auto-registered methods stay bound) and shares the callables; only
+    #    the three registry dicts are replaced by `_alias_logic_names`.
+    owned_logic = (
+        copy.copy(final_logic)
+        if isinstance(final_logic, MachineLogic)
+        else final_logic  # duck-typed: leave as-is
+    )
+    machine = MachineNode(config, owned_logic)
     # 🔤 Bind snake_case implementations to the camelCase names the config
     #    uses (and vice versa) once, here, so every interpreter lookup stays
     #    a plain dict hit. Exact-name entries are never overridden.
@@ -246,13 +256,24 @@ def _alias_logic_names(machine: MachineNode[Any]) -> None:
     services: set = set()
     LogicLoader._extract_logic_from_node(machine, actions, guards, services)
     logic = machine.logic
-    # 🦆 `logic` is duck-typed by contract (any object exposing the three
-    #    registries); skip a registry that is absent or not a dict.
+    # 🏛️ #92: `create_machine()` must not modify the object it was handed.
+    #    Aliasing used to write into the caller's `MachineLogic` dicts, so a
+    #    second machine built from the same logic saw already-aliased keys
+    #    (suppressing the ambiguity guard) and an EARLIER machine's
+    #    registry was retroactively extended. The machine now owns a
+    #    shallow COPY of each registry: identical hot-path cost (still a
+    #    plain dict), zero caller mutation, and `create_machine` is a pure
+    #    function of its inputs again.
     for attr, required in (
         ("actions", actions),
         ("guards", guards),
         ("services", services),
     ):
         registry = getattr(logic, attr, None)
+        # 🦆 `logic` is duck-typed by contract (any object exposing the
+        #    three registries); skip a registry that is absent or not a
+        #    dict.
         if isinstance(registry, dict):
-            resolve_aliases(registry, required)
+            owned = dict(registry)
+            resolve_aliases(owned, required)
+            setattr(logic, attr, owned)

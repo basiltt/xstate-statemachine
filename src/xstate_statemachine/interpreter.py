@@ -62,6 +62,7 @@ from .actions import (
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from .base_interpreter import AnyEvent, BaseInterpreter
+from .exceptions import RunawayChainError
 from .clock import Clock, SimulatedClock
 from .events import AfterEvent, DoneEvent, ErrorEvent, Event, Receipt
 from .exceptions import (
@@ -623,6 +624,16 @@ class Interpreter(BaseInterpreter[TContext]):
             # ⏸️ BLOCK is the one policy that must genuinely await.
             return self._enqueue_blocking(event_obj, receipt)
         else:
+            # 🏛️ #90: a `send()` issued FROM AN ACTION on this interpreter is
+            #    self-generated work, exactly like `raise`. It used to bypass
+            #    the chain budget entirely (only BLOCK-policy self-sends were
+            #    routed internally), so `async def act(i,...): await
+            #    i.send(...)` spun unbounded while the sync engine stopped at
+            #    the limit. Route it to the internal queue and count it.
+            if self._processing and not self._refuse_if_not_running(event_obj):
+                self._raise_depth += 1
+                self._internal_queue.append(event_obj)
+                return receipt if receipt is not None else _completed()
             self._enqueue(event_obj)
         return receipt if receipt is not None else _completed()
 
@@ -711,12 +722,18 @@ class Interpreter(BaseInterpreter[TContext]):
         return fut
 
     def _resolve_receipt(
-        self, event_obj: Any, changed: bool, error: Optional[BaseException]
+        self,
+        event_obj: Any,
+        changed: bool,
+        error: Optional[BaseException],
+        deferred: bool = False,
     ) -> None:
         fut = self._receipts.pop(id(event_obj), None)
         if fut is not None and not fut.done():
             fut.set_result(
-                Receipt(frozenset(self.current_state_ids), changed, error)
+                Receipt(
+                    frozenset(self.current_state_ids), changed, error, deferred
+                )
             )
 
     def _fail_receipt(self, event_obj: Any, message: str) -> None:
@@ -1163,6 +1180,13 @@ class Interpreter(BaseInterpreter[TContext]):
                         self.id,
                     )
                     self._raise_depth = 0
+                    # 🔔 #77 criterion 6: observable, not just logged.
+                    for plugin in self._plugins:
+                        plugin.on_event_dropped(self, event, "chain_budget")
+                    self.last_transition_ok = False
+                    self._last_action_error = RunawayChainError(
+                        self.id, limit, 1
+                    )
                     # 🧾 The dropped event may carry a receipt; never hang it.
                     self._fail_receipt(
                         event,
@@ -1223,6 +1247,17 @@ class Interpreter(BaseInterpreter[TContext]):
                     raise
                 except Exception as exc:
                     step_error = exc
+                    # 🏛️ #31 (runtime parity): the sync engine RAISES an
+                    #    unresolvable target / missing implementation to its
+                    #    caller. This engine cannot raise into a
+                    #    fire-and-forget `send()`, so the same failure is
+                    #    published where a caller CAN see it without
+                    #    `wait=True`: `last_transition_ok` / `last_error`,
+                    #    plus the `on_transition_failed` hook -- the same
+                    #    surface a failed action list uses. Logging alone
+                    #    left the two engines disagreeing on an error path.
+                    self.last_transition_ok = False
+                    self._last_action_error = exc
                     logger.error(
                         "💥 Error processing event '%s' on '%s'; the "
                         "interpreter remains running. %s",
@@ -1240,7 +1275,9 @@ class Interpreter(BaseInterpreter[TContext]):
                         frozenset(self._active_state_nodes) != config_before
                         or self.context != context_before
                     )
-                    self._resolve_receipt(event, changed, step_error)
+                    deferred = id(event) in self._deferred_this_step
+                    self._deferred_this_step.discard(id(event))
+                    self._resolve_receipt(event, changed, step_error, deferred)
 
                 if from_inbox:
                     self._event_queue.task_done()

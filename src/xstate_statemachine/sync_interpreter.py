@@ -47,8 +47,16 @@ from typing import (
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from .base_interpreter import AnyEvent, BaseInterpreter, _RollbackRequested
+from .exceptions import RunawayChainError
 from .clock import Clock, SimulatedClock
-from .events import AfterEvent, DoneEvent, ErrorEvent, Event, Receipt
+from .events import (
+    AfterEvent,
+    DoneEvent,
+    ErrorEvent,
+    Event,
+    Receipt,
+    is_system_event,
+)
 from .exceptions import (
     ActorSpawningError,
     ImplementationMissingError,
@@ -485,6 +493,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         try:
             self._process_event_queue()
         except Exception as exc:
+            # 🏛️ #31 (runtime parity): whatever the caller sees, the
+            #    interpreter's own record must agree with the async engine's
+            #    -- a step that raised is not `last_transition_ok`.
+            self.last_transition_ok = False
+            self._last_action_error = exc
             if not wait:
                 raise
             step_error = exc
@@ -496,7 +509,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             frozenset(self._active_state_nodes) != config_before
             or self.context != context_before
         )
-        return Receipt(frozenset(self.current_state_ids), changed, step_error)
+        deferred = id(event_obj) in self._deferred_this_step
+        self._deferred_this_step.discard(id(event_obj))
+        return Receipt(
+            frozenset(self.current_state_ids), changed, step_error, deferred
+        )
 
     # -------------------------------------------------------------------------
     # 🏁 Reaping (#57)
@@ -601,7 +618,14 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    caller was told was accepted.
         external_budget = len(self._event_queue)
         generated = 0
+        # 🏛️ #88: `tripped` is per CHAIN, not per drain. It is cleared by
+        #    the same condition that resets `generated` (a step that produced
+        #    nothing), so one runaway `SPIN` cannot starve five unrelated
+        #    `WORK` events queued behind it. Within a chain it stays sticky:
+        #    each further self-event the runaway produces is dropped on
+        #    arrival instead of earning a fresh budget.
         tripped = False
+        dropped_total = 0
         limit = getattr(self.machine, "max_iterations", 1000)
         try:
             while self._event_queue or self._internal_queue:
@@ -621,36 +645,91 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                     current_event = self._event_queue.popleft()
                 else:
                     current_event = self._event_queue.popleft()
+                # 🏛️ #94: an ENGINE completion (`done.invoke`, `error.platform`,
+                #    a due `after`) is the result of work that already
+                #    finished. Dropping one strands the machine in the
+                #    invoking state forever -- strictly worse than the
+                #    runaway the budget prevents -- so completions are NEVER
+                #    dropped (see the trip handler). They ARE counted like
+                #    any other self-generated event: a rollback that re-arms
+                #    an invoke whose `onDone` fails again is a genuine
+                #    self-feeding cycle made entirely of completions, and the
+                #    count is the only thing that breaks it. In the normal
+                #    case a sync service's completion is one deep and the
+                #    per-step reset below clears it immediately.
+                is_completion = is_generated and is_system_event(current_event)
+                if not is_generated:
+                    # 🔗 #88: a USER event starts a fresh chain. Whatever a
+                    #    previous runaway did, this event and everything it
+                    #    generates get a clean budget -- mirrors the async
+                    #    engine, whose `_raise_depth` only ever counts
+                    #    internal events and is reset per macrostep.
+                    generated = 0
+                    tripped = False
                 if is_generated:
                     generated += 1
-                if is_generated and generated > limit:
-                    # ✂️ Internal events drain first, so the user's own
-                    #    events may still sit at the HEAD of the inbox with
-                    #    self-generated ones appended behind them. Drop the
-                    #    overflowing event and the generated tail; keep
-                    #    processing the user's. The budget is NOT reset: the
-                    #    drain stays tripped, so a machine that keeps
-                    #    regenerating has each new self-event dropped on
-                    #    arrival instead of earning a fresh 1,000.
-                    self._internal_queue.clear()
-                    dropped = 1 + max(
-                        0, len(self._event_queue) - external_budget
-                    )
-                    for _ in range(dropped - 1):
-                        self._event_queue.pop()
-                    logger.log(
-                        logging.ERROR if not tripped else logging.DEBUG,
-                        "🛑 Exceeded %d self-generated events in a single "
-                        "macrostep on '%s'. This means an action raises or "
-                        "sends the event that triggers it. Discarded %d "
-                        "pending self-generated event(s); every event the "
-                        "caller queued is still processed.",
-                        limit,
-                        self.id,
-                        dropped,
+                if is_generated and (tripped or generated > limit):
+                    # ✂️ The chain is over budget. Internal events drain
+                    #    first, so the user's own events may still sit at the
+                    #    HEAD of the inbox with self-generated ones appended
+                    #    behind them: discard the self-generated tail, keep
+                    #    the user's. Within this chain `tripped` stays set so
+                    #    each further self-event is dropped on arrival.
+                    #
+                    #    Engine completions are never discarded (#94): a
+                    #    completion found in the tail is re-queued ahead of
+                    #    it, and a completion that IS the tripping event is
+                    #    processed (falls through below) rather than
+                    #    re-queued -- re-queueing would dequeue it again on
+                    #    the next iteration, still tripped, forever.
+                    victims: List[AnyEvent] = []
+                    keep: List[AnyEvent] = []
+                    # A completion is spared ONLY at the moment of the trip
+                    # (`not tripped`): it is the result of real work and is
+                    # delivered. Once the chain is tripped, a further
+                    # completion IS the cycle (rollback -> re-arm -> done ->
+                    # rollback ...) and must be dropped or the drain never
+                    # ends.
+                    spare = is_completion and not tripped
+                    if not spare:
+                        victims.append(current_event)
+                    while self._internal_queue:
+                        ev = self._internal_queue.popleft()
+                        (keep if is_system_event(ev) else victims).append(ev)
+                    tail = max(0, len(self._event_queue) - external_budget)
+                    for _ in range(tail):
+                        ev = self._event_queue.pop()
+                        (keep if is_system_event(ev) else victims).append(ev)
+                    for ev in reversed(keep):
+                        self._internal_queue.appendleft(ev)
+                    dropped_total += len(victims)
+                    if not tripped:
+                        logger.error(
+                            "🛑 Exceeded %d self-generated events in a single "
+                            "macrostep on '%s'. An action raises or sends the "
+                            "event that triggers it. Discarding the "
+                            "self-generated tail; every event the caller "
+                            "queued is still processed.",
+                            limit,
+                            self.id,
+                        )
+                    # 🔔 #77 criterion 6: the break is OBSERVABLE. Each
+                    #    victim fires `on_event_dropped`; the step is marked
+                    #    failed so `Receipt.error` / `last_transition_ok`
+                    #    carry a `RunawayChainError`.
+                    for ev in victims:
+                        for plugin in self._plugins:
+                            plugin.on_event_dropped(self, ev, "chain_budget")
+                    self.last_transition_ok = False
+                    self._last_action_error = RunawayChainError(
+                        self.id, limit, dropped_total
                     )
                     tripped = True
-                    continue
+                    if not spare:
+                        continue
+                    # The spared completion falls through and is processed.
+                    # It does NOT reset the chain: `generated` stays over
+                    # budget so anything it produces is dropped on arrival.
                 logger.debug(
                     "⚙️ Processing event: '%s'", current_event.type
                 )  # 📉 #55: hot path, DEBUG
@@ -676,12 +755,16 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 #    has overflowed it stays in drop-on-arrival mode until the
                 #    caller returns, so a machine that keeps regenerating
                 #    cannot earn a fresh 1,000 per user event.
+                # 🔗 A step that produced nothing ends the current chain
+                #    (parity with the async `_raise_depth` reset). `tripped`
+                #    is cleared here too: the runaway is over once it stops
+                #    regenerating.
                 if (
-                    not tripped
-                    and len(self._internal_queue) + len(self._event_queue)
+                    len(self._internal_queue) + len(self._event_queue)
                     <= queued_before
                 ):
                     generated = 0
+                    tripped = False
 
                 # 📨 Replay deferred events at the HEAD of the queue, ahead of
                 #    live traffic and in original order (LC-18). `extendleft`
@@ -1048,6 +1131,28 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             child: The spawned child interpreter.
             invoke_id: The `invoke` id to report completion under.
         """
+        # 💥 #99: a child that ENDED IN ERROR must satisfy `onError`, not
+        #    fall through as "did not reach final". Same shape as the async
+        #    engine's `_deliver_invoked_completion`; with no handler the
+        #    parent fails like it does for a failing callable service.
+        if child.status == "error":
+            failure = child.error or RuntimeError(
+                f"Invoked machine '{child.id}' failed."
+            )
+            logger.warning(
+                "💥 Invoked machine '%s' ended in error; firing onError.",
+                child.id,
+            )
+            error_event = ErrorEvent(
+                type=f"error.platform.{invoke_id}",
+                error=failure,
+                src=invoke_id,
+            )
+            handled = self._has_error_handler_for_id(invoke_id)
+            self.send(error_event)
+            if not handled:
+                self._fail(failure)
+            return
         reached_final = any(
             node.is_final and node.parent is child.machine
             for node in child._active_state_nodes

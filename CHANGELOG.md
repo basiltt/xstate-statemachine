@@ -9,6 +9,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Round-3 re-verification findings** (#84–#99; reopened #31, #77, #79).
+  Every item was reproduced against `main` before the fix and pinned in
+  `tests/test_round3_findings.py`.
+  - **`Receipt.deferred`** (#84): an event held by `onUnhandled: "defer"`
+    resolved `changed=False, error=None` — indistinguishable from a correct
+    no-op. The receipt now says `deferred=True`.
+  - **Provenance is not forgeable** (#85): `Event(system=True)` let user
+    code mint engine-status events that bypassed `strict`, `onUnhandled`
+    and `"*"`. The public constructor has no such parameter; `Event.system`
+    is a read-only property backed by an engine-private identity sentinel
+    that only `system_event()` can set.
+  - **Provenance and engine events survive a snapshot** (#86, #87): pending
+    `DoneEvent` / `ErrorEvent` were silently dropped by
+    `get_persisted_snapshot()`, and a restored engine `Event` became user
+    traffic that failed an `onUnhandled: "error"` machine. Snapshot layout
+    **v2** persists a `kind` per record and round-trips every event class;
+    v1 restores unchanged.
+  - **Runaway-chain trip is observable** (#77 criterion 6): the triggering
+    receipt carries `RunawayChainError`, `last_transition_ok` is `False`,
+    `last_error` is set, and `on_event_dropped(reason="chain_budget")`
+    fires per discarded event — on **both** engines.
+  - **`tripped` is per chain** (#88): one runaway no longer starves
+    unrelated events queued behind it in the same `send_events()` batch.
+  - **Completions are never discarded** (#94): a `done.invoke` /
+    `error.platform` arriving during or after a trip is delivered, so a
+    trip can no longer strand the machine in the invoking state. It is still
+    counted, so a rollback→re-arm→done cycle remains bounded.
+  - **Async action-side `send()` is budgeted** (#90): an action calling
+    `await interp.send(...)` on its own interpreter spun unbounded; it now
+    routes to the internal queue and counts against the chain like `raise`.
+  - **`**kwargs` is not consent** (#89): a legacy clock wrapper forwarding
+    `**kwargs` was fed `sync=`; only an explicitly named parameter opts in.
+  - **`create_machine()` no longer mutates the caller's `MachineLogic`**
+    (#92): aliases are resolved into a machine-owned copy of each registry,
+    so a second machine from the same logic still trips the ambiguity guard
+    and an earlier machine is never retroactively rebound.
+  - **Shadowed near-duplicates warn** (#91): an exact key still wins by
+    design, but if a *different* callable is also registered under a
+    spelling that normalises to it, a `UserWarning` names both.
+  - **`logic_modules` / `logic_providers` apply the ambiguity rule** (#93):
+    two different callables whose names normalise equal, for a name the
+    machine requires, are `InvalidConfigError` instead of iteration-order
+    roulette. The legacy forward snake→camel alias that masked this is gone.
+  - **Library no longer reads `ErrorEvent.data`** (#95), so
+    `-W error::DeprecationWarning` CI passes.
+  - **`_resolve_event_spec` always yields a dict payload** (#96): an
+    `ErrorEvent` re-sent through `sendTo`/`forwardTo` carried the exception
+    *as* the payload; it is now `{"error": exc, "src": id}`.
+  - **`escalate` mints an `ErrorEvent`** (#97) — the one failure path that
+    still delivered a plain `Event`.
+  - **Strict mode exempts by provenance only** (#98): forged engine-shaped
+    user events (`done.invoke.NEVER`, `after.party`, `xstate.whatever`,
+    `___xstate_forged`) are rejected like any undeclared name.
+  - **`SyncInterpreter` delivers `onError` for a failed invoked child
+    machine** (#99), and fails the parent when no handler is declared —
+    parity with the async engine and with failing callable services.
+  - **Runtime parity for unresolvable targets under `strict_targets=False`**
+    (#31): both engines now expose the same surface — `StateNotFoundError`
+    on the receipt, `last_transition_ok=False`, `last_error` set, machine
+    still `running`; the sync engine additionally raises from a
+    fire-and-forget `send()` as before.
 - **`send(event, wait=True)` no longer hangs when one `Event` instance is
   in flight twice** (#75, #39). Receipts were keyed on `id(event)`, so two
   concurrent sends of the same pre-built `Event` collided and the first
@@ -84,6 +145,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`interp.last_error`** — the exception behind the most recent
+  `last_transition_ok=False`, on both engines, so a fire-and-forget caller
+  can detect a failed step without `wait=True`.
+- **`RunawayChainError`** — carried on receipts / `last_error` when a
+  self-generated chain exceeds `maxIterations`.
+- **`events.persist_event` / `events.restore_event`** — the snapshot record
+  codec for every event class (layout v2).
 - **`has_dormant_invocations`** on both engines (#44). After a static
   `from_snapshot()` the machine reports `status == "running"` — it *is*
   processing events — while every `invoke` in the configuration is parked.

@@ -60,6 +60,8 @@ from .events import (
     ErrorEvent,
     Event,
     is_system_event,
+    persist_event,
+    restore_event,
     system_event,
 )
 from .exceptions import (
@@ -282,18 +284,20 @@ def _accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
     """``True`` if calling *fn* with keyword *name* is signature-legal.
 
     Used to detect 0.8.0-era `Clock` implementations whose `set_timeout`
-    predates the ``sync=`` keyword (#76). A ``**kwargs`` catch-all counts.
-    Un-introspectable callables (C builtins, some mocks) are assumed to
-    accept it, matching the protocol they claim to implement.
+    predates the ``sync=`` keyword (#76). Only an EXPLICITLY named
+    parameter counts (#89): a ``**kwargs`` catch-all is how a legacy
+    wrapper forwards to a backend that has never heard of ``sync``, so
+    feeding it the keyword broke it. Un-introspectable callables (C
+    builtins, some mocks) are assumed NOT to accept it -- the legacy call
+    shape is the safe default.
     """
     try:
         params = inspect.signature(fn).parameters
     except (TypeError, ValueError):  # pragma: no cover -- exotic callables
-        return True
-    if name in params:
-        return True
-    return any(
-        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+        return False
+    param = params.get(name)
+    return (
+        param is not None and param.kind is not inspect.Parameter.VAR_KEYWORD
     )
 
 
@@ -456,6 +460,9 @@ class BaseInterpreter(Generic[TContext]):
         #: Events held back under ``onUnhandled: "defer"``, replayed after
         #: the next successful transition. Empty under other policies.
         self._deferred_events: List[Event] = []
+        #: 🧾 #84: ids of events `onUnhandled: "defer"` held during the
+        #: current step, so `send(wait=True)` can report `deferred=True`.
+        self._deferred_this_step: Set[int] = set()
         #: Listeners registered via :meth:`on`, keyed by emitted event type.
         self._emit_listeners: Dict[str, List[Callable[[Any], None]]] = {}
         #: Cancellation callbacks for pending delayed sends, keyed by send id.
@@ -996,19 +1003,16 @@ class BaseInterpreter(Generic[TContext]):
             "error": str(self.error) if self.error is not None else None,
             # 📨 Deferred events survive a crash: drained on start()
             #    before any invoke is re-driven.
-            "deferred": [
-                {"type": e.type, "payload": copy.deepcopy(e.payload)}
-                for e in self._deferred_events
-            ],
+            "deferred": [persist_event(e) for e in self._deferred_events],
             # 📬 #47: the inbox. Events `send()` ACCEPTED but has not yet
             #    processed. Without this a crash between accept and process
             #    lost them with no trace; with it a restored machine resumes
             #    with its mailbox intact.
-            "pending_events": [
-                {"type": e.type, "payload": copy.deepcopy(e.payload)}
-                for e in self.pending_events
-                if isinstance(e, Event)
-            ],
+            # 🏛️ #86/#87: EVERY kind round-trips -- `DoneEvent` /
+            #    `ErrorEvent` / `AfterEvent` and engine-minted `Event`s
+            #    carry a `kind` discriminator so an accepted invoke failure
+            #    is not silently dropped and provenance survives a restore.
+            "pending_events": [persist_event(e) for e in self.pending_events],
             # 🕰️ Remembered history, so a restored machine can still honour a
             #    later transition to a history state.
             "history": {
@@ -1226,14 +1230,11 @@ class BaseInterpreter(Generic[TContext]):
         interpreter.output = snapshot.get("output")
         recorded_error = snapshot.get("error")
         interpreter._deferred_events = [
-            Event(type=d["type"], payload=d.get("payload") or {})
-            for d in snapshot.get("deferred", [])
+            restore_event(d) for d in snapshot.get("deferred", [])
         ]
         # 📬 #47: re-enqueue the persisted inbox in original order.
         for record in snapshot.get("pending_events") or []:
-            interpreter._enqueue_restored(
-                Event(type=record["type"], payload=record.get("payload") or {})
-            )
+            interpreter._enqueue_restored(restore_event(record))
         if recorded_error:
             # 📝 The original exception type cannot survive JSON, so the
             #    message is preserved in a dedicated wrapper. Without this a
@@ -1536,9 +1537,15 @@ class BaseInterpreter(Generic[TContext]):
         # 🏛️ #79: engine-minted events are never "unknown"; a USER event
         #    is checked whatever it is called -- `Event("done.typo")` from
         #    application code is a typo like any other.
-        if not isinstance(event, Event) or event.system:
+        # 🏛️ #79/#98: engine-minted events are never "unknown"; a USER
+        #    event is checked whatever it is called. `is_known_event` no
+        #    longer grants a by-name exemption, so a forged
+        #    `done.invoke.NEVER` or `___xstate_x` is rejected like `TYPO`.
+        if is_system_event(event) or not isinstance(event, Event):
             return
-        if self.strict and not self.machine.is_known_event(event.type):
+        if self.strict and not self.machine.is_known_event(
+            event.type, user_sent=True
+        ):
             raise UnknownEventError(
                 event.type, self.machine.id, sorted(self.machine.known_events)
             )
@@ -1776,10 +1783,25 @@ class BaseInterpreter(Generic[TContext]):
         resolved = self._coerce_event(spec)
         if isinstance(resolved, Event):
             return resolved
-        # 🔁 Normalise AfterEvent/DoneEvent into a plain Event for re-sending.
-        return Event(
-            type=resolved.type, payload=getattr(resolved, "data", {}) or {}
-        )
+        # 🔁 Normalise engine events into a plain Event for re-sending.
+        #    `Event.payload` is a Dict by contract (#96): a `DoneEvent.data`
+        #    that is not a mapping, or an `ErrorEvent.error`, is wrapped
+        #    rather than assigned as the payload itself.
+        if isinstance(resolved, ErrorEvent):
+            return Event(
+                type=resolved.type,
+                payload={"error": resolved.error, "src": resolved.src},
+            )
+        data = getattr(resolved, "data", None)
+        if isinstance(data, dict):
+            return Event(type=resolved.type, payload=dict(data))
+        payload: Dict[str, Any] = {}
+        if data is not None:
+            payload["data"] = data
+        src = getattr(resolved, "src", None)
+        if src is not None:
+            payload["src"] = src
+        return Event(type=resolved.type, payload=payload)
 
     def _resolve_actor_target(
         self, spec: Any, event: AnyEvent
@@ -2664,8 +2686,16 @@ class BaseInterpreter(Generic[TContext]):
 
         elif canonical == ESCALATE:
             error_payload = params.get("error")
-            escalate_event = system_event(
-                f"xstate.error.actor.{self.id}", error=error_payload
+            # 🏛️ #97: `escalate` is a FAILURE, so it rides the same type as
+            #    every other failure (#80). Handlers written to the documented
+            #    `event.error` pattern work; `event.type` is unchanged.
+            err = (
+                error_payload
+                if isinstance(error_payload, BaseException)
+                else RuntimeError(str(error_payload))
+            )
+            escalate_event = ErrorEvent(
+                type=f"xstate.error.actor.{self.id}", error=err, src=self.id
             )
             if self.parent is not None:
                 await self._deliver(self.parent, escalate_event, None, None)
@@ -3216,6 +3246,27 @@ class BaseInterpreter(Generic[TContext]):
                 return None
         return output
 
+    @property
+    def last_error(self) -> Optional[BaseException]:
+        """The exception behind the most recent ``last_transition_ok=False``.
+
+        ``None`` while the last step ran cleanly. Covers every per-step
+        failure both engines can report without a receipt: an action that
+        raised under ``actionErrorPolicy``, an unresolvable transition
+        target (#31), a missing implementation, or a `RunawayChainError`
+        (#77). Reset to ``None`` at the start of each processed event.
+        """
+        return None if self.last_transition_ok else self._last_action_error
+
+    def _has_error_handler_for_id(self, invoke_id: str) -> bool:
+        """`_has_error_handler` by invoke id, for engines that only hold the
+        id at completion time (the sync actor runner, #99)."""
+        for state in list(self._active_state_nodes):
+            for inv in state.invoke:
+                if inv.id == invoke_id:
+                    return self._has_error_handler(inv)
+        return False
+
     def _has_error_handler(self, invocation: Any) -> bool:
         """Reports whether an invocation declares any `onError` handler.
 
@@ -3278,6 +3329,10 @@ class BaseInterpreter(Generic[TContext]):
                 #    caller learns which one was lost.
                 self._notify_unhandled(evicted, active, "dropped")
             self._deferred_events.append(event)
+            # 🧾 #84: a `wait=True` caller must not read the resulting
+            #    `changed=False` as "processed, no-op". Record the hold so
+            #    the receipt can say `deferred=True`.
+            self._deferred_this_step.add(id(event))
             self._notify_unhandled(event, active, disposition)
             logger.debug(
                 "📨 Deferred '%s' (%d held).",

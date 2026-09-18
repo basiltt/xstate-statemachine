@@ -30,6 +30,7 @@ would affect all subsequently created events.
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 from dataclasses import dataclass, field
+import copy
 import warnings
 from typing import Any, Dict, FrozenSet, NamedTuple, Optional, Tuple
 
@@ -110,11 +111,22 @@ class Event:
     # own payload dictionary rather than sharing one across instances.
     payload: Dict[str, Any] = field(default_factory=dict)
 
-    # 🏷️ #79: provenance flag. ``True`` only for events the engine minted
-    #    for itself (init/exit sentinels, `escalate`, restore). Excluded
-    #    from equality/repr so `Event("X") == Event("X")` is unaffected and
-    #    existing snapshots (which never persist it) round-trip unchanged.
-    system: bool = field(default=False, compare=False, repr=False)
+    # 🏷️ #79/#85: provenance. Set ONLY by `system_event()` via the private
+    #    `_provenance` slot, which holds an engine-owned sentinel object that
+    #    user code cannot obtain by name. A caller passing `system=True`
+    #    used to forge engine status and bypass `strict`, `onUnhandled`
+    #    and the `"*"` matcher (#85); the public constructor no longer has
+    #    such a parameter. Excluded from equality/repr so
+    #    `Event("X") == Event("X")` is unaffected. `init=False` so it cannot
+    #    be supplied positionally or by keyword.
+    _provenance: Any = field(
+        default=None, init=False, compare=False, repr=False
+    )
+
+    @property
+    def system(self) -> bool:
+        """``True`` if the ENGINE minted this event (read-only, #85)."""
+        return self._provenance is _ENGINE_MARK
 
     @property
     def data(self) -> Dict[str, Any]:
@@ -223,6 +235,11 @@ class ErrorEvent(NamedTuple):
 ENGINE_EVENT_TYPES: Tuple[type, ...] = ()  # populated below, after defs
 
 
+#: Engine-private provenance sentinel. Compared by IDENTITY; it is not
+#: exported, not a bool, and cannot be reconstructed from a name.
+_ENGINE_MARK: Any = object()
+
+
 def is_system_event(event: Any) -> bool:
     """``True`` for events the ENGINE synthesised (#79).
 
@@ -233,12 +250,89 @@ def is_system_event(event: Any) -> bool:
     """
     if isinstance(event, ENGINE_EVENT_TYPES):
         return True
-    return isinstance(event, Event) and event.system
+    return isinstance(event, Event) and event._provenance is _ENGINE_MARK
 
 
 def system_event(event_type: str, **payload: Any) -> "Event":
-    """Mint an engine-owned `Event` (init/exit sentinels, escalate, …)."""
-    return Event(type=event_type, payload=dict(payload), system=True)
+    """Mint an engine-owned `Event` (init/exit sentinels, restore, …).
+
+    The ONLY way to produce an `Event` for which `is_system_event` is
+    true. `Event` is frozen, so the marker is written through
+    `object.__setattr__` exactly once, here.
+    """
+    ev = Event(type=event_type, payload=dict(payload))
+    object.__setattr__(ev, "_provenance", _ENGINE_MARK)
+    return ev
+
+
+def event_kind(event: Any) -> str:
+    """Discriminator persisted with an event (#86/#87).
+
+    ``"system"`` for an engine-minted plain `Event`, ``"done"`` /
+    ``"error"`` / ``"after"`` for the NamedTuple engine events, ``"event"``
+    for user traffic. `restore_event` inverts it.
+    """
+    if isinstance(event, DoneEvent):
+        return "done"
+    if isinstance(event, ErrorEvent):
+        return "error"
+    if isinstance(event, AfterEvent):
+        return "after"
+    return "system" if is_system_event(event) else "event"
+
+
+def persist_event(event: Any) -> Dict[str, Any]:
+    """JSON-safe record for a pending/deferred event (#86/#87).
+
+    Round-trips every engine event kind instead of silently dropping the
+    NamedTuple ones. `ErrorEvent.error` is an exception and cannot be
+    serialised faithfully; its ``repr`` is kept and restored as a
+    `RestoredError`-style stand-in by `restore_event`.
+    """
+    kind = event_kind(event)
+    rec: Dict[str, Any] = {"kind": kind, "type": event.type}
+    if kind in ("event", "system"):
+        rec["payload"] = copy.deepcopy(event.payload)
+    elif kind == "done":
+        rec["data"] = copy.deepcopy(event.data)
+        rec["src"] = event.src
+    elif kind == "error":
+        rec["error"] = repr(event.error)
+        rec["src"] = event.src
+    return rec
+
+
+def restore_event(record: Dict[str, Any]) -> Any:
+    """Inverse of `persist_event`; tolerant of v1 records (#86).
+
+    A v1 record has no ``kind``. For those, provenance is re-derived from
+    the NAME for the exact engine shapes only -- the one place a name is
+    all we have, and only at this boundary -- so an escalate event or init
+    sentinel persisted by 0.8.1 is not turned into user traffic that fails
+    an `onUnhandled: "error"` machine on restore.
+    """
+    kind = record.get("kind")
+    etype = record["type"]
+    if kind is None:  # v1 record
+        kind = "system" if etype.startswith(ENGINE_EVENT_SHAPES) else "event"
+    if kind == "done":
+        return DoneEvent(
+            type=etype, data=record.get("data"), src=record.get("src", "")
+        )
+    if kind == "error":
+        from .exceptions import RestoredError
+
+        return ErrorEvent(
+            type=etype,
+            error=RestoredError(record.get("error") or "unknown error"),
+            src=record.get("src", ""),
+        )
+    if kind == "after":
+        return AfterEvent(type=etype)
+    payload = record.get("payload") or {}
+    if kind == "system":
+        return system_event(etype, **payload)
+    return Event(type=etype, payload=payload)
 
 
 class Receipt(NamedTuple):
@@ -250,14 +344,20 @@ class Receipt(NamedTuple):
         changed: ``True`` if a transition was taken (configuration or
             context changed) for THIS event.
         error: The exception raised while processing this event -- an
-            action that raised, an unresolvable target -- or ``None``. The
-            machine may still be ``running`` (see ``actionErrorPolicy``);
-            the receipt tells the CALLER its request did not run cleanly.
+            action that raised, an unresolvable target, a runaway-chain
+            budget trip -- or ``None``. The machine may still be
+            ``running`` (see ``actionErrorPolicy``); the receipt tells the
+            CALLER its request did not run cleanly.
+        deferred: ``True`` when the event was HELD by ``onUnhandled:
+            "defer"`` rather than processed (#84). ``changed`` is then
+            ``False`` because nothing has run yet -- not because the event
+            was a correct no-op. Check this before reading ``changed``.
     """
 
     state_ids: FrozenSet[str]
     changed: bool
     error: Optional[BaseException] = None
+    deferred: bool = False
 
 
 class AfterEvent(NamedTuple):

@@ -162,6 +162,26 @@ def resolve_aliases(
         by_key.setdefault(normalize_logic_name(key), []).append(key)
     for name in required:
         if name in registry:
+            # ⚠️ #91: exact key wins BY DESIGN -- but if a DIFFERENT callable
+            #    is also registered under a spelling that normalises to this
+            #    name, the author almost certainly has two implementations
+            #    and does not know which one runs. Say so; silently
+            #    preferring one is the exact failure the guard exists for.
+            shadows = [
+                c
+                for c in by_key.get(normalize_logic_name(name), [])
+                if c != name and registry[c] is not registry[name]
+            ]
+            if shadows:
+                warnings.warn(
+                    f"Logic name '{name}' is registered exactly and also as "
+                    f"{sorted(shadows)}, which differ only by case or "
+                    f"separators but are DIFFERENT callables. The exact key "
+                    f"'{name}' is used; remove the others or make them the "
+                    f"same object.",
+                    UserWarning,
+                    stacklevel=3,
+                )
             continue
         candidates = by_key.get(normalize_logic_name(name))
         if not candidates:

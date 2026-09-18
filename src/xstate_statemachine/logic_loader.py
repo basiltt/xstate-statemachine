@@ -75,34 +75,6 @@ _TLogicLoader = TypeVar("_TLogicLoader", bound="LogicLoader")
 # -----------------------------------------------------------------------------
 
 
-def _snake_to_camel(snake_str: str) -> str:
-    """Converts a snake_case string to camelCase.
-
-    This utility function is a key part of the "Convention over Configuration"
-    strategy. It allows developers to define Python functions using the
-    standard PEP 8 snake_case naming convention, while seamlessly matching them
-    against the conventional camelCase naming used in JSON/JavaScript
-    environments like XState.
-
-    Args:
-        snake_str: The string in snake_case format (e.g., "my_action_name").
-
-    Returns:
-        The converted string in camelCase format (e.g., "myActionName").
-
-    Example:
-        >>> _snake_to_camel("hello_world")
-        'helloWorld'
-        >>> _snake_to_camel("a_b_c")
-        'aBC'
-    """
-    # 🐍 Split the string by underscores.
-    components = snake_str.split("_")
-    # 📝 Capitalize the first letter of all components after the first one
-    # and join them together.
-    return components[0] + "".join(x.title() for x in components[1:])
-
-
 # -----------------------------------------------------------------------------
 # 🏛️ LogicLoader Class (Singleton Design Pattern)
 # -----------------------------------------------------------------------------
@@ -353,8 +325,14 @@ class LogicLoader:
             )
             for name, func in inspect.getmembers(module, inspect.isfunction):
                 if not name.startswith("_"):
+                    # 🏛️ #93: register under the REAL name only. The old
+                    #    forward `snake->camel` alias wrote `fetchData` for
+                    #    `fetch_data`, silently OVERWRITING a genuine
+                    #    `fetchData` defined in the same module -- so the
+                    #    ambiguity check below never saw two candidates.
+                    #    Matching is normalised (case/separator-insensitive)
+                    #    at resolution time, which subsumes that alias.
                     logic_map[name] = func
-                    logic_map[_snake_to_camel(name)] = func
                     _register_explicit_name(logic_map, func)
 
         # 🔎 Scan all provider instances for methods (overrides module functions)
@@ -370,7 +348,6 @@ class LogicLoader:
                 ):
                     if not name.startswith("_"):
                         logic_map[name] = method
-                        logic_map[_snake_to_camel(name)] = method
                         _register_explicit_name(logic_map, method)
 
         # ---------------------------------------------------------------------
@@ -404,18 +381,36 @@ class LogicLoader:
         # 🔤 Normalised index so `log_http_status` satisfies `logHTTPStatus`
         #    (the camelCase forward conversion is lossy for acronyms and
         #    undefined for non-identifier names; see `normalize_logic_name`).
+        # 🏛️ #93: the same ambiguity rule `resolve_aliases` applies to an
+        #    explicit `MachineLogic`. Two DIFFERENT callables whose names
+        #    normalise equal used to resolve by module iteration order with
+        #    no error; now that is `InvalidConfigError` -- but only when the
+        #    machine actually REQUIRES the name, so unrelated near-duplicates
+        #    in a big shared module do not break unrelated machines.
         normalized_map: Dict[str, Callable[..., Any]] = {}
+        normalized_candidates: Dict[str, List[str]] = {}
         for key, impl in logic_map.items():
-            normalized_map.setdefault(normalize_logic_name(key), impl)
+            norm = normalize_logic_name(key)
+            normalized_map.setdefault(norm, impl)
+            normalized_candidates.setdefault(norm, []).append(key)
 
         for logic_type, required_set, discovered_dict in logic_definitions:
             for name in required_set:
                 if name in logic_map:
                     discovered_dict[name] = logic_map[name]
                 elif normalize_logic_name(name) in normalized_map:
-                    discovered_dict[name] = normalized_map[
-                        normalize_logic_name(name)
-                    ]
+                    norm = normalize_logic_name(name)
+                    cands = normalized_candidates[norm]
+                    distinct = {id(logic_map[c]) for c in cands}
+                    if len(distinct) > 1:
+                        raise InvalidConfigError(
+                            f"{logic_type} '{name}' is ambiguous: "
+                            f"{sorted(cands)} are all discovered and differ "
+                            f"only by case or separators, but are DIFFERENT "
+                            f"callables. Keep one, or register the exact "
+                            f"name '{name}' explicitly."
+                        )
+                    discovered_dict[name] = normalized_map[norm]
                 else:
                     # 💥 Fail-fast if an implementation is missing.
                     raise ImplementationMissingError(
