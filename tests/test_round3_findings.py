@@ -851,5 +851,82 @@ class TestUnresolvableTargetParity(_Quiet):
         s.stop()
 
 
+# =============================================================================
+# #77 ride-along — engines land on the same state when a chain is cut
+# =============================================================================
+class TestChainCutParity(_Quiet):
+    @staticmethod
+    def _entry_raise_chain(limit: int, depth: int) -> Dict[str, Any]:
+        states = {
+            f"s{k}": {
+                "entry": [{"type": "raise", "params": {"event": "NEXT"}}],
+                "on": {"NEXT": f"s{k + 1}"},
+            }
+            for k in range(depth + 1)
+        }
+        states[f"s{depth + 1}"] = {}
+        return {
+            "id": "m",
+            "initial": "s0",
+            "maxIterations": limit,
+            "states": states,
+        }
+
+    def test_both_engines_cut_a_deep_chain_at_the_same_link(self) -> None:
+        """The reporter's 1 001-deep chain landed on `s1000` (sync) vs
+        `s1001` (async): raises seeded by `start()`'s initial entry were
+        counted against the sync budget but not the async one."""
+        for limit in (3, 5, 50):
+            cfg = self._entry_raise_chain(limit, depth=limit + 5)
+            s = SyncInterpreter(create_machine(cfg))
+            s.start()
+            sync_land = s.value
+            s.stop()
+
+            async def main():
+                i = await Interpreter(create_machine(cfg)).start()
+                await asyncio.sleep(0.2)
+                v = i.value
+                await i.stop()
+                return v
+
+            self.assertEqual(sync_land, asyncio.run(main()), f"limit={limit}")
+            self.assertEqual(sync_land, f"s{limit + 1}")
+
+
+# =============================================================================
+# #31 ride-along — the sibling-fallback warning throttle is bounded
+# =============================================================================
+class TestSiblingFallbackThrottleBounded(_Quiet):
+    def test_set_never_exceeds_cap(self) -> None:
+        from src.xstate_statemachine import resolver as R
+
+        R._SIBLING_FALLBACKS_WARNED.clear()
+        cap = R._SIBLING_FALLBACKS_WARNED_MAX
+        for k in range(cap + 50):
+            cfg = {
+                "id": f"m{k}",
+                "initial": "a",
+                "states": {
+                    "a": {
+                        "on": {"GO": ".b"},
+                        "initial": "x",
+                        "states": {"x": {}},
+                    },
+                    "b": {},
+                },
+            }
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                i = SyncInterpreter(create_machine(cfg, strict_targets=False))
+                i.start()
+                try:
+                    i.send("GO")
+                except Exception:
+                    pass
+                i.stop()
+        self.assertLessEqual(len(R._SIBLING_FALLBACKS_WARNED), cap)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
