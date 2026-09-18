@@ -87,6 +87,10 @@ def _machine_of(node: "StateNode") -> Optional["StateNode"]:
 #: (source id, target) pairs already warned about, so a hot transition
 #: does not warn on every event (#31).
 _SIBLING_FALLBACKS_WARNED: Set[Tuple[str, str]] = set()
+#: Cap on the throttle set (#31 ride-along). A long-lived process that
+#: builds a machine per job accumulated one entry per distinct pair
+#: forever; past the cap the set is cleared, which at worst re-warns once.
+_SIBLING_FALLBACKS_WARNED_MAX = 1024
 
 
 def _warn_sibling_fallback(
@@ -95,6 +99,8 @@ def _warn_sibling_fallback(
     key = (source.id, target)
     if key in _SIBLING_FALLBACKS_WARNED:
         return
+    if len(_SIBLING_FALLBACKS_WARNED) >= _SIBLING_FALLBACKS_WARNED_MAX:
+        _SIBLING_FALLBACKS_WARNED.clear()
     _SIBLING_FALLBACKS_WARNED.add(key)
     root = _machine_of(source)
     machine_id = root.id if root is not None else "?"

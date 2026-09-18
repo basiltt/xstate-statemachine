@@ -73,6 +73,12 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
   - **`SyncInterpreter` delivers `onError` for a failed invoked child
     machine** (#99), and fails the parent when no handler is declared —
     parity with the async engine and with failing callable services.
+  - **Engines cut a deep chain at the same link** (#77 ride-along): the
+    sync budget counted raises seeded by `start()`'s initial entry; the
+    async one did not, so a 1 001-deep chain landed on `s1000` vs `s1001`.
+    Pre-drain internals now have user-event standing on both engines.
+  - **`_SIBLING_FALLBACKS_WARNED` is bounded** (#31 ride-along) to 1 024
+    pairs; a long-lived process no longer accumulates entries forever.
   - **Runtime parity for unresolvable targets under `strict_targets=False`**
     (#31): both engines now expose the same surface — `StateNotFoundError`
     on the receipt, `last_transition_ok=False`, `last_error` set, machine

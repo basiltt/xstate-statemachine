@@ -617,6 +617,13 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    both queues is self-generated and dropping it loses nothing the
         #    caller was told was accepted.
         external_budget = len(self._event_queue)
+        # 🔗 Internal events ALREADY queued when the drain opens were raised
+        #    by whatever ran before it -- the initial entry in `start()`, a
+        #    restored inbox -- not by this drain. Give them the same standing
+        #    as a user event so the chain count starts at their FIRST
+        #    descendant, which is what the async engine's `_raise_depth`
+        #    does. Without this the sync engine cut a chain one link short.
+        seed_internal = len(self._internal_queue)
         generated = 0
         # 🏛️ #88: `tripped` is per CHAIN, not per drain. It is cleared by
         #    the same condition that resets `generated` (a step that produced
@@ -639,6 +646,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 is_generated = True
                 if self._internal_queue:
                     current_event = self._internal_queue.popleft()
+                    if seed_internal > 0:
+                        seed_internal -= 1
+                        is_generated = False
                 elif external_budget > 0:
                     external_budget -= 1
                     is_generated = False
