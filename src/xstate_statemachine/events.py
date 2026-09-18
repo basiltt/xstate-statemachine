@@ -30,6 +30,7 @@ would affect all subsequently created events.
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 from dataclasses import dataclass, field
+import warnings
 from typing import Any, Dict, FrozenSet, NamedTuple, Optional, Tuple
 
 # -----------------------------------------------------------------------------
@@ -47,6 +48,19 @@ from typing import Any, Dict, FrozenSet, NamedTuple, Optional, Tuple
 SYSTEM_EVENT_PREFIXES: Tuple[str, ...] = (
     "done.",
     "error.",
+    "after.",
+    "xstate.",
+    "___xstate",
+)
+
+#: The exact name SHAPES the engine synthesises. Since 0.8.1 (#79) system
+#: status is decided by provenance (`is_system_event`), not by name; this
+#: list exists for the one place a name is all we have -- build-time
+#: `strict` validation of `raise`/`on` keys -- and for documentation.
+ENGINE_EVENT_SHAPES: Tuple[str, ...] = (
+    "done.invoke.",
+    "done.state.",
+    "error.platform.",
     "after.",
     "xstate.",
     "___xstate",
@@ -95,6 +109,12 @@ class Event:
     # used instead of a plain ``{}`` to ensure that each ``Event`` receives its
     # own payload dictionary rather than sharing one across instances.
     payload: Dict[str, Any] = field(default_factory=dict)
+
+    # 🏷️ #79: provenance flag. ``True`` only for events the engine minted
+    #    for itself (init/exit sentinels, `escalate`, restore). Excluded
+    #    from equality/repr so `Event("X") == Event("X")` is unaffected and
+    #    existing snapshots (which never persist it) round-trip unchanged.
+    system: bool = field(default=False, compare=False, repr=False)
 
     @property
     def data(self) -> Dict[str, Any]:
@@ -151,6 +171,74 @@ class DoneEvent(NamedTuple):
 
     # 📍 The ID of the invoked service or state that completed.
     src: str
+
+
+class ErrorEvent(NamedTuple):
+    """A failure delivered by the engine: an invoked service or child actor
+    raised, or a child machine ended in the ``error`` status (#80).
+
+    🏛️ Architecture decision: before 0.8.1 failures rode in a `DoneEvent`
+    whose `data` happened to hold an exception, so an `onError` handler and
+    an `onDone` handler received the same shape and consumers had to
+    string-prefix the type to tell them apart. XState v5 delivers
+    ``xstate.error.actor.*`` as a distinct event carrying ``error``. This
+    type does the same: branch on ``isinstance(event, ErrorEvent)`` or read
+    ``event.error``. ``event.data`` still returns the exception for one
+    minor version so existing ``onError`` actions keep working, but it is
+    deprecated and reads as such.
+
+    Attributes:
+        type: ``error.platform.<invoke_id>`` (XState v4 naming, which this
+            library keeps for compatibility with existing configs).
+        error: The exception the service or child raised.
+        src: The ``id`` of the invoke that failed, for `onError` routing.
+    """
+
+    type: str
+    error: BaseException
+    src: str
+
+    @property
+    def data(self) -> BaseException:
+        """Deprecated alias for :attr:`error` (removed in 0.9).
+
+        Kept so an ``onError`` action written against 0.8.0 --
+        ``context["err"] = str(event.data)`` -- keeps working unchanged.
+        """
+        warnings.warn(
+            "ErrorEvent.data is deprecated and will be removed in 0.9; "
+            "read ErrorEvent.error instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.error
+
+
+#: Event classes the engine itself mints. Membership -- not the name -- is
+#: what marks an event as "system traffic" for the wildcard matcher, the
+#: `onUnhandled` policy and strict mode (#79). A user-sent `Event` whose
+#: `type` merely starts with ``done.`` is user traffic and is treated as
+#: such. `Event` instances the engine creates for its own sentinels are
+#: flagged with `Event.system=True` (see `system_event`).
+ENGINE_EVENT_TYPES: Tuple[type, ...] = ()  # populated below, after defs
+
+
+def is_system_event(event: Any) -> bool:
+    """``True`` for events the ENGINE synthesised (#79).
+
+    Provenance, not spelling: a `DoneEvent` / `ErrorEvent` / `AfterEvent`
+    is always engine-made; a plain `Event` is engine-made only when it was
+    created via :func:`system_event` (init/exit sentinels, `escalate`,
+    restore). A user `Event("done.review")` is user traffic.
+    """
+    if isinstance(event, ENGINE_EVENT_TYPES):
+        return True
+    return isinstance(event, Event) and event.system
+
+
+def system_event(event_type: str, **payload: Any) -> "Event":
+    """Mint an engine-owned `Event` (init/exit sentinels, escalate, …)."""
+    return Event(type=event_type, payload=dict(payload), system=True)
 
 
 class Receipt(NamedTuple):
@@ -218,3 +306,7 @@ class AfterEvent(NamedTuple):
     def lateness_ms(self) -> float:
         """Milliseconds the timer fired AFTER its deadline (>= 0)."""
         return max(0.0, (self.fired_at - self.scheduled_for) * 1000.0)
+
+
+# 🧩 Filled in here, once every class above is defined (#79).
+ENGINE_EVENT_TYPES = (DoneEvent, ErrorEvent, AfterEvent)

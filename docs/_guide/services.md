@@ -22,7 +22,7 @@ Key characteristics:
 flowchart LR
     S["state <b>loading</b>"] --> I["invoke<br/><small>src: fetchUser · id · input</small>"]
     I -- "resolves" --> D["onDone<br/><small>event.data = return value</small>"]
-    I -- "raises" --> E["onError<br/><small>event.data = exception</small>"]
+    I -- "raises" --> E["onError<br/><small>ErrorEvent · event.error = exception</small>"]
     S -. "leave state early" .-> X["service cancelled"]
 ```
 
@@ -207,7 +207,7 @@ The `onDone` transition can include both a target state and actions — just lik
 When a service raises an exception, the interpreter:
 
 1. Catches the exception
-2. Wraps it in a `DoneEvent` with `type="error.platform.<id>"`
+2. Wraps it in an **`ErrorEvent`** with `type="error.platform.<id>"` and the exception on `.error` (0.8.1, #80 — before that it was a `DoneEvent` carrying the exception in `data`)
 3. Sends that event to the machine
 4. The machine matches it against the `onError` transition
 
@@ -239,21 +239,25 @@ class Logic(MachineLogic):
 
 ## 🐛 Accessing Error Info
 
-In `onError` actions, the exception object is available on `event.data`:
+In `onError` actions the event is an `ErrorEvent` and the exception object is on `event.error`:
 
 ```python
+from xstate_statemachine import ErrorEvent, MachineLogic
+
 class Logic(MachineLogic):
     def fetch_user(self, interpreter, context, event):
         raise ConnectionError("API server unreachable")
 
     def store_error(self, interpreter, context, event, action_def):
-        # event.data is the exception object
-        error = event.data
+        assert isinstance(event, ErrorEvent)      # branch on type, not on a string prefix
+        error = event.error                       # the exception object
         context["error"] = str(error)
         context["errorType"] = type(error).__name__
         print(f"Service failed: {error}")
         # Output: Service failed: API server unreachable
 ```
+
+> **Migrating from 0.8.0:** `event.data` still returns the exception on an `ErrorEvent`, with a `DeprecationWarning`; it is removed in 0.9. Success events are unchanged — `onDone` still receives a `DoneEvent` whose `data` is the service's return value.
 
 ## 🔗 Multiple Services (Array Form)
 

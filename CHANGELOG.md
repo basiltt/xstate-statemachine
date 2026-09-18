@@ -39,6 +39,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   generated tail is discarded — never events the caller was told were
   accepted. The 0.8.0 note claiming the two engines already agreed was
   wrong; they do now, and an engine-parity test pins it.
+- **System-event exemption is decided by provenance, not by name** (#79).
+  The `"*"` / `"prefix.*"` wildcard matcher, `onUnhandled` and `strict`
+  mode used to exempt any event whose *type* began with `done.`, `error.`,
+  `after.` or `xstate.` — so a user-sent `done.review` was invisible to
+  `"*"`, could not trip `onUnhandled: "error"`, and passed `strict`
+  undeclared. The engine now flags the events it mints (`DoneEvent`,
+  `ErrorEvent`, `AfterEvent`, and `Event.system=True` for its sentinels,
+  `escalate` and restore) and the three checks consult that flag. A user
+  event is user traffic whatever it is called; engine events remain exempt
+  with no regression to the 0.8.0 `escalate` / `onUnhandled` fix. The
+  build-time reserved-namespace warning added earlier in this release is
+  withdrawn — its premise no longer holds.
+- **An invoked child actor costs one asyncio task, not two** (#43). The
+  parent no longer runs a manager task per child that sat awaiting
+  `wait_done()`; completion is pushed from the child's terminal listener
+  the instant its status flips, and exiting the owning state stops its
+  children directly. 50 idle children add ≤ 51 tasks over baseline
+  (pinned), the loop schedules no timer callbacks while they idle
+  (pinned), and `onDone` latency is sub-2 ms median (pinned). The
+  `Production Characteristics` task budget is now `children + 1`.
 - **`send_threadsafe()` applies `strict` and `event_schemas`** (#78, #51).
   It skipped `_check_strict`, so the *recommended* cross-thread path was the
   one without the guardrail — a typo'd event was accepted and dropped, and a
@@ -82,17 +102,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in the config is a configuration error; `create_machine()` now rejects it
   with a `Did you mean …?` suggestion. Dynamic (callable) `raise` events are
   still checked at runtime.
-- **`events.SYSTEM_EVENT_PREFIXES`** is the single, importable list of
-  reserved event namespaces (`done.`, `error.`, `after.`, `xstate.`,
-  `___xstate`) consulted by the wildcard matcher, `onUnhandled` and strict
-  mode (#79). `create_machine()` now emits a `UserWarning` for an `on` key
-  in a reserved namespace that the engine will never synthesise
-  (`done.review`, `error.validation`), explaining that such an event is
-  matched *only* by exact key — invisible to `"*"` and `prefix.*`, exempt
-  from `onUnhandled`, never rejected by `strict`. Engine-shaped keys
-  (`done.invoke.<id>`, `error.platform.<id>`, `after.<ms>`, …) do not warn.
-  Provenance-tagged system events, which would lift the restriction
-  entirely, are planned for 0.9.
+- **`ErrorEvent`** (#80). Service and child-actor failures are delivered
+  as a dedicated `ErrorEvent(type, error, src)` instead of a `DoneEvent`
+  whose `data` happened to hold an exception — `onError` handlers can now
+  branch on `isinstance(event, ErrorEvent)` or read `event.error`, as in
+  XState v5. `DoneEvent` is used only for success (`done.invoke.*`,
+  `done.state.*`). `ErrorEvent.data` still returns the exception with a
+  `DeprecationWarning` and is removed in 0.9.
+- **`events.ENGINE_EVENT_SHAPES`** — the exact name shapes the engine
+  synthesises (`done.invoke.`, `done.state.`, `error.platform.`, `after.`,
+  `xstate.`, the sentinels), for build-time checks and documentation.
+  `SYSTEM_EVENT_PREFIXES` remains exported for compatibility.
 - **snake_case ↔ camelCase logic names, everywhere.** A PEP 8 Python
   function now implements the camelCase name in an XState config through
   *every* entry point — `MachineLogic(actions={"store_user": fn})`,

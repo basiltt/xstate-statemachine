@@ -53,7 +53,15 @@ from typing import (
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
-from .events import SYSTEM_EVENT_PREFIXES, AfterEvent, DoneEvent, Event
+from .events import (
+    SYSTEM_EVENT_PREFIXES,
+    AfterEvent,
+    DoneEvent,
+    ErrorEvent,
+    Event,
+    is_system_event,
+    system_event,
+)
 from .exceptions import (
     NotSupportedError,
     InvalidEventPayloadError,
@@ -111,7 +119,7 @@ TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter")
 logger = logging.getLogger(__name__)
 
 #: Every event kind the core algorithm can be asked to process.
-AnyEvent = Union[Event, DoneEvent, AfterEvent]
+AnyEvent = Union[Event, DoneEvent, AfterEvent, ErrorEvent]
 
 
 # -----------------------------------------------------------------------------
@@ -744,19 +752,19 @@ class BaseInterpreter(Generic[TContext]):
     @staticmethod
     def _coerce_event(
         event: Union[str, Event, Dict[str, Any], AfterEvent, DoneEvent],
-    ) -> Union[Event, AfterEvent, DoneEvent]:
+    ) -> AnyEvent:
         """Normalises the accepted event spellings into an event object.
 
         Args:
             event: A type string, a mapping with a `type` key, or an event.
 
         Returns:
-            Union[Event, AfterEvent, DoneEvent]: The normalised event.
+            AnyEvent: The normalised event.
 
         Raises:
             TypeError: If the value cannot be interpreted as an event.
         """
-        if isinstance(event, (Event, AfterEvent, DoneEvent)):
+        if isinstance(event, (Event, AfterEvent, DoneEvent, ErrorEvent)):
             return event
         if isinstance(event, str):
             return Event(type=event)
@@ -1075,7 +1083,7 @@ class BaseInterpreter(Generic[TContext]):
         if callable(source):
             try:
                 produced = source(
-                    self, self.context, Event(type="__restore__")
+                    self, self.context, system_event("__restore__")
                 )
             except Exception:
                 logger.exception(
@@ -1415,13 +1423,13 @@ class BaseInterpreter(Generic[TContext]):
     @property
     def pending_events(
         self,
-    ) -> Tuple[Union[Event, DoneEvent, AfterEvent], ...]:
+    ) -> Tuple[AnyEvent, ...]:
         """Events accepted by `send()` but not yet processed, in order."""
         return tuple(self._snapshot_pending_events())
 
     def _snapshot_pending_events(
         self,
-    ) -> List[Union[Event, DoneEvent, AfterEvent]]:
+    ) -> List[AnyEvent]:
         """Return the queue contents WITHOUT removing them. Engine-specific."""
         raise NotImplementedError  # pragma: no cover
 
@@ -1432,7 +1440,7 @@ class BaseInterpreter(Generic[TContext]):
     def send(
         self,
         event_or_type: Union[
-            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent, ErrorEvent
         ],
         /,
         *,
@@ -1525,7 +1533,10 @@ class BaseInterpreter(Generic[TContext]):
             InvalidEventPayloadError: a schema is registered for the type
                 and rejected the payload (applies regardless of `strict`).
         """
-        if not isinstance(event, Event):
+        # 🏛️ #79: engine-minted events are never "unknown"; a USER event
+        #    is checked whatever it is called -- `Event("done.typo")` from
+        #    application code is a typo like any other.
+        if not isinstance(event, Event) or event.system:
             return
         if self.strict and not self.machine.is_known_event(event.type):
             raise UnknownEventError(
@@ -1564,7 +1575,7 @@ class BaseInterpreter(Generic[TContext]):
     def _prepare_event(
         event_or_type: Union[str, Dict[str, Any], Any],
         **payload: Any,
-    ) -> Union[Event, DoneEvent, AfterEvent]:
+    ) -> AnyEvent:
         """Normalizes various event inputs into a concrete `Event` object.
 
         This helper ensures that the interpreter can robustly handle events
@@ -1584,7 +1595,7 @@ class BaseInterpreter(Generic[TContext]):
                 event's payload if `event_or_type` is a string.
 
         Returns:
-            Union[Event, DoneEvent, AfterEvent]: A concrete event object ready
+            AnyEvent: A concrete event object ready
             for processing.
 
         Raises:
@@ -1601,7 +1612,9 @@ class BaseInterpreter(Generic[TContext]):
             return Event(type=event_type, payload=data)
 
         # 3️⃣ Input is already a native Event instance: use as-is.
-        if isinstance(event_or_type, (Event, DoneEvent, AfterEvent)):
+        if isinstance(
+            event_or_type, (Event, DoneEvent, AfterEvent, ErrorEvent)
+        ):
             return event_or_type
 
         # 4️⃣ Duck-typing: handle "foreign" Event objects (for testing robustness).
@@ -1706,16 +1719,14 @@ class BaseInterpreter(Generic[TContext]):
         )
         return None
 
-    async def _process_event(
-        self, event: Union[Event, DoneEvent, AfterEvent]
-    ) -> None:
+    async def _process_event(self, event: AnyEvent) -> None:
         """Executes a single, complete "step" of the SCXML algorithm.
 
         Selects the optimal transition set for `event` — one transition per
         orthogonal region — and executes each in turn.
 
         Args:
-            event (Union[Event, DoneEvent, AfterEvent]): The event to process.
+            event (AnyEvent): The event to process.
         """
         # 1. Select every transition this event triggers (one per region).
         transitions = self._select_transitions(event)
@@ -1742,9 +1753,7 @@ class BaseInterpreter(Generic[TContext]):
     # 🎬 Built-in Action Support
     # -------------------------------------------------------------------------
 
-    def _resolve_event_spec(
-        self, spec: Any, event: Union[Event, AfterEvent, DoneEvent]
-    ) -> Event:
+    def _resolve_event_spec(self, spec: Any, event: AnyEvent) -> Event:
         """Turns an event specification from action params into an `Event`.
 
         Accepts a plain type string, a mapping with a `type` key, an existing
@@ -1753,7 +1762,7 @@ class BaseInterpreter(Generic[TContext]):
 
         Args:
             spec (Any): The declared event specification.
-            event (Union[Event, AfterEvent, DoneEvent]): The triggering event,
+            event (AnyEvent): The triggering event,
                 used to resolve callables.
 
         Returns:
@@ -1773,7 +1782,7 @@ class BaseInterpreter(Generic[TContext]):
         )
 
     def _resolve_actor_target(
-        self, spec: Any, event: Union[Event, AfterEvent, DoneEvent]
+        self, spec: Any, event: AnyEvent
     ) -> Optional["BaseInterpreter[Any]"]:
         """Resolves a `sendTo`/`forwardTo` target to a live interpreter.
 
@@ -1785,7 +1794,7 @@ class BaseInterpreter(Generic[TContext]):
         Args:
             spec (Any): The declared target: an id string, a callable
                 resolving one, or an interpreter instance.
-            event (Union[Event, AfterEvent, DoneEvent]): The triggering event.
+            event (AnyEvent): The triggering event.
 
         Returns:
             Optional[BaseInterpreter]: The resolved actor, or `None`.
@@ -2032,14 +2041,12 @@ class BaseInterpreter(Generic[TContext]):
 
         return _off
 
-    def _apply_assign(
-        self, params: Any, event: Union[Event, AfterEvent, DoneEvent]
-    ) -> None:
+    def _apply_assign(self, params: Any, event: AnyEvent) -> None:
         """Applies an `assign` action to the machine context.
 
         Args:
             params (Any): The action's params, carrying `assignment`.
-            event (Union[Event, AfterEvent, DoneEvent]): The triggering event.
+            event (AnyEvent): The triggering event.
         """
         assignment = (
             params.get("assignment") if isinstance(params, dict) else params
@@ -2064,7 +2071,7 @@ class BaseInterpreter(Generic[TContext]):
         self,
         canonical: str,
         action_def: ActionDefinition,
-        event: Union[Event, AfterEvent, DoneEvent],
+        event: AnyEvent,
     ) -> List[Any]:
         """Handles a built-in action, returning any actions it produced.
 
@@ -2076,7 +2083,7 @@ class BaseInterpreter(Generic[TContext]):
         Args:
             canonical (str): The canonical built-in action name.
             action_def (ActionDefinition): The action being executed.
-            event (Union[Event, AfterEvent, DoneEvent]): The triggering event.
+            event (AnyEvent): The triggering event.
 
         Returns:
             List[Any]: Nested action definitions to execute next.
@@ -2201,13 +2208,13 @@ class BaseInterpreter(Generic[TContext]):
     async def _execute_transition(
         self,
         transition: TransitionDefinition,
-        event: Union[Event, DoneEvent, AfterEvent],
+        event: AnyEvent,
     ) -> None:
         """Executes one selected transition, mutating the active configuration.
 
         Args:
             transition (TransitionDefinition): The transition to execute.
-            event (Union[Event, DoneEvent, AfterEvent]): The triggering event.
+            event (AnyEvent): The triggering event.
 
         Raises:
             StateNotFoundError: If the transition's target cannot be resolved.
@@ -2443,7 +2450,7 @@ class BaseInterpreter(Generic[TContext]):
     async def _execute_internal_transition(
         self,
         transition: TransitionDefinition,
-        event: Union[Event, DoneEvent, AfterEvent],
+        event: AnyEvent,
     ) -> None:
         """Run a targetless or internal self-transition atomically.
 
@@ -2657,9 +2664,8 @@ class BaseInterpreter(Generic[TContext]):
 
         elif canonical == ESCALATE:
             error_payload = params.get("error")
-            escalate_event = Event(
-                type=f"xstate.error.actor.{self.id}",
-                payload={"error": error_payload},
+            escalate_event = system_event(
+                f"xstate.error.actor.{self.id}", error=error_payload
             )
             if self.parent is not None:
                 await self._deliver(self.parent, escalate_event, None, None)
@@ -2830,7 +2836,7 @@ class BaseInterpreter(Generic[TContext]):
                 enter, from the outermost ancestor to the innermost child.
             event (Optional[Event]): The event that triggered this state entry.
         """
-        trigger_event = event or Event(type="___xstate_statemachine_init___")
+        trigger_event = event or system_event("___xstate_statemachine_init___")
 
         # 🗺️ Index the remaining path so a compound state can tell whether the
         #    caller already named which child to descend into.
@@ -3041,7 +3047,7 @@ class BaseInterpreter(Generic[TContext]):
                 exit, from the innermost child to the outermost ancestor.
             event (Optional[Event]): The event that triggered the state exit.
         """
-        trigger_event = event or Event(type="___xstate_statemachine_exit___")
+        trigger_event = event or system_event("___xstate_statemachine_exit___")
 
         # 🕰️ Record history *before* anything is removed, so the remembered
         #    configuration reflects the state of the machine as it was.
@@ -3233,9 +3239,7 @@ class BaseInterpreter(Generic[TContext]):
     #    grow the buffer without bound.
     DEFER_MAX: int = 1000
 
-    def _handle_unhandled_event(
-        self, event: Union[Event, DoneEvent, AfterEvent]
-    ) -> None:
+    def _handle_unhandled_event(self, event: AnyEvent) -> None:
         """Apply the machine's ``onUnhandled`` policy to a matched-nothing event.
 
         🏛️ Architecture decision: per XState an unhandled event is silently
@@ -3248,9 +3252,10 @@ class BaseInterpreter(Generic[TContext]):
         the machine did not ask for them and cannot be blamed for not
         handling them.
         """
-        if not isinstance(event, Event) or event.type.startswith(
-            _SYSTEM_EVENT_PREFIXES
-        ):
+        # 🏛️ #79: exempt by PROVENANCE, not by name. A user-sent
+        #    `Event("done.review")` is user traffic and must trip the policy;
+        #    only events the engine minted are excused.
+        if is_system_event(event) or not isinstance(event, Event):
             logger.debug("🍃 No transition for system event '%s'.", event.type)
             return
 
@@ -3537,7 +3542,9 @@ class BaseInterpreter(Generic[TContext]):
             del registry[system_id]
 
     @staticmethod
-    def _matching_descriptors(node: StateNode, event_type: str) -> List[str]:
+    def _matching_descriptors(
+        node: StateNode, event_type: str, *, system: bool = False
+    ) -> List[str]:
         """Finds the `on` keys that match an event type, most specific first.
 
         Implements XState's event-descriptor matching:
@@ -3564,7 +3571,11 @@ class BaseInterpreter(Generic[TContext]):
         matches: List[str] = []
         if event_type in on_map:
             matches.append(event_type)
-        if event_type.startswith(_SYSTEM_EVENT_PREFIXES):
+        # 🏛️ #79: engine-synthesised events match ONLY an exact key -- a
+        #    `"*"` handler must not swallow `done.invoke.*`. Decided by
+        #    provenance: a user event that merely LOOKS reserved still
+        #    reaches `"*"` and `"prefix.*"` descriptors.
+        if system:
             return matches
         for key, prefix in node._on_partials:  # already longest-first
             if event_type == prefix or event_type.startswith(prefix + "."):
@@ -3576,7 +3587,7 @@ class BaseInterpreter(Generic[TContext]):
     def _collect_eligible_transitions(
         self,
         state: StateNode,
-        event: Union[Event, AfterEvent, DoneEvent],
+        event: AnyEvent,
         guard_cache: Optional[Dict[int, bool]] = None,
     ) -> List[TransitionDefinition]:
         """Collects every eligible transition on one state's ancestor chain.
@@ -3587,7 +3598,7 @@ class BaseInterpreter(Generic[TContext]):
 
         Args:
             state (StateNode): The active state to start the upward walk from.
-            event (Union[Event, AfterEvent, DoneEvent]): The event being
+            event (AnyEvent): The event being
                 processed.
             guard_cache (Optional[Dict[int, bool]]): Memo of guard results for
                 the current selection pass, keyed by transition identity. When
@@ -3633,7 +3644,9 @@ class BaseInterpreter(Generic[TContext]):
             #    partial descriptors, most specific first.
             if not is_explicit_transient_event:
                 blocked = False
-                for key in self._matching_descriptors(current, event.type):
+                for key in self._matching_descriptors(
+                    current, event.type, system=is_system_event(event)
+                ):
                     for t in current.on[key]:
                         # 🚫 A forbidden transition consumes the event here so
                         #    no ancestor handler can see it.
@@ -3671,8 +3684,10 @@ class BaseInterpreter(Generic[TContext]):
                         if t.event == event.type and _passes(t):
                             eligible.append(t)
 
-            # 🤖 `onDone`/`onError` for invoked services.
-            if isinstance(event, DoneEvent):
+            # 🤖 `onDone`/`onError` for invoked services. `ErrorEvent`
+            #    (#80) is a distinct type so consumers can branch on it,
+            #    but it routes through `inv.on_error` the same way.
+            if isinstance(event, (DoneEvent, ErrorEvent)):
                 for inv in current.invoke:
                     if event.src == inv.id:
                         for t in inv.on_done + inv.on_error:
@@ -3684,7 +3699,7 @@ class BaseInterpreter(Generic[TContext]):
         return eligible
 
     def _select_transitions(
-        self, event: Union[Event, AfterEvent, DoneEvent]
+        self, event: AnyEvent
     ) -> List[TransitionDefinition]:
         """Selects the optimal transition set for an event, one per region.
 
@@ -3702,7 +3717,7 @@ class BaseInterpreter(Generic[TContext]):
         selected by several leaves but executed only once.
 
         Args:
-            event (Union[Event, AfterEvent, DoneEvent]): The event being
+            event (AnyEvent): The event being
                 processed.
 
         Returns:
@@ -3991,7 +4006,7 @@ class BaseInterpreter(Generic[TContext]):
     def _is_guard_satisfied(
         self,
         guard: Optional[Union[str, "GuardDefinition"]],
-        event: Union[Event, AfterEvent, DoneEvent],
+        event: AnyEvent,
     ) -> bool:
         """Evaluates a transition guard in any of its supported forms.
 
@@ -4005,7 +4020,7 @@ class BaseInterpreter(Generic[TContext]):
         Args:
             guard (Optional[Union[str, GuardDefinition]]): The guard to
                 evaluate. `None` means the transition is unguarded.
-            event (Union[Event, AfterEvent, DoneEvent]): The current event,
+            event (AnyEvent): The current event,
                 passed to user predicates.
 
         Returns:
@@ -4116,7 +4131,7 @@ class BaseInterpreter(Generic[TContext]):
     def _is_state_in(
         self,
         guard: "GuardDefinition",
-        event: Union[Event, AfterEvent, DoneEvent],
+        event: AnyEvent,
     ) -> bool:
         """Evaluates the built-in ``stateIn`` guard.
 
@@ -4126,7 +4141,7 @@ class BaseInterpreter(Generic[TContext]):
         Args:
             guard (GuardDefinition): The `stateIn` guard, whose params carry
                 the state id under `state` (or `value`).
-            event (Union[Event, AfterEvent, DoneEvent]): The current event,
+            event (AnyEvent): The current event,
                 used only to resolve callable params.
 
         Returns:
@@ -4152,9 +4167,7 @@ class BaseInterpreter(Generic[TContext]):
                 return True
         return False
 
-    def _resolve_params(
-        self, params: Any, event: Union[Event, AfterEvent, DoneEvent]
-    ) -> Any:
+    def _resolve_params(self, params: Any, event: AnyEvent) -> Any:
         """Resolves action/guard params, invoking them if they are callable.
 
         🏛️ Architecture decision: XState v5 allows `params` to be a function of
@@ -4165,7 +4178,7 @@ class BaseInterpreter(Generic[TContext]):
 
         Args:
             params (Any): The declared params, possibly a callable.
-            event (Union[Event, AfterEvent, DoneEvent]): The triggering event.
+            event (AnyEvent): The triggering event.
 
         Returns:
             Any: The resolved params.
@@ -4178,7 +4191,7 @@ class BaseInterpreter(Generic[TContext]):
     def _call_with_optional_params(
         fn: Callable[..., Any],
         context: Any,
-        event: Union[Event, AfterEvent, DoneEvent],
+        event: AnyEvent,
         params: Any,
     ) -> Any:
         """Calls a guard, passing `params` only if it accepts a third argument.
@@ -4190,7 +4203,7 @@ class BaseInterpreter(Generic[TContext]):
         Args:
             fn (Callable[..., Any]): The guard implementation.
             context (Any): The interpreter's context.
-            event (Union[Event, AfterEvent, DoneEvent]): The current event.
+            event (AnyEvent): The current event.
             params (Any): Resolved params, or `None`.
 
         Returns:

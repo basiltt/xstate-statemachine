@@ -696,9 +696,9 @@ ensuring clean cancellation when states are exited.
 |--------|-----------|---------|-------------|
 | `await .start()` | `() -> Interpreter` | `Interpreter` | Starts the interpreter and its event loop. Enters the initial state(s). Returns `self` for chaining. Idempotent. |
 | `await .stop(drain=False, timeout=None)` | `(bool, Optional[float]) -> None` | `None` | Gracefully stops the event loop, cancels all tasks and child actors. `drain=True` processes the inbox to empty first, bounded by `timeout` seconds (`None` waits until empty). Idempotent; a no-op on an already-`"done"`/`"stopped"` interpreter. |
-| `await .send(event, *, wait=False, priority=False, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], bool, bool, **Any) -> Optional[Receipt]` | `Optional[Receipt]` | Sends an event to the queue. Accepts a string, dict, or `Event` object. Non-blocking unless `overflow_policy=OverflowPolicy.BLOCK`. `wait=True` **[wave 3]** (#39) makes the returned awaitable resolve to a `Receipt` once the event's macrostep has fully run; `False` (default) resolves immediately to `None`. `priority=True` **[wave 3]** (#39) delivers the event ahead of every already-queued external event and exempts it from `max_queue_size`. Raises `WrongThreadError` when called from a thread other than the one whose event loop owns this interpreter, and `QueueOverflowError` when the inbox is bounded, full, and the policy is `RAISE` **[wave 3]** (#38). |
-| `await .send_priority(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], **Any) -> Optional[Receipt]` | `Optional[Receipt]` | Shorthand for `send(event, wait=True, priority=True, **payload)` (#39) -- ask an urgent question and get a `Receipt` back once it settles, jumping ahead of any backlog. Pass `wait=False` for a fire-and-forget priority send. |
-| `.send_threadsafe(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], **Any) -> concurrent.futures.Future[None]` | `concurrent.futures.Future[None]` | Sends an event from **any** thread by routing the enqueue through the interpreter's owning event loop. Returns a `Future` you may `.result()` on to block until the event is queued (not processed). |
+| `await .send(event, *, wait=False, priority=False, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent, ErrorEvent], bool, bool, **Any) -> Optional[Receipt]` | `Optional[Receipt]` | Sends an event to the queue. Accepts a string, dict, or `Event` object. Non-blocking unless `overflow_policy=OverflowPolicy.BLOCK`. `wait=True` **[wave 3]** (#39) makes the returned awaitable resolve to a `Receipt` once the event's macrostep has fully run; `False` (default) resolves immediately to `None`. `priority=True` **[wave 3]** (#39) delivers the event ahead of every already-queued external event and exempts it from `max_queue_size`. Raises `WrongThreadError` when called from a thread other than the one whose event loop owns this interpreter, and `QueueOverflowError` when the inbox is bounded, full, and the policy is `RAISE` **[wave 3]** (#38). |
+| `await .send_priority(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent, ErrorEvent], **Any) -> Optional[Receipt]` | `Optional[Receipt]` | Shorthand for `send(event, wait=True, priority=True, **payload)` (#39) -- ask an urgent question and get a `Receipt` back once it settles, jumping ahead of any backlog. Pass `wait=False` for a fire-and-forget priority send. |
+| `.send_threadsafe(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent, ErrorEvent], **Any) -> concurrent.futures.Future[None]` | `concurrent.futures.Future[None]` | Sends an event from **any** thread by routing the enqueue through the interpreter's owning event loop. Returns a `Future` you may `.result()` on to block until the event is queued (not processed). |
 | `await .send_events(events)` | `(List[Union[str, Dict, Event]]) -> None` | `None` | Sends a list of events to the queue. Non-blocking. |
 | `.matches(state)` | `(Union[str, Dict[str, Any]]) -> bool` | `bool` | Reports whether *state* is part of the active configuration. Accepts a string id (fully-qualified, `#`-prefixed, or trailing partial path) or a partial `.value` dict. |
 | `.can(event)` | `(Union[str, Event, Dict[str, Any]]) -> bool` | `bool` | Reports whether sending *event* right now would cause a transition. Guards are evaluated, so this predicts accurately rather than checking structure only; has no side effects. |
@@ -709,7 +709,7 @@ ensuring clean cancellation when states are exited.
 | `.use(plugin)` | `(PluginBase) -> Interpreter` | `Interpreter` | Registers a plugin. Returns `self` for chaining. |
 | `.get_snapshot()` | `() -> str` | `str` | Returns a JSON string snapshot of current state, context, and status. |
 | `.get_persisted_snapshot()` | `() -> Dict[str, Any]` | `Dict[str, Any]` | Returns a deep, JSON-serialisable snapshot as a dict, including the full actor hierarchy (child actors, history, output). Mirrors XState's `actor.getPersistedSnapshot()`; `get_snapshot()` above is the JSON-string convenience wrapper around this. |
-| `await .drain_pending()` | `() -> List[Union[Event, DoneEvent, AfterEvent]]` | `list` | Removes and returns every accepted-but-unprocessed event, without processing it. |
+| `await .drain_pending()` | `() -> List[Union[Event, DoneEvent, AfterEvent, ErrorEvent]]` | `list` | Removes and returns every accepted-but-unprocessed event, without processing it. |
 | `await .wait_done()` | `() -> asyncio.Future[str]` | `Future[str]` | Resolves to `"done"`/`"error"` the instant the machine reaches a terminal status. Already-resolved if the machine is terminal now. |
 | `.pending_invocations()` | `() -> List[PendingInvocation]` | `list` | Invokes in the active configuration that have NO live service -- the truthful list of what a static `from_snapshot()` restore left dormant **[wave 3]** (#44). Empty on a live machine and after `restart_services=True`. |
 
@@ -737,7 +737,7 @@ ensuring clean cancellation when states are exited.
 | `Interpreter.DEFER_MAX` | `int` | Class attribute bounding the deferral buffer's size; oldest entries are evicted once full. |
 | `Interpreter.MAX_ACTION_DEPTH` | `int` | Class attribute (default `50`) bounding nested action expansion (`pure` / `choose` / `enqueueActions` returning further actions), guarding against a callback that re-enqueues itself. |
 | `.value` | `str \| Dict[str, Any]` | The active configuration in hierarchical form: a string for an atomic state, `{parent: child}` for compound, one key per region for parallel, `{}` before `start()`. |
-| `.pending_events` | `Sequence[Union[Event, DoneEvent, AfterEvent]]` | Events accepted by `send()` but not yet processed, FIFO order. |
+| `.pending_events` | `Sequence[Union[Event, DoneEvent, AfterEvent, ErrorEvent]]` | Events accepted by `send()` but not yet processed, FIFO order. |
 | `.queue_depth` | `int` | Number of events accepted but not yet processed; `len(.pending_events)`. Read-only. |
 | `.tags` | `Set[str]` | The union of tags across every currently active state. |
 
@@ -816,7 +816,7 @@ injected `Clock` (thread-free; #49/#50) rather than a background thread.
 |--------|-----------|---------|-------------|
 | `.start()` | `() -> SyncInterpreter` | `SyncInterpreter` | Starts the interpreter and enters the initial state(s). Returns `self` for chaining. Idempotent. |
 | `.stop(drain=False, timeout=None)` | `(bool, Optional[float]) -> None` | `None` | Stops the interpreter, cancels timers, stops child actors. `drain=True` processes the inbox to empty first. Idempotent; a no-op on an already-`"done"`/`"stopped"` interpreter. |
-| `.send(event, *, wait=False, priority=False, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent], bool, bool, **Any) -> Optional[Receipt]` | `Optional[Receipt]` | Sends an event for **immediate** synchronous processing. Blocks until the event and all resulting transitions are fully processed. `wait=True` **[wave 3]** (#39) returns a `Receipt` for API symmetry with the async engine's `send(wait=True)` (the sync engine already processes inline by the time `send()` returns). `priority` is accepted for signature symmetry but has no effect -- there is no backlog to jump. |
+| `.send(event, *, wait=False, priority=False, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent, ErrorEvent], bool, bool, **Any) -> Optional[Receipt]` | `Optional[Receipt]` | Sends an event for **immediate** synchronous processing. Blocks until the event and all resulting transitions are fully processed. `wait=True` **[wave 3]** (#39) returns a `Receipt` for API symmetry with the async engine's `send(wait=True)` (the sync engine already processes inline by the time `send()` returns). `priority` is accepted for signature symmetry but has no effect -- there is no backlog to jump. |
 | `.send_events(events)` | `(List[Union[str, Dict, Event]]) -> None` | `None` | Sends a list of events for immediate processing. |
 | `.matches(state)` | `(Union[str, Dict[str, Any]]) -> bool` | `bool` | Reports whether *state* is part of the active configuration. Accepts a string id or a partial `.value` dict. |
 | `.can(event)` | `(Union[str, Event, Dict[str, Any]]) -> bool` | `bool` | Reports whether sending *event* right now would cause a transition, per `Interpreter.can()` above. |
@@ -827,7 +827,7 @@ injected `Clock` (thread-free; #49/#50) rather than a background thread.
 | `.use(plugin)` | `(PluginBase) -> SyncInterpreter` | `SyncInterpreter` | Registers a plugin. Returns `self` for chaining. |
 | `.get_snapshot()` | `() -> str` | `str` | Returns a JSON string snapshot. |
 | `.get_persisted_snapshot()` | `() -> Dict[str, Any]` | `Dict[str, Any]` | Returns a deep, JSON-serialisable snapshot as a dict, including the full actor hierarchy, per `Interpreter.get_persisted_snapshot()` above. |
-| `.drain_pending()` | `() -> List[Union[Event, DoneEvent, AfterEvent]]` | `list` | Removes and returns every accepted-but-unprocessed event, without processing it. |
+| `.drain_pending()` | `() -> List[Union[Event, DoneEvent, AfterEvent, ErrorEvent]]` | `list` | Removes and returns every accepted-but-unprocessed event, without processing it. |
 | `.pending_invocations()` | `() -> List[PendingInvocation]` | `list` | Invokes in the active configuration that have NO live service, per `Interpreter.pending_invocations()` above **[wave 3]** (#44). |
 
 #### Class Method
@@ -852,7 +852,7 @@ Same as `Interpreter`:
 | `.system` | `ActorSystem` | The actor system this interpreter belongs to, per `Interpreter.system` above. |
 | `.plugins` | `List[PluginBase]` | The list of plugin instances attached to this interpreter. |
 | `.value` | `str \| Dict[str, Any]` | The active configuration in hierarchical form. |
-| `.pending_events` | `Sequence[Union[Event, DoneEvent, AfterEvent]]` | Events accepted but not yet processed. |
+| `.pending_events` | `Sequence[Union[Event, DoneEvent, AfterEvent, ErrorEvent]]` | Events accepted but not yet processed. |
 | `.queue_depth` | `int` | Number of events accepted but not yet processed. Read-only. |
 | `.tags` | `Set[str]` | The union of tags across every currently active state. |
 
@@ -1088,25 +1088,18 @@ class DoneEvent(NamedTuple):
     src: str
 ```
 
-An internal event generated by the interpreter when:
+An internal **success** event generated by the interpreter when:
 
 1. An `invoke`d service completes successfully (`done.invoke.<service_id>`).
-2. An `invoke`d service fails (`error.platform.<service_id>`).
-3. A compound/parallel state reaches its final state (`done.state.<state_id>`).
+2. A compound/parallel state reaches its final state (`done.state.<state_id>`).
+
+Failures are delivered as an [`ErrorEvent`](#erroreventtype-error-src) since 0.8.1 (#80).
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `type` | `str` | Event name following the convention: `"done.invoke.<id>"`, `"done.state.<id>"`, or `"error.platform.<id>"`. |
-| `data` | `Any` | The data returned by the completed service, the child actor's final context, or the `Exception` on error. |
+| `type` | `str` | `"done.invoke.<id>"` or `"done.state.<id>"`. |
+| `data` | `Any` | The service's return value, the child actor's final context, or a final state's `output`. |
 | `src` | `str` | The unique identifier of the service or state that generated this event. |
-
-#### When it's generated
-
-| Scenario | Event `type` | `data` contains |
-|----------|-------------|----------------|
-| Service completes | `done.invoke.<invocation_id>` | Return value of the service function |
-| Service fails | `error.platform.<invocation_id>` | The `Exception` raised by the service |
-| Final state reached | `done.state.<state_id>` | (Typically empty) |
 
 #### Accessing data in handlers
 
@@ -1114,6 +1107,35 @@ An internal event generated by the interpreter when:
 def save_result(interpreter, context, event, action_def):
     # event is a DoneEvent when handling onDone
     context["result"] = event.data
+```
+
+---
+
+### `ErrorEvent(type, error, src)` **[0.8.1]**
+
+```python
+class ErrorEvent(NamedTuple):
+    type: str
+    error: BaseException
+    src: str
+```
+
+Delivered when an `invoke`d service raises, a child actor's bring-up fails, or a child machine ends in the `error` status (#80). A distinct type from `DoneEvent`, so `onError` handlers branch on `isinstance(event, ErrorEvent)` or read `event.error` instead of string-prefixing `event.type` — the shape XState v5 uses for `xstate.error.actor.*`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `str` | `"error.platform.<invocation_id>"` (v4 naming, kept for config compatibility). |
+| `error` | `BaseException` | The exception the service or child raised. |
+| `src` | `str` | The `id` of the invoke that failed. |
+
+`event.data` still returns `error` with a `DeprecationWarning` so 0.8.0-era `onError` actions keep working; it is removed in 0.9.
+
+```python
+from xstate_statemachine import ErrorEvent
+
+def store_error(interpreter, context, event, action_def):
+    assert isinstance(event, ErrorEvent)
+    context["error"] = str(event.error)
 ```
 
 ---

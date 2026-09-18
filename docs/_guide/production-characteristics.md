@@ -63,7 +63,7 @@ Measured on a 5-state cycle machine, `SyncInterpreter`, 20 000 events, policy *a
 
 ### Resource budget per invoked child (async engine)
 
-Each `invoke`d child machine costs **two asyncio tasks** while it is alive: its own run loop, and a manager task in the parent that awaits the child's completion future (to dispatch `onDone` / `onError`, apply `spawnBlockingTimeout`, and cancel the child on state exit). There are **no periodic wake-ups** — the 5 ms status poll was removed in 0.8.0 (#43) — so an idle child costs memory, not CPU. If you cap concurrent children on a task budget, the number to plan for is `2 × children + 1`.
+Each `invoke`d child machine costs **one asyncio task** while it is alive — its own run loop — and nothing else. Completion is *pushed*: the child's terminal listener fires the instant its `status` flips and dispatches `onDone` / `onError` to the parent from a short-lived task, so there is no per-child waiter and there are **no periodic wake-ups** (the 5 ms status poll went in 0.8.0; the manager task went in 0.8.1 — #43). An idle child costs memory, not CPU. If you cap concurrent children on a task budget, the number to plan for is `children + 1`. Exiting the owning state stops its children directly.
 
 The `SyncInterpreter` is different in kind, not degree: it processes each `send()` to completion on the *calling* thread. Its throughput is whatever the calling thread can do, but two sync interpreters driven from two threads genuinely run in parallel (subject to the GIL) — see §3 for what that does and does not buy you.
 

@@ -48,7 +48,7 @@ from typing import (
 # -----------------------------------------------------------------------------
 from .base_interpreter import AnyEvent, BaseInterpreter, _RollbackRequested
 from .clock import Clock, SimulatedClock
-from .events import AfterEvent, DoneEvent, Event, Receipt
+from .events import AfterEvent, DoneEvent, ErrorEvent, Event, Receipt
 from .exceptions import (
     ActorSpawningError,
     ImplementationMissingError,
@@ -140,7 +140,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     methods related to action execution and service invocation.
 
     Attributes:
-        _event_queue (Deque[Union[Event, AfterEvent, DoneEvent]]): A queue to
+        _event_queue (Deque[AnyEvent]): A queue to
             manage the event processing sequence in a first-in, first-out (FIFO) manner.
         _is_processing (bool): A flag to prevent re-entrant event processing,
             ensuring atomicity of a single `send` call's execution loop.
@@ -186,12 +186,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         logger.info("⛓️ Initializing Synchronous Interpreter... 🚀")
 
         # ⚙️ Initialize synchronous-specific attributes
-        self._event_queue: Deque[Union[Event, DoneEvent, AfterEvent]] = deque()
+        self._event_queue: Deque[AnyEvent] = deque()
         #: 🔁 #36: events raised BY this machine during a macrostep, drained
         #: before the next external event (SCXML internal queue).
-        self._internal_queue: Deque[Union[Event, DoneEvent, AfterEvent]] = (
-            deque()
-        )
+        self._internal_queue: Deque[AnyEvent] = deque()
         self._is_processing: bool = False
         # 🏛️ #50: `_after_threads` / `_after_events` / `_pending_send_cancels`
         #    are gone. Timers no longer own threads; see `_after_timer`.
@@ -418,7 +416,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     @overload
     def send(  # noqa: E704
         self,
-        event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent],
+        event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent, ErrorEvent],
         /,
         *,
         wait: Literal[True],
@@ -429,7 +427,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     @overload
     def send(  # noqa: E704
         self,
-        event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent],
+        event: Union[Dict[str, Any], Event, DoneEvent, AfterEvent, ErrorEvent],
         /,
         *,
         wait: Literal[False] = ...,
@@ -441,7 +439,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     def send(  # noqa: E704
         self,
         event_or_type: Union[
-            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent, ErrorEvent
         ],
         /,
         *,
@@ -453,7 +451,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     def send(  # type: ignore[override, misc]
         self,
         event_or_type: Union[
-            str, Dict[str, Any], Event, DoneEvent, AfterEvent
+            str, Dict[str, Any], Event, DoneEvent, AfterEvent, ErrorEvent
         ],
         /,
         *,
@@ -536,13 +534,13 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     # -------------------------------------------------------------------------
     def _snapshot_pending_events(
         self,
-    ) -> List[Union[Event, DoneEvent, AfterEvent]]:
+    ) -> List[AnyEvent]:
         return list(self._event_queue)
 
     def _enqueue_restored(self, event: Event) -> None:
         self._event_queue.append(event)
 
-    def drain_pending(self) -> List[Union[Event, DoneEvent, AfterEvent]]:
+    def drain_pending(self) -> List[AnyEvent]:
         """Remove and return every accepted-but-unprocessed event.
 
         The events are NOT processed. Sync mirror of
@@ -1211,9 +1209,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 child_input = invocation.resolve_input(self.context, None)
             except Exception as exc:  # noqa: BLE001 -- user code
                 self.send(
-                    DoneEvent(
+                    ErrorEvent(
                         type=f"error.platform.{invocation.id}",
-                        data=exc,
+                        error=exc,
                         src=invocation.id,
                     )
                 )
@@ -1274,8 +1272,8 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 e,
                 exc_info=True,
             )
-            error_event = DoneEvent(
-                f"error.platform.{invocation.id}", data=e, src=invocation.id
+            error_event = ErrorEvent(
+                f"error.platform.{invocation.id}", error=e, src=invocation.id
             )
             # 🚨 Unhandled service failures must be observable, not just
             #    logged. See BaseInterpreter._fail.
