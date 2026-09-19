@@ -161,6 +161,14 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     # 🧙 Magic Methods & Initialization
     # -------------------------------------------------------------------------
 
+    # ⚡ See BaseInterpreter.__slots__.
+    __slots__ = (
+        "_held_replays",
+        "_is_processing",
+        "_settle_iterations",
+        "_settle_tripped",
+    )
+
     def __init__(
         self,
         machine: MachineNode[TContext],
