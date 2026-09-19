@@ -135,7 +135,23 @@ def check_version(snapshot: Dict[str, Any]) -> int:
     Raises:
         SnapshotVersionError: ``snapshot["version"] > SNAPSHOT_VERSION``.
     """
-    version = int(snapshot.get("version", 0))
+    from .exceptions import SnapshotCorruptError
+
+    raw = snapshot.get("version", 0)
+    # 🛡️ #146: `int("x")` / `int(None)` escaped as ValueError/TypeError
+    #    before `check_shape` ever ran. A `bool` is an int subclass; it is
+    #    not a version.
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        raise SnapshotCorruptError(
+            f"Snapshot is malformed: 'version' is {type(raw).__name__}, "
+            f"expected an integer."
+        )
+    try:
+        version = int(raw)
+    except (TypeError, ValueError):
+        raise SnapshotCorruptError(
+            f"Snapshot is malformed: 'version' {raw!r} is not an integer."
+        ) from None
     if version > SNAPSHOT_VERSION:
         raise SnapshotVersionError(version, SNAPSHOT_VERSION)
     return version
@@ -167,7 +183,9 @@ def check_shape(snapshot: Dict[str, Any]) -> None:
         if key not in snapshot:
             fail(f"missing required key '{key}'")
     status = snapshot["status"]
-    if status not in _VALID_STATUSES:
+    # 🛡️ #146: an unhashable status (list/dict) raised TypeError from the
+    #    set membership test itself.
+    if not isinstance(status, str) or status not in _VALID_STATUSES:
         fail(
             f"unknown status {status!r}; expected one of {sorted(_VALID_STATUSES)}"
         )
@@ -187,13 +205,54 @@ def check_shape(snapshot: Dict[str, Any]) -> None:
         snapshot.get("configuration") or snapshot["state_ids"]
     ):
         fail("status is 'running' but the configuration is empty")
+    # 🛡️ #145 (read side): an "error" machine always knows WHY -- `_fail`
+    #    and `_die` both set `error`. A blob claiming "error" with nothing
+    #    to say is not one this library wrote.
+    if status == "error" and not snapshot.get("error"):
+        fail("status is 'error' but no 'error' message is recorded")
     for key in ("pending_events", "deferred"):
         val = snapshot.get(key)
         if val is not None and (
             not isinstance(val, list)
-            or not all(isinstance(r, dict) and "type" in r for r in val)
+            or not all(
+                isinstance(r, dict)
+                # 🛡️ #158: the type must be a non-empty str, as `send()`
+                #    requires; `restore_event` re-checks per record.
+                and isinstance(r.get("type"), str) and r["type"]
+                for r in val
+            )
         ):
-            fail(f"'{key}' must be a list of event records with a 'type'")
+            fail(
+                f"'{key}' must be a list of event records whose 'type' is "
+                f"a non-empty string"
+            )
+    # 🛡️ #146: every remaining top-level key `from_snapshot` reads. Each
+    #    is optional, but when present it must have the shape the reader
+    #    assumes, or the reader's own `.items()` / indexing leaks a bare
+    #    AttributeError. `output` and `error` are opaque values and are
+    #    deliberately NOT constrained.
+    for key in ("history", "actors", "system"):
+        val = snapshot.get(key)
+        if val is not None and not isinstance(val, dict):
+            fail(f"'{key}' is {type(val).__name__}, expected an object")
+    history = snapshot.get("history") or {}
+    if not all(
+        isinstance(k, str)
+        and isinstance(v, list)
+        and all(isinstance(x, str) for x in v)
+        for k, v in history.items()
+    ):
+        fail("'history' must map state ids to lists of state-id strings")
+    actors = snapshot.get("actors") or {}
+    if not all(
+        isinstance(k, str) and isinstance(v, dict) for k, v in actors.items()
+    ):
+        fail("'actors' must map actor ids to persisted actor records")
+    system = snapshot.get("system") or {}
+    if not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in system.items()
+    ):
+        fail("'system' must map system ids to actor-id strings")
 
 
 def check_identity(

@@ -363,10 +363,32 @@ def restore_event(record: Dict[str, Any]) -> Any:
     sentinel persisted by 0.8.1 is not turned into user traffic that fails
     an `onUnhandled: "error"` machine on restore.
     """
+    from .exceptions import SnapshotCorruptError
+
+    if not isinstance(record, dict):
+        raise SnapshotCorruptError(
+            f"Snapshot is malformed: event record is "
+            f"{type(record).__name__}, expected an object."
+        )
     kind = record.get("kind")
-    etype = record["type"]
-    if kind is None:  # v1 record
-        kind = "system" if etype.startswith(ENGINE_EVENT_SHAPES) else "event"
+    etype = record.get("type")
+    # 🛡️ #158: the same guard `send()` applies (#113) -- a non-`str` type
+    #    must not enter the hierarchy through the restore door either.
+    if not isinstance(etype, str) or not etype:
+        raise SnapshotCorruptError(
+            f"Snapshot is malformed: event record 'type' must be a "
+            f"non-empty string, got {etype!r}."
+        )
+    if kind is None:
+        # 🏷️ #162: a v1 record (no `kind`) carries no provenance. It is
+        #    USER traffic by default -- laundering it into a system event
+        #    on the strength of its NAME is exactly the by-name
+        #    classification #79 removed everywhere else, and it exempted a
+        #    user's `after.hours` from `onUnhandled`/`strict`. The one
+        #    shape the engine itself persisted under v1 that must stay
+        #    system is the init sentinel; everything else re-persists as
+        #    v2 on the next save. See the 0.8.1 changelog migration note.
+        kind = "system" if etype.startswith("___xstate") else "event"
     if kind == "done":
         return DoneEvent(
             type=etype, data=record.get("data"), src=record.get("src", "")
@@ -380,10 +402,13 @@ def restore_event(record: Dict[str, Any]) -> Any:
             src=record.get("src", ""),
         )
     if kind == "after":
+        # 📏 #118: absent telemetry restores as None, never 0.0.
+        sched = record.get("scheduled_for")
+        fired = record.get("fired_at")
         return AfterEvent(
             type=etype,
-            scheduled_for=float(record.get("scheduled_for", 0.0)),
-            fired_at=float(record.get("fired_at", 0.0)),
+            scheduled_for=None if sched is None else float(sched),
+            fired_at=None if fired is None else float(fired),
         )
     payload = record.get("payload") or {}
     if kind == "system":
@@ -408,12 +433,18 @@ class Receipt(NamedTuple):
             "defer"`` rather than processed (#84). ``changed`` is then
             ``False`` because nothing has run yet -- not because the event
             was a correct no-op. Check this before reading ``changed``.
+        denied: ``True`` when the active state DID declare a handler for
+            this event but every candidate's guard returned ``False``
+            (#153). Distinguishes "a business rule refused it" from "this
+            event does not apply in this state" (``denied=False``,
+            ``changed=False``), which are otherwise identical receipts.
     """
 
     state_ids: FrozenSet[str]
     changed: bool
     error: Optional[BaseException] = None
     deferred: bool = False
+    denied: bool = False
 
 
 class AfterEvent(NamedTuple):
@@ -455,12 +486,22 @@ class AfterEvent(NamedTuple):
     #: 📏 #48: when the timer was DUE (clock seconds) and when it actually
     #: fired. `lateness_ms` is the difference -- data an application can
     #: alarm on instead of inferring timer starvation from symptoms.
-    scheduled_for: float = 0.0
-    fired_at: float = 0.0
+    #: ``None`` (#118) means "not recorded": a record persisted before the
+    #: telemetry existed, or one whose keys were stripped. It is never
+    #: coerced to ``0.0``, which would be an affirmative "fired on time".
+    scheduled_for: Optional[float] = None
+    fired_at: Optional[float] = None
 
     @property
-    def lateness_ms(self) -> float:
-        """Milliseconds the timer fired AFTER its deadline (>= 0)."""
+    def lateness_ms(self) -> Optional[float]:
+        """Milliseconds the timer fired AFTER its deadline (>= 0).
+
+        ``None`` when either timestamp is unknown (#118) -- telemetry that
+        reads ``0.0`` when the truth is "we do not know" gets trusted
+        downstream, so the absence is made explicit instead.
+        """
+        if self.scheduled_for is None or self.fired_at is None:
+            return None
         return max(0.0, (self.fired_at - self.scheduled_for) * 1000.0)
 
 

@@ -756,8 +756,15 @@ class TestPlainSyncInvokeTimingParity(_Quiet):
             for _ in range(10):
                 await i.send("GO")
                 await i.send("CANCEL")
-            for _ in range(200):
-                await asyncio.sleep(0)
+            # Settle on the SIGNAL, not a fixed spin: since #149 a plain
+            # service completes via an executor hop, so on a slow runner
+            # the last `done.invoke` may still be in flight after N yields.
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and not (
+                i.value == "idle"
+                and i.context["ok"] + i.context["cancel"] >= 10
+            ):
+                await asyncio.sleep(0.01)
             out = dict(i.context)
             await i.stop()
             return out

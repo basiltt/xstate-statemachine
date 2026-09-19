@@ -9,6 +9,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Round-5 re-verification findings** (#142–#162; reopened #118, #122,
+  #125, #133, #134). Twenty-six issues, every one reproduced against
+  `main` with an independent probe before the fix and pinned in
+  `tests/test_round5_findings.py` (52 tests, both engines wherever parity
+  is the point).
+  - **Configuration legality, both directions.** The mid-step snapshot
+    guard tested "some atomic node is active"; in a `parallel` machine one
+    region mid-transition left the other's leaf to satisfy it and the
+    snapshot recorded a torn region (#142). Legality is now *exactly one
+    active leaf per region* (`_configuration_is_legal`), used on the write
+    side and mirrored on the read side: a `running` snapshot whose
+    `configuration` lost its leaves restored as a live, permanently inert
+    machine (#143) and is now `SnapshotCorruptError`.
+  - **Hostile snapshot fields are typed** (#146): `version`, `status`,
+    `history`, `actors`, `system`, `deferred` and a non-`str` payload all
+    raised bare `TypeError` / `ValueError` / `AttributeError`; a pending
+    event with a non-`str` `type` walked in through the restore door
+    (#158). Every top-level key `from_snapshot` reads is now shape-checked
+    and `restore_event` re-checks per record.
+  - **`actionErrorPolicy: "fail"` stops the machine** as documented
+    (#145): `status` is `"stopped"`, the configuration is cleared, children
+    and timers are torn down, and the `TransitionFailedError` is retained
+    on `.error`. Before, it parked in `"error"` still reporting the
+    pre-transition leaf — a bricked machine that persisted as resumable.
+    A child stopped this way fails its parent's `invoke` (`onError`) on
+    both engines. Read side: an `"error"` snapshot with no recorded error
+    is refused.
+  - **`strict_targets=False` no longer reopens the root-target hole**
+    (#147): the #108 rejection was emitted from the *unresolvable-targets*
+    branch that the flag downgrades to a warning. It is now a
+    non-downgradable `RootTargetError` on every flag setting.
+  - **Two livelocks / budget faults on the sync engine.** A nested `invoke`
+    whose `onDone` re-enters the common ancestor is a conservative cycle
+    (dequeue one, enqueue one) that reset the chain budget every lap and
+    hung `start()` for ever regardless of `maxIterations` (#144); a chain
+    now ends only when nothing self-generated remains queued. The
+    `always`-settle budget was reset per *drain*, so two independent
+    events in one `send_events()` batch shared one allowance and the second
+    tripped where `send(A); send(B)` did not (#151); it is per macrostep.
+  - **Async run-loop death is published from the task** (#148): a cancel
+    landing before the loop's first scheduling turn never entered the
+    coroutine body, so #114's handler never ran — `status="running"`,
+    `is_running=False`, `send(wait=True)` hung. A done-callback now fires
+    for every way the task ends (`_die` is idempotent).
+  - **Plain-`def` services run off the loop** (#149): #116 made them run
+    inline so their completion lands at the same point as on the sync
+    engine, at the price of blocking the event loop for the service's
+    whole duration — every timer, actor and inbound send stalled. They
+    now run on `Interpreter(service_executor=...)` (default: a small
+    owned `ThreadPoolExecutor`) and the entering *macrostep* awaits the
+    result, so #116's ordering holds while the loop keeps turning.
+  - **`send_threadsafe` is classified and bounded on the calling thread.**
+    An action that handed its own re-trigger to a worker thread was never
+    charged to `maxIterations` (#150): the self-send decision is made on
+    the caller's thread (context-inheriting threads/executors are
+    recognised; a plain `threading.Thread` should pass `internal=True`),
+    in-flight self-sends keep the chain alive, and the trip is
+    observable. Under `OverflowPolicy.RAISE` a full inbox raises
+    `QueueOverflowError` at the `send_threadsafe()` call site instead of
+    on a future the fire-and-forget pattern never reads (#157).
+  - **`guardErrorPolicy: "raise"` cancels only its own candidate** (#152):
+    the exception used to abort the whole selection pass, so an unguarded
+    fallback on an `invoke.onDone` was never taken and the completion was
+    lost. The fallback is now taken; a caller-driven event still delivers
+    the exception to the sync `send()` caller / async receipt, and an
+    engine-driven one records it on `last_transition_ok` / `last_error`.
+  - **Guard-denied is distinguishable from undeclared** (#153):
+    `on_unhandled_event` reports `"guard_denied"` and `Receipt.denied` is
+    `True` when a handler was declared but every guard refused.
+  - **Sync engine parity for three round-4 fixes** (reopened): a deferred
+    event's replay is its own macrostep on `SyncInterpreter` too — the
+    caller's `Receipt` is final before any replay runs (#125);
+    `on_resolve_error` fires from the shared algorithm, on both engines
+    (#134); `forwardTo` shares `sendTo`'s unresolved-target reporting
+    (`on_event_dropped(reason="unresolved_target")` + soft step error)
+    through one helper (#133).
+  - **Sync restore attaches the `SimulatedClock`** (#154): both restore
+    branches of `start()` returned before `clock._attach(tick)`, so
+    `restart_timers=True` re-armed deadlines nothing would ever drain.
+  - **A user action named `spawn_*` is the user's** (#155): the built-in
+    spawn prefix was resolved *before* `logic.actions`, the only built-in
+    that claimed a name out of the user's namespace; discovery and the
+    runtime now both prefer an implemented action.
+  - **`escalate` reaches `onError` without an explicit `invoke.id`**
+    (#156): the child records the invoke id its parent knows it by
+    (`_invoked_as`) instead of parsing it back out of a runtime actor id
+    whose first segment is the *service* key for anonymous invokes.
+  - **Error hooks** (#159): new `on_invalid_event` and `on_snapshot_error`
+    fire before `InvalidEventError` / `SnapshotMidStepError` /
+    `SnapshotSerializationError` propagate.
+  - **Redaction** (#160): `get_snapshot()`'s DEBUG log is redacted (it
+    wrote the whole context verbatim, `LoggingInspector` or not);
+    `DEFAULT_REDACT_KEYS` covers financial, session and personal
+    identifiers (`iban`, `pan`, `cvc`, `bearer`, `cookie`, `session`,
+    `signature`, `otp`, `pin`, `mnemonic`, `seed_phrase`, `dob`, `email`,
+    `phone`, `passport`, …); `LoggingInspector` redacts service results
+    and `DoneEvent` / `ErrorEvent` data.
+  - **Dict-event validation is explicit** (#161): the mapping form
+    requires a non-empty `str` `type` and `str` keys (non-`str` keys raise
+    `InvalidEventError`); payload *values* are the caller's — documented
+    on `send()` for both engines.
+  - **v1 pending events are user events** (#162): re-deriving provenance
+    from the *name* laundered a user's `after.hours` into an engine event
+    exempt from `onUnhandled` / `strict`. Only the init sentinel keeps
+    system provenance. See the migration note in Snapshots.
+  - **Telemetry honesty** (#118): absent `AfterEvent.scheduled_for` /
+    `fired_at` restore as `None`, never `0.0`; `lateness_ms` is `None`
+    when unknown. **`tick()` contract documented** (#122): it drains what
+    is *due*, does not advance time; a real-delay ladder needs one
+    `tick()` per rung or a `SimulatedClock`.
 - **Round-4 re-verification findings** (#102–#138; reopened #91, #99).
   Thirty-nine issues, every one reproduced against `main` with an
   independent probe before the fix and pinned in
@@ -230,6 +340,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`Interpreter(service_executor=)`**, **`send_threadsafe(internal=)`**,
+  **`Receipt.denied`**, `on_unhandled_event` disposition `"guard_denied"`,
+  **`on_invalid_event`** / **`on_snapshot_error`** plugin hooks.
 - **`SnapshotMidStepError`, `SnapshotCorruptError`,
   `SnapshotSerializationError`, `InvalidEventError`, `RootTargetError`** —
   typed members of the `XStateMachineError` hierarchy for the conditions
@@ -295,6 +408,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`actionErrorPolicy: "fail"` now leaves `status == "stopped"`**, not
+  `"error"`, with the configuration cleared (#145). Code that checked
+  `status == "error"` after a policy halt should check `"stopped"` (or
+  `interp.error is not None`). `"error"` remains the status for an invoked
+  service that died.
+- **`guardErrorPolicy: "raise"` takes the fallback candidate** before
+  surfacing the exception (#152); a machine that relied on the raise
+  aborting the whole array now lands on the fallback.
+- **`Receipt` gained a fifth field, `denied`** (#153). A positional
+  destructure of exactly four fields now raises `ValueError`; read fields
+  by attribute.
+- **`AfterEvent.scheduled_for` / `fired_at` are `Optional[float]`** and
+  `lateness_ms` is `Optional[float]` (#118): `None` means "not recorded".
+- **v1 persisted events with engine-shaped names restore as user events**
+  (#162). See Snapshots for the one-time re-persist note.
 - **`Receipt` gained a fourth field, `deferred`** (#84 in this release;
   flagged as undeclared by #119). A positional destructure written for
   0.8.0 — `state_ids, changed, error = receipt` — now raises `ValueError`.

@@ -267,6 +267,45 @@ class PluginBase(Generic[TInterpreter]):
         """
         pass  # pragma: no cover
 
+    def on_invalid_event(
+        self,
+        interpreter: TInterpreter,
+        error: BaseException,
+        raw_event: Any,
+    ) -> None:
+        """Called when `send()` refuses a malformed event (#159).
+
+        Fires immediately before the `InvalidEventError` propagates to the
+        caller -- the hook is observability, not containment; the caller
+        still gets the exception. Without it, a plugin bound to every hook
+        saw only routine traffic while `send(42)` was raising.
+
+        Args:
+            interpreter: The interpreter instance.
+            error: The `InvalidEventError` about to be raised.
+            raw_event: Whatever the caller passed to `send()`.
+        """
+        pass  # pragma: no cover
+
+    def on_snapshot_error(
+        self,
+        interpreter: TInterpreter,
+        error: BaseException,
+    ) -> None:
+        """Called when a snapshot is refused (#159).
+
+        Fires immediately before a `SnapshotMidStepError` (mid-macrostep
+        snapshot) or `SnapshotSerializationError` (non-JSON pending data)
+        propagates from `get_persisted_snapshot()` / `get_snapshot()`. As
+        with :meth:`on_invalid_event`, the exception still reaches the
+        caller; this is the audit surface.
+
+        Args:
+            interpreter: The interpreter instance.
+            error: The snapshot error about to be raised.
+        """
+        pass  # pragma: no cover
+
     def on_plugin_error(
         self,
         interpreter: TInterpreter,
@@ -452,19 +491,45 @@ class PluginBase(Generic[TInterpreter]):
 #: payload KEY containing one of these substrings (case-insensitive) is
 #: logged as ``"***"``. Extend with ``LoggingInspector(redact_keys=[...])``.
 DEFAULT_REDACT_KEYS: Tuple[str, ...] = (
+    # credentials
     "password",
     "passwd",
+    "pwd",
     "secret",
     "token",
     "api_key",
     "apikey",
     "authorization",
     "auth",
+    "bearer",
     "credential",
     "private_key",
-    "ssn",
+    "cookie",
+    "session",  # sessionId, session_token, ...
+    "signature",
+    "otp",
+    "pin",
+    # payment / banking (#160)
     "card",
     "cvv",
+    "cvc",
+    "pan",
+    "iban",
+    "account_number",
+    "account_no",
+    "routing",
+    "swift",
+    # crypto
+    "mnemonic",
+    "seed_phrase",
+    "seed",
+    # personal identifiers
+    "ssn",
+    "dob",
+    "date_of_birth",
+    "email",
+    "phone",
+    "passport",
 )
 
 
@@ -553,10 +618,18 @@ class LoggingInspector(PluginBase[Any]):
         #    its deprecated `.data` alias here tripped the library's own
         #    DeprecationWarning under `-W error` (#95).
         elif isinstance(event, ErrorEvent):
-            data_to_log = event.error
-        #    For `DoneEvent` / `AfterEvent`, it's in `data`.
+            # 🔒 #160: the message may echo the failed request; redact
+            #    structured args, keep the type.
+            err = event.error
+            data_to_log = (
+                f"{type(err).__name__}: {self._safe(err.args[0])}"
+                if getattr(err, "args", None)
+                else err
+            )
+        #    For `DoneEvent` / `AfterEvent`, it's in `data`. 🔒 #160: a
+        #    service RESULT is data like any other -- redact it too.
         else:
-            data_to_log = getattr(event, "data", None)
+            data_to_log = self._safe(getattr(event, "data", None))
 
         # 2️⃣ Compose and emit the final log message.
         message = f"🕵️ [INSPECT] Event Received: {event.type}"
@@ -674,7 +747,7 @@ class LoggingInspector(PluginBase[Any]):
             "✅ [INSPECT] Service '%s' (ID: %s) completed. Result: %s",
             invocation.src,
             invocation.id,
-            result,
+            self._safe(result),  # 🔒 #160: a service result is data too
         )
 
     def on_service_error(
@@ -691,10 +764,14 @@ class LoggingInspector(PluginBase[Any]):
             error: The exception raised by the service.
         """
         logger.error(
-            "❌ [INSPECT] Service '%s' (ID: %s) failed. Error: %s",
+            "❌ [INSPECT] Service '%s' (ID: %s) failed. Error: %s: %s",
             invocation.src,
             invocation.id,
-            error,
+            type(error).__name__,
+            # 🔒 #160: an exception's message may echo the request that
+            #    failed (a card number in a gateway error). Redact when it
+            #    carries structured args; the traceback is kept.
+            self._safe(error.args[0]) if error.args else "",
             exc_info=True,  # 🐛 Include full traceback for debugging.
         )
 

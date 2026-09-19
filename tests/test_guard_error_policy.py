@@ -113,9 +113,13 @@ class TestRaisePolicy(_Quiet):
         i.start()
         with self.assertRaises(ValueError):
             i.send("GO")
-        # Machine intact and still usable.
-        self.assertEqual(i.current_state_ids, {"m.s"})
+        # #152: the raise cancels only ITS candidate. The unguarded
+        # fallback in the same array is still taken, and the exception
+        # still reaches the caller. Machine intact and still usable.
+        self.assertEqual(i.current_state_ids, {"m.fallback"})
         self.assertEqual(i.status, "running")
+        self.assertFalse(i.last_transition_ok)
+        self.assertIsInstance(i.last_error, ValueError)
 
     def test_raise_keeps_async_interpreter_running(self) -> None:
         async def main():
@@ -133,7 +137,7 @@ class TestRaisePolicy(_Quiet):
 
         state, status, seen = asyncio.run(main())
         # The run loop contains the error and stays alive.
-        self.assertEqual(state, {"m.s"})
+        self.assertEqual(state, {"m.fallback"})  # #152: fallback taken
         self.assertEqual(status, "running")
         self.assertEqual(seen, [("error", "risk_ok", "ValueError")])
 

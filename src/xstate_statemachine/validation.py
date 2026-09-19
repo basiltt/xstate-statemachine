@@ -25,7 +25,11 @@ import warnings
 from typing import TYPE_CHECKING, Iterator, List, Optional, Tuple
 
 from .actions import RAISE, resolve_builtin
-from .exceptions import InvalidConfigError, StateNotFoundError
+from .exceptions import (
+    InvalidConfigError,
+    RootTargetError,
+    StateNotFoundError,
+)
 from .resolver import resolve_target_state
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -152,10 +156,17 @@ def _is_dead_always_loop(
 
 def _collect_findings(
     machine: "MachineNode",
-) -> Tuple[List[str], List[str]]:
-    """Walk the tree once and gather ``(unresolved, dead_loops)`` messages."""
+) -> Tuple[List[str], List[str], List[str]]:
+    """Walk the tree once; gather ``(unresolved, dead_loops, root_targets)``.
+
+    The three lists have different severities downstream: `unresolved` is
+    downgradable to a warning by ``strict_targets=False``; `dead_loops`
+    and `root_targets` are not (#147) -- both describe a machine that
+    cannot run, not a transition that will merely no-op.
+    """
     unresolved: List[str] = []
     dead_loops: List[str] = []
+    root_targets: List[str] = []
 
     for node in walk(machine):
         for label, t in transitions_of(node):
@@ -179,7 +190,10 @@ def _collect_findings(
                 #    "running" -- a silently inert machine on both engines.
                 #    XState/SCXML: entering a compound state enters its
                 #    initial child, so "target the root" has no meaning.
-                unresolved.append(
+                # 🛑 #147: kept SEPARATE from `unresolved` so that
+                #    `strict_targets=False` (which downgrades unresolvable
+                #    targets to a warning) cannot reopen this hole.
+                root_targets.append(
                     f"  {node.id}: {label} -> target {t.target_str!r} is the "
                     f"machine root; entering it empties the configuration. "
                     f"Target the root's initial child "
@@ -194,7 +208,7 @@ def _collect_findings(
                     f'"reenter": true, route via an intermediate state, '
                     f"or give the transition actions that mutate context."
                 )
-    return unresolved, dead_loops
+    return unresolved, dead_loops, root_targets
 
 
 def _static_raise_event_type(action: "ActionDefinition") -> Optional[str]:
@@ -264,7 +278,16 @@ def validate_machine(machine: "MachineNode", *, strict_targets: bool) -> None:
             ``always`` self-target cannot make progress. The message lists
             every finding.
     """
-    unresolved, dead_loops = _collect_findings(machine)
+    unresolved, dead_loops, root_targets = _collect_findings(machine)
+
+    # 🛑 #108 / #147: a root target is a typed, NON-downgradable error on
+    #    every flag setting. `RootTargetError` is an `InvalidConfigError`,
+    #    so existing handlers still catch it.
+    if root_targets:
+        raise RootTargetError(
+            f"Machine '{machine.id}' has transition(s) targeting the "
+            f"machine root:\n" + "\n".join(root_targets)
+        )
 
     # 🛡️ #51 follow-up: a strict machine must not be able to raise, from a
     #    literal in its own config, an event it can never handle.

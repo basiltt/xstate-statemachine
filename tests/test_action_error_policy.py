@@ -251,12 +251,15 @@ class TestFail(_Quiet):
         interp.start()
         interp.send("GO")
 
-        self.assertEqual(interp.status, "error")
+        # #145: "fail" STOPS the machine, as documented. The configuration
+        # is cleared (a stopped machine has no active leaf, and reporting
+        # the pre-transition leaf was a lie); the reason is retained.
+        self.assertEqual(interp.status, "stopped")
         self.assertIsInstance(interp.error, TransitionFailedError)
         # The ORIGINAL exception is retrievable, not just a message.
         self.assertIsInstance(interp.error.__cause__, RuntimeError)
         self.assertEqual(interp.error.action_type, "explode")
-        self.assertEqual(sorted(interp.current_state_ids), ["oms.a"])
+        self.assertEqual(sorted(interp.current_state_ids), [])
         self.assertEqual(spy.errors, ["TransitionFailedError"])
 
 
@@ -293,8 +296,8 @@ class TestAsyncInterpreterHonoursPolicy(_Quiet):
 
     def test_async_fail(self) -> None:
         (state, status, trace, ok), spy = self._run("fail")
-        self.assertEqual(status, "error")
-        self.assertEqual(state, ["oms.a"])
+        self.assertEqual(status, "stopped")  # #145
+        self.assertEqual(state, [])
 
     def test_async_continue_reports(self) -> None:
         (state, status, trace, ok), spy = self._run("continue")

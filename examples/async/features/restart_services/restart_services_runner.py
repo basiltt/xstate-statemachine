@@ -15,6 +15,7 @@ an order placement that means the caller needs an idempotency key.
 """
 
 import asyncio
+import time
 import logging
 import os
 import sys
@@ -83,7 +84,14 @@ async def main() -> None:
         snapshot, machine_with_logic, restart_services=True
     )
     await restarted.start()
-    await asyncio.sleep(0.05)
+    # ⏳ Settle on the OBSERVABLE condition, not a fixed sleep: a slow CI
+    #    runner can take longer than 50 ms to run a 20 ms service.
+    deadline = time.monotonic() + 5.0
+    while (
+        "order.live" not in restarted.current_state_ids
+        and time.monotonic() < deadline
+    ):
+        await asyncio.sleep(0.01)
     logger.info(f"After restart, calls: {calls}")
     logger.info(f"State: {restarted.current_state_ids}")
     assert calls.count("place") == 2  # original attempt + the restart
