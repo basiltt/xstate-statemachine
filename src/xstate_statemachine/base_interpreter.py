@@ -386,6 +386,12 @@ def _accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
 
 _ACCEPTS_KWARG_KEEPALIVE: List[Any] = []
 
+#: ⚡ The init / exit trigger events are constant, payload-less sentinels;
+#: `Event` is an immutable NamedTuple, so one instance each is safe to share
+#: across every interpreter instead of minting one per `start()`.
+_INIT_EVENT: Event = system_event("___xstate_statemachine_init___")
+_EXIT_EVENT: Event = system_event("___xstate_statemachine_exit___")
+
 
 class PendingInvocation(NamedTuple):
     """An `invoke` that is part of the configuration but has no live task.
@@ -706,7 +712,12 @@ class BaseInterpreter(Generic[TContext]):
         if callable(raw):
             produced = raw({"input": input})
             return copy.deepcopy(produced) if produced is not None else {}
-        context = copy.deepcopy(raw)
+        # ⚡ A flat dict of immutable scalars (the overwhelmingly common
+        #    initial context, decided once at build: `context_is_flat`) is
+        #    copied with `dict()` -- 11x cheaper than `deepcopy` and
+        #    observationally identical, since there is nothing nested to
+        #    alias. Anything else keeps the deep copy.
+        context = dict(raw) if machine.context_is_flat else copy.deepcopy(raw)
         # 📥 Expose input to the machine even without a context factory.
         #    Deliberately ONLY under `context["input"]` (0.7.x contract):
         #    letting input overwrite declared keys would make
@@ -3469,7 +3480,7 @@ class BaseInterpreter(Generic[TContext]):
                 enter, from the outermost ancestor to the innermost child.
             event (Optional[Event]): The event that triggered this state entry.
         """
-        trigger_event = event or system_event("___xstate_statemachine_init___")
+        trigger_event = event or _INIT_EVENT  # ⚡ shared immutable sentinel
 
         # 🗺️ Index the remaining path so a compound state can tell whether the
         #    caller already named which child to descend into.
@@ -3507,7 +3518,8 @@ class BaseInterpreter(Generic[TContext]):
                 await self._execute_lifecycle_actions(
                     state.entry, trigger_event
                 )
-            self._schedule_state_tasks(state)
+            if state.owns_tasks:  # ⚡ no `after` / `invoke` -> nothing to arm
+                self._schedule_state_tasks(state)
 
             # 🎉 If we entered a final state, check if its parent is now complete.
             if state.is_final:
@@ -3690,7 +3702,7 @@ class BaseInterpreter(Generic[TContext]):
                 exit, from the innermost child to the outermost ancestor.
             event (Optional[Event]): The event that triggered the state exit.
         """
-        trigger_event = event or system_event("___xstate_statemachine_exit___")
+        trigger_event = event or _EXIT_EVENT  # ⚡ shared immutable sentinel
 
         # 🕰️ Record history *before* anything is removed, so the remembered
         #    configuration reflects the state of the machine as it was.
@@ -3701,9 +3713,13 @@ class BaseInterpreter(Generic[TContext]):
             if debug:
                 logger.debug("⬅️  Exiting state: '%s'.", state.id)
             # 🛑 Crucially, cancel tasks before running exit actions.
-            _pending = self._cancel_state_tasks(state)
-            if _pending is not None:
-                await _pending
+            #    ⚡ A state that declares no `after` / `invoke` owns nothing
+            #    to cancel (delayed sends are owned by the root, which is
+            #    never exited by a transition).
+            if state.owns_tasks:
+                _pending = self._cancel_state_tasks(state)
+                if _pending is not None:
+                    await _pending
             # ⚙️ Then, run the synchronous exit actions (⚡ only if any).
             if state.exit:
                 await self._execute_lifecycle_actions(

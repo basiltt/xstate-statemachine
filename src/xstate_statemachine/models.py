@@ -1011,6 +1011,13 @@ class StateNode(Generic[TContext]):
         self.on_done = self._parse_on_done(raw_on_done)
         self.after = self._parse_after(raw_after)
         self.invoke = self._parse_invoke(raw_invoke)
+        #: ⚡ Can this state ever OWN a scheduled task (an `after` deadline
+        #: or an invoked service/child)? Decided once here so `_enter_states`
+        #: / `_exit_states` skip the schedule/cancel round-trip -- two
+        #: method calls, a dict pop and (async) a TaskManager cancel -- for
+        #: the majority of states that declare neither. Delayed `sendTo`s
+        #: are owned by the machine ROOT, which is handled separately.
+        self.owns_tasks: bool = bool(self.after or self.invoke)
 
         # 🌳 Recursively build child states, forming the Composite pattern.
         #
@@ -1622,6 +1629,14 @@ class MachineNode(StateNode[TContext]):
         #: `Receipt` need not deep-copy it to decide `changed`. Distinct
         #: from `subtree_has_actions`, which covers entry/exit only.
         self._context_is_immutable: Optional[bool] = None  # lazy, see property
+        #: ⚡ Is `initial_context` a plain dict whose values are all immutable
+        #: scalars? Then a per-interpreter `dict()` copy is as good as a
+        #: `deepcopy` (see `BaseInterpreter._build_initial_context`).
+        raw_ctx = self.initial_context
+        self.context_is_flat: bool = isinstance(raw_ctx, dict) and all(
+            isinstance(v, (str, int, float, bool, bytes, type(None)))
+            for v in raw_ctx.values()
+        )
         #: ⚡ Memo for `LogicLoader.required_names()`: the (actions, guards,
         #: services) the config references. Auto-discovery and alias
         #: resolution both need it; the tree is walked once, not twice.

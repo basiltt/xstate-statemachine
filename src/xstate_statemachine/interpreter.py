@@ -1662,7 +1662,13 @@ class Interpreter(BaseInterpreter[TContext]):
             event: The external event to process first.
         """
         # 1️⃣ Process the initial event that was dequeued.
-        before = frozenset(self._active_state_nodes)
+        # ⚡ Only needed to decide whether deferred events earned a replay;
+        #    skip both frozensets when nothing is deferred.
+        before = (
+            frozenset(self._active_state_nodes)
+            if self._deferred_events
+            else None
+        )
         await self._process_event(event)
         await self._await_inline_services()  # #149
 
@@ -1685,8 +1691,9 @@ class Interpreter(BaseInterpreter[TContext]):
         #    its own macrostep -- ahead of live traffic via the priority
         #    lane, in original order -- right after this receipt resolves.
         if (
-            before != frozenset(self._active_state_nodes)
+            before is not None
             and self._deferred_events
+            and before != frozenset(self._active_state_nodes)
         ):
             self._replay_pending = True
 
