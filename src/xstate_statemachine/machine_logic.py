@@ -306,12 +306,14 @@ class MachineLogic(Generic[TContext]):
         #    truth, no matter which authoring style produced them.
         self._register_subclass_methods()
 
-        logger.info(
-            "✅ MachineLogic initialized with %d actions, %d guards, and %d services.",
-            len(self.actions),
-            len(self.guards),
-            len(self.services),
-        )
+        if logger.isEnabledFor(logging.INFO):  # ⚡ constructed per build
+            logger.info(
+                "✅ MachineLogic initialized with %d actions, %d guards, "
+                "and %d services.",
+                len(self.actions),
+                len(self.guards),
+                len(self.services),
+            )
 
     # -------------------------------------------------------------------------
     # 🧬 Subclass Method Discovery

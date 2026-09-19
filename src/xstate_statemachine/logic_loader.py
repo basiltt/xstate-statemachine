@@ -311,7 +311,9 @@ class LogicLoader:
             TypeError: If an item in `logic_modules` is not a string or module.
             ImplementationMissingError: If a required implementation is not found.
         """
-        logger.info("🔍 Starting logic discovery and binding process...")
+        _info = logger.isEnabledFor(logging.INFO)  # ⚡ per build
+        if _info:
+            logger.info("🔍 Starting logic discovery and binding process...")
         if not isinstance(machine_config, dict):
             raise InvalidConfigError(
                 "Machine configuration must be a dictionary."
@@ -463,10 +465,12 @@ class LogicLoader:
                         "or providers."
                     )
 
-        total = sum(len(d) for d in discovered_logic.values())
-        logger.info(
-            "✨ Logic discovery complete. Bound %d implementations.", total
-        )
+        if _info:
+            total = sum(len(d) for d in discovered_logic.values())
+            logger.info(
+                "✨ Logic discovery complete. Bound %d implementations.",
+                total,
+            )
         return MachineLogic(
             actions=discovered_logic["actions"],
             guards=discovered_logic["guards"],
