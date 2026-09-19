@@ -234,6 +234,12 @@ class Interpreter(BaseInterpreter[TContext]):
             interpreter for services and timers.
     """
 
+    #: ⚡ How many consecutive INBOX events the run loop processes before it
+    #: yields to the asyncio loop (#48 fairness for `call_later` timers and
+    #: other tasks). 1 = the 0.8.0 behaviour (yield every event). Higher
+    #: trades timer-lateness bound (N * per-event cost) for throughput.
+    _INBOX_YIELD_EVERY: int = 16
+
     def __init__(
         self,
         machine: MachineNode[TContext],
@@ -284,6 +290,9 @@ class Interpreter(BaseInterpreter[TContext]):
         #: Wakes the run loop when a priority event arrives while it is
         #: blocked on the (empty) inbox.
         self._wakeup: Optional[asyncio.Event] = None
+        #: ⚡ Inbox events taken since the run loop last yielded to the event
+        #: loop; see `_next_event`.
+        self._inbox_streak: int = 0
         #: 📏 #38: inbox bound and overflow policy.
         if max_queue_size is not None and max_queue_size < 1:
             raise InvalidConfigError("max_queue_size must be >= 1 or None")
@@ -1376,9 +1385,13 @@ class Interpreter(BaseInterpreter[TContext]):
                 #    the configuration + context before and after, and by
                 #    the action-failure signal the policy machinery records.
                 config_before = frozenset(self._active_state_nodes)
+                # ⚡ A machine with no actions anywhere cannot mutate
+                #    context, so `changed` reduces to the configuration
+                #    compare and the per-receipt deepcopy is skipped.
                 context_before = (
                     copy.deepcopy(self.context)
                     if id(event) in self._receipts
+                    and not self.machine.context_is_immutable
                     else None
                 )
                 step_error: Optional[BaseException] = None
@@ -1421,9 +1434,11 @@ class Interpreter(BaseInterpreter[TContext]):
                 if id(event) in self._receipts:
                     if step_error is None and not self.last_transition_ok:
                         step_error = self._last_action_error
-                    changed = (
-                        frozenset(self._active_state_nodes) != config_before
-                        or self.context != context_before
+                    changed = frozenset(
+                        self._active_state_nodes
+                    ) != config_before or (
+                        context_before is not None
+                        and self.context != context_before
                     )
                     deferred = any(
                         ev is event for ev in self._deferred_this_step
@@ -1893,16 +1908,34 @@ class Interpreter(BaseInterpreter[TContext]):
                 #    drain a 2,000-event backlog in ONE loop turn, and a
                 #    `call_later` timer that came due meanwhile could not
                 #    run until the inbox was empty -- the starvation this
-                #    lane exists to end. Yield once per inbox event so
-                #    due timers get their turn and land in the lane, which
-                #    is checked first on the next iteration.
-                await asyncio.sleep(0)
+                #    lane exists to end. Yield so due timers get their turn
+                #    and land in the lane, which is checked first on the
+                #    next iteration.
+                #
+                # ⚡ Amortised: a yield per inbox event made two loop turns
+                #    of every event's cost (~45% of `send(wait=True)`
+                #    throughput). Yield every `_INBOX_YIELD_EVERY` inbox
+                #    events instead; the starvation bound becomes N events
+                #    (microseconds) instead of one, still far below any
+                #    timer's resolution. Priority/internal lanes are checked
+                #    before each inbox take regardless.
+                self._inbox_streak += 1
+                if self._inbox_streak >= self._INBOX_YIELD_EVERY:
+                    self._inbox_streak = 0
+                    await asyncio.sleep(0)
                 return event, True
             # 🔒 Clear THEN re-check both sources, so an event that arrived
             #    between the checks above and this clear is not slept
             #    through (lost wake-up).
             self._wakeup.clear()
+            self._inbox_streak = 0  # ⚡ reaching the park point ends a streak
             if self._priority_queue or not self._event_queue.empty():
+                # 🏁 Something landed between the emptiness checks and the
+                #    clear. Yield before taking it: this path can be
+                #    re-entered continuously by a producer racing the loop,
+                #    and without a yield nothing else on the event loop
+                #    (timers, the producer's own continuation) could run.
+                await asyncio.sleep(0)
                 continue
             await self._wakeup.wait()
 

@@ -159,30 +159,29 @@ def create_machine(
     # -------------------------------------------------------------------------
     # ☝️ Step 1: Determine the Source of Business Logic
     # -------------------------------------------------------------------------
-    final_logic: MachineLogic
+    final_logic: Optional[MachineLogic] = None
     if logic:
         # ✅ Path 1: Use the explicitly provided logic instance.
-        # This is the most direct approach, bypassing auto-discovery.
         logger.info("🧠 Using explicitly provided MachineLogic instance.")
         final_logic = logic
     else:
-        # ✅ Path 2: No explicit logic provided, so engage auto-discovery.
+        # ✅ Path 2: auto-discovery. ⚡ It needs the parsed tree to know which
+        #    names the config requires, so it runs AFTER the single
+        #    `MachineNode` build below and is handed that tree -- the config
+        #    used to be parsed twice (a throwaway node just for discovery).
         logger.info(
             "🤖 Attempting auto-discovery of actions, guards, and services..."
-        )
-        # The LogicLoader uses a Singleton pattern to ensure a single instance
-        # can be used to register global logic modules if desired.
-        loader = LogicLoader.get_instance()
-        final_logic = loader.discover_and_build_logic(
-            config,
-            logic_modules=logic_modules,
-            logic_providers=logic_providers,
         )
 
     # -------------------------------------------------------------------------
     # 🧪 Step 2: Validate the Core Machine Configuration
     # -------------------------------------------------------------------------
     logger.info("🕵️  Validating core machine configuration structure...")
+    # 🛡️ These checks used to be unreachable: the logic loader ran first
+    #    and its own MachineNode build raised. With the single build (⚡)
+    #    they are the front door, so their wording is the one callers see.
+    if not isinstance(config, dict):
+        raise InvalidConfigError("Machine configuration must be a dictionary.")
     machine_id = config.get("id")
 
     # The machine ID is crucial for identification, logging, and event routing.
@@ -191,8 +190,10 @@ def create_machine(
         logger.error(
             "❌ Machine configuration validation failed: 'id' is missing or not a non-empty string."
         )
+        # 📝 Same wording as `MachineNode.__init__`'s own check, which is
+        #    what callers saw before the single-build change (doctested).
         raise InvalidConfigError(
-            "Machine configuration must have a non-empty 'id' string."
+            "❌ Machine configuration must have a root 'id'."
         )
 
     # The 'states' dictionary is the fundamental building block of any state machine.
@@ -223,11 +224,25 @@ def create_machine(
     #    `MachineLogic` -- the "never mutate the caller" contract makes no
     #    distinction. `copy.copy` works for any plain object; the three
     #    registries are re-bound to owned copies by `_alias_logic_names`.
-    try:
-        owned_logic = copy.copy(final_logic)
-    except TypeError:  # pragma: no cover -- exotic objects refusing copy
-        owned_logic = final_logic
-    machine = MachineNode(config, owned_logic)
+    machine: MachineNode[Any]
+    if final_logic is None:
+        # 🤖 Build once with an empty logic, discover against the built
+        #    tree, then attach. `MachineNode.logic` is a plain attribute read
+        #    only at run time, so attaching after the parse is
+        #    observationally identical to passing it in.
+        machine = MachineNode(config, MachineLogic())
+        machine.logic = LogicLoader.get_instance().discover_and_build_logic(
+            config,
+            logic_modules=logic_modules,
+            logic_providers=logic_providers,
+            machine=machine,
+        )
+    else:
+        try:
+            owned_logic = copy.copy(final_logic)
+        except TypeError:  # pragma: no cover -- exotic objects refusing copy
+            owned_logic = final_logic
+        machine = MachineNode(config, owned_logic)
     # 🔤 Bind snake_case implementations to the camelCase names the config
     #    uses (and vice versa) once, here, so every interpreter lookup stays
     #    a plain dict hit. Exact-name entries are never overridden.
@@ -260,10 +275,7 @@ def create_machine(
 
 def _alias_logic_names(machine: MachineNode[Any]) -> None:
     """Resolve case/separator-insensitive aliases for a built machine."""
-    actions: set = set()
-    guards: set = set()
-    services: set = set()
-    LogicLoader._extract_logic_from_node(machine, actions, guards, services)
+    actions, guards, services = LogicLoader.required_names(machine)
     logic = machine.logic
     # 🏛️ #92: `create_machine()` must not modify the object it was handed.
     #    Aliasing used to write into the caller's `MachineLogic` dicts, so a

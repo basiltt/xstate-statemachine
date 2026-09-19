@@ -322,6 +322,47 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 - Every Python snippet in the guides and README now uses snake_case
   implementations against camelCase JSON, matching what `xsm gt` generates.
 
+### Performance
+
+- **Hot-path work, measured on the cross-library benchmark** (same host,
+  Python 3.14, `benchmarks/competitors/run.py`; details in the PR). Nothing
+  observable changed -- every shortcut is pinned by
+  `tests/test_perf_hot_path.py` and the full parity suite.
+  - `create_machine()` builds the tree **once**: auto-discovery used to
+    construct a throwaway `MachineNode` just to collect required names,
+    then the real one -- 43% of construction time. The loader now walks the
+    tree it is handed, and the required-name walk is memoised on the machine.
+  - `_accepts_kwarg` (the 0.8.0-clock `sync=` probe run in every
+    interpreter `__init__`) is memoised per function; `inspect.signature`
+    was 32% of interpreter construction.
+  - **Static transition geometry is memoised** on the
+    `TransitionDefinition` (domain / LCCA and entry path), keyed on the
+    resolved target's identity so live-resolved targets are never served a
+    stale plan. The exit set stays dynamic. ~6 µs of a 21 µs flat
+    macrostep.
+  - No coroutine is created for an **empty action list** (entry, exit,
+    transition): the sync engine's trampoline paid two frames per entered
+    state for nothing.
+  - `send()` fixed costs trimmed: `Clock.pump()` returns immediately on an
+    empty heap; `_check_strict` is one attribute read when not strict and
+    no schemas; the reserved-key scan skips empty payloads; hot-path
+    `logger.debug` calls sit behind one `isEnabledFor` per macrostep.
+  - **`Receipt` no longer deep-copies `context`** on a machine that
+    declares no actions anywhere (`MachineNode.context_is_immutable`):
+    nothing can mutate it, so `changed` is the configuration compare.
+  - The async run loop yields to the event loop every
+    `Interpreter._INBOX_YIELD_EVERY` (16) inbox events instead of every
+    one; the #48 fairness bound for `call_later` timers is now N events
+    (microseconds) rather than one, and `send(wait=True)` throughput rises
+    ~35%. Priority and internal lanes are still checked before each take.
+  - Net, full cross-library harness (median of 7, GC off, same session):
+    flat toggle 48.6k → 62.4k ev/s (+28%), nested 20.8k → 25.9k (+24%),
+    parallel 37.6k → 44.5k (+18%), construction 5.9k → 9.4k machines/s
+    (+61%), 1,000 instances 17.1k → 28.3k/s (+65%), delayed transitions
+    6.8k → 8.9k timers/s (+31%), async `send(wait=True)` 23.5k → 27.1k
+    (+15%). Construction and 1,000-instances are now the fastest of the
+    four libraries benchmarked.
+
 ### Deprecated
 
 - **The 0.7.x sibling reading of a leading-dot target now warns** (#31).
