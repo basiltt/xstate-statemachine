@@ -1085,6 +1085,23 @@ class BaseInterpreter(Generic[TContext]):
                 self._active_state_nodes.add(ancestor)
                 ancestor = ancestor.parent
 
+    def _await_settled_for_snapshot(self, timeout_s: float = 0.5) -> None:
+        """Block (briefly) until a child actor's in-flight step finishes.
+
+        Only used when snapshotting a CHILD recursively (#102). A sync
+        child's step runs on its actor thread and completes in
+        microseconds; a bound keeps a pathological child from hanging the
+        parent's snapshot -- after it we snapshot whatever is there, which
+        the restore-time repair (`_repair_configuration`) makes legal.
+        """
+        deadline = time.monotonic() + timeout_s
+        while (
+            self._step_in_flight()
+            and not self._active_leaf_present()
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.0005)
+
     def _step_in_flight(self) -> bool:
         """Engine hook: is a macrostep currently executing? (#102)"""
         return bool(
@@ -1129,8 +1146,17 @@ class BaseInterpreter(Generic[TContext]):
         #    `_step_in_flight()` is engine-specific (`_processing` on the
         #    async engine, `_is_processing` on the sync one) and is True
         #    exactly while exit -> actions -> enter is open.
+        #
+        #    For the ROOT of the call (``_seen is None``) that is a caller
+        #    error and is refused. For a CHILD actor reached recursively the
+        #    parent is settled and the caller cannot see the child's step;
+        #    a non-blocking sync child runs on its own thread and may be
+        #    mid-microstep at any instant. Wait briefly for it to settle
+        #    rather than fail the parent's whole snapshot on a race.
         if self._step_in_flight() and not self._active_leaf_present():
-            raise SnapshotMidStepError(self.id)
+            if _seen is None:
+                raise SnapshotMidStepError(self.id)
+            self._await_settled_for_snapshot()
         # 🔁 Guard against an actor cycle. The registry makes a cycle
         #    constructible, and unbounded recursion would blow the stack
         #    instead of failing cleanly.

@@ -86,6 +86,16 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
   - **Timers.** `SyncInterpreter.tick()` drains chained due deadlines in
     one call (#122); `SimulatedClock` detaches an interpreter's settle hook
     on teardown (#115).
+  - **Ride-alongs found while landing #102 / #116.** A non-blocking
+    `spawnChild` on `SyncInterpreter` now *starts* the child on the
+    spawning thread (its pump thread only ticks it), so a snapshot, `sendTo`
+    or `stop_child` issued right after the spawn sees a fully entered child
+    and its grandchildren — previously a load-dependent race. The #102
+    mid-step refusal applies to the root of `get_persisted_snapshot()`
+    only; a child actor caught mid-step is waited for (bounded) instead of
+    failing the parent's snapshot. A plain `def` service that returns an
+    awaitable, or a `unittest.mock.AsyncMock`, that *fails* now reaches
+    `onError` on Python 3.9–3.11 too.
 - **Round-3 re-verification findings** (#84–#99; reopened #31, #77, #79).
   Every item was reproduced against `main` before the fix and pinned in
   `tests/test_round3_findings.py`.

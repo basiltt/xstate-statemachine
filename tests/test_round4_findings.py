@@ -1298,5 +1298,112 @@ class TestProvenanceApi(_Quiet):
         self.assertFalse(is_system_event(copy.deepcopy(Event("T"))))
 
 
+# =============================================================================
+# #102 ride-along — child actors: snapshot recursion and deterministic start
+# =============================================================================
+class TestChildActorSnapshotRideAlongs(_Quiet):
+    """Two ride-alongs surfaced by the #102 mid-step guard under load.
+
+    1. A non-blocking sync child used to be *started* on its pump thread, so
+       a parent snapshotting immediately after the spawn action could see
+       a registered child with no grandchildren yet. The child now starts
+       on the spawning thread; the snapshot is deterministic.
+    2. The #102 refusal applies to the ROOT of `get_persisted_snapshot()`
+       only; a child caught mid-step is waited for (bounded), never turns
+       into a `SnapshotMidStepError` for the parent's snapshot.
+    """
+
+    GC = {"id": "gc", "initial": "g", "states": {"g": {}}}
+    CHILD = {
+        "id": "kid",
+        "initial": "i",
+        "context": {},
+        "states": {
+            "i": {
+                "entry": [
+                    {"type": "spawnChild", "params": {"src": "gc", "id": "g"}}
+                ]
+            }
+        },
+    }
+    PARENT = {
+        "id": "p",
+        "initial": "a",
+        "context": {},
+        "states": {
+            "a": {
+                "entry": [
+                    {
+                        "type": "spawnChild",
+                        "params": {"src": "kid", "id": "w"},
+                    }
+                ]
+            }
+        },
+    }
+
+    def _parent(self) -> SyncInterpreter:
+        kid_logic = MachineLogic(
+            services={"gc": lambda a, b, d: create_machine(self.GC)}
+        )
+        return SyncInterpreter(
+            create_machine(
+                self.PARENT,
+                logic=MachineLogic(
+                    services={
+                        "kid": lambda i, c, e: create_machine(
+                            self.CHILD, logic=kid_logic
+                        )
+                    }
+                ),
+            )
+        )
+
+    def test_grandchild_present_immediately_after_start(self) -> None:
+        # 50 iterations: the pre-fix race was load-dependent, one miss fails.
+        for _ in range(50):
+            interp = self._parent().start()
+            try:
+                data = json.loads(interp.get_snapshot())
+                self.assertIn(
+                    "p:w:g", data["actors"]["p:w"]["snapshot"]["actors"]
+                )
+            finally:
+                interp.stop()
+
+    def test_child_mid_step_is_waited_for_not_refused(self) -> None:
+        interp = self._parent().start()
+        self.addCleanup(interp.stop)
+        child = interp._actors["p:w"]
+        # Simulate the child being caught between exit set and entry set.
+        child._is_processing = True
+        saved = set(child._active_state_nodes)
+        child._active_state_nodes.clear()
+
+        def _settle() -> None:
+            time.sleep(0.02)
+            child._active_state_nodes.update(saved)
+            child._is_processing = False
+
+        threading.Thread(target=_settle).start()
+        data = interp.get_persisted_snapshot()  # must not raise
+        self.assertIn("p:w", data["actors"])
+        self.assertEqual(
+            ["kid.i"], data["actors"]["p:w"]["snapshot"]["state_ids"]
+        )
+
+    def test_root_mid_step_is_still_refused(self) -> None:
+        interp = SyncInterpreter(
+            create_machine(
+                {"id": "m", "initial": "a", "states": {"a": {}, "b": {}}}
+            )
+        ).start()
+        self.addCleanup(interp.stop)
+        interp._is_processing = True
+        interp._active_state_nodes.clear()
+        with self.assertRaises(SnapshotMidStepError):
+            interp.get_persisted_snapshot()
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

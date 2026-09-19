@@ -152,6 +152,44 @@ class _PreStartQueue:
         return list(self._items)
 
 
+def _is_plain_sync_callable(fn: Any) -> bool:
+    """``True`` for a callable that will return its result synchronously.
+
+    🏛️ #116: `inspect.iscoroutinefunction` is the wrong test on its own --
+    it says False for an `AsyncMock` (before 3.12), a `functools.partial`
+    of a coroutine function, or any callable object whose `__call__` is a
+    coroutine function -- and treating those as plain would run them
+    inline and drop their awaitable. Look through the common wrappers and
+    require a genuine synchronous function.
+    """
+    target = fn
+    # unwrap functools.partial / bound methods / mock wrappers
+    for _ in range(4):
+        inner = (
+            getattr(target, "func", None)
+            or getattr(target, "__func__", None)
+            or getattr(target, "__wrapped__", None)
+        )
+        if inner is None or inner is target:
+            break
+        target = inner
+    if inspect.iscoroutinefunction(target) or inspect.isasyncgenfunction(
+        target
+    ):
+        return False
+    # `AsyncMock` / awaitable-returning mock objects
+    if getattr(type(fn), "__module__", "").startswith("unittest.mock"):
+        return False
+    call = getattr(type(fn), "__call__", None)
+    if call is not None and inspect.iscoroutinefunction(call):
+        return False
+    return (
+        inspect.isfunction(target)
+        or inspect.isbuiltin(target)
+        or (callable(fn) and not inspect.isclass(fn))
+    )
+
+
 def _completed() -> "asyncio.Future[None]":
     """An already-resolved awaitable -- what `send()` hands back.
 
@@ -2082,7 +2120,7 @@ class Interpreter(BaseInterpreter[TContext]):
         #    diverged between engines. Coroutine services still run as
         #    tasks: they genuinely await, and that is the async engine's
         #    whole reason to exist.
-        if not inspect.iscoroutinefunction(service):
+        if _is_plain_sync_callable(service):
             self._invoke_plain_service_inline(invocation, service, owner_id)
             return
 
@@ -2096,6 +2134,31 @@ class Interpreter(BaseInterpreter[TContext]):
         task = asyncio.create_task(_invoke_wrapper())
         # Register the task with its owner for lifecycle management.
         self.task_manager.add(owner_id, task)
+
+    def _report_service_failure(
+        self, invocation: InvokeDefinition, exc: Exception
+    ) -> None:
+        """Deliver `error.platform.<id>` for a failed service and, with no
+        `onError` declared, fail the parent (shared by the inline and
+        late-awaitable paths of #116)."""
+        logger.error(
+            "💥 Service '%s' (ID: '%s') failed: %s",
+            invocation.src,
+            invocation.id,
+            exc,
+            exc_info=True,
+        )
+        error_event = ErrorEvent(
+            type=f"error.platform.{invocation.id}",
+            error=exc,
+            src=invocation.id,
+        )
+        handled = self._has_error_handler(invocation)
+        self._deliver_priority(error_event)
+        for plugin in self._plugins:
+            plugin.on_service_error(self, invocation, exc)
+        if not handled:
+            self._fail(exc)
 
     def _invoke_plain_service_inline(
         self,
@@ -2122,29 +2185,20 @@ class Interpreter(BaseInterpreter[TContext]):
             )
             produced = service(self, self.context, invoke_event)
         except Exception as exc:  # noqa: BLE001 -- user code
-            logger.error(
-                "💥 Service '%s' (ID: '%s') failed: %s",
-                invocation.src,
-                invocation.id,
-                exc,
-                exc_info=True,
-            )
-            error_event = ErrorEvent(
-                type=f"error.platform.{invocation.id}",
-                error=exc,
-                src=invocation.id,
-            )
-            handled = self._has_error_handler(invocation)
-            self._deliver_priority(error_event)
-            for plugin in self._plugins:
-                plugin.on_service_error(self, invocation, exc)
-            if not handled:
-                self._fail(exc)
+            self._report_service_failure(invocation, exc)
             return
         if inspect.isawaitable(produced):
-            # A `def` that returned a coroutine/future: await it in a task.
+            # A `def` that returned an awaitable after all: await it in a
+            # task, with the same success / failure handling as the
+            # coroutine path (`_invoke_service_task`).
             async def _finish() -> None:
-                result = await produced
+                try:
+                    result = await produced
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 -- user code
+                    self._report_service_failure(invocation, exc)
+                    return
                 await self.send(
                     DoneEvent(
                         type=f"done.invoke.{invocation.id}",

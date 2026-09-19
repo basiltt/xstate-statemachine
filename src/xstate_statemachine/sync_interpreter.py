@@ -1130,11 +1130,21 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             return
 
         # --- Non-Blocking Execution Path (via a background thread) ---
+        # 🚀 Start the child HERE, on the spawning thread, before the pump
+        #    thread exists. Starting it on the runner made "spawned" and
+        #    "started" two different instants: a parent that snapshotted,
+        #    `sendTo`'d or `stop_child`'d right after the spawn action could
+        #    observe a registered child whose entry actions (and its own
+        #    grandchildren) did not exist yet -- a rare, load-dependent
+        #    flake. The async engine starts a spawned child in the same loop
+        #    turn; this restores that parity. `start()` on a sync child is
+        #    bounded work (entry actions; `after` timers arm, they do not
+        #    block), so the parent's own step is not held up.
+        child.start()
+
         def _runner() -> None:
-            """Starts the child and cleans up when it's done or stopped."""
+            """Pumps the already-started child until it ends or is stopped."""
             try:
-                # 🚀 Start the actor in the background thread.
-                child.start()
                 # 🔄 Keep the thread alive while the child runs. This thread
                 #    is the child's pump: with no timer threads (#50), the
                 #    child's `after` deadlines fire only when someone calls
