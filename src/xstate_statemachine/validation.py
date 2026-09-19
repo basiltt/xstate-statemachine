@@ -173,6 +173,19 @@ def _collect_findings(
                     f"  {node.id}: {label} -> target {t.target_str!r} "
                     f"does not resolve{_suggest(t.target_str, machine)}"
                 )
+            elif target is machine:
+                # 🛑 #108: entering the ROOT enters nothing below it; the
+                #    configuration ends up EMPTY while `status` stays
+                #    "running" -- a silently inert machine on both engines.
+                #    XState/SCXML: entering a compound state enters its
+                #    initial child, so "target the root" has no meaning.
+                unresolved.append(
+                    f"  {node.id}: {label} -> target {t.target_str!r} is the "
+                    f"machine root; entering it empties the configuration. "
+                    f"Target the root's initial child "
+                    f"('#{machine.id}.{machine.initial}') or a specific "
+                    f"state."
+                )
             elif _is_dead_always_loop(label, t, target):
                 dead_loops.append(
                     f"  {node.id}: always self-target can never make "

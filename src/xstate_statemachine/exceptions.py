@@ -417,3 +417,75 @@ class RunawayChainError(XStateMachineError):
             f"action raises or sends the event that triggers it; break the "
             f"cycle or raise 'maxIterations'."
         )
+
+
+class SnapshotMidStepError(XStateMachineError):
+    """A snapshot was requested while a macrostep is in flight (#102).
+
+    `exit -> actions -> enter` is one transaction; between exit and enter
+    the configuration has no leaf. A snapshot taken there would persist an
+    empty configuration that restores as a permanently inert machine
+    reporting ``status="running"``. Take snapshots from a settled
+    interpreter -- after ``send(wait=True)`` resolves, from a plugin hook
+    such as ``on_transition``, or after ``stop(drain=True)``.
+    """
+
+    def __init__(self, machine_id: str):
+        super().__init__(
+            f"Interpreter '{machine_id}' is mid-macrostep: a transition's "
+            f"actions are still running and the configuration has no leaf. "
+            f"Snapshot it once the step settles (await send(..., wait=True), "
+            f"or from on_transition)."
+        )
+
+
+class InvalidEventError(XStateMachineError, TypeError):
+    """An event could not be normalised into a valid event object (#113).
+
+    Raised by ``send()`` for a non-``str`` ``type`` (``None``, ``5``), a
+    dict without a ``type`` key, or an object that is none of ``str`` /
+    ``dict`` / an event class. Replaces the bare ``TypeError`` /
+    ``AttributeError`` that used to escape the documented hierarchy.
+
+    🏛️ Also a ``TypeError``: 0.8.0 raised that for the unsupported-object
+    case, so an existing ``except TypeError`` keeps working while
+    ``except XStateMachineError`` now catches it too.
+    """
+
+
+class RootTargetError(InvalidConfigError):
+    """A transition targets the machine root itself (#108).
+
+    Entering the root node re-enters nothing below it, leaving the
+    configuration empty while ``status`` stays ``"running"`` -- a silently
+    inert machine. Target the root's ``initial`` child, or a specific state.
+    """
+
+
+class SnapshotSerializationError(XStateMachineError):
+    """A pending event's data is not JSON-representable (#131).
+
+    `get_snapshot()` refuses rather than coercing: a `Decimal` persisted as
+    ``"10.50"`` would be handed to the restored `onDone` handler as a
+    `str`, and arithmetic that worked before the restore would break after
+    it. Convert the value in the service that produced it (e.g. `str()` /
+    `float()` explicitly), or drain the inbox before snapshotting.
+    """
+
+    def __init__(self, event_type: str, cause: BaseException):
+        super().__init__(
+            f"Pending event '{event_type}' carries data that is not JSON-"
+            f"serialisable ({cause}). Snapshots refuse to coerce values "
+            f"silently; make the data JSON-native or snapshot from a "
+            f"quiesced interpreter."
+        )
+
+
+class SnapshotCorruptError(XStateMachineError):
+    """A snapshot's payload is structurally invalid (#110).
+
+    Missing required keys, a non-mapping ``context``, an unknown ``status``,
+    or a ``configuration`` that is not a list of state ids. Distinct from
+    `SnapshotVersionError` (too new) and `SnapshotDriftError` (wrong
+    machine): the blob is for the right machine but its shape is wrong.
+    """

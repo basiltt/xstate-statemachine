@@ -150,11 +150,17 @@ class TestTeardownWithoutLoop(_Quiet):
         async def boot():
             await i.start()
 
-        asyncio.run(boot())  # loop closed; interpreter still "running"
-        # Driving completion with no live loop must not blow up on the
-        # deferred-teardown path.
+        asyncio.run(boot())  # loop closed -> run task cancelled underneath
+        # 🏛️ #114: a run loop that dies without an orderly `stop()` is now
+        #    REPORTED -- `status="error"` with the cause on `error` --
+        #    instead of leaving a dead machine claiming `running`.
+        self.assertEqual(i.status, "error")
+        self.assertIsInstance(i.error, RuntimeError)
+        # Driving completion with no live loop must still not blow up on
+        # the deferred-teardown path (the original finding). A machine that
+        # has already died stays `error`; `_complete` is a no-op on it.
         i._complete({"ok": True})
-        self.assertEqual(i.status, "done")
+        self.assertEqual(i.status, "error")
 
 
 # -----------------------------------------------------------------------------

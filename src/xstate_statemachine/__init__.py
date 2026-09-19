@@ -83,7 +83,17 @@ from .logic_loader import LogicLoader
 # -----------------------------------------------------------------------------
 # ✉️ Event & Model Definitions
 # -----------------------------------------------------------------------------
-from .events import SYSTEM_EVENT_PREFIXES, ErrorEvent, Event, Receipt
+from .events import (
+    ENGINE_EVENT_SHAPES,
+    SYSTEM_EVENT_PREFIXES,
+    AfterEvent,
+    DoneEvent,
+    ErrorEvent,
+    Event,
+    Receipt,
+    is_system_event,
+    system_event,
+)
 from .models import ActionDefinition, MachineNode, OverflowPolicy
 
 # -----------------------------------------------------------------------------
@@ -108,7 +118,12 @@ from .exceptions import (
     InterpreterStoppedError,
     UnknownEventError,
     InvalidEventPayloadError,
+    InvalidEventError,
+    RootTargetError,
     RunawayChainError,
+    SnapshotCorruptError,
+    SnapshotMidStepError,
+    SnapshotSerializationError,
     UnhandledEventError,
     WrongThreadError,
     XStateMachineError,
@@ -198,6 +213,11 @@ __all__ = [
     # ✉️ Event & Model Definitions
     "Event",
     "SYSTEM_EVENT_PREFIXES",
+    "ENGINE_EVENT_SHAPES",
+    "AfterEvent",
+    "DoneEvent",
+    "is_system_event",
+    "system_event",
     "ErrorEvent",
     "ActionDefinition",
     # 🔌 Extensibility & Plugins
@@ -210,7 +230,12 @@ __all__ = [
     "ImplementationMissingError",
     "ActorSpawningError",
     "NotSupportedError",
+    "InvalidEventError",
+    "RootTargetError",
     "RunawayChainError",
+    "SnapshotCorruptError",
+    "SnapshotMidStepError",
+    "SnapshotSerializationError",
     "UnhandledEventError",
     "TransitionFailedError",
     "WrongThreadError",

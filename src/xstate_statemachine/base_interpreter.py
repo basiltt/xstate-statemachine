@@ -65,6 +65,8 @@ from .events import (
     system_event,
 )
 from .exceptions import (
+    InvalidEventError,
+    SnapshotMidStepError,
     NotSupportedError,
     InvalidEventPayloadError,
     UnknownEventError,
@@ -237,20 +239,80 @@ class _SafePlugin:
 
         @functools.wraps(attribute)
         def _guarded(*args: Any, **kwargs: Any) -> Any:
-            """Invokes the hook, logging and swallowing any failure."""
+            """Invokes the hook, containing any failure.
+
+            🏛️ #114: `asyncio.CancelledError` is a `BaseException` since
+            3.8, so the old `except Exception` let a plugin that raised it
+            (or `concurrent.futures.CancelledError`, which IS it) unwind the
+            run loop -- leaving `status="running"` on a dead machine with
+            every pending receipt hung. A hook raising CancelledError is a
+            plugin bug like any other and is contained the same way. Real
+            task cancellation never passes through a plugin hook.
+
+            🔔 #127: an `async def` override returns a coroutine the engine
+            cannot await from a synchronous dispatch site. It used to be
+            dropped on the floor with only a Python `RuntimeWarning: coroutine
+            was never awaited`. Now it is closed explicitly and reported
+            through the same failure surface as a raising hook.
+            """
             try:
-                return attribute(*args, **kwargs)
-            except Exception:
-                logger.error(
-                    "🔌 Plugin '%s' raised in '%s'; ignoring so the "
-                    "interpreter keeps running.",
-                    type(plugin).__name__,
+                result = attribute(*args, **kwargs)
+            except asyncio.CancelledError as exc:
+                _SafePlugin._report(plugin, name, exc, args)
+                return None
+            except Exception as exc:
+                _SafePlugin._report(plugin, name, exc, args)
+                return None
+            if inspect.iscoroutine(result):
+                result.close()
+                _SafePlugin._report(
+                    plugin,
                     name,
-                    exc_info=True,
+                    TypeError(
+                        f"{type(plugin).__name__}.{name} is 'async def'; "
+                        f"plugin hooks are synchronous callbacks and are "
+                        f"never awaited. Make it a plain 'def' and schedule "
+                        f"your own task inside it if you need async work."
+                    ),
+                    args,
                 )
                 return None
+            return result
 
         return _guarded
+
+    @staticmethod
+    def _report(
+        plugin: Any, hook: str, exc: BaseException, args: tuple
+    ) -> None:
+        """Log a contained hook failure and offer it to `on_plugin_error`.
+
+        🏛️ #127: swallowing a hook failure protected the machine but left
+        the *plugin author* with no programmatic signal. The interpreter
+        (``args[0]`` by hook convention) now records it on
+        `last_plugin_error` and fires `on_plugin_error` on every OTHER
+        plugin, so a metrics exporter can count observability failures
+        without the failing plugin being able to recurse into itself.
+        """
+        logger.error(
+            "🔌 Plugin '%s' failed in '%s'; contained so the interpreter "
+            "keeps running: %r",
+            type(plugin).__name__,
+            hook,
+            exc,
+            exc_info=isinstance(exc, Exception),
+        )
+        interp = args[0] if args else None
+        if interp is None or not hasattr(interp, "_plugins"):
+            return
+        interp.last_plugin_error = (type(plugin).__name__, hook, exc)
+        if hook == "on_plugin_error":
+            return  # never recurse
+        for other in interp._plugins:
+            inner = other.wrapped if isinstance(other, _SafePlugin) else other
+            if inner is plugin:
+                continue  # the failing plugin never hears about itself
+            other.on_plugin_error(interp, plugin, hook, exc)
 
     def __eq__(self, other: Any) -> bool:
         """Compares against the wrapped plugin so `in` checks work."""
@@ -448,6 +510,16 @@ class BaseInterpreter(Generic[TContext]):
         self.last_transition_ok: bool = True
         #: The exception behind the most recent `last_transition_ok=False`.
         self._last_action_error: Optional[BaseException] = None
+        #: 🔔 #133: a non-fatal built-in failure recorded mid-transition and
+        #: published by the transition epilogue.
+        self._step_soft_error: Optional[BaseException] = None
+        #: ⏱️ Live clock handles per owning state id. Declared here so the
+        #: shared restore / dormancy logic (#128) can read it; each engine
+        #: re-binds the same attribute in its own `__init__`.
+        self._timer_handles: Dict[str, List[Any]] = {}
+        #: 🔌 #127: `(plugin class name, hook name, exception)` of the most
+        #: recent contained plugin-hook failure, or ``None``.
+        self.last_plugin_error: Optional[Tuple[str, str, BaseException]] = None
         # 🧾 Stack of open action-error transactions; see
         #    `_execute_lifecycle_actions`. Each entry is
         #    ``(transition, failures_collected_so_far)``.
@@ -460,9 +532,13 @@ class BaseInterpreter(Generic[TContext]):
         #: Events held back under ``onUnhandled: "defer"``, replayed after
         #: the next successful transition. Empty under other policies.
         self._deferred_events: List[Event] = []
-        #: 🧾 #84: ids of events `onUnhandled: "defer"` held during the
-        #: current step, so `send(wait=True)` can report `deferred=True`.
-        self._deferred_this_step: Set[int] = set()
+        #: 🧾 #84/#106: the event objects `onUnhandled: "defer"` held during
+        #: the CURRENT step, so `send(wait=True)` can report `deferred=True`.
+        #: Holds references (not `id()`s -- an id is recycled the moment
+        #: its object dies, which mislabelled unrelated later events) and is
+        #: cleared at the start of every step, so it never outgrows one
+        #: step's worth of deferrals.
+        self._deferred_this_step: List[Any] = []
         #: Listeners registered via :meth:`on`, keyed by emitted event type.
         self._emit_listeners: Dict[str, List[Callable[[Any], None]]] = {}
         #: Cancellation callbacks for pending delayed sends, keyed by send id.
@@ -483,6 +559,9 @@ class BaseInterpreter(Generic[TContext]):
         #: the engine's `start()` resume path, which re-invokes every
         #: dormant invoke in the restored configuration.
         self._restart_services_on_start: bool = False
+        #: ⏱️ #128: re-arm `after` timers of the restored configuration on
+        #: the next `start()`.
+        self._restart_timers_on_start: bool = False
         #: Maps a spawned actor id to the `services` key it came from, so a
         #: snapshot can record enough to rebuild it.
         self._actor_sources: Dict[str, str] = {}
@@ -949,6 +1028,79 @@ class BaseInterpreter(Generic[TContext]):
         )
         return json_snapshot
 
+    def _report_resolve_error(self, exc: BaseException, event: Any) -> None:
+        """Fire `on_resolve_error` for an unresolvable transition target (#134).
+
+        The third per-transition failure category alongside
+        `on_action_error` and `on_guard_error`; observability code no longer
+        has to poll `last_error` for this one case.
+        """
+        for plugin in self._plugins:
+            plugin.on_resolve_error(self, exc, event)
+
+    def _detach_clock(self) -> None:
+        """Unregister this interpreter's settle hook from a `SimulatedClock`
+        (#115). Called from both engines' `_teardown`. Every restored /
+        restarted interpreter used to leave its bound method in the clock's
+        settler list forever, keeping the whole object graph alive and
+        growing per-tick settle cost without bound."""
+        detach = getattr(self.clock, "_detach", None)
+        if callable(detach):
+            for hook in (
+                getattr(self, "_settle_for_clock", None),
+                getattr(self, "tick", None),
+            ):
+                if hook is not None:
+                    detach(hook)
+
+    def _publish_soft_step_error(self) -> None:
+        """Surface a non-fatal built-in failure recorded mid-step (#133).
+
+        A `sendTo` whose target does not resolve cannot roll the transition
+        back -- the other actions ran and the target state was entered --
+        but the step did not do what the config claimed. Both transition
+        epilogues (external and internal) call this after their own
+        `last_transition_ok = True` reset, so the receipt / `last_error`
+        report the failure on the same channel an action error uses.
+        """
+        soft = self._step_soft_error
+        if soft is not None:
+            self._step_soft_error = None
+            self.last_transition_ok = False
+            self._last_action_error = soft
+
+    def _repair_configuration(self) -> None:
+        """Make the live configuration legal: every active node's ancestors
+        are active too (#112).
+
+        A settling pass that trips its budget mid-microstep can leave a leaf
+        whose parent chain was exited but never re-entered. `from_snapshot`
+        already re-derives ancestors from leaves, so a persist/restore
+        silently "fixed" the live machine -- meaning the two disagreed.
+        Apply the same rule in place so what runs is what would restore.
+        """
+        for node in list(self._active_state_nodes):
+            ancestor = node.parent
+            while ancestor is not None:
+                self._active_state_nodes.add(ancestor)
+                ancestor = ancestor.parent
+
+    def _step_in_flight(self) -> bool:
+        """Engine hook: is a macrostep currently executing? (#102)"""
+        return bool(
+            getattr(self, "_processing", False)
+            or getattr(self, "_is_processing", False)
+        )
+
+    def _active_leaf_present(self) -> bool:
+        """``True`` when the configuration contains at least one atomic
+        state -- i.e. it is a legal SCXML configuration (#102/#108)."""
+        return any(
+            not node.states or node.is_final
+            for node in self._active_state_nodes
+            if node is not self.machine
+        )
+
     def get_persisted_snapshot(
         self, _seen: Optional[Set[int]] = None
     ) -> Dict[str, Any]:
@@ -956,6 +1108,12 @@ class BaseInterpreter(Generic[TContext]):
 
         Mirrors XState's ``actor.getPersistedSnapshot()``. Unlike the earlier
         shallow form, this captures the *whole* actor hierarchy.
+
+        Raises:
+            SnapshotMidStepError: if a macrostep is in flight (#102). Between
+                a transition's exit set and entry set the configuration has
+                no leaf; persisting that would restore as a permanently inert
+                machine reporting ``running``.
 
         🏛️ Architecture decision: child actors were previously omitted
         entirely. A parent with live children serialised to just
@@ -967,6 +1125,12 @@ class BaseInterpreter(Generic[TContext]):
         Returns:
             Dict[str, Any]: The persisted snapshot.
         """
+        # 🛡️ #102: a snapshot is only meaningful at a macrostep boundary.
+        #    `_step_in_flight()` is engine-specific (`_processing` on the
+        #    async engine, `_is_processing` on the sync one) and is True
+        #    exactly while exit -> actions -> enter is open.
+        if self._step_in_flight() and not self._active_leaf_present():
+            raise SnapshotMidStepError(self.id)
         # 🔁 Guard against an actor cycle. The registry makes a cycle
         #    constructible, and unbounded recursion would blow the stack
         #    instead of failing cleanly.
@@ -1107,6 +1271,8 @@ class BaseInterpreter(Generic[TContext]):
         *,
         verify_machine_hash: bool = True,
         restart_services: bool = False,
+        restart_timers: Optional[bool] = None,
+        clock: Optional[Clock] = None,
     ) -> TInterpreter:
         """Creates and restores an interpreter instance from a saved snapshot.
 
@@ -1139,6 +1305,25 @@ class BaseInterpreter(Generic[TContext]):
                 service therefore runs again; for an order placement that
                 means a client-supplied idempotency key. Opt-in for exactly
                 that reason. Default `False` keeps the static restore.
+
+                ⚠️ **`status` is not a liveness signal between
+                `from_snapshot()` and `start()`** (#135). The restored
+                object reports the persisted ``"running"`` immediately --
+                meaning "the state machine is in a running configuration",
+                not "a loop is driving it". Nothing is re-invoked and no
+                timer is re-armed until `start()` runs. In that window (and
+                after a static restore) check `has_dormant_invocations` and
+                `has_dormant_timers`, which are `True` exactly while work
+                the configuration relies on is parked.
+            restart_timers (Optional[bool]): When `True`, `start()` re-arms
+                every `after` timer of the restored configuration **from
+                zero** (#128) -- a snapshot records that a timer was pending,
+                not how far along it was. Defaults to the value of
+                `restart_services`, so "bring it all back" is one flag.
+            clock (Optional[Clock]): Clock for the restored interpreter
+                (#117). The other half of construct-then-restore: without
+                it every restored machine ran on `RealClock`, which broke
+                `SimulatedClock`-based deterministic replay.
 
         Returns:
             BaseInterpreter[TContext]: A new interpreter instance
@@ -1183,8 +1368,18 @@ class BaseInterpreter(Generic[TContext]):
         )
         snapshot = persistence.upcast(snapshot, version)
 
+        # 🛡️ #110: validate the payload SHAPE before touching it, so a
+        #    corrupted blob is a typed `SnapshotCorruptError` rather than a
+        #    bare KeyError/AttributeError -- or, worse, silently accepted.
+        persistence.check_shape(snapshot)
+
         # 🧪 Create a new instance of the correct interpreter class (sync/async)
-        interpreter = cls(machine)
+        # ⏱️ #117: honour an injected clock -- the other half of the
+        #    construct-then-restore lifecycle. Without it every restored
+        #    machine ran on `RealClock`, breaking deterministic replay.
+        interpreter = (
+            cls(machine, clock=clock) if clock is not None else cls(machine)
+        )
         # 🧊 #46: layer the persisted context over the machine's CURRENT
         #    defaults, and deep-copy so the caller's parsed dict does not
         #    alias live state. Persisted values win for every key present;
@@ -1199,7 +1394,19 @@ class BaseInterpreter(Generic[TContext]):
             interpreter.context = {**interpreter.context, **restored}
         else:
             interpreter.context = restored
+        # 🏛️ #135: `status` is restored as persisted -- "running" means the
+        #    STATE MACHINE is in a running configuration, not that a loop is
+        #    driving it. Liveness after a restore is `has_dormant_invocations`
+        #    / `has_dormant_timers` (#128), documented on both. See the
+        #    `restart_services` note in the docstring.
         interpreter.status = snapshot["status"]
+        # ⏱️ #128: `after` timers are not persisted (a deadline is relative
+        #    to a clock that no longer exists). Opt in to re-arming them from
+        #    zero on `start()`; defaults to the `restart_services` choice so
+        #    the common "bring it all back" call is one flag.
+        interpreter._restart_timers_on_start = (
+            restart_services if restart_timers is None else restart_timers
+        )
 
         # 🌳 Reconstruct the set of active state nodes from their IDs.
         #    Prefer the full `configuration` when present (it includes
@@ -1340,6 +1547,42 @@ class BaseInterpreter(Generic[TContext]):
     ) -> bool:
         """Engine-specific: is a service/actor currently running for this?"""
         raise NotImplementedError  # pragma: no cover
+
+    @property
+    def has_dormant_timers(self) -> bool:
+        """``True`` when an active state declares an ``after`` timer that is
+        not currently armed (#128) -- the case after a static restore.
+
+        `from_snapshot()` cannot know how much of a delay had elapsed, so
+        it does not re-arm timers on its own. `start(restart_services=True)`
+        (or `restart_timers=True`) re-arms them from zero; otherwise this
+        flag tells a health check that a deadline the configuration relies
+        on will never fire.
+        """
+        if not any(state.after for state in self._active_state_nodes):
+            return False
+        return not any(
+            self._timer_handles.get(state.id)
+            for state in self._active_state_nodes
+            if state.after
+        )
+
+    def _rearm_dormant_timers(self) -> int:
+        """Arm every ``after`` timer of the active configuration that has
+        no live handle (#128). Returns how many were armed.
+
+        Deadlines restart from zero: a snapshot records that a timer was
+        pending, not how far along it was. That is the SCXML `<send delay>`
+        contract -- scheduled relative to when the actor (re)starts -- and
+        is strictly better than a timer that never fires.
+        """
+        armed = 0
+        for state in list(self._active_state_nodes):
+            if not state.after or self._timer_handles.get(state.id):
+                continue
+            self._schedule_state_timers(state)
+            armed += 1
+        return armed
 
     def _restart_dormant_invocations(self) -> None:
         """Re-invoke every dormant invoke through the normal entry path.
@@ -1606,7 +1849,11 @@ class BaseInterpreter(Generic[TContext]):
             for processing.
 
         Raises:
-            TypeError: If the input cannot be resolved into a valid event format.
+            InvalidEventError: If the input cannot be resolved into a valid
+                event -- a non-``str`` ``type``, a dict without ``type``, or
+                an unsupported object (#113). A typed member of the
+                documented hierarchy, so ``except XStateMachineError``
+                catches it.
         """
         # 1️⃣ Input is a simple string: create a new Event.
         if isinstance(event_or_type, str):
@@ -1615,7 +1862,17 @@ class BaseInterpreter(Generic[TContext]):
         # 2️⃣ Input is a dictionary: convert to an Event.
         if isinstance(event_or_type, dict):
             data = event_or_type.copy()
-            event_type = data.pop("type", "UnnamedEvent")
+            if "type" not in data:
+                raise InvalidEventError(
+                    "A dict event must carry a 'type' key; got keys "
+                    f"{sorted(map(str, data))}."
+                )
+            event_type = data.pop("type")
+            if not isinstance(event_type, str) or not event_type:
+                raise InvalidEventError(
+                    f"Event 'type' must be a non-empty str, got "
+                    f"{type(event_type).__name__}: {event_type!r}."
+                )
             return Event(type=event_type, payload=data)
 
         # 3️⃣ Input is already a native Event instance: use as-is.
@@ -1632,8 +1889,9 @@ class BaseInterpreter(Generic[TContext]):
             return event_or_type  # type: ignore[return-value]
 
         # 5️⃣ Anything else is an unsupported format.
-        raise TypeError(
-            f"Unsupported event type passed to send(): {type(event_or_type)}"
+        raise InvalidEventError(
+            f"Unsupported event type passed to send(): {type(event_or_type).__name__}. "
+            f"Pass a str, a dict with a 'type' key, or an Event."
         )
 
     # -------------------------------------------------------------------------
@@ -2460,6 +2718,7 @@ class BaseInterpreter(Generic[TContext]):
         # 6. Notify plugins and subscribers of the completed transition.
         if not failed_actions:
             self.last_transition_ok = True
+        self._publish_soft_step_error()  # #133
         for plug in self._plugins:
             plug.on_transition(
                 self,
@@ -2506,6 +2765,7 @@ class BaseInterpreter(Generic[TContext]):
             return
         if not failed:
             self.last_transition_ok = True
+        self._publish_soft_step_error()  # #133
         for plug in self._plugins:
             plug.on_transition(
                 self,
@@ -2654,13 +2914,30 @@ class BaseInterpreter(Generic[TContext]):
 
         elif canonical == SEND_TO:
             actor = self._resolve_actor_target(params.get("to"), event)
+            target_event = self._resolve_event_spec(params.get("event"), event)
             if actor is None:
+                # 🔔 #133: an accepted-for-delivery event that reaches no
+                #    destination is a DROP, and every other drop site fires
+                #    the hook. Also record it as this step's error so a
+                #    `Receipt` / `last_error` shows the transition did not do
+                #    what it said.
                 logger.warning(
                     "⚠️ sendTo could not resolve target %r; event dropped.",
                     params.get("to"),
                 )
+                for plugin in self._plugins:
+                    plugin.on_event_dropped(
+                        self, target_event, "unresolved_target"
+                    )
+                # Recorded as a SOFT step error: the transition still commits
+                # (the other actions ran), but the epilogue must not report
+                # a clean step. `_step_soft_error` survives the epilogue's
+                # `last_transition_ok = True` reset.
+                self._step_soft_error = ActorSpawningError(
+                    f"sendTo target {params.get('to')!r} did not resolve to a "
+                    f"live actor; '{target_event.type}' was not delivered."
+                )
                 return
-            target_event = self._resolve_event_spec(params.get("event"), event)
             delay = self._resolve_delay(params.get("delay"), event)
             await self._deliver(actor, target_event, delay, params.get("id"))
 
@@ -2694,8 +2971,20 @@ class BaseInterpreter(Generic[TContext]):
                 if isinstance(error_payload, BaseException)
                 else RuntimeError(str(error_payload))
             )
+            # 🎯 #130: `src` must equal the invoke's DECLARED id for the
+            #    parent's `onError` collector to match; the runtime actor id
+            #    is `parent:declared_id` (or `parent:src:uuid` when
+            #    anonymous). Strip the parent prefix so an escalation
+            #    reaches `onError` exactly like a child that ended in
+            #    `error` does. The event `type` keeps the runtime id -- a
+            #    literal `on: {"xstate.error.actor.p:kid": ...}` still works.
+            declared = self.id
+            if self.parent is not None and declared.startswith(
+                self.parent.id + ":"
+            ):
+                declared = declared[len(self.parent.id) + 1 :].split(":")[0]
             escalate_event = ErrorEvent(
-                type=f"xstate.error.actor.{self.id}", error=err, src=self.id
+                type=f"xstate.error.actor.{self.id}", error=err, src=declared
             )
             if self.parent is not None:
                 await self._deliver(self.parent, escalate_event, None, None)
@@ -3332,7 +3621,7 @@ class BaseInterpreter(Generic[TContext]):
             # 🧾 #84: a `wait=True` caller must not read the resulting
             #    `changed=False` as "processed, no-op". Record the hold so
             #    the receipt can say `deferred=True`.
-            self._deferred_this_step.add(id(event))
+            self._deferred_this_step.append(event)
             self._notify_unhandled(event, active, disposition)
             logger.debug(
                 "📨 Deferred '%s' (%d held).",
@@ -3744,9 +4033,21 @@ class BaseInterpreter(Generic[TContext]):
             #    but it routes through `inv.on_error` the same way.
             if isinstance(event, (DoneEvent, ErrorEvent)):
                 for inv in current.invoke:
-                    if event.src == inv.id:
-                        for t in inv.on_done + inv.on_error:
-                            if t.event == event.type and _passes(t):
+                    if event.src != inv.id:
+                        continue
+                    for t in inv.on_done + inv.on_error:
+                        if t.event == event.type and _passes(t):
+                            eligible.append(t)
+                    # 🎯 #130: an `escalate` from the invoked child arrives as
+                    #    `ErrorEvent(type="xstate.error.actor.<runtime id>")`,
+                    #    not `error.platform.<id>`. It is a failure of THIS
+                    #    invocation and XState routes it to `onError`; match
+                    #    the declared `onError` transitions by `src` alone.
+                    if isinstance(event, ErrorEvent) and event.type.startswith(
+                        "xstate.error.actor."
+                    ):
+                        for t in inv.on_error:
+                            if _passes(t):
                                 eligible.append(t)
 
             current = current.parent
@@ -4007,6 +4308,15 @@ class BaseInterpreter(Generic[TContext]):
         Args:
             state (StateNode): The state being entered.
         """
+        self._schedule_state_timers(state)
+        self._schedule_state_invokes(state)
+
+    def _schedule_state_timers(self, state: StateNode) -> None:
+        """Arm every ``after`` timer *state* declares (#128 split).
+
+        Separate from invoke scheduling so a restore can re-arm timers
+        without re-invoking services (or vice versa).
+        """
         # 🕒 Schedule `after` timers.
         for delay_ms, transitions in state.after.items():
             # 🏷️ Symbolic delays resolve through MachineLogic.delays.
@@ -4035,6 +4345,8 @@ class BaseInterpreter(Generic[TContext]):
                     state.id,
                 )
 
+    def _schedule_state_invokes(self, state: StateNode) -> None:
+        """Start every ``invoke`` *state* declares (#128 split)."""
         # 📞 Schedule `invoke` services.
         for invocation in state.invoke:
             service_callable = (
@@ -4217,6 +4529,20 @@ class BaseInterpreter(Generic[TContext]):
 
         # 🎯 Accept both '#machine.a.b' and 'machine.a.b' spellings.
         normalised = target[1:] if target.startswith("#") else target
+        # 🏛️ #132: a BARE name (no dot) is a convenience, not a guess. If more
+        #    than one state in the whole machine has that bare name, the
+        #    guard used to match whichever happened to be active -- a
+        #    silently wrong answer in a parallel machine. Reject at first
+        #    use with a typed error naming every candidate.
+        if "." not in normalised:
+            matches = [
+                sid for sid in self.machine.state_ids_by_bare_name(normalised)
+            ]
+            if len(matches) > 1:
+                raise InvalidConfigError(
+                    f"'stateIn' guard '{target}' is ambiguous: it names "
+                    f"{sorted(matches)}. Use a fully qualified id."
+                )
         for node in self._active_state_nodes:
             if node.id == normalised or node.id.endswith("." + normalised):
                 return True

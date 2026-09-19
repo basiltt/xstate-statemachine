@@ -370,6 +370,17 @@ class SimulatedClock:
         if settle not in self._settlers:
             self._settlers.append(settle)
 
+    def _detach(self, settle: Callable[[], Any]) -> None:
+        """Interpreter hook: unregister a settle callable (#115).
+
+        The pair to `_attach`. Bound methods compare equal by (self, func),
+        so the interpreter can pass the same attribute it registered.
+        """
+        try:
+            self._settlers.remove(settle)
+        except ValueError:
+            pass
+
 
 class _MustAwait:
     """Awaitable that raises if garbage-collected without being awaited.

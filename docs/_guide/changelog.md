@@ -17,6 +17,75 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Fixed
 
+- **Round-4 re-verification findings** (#102–#138; reopened #91, #99).
+  Thirty-nine issues, every one reproduced against `main` with an
+  independent probe before the fix and pinned in
+  `tests/test_round4_findings.py`. Two blockers first:
+  - **Mid-macrostep snapshots are refused** (#102): between a transition's
+    exit set and entry set the configuration has no leaf; a snapshot taken
+    there persisted `state_ids: []` and restored as a permanently inert
+    machine reporting `running`. `get_persisted_snapshot()` now raises
+    `SnapshotMidStepError` in that window.
+  - **`SyncInterpreter.start()` terminates** (#103): a cross-region `always`
+    into an invoking state re-armed the invoke on every settling pass and
+    the microstep budget restarted at 0 each time, so it tripped forever.
+    The budget is now per macrostep. A settle trip is also observable and
+    leaves a legal configuration (#112).
+  - **Engine parity.** A plain-sync `invoke` completes at the same point on
+    both engines (#116 — the identical `(GO, CANCEL)×10` script gave
+    `ok=10` on sync and `cancel=10` on async; the async engine now runs a
+    non-coroutine service inline, and the sync engine queues an in-step
+    completion ahead of the inbox, so `send_events([GO, X])` and
+    `send(GO); send(X)` agree too); an unhandled invoked-child
+    failure fails the parent on both (#99); `send()` to a stopped machine,
+    the init `on_transition` record, and `stop()`'s abandoned events fire
+    the same hooks on both (#123, #124, #129); the async trip spares engine
+    completions like the sync one (#120).
+  - **Async `send()` under `OverflowPolicy.BLOCK` enqueues eagerly** when
+    the inbox has room (#104) — a fire-and-forget send was silently lost
+    even on an empty inbox. An external producer sending during an
+    in-flight step is no longer charged to `maxIterations` (#105): the
+    self-send gate is now "issued from one of this interpreter's actions",
+    tracked per task, not "the loop is busy".
+  - **Persistence.** The priority (fired-timer) lane is persisted (#107);
+    `after` timers can be re-armed on restore with `restart_timers=True`
+    and `has_dormant_timers` reports when they are not (#128);
+    `from_snapshot(clock=)` (#117); malformed snapshots raise
+    `SnapshotCorruptError` (#110); non-JSON pending data raises
+    `SnapshotSerializationError` instead of being stringified (#131);
+    `AfterEvent` lateness telemetry round-trips (#118); `status` after a
+    restore is documented as not-a-liveness-signal (#135).
+  - **Provenance.** `send(engine_event, wait=True)` no longer strips the
+    engine marker (#111); the marker survives `deepcopy` / `pickle` (#138);
+    `is_system_event`, `system_event`, `DoneEvent`, `AfterEvent`,
+    `ENGINE_EVENT_SHAPES` are exported and documented (#137);
+    `Receipt.deferred` bookkeeping is per-step and by reference, so it can
+    neither grow nor mislabel an unrelated later event (#106); a deferred
+    event's replay is its own macrostep and no longer folds into the
+    triggering event's `Receipt` (#125).
+  - **Actors.** `done.invoke` carries the child's declared `output`, not
+    its private context (#109); `escalate` from an invoked child reaches
+    the parent's `onError` (#130); a `sendTo` with no live target fires
+    `on_event_dropped(reason="unresolved_target")` and marks the step
+    (#133).
+  - **Validation.** A transition targeting the machine root is rejected at
+    build (#108); a bare `stateIn` name that is ambiguous in the machine is
+    rejected at first use (#132); a self-referential config dict raises
+    `InvalidConfigError` instead of `RecursionError` (#136); a non-`str`
+    event `type` raises `InvalidEventError` (also a `TypeError`) instead
+    of escaping the hierarchy (#113); two *config* names that normalise
+    equal and resolve to one callable warn (#91); a duck-typed logic
+    object is copied like a `MachineLogic` (#121).
+  - **Plugins.** A hook raising `asyncio.CancelledError` is contained like
+    any other failure, and an externally cancelled run loop flips `status`
+    to `error` and fails pending receipts instead of leaving a dead machine
+    reporting `running` (#114); an `async def` hook is reported via the new
+    `on_plugin_error` / `last_plugin_error` instead of silently never
+    running (#127); `on_resolve_error` (#134); `LoggingInspector` redacts
+    sensitive keys by default (#126).
+  - **Timers.** `SyncInterpreter.tick()` drains chained due deadlines in
+    one call (#122); `SimulatedClock` detaches an interpreter's settle hook
+    on teardown (#115).
 - **Round-3 re-verification findings** (#84–#99; reopened #31, #77, #79).
   Every item was reproduced against `main` before the fix and pinned in
   `tests/test_round3_findings.py`.
@@ -159,6 +228,17 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Added
 
+- **`SnapshotMidStepError`, `SnapshotCorruptError`,
+  `SnapshotSerializationError`, `InvalidEventError`, `RootTargetError`** —
+  typed members of the `XStateMachineError` hierarchy for the conditions
+  above.
+- **`from_snapshot(clock=, restart_timers=)`**, **`has_dormant_timers`**.
+- **`on_resolve_error`**, **`on_plugin_error`** plugin hooks;
+  **`interpreter.last_plugin_error`**.
+- **`LoggingInspector(redact_keys=, log_context=)`**, `redact()`,
+  `DEFAULT_REDACT_KEYS`.
+- Package-root exports: `is_system_event`, `system_event`, `DoneEvent`,
+  `AfterEvent`, `ENGINE_EVENT_SHAPES`.
 - **`interp.last_error`** — the exception behind the most recent
   `last_transition_ok=False`, on both engines, so a fire-and-forget caller
   can detect a failed step without `wait=True`.
@@ -213,6 +293,10 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Changed
 
+- **`Receipt` gained a fourth field, `deferred`** (#84 in this release;
+  flagged as undeclared by #119). A positional destructure written for
+  0.8.0 — `state_ids, changed, error = receipt` — now raises `ValueError`.
+  Destructure by attribute, or `state_ids, changed, error, _ = receipt`.
 - **`WrongThreadError` message corrected** (#37). It claimed events sent
   from a foreign thread "would be silently lost", which was false for the
   correct 0.7.x idiom `asyncio.run_coroutine_threadsafe(interp.send(…),

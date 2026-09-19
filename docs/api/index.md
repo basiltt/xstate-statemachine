@@ -717,7 +717,7 @@ ensuring clean cancellation when states are exited.
 
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
-| `Interpreter.from_snapshot(json_str, machine, *, verify_machine_hash=True, restart_services=False)` | `(str, MachineNode, bool, bool) -> Interpreter` | `Interpreter` | Restores an interpreter from a snapshot. Does **not** re-run entry actions or restart timers/services by default. Raises `SnapshotVersionError` for a snapshot newer than this library supports, and `SnapshotDriftError` on a machine id or structural-hash mismatch (skip the hash check with `verify_machine_hash=False`). `restart_services=True` **[wave 3]** (#44) makes the restored interpreter's `start()` re-invoke every `invoke` in the restored configuration from scratch (not resumed) -- opt in only when the service is safe to run again (e.g. guarded by a client-supplied idempotency key). |
+| `Interpreter.from_snapshot(json_str, machine, *, verify_machine_hash=True, restart_services=False, restart_timers=None, clock=None)` | `(str, MachineNode, bool, bool) -> Interpreter` | `Interpreter` | Restores an interpreter from a snapshot. Does **not** re-run entry actions or restart timers/services by default. Raises `SnapshotVersionError` for a snapshot newer than this library supports, and `SnapshotDriftError` on a machine id or structural-hash mismatch (skip the hash check with `verify_machine_hash=False`). `restart_services=True` **[wave 3]** (#44) makes the restored interpreter's `start()` re-invoke every `invoke` in the restored configuration from scratch (not resumed) -- opt in only when the service is safe to run again (e.g. guarded by a client-supplied idempotency key). |
 
 #### Properties
 
@@ -834,7 +834,7 @@ injected `Clock` (thread-free; #49/#50) rather than a background thread.
 
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
-| `SyncInterpreter.from_snapshot(json_str, machine, *, verify_machine_hash=True, restart_services=False)` | `(str, MachineNode, bool, bool) -> SyncInterpreter` | `SyncInterpreter` | Restores an interpreter from a snapshot. Raises `SnapshotVersionError`/`SnapshotDriftError` as described for `Interpreter.from_snapshot` above. `restart_services=True` **[wave 3]** (#44) re-invokes every dormant `invoke` from scratch when the restored interpreter starts. |
+| `SyncInterpreter.from_snapshot(json_str, machine, *, verify_machine_hash=True, restart_services=False, restart_timers=None, clock=None)` | `(str, MachineNode, bool, bool) -> SyncInterpreter` | `SyncInterpreter` | Restores an interpreter from a snapshot. Raises `SnapshotVersionError`/`SnapshotDriftError` as described for `Interpreter.from_snapshot` above. `restart_services=True` **[wave 3]** (#44) re-invokes every dormant `invoke` from scratch when the restored interpreter starts. |
 
 #### Properties
 

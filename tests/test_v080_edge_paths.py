@@ -206,13 +206,19 @@ class TestBuiltinParamHint(_Quiet):
 # 📸 base_interpreter.py — from_snapshot when context is not a dict
 # -----------------------------------------------------------------------------
 class TestSnapshotNonDictContext(_Quiet):
-    def test_non_dict_context_is_assigned_wholesale(self) -> None:
+    def test_non_dict_context_is_refused_typed(self) -> None:
+        """Context is a mapping by contract (`models.py`, the Context
+        guide). #110: a snapshot whose `context` is not an object is
+        malformed and is refused with a typed error, not restored into a
+        machine every `assign` would then crash on."""
+        from src.xstate_statemachine import SnapshotCorruptError
+
         cfg = {"id": "m", "initial": "a", "states": {"a": {}}}
         i = SyncInterpreter(create_machine(cfg)).start()
         i.context = ["not", "a", "dict"]  # type: ignore[assignment]
         snap = i.get_snapshot()
-        j = SyncInterpreter.from_snapshot(snap, create_machine(cfg))
-        self.assertEqual(j.context, ["not", "a", "dict"])
+        with self.assertRaises(SnapshotCorruptError):
+            SyncInterpreter.from_snapshot(snap, create_machine(cfg))
 
 
 # -----------------------------------------------------------------------------

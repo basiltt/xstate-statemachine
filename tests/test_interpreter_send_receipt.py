@@ -408,7 +408,13 @@ class TestQueueDepthAndBound(_Quiet):
 
         depth, dropped, logs = _run(main())
         self.assertEqual(depth, 3)
-        self.assertEqual(dropped, [("TICK", "queue_full")] * 2)
+        # #129: `stop()` now also reports the events still queued as
+        # dropped (reason "stopped"); this test is about the DROP_NEWEST
+        # refusals, so filter to those.
+        self.assertEqual(
+            [d for d in dropped if d[1] == "queue_full"],
+            [("TICK", "queue_full")] * 2,
+        )
         self.assertTrue(any("dropped" in line.lower() for line in logs))
 
     def test_send_events_honours_the_bound(self) -> None:

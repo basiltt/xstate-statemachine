@@ -557,9 +557,11 @@ class TestFactory(unittest.TestCase):
         except Exception as e:
             self.fail(f"Factory unexpectedly raised {type(e).__name__}: {e}")
 
-        # ✅ Assert: The machine should be created successfully, and its `logic`
-        # attribute should be the exact invalid object that was passed in.
-        self.assertIs(machine.logic, not_logic_instance)
+        # ✅ Assert: The machine should be created successfully. Its `logic`
+        # is a machine-owned COPY of the object passed in (#92/#121): the
+        # factory never mutates caller state, duck-typed or not.
+        self.assertIsNot(machine.logic, not_logic_instance)
+        self.assertIsInstance(machine.logic, NotLogic)
 
     # -------------------------------------------------------------------------
     # ✅ Complex Configuration Tests

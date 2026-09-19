@@ -19,6 +19,7 @@ import unittest
 from typing import Any, Dict
 
 from src.xstate_statemachine import (
+    SnapshotMidStepError,
     Interpreter,
     MachineLogic,
     SyncInterpreter,
@@ -60,21 +61,29 @@ class TestValueNeverRaisesOnLiveMachine(_Quiet):
             ).start()
             await i.send("GO")
             values = []
+            refused = 0
             for _ in range(30):
-                snap = i.get_persisted_snapshot()  # must not raise
-                values.append(snap["value"])
+                # `value` itself never raises (the original review finding).
+                values.append(i.value)
+                # 🏛️ #102: a SNAPSHOT mid-transition is refused, typed. The
+                #    old contract let it succeed with `state_ids: []`, which
+                #    restored as a permanently inert machine reporting
+                #    `running`. `{}` is an honest answer for `value`; it is
+                #    not a restorable configuration.
+                try:
+                    i.get_persisted_snapshot()
+                except SnapshotMidStepError:
+                    refused += 1
                 await asyncio.sleep(0.01)
             await i.stop()
-            return values
+            return values, refused
 
-        values = asyncio.run(main())
-        # Never an exception. Mid-transition the source has been exited and
-        # the target not yet entered, so the honest answer is `{}` (no
-        # active leaf) -- the same shape as "not started" -- rather than a
-        # fabricated pre- or post-state. Before and after: real values.
+        values, refused = asyncio.run(main())
         self.assertIn("a", values[:2])
         self.assertEqual(values[-1], {"b": "b1"})
         self.assertTrue(all(v in ("a", {}, {"b": "b1"}) for v in values))
+        self.assertGreater(refused, 0, "the 150 ms window must be refused")
+        self.assertLess(refused, 30, "settled snapshots must still succeed")
 
     def test_value_from_entry_action_does_not_raise(self) -> None:
         seen = []
