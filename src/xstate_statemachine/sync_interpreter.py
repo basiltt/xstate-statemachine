@@ -508,7 +508,12 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         self._warn_reserved_payload_keys(event_obj)
         self._check_strict(event_obj)  # #51
         config_before = frozenset(self._active_state_nodes)
-        context_before = copy.deepcopy(self.context) if wait else None
+        # ⚡ see Interpreter._run_event_loop: no actions -> context is fixed.
+        context_before = (
+            copy.deepcopy(self.context)
+            if wait and not self.machine.context_is_immutable
+            else None
+        )
         self.last_transition_ok = True
         step_error: Optional[BaseException] = None
         self._deferred_this_step.clear()  # #106: per-step scope
@@ -531,9 +536,8 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             return None
         if step_error is None and not self.last_transition_ok:
             step_error = self._last_action_error
-        changed = (
-            frozenset(self._active_state_nodes) != config_before
-            or self.context != context_before
+        changed = frozenset(self._active_state_nodes) != config_before or (
+            context_before is not None and self.context != context_before
         )
         deferred = any(ev is event_obj for ev in self._deferred_this_step)
         return Receipt(
@@ -664,6 +668,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         tripped = False
         dropped_total = 0
         limit = getattr(self.machine, "max_iterations", 1000)
+        debug = logger.isEnabledFor(logging.DEBUG)  # ⚡ once per macrostep
         try:
             while self._event_queue or self._internal_queue:
                 # ⏰ #50: a deadline that elapsed while THIS macrostep was
@@ -770,9 +775,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                     # The spared completion falls through and is processed.
                     # It does NOT reset the chain: `generated` stays over
                     # budget so anything it produces is dropped on arrival.
-                logger.debug(
-                    "⚙️ Processing event: '%s'", current_event.type
-                )  # 📉 #55: hot path, DEBUG
+                if debug:  # 📉 #55: hot path, DEBUG
+                    logger.debug(
+                        "⚙️ Processing event: '%s'", current_event.type
+                    )
 
                 for plugin in self._plugins:
                     plugin.on_event_received(self, current_event)
@@ -818,7 +824,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                         external_budget += len(held)
         finally:
             self._is_processing = False
-            logger.debug("🎉 Event processing cycle completed. Queue empty.")
+            if debug:
+                logger.debug(
+                    "🎉 Event processing cycle completed. Queue empty."
+                )
 
     # -------------------------------------------------------------------------
     # ⚙️ Core State Transition Logic (Private)

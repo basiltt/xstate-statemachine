@@ -342,8 +342,17 @@ _SYSTEM_EVENT_PREFIXES: Tuple[str, ...] = SYSTEM_EVENT_PREFIXES
 _WARNED_ACTION_ERROR_POLICY_DEFAULT: bool = False
 
 
+#: ⚡ Memo for `_accepts_kwarg`, keyed on the UNDERLYING function (a bound
+#: method's `__func__`) so every interpreter sharing a clock class hits the
+#: cache. `inspect.signature` was 32% of interpreter construction (#S6).
+_ACCEPTS_KWARG_CACHE: Dict[Tuple[int, str], bool] = {}
+
+
 def _accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
     """``True`` if calling *fn* with keyword *name* is signature-legal.
+
+    Memoised per ``(function, name)``: a function's signature does not
+    change, and this is called from every ``BaseInterpreter.__init__``.
 
     Used to detect 0.8.0-era `Clock` implementations whose `set_timeout`
     predates the ``sync=`` keyword (#76). Only an EXPLICITLY named
@@ -353,14 +362,27 @@ def _accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
     builtins, some mocks) are assumed NOT to accept it -- the legacy call
     shape is the safe default.
     """
+    target = getattr(fn, "__func__", fn)
+    key = (id(target), name)
+    cached = _ACCEPTS_KWARG_CACHE.get(key)
+    if cached is not None:
+        return cached
     try:
         params = inspect.signature(fn).parameters
     except (TypeError, ValueError):  # pragma: no cover -- exotic callables
         return False
     param = params.get(name)
-    return (
+    result = (
         param is not None and param.kind is not inspect.Parameter.VAR_KEYWORD
     )
+    # 🧷 Keep the function alive so its id() cannot be recycled by a later,
+    #    different function (which would make the memo lie).
+    _ACCEPTS_KWARG_CACHE[key] = result
+    _ACCEPTS_KWARG_KEEPALIVE.append(target)
+    return result
+
+
+_ACCEPTS_KWARG_KEEPALIVE: List[Any] = []
 
 
 class PendingInvocation(NamedTuple):
@@ -1810,6 +1832,11 @@ class BaseInterpreter(Generic[TContext]):
         #    event is checked whatever it is called. `is_known_event` no
         #    longer grants a by-name exemption, so a forged
         #    `done.invoke.NEVER` or `___xstate_x` is rejected like `TYPO`.
+        # ⚡ Nothing to check for the common configuration: not strict and
+        #    no schemas. Decided before the (comparatively costly)
+        #    provenance test so the hot path is one attribute read.
+        if not self.strict and not self.machine.event_schemas:
+            return
         if is_system_event(event) or not isinstance(event, Event):
             return
         if self.strict and not self.machine.is_known_event(
@@ -1834,7 +1861,9 @@ class BaseInterpreter(Generic[TContext]):
 
     def _warn_reserved_payload_keys(self, event: Any) -> None:
         payload = getattr(event, "payload", None)
-        if isinstance(payload, dict):
+        # ⚡ `if payload` -- an empty dict (the overwhelmingly common
+        #    `send("TYPE")` case) cannot clash; skip the comprehension.
+        if payload and isinstance(payload, dict):
             clash = [k for k in self._RESERVED_SEND_KWARGS if k in payload]
             if clash:
                 warnings.warn(
@@ -2569,11 +2598,10 @@ class BaseInterpreter(Generic[TContext]):
         #    undone -- orphaned from any active state and reachable only
         #    until the parent itself eventually stopped.
         actor_ids_before = set(self._actors.keys())
-        domain = self._find_transition_domain(transition, target_state)
-
+        domain, path_to_enter = self._transition_geometry(
+            transition, target_state
+        )
         states_to_exit = self._compute_states_to_exit(domain, target_state)
-
-        path_to_enter = self._get_path_to_state(target_state, stop_at=domain)
 
         # 🧷 Context is snapshotted only when a rollback could need it: a
         #    deepcopy per transition on the "continue" hot path would be a
@@ -2646,8 +2674,10 @@ class BaseInterpreter(Generic[TContext]):
                 ),
                 event,
             )
-            failed_actions = await self._execute_actions(
-                transition.actions, event
+            failed_actions: List[Tuple[ActionDefinition, BaseException]] = (
+                await self._execute_actions(transition.actions, event)
+                if transition.actions  # ⚡ no coroutine for an empty list
+                else []
             )
             if failed_actions:
                 self._apply_action_error_policy(transition, failed_actions)
@@ -3203,12 +3233,22 @@ class BaseInterpreter(Generic[TContext]):
             state.id for state in states_to_enter if state.parent is not None
         }
 
+        # ⚡ One level check per call, not one per state: `logger.debug`
+        #    costs ~0.4 us even when disabled, and this runs per entered node.
+        debug = logger.isEnabledFor(logging.DEBUG)
         for state in states_to_enter:
             self._active_state_nodes.add(state)
-            logger.debug("➡️  Entering state: '%s'.", state.id)
+            if debug:
+                logger.debug("➡️  Entering state: '%s'.", state.id)
 
-            # ⚙️ Run entry actions and schedule background tasks.
-            await self._execute_lifecycle_actions(state.entry, trigger_event)
+            # ⚙️ Run entry actions and schedule background tasks. ⚡ The
+            #    coroutine is only created when there is something to run:
+            #    two frames per entered state for an empty list was ~15%
+            #    of a flat macrostep on the trampoline-driven sync engine.
+            if state.entry:
+                await self._execute_lifecycle_actions(
+                    state.entry, trigger_event
+                )
             self._schedule_state_tasks(state)
 
             # 🎉 If we entered a final state, check if its parent is now complete.
@@ -3398,14 +3438,19 @@ class BaseInterpreter(Generic[TContext]):
         #    configuration reflects the state of the machine as it was.
         self._record_history(states_to_exit)
 
+        debug = logger.isEnabledFor(logging.DEBUG)  # ⚡ see _enter_states
         for state in states_to_exit:
-            logger.debug("⬅️  Exiting state: '%s'.", state.id)
+            if debug:
+                logger.debug("⬅️  Exiting state: '%s'.", state.id)
             # 🛑 Crucially, cancel tasks before running exit actions.
             _pending = self._cancel_state_tasks(state)
             if _pending is not None:
                 await _pending
-            # ⚙️ Then, run the synchronous exit actions.
-            await self._execute_lifecycle_actions(state.exit, trigger_event)
+            # ⚙️ Then, run the synchronous exit actions (⚡ only if any).
+            if state.exit:
+                await self._execute_lifecycle_actions(
+                    state.exit, trigger_event
+                )
             # 🗑️ Finally, remove from the active set.
             self._active_state_nodes.discard(state)
 
@@ -4195,6 +4240,36 @@ class BaseInterpreter(Generic[TContext]):
                 }
 
         return candidates
+
+    def _transition_geometry(
+        self, transition: TransitionDefinition, target_state: StateNode
+    ) -> Tuple[Optional[StateNode], List[StateNode]]:
+        """The static part of a transition's execution plan, memoised.
+
+        ⚡ Returns ``(domain, path_to_enter)``. Both depend only on the
+        machine tree and the resolved target, never on the live
+        configuration, so they are computed once per transition and served
+        from `TransitionDefinition._geometry` thereafter. History targets
+        are handled by the caller (their entry path is resolved live).
+
+        The memo is keyed on ``id(target_state)``: a transition that is
+        resolved at run time (unresolvable at build under
+        ``strict_targets=False``) may legitimately land on a different node
+        later, and must not be served the first answer.
+
+        Returns:
+            Tuple[Optional[StateNode], List[StateNode]]: the LCCA (``None``
+            when the machine root is the domain) and the parent-to-child
+            entry path from the domain down to the target. The list is a
+            fresh copy so callers may mutate it.
+        """
+        memo = transition._geometry
+        if memo is not None and memo[0] == id(target_state):
+            return memo[1], list(memo[2])
+        domain = self._find_transition_domain(transition, target_state)
+        path = self._get_path_to_state(target_state, stop_at=domain)
+        transition._geometry = (id(target_state), domain, tuple(path))
+        return domain, path
 
     def _find_transition_domain(
         self, transition: TransitionDefinition, target_state: StateNode

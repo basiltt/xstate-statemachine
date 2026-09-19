@@ -512,6 +512,17 @@ class TransitionDefinition:
         #: runtime falls back to resolving live. The resolver stays the single
         #: authority: this only memoises its result.
         self.resolved_target: Optional["StateNode"] = None
+        #: ⚡ Perf: static transition GEOMETRY, memoised on first execution
+        #: by `BaseInterpreter._transition_geometry`. For a given resolved
+        #: target the domain (LCCA) and the entry path from the domain down
+        #: to the target depend only on the immutable tree, yet were rebuilt
+        #: on every event (~6 us of a 21 us flat macrostep). Keyed on the
+        #: target's identity so a live-resolved (`strict_targets=False`)
+        #: transition that resolves differently is not served a stale answer.
+        #: The EXIT set stays dynamic -- it depends on the live configuration.
+        self._geometry: Optional[Tuple[int, Any, Tuple["StateNode", ...]]] = (
+            None
+        )
 
         # 🛡️ Guard resolution.
         #
@@ -775,11 +786,15 @@ class StateNode(Generic[TContext]):
             key: The key for this state within its parent's `states` object.
             parent: The parent state node, if any.
         """
-        logger.debug(
-            "🚀 Initializing StateNode: key='%s', parent_id='%s'",
-            key,
-            parent.id if parent else "ROOT",
-        )
+        # ⚡ Two debug records per node add up on a 1,000-machine build;
+        #    gate them on the level once instead of formatting args each time.
+        _dbg = logger.isEnabledFor(logging.DEBUG)
+        if _dbg:
+            logger.debug(
+                "🚀 Initializing StateNode: key='%s', parent_id='%s'",
+                key,
+                parent.id if parent else "ROOT",
+            )
         # 🧍‍♂️ Core Properties
         #
         self.key = key
@@ -994,9 +1009,10 @@ class StateNode(Generic[TContext]):
                 )
             finally:
                 _config_stack.discard(id(state_config))
-        logger.debug(
-            "✅ StateNode '%s' and its children initialized.", self.id
-        )
+        if _dbg:
+            logger.debug(
+                "✅ StateNode '%s' and its children initialized.", self.id
+            )
 
     # -------------------------------------------------------------------------
     # Internal Parsing Methods (Encapsulated Logic)
@@ -1504,6 +1520,19 @@ class MachineNode(StateNode[TContext]):
         self.has_history_states, self.has_always_transitions = (
             self._scan_tree_features(self)
         )
+        #: ⚡ Perf: can ANY action run on this machine? `False` means no
+        #: state or transition anywhere declares an action (entry / exit /
+        #: `on` / `after` / `always` / `onDone` / invoke `onDone`-`onError`),
+        #: so nothing the engine does can mutate `context` -- and a
+        #: `Receipt` need not deep-copy it to decide `changed`. Distinct
+        #: from `subtree_has_actions`, which covers entry/exit only.
+        self._context_is_immutable: Optional[bool] = None  # lazy, see property
+        #: ⚡ Memo for `LogicLoader.required_names()`: the (actions, guards,
+        #: services) the config references. Auto-discovery and alias
+        #: resolution both need it; the tree is walked once, not twice.
+        self._required_logic: Optional[Tuple[Set[str], Set[str], Set[str]]] = (
+            None
+        )
         self._mark_subtree_actions(self)
 
     @staticmethod
@@ -1521,6 +1550,45 @@ class MachineNode(StateNode[TContext]):
                 flag = True
         node.subtree_has_actions = flag
         return flag
+
+    @property
+    def context_is_immutable(self) -> bool:
+        """⚡ ``True`` when no state or transition declares any action.
+
+        Nothing the engine does can then mutate ``context``, so a
+        `Receipt` need not deep-copy it to decide ``changed``. Computed
+        lazily on first use (a build-time walk would tax every
+        `create_machine()`, but only ``send(wait=True)`` needs the answer)
+        and cached: the tree is immutable once built.
+        """
+        if self._context_is_immutable is None:
+            self._context_is_immutable = not self._tree_declares_actions(self)
+        return self._context_is_immutable
+
+    @staticmethod
+    def _tree_declares_actions(root: "StateNode") -> bool:
+        """True if any state in the tree declares an action anywhere.
+
+        Walks entry/exit, every `on` / `after` / `onDone` transition and
+        every invoke's `onDone` / `onError`. Built-in creators (`assign`,
+        `raise`, …) count: they mutate context or produce events, so the
+        machine is not inert.
+        """
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node.entry or node.exit:
+                return True
+            transitions = [t for tl in node.on.values() for t in tl]
+            transitions += [t for tl in node.after.values() for t in tl]
+            if node.on_done is not None:
+                transitions.append(node.on_done)
+            for inv in node.invoke:
+                transitions += list(inv.on_done) + list(inv.on_error)
+            if any(t.actions for t in transitions):
+                return True
+            stack.extend(node.states.values())
+        return False
 
     @staticmethod
     def _scan_tree_features(root: "StateNode") -> Tuple[bool, bool]:

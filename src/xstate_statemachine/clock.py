@@ -211,6 +211,11 @@ class RealClock:
             self._heap.cancel(handle)
 
     def pump(self) -> int:
+        # ⚡ The sync engine pumps at the top of EVERY send(); a machine
+        #    with no timers armed must not pay for a lock + monotonic() +
+        #    heap scan each time. An empty list is a plain attribute read.
+        if not self._heap._heap:
+            return 0
         fired = 0
         for t in self._heap.due_before(self.now()):
             t.fn()
@@ -276,6 +281,8 @@ class SimulatedClock:
         self._heap.cancel(handle)
 
     def pump(self) -> int:
+        if not self._heap._heap:  # ⚡ see RealClock.pump
+            return 0
         fired = 0
         for t in self._heap.due_before(self._now):
             t.fn()

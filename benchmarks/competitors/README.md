@@ -112,7 +112,7 @@ authoritative numbers reported elsewhere (README, docs). This directory's
 end-to-end; its numbers should not be treated as representative performance
 figures.
 
-## Results (2026-09-19)
+## Results (2026-09-19, after the 0.8.1 hot-path work)
 
 Python 3.14.6, Windows 11, Intel Core i7-11850H (laptop, on mains, otherwise idle),
 `xstate-statemachine` 0.8.1 (pre-release wheel built from `main`) installed in a clean
@@ -123,47 +123,42 @@ older table. Higher is better. **Bold** = fastest in the row. Reproduce with
 
 | Scenario | xsm (sync) | xsm (pure) | xsm (async) | transitions 0.9.3 | python-statemachine 3.2.1 | sismic 1.6.11 |
 |:--|--:|--:|--:|--:|--:|--:|
-| Flat toggle (ev/s) | 48,644 | 28,737 | — | **163,395** | 11,076 | 15,051 |
-| Guard + action (ev/s) | 61,044 | 37,782 | — | **137,236** | 9,754 | 13,982 |
-| 3-level nested (ev/s) | **20,817** | 14,045 | — | 9,801 | 3,138 | 5,866 |
-| Parallel regions (ev/s) | **37,643** | — | — | 7,017 | 4,509 | 5,455 |
-| Construction (machines/s) | 5,850 | — | — | **10,564** | 1,784 | 343 |
-| 1,000 instances (inst/s) | 17,129 | — | — | **46,274** | 4,534 | 9,098 |
-| Delayed transition (timers/s) | **6,805** | — | — | 70 | 4,708 | 6,775 |
-| Native asyncio (ev/s) | — | — | 23,505 | **48,305** | 7,880 | — |
+| Flat toggle (ev/s) | 62,413 | 39,297 | — | **145,100** | 9,198 | 12,872 |
+| Guard + action (ev/s) | 66,043 | 39,259 | — | **120,094** | 8,158 | 12,055 |
+| 3-level nested (ev/s) | **25,855** | 18,850 | — | 8,266 | 2,653 | 4,951 |
+| Parallel regions (ev/s) | **44,520** | — | — | 5,894 | 3,831 | 4,613 |
+| Construction (machines/s) | **9,403** | — | — | 7,021 | 1,366 | 260 |
+| 1,000 instances (inst/s) | **28,321** | — | — | 26,556 | 3,986 | 7,807 |
+| Delayed transition (timers/s) | **8,942** | — | — | 69 | 4,064 | 5,659 |
+| Native asyncio (ev/s) | — | — | 27,090 | **43,761** | 6,830 | — |
 
 ### Reading the table honestly
 
-- **`transitions` wins every flat scenario by 2-3x.** It is a transition table with
-  method-name dispatch and no statechart algorithm: no configuration set, no
-  entry/exit ordering, no history, no internal queue. When that is all you need, it is
-  the fastest thing here and nothing in this library will catch it.
-- **xstate-statemachine wins every statechart scenario.** As soon as the machine has
-  depth (nested: 2.1x `transitions`, 3.5x `sismic`, 6.6x `python-statemachine`) or
-  orthogonal regions (parallel: 5.4x the next best), the SCXML algorithm that costs us
-  on flat machines is what the others have to emulate, and we pull ahead. `transitions`
-  in particular drops from 163k to 9.8k ev/s the moment states nest -- a 17x cliff;
-  ours drops 2.3x.
-- **Delayed transitions: ~100x faster than `transitions`, level with `sismic`.**
+- **`transitions` wins the flat scenarios by ~2x** and native asyncio by ~1.6x. It is a
+  transition table with method-name dispatch and no statechart algorithm: no
+  configuration set, no entry/exit ordering, no history, no internal queue. When that is
+  all you need, it is the fastest thing here.
+- **xstate-statemachine wins every statechart scenario and both construction rows.**
+  Nested: 3.1x `transitions`, 5.2x `sismic`,
+  9.7x `python-statemachine`. Parallel: 7.6x the next best.
+  `transitions` drops from 145k to 8.3k ev/s the moment states nest -- a
+  18x cliff; ours drops 2.4x.
+- **Construction and 1,000 instances flipped in 0.8.1.** `create_machine()` used to parse
+  the config twice (a throwaway tree for logic discovery), and every interpreter ran
+  `inspect.signature` on its clock; both are gone. We still run the full build-time
+  validator on every `create_machine()` -- that is the cost of a config error being a
+  build error -- and still come out 1.3x `transitions` on construction.
+- **Delayed transitions: ~130x faster than `transitions`, 1.6x `sismic`.**
   `transitions` has no native timer -- its `Timeout` extension arms a `threading.Timer`
   (an OS thread) per state entry. We schedule on a `Clock` (here `SimulatedClock`, so
-  the number is dispatch cost, not wall time). `sismic` and `python-statemachine` have
-  native timers and are in the same order of magnitude as us.
+  the number is dispatch cost, not wall time).
 - **The pure API is slower than `SyncInterpreter`, not faster.** Each
   `get_next_snapshot()` call deep-copies context in and out to guarantee the caller's
   snapshot is untouched (#54). Use it for its purity in tests, not for throughput.
-- **Async costs ~50% versus sync** on the same machine (23.5k vs 48.6k ev/s). That is
+- **Async costs ~57% versus sync** on the same machine (27.1k vs 62.4k ev/s). That is
   the price of `await send(wait=True)` per event: a Future, a queue put, a loop turn.
-  Fire-and-forget `send()` with a final `wait_done()` would sit much closer to the sync
+  Fire-and-forget `send()` with a final `wait_done()` sits much closer to the sync
   number; this scenario deliberately measures the request/response shape.
-- **Construction and instance fan-out are where `transitions` is clearly ahead**
-  (1.8x on construction, 2.7x on 1,000 instances). Every `create_machine()` here runs
-  the full build-time validator -- unreachable states, dead `always` loops, root
-  targets, ambiguous ids, cyclic configs (#108, #136) -- and each interpreter owns an
-  inbox, a priority lane and a clock lane. That is deliberate: the checks are what
-  make a config error a build error instead of a production surprise. Against the
-  other two statechart libraries we are 3-4x faster on both (17x vs `sismic` on
-  construction, which parses YAML).
 
 ### What this benchmark does not measure
 

@@ -149,13 +149,19 @@ class TestDriveNeverSuspends(_Quiet):
 
                 return suspends()
 
+        # The entry action is what routes `start()` through the leaf: an
+        # empty action list never creates the coroutine (perf, 0.8.1).
         i = Bad(
             create_machine(
                 {
                     "id": "m",
                     "initial": "a",
-                    "states": {"a": {"on": {"G": "b"}}, "b": {}},
-                }
+                    "states": {
+                        "a": {"entry": "noop", "on": {"G": "b"}},
+                        "b": {},
+                    },
+                },
+                logic=MachineLogic(actions={"noop": lambda i, c, e, a: None}),
             )
         )
         with self.assertRaises(RuntimeError) as cm:

@@ -39,6 +39,7 @@ from typing import (
     List,
     Optional,
     Set,
+    Tuple,
     Type,
     TypeVar,
     Union,
@@ -240,6 +241,25 @@ class LogicLoader:
             )
 
     @staticmethod
+    def required_names(
+        machine: MachineNode[Any],
+    ) -> Tuple[Set[str], Set[str], Set[str]]:
+        """The (actions, guards, services) a machine's config references.
+
+        ⚡ Memoised on the `MachineNode`: discovery and alias resolution both
+        need this set during `create_machine()`, and the tree is immutable
+        once built. Returns COPIES so callers may mutate freely.
+        """
+        memo = machine._required_logic
+        if memo is None:
+            a: Set[str] = set()
+            g: Set[str] = set()
+            s: Set[str] = set()
+            LogicLoader._extract_logic_from_node(machine, a, g, s)
+            memo = machine._required_logic = (a, g, s)
+        return set(memo[0]), set(memo[1]), set(memo[2])
+
+    @staticmethod
     def _collect_guard_names(guard_def: Any, guards: Set[str]) -> None:
         """Collects the user-implemented guard names a guard depends on.
 
@@ -266,6 +286,8 @@ class LogicLoader:
         machine_config: Dict[str, Any],
         logic_modules: Optional[List[Union[str, ModuleType]]] = None,
         logic_providers: Optional[List[Any]] = None,
+        *,
+        machine: Optional[MachineNode[Any]] = None,
     ) -> MachineLogic:
         """Discovers implementations and builds a `MachineLogic` instance.
 
@@ -356,13 +378,21 @@ class LogicLoader:
         required_actions: Set[str] = set()
         required_guards: Set[str] = set()
         required_services: Set[str] = set()
-        # Temporarily create a machine node to traverse its structure
-        temp_machine: MachineNode[Any] = MachineNode(
-            config=machine_config, logic=MachineLogic()
+        # ⚡ Perf: walk the caller's already-built tree when it hands one in.
+        #    `create_machine` used to let this method build a THROWAWAY
+        #    `MachineNode` purely to collect names, then build the real one
+        #    -- every machine was parsed twice, and the loader was 43% of
+        #    construction time. The tree is the same either way; only the
+        #    `logic` attribute differs, and it is attached afterwards.
+        tree: MachineNode[Any] = (
+            machine
+            if machine is not None
+            else MachineNode(config=machine_config, logic=MachineLogic())
         )
-        LogicLoader._extract_logic_from_node(
-            temp_machine, required_actions, required_guards, required_services
-        )
+        req_a, req_g, req_s = LogicLoader.required_names(tree)
+        required_actions |= req_a
+        required_guards |= req_g
+        required_services |= req_s
 
         # ---------------------------------------------------------------------
         # 🔗 Step 3: Match requirements with implementations.

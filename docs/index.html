@@ -329,24 +329,23 @@ interp.stop()</code></pre>
         </tr>
       </thead>
       <tbody>
-        <tr><td>Flat toggle <span class="perf-unit">events/s</span></td><td>48,644</td><td class="perf-best">163,395</td><td>11,076</td><td>15,051</td></tr>
-        <tr><td>Guard + action <span class="perf-unit">events/s</span></td><td>61,044</td><td class="perf-best">137,236</td><td>9,754</td><td>13,982</td></tr>
-        <tr><td>3-level nested <span class="perf-unit">events/s</span></td><td class="perf-best">20,817</td><td>9,801</td><td>3,138</td><td>5,866</td></tr>
-        <tr><td>Parallel regions <span class="perf-unit">events/s</span></td><td class="perf-best">37,643</td><td>7,017</td><td>4,509</td><td>5,455</td></tr>
-        <tr><td>Delayed transitions <span class="perf-unit">timers/s</span></td><td class="perf-best">6,805</td><td>70</td><td>4,708</td><td>6,775</td></tr>
-        <tr><td>1,000 instances <span class="perf-unit">instances/s</span></td><td>17,129</td><td class="perf-best">46,274</td><td>4,534</td><td>9,098</td></tr>
-        <tr><td>Construction <span class="perf-unit">machines/s</span></td><td>5,850</td><td class="perf-best">10,564</td><td>1,784</td><td>343</td></tr>
-        <tr><td>Native asyncio <span class="perf-unit">events/s</span></td><td>23,505</td><td class="perf-best">48,305</td><td>7,880</td><td>&mdash;</td></tr>
+        <tr><td>Flat toggle <span class="perf-unit">events/s</span></td><td>62,413</td><td class="perf-best">145,100</td><td>9,198</td><td>12,872</td></tr>
+        <tr><td>Guard + action <span class="perf-unit">events/s</span></td><td>66,043</td><td class="perf-best">120,094</td><td>8,158</td><td>12,055</td></tr>
+        <tr><td>3-level nested <span class="perf-unit">events/s</span></td><td class="perf-best">25,855</td><td>8,266</td><td>2,653</td><td>4,951</td></tr>
+        <tr><td>Parallel regions <span class="perf-unit">events/s</span></td><td class="perf-best">44,520</td><td>5,894</td><td>3,831</td><td>4,613</td></tr>
+        <tr><td>Delayed transitions <span class="perf-unit">timers/s</span></td><td class="perf-best">8,942</td><td>69</td><td>4,064</td><td>5,659</td></tr>
+        <tr><td>1,000 instances <span class="perf-unit">instances/s</span></td><td class="perf-best">28,321</td><td>26,556</td><td>3,986</td><td>7,807</td></tr>
+        <tr><td>Construction <span class="perf-unit">machines/s</span></td><td class="perf-best">9,403</td><td>7,021</td><td>1,366</td><td>260</td></tr>
+        <tr><td>Native asyncio <span class="perf-unit">events/s</span></td><td>27,090</td><td class="perf-best">43,761</td><td>6,830</td><td>&mdash;</td></tr>
       </tbody>
     </table>
   </div>
   <p class="perf-note">
     <code>transitions</code> is faster on <em>flat</em> machines because it is a transition table, not a statechart
     engine &mdash; no configuration set, no entry/exit ordering, no internal queue. The moment states nest or run in
-    parallel, that algorithm is what the others have to emulate, and XState-StateMachine is 2&ndash;7&times; faster
-    than every library that does implement statecharts (nested: 2.1&times; <code>transitions</code>, 3.5&times; <code>sismic</code>,
-    6.6&times; <code>python-statemachine</code>; parallel: 5.4&times; the next best). Construction is slower than
-    <code>transitions</code> because every <code>create_machine()</code> runs the full build-time validator.
+    parallel, that algorithm is what the others have to emulate, and XState-StateMachine is 3.1&ndash;8&times; faster
+    than every library that does implement statecharts. Since 0.8.1 it is also the fastest to <em>construct</em> and to
+    fan out to 1,000 instances &mdash; while still running the full build-time validator on every <code>create_machine()</code>.
     Measured 2026-09-19 on 0.8.1, all libraries in one session: Python 3.14, median of 7 runs, GC disabled, setup excluded.
     Reproduce with <code>benchmarks/competitors/run.py</code>; full table and caveats in the
     <a href="https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md">benchmark README</a>,
