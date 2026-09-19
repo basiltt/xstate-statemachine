@@ -161,6 +161,14 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     # 🧙 Magic Methods & Initialization
     # -------------------------------------------------------------------------
 
+    # ⚡ See BaseInterpreter.__slots__.
+    __slots__ = (
+        "_held_replays",
+        "_is_processing",
+        "_settle_iterations",
+        "_settle_tripped",
+    )
+
     def __init__(
         self,
         machine: MachineNode[TContext],
@@ -195,7 +203,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #: ⏱️ Live clock handles per owning state id, so exiting a state
         #: cancels its timers on any Clock (#49/#50).
         self._timer_handles: Dict[str, List[Any]] = {}
-        logger.info("⛓️ Initializing Synchronous Interpreter... 🚀")
+        _info = logger.isEnabledFor(logging.INFO)  # ⚡ per construction
+        if _info:
+            logger.info("⛓️ Initializing Synchronous Interpreter... 🚀")
 
         # ⚙️ Initialize synchronous-specific attributes
         self._event_queue: Deque[AnyEvent] = deque()
@@ -214,7 +224,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         # 🏛️ #50: `_after_threads` / `_after_events` / `_pending_send_cancels`
         #    are gone. Timers no longer own threads; see `_after_timer`.
 
-        logger.info("✅ Synchronous Interpreter '%s' initialized. 🎉", self.id)
+        if _info:
+            logger.info(
+                "✅ Synchronous Interpreter '%s' initialized. 🎉", self.id
+            )
 
     # -------------------------------------------------------------------------
     # 🚗 Driving the shared algorithm (#60)
@@ -315,21 +328,31 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             )
             return self
 
-        logger.info("🏁 Starting sync interpreter '%s'...", self.id)
+        _info = logger.isEnabledFor(logging.INFO)  # ⚡ per start()
+        if _info:
+            logger.info("🏁 Starting sync interpreter '%s'...", self.id)
         self.status = "running"
         # 🧪 A SimulatedClock drives us through `tick()` after each increment
         #    so `clock.increment(ms)` leaves the machine settled (#49).
         self._attach_clock()
 
-        # ✅ Define a pseudo-transition for the initial state entry
-        initial_transition = TransitionDefinition(
-            event="___xstate_statemachine_init___",
-            config={},
-            source=self.machine,
+        # ✅ Define a pseudo-transition for the initial state entry. ⚡ It
+        #    exists only to be reported to `on_transition`; do not build it
+        #    (a TransitionDefinition plus a system event, ~1.3 µs) when
+        #    nobody is listening.
+        plugins = self._plugins
+        initial_transition = (
+            TransitionDefinition(
+                event="___xstate_statemachine_init___",
+                config={},
+                source=self.machine,
+            )
+            if plugins
+            else None
         )
 
         # 🔌 Notify plugins about the interpreter start
-        for plugin in self._plugins:
+        for plugin in plugins:
             plugin.on_interpreter_start(self)
 
         # Capture the pre-transition state set (empty before initialization)
@@ -358,16 +381,18 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         post_states = set(self._active_state_nodes)
 
         # 🔌 Notify plugins about the initial transition with accurate state info
-        for plugin in self._plugins:
-            plugin.on_transition(
-                self, pre_states, post_states, initial_transition
-            )
+        if initial_transition is not None:
+            for plugin in plugins:
+                plugin.on_transition(
+                    self, pre_states, post_states, initial_transition
+                )
 
-        logger.info(
-            "✨ Sync interpreter '%s' started. Current states: %s",
-            self.id,
-            self.current_state_ids,
-        )
+        if _info:
+            logger.info(
+                "✨ Sync interpreter '%s' started. Current states: %s",
+                self.id,
+                self.current_state_ids,
+            )
         return self
 
     def stop(self, *, drain: bool = False) -> None:
@@ -846,7 +871,14 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 for plugin in self._plugins:
                     plugin.on_event_received(self, current_event)
 
-                before = frozenset(self._active_state_nodes)
+                # ⚡ The configuration snapshot exists only to decide whether
+                #    deferred events earned a replay; skip both frozensets
+                #    when nothing is deferred (the common case).
+                before = (
+                    frozenset(self._active_state_nodes)
+                    if self._deferred_events
+                    else None
+                )
                 queued_before = len(self._internal_queue) + len(
                     self._event_queue
                 )
@@ -894,7 +926,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 #    reverses, so feed it reversed to preserve order. Events
                 #    still unhandled in the new state come straight back
                 #    through `_handle_unhandled_event` and are re-deferred.
-                if before != frozenset(self._active_state_nodes):
+                if before is not None and before != frozenset(
+                    self._active_state_nodes
+                ):
                     # 📨 #125: do NOT re-queue into this drain. Park the
                     #    replays; `_run_held_replays` (called by `send` /
                     #    `send_events` / `tick` after the receipt is built)

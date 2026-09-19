@@ -187,15 +187,23 @@ def resolve_target_state(
         raise StateNotFoundError(target, reference_state.id)
 
     machine: "MachineNode" = reference_state.machine
-    logger.debug(
-        "🗺️ Resolving target '%s' from state '%s'", target, reference_state.id
-    )
+    # ⚡ Perf: this runs for every transition of every build (and at
+    #    runtime for live-resolved targets); five gated DEBUG calls per
+    #    resolution were ~10% of validation. One level check instead.
+    _dbg = logger.isEnabledFor(logging.DEBUG)
+    if _dbg:
+        logger.debug(
+            "🗺️ Resolving target '%s' from state '%s'",
+            target,
+            reference_state.id,
+        )
 
     # -------------------------------------------------------------------------
     # 🏛️ Strategy 1: Absolute path resolution (e.g., "#machine.state.child")
     # -------------------------------------------------------------------------
     if target.startswith("#"):
-        logger.debug("  -> Attempting absolute path resolution...")
+        if _dbg:
+            logger.debug("  -> Attempting absolute path resolution...")
         segments = target[1:].split(".")
         _validate_segments(segments, target, reference_state.id)
 
@@ -244,7 +252,8 @@ def resolve_target_state(
     # 🏛️ Strategy 2: Parent state resolution ('.')
     # -------------------------------------------------------------------------
     if target == ".":
-        logger.debug("  -> Attempting parent state resolution...")
+        if _dbg:
+            logger.debug("  -> Attempting parent state resolution...")
         # ✅ Return parent, or self if at the root.
         return reference_state.parent or reference_state
 
@@ -252,7 +261,8 @@ def resolve_target_state(
     # 🏛️ Strategy 3: Relative path resolution (e.g., '.sibling')
     # -------------------------------------------------------------------------
     if target.startswith("."):
-        logger.debug("  -> Attempting relative path resolution...")
+        if _dbg:
+            logger.debug("  -> Attempting relative path resolution...")
         segments = target[1:].split(".")
         _validate_segments(segments, target, reference_state.id)
         # 🏛️ Architecture decision (0.8.0, #31): XState resolves a leading
@@ -285,7 +295,8 @@ def resolve_target_state(
     # -------------------------------------------------------------------------
     # 🏛️ Strategy 4: Plain ID resolution (e.g., 'myState')
     # -------------------------------------------------------------------------
-    logger.debug("  -> Attempting plain ID resolution (bubbling up)...")
+    if _dbg:
+        logger.debug("  -> Attempting plain ID resolution (bubbling up)...")
     segments = target.split(".")
     _validate_segments(segments, target, reference_state.id)
 

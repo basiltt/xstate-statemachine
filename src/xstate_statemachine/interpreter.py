@@ -240,6 +240,28 @@ class Interpreter(BaseInterpreter[TContext]):
     #: trades timer-lateness bound (N * per-event cost) for throughput.
     _INBOX_YIELD_EVERY: int = 16
 
+    # ⚡ See BaseInterpreter.__slots__.
+    __slots__ = (
+        "_event_loop_task",
+        "_inbox_streak",
+        "_inline_service_futures",
+        "_invoked_children",
+        "_loop",
+        "_loop_thread_name",
+        "_max_queue_size",
+        "_overflow_policy",
+        "_owns_service_executor",
+        "_priority_queue",
+        "_processing",
+        "_raise_depth",
+        "_receipts",
+        "_replay_pending",
+        "_service_executor",
+        "_threadsafe_self_sends_in_flight",
+        "_wakeup",
+        "task_manager",
+    )
+
     def __init__(
         self,
         machine: MachineNode[TContext],
@@ -1640,7 +1662,13 @@ class Interpreter(BaseInterpreter[TContext]):
             event: The external event to process first.
         """
         # 1️⃣ Process the initial event that was dequeued.
-        before = frozenset(self._active_state_nodes)
+        # ⚡ Only needed to decide whether deferred events earned a replay;
+        #    skip both frozensets when nothing is deferred.
+        before = (
+            frozenset(self._active_state_nodes)
+            if self._deferred_events
+            else None
+        )
         await self._process_event(event)
         await self._await_inline_services()  # #149
 
@@ -1663,8 +1691,9 @@ class Interpreter(BaseInterpreter[TContext]):
         #    its own macrostep -- ahead of live traffic via the priority
         #    lane, in original order -- right after this receipt resolves.
         if (
-            before != frozenset(self._active_state_nodes)
+            before is not None
             and self._deferred_events
+            and before != frozenset(self._active_state_nodes)
         ):
             self._replay_pending = True
 

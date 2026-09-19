@@ -24,6 +24,7 @@ configuration dictionary and associated business logic.
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import copy
+import logging
 import warnings
 from types import ModuleType
 from typing import Any, Dict, List, Optional, Type, Union, overload
@@ -46,6 +47,11 @@ from .validation import validate_machine
 # -----------------------------------------------------------------------------
 # 🏭 Factory Function
 # -----------------------------------------------------------------------------
+
+
+#: ⚡ Placeholder handed to `MachineNode` during an auto-discovery build;
+#: replaced before the machine is returned, never mutated.
+_EMPTY_LOGIC: MachineLogic = MachineLogic()
 
 
 @overload
@@ -159,24 +165,31 @@ def create_machine(
     # -------------------------------------------------------------------------
     # ☝️ Step 1: Determine the Source of Business Logic
     # -------------------------------------------------------------------------
+    # ⚡ Perf: five INFO records per build were measurable at 10k
+    #    machines/s; emit them only when INFO is actually enabled.
+    _info = logger.isEnabledFor(logging.INFO)
     final_logic: Optional[MachineLogic] = None
     if logic:
         # ✅ Path 1: Use the explicitly provided logic instance.
-        logger.info("🧠 Using explicitly provided MachineLogic instance.")
+        if _info:
+            logger.info("🧠 Using explicitly provided MachineLogic instance.")
         final_logic = logic
     else:
         # ✅ Path 2: auto-discovery. ⚡ It needs the parsed tree to know which
         #    names the config requires, so it runs AFTER the single
         #    `MachineNode` build below and is handed that tree -- the config
         #    used to be parsed twice (a throwaway node just for discovery).
-        logger.info(
-            "🤖 Attempting auto-discovery of actions, guards, and services..."
-        )
+        if _info:
+            logger.info(
+                "🤖 Attempting auto-discovery of actions, guards, and "
+                "services..."
+            )
 
     # -------------------------------------------------------------------------
     # 🧪 Step 2: Validate the Core Machine Configuration
     # -------------------------------------------------------------------------
-    logger.info("🕵️  Validating core machine configuration structure...")
+    if _info:
+        logger.info("🕵️  Validating core machine configuration structure...")
     # 🛡️ These checks used to be unreachable: the logic loader ran first
     #    and its own MachineNode build raised. With the single build (⚡)
     #    they are the front door, so their wording is the one callers see.
@@ -205,16 +218,19 @@ def create_machine(
             "Invalid config: must be a dict with 'id' and 'states' keys."
         )
 
-    logger.info(
-        "✅ Configuration structure for machine '%s' is valid.", machine_id
-    )
+    if _info:
+        logger.info(
+            "✅ Configuration structure for machine '%s' is valid.",
+            machine_id,
+        )
 
     # -------------------------------------------------------------------------
     # 🏗️ Step 3: Construct and Return the MachineNode
     # -------------------------------------------------------------------------
     # The MachineNode constructor will handle the recursive parsing of the
     # entire statechart configuration.
-    logger.info("🏭 Assembling final MachineNode for '%s'...", machine_id)
+    if _info:
+        logger.info("🏭 Assembling final MachineNode for '%s'...", machine_id)
     # 🏛️ #92: give the MACHINE its own logic container so aliasing (below)
     #    never touches the caller's object. `copy.copy` keeps the subclass
     #    (auto-registered methods stay bound) and shares the callables; only
@@ -230,7 +246,10 @@ def create_machine(
         #    tree, then attach. `MachineNode.logic` is a plain attribute read
         #    only at run time, so attaching after the parse is
         #    observationally identical to passing it in.
-        machine = MachineNode(config, MachineLogic())
+        # ⚡ The placeholder logic is replaced two lines down and never
+        #    read; share one immutable-by-convention instance instead of
+        #    constructing (and INFO-logging) a fresh one per build.
+        machine = MachineNode(config, _EMPTY_LOGIC)
         machine.logic = LogicLoader.get_instance().discover_and_build_logic(
             config,
             logic_modules=logic_modules,

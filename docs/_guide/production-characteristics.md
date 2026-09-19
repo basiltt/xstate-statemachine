@@ -7,7 +7,7 @@ Most of this guide describes what a machine *means*. This page describes how the
 
 Three facts, each with the measurement behind it. Every number below was produced by [`benchmarks/production_characteristics.py`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/production_characteristics.py); run it on your own hardware and trust your figures over ours.
 
-> **Measured on:** 0.8.1 after round 5 (2026-09-19, `main` @ `cd03cee`), CPython 3.14.6, Windows 11, Intel Core i7-11850H laptop, a trivial single-action macrostep, `tracemalloc` **off**, best-of-3. Treat these as order-of-magnitude, not guarantees. For how the runtime compares with other Python state-machine libraries on identical machine shapes, see the [cross-library benchmark](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md) (summary on the [home page](../../#how-it-compares)).
+> **Measured on:** 0.8.1 (2026-09-19, `main` @ `816600c`), CPython 3.14.6, Windows 11, Intel Core i7-11850H laptop, a trivial single-action macrostep, `tracemalloc` **off**, best-of-3. Treat these as order-of-magnitude, not guarantees. For how the runtime compares with other Python state-machine libraries on identical machine shapes, see the [cross-library benchmark](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md) (summary on the [home page](../../#how-it-compares)).
 
 ---
 
@@ -28,10 +28,10 @@ The consequence: **throughput is a per-process budget, not a per-machine capacit
 
 | Interpreters | Aggregate ev/s | Per-interpreter ev/s |
 |---:|---:|---:|
-| 1 | ~44,000 | ~44,000 |
-| 10 | ~45,000 | ~4,500 |
-| 100 | ~40,000 | ~400 |
-| 1,000 | ~38,000 | ~38 |
+| 1 | ~59,000 | ~59,000 |
+| 10 | ~58,000 | ~5,800 |
+| 100 | ~57,000 | ~570 |
+| 1,000 | ~52,000 | ~52 |
 
 The aggregate barely moves across three orders of magnitude (0.8.1 closed the dip at 100–1,000 machines that 0.8.0 showed — the per-child manager task and the settle-hook accumulation are gone — and the run loop now yields to the event loop every 16 inbox events instead of every one, which is most of the ~30% lift over the first 0.8.1 measurement); the per-machine share collapses. This is the correct and unavoidable behaviour of a single-threaded core — it is how XState's actor system behaves too, and it is not something a library change can "fix" without a different architecture.
 
@@ -79,16 +79,16 @@ On the async engine a timer is scheduled through the interpreter's [`Clock`](../
 
 | Busy machines in the process | `after: 10` fires late by |
 |---:|---:|
-| 0 | ~0.2 ms |
+| 0 | ~0.1 ms |
 | 10 | ~1 ms |
-| 100 | ~11 ms |
-| 500 | ~62 ms |
+| 100 | ~7 ms |
+| 500 | ~36 ms |
 
-(The 0.8.1 run loop yields to the event loop every `Interpreter._INBOX_YIELD_EVERY` = 16 inbox events rather than every one; that is where the ~30% throughput lift in §1 comes from, and it is also why lateness at 100–500 busy machines is ~20% higher than the first 0.8.1 measurement — set the class attribute to `1` to restore the per-event yield if you would rather trade throughput for timer punctuality. Before 0.8.0 the timer's continuation shared the inbox and the same run measured ~35 ms and ~180 ms; the priority lane and the 0.8.0 hot-path work together cut the lateness by roughly 4x. Lateness tracks per-event cost -- every event the loop processes faster is a timer that fires sooner -- so it will keep moving with throughput. `AfterEvent.lateness_ms` reports the actual figure for each firing.)
+(The 0.8.1 run loop yields to the event loop every `Interpreter._INBOX_YIELD_EVERY` = 16 inbox events rather than every one — set the class attribute to `1` to restore the per-event yield if you would rather trade throughput for timer punctuality. The construction/instance work that followed made every macrostep cheaper, which pulled lateness back down: every event the loop processes faster is a timer that fires sooner. Before 0.8.0 the timer's continuation shared the inbox and the same run measured ~35 ms and ~180 ms; the priority lane and the 0.8.0 hot-path work together cut the lateness by roughly 4x. Lateness tracks per-event cost -- every event the loop processes faster is a timer that fires sooner -- so it will keep moving with throughput. `AfterEvent.lateness_ms` reports the actual figure for each firing.)
 
 Two properties of that curve matter for design:
 
-- **The error is roughly constant in absolute terms across delay sizes.** A 10 ms timer and a 10 s timer are each ~60 ms late at 500 busy machines — so *short* deadlines degrade worst *relatively*. A 10 ms timeout at 500 machines is meaningless; a 30 s one is fine.
+- **The error is roughly constant in absolute terms across delay sizes.** A 10 ms timer and a 10 s timer are each ~36 ms late at 500 busy machines — so *short* deadlines degrade worst *relatively*. A 10 ms timeout at 500 machines is meaningless; a 30 s one is fine.
 - **The OS floor.** On Windows the default timer resolution is ~15.6 ms; an `after: 5` cannot fire at 5 ms on an idle loop there. Linux and macOS are ~1 ms.
 
 ### What to use `after` for

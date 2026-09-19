@@ -121,7 +121,23 @@ class _DeadlineHeap:
     def __init__(self) -> None:
         self._heap: List[_Timer] = []
         self._seq = itertools.count()
-        self._lock = threading.Lock()
+        #: ⚡ Allocated on the first `push`. A `threading.Lock` is the most
+        #: expensive thing a fresh `RealClock` owned, and most interpreters
+        #: never arm a timer -- yet every one got a clock, heap and lock.
+        #: `pump()` / `due_before()` on an empty heap never take the lock.
+        self._lock_: Optional[threading.Lock] = None
+
+    @property
+    def _lock(self) -> threading.Lock:
+        lock = self._lock_
+        if lock is None:
+            # Benign race: two threads may each build a Lock; the second
+            # assignment wins and the first is garbage. Both are unlocked,
+            # and the heap is empty until the first push completes under
+            # whichever lock that push took -- a push and a pop cannot
+            # interleave before any push has happened.
+            lock = self._lock_ = threading.Lock()
+        return lock
 
     def push(self, due: float, fn: Callable[[], Any], owner: Any) -> _Timer:
         t = _Timer(due, next(self._seq), fn, owner)
@@ -135,6 +151,8 @@ class _DeadlineHeap:
 
     def due_before(self, now: float) -> List[_Timer]:
         out: List[_Timer] = []
+        if not self._heap:  # ⚡ no lock for the empty case
+            return out
         with self._lock:
             while self._heap and self._heap[0].due <= now:
                 t = heapq.heappop(self._heap)
@@ -149,6 +167,8 @@ class _DeadlineHeap:
             return self._heap[0].due if self._heap else None
 
     def __len__(self) -> int:
+        if not self._heap:
+            return 0
         with self._lock:
             return sum(1 for t in self._heap if not t.cancelled)
 

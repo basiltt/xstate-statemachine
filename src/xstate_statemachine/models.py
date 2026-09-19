@@ -493,11 +493,12 @@ class TransitionDefinition:
             source: The `StateNode` where this transition is defined.
             actions: A list of `ActionDefinition` objects to be executed.
         """
-        logger.debug(
-            "🔧 Creating transition for event '%s' from config: %s",
-            event,
-            config,
-        )
+        if _PARSE_DEBUG():  # ⚡ once per transition per build
+            logger.debug(
+                "🔧 Creating transition for event '%s' from config: %s",
+                event,
+                config,
+            )
         self.event: str = event
         self.source: "StateNode" = source
         self.target_str: Optional[str] = config.get("target")
@@ -730,6 +731,47 @@ class InvokeDefinition:
 # -----------------------------------------------------------------------------
 
 
+#: Order of the tuple `_prefetch_node_keys` returns.
+_NODE_KEYS: Tuple[str, ...] = (
+    "states",
+    "type",
+    "initial",
+    "tags",
+    "meta",
+    "entry",
+    "exit",
+    "on",
+    "always",
+    "onDone",
+    "after",
+    "invoke",
+)
+_NODE_KEY_INDEX: Dict[str, int] = {k: i for i, k in enumerate(_NODE_KEYS)}
+
+
+def _prefetch_node_keys(config: Dict[str, Any]) -> List[Any]:
+    """⚡ Read every optional `StateNode` key in ONE pass over the config.
+
+    A state config typically has 1-3 keys; probing all twelve optional keys
+    with `.get` cost ~45% more than a single `items()` pass that routes each
+    present key into its slot. Absent keys are `None`.
+    """
+    out: List[Any] = [None] * len(_NODE_KEYS)
+    idx = _NODE_KEY_INDEX
+    for k, v in config.items():
+        i = idx.get(k)
+        if i is not None:
+            out[i] = v
+    return out
+
+
+def _PARSE_DEBUG() -> bool:
+    """⚡ One level check for the parser's per-node / per-transition DEBUG
+    records. The previous per-record `logger.debug` calls were ~1.6 gated
+    calls per node on every build."""
+    return logger.isEnabledFor(logging.DEBUG)
+
+
 #: 🛡️ #136: ids of the config dicts on the CURRENT construction descent.
 #: Module-level (not per-instance) because `StateNode.__init__` recurses
 #: before the parent exists; cleared on every unwind, so it is empty
@@ -788,13 +830,36 @@ class StateNode(Generic[TContext]):
         """
         # ⚡ Two debug records per node add up on a 1,000-machine build;
         #    gate them on the level once instead of formatting args each time.
-        _dbg = logger.isEnabledFor(logging.DEBUG)
+        _dbg = _PARSE_DEBUG()
         if _dbg:
             logger.debug(
                 "🚀 Initializing StateNode: key='%s', parent_id='%s'",
                 key,
                 parent.id if parent else "ROOT",
             )
+        # ⚡ Perf (single-pass parse): every optional key is read from the
+        #    config exactly ONCE, here, and handed to the `_parse_*` helpers.
+        #    Each helper used to re-probe the dict for its own keys -- on a
+        #    7-node machine that was 21 `dict.get` calls per node for a
+        #    config with ~2 keys per node, and the parse was ~48% of
+        #    `create_machine()`.
+        #    A single `items()` pass over the (typically 1-3 key) config is
+        #    ~45% cheaper than probing all 16 optional keys with `.get`.
+        cfg_get = config.get
+        (
+            raw_states,
+            cfg_type,
+            raw_initial,
+            raw_tags,
+            raw_meta,
+            raw_entry,
+            raw_exit,
+            raw_on,
+            raw_always,
+            raw_on_done,
+            raw_after,
+            raw_invoke,
+        ) = _prefetch_node_keys(config)
         # 🧍‍♂️ Core Properties
         #
         self.key = key
@@ -813,7 +878,7 @@ class StateNode(Generic[TContext]):
         #    for `#` lookups.
         self.custom_id: Optional[str] = None
         if parent is not None:
-            declared_id = config.get("id")
+            declared_id = cfg_get("id")
             if declared_id is not None:
                 if not isinstance(declared_id, str) or not declared_id:
                     raise InvalidConfigError(
@@ -844,19 +909,23 @@ class StateNode(Generic[TContext]):
         self.depth: int = parent.depth + 1 if parent else 0
 
         # ⚙️ Determine and strictly type the state's `type` attribute.
-        self.type = self._determine_state_type(config)
-        logger.debug(
-            "  -> StateNode '%s' identified as type: '%s'", self.id, self.type
-        )
+        self.type = self._determine_state_type(raw_states, cfg_type)
+        if _dbg:
+            logger.debug(
+                "  -> StateNode '%s' identified as type: '%s'",
+                self.id,
+                self.type,
+            )
 
         # ⚙️ Parse all properties from the configuration dictionary.
         # This encapsulates the parsing logic within the model itself.
-        self.initial = self._parse_initial(config)
+        self.initial = self._parse_initial(raw_initial, raw_states)
 
         # 🏷️ Metadata keys. Previously all three were dropped at parse time,
         #    so `tags` (UI-state modelling) and `meta` (arbitrary annotation)
         #    were silently unavailable to users who had declared them.
-        raw_tags = config.get("tags", [])
+        if raw_tags is None:
+            raw_tags = []
         if isinstance(raw_tags, str):
             raw_tags = [raw_tags]
         # ⚠️ Validate rather than let `set()` decide. A bare `set(raw_tags)`
@@ -881,25 +950,25 @@ class StateNode(Generic[TContext]):
             )
         self.tags: Set[str] = set(raw_tags)
 
-        raw_meta = config.get("meta") or {}
+        raw_meta = raw_meta or {}
         if not isinstance(raw_meta, dict):
             raise InvalidConfigError(
                 f"State '{self.id}' has an invalid 'meta' value of type "
                 f"'{type(raw_meta).__name__}'. Expected an object/dict."
             )
         self.meta: Dict[str, Any] = raw_meta
-        self.description: Optional[str] = config.get("description")
+        self.description: Optional[str] = cfg_get("description")
 
         # 🏁 Final states may declare `output` (a.k.a. "done data"), which is
         #    surfaced on the `done.state.*` / `done.invoke.*` event.
-        self.output: Any = config.get("output")
+        self.output: Any = cfg_get("output")
 
         # 🕰️ History configuration. `history` is "shallow" (restore the
         #    immediate child) or "deep" (restore the full nested
         #    configuration). XState defaults to shallow.
         self.history: Optional[str] = None
         if self.type == "history":
-            history_kind = config.get("history", "shallow")
+            history_kind = cfg_get("history", "shallow")
             if history_kind not in ("shallow", "deep"):
                 logger.warning(
                     "⚠️ Invalid 'history' value '%s' on state '%s'. "
@@ -910,32 +979,45 @@ class StateNode(Generic[TContext]):
                 history_kind = "shallow"
             self.history = history_kind
         #: Default target used when a history state has nothing recorded yet.
-        self.target_str: Optional[str] = config.get("target")
+        self.target_str: Optional[str] = cfg_get("target")
 
-        self.entry = self._parse_actions(config.get("entry"))
-        self.exit = self._parse_actions(config.get("exit"))
+        self.entry = self._parse_actions(raw_entry)
+        self.exit = self._parse_actions(raw_exit)
         #: ⚡ #27: does this node OR any descendant declare entry/exit
         #: actions? Set by `MachineNode._mark_subtree_actions` once the
         #: tree is complete; conservatively True until then.
-        self.subtree_has_actions: bool = True
-        self.on = self._parse_on(config)
+        self.on = self._parse_on(raw_on, raw_always)
         # ⚡ #55 part 2: precompiled descriptor index. `_matching_descriptors`
         #    used to scan every `on` key per event to find partials; for a
         #    typical machine there are none, so the scan was pure overhead
         #    on the hottest path. Built ONCE here.
-        self._on_partials: List[Tuple[str, str]] = sorted(
-            (
-                (key, key[:-2])
-                for key in self.on
-                if key != "*" and key.endswith(".*")
-            ),
-            key=lambda kv: len(kv[0]),
-            reverse=True,
+        # ⚡ Perf: the partial-wildcard table is only non-empty when some
+        #    `on` key ends in ".*"; skip the generator + sorted() otherwise
+        #    (it ran on every node, sorting an empty list 6 times in 7).
+        self._on_partials: List[Tuple[str, str]] = (
+            sorted(
+                (
+                    (key, key[:-2])
+                    for key in self.on
+                    if key != "*" and key.endswith(".*")
+                ),
+                key=lambda kv: len(kv[0]),
+                reverse=True,
+            )
+            if any(k.endswith(".*") for k in self.on)
+            else []
         )
         self._on_has_wildcard: bool = "*" in self.on
-        self.on_done = self._parse_on_done(config)
-        self.after = self._parse_after(config)
-        self.invoke = self._parse_invoke(config)
+        self.on_done = self._parse_on_done(raw_on_done)
+        self.after = self._parse_after(raw_after)
+        self.invoke = self._parse_invoke(raw_invoke)
+        #: ⚡ Can this state ever OWN a scheduled task (an `after` deadline
+        #: or an invoked service/child)? Decided once here so `_enter_states`
+        #: / `_exit_states` skip the schedule/cancel round-trip -- two
+        #: method calls, a dict pop and (async) a TaskManager cancel -- for
+        #: the majority of states that declare neither. Delayed `sendTo`s
+        #: are owned by the machine ROOT, which is handled separately.
+        self.owns_tasks: bool = bool(self.after or self.invoke)
 
         # 🌳 Recursively build child states, forming the Composite pattern.
         #
@@ -944,7 +1026,8 @@ class StateNode(Generic[TContext]):
         #    "'str' object has no attribute 'items'" from library internals,
         #    naming neither the offending state nor the offending key — the
         #    user had no way to locate a typo in a large config.
-        raw_states = config.get("states", {})
+        if raw_states is None:
+            raw_states = {}
         if not isinstance(raw_states, dict):
             raise InvalidConfigError(
                 f"State '{self.id}' has an invalid 'states' value of type "
@@ -993,6 +1076,15 @@ class StateNode(Generic[TContext]):
         #    used to blow the call stack with a bare RecursionError. Track
         #    the ids of every config dict on the current descent and refuse
         #    with a typed error naming the state instead.
+        # 🌳 Post-order tree facts, accumulated as children finish (⚡ this
+        #    replaces two whole-tree walks that ran after the parse):
+        #    * subtree_has_actions -- this node or any descendant declares
+        #      entry/exit (#27 rollback checkpoint gate);
+        #    * _subtree_has_history / _subtree_has_always -- feed the
+        #      machine-level `has_history_states` / `has_always_transitions`.
+        has_actions = bool(self.entry or self.exit)
+        has_history = self.type == "history"
+        has_always = "" in self.on
         self.states = {}
         for state_key, state_config in raw_states.items():
             if id(state_config) in _config_stack:
@@ -1004,11 +1096,17 @@ class StateNode(Generic[TContext]):
                 )
             _config_stack.add(id(state_config))
             try:
-                self.states[state_key] = StateNode(
+                child = self.states[state_key] = StateNode(
                     machine, state_config, state_key, self
                 )
             finally:
                 _config_stack.discard(id(state_config))
+            has_actions = has_actions or child.subtree_has_actions
+            has_history = has_history or child._subtree_has_history
+            has_always = has_always or child._subtree_has_always
+        self.subtree_has_actions: bool = has_actions
+        self._subtree_has_history: bool = has_history
+        self._subtree_has_always: bool = has_always
         if _dbg:
             logger.debug(
                 "✅ StateNode '%s' and its children initialized.", self.id
@@ -1018,12 +1116,14 @@ class StateNode(Generic[TContext]):
     # Internal Parsing Methods (Encapsulated Logic)
     # -------------------------------------------------------------------------
 
-    def _determine_state_type(self, config: Dict[str, Any]) -> StateType:
+    def _determine_state_type(
+        self, raw_states: Any, cfg_type: Any
+    ) -> StateType:
         """Determines the type of the state based on its configuration."""
-        if "states" in config:
+        if raw_states is not None:
             # A state with children is either compound or parallel
-            state_type = config.get("type", "compound")
-            if state_type in ["compound", "parallel"]:
+            state_type = "compound" if cfg_type is None else cfg_type
+            if state_type in ("compound", "parallel"):
                 return state_type  # type: ignore
             else:
                 logger.warning(
@@ -1033,9 +1133,9 @@ class StateNode(Generic[TContext]):
                     self.id,
                 )
                 return "compound"
-        elif config.get("type") == "final":
+        elif cfg_type == "final":
             return "final"
-        elif config.get("type") == "history":
+        elif cfg_type == "history":
             # 🕰️ A history pseudo-state. It has no children and is never
             #    "entered" in the ordinary sense — targeting it restores the
             #    remembered configuration of its parent instead.
@@ -1043,7 +1143,7 @@ class StateNode(Generic[TContext]):
         else:
             return "atomic"
 
-    def _parse_initial(self, config: Dict[str, Any]) -> Optional[str]:
+    def _parse_initial(self, initial: Any, raw_states: Any) -> Optional[str]:
         """Parses the initial state key, inferring it where unambiguous.
 
         🏛️ Architecture decision: a compound state with no `initial` used to
@@ -1066,7 +1166,6 @@ class StateNode(Generic[TContext]):
             InvalidConfigError: If a compound state has several children and
                 no way to choose between them.
         """
-        initial = config.get("initial")
         # 🛡️ `initial` names a child state, so it must be a string. A non-string
         #    was accepted and then never matched any child, producing a machine
         #    that started with an empty configuration and dropped every event.
@@ -1082,7 +1181,7 @@ class StateNode(Generic[TContext]):
         # 🕰️ History pseudo-states are never a valid initial target.
         candidates = [
             key
-            for key, child in config.get("states", {}).items()
+            for key, child in (raw_states or {}).items()
             if not (isinstance(child, dict) and child.get("type") == "history")
         ]
 
@@ -1121,7 +1220,7 @@ class StateNode(Generic[TContext]):
         return [ActionDefinition(a) for a in self._ensure_list(config)]
 
     def _parse_on(
-        self, config: Dict[str, Any]
+        self, raw_on: Any, always_config: Any
     ) -> Dict[str, List[TransitionDefinition]]:
         """Parses all event transitions from the 'on' property.
 
@@ -1133,7 +1232,8 @@ class StateNode(Generic[TContext]):
         transitions silently never fired.
         """
         on_map: Dict[str, List[TransitionDefinition]] = {}
-        raw_on = config.get("on", {})
+        if raw_on is None:
+            raw_on = {}
         if not isinstance(raw_on, dict):
             raise InvalidConfigError(
                 f"State '{self.id}' has an invalid 'on' value of type "
@@ -1150,7 +1250,6 @@ class StateNode(Generic[TContext]):
             ]
 
         # ⚡ Merge `always` into the transient ("") bucket.
-        always_config = config.get("always")
         if always_config is not None:
             always_transitions = [
                 self._create_transition("", t_config)
@@ -1161,10 +1260,9 @@ class StateNode(Generic[TContext]):
         return on_map
 
     def _parse_on_done(
-        self, config: Dict[str, Any]
+        self, on_done_config: Any
     ) -> Optional[TransitionDefinition]:
         """Parses the 'onDone' transition for a compound/parallel state."""
-        on_done_config = config.get("onDone")
         if not on_done_config:
             return None
 
@@ -1183,7 +1281,7 @@ class StateNode(Generic[TContext]):
         return transition
 
     def _parse_after(
-        self, config: Dict[str, Any]
+        self, raw_after: Any
     ) -> Dict[Union[int, str], List[TransitionDefinition]]:
         """Parses all delayed transitions from the 'after' property.
 
@@ -1194,7 +1292,8 @@ class StateNode(Generic[TContext]):
         with no indication that named delays were the intended feature.
         """
         after_map: Dict[Union[int, str], List[TransitionDefinition]] = {}
-        raw_after = config.get("after", {})
+        if raw_after is None:
+            raw_after = {}
         if not isinstance(raw_after, dict):
             raise InvalidConfigError(
                 f"State '{self.id}' has an invalid 'after' value of type "
@@ -1216,9 +1315,11 @@ class StateNode(Generic[TContext]):
             ]
         return after_map
 
-    def _parse_invoke(self, config: Dict[str, Any]) -> List[InvokeDefinition]:
+    def _parse_invoke(self, raw_invoke: Any) -> List[InvokeDefinition]:
         """Parses all invoked services from the 'invoke' property."""
-        invoke_configs = self._ensure_list(config.get("invoke", []))
+        invoke_configs = self._ensure_list(
+            [] if raw_invoke is None else raw_invoke
+        )
         invokes: List[InvokeDefinition] = []
         for i_config in invoke_configs:
             # 🛡️ Reject rather than skip. Silently ignoring a malformed
@@ -1517,9 +1618,10 @@ class MachineNode(StateNode[TContext]):
         super().__init__(self, config, config["id"])
         # ⚡ Tree is complete: one walk to learn whether history bookkeeping
         #    is ever needed (see `has_history_states`).
-        self.has_history_states, self.has_always_transitions = (
-            self._scan_tree_features(self)
-        )
+        # ⚡ Perf: accumulated post-order during the parse (see
+        #    `StateNode.__init__`) instead of a second whole-tree walk.
+        self.has_history_states = self._subtree_has_history
+        self.has_always_transitions = self._subtree_has_always
         #: ⚡ Perf: can ANY action run on this machine? `False` means no
         #: state or transition anywhere declares an action (entry / exit /
         #: `on` / `after` / `always` / `onDone` / invoke `onDone`-`onError`),
@@ -1527,15 +1629,22 @@ class MachineNode(StateNode[TContext]):
         #: `Receipt` need not deep-copy it to decide `changed`. Distinct
         #: from `subtree_has_actions`, which covers entry/exit only.
         self._context_is_immutable: Optional[bool] = None  # lazy, see property
+        #: ⚡ Is `initial_context` a plain dict whose values are all immutable
+        #: scalars? Then a per-interpreter `dict()` copy is as good as a
+        #: `deepcopy` (see `BaseInterpreter._build_initial_context`).
+        raw_ctx = self.initial_context
+        self.context_is_flat: bool = isinstance(raw_ctx, dict) and all(
+            isinstance(v, (str, int, float, bool, bytes, type(None)))
+            for v in raw_ctx.values()
+        )
         #: ⚡ Memo for `LogicLoader.required_names()`: the (actions, guards,
         #: services) the config references. Auto-discovery and alias
         #: resolution both need it; the tree is walked once, not twice.
         self._required_logic: Optional[Tuple[Set[str], Set[str], Set[str]]] = (
             None
         )
-        self._mark_subtree_actions(self)
+        # (subtree_has_actions is set per node during the parse.)
 
-    @staticmethod
     def _mark_subtree_actions(node: "StateNode") -> bool:
         """Post-order walk setting `StateNode.subtree_has_actions` (#27).
 
@@ -1590,7 +1699,6 @@ class MachineNode(StateNode[TContext]):
             stack.extend(node.states.values())
         return False
 
-    @staticmethod
     def _scan_tree_features(root: "StateNode") -> Tuple[bool, bool]:
         """One walk: (any history child anywhere, any `always` anywhere)."""
         history = False

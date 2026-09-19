@@ -381,5 +381,58 @@ class TestPumpFastPath(_Quiet):
         self.assertEqual({"m.b"}, i.current_state_ids)
 
 
+# =============================================================================
+# 8. __slots__ on the interpreters
+# =============================================================================
+class TestInterpreterSlots(_Quiet):
+    """Every attribute an interpreter sets must be declared in a `__slots__`
+    somewhere on its MRO, or it silently falls into the kept `__dict__` and
+    the locality win is lost for that attribute. `__dict__` itself is kept
+    so subclasses and ad-hoc attributes keep working."""
+
+    CFG = {
+        "id": "t",
+        "initial": "A",
+        "context": {"n": 0},
+        "states": {
+            "A": {"on": {"NEXT": "B"}, "after": {"1000": "B"}},
+            "B": {"on": {"NEXT": "A"}},
+        },
+    }
+
+    @staticmethod
+    def _declared(cls) -> set:
+        return {n for c in cls.__mro__ for n in getattr(c, "__slots__", ())}
+
+    def test_sync_sets_only_declared_attributes(self) -> None:
+        i = SyncInterpreter(create_machine(self.CFG)).start()
+        i.send("NEXT")
+        i.stop()
+        self.assertEqual({}, vars(i), "attributes fell through to __dict__")
+        self.assertTrue(
+            self._declared(SyncInterpreter) >= {"status", "_held_replays"}
+        )
+
+    def test_async_sets_only_declared_attributes(self) -> None:
+        async def main():
+            i = await Interpreter(create_machine(self.CFG)).start()
+            await i.send("NEXT", wait=True)
+            await i.stop()
+            return dict(vars(i))
+
+        self.assertEqual({}, asyncio.run(main()))
+
+    def test_subclasses_and_adhoc_attributes_still_work(self) -> None:
+        class Spy(SyncInterpreter):
+            def __init__(self, m):
+                super().__init__(m)
+                self.seen = []
+
+        s = Spy(create_machine(self.CFG)).start()
+        s.seen.append(1)
+        s.anything = "ok"  # type: ignore[attr-defined]
+        self.assertEqual("ok", s.anything)  # type: ignore[attr-defined]
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
