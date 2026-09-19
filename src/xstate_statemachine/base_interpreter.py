@@ -484,9 +484,14 @@ class BaseInterpreter(Generic[TContext]):
                 ``strict`` config key. Declared-but-unhandled events stay
                 silent no-ops (XState semantics).
         """
-        logger.info(
-            "🧠 Initializing BaseInterpreter for machine '%s'...", machine.id
-        )
+        # ⚡ Two INFO records per interpreter were ~6% of a 1,000-instance
+        #    fan-out; one level check per construction instead.
+        _info = logger.isEnabledFor(logging.INFO)
+        if _info:
+            logger.info(
+                "🧠 Initializing BaseInterpreter for machine '%s'...",
+                machine.id,
+            )
         # 🧍‍♂️ Core Properties
         self.machine: MachineNode[TContext] = machine
         #: Input supplied at creation, available to context factories and
@@ -618,11 +623,12 @@ class BaseInterpreter(Generic[TContext]):
             interpreter_class or self.__class__
         )
 
-        logger.info(
-            "✅ BaseInterpreter '%s' initialized. Status: '%s'.",
-            self.id,
-            self.status,
-        )
+        if _info:
+            logger.info(
+                "✅ BaseInterpreter '%s' initialized. Status: '%s'.",
+                self.id,
+                self.status,
+            )
 
     @staticmethod
     def _build_initial_context(
