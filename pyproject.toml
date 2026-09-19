@@ -152,6 +152,9 @@ omit = [
 ]
 
 [tool.coverage.report]
+# 📏 Repository rule: minimum 90% line+branch coverage. `pytest --cov` fails
+#    below this locally and in CI alike. Ratchet up, never down.
+fail_under = 90
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

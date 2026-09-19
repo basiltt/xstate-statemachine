@@ -363,6 +363,14 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
     (+15%). Construction and 1,000-instances are now the fastest of the
     four libraries benchmarked.
 
+### Removed
+
+- **Dead CLI code**: `generator._generate_logic_header` /
+  `_generate_logic_component` (superseded by the `strategies/` templates
+  in 0.7.0) and `strategies._shared.collect_all_states` /
+  `collect_all_transitions` / `_resolve_target` (superseded by the typed
+  IR in `cli/ir.py`). None was reachable from any command; ~390 lines.
+
 ### Deprecated
 
 - **The 0.7.x sibling reading of a leading-dot target now warns** (#31).

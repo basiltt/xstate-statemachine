@@ -184,18 +184,14 @@ jobs:
           python -m pip install "pytest>=8.3.0" "mypy>=1.14" "pytest-cov>=6.0.0"
 
       - name: 📊 Run suite with coverage
-        # 🚧 The threshold is a ratchet, not an aspiration. Raise it when
+        # 🚧 The threshold is a repository rule: 90% minimum. Raise it when
         #    coverage genuinely improves; never lower it to make a red build
-        #    green.
-        #
-        # ⚠️ Why 86 and not 87: measured coverage is ~87.4%, which pytest-cov
-        #    truncates to "87%". Setting the gate at 87 leaves under half a
-        #    point of headroom, and `branch = true` means arc counts differ
-        #    slightly between interpreter versions (this job pins 3.13; the
-        #    number above was measured on 3.14). A gate that trips on a Python
-        #    version difference rather than a real regression trains people to
-        #    ignore it. One point of slack keeps the signal trustworthy.
-        run: pytest --cov --cov-report=term-missing --cov-report=xml --cov-fail-under=86
+        #    green. The single source of truth is `fail_under` in
+        #    `[tool.coverage.report]` (pyproject.toml), so a local
+        #    `pytest --cov` enforces the same gate as CI. Measured 90.4% on
+        #    3.14 when the rule was set; `branch = true` arc counts differ
+        #    slightly across interpreter versions, which is the headroom.
+        run: pytest --cov --cov-report=term-missing --cov-report=xml
 
       - name: 📤 Upload coverage artifact
         if: always()

@@ -37,6 +37,8 @@ uv run pytest
 
 This will automatically find and execute all tests in the tests/ directory. All tests must pass before a pull request can be merged.
 
+Coverage is a repository rule: the suite must keep **at least 90%** line and branch coverage (`fail_under` in `pyproject.toml`). `uv run pytest --cov` reports it and fails below the bar, exactly as CI does. New code should arrive with tests that keep the number where it is or move it up; the threshold is only ever raised.
+
 ## 📬 Submitting Your Pull Request
 
 1.  **Push** your feature branch to your fork on GitHub:
