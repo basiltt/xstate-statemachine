@@ -1013,18 +1013,18 @@ on 0.8.1 (Python 3.14, median of 7 runs, GC disabled, setup excluded). Events pe
 
 | Scenario | **xstate-statemachine** (sync) | transitions 0.9.3 | python-statemachine 3.2.1 | sismic 1.6.11 |
 |:--|--:|--:|--:|--:|
-| Flat toggle | 62,413 | **145,100** | 9,198 | 12,872 |
-| 3-level nested | **25,855** | 8,266 | 2,653 | 4,951 |
-| Parallel regions | **44,520** | 5,894 | 3,831 | 4,613 |
-| Delayed transitions (timers/s) | **8,942** | 69 | 4,064 | 5,659 |
-| Construction (machines/s) | **9,403** | 7,021 | 1,366 | 260 |
-| 1,000 instances (inst/s) | **28,321** | 26,556 | 3,986 | 7,807 |
+| Flat toggle | 54,647 | **139,048** | 9,797 | 13,156 |
+| 3-level nested | **22,632** | 8,694 | 2,728 | 5,134 |
+| Parallel regions | **40,372** | 6,194 | 3,934 | 4,822 |
+| Delayed transitions (timers/s) | **8,712** | 68 | 3,915 | 5,892 |
+| Construction (machines/s) | 8,529 | **8,635** | 1,502 | 281 |
+| 1,000 instances (inst/s) | 26,553 | **37,001** | 3,685 | 7,762 |
 
 `transitions` is a transition table, not a statechart engine, and wins the *flat* scenario
-by ~2×. The moment states nest or run in parallel it has to emulate the SCXML algorithm and
-this library is 3.1–8× faster than everything else. Since 0.8.1 it is also the fastest to
-construct and to fan out to 1,000 instances, while still running the full build-time validator
-on every `create_machine()`. Full table, method and caveats:
+by ~2.5×. The moment states nest or run in parallel it has to emulate the SCXML algorithm and
+this library is 2.6–6.5× faster than everything else. Construction and 1,000-instance fan-out
+are a coin-flip against `transitions` (within ~10% run to run) while we still run the full
+build-time validator on every `create_machine()`. Full table, method and caveats:
 [`benchmarks/competitors/`](benchmarks/competitors/README.md).
 
 ### When *not* to use this
