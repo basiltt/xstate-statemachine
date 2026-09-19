@@ -73,7 +73,7 @@ print(get_next_snapshot(machine, snapshot, "GO").state_ids)   # {'fetch.done'}
 | `.context` | The context dict |
 | `.status` | `'active'`, `'done'` or `'error'` |
 | `.output` | Machine output, once a top-level final state is reached |
-| `.configuration` | The active `StateNode` objects |
+| `.configuration` | `Set[str]` of every active state id, ancestors included (not just leaves) |
 | `.matches(id)` | Test a state id, supporting nested paths |
 
 Snapshots are immutable — each transition returns a new one, so you can branch

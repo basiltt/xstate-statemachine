@@ -433,11 +433,9 @@ serialized = json.dumps(snapshot)
 
 # ... store `serialized` in a database, file, or cache ...
 
-# Restore state later
-saved_snapshot = json.loads(serialized)
+# Restore state later — from_snapshot() is the only restore path
 machine2 = create_machine(config)
-interp2 = SyncInterpreter(machine2)
-interp2.start(snapshot=saved_snapshot)
+interp2 = SyncInterpreter.from_snapshot(serialized, machine2)
 
 print(interp2.current_state_ids)  # Restored to the saved state
 ```
@@ -484,7 +482,7 @@ async def checkout():
 
 ### Is the interpreter thread-safe?
 
-The async `Interpreter` is bound to its event loop: calling `send()` from another thread raises `WrongThreadError`. From a plain thread, use `interp.send_threadsafe("EVENT")`, which schedules delivery onto the loop. `SyncInterpreter.send()` takes an internal lock, so it is safe to call from multiple threads, but a machine is fundamentally a single sequential thing — one producer per machine keeps your reasoning simple.
+The async `Interpreter` is bound to its event loop: calling `send()` from another thread raises `WrongThreadError`. From a plain thread, use `interp.send_threadsafe("EVENT")`, which schedules delivery onto the loop. `SyncInterpreter.send()` has **no** internal lock — it runs the whole macrostep on the calling thread, and two threads calling `send()` on one interpreter concurrently will interleave macrosteps and race on `context`. Drive a sync machine from one thread (its `after` timers fire on that same thread, inside `send()`/`tick()`). The full contract is in [Production Characteristics — The `SyncInterpreter` threading contract](../production-characteristics/#3-the-syncinterpreter-threading-contract).
 
 ---
 
