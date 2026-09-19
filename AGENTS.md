@@ -40,8 +40,8 @@ uv run pytest tests/tests_cli/
 # Run with verbose output
 uv run pytest -v
 
-# Run with coverage
-uv run pytest --cov=src/xstate_statemachine
+# Run with coverage (fails below the 90% repository minimum)
+uv run pytest --cov
 ```
 
 ### Linting and Formatting
@@ -68,7 +68,7 @@ independent jobs, so a red build tells you *what kind* of thing broke:
 |:----|:-----|
 | **lint** | `black --check` (line length 79) + `flake8` — same flags and pinned versions as `.pre-commit-config.yaml` |
 | **test** | Full suite on Python 3.9–3.14 (Linux) plus Windows 3.9/3.14 and macOS 3.14 spot-checks; also runs the `doctest` examples |
-| **coverage** | Full suite with `--cov-fail-under=86` (a ratchet — raise it, never lower it) |
+| **coverage** | Full suite with `pytest --cov`; **minimum 90%** line+branch coverage is a repository rule (`fail_under` in `pyproject.toml`, enforced locally and in CI; a ratchet — raise it, never lower it) |
 | **build** | `python -m build`, `twine check`, then installs the built **wheel** into a clean venv and smoke-tests the public API and the `xsm` entry point |
 
 To reproduce a CI failure locally, run the exact command from the failing

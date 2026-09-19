@@ -21,7 +21,6 @@
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
-import keyword
 import logging
 from typing import Any, Dict, List, Set
 
@@ -30,7 +29,6 @@ from typing import Any, Dict, List, Set
 # -----------------------------------------------------------------------------
 from .extractor import extract_events
 from .strategies import GenerationContext, get_strategy
-from .utils import camel_to_snake
 
 # -----------------------------------------------------------------------------
 # 🪵 Module Logger
@@ -39,214 +37,11 @@ logger = logging.getLogger(__name__)
 
 
 # -----------------------------------------------------------------------------
-# 🛠️ Logic Generation Helpers
+# 🛠️ Runner Generation Helpers
 # -----------------------------------------------------------------------------
-# These functions are responsible for generating specific parts of the
-# *_logic.py file. They are orchestrated by the main `generate_logic_code`
-# function.
-# -----------------------------------------------------------------------------
-
-
-def _generate_logic_header(
-    is_async: bool, log: bool, file_count: int, services: Set[str]
-) -> str:
-    """
-    Generates the header and import statements for the logic file.
-
-    Args:
-        is_async (bool): 🚦 True if the machine is asynchronous.
-        log (bool): 🪵 True to include logging setup.
-        file_count (int): 🔢 The number of generated files (1 or 2).
-        services (Set[str]): 🔄 A set of service names.
-
-    Returns:
-        str: The generated header code as a string.
-    """
-    file_title = (
-        "# 📡 Generated Logic File"
-        if file_count > 1
-        else "# 📡 Generated File"
-    )
-    header = [
-        "# -------------------------------------------------------------------------------",
-        file_title,
-        "# -------------------------------------------------------------------------------",
-        "",
-    ]
-    # 📚 Add async-specific imports
-    if is_async:
-        header.extend(["import asyncio", "from typing import Awaitable"])
-
-    # 📚 Add standard imports
-    if services and not is_async:
-        header.append("import time")
-    header.extend(
-        [
-            "from typing import Any, Dict, Union",
-            "",
-            "from xstate_statemachine import Interpreter, SyncInterpreter, Event, ActionDefinition",
-            "",
-        ]
-    )
-
-    # 🪵 Add logger configuration if requested
-    if log:
-        header.extend(
-            [
-                "import logging",
-                "",
-                "# -----------------------------------------------------------------------------",
-                "# 🧾 Logger Configuration",
-                "# -----------------------------------------------------------------------------",
-                "logger = logging.getLogger(__name__)",
-                "",
-            ]
-        )
-    return "\n".join(header)
-
-
-def _generate_logic_component(
-    items: Set[str],
-    component_type: str,
-    is_async: bool,
-    log: bool,
-    style: str,
-    indent: str,
-) -> str:
-    """
-    Generates code for a specific logic component (actions, guards, or services).
-    This is a generic helper that applies the DRY principle.
-
-    Args:
-        items (Set[str]): 📝 A set of names for the component (e.g., action names).
-        component_type (str): 🏷️ The type of component ("action", "guard", "service").
-        is_async (bool): 🚦 True for asynchronous code generation.
-        log (bool): 🪵 True to include logging calls.
-        style (str): 🎨 The code style ('class' or 'function').
-        indent (str): '    ' or '' depending on style.
-
-    Returns:
-        str: The generated Python code for the component.
-    """
-    if not items:
-        return ""
-
-    _snake = camel_to_snake
-    code_lines = []
-
-    # 🗺️ Map component types to their specific metadata
-    component_map = {
-        "action": {
-            "emoji": "⚙️",
-            "title": "Actions",
-            "verb": "Executing action",
-        },
-        "guard": {
-            "emoji": "🛡️",
-            "title": "Guards",
-            "verb": "Evaluating guard",
-        },
-        "service": {
-            "emoji": "🔄",
-            "title": "Services",
-            "verb": "Running service",
-        },
-    }
-    meta = component_map[component_type]
-    code_lines.append(f"{indent}# {meta['emoji']} {meta['title']}")
-
-    for original in sorted(items):
-        fn_name = _snake(original)
-        if keyword.iskeyword(fn_name):
-            fn_name = f"{fn_name}_"
-
-        async_kw = "async " if is_async and component_type != "guard" else ""
-        self_arg = [f"{indent}        self,"] if style == "class" else []
-
-        # ✍️ Determine arguments based on component type
-        if component_type == "guard":
-            args = [
-                f"{indent}        context: Dict[str, Any],",
-                f"{indent}        event: Event,",
-            ]
-        else:
-            args = [
-                f"{indent}        interpreter: "
-                f"Union[Interpreter[Any], SyncInterpreter[Any]],",
-                f"{indent}        context: Dict[str, Any],",
-                f"{indent}        event: Event,",
-            ]
-            if component_type == "action":
-                args.append(
-                    f"{indent}        action_def: ActionDefinition,  # noqa: D401 – lib callback"
-                )
-
-        # ↪️ Determine return type
-        if component_type == "action":
-            ret_type = "Awaitable[None]" if is_async else "None"
-            ret_comment = "  # noqa : ignore IDE return type hint warning"
-        elif component_type == "guard":
-            ret_type = "bool"
-            ret_comment = ""
-        else:  # service
-            ret_type = (
-                "Awaitable[Dict[str, Any]]" if is_async else "Dict[str, Any]"
-            )
-            ret_comment = "  # noqa : ignore IDE return type hint warning"
-
-        signature = [
-            f"{indent}{async_kw}def {fn_name}(  # noqa: ignore IDE static method warning,",
-            *self_arg,
-            *args,
-            f"{indent}) -> {ret_type}:{ret_comment}",
-        ]
-        code_lines.extend(signature)
-
-        code_lines.append(
-            f'{indent}    """{component_type.capitalize()}: `{original}`."""'
-        )
-        if log:
-            # FIX: Use the correct verb for the log message
-            code_lines.append(
-                f'{indent}    logger.info("{meta["verb"]} {original}")'
-            )
-
-        if component_type == "action":
-            if is_async:
-                code_lines.append(
-                    f"{indent}    await asyncio.sleep(0.1)  # placeholder"
-                )
-            code_lines.append(f"{indent}    # TODO: implement")
-        elif component_type == "guard":
-            code_lines.append(
-                f"{indent}    # TODO: implement guard logic\n{indent}    return True"
-            )
-        else:  # service
-            if is_async:
-                code_lines.append(f"{indent}    await asyncio.sleep(1)")
-            else:
-                code_lines.append(f"{indent}    time.sleep(1)")
-            code_lines.append(
-                f"{indent}    # TODO: implement service\n{indent}    return {{'result': 'done'}}{ret_comment}"
-            )
-
-        if fn_name != original and component_type == "service":
-            code_lines.append(
-                f"\n{indent}{original} = {fn_name}  # alias for JSON name"
-            )
-
-        code_lines.append("")
-
-    return "\n".join(code_lines)
-
-
-# -----------------------------------------------------------------------------
-# 🏃 Runner Generation Helpers & Strategy Pattern
-# -----------------------------------------------------------------------------
-# The generation of the runner file is complex due to multiple modes
-# (single, multiple, hierarchical). We use a Strategy Pattern to handle this
-# complexity cleanly. Each strategy class is responsible for generating the
-# code for one specific mode.
+# Logic-file generation lives in `strategies/` (one template per module);
+# `generate_logic_code` below only dispatches to the selected strategy. The
+# helpers here build the *_runner.py file.
 # -----------------------------------------------------------------------------
 
 
