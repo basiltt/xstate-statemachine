@@ -506,7 +506,8 @@ print(receipt.error)      # the exception raised while processing THIS event, or
 - `changed: bool` — `True` if a transition was taken (configuration or context changed) *for this event*.
 - `error: Optional[BaseException]` — set when an action raised or a target was unresolvable while processing this event; otherwise `None`. The machine can still be `running` when `error` is set (depending on `actionErrorPolicy`) — the receipt only reports whether *this caller's* event was processed cleanly.
 
-- `deferred: bool` — `True` when this event selected no transition and was parked under `onUnhandled: "defer"`. It is replayed as its *own* macrostep after the next event that changes the configuration; the replay never folds into that event's receipt (0.8.1).
+- `deferred: bool` — `True` when this event selected no transition and was parked under `onUnhandled: "defer"`. It is replayed as its *own* macrostep after the next event that changes the configuration; the replay never folds into that event's receipt (0.8.1, both engines — the sync engine now holds replays until the caller's receipt is final, #125).
+- `denied: bool` — `True` when the active state *declared* a handler for this event but every guard said no (0.8.1, #153). Without it, a business-rule refusal and an event that simply does not apply in this state produce byte-identical receipts.
 
 `error` is also set (to `InterpreterStoppedError`) if the interpreter is stopped, refuses the event, or tears down before a pending receipt resolves, so a caller awaiting `wait=True` never hangs on shutdown.
 

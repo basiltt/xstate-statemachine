@@ -93,9 +93,12 @@ def run_fail_policy() -> None:
         interpreter.send("CHECKOUT")
     except TransitionFailedError as exc:
         logger.info(f"❌ Transition rolled back as expected: {exc}")
-    logger.info(f"State (unchanged): {interpreter.current_state_ids}")
-    assert "checkout-fail.cart" in interpreter.current_state_ids
-    interpreter.stop()
+    # 🛑 "fail" STOPS the machine (0.8.1, #145): the configuration is cleared,
+    #    status is "stopped", and the reason is retained on `.error`.
+    logger.info(f"Status: {interpreter.status}; error: {interpreter.error}")
+    assert interpreter.status == "stopped"
+    assert interpreter.current_state_ids == set()
+    assert isinstance(interpreter.error, TransitionFailedError)
 
 
 def main() -> None:

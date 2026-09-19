@@ -608,7 +608,7 @@ The behavior above is one of three policies, controlled by the machine-config ke
 |-------|----------|
 | `"continue"` (default) | The error is contained: it is logged, the transition still completes, and the machine keeps running. Emits a one-shot `DeprecationWarning` — the default flips to `"rollback"` in 1.0. |
 | `"rollback"` | The transition's configuration *and* context changes are rolled back; the machine stays in its pre-transition state. |
-| `"fail"` | Same rollback, plus the interpreter stops and raises `TransitionFailedError`, with `status` set to `"error"`. |
+| `"fail"` | Same rollback, plus the interpreter **stops**: `status` becomes `"stopped"`, the configuration is cleared (a stopped machine has no active leaf — before 0.8.1 it kept reporting the source leaf under `status="error"`, #145), children and timers are torn down, and the `TransitionFailedError` is retained on `interp.error` (`__cause__` is the action's exception). The sync `send()` caller and the async `wait=True` receipt both receive it. A parent that `invoke`d this machine sees the failure on its `onError`. |
 
 ```json
 {

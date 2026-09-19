@@ -176,7 +176,11 @@ class TestSnapshotRoundTripsEngineEvents(_Quiet):
         self.assertIn("boom", str(err.error))
 
     def test_v1_record_without_kind_rederives_engine_shape(self) -> None:
-        self.assertTrue(
+        # #162: a v1 record is USER traffic by default -- classifying by
+        # name laundered a user's `after.hours` into a system event. Only
+        # the init sentinel (which the engine itself persisted under v1,
+        # and no user can send) keeps system provenance.
+        self.assertFalse(
             is_system_event(
                 restore_event({"type": "xstate.error.actor.k", "payload": {}})
             )

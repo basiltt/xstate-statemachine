@@ -1456,7 +1456,7 @@ Each is a **per-machine policy**. The default preserves the historical behaviour
 
 | What fails | Default | Opt-in policy (machine config key) | How to observe it |
 |:--|:--|:--|:--|
-| An **action** raises (entry, exit, or transition) | Contained; the transition still commits | `actionErrorPolicy`: `"rollback"` restores configuration *and* context · `"fail"` also stops with `TransitionFailedError` | `on_action_error`, `on_transition_failed`, `interpreter.last_transition_ok` |
+| An **action** raises (entry, exit, or transition) | Contained; the transition still commits | `actionErrorPolicy`: `"rollback"` restores configuration *and* context · `"fail"` also **stops** the machine (`status == "stopped"`, configuration cleared) with `TransitionFailedError` on `.error` | `on_action_error`, `on_transition_failed`, `interpreter.last_transition_ok` |
 | A **guard** raises | Treated as `False` | `guardErrorPolicy`: `"true"` · `"raise"` | `on_guard_error` (distinct from a guard that *returned* `False`) |
 | An invoked **service** raises | Routed to `onError` — a normal transition, not a crash | — | `onError` target, `on_service_error` |
 | An **unknown event** arrives | Ignored (XState semantics) | `onUnhandled`: `"defer"` replays it after the next state change · `"error"` stops with `UnhandledEventError` | `on_unhandled_event` fires under *every* policy |

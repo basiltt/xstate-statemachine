@@ -620,9 +620,9 @@ class TestSyncBuiltinActionFailure(_Quiet):
         i.send("GO")
         # Whether or not this particular built-in raises, the machine must be
         # in exactly one of two consistent states: transitioned, or failed.
-        if i.status == "error":
+        if i.status == "stopped":  # #145: "fail" stops the machine
             self.assertIsInstance(i.error, TransitionFailedError)
-            self.assertEqual(i.current_state_ids, {"m.a"})
+            self.assertEqual(i.current_state_ids, set())
         else:
             self.assertEqual(i.current_state_ids, {"m.b"})
 

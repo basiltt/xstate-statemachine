@@ -209,7 +209,7 @@ class TestUnknownEvents(_Quiet):
             return out
 
         status, err = _run(main())
-        self.assertEqual(status, "error")
+        self.assertEqual(status, "stopped")  # #145: "fail" stops the machine
         self.assertEqual(err, "TransitionFailedError")
 
     def test_after_and_invoke_generated_events_are_known(self) -> None:

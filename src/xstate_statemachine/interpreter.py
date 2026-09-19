@@ -248,6 +248,7 @@ class Interpreter(BaseInterpreter[TContext]):
         max_queue_size: Optional[int] = None,
         overflow_policy: "OverflowPolicy" = OverflowPolicy.RAISE,
         strict: Optional[bool] = None,
+        service_executor: Optional[concurrent.futures.Executor] = None,
     ) -> None:
         """Initializes a new asynchronous Interpreter instance.
 
@@ -262,6 +263,15 @@ class Interpreter(BaseInterpreter[TContext]):
                 ``DROP_NEWEST``; see `OverflowPolicy`. Ignored when no
                 bound is set. The priority lane is never bounded: an urgent
                 decision must get through a full inbox.
+            service_executor: Where a PLAIN (non-coroutine) ``invoke``
+                service runs (#149). ``None`` (default) lazily creates a
+                small `ThreadPoolExecutor` owned by this interpreter and
+                shut down with it. Pass a shared / bounded pool, or a
+                `ProcessPoolExecutor` for CPU-bound work. The entering
+                macrostep still awaits the result before it completes, so
+                a plain service's ``done.invoke`` lands ahead of any event
+                already waiting in the inbox exactly as on the sync engine
+                (#116) -- but the event loop is free for the duration.
 
         Args:
             machine (MachineNode[TContext]): The `MachineNode` instance
@@ -298,6 +308,15 @@ class Interpreter(BaseInterpreter[TContext]):
             raise InvalidConfigError("max_queue_size must be >= 1 or None")
         self._max_queue_size: Optional[int] = max_queue_size
         self._overflow_policy: OverflowPolicy = OverflowPolicy(overflow_policy)
+        #: 🧵 #149: executor for plain-`def` services; `None` until first
+        #: use (a machine with only coroutine services never creates one).
+        self._service_executor: Optional[concurrent.futures.Executor] = (
+            service_executor
+        )
+        self._owns_service_executor: bool = service_executor is None
+        #: 🧵 #149: plain-service results the CURRENT macrostep must await
+        #: before it completes (see `_process_event_and_transient_transitions`).
+        self._inline_service_futures: List["asyncio.Future[Any]"] = []
         #: 🧾 #39: receipts awaiting the macrostep of a specific event,
         #: keyed by the event object's identity (events are NamedTuples and
         #: may compare equal; identity is what distinguishes two sends of
@@ -334,6 +353,10 @@ class Interpreter(BaseInterpreter[TContext]):
         #: a macrostep completes without having done so. Bounds a runaway
         #: `raise` without ever throttling external `send()` traffic.
         self._raise_depth: int = 0
+        #: 🔗 #150: self-issued `send_threadsafe` deliveries accepted on a
+        #: worker thread but not yet landed on the loop. A macrostep that
+        #: "raised nothing" must not end the chain while one is in flight.
+        self._threadsafe_self_sends_in_flight: int = 0
         #: 📨 #125: set when a step changed the configuration while events
         #: were deferred; the run loop replays them as separate macrosteps.
         self._replay_pending: bool = False
@@ -401,9 +424,7 @@ class Interpreter(BaseInterpreter[TContext]):
             logger.info("♻️ Resuming restored interpreter '%s'...", self.id)
             if self.status == "running":
                 self._bind_loop()
-                self._event_loop_task = asyncio.create_task(
-                    self._run_event_loop()
-                )
+                self._event_loop_task = self._spawn_run_loop()
                 # 🔁 #44: opt-in re-drive of invokes the snapshot left parked.
                 if self._restart_services_on_start:
                     self._restart_services_on_start = False
@@ -450,7 +471,7 @@ class Interpreter(BaseInterpreter[TContext]):
         self.status = "running"
         # 🌀 Launch the main event loop as a background task.
         self._bind_loop()
-        self._event_loop_task = asyncio.create_task(self._run_event_loop())
+        self._event_loop_task = self._spawn_run_loop()
 
         try:
             # 🔔 Notify plugins that the interpreter is starting.
@@ -675,6 +696,15 @@ class Interpreter(BaseInterpreter[TContext]):
         AT THE CALL SITE, and a fire-and-forget ``interp.send("GO")`` from
         inside the loop is delivered rather than silently dropped.
 
+        Event shapes and what is validated (#113 / #161): a ``str`` is the
+        type; a ``dict`` must carry a non-empty ``str`` ``"type"`` and every
+        other key must be a ``str`` (those become the payload; their VALUES
+        are not inspected -- payload semantics are domain-specific and belong
+        to ``event_schemas``); an `Event` / `DoneEvent` / `AfterEvent` /
+        `ErrorEvent` is passed through. Anything else raises
+        `InvalidEventError` (also a `TypeError`), and `on_invalid_event`
+        fires first (#159).
+
         Args:
             event_or_type: The event to send. Can be an event type string,
                 a dictionary (e.g., `{"type": "MY_EVENT", "value": 42}`),
@@ -703,7 +733,7 @@ class Interpreter(BaseInterpreter[TContext]):
         """
         self._assert_owning_thread("send")
         # 📦 Normalise eagerly so a malformed event also fails at the call site.
-        event_obj = self._prepare_event(event_or_type, **payload)
+        event_obj = self._prepare_event_reporting(event_or_type, **payload)
         self._warn_reserved_payload_keys(event_obj)
         self._check_strict(event_obj)  # #51: at the call site, pre-queue
         if wait and event_obj is event_or_type:
@@ -861,12 +891,17 @@ class Interpreter(BaseInterpreter[TContext]):
         changed: bool,
         error: Optional[BaseException],
         deferred: bool = False,
+        denied: bool = False,
     ) -> None:
         fut = self._receipts.pop(id(event_obj), None)
         if fut is not None and not fut.done():
             fut.set_result(
                 Receipt(
-                    frozenset(self.current_state_ids), changed, error, deferred
+                    frozenset(self.current_state_ids),
+                    changed,
+                    error,
+                    deferred,
+                    denied,
                 )
             )
 
@@ -1013,6 +1048,7 @@ class Interpreter(BaseInterpreter[TContext]):
         event_or_type: Union[
             str, Dict[str, Any], Event, DoneEvent, AfterEvent, ErrorEvent
         ],
+        internal: Optional[bool] = None,
         **payload: Any,
     ) -> "concurrent.futures.Future[None]":
         """Send an event from ANY thread.
@@ -1029,6 +1065,26 @@ class Interpreter(BaseInterpreter[TContext]):
                 Raised on the calling thread, before anything is queued.
             InvalidEventPayloadError: a registered `event_schemas` validator
                 rejected the payload (#78). Same guardrail as `send()`.
+            QueueOverflowError: the inbox is bounded, full, and the policy
+                is ``RAISE`` -- raised **on the calling thread** (#157), so
+                a fire-and-forget producer sees backpressure at the call
+                site rather than on a future it never reads. Evaluated
+                against the inbox depth visible from the caller's thread;
+                a concurrent producer may still be refused on the loop, in
+                which case the returned future carries the error.
+
+        Args:
+            internal: Charge this send to the machine's ``maxIterations``
+                chain budget as a self-send (#150). ``None`` (default)
+                decides by context: a call made from inside one of this
+                interpreter's own actions, or from a thread/executor that
+                inherited that action's ``contextvars`` context, is
+                internal. A plain ``threading.Thread`` does NOT inherit
+                the context (before 3.14, and on 3.14 unless
+                ``thread_inherit_context`` is on) -- an action that hands
+                its own re-trigger to one must pass ``internal=True``, or
+                start the thread with ``contextvars.copy_context().run``.
+                ``False`` forces external accounting.
         """
         if self._loop is None:
             raise RuntimeError(
@@ -1040,15 +1096,50 @@ class Interpreter(BaseInterpreter[TContext]):
                 f"Interpreter '{self.id}' was bound to an event loop that "
                 f"has been closed; it can no longer accept events."
             )
-        event_obj = self._prepare_event(event_or_type, **payload)
+        event_obj = self._prepare_event_reporting(event_or_type, **payload)
         # 🛡️ #78: the SAME guardrail as `send()`, on the calling thread. It
         #    reads only immutable machine data, so it is safe off-loop, and
         #    raising here -- not inside the returned future -- is what a
         #    foreign-thread caller can actually act on. Without this the
         #    recommended cross-thread path was the one without validation.
         self._check_strict(event_obj)
+        # 🔗 #150: decide "self-send or external" on the CALLING thread,
+        #    where the action's context (if inherited) is visible, and carry
+        #    the answer to the loop. Deciding on the loop always read the
+        #    loop task's own context and classified every threadsafe send
+        #    as external.
+        self_issued = (
+            self._issued_from_own_action() if internal is None else internal
+        )
+        # 🚦 #157: backpressure at the CALL SITE. `qsize()` is a plain read
+        #    that is safe from any thread; if the inbox is already full and
+        #    the policy is RAISE, refuse here rather than on a future the
+        #    documented fire-and-forget pattern never inspects. Self-issued
+        #    sends go to the internal queue, which is never bounded.
+        if (
+            not self_issued
+            and self._overflow_policy is OverflowPolicy.RAISE
+            and self._inbox_is_full()
+        ):
+            raise QueueOverflowError(
+                self.id, self._event_queue.qsize(), self._max_queue_size or 0
+            )
+
+        if self_issued:
+            # Counted at ISSUE time, on this thread: the loop may finish
+            # the issuing action's macrostep before `_deliver` runs, and
+            # must not conclude the chain has ended.
+            self._threadsafe_self_sends_in_flight += 1
 
         async def _deliver() -> None:
+            if self_issued:
+                self._threadsafe_self_sends_in_flight -= 1
+                if not self._refuse_if_not_running(event_obj):
+                    self._raise_depth += 1
+                    self._internal_queue.append(event_obj)
+                    if self._wakeup is not None:
+                        self._wakeup.set()
+                return
             self._enqueue(event_obj)
 
         return asyncio.run_coroutine_threadsafe(_deliver(), self._loop)
@@ -1122,6 +1213,13 @@ class Interpreter(BaseInterpreter[TContext]):
         Shared by `stop()` and by reaching a terminal status (#57).
         """
         self._detach_clock()  # #115
+        # 🧵 #149: release the plain-service pool we created (never one the
+        #    caller handed in). `wait=False`: a still-running service is
+        #    user code we cannot interrupt; its result is discarded because
+        #    the machine is gone.
+        if self._owns_service_executor and self._service_executor is not None:
+            self._service_executor.shutdown(wait=False)
+            self._service_executor = None
         for actor in list(self._actors.values()):
             _stopped = actor.stop()
             if _stopped is not None:
@@ -1397,12 +1495,23 @@ class Interpreter(BaseInterpreter[TContext]):
                 step_error: Optional[BaseException] = None
                 self.last_transition_ok = True
                 self._deferred_this_step.clear()  # #106: per-step scope
+                self._guard_denied_this_step = False  # #153: per-step scope
                 try:
                     self._processing = True
                     depth_before = self._raise_depth
                     await self._process_event_and_transient_transitions(event)
-                    # ✅ A macrostep that raised nothing ends the chain.
-                    if self._raise_depth == depth_before:
+                    # ✅ A macrostep that raised nothing ends the chain --
+                    #    provided no self-generated work is still queued.
+                    #    #150: an action that hands its re-trigger to a
+                    #    worker thread returns before that send lands, so
+                    #    "raised nothing during the step" was true on every
+                    #    lap and the chain never accumulated. The internal
+                    #    queue being non-empty means the chain is alive.
+                    if (
+                        self._raise_depth == depth_before
+                        and not self._internal_queue
+                        and not self._threadsafe_self_sends_in_flight
+                    ):
                         self._raise_depth = 0
                 except asyncio.CancelledError:
                     raise
@@ -1419,8 +1528,8 @@ class Interpreter(BaseInterpreter[TContext]):
                     #    left the two engines disagreeing on an error path.
                     self.last_transition_ok = False
                     self._last_action_error = exc
-                    if isinstance(exc, StateNotFoundError):
-                        self._report_resolve_error(exc, event)  # #134
+                    # (#134: `on_resolve_error` fires from the shared
+                    #  `_execute_transition`, on both engines.)
                     logger.error(
                         "💥 Error processing event '%s' on '%s'; the "
                         "interpreter remains running. %s",
@@ -1443,7 +1552,13 @@ class Interpreter(BaseInterpreter[TContext]):
                     deferred = any(
                         ev is event for ev in self._deferred_this_step
                     )
-                    self._resolve_receipt(event, changed, step_error, deferred)
+                    self._resolve_receipt(
+                        event,
+                        changed,
+                        step_error,
+                        deferred,
+                        denied=(not changed and self._guard_denied_this_step),
+                    )
                 # 📨 #125: replay deferred events as their OWN macrosteps,
                 #    after this event's receipt has been resolved, so the
                 #    receipt describes THIS event's transition and not the
@@ -1527,9 +1642,11 @@ class Interpreter(BaseInterpreter[TContext]):
         # 1️⃣ Process the initial event that was dequeued.
         before = frozenset(self._active_state_nodes)
         await self._process_event(event)
+        await self._await_inline_services()  # #149
 
         # 2️⃣ Immediately settle any event-less ("always") transitions.
         await self._settle_transient_transitions()
+        await self._await_inline_services()  # a settle may enter an invoke
 
         # 3️⃣ Replay deferred events now that the configuration changed.
         #
@@ -1617,6 +1734,43 @@ class Interpreter(BaseInterpreter[TContext]):
         finally:
             _ACTIVE_ACTION_OWNER.reset(token)
 
+    def _spawn_run_loop(self) -> "asyncio.Task[None]":
+        """Create the run-loop task with death publication attached to the TASK.
+
+        🏛️ #148: #114 published an external cancel from the
+        ``except CancelledError`` inside `_run_event_loop`. That handler
+        only exists once the coroutine body has started; a task cancelled
+        between `start()` returning and its first scheduling turn never
+        enters the body, so nothing published and the machine was a
+        zombie (`status="running"`, `is_running=False`, receipts hung).
+        A done-callback fires for EVERY way a task ends -- cancelled
+        before first step, cancelled mid-way, or a non-cancel exception
+        that escaped the loop -- so it is the one place that cannot be
+        skipped. `_die` is idempotent on status, so the in-body handler
+        (still there for the common case) and this callback never
+        double-publish.
+        """
+        task = asyncio.create_task(self._run_event_loop())
+
+        def _on_loop_done(t: "asyncio.Task[None]") -> None:
+            if self.status != "running":
+                return  # orderly stop / done / error: nothing to publish
+            if t.cancelled():
+                self._die(
+                    RuntimeError(
+                        f"Interpreter '{self.id}' run loop was cancelled "
+                        f"while running; the machine is no longer "
+                        f"processing events."
+                    )
+                )
+                return
+            exc = t.exception()
+            if exc is not None:
+                self._die(exc)
+
+        task.add_done_callback(_on_loop_done)
+        return task
+
     def _die(self, error: BaseException) -> None:
         """The run loop is gone without an orderly `stop()` (#114).
 
@@ -1625,6 +1779,10 @@ class Interpreter(BaseInterpreter[TContext]):
         no awaiter hangs, and fire `on_error` -- the same surface a fatal
         `actionErrorPolicy="fail"` uses.
         """
+        if self.status != "running":
+            # 🔁 Idempotent: the task done-callback (#148) and the in-body
+            #    CancelledError handler (#114) may both arrive.
+            return
         self.status = "error"
         self.error = error
         for key in list(self._receipts):
@@ -2193,19 +2351,55 @@ class Interpreter(BaseInterpreter[TContext]):
         if not handled:
             self._fail(exc)
 
+    def _get_service_executor(self) -> concurrent.futures.Executor:
+        """The executor plain services run on; created on first use (#149)."""
+        if self._service_executor is None:
+            # 🧵 Small and explicit: the number of concurrently-running
+            #    plain services is a property of the machine, not the host.
+            self._service_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=4, thread_name_prefix=f"xsm-svc-{self.id}"
+            )
+            self._owns_service_executor = True
+        return self._service_executor
+
+    async def _await_inline_services(self) -> None:
+        """Block the CURRENT macrostep (not the loop) on plain services (#149).
+
+        Each future was created by `_invoke_plain_service_inline` when the
+        step entered an invoking state. Awaiting here -- before the step
+        completes and before `_next_event` looks at the inbox -- is what
+        keeps #116's guarantee: the `done.invoke` is in the priority lane
+        before any external event queued behind the entry is considered.
+        A service that itself enters another invoking state (via its
+        completion) is picked up by the loop's next iteration.
+        """
+        while self._inline_service_futures:
+            pending, self._inline_service_futures = (
+                self._inline_service_futures,
+                [],
+            )
+            await asyncio.gather(*pending, return_exceptions=True)
+
     def _invoke_plain_service_inline(
         self,
         invocation: InvokeDefinition,
         service: Callable[..., Any],
         owner_id: str,
     ) -> None:
-        """Run a non-coroutine service synchronously (#116).
+        """Run a non-coroutine service off the loop; the step awaits it.
 
-        Mirrors `SyncInterpreter._invoke_service`'s callable branch: call,
-        then deliver `done.invoke` / `error.platform` through the priority
-        lane so the completion lands ahead of the inbox backlog. If the
-        callable returns an awaitable after all (a plain `def` returning a
-        coroutine), fall back to the task path so it is awaited.
+        🏛️ #116 made a plain callable complete INSIDE the macrostep that
+        enters the invoking state, so `done.invoke` lands ahead of any
+        event already in the inbox -- the same point the sync engine
+        completes it. #149: doing that by calling the function on the loop
+        thread stalled every timer, actor and inbound send for the
+        service's full duration. The call now runs on
+        `_get_service_executor()`; the macrostep awaits the result
+        (`_await_inline_services`) so the ORDERING is unchanged while the
+        loop keeps turning. Failure is reported on the loop thread through
+        the same `_report_service_failure` path. If the callable returns an
+        awaitable after all (a plain `def` returning a coroutine), it is
+        awaited as a task instead.
         """
         for plugin in self._plugins:
             plugin.on_service_start(self, invocation)
@@ -2216,10 +2410,41 @@ class Interpreter(BaseInterpreter[TContext]):
                     "input": invocation.resolve_input(self.context, None) or {}
                 },
             )
-            produced = service(self, self.context, invoke_event)
-        except Exception as exc:  # noqa: BLE001 -- user code
+        except Exception as exc:  # noqa: BLE001 -- user code (input factory)
             self._report_service_failure(invocation, exc)
             return
+
+        loop = asyncio.get_running_loop()
+        try:
+            handoff = loop.run_in_executor(
+                self._get_service_executor(),
+                service,
+                self,
+                self.context,
+                invoke_event,
+            )
+        except RuntimeError as exc:  # executor already shut down
+            self._report_service_failure(invocation, exc)
+            return
+
+        async def _settle() -> None:
+            try:
+                produced = await handoff
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 -- user code
+                self._report_service_failure(invocation, exc)
+                return
+            self._finish_plain_service(invocation, owner_id, produced)
+
+        fut = asyncio.ensure_future(_settle())
+        self._inline_service_futures.append(fut)
+        self.task_manager.add(owner_id, fut)
+
+    def _finish_plain_service(
+        self, invocation: InvokeDefinition, owner_id: str, produced: Any
+    ) -> None:
+        """Deliver a plain service's result (#116 / #149 tail)."""
         if inspect.isawaitable(produced):
             # A `def` that returned an awaitable after all: await it in a
             # task, with the same success / failure handling as the
@@ -2251,7 +2476,7 @@ class Interpreter(BaseInterpreter[TContext]):
         )
         self._deliver_priority(done_event)
         logger.info(
-            "✅ Service '%s' (ID: '%s') completed inline.",
+            "✅ Service '%s' (ID: '%s') completed (plain service).",
             invocation.src,
             invocation.id,
         )
@@ -2310,6 +2535,7 @@ class Interpreter(BaseInterpreter[TContext]):
             )
             child_interpreter.parent = self
             child_interpreter.id = actor_id
+            child_interpreter._invoked_as = invocation.id  # #156
             self._actors[actor_id] = child_interpreter
             self._actor_sources[actor_id] = invocation.src or ""
             self._invoked_children.setdefault(owner_id, []).append(
@@ -2399,8 +2625,13 @@ class Interpreter(BaseInterpreter[TContext]):
         #    NOT `stop()` it -- that would clear the `output` / `error` the
         #    parent is about to read.
         await self._retire_invoked_child(owner_id, child, stop=False)
-        if status == "error":
-            failure = getattr(child, "error", None) or RuntimeError(
+        # 💥 A child that ended in `error`, OR one that STOPPED because its
+        #    own `actionErrorPolicy: "fail"` halted it (#145: status is
+        #    "stopped" with `error` set), both failed from the parent's
+        #    point of view: neither reached a final state and both know why.
+        child_error = getattr(child, "error", None)
+        if status == "error" or (status == "stopped" and child_error):
+            failure = child_error or RuntimeError(
                 f"Invoked machine '{invocation.src}' failed."
             )
             logger.warning(

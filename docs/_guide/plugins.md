@@ -188,6 +188,8 @@ Every hook receives the `interpreter` instance as its first argument, giving plu
 | `on_event_dropped` | `(interpreter, event, reason)` | An event was discarded unprocessed. `reason` is one of `queue_full`, `not_running`, `chain_budget`, `stopped` (abandoned by `stop()`, incl. producers parked on a full `BLOCK` inbox), `unresolved_target` (`sendTo` to no live actor). Fires on **both** engines for every loss site (0.8.1) |
 | `on_resolve_error` | `(interpreter, error, event)` | A transition's target could not be resolved at runtime (`strict_targets=False` only) — the third per-transition failure category alongside `on_action_error` / `on_guard_error` (0.8.1) |
 | `on_plugin_error` | `(interpreter, plugin, hook, error)` | **Another** plugin's hook raised (or was `async def` and could not be awaited). Never fires for the plugin that failed. The same triple is on `interpreter.last_plugin_error` (0.8.1) |
+| `on_invalid_event` | `(interpreter, error, raw_event)` | `send()` refused a malformed event (`InvalidEventError`); fires before the exception propagates to the caller (0.8.1, #159) |
+| `on_snapshot_error` | `(interpreter, error)` | A snapshot was refused (`SnapshotMidStepError` / `SnapshotSerializationError`); fires before the exception propagates (0.8.1, #159) |
 | `on_error` | `(interpreter, error)` | The interpreter enters the `"error"` status |
 | `on_done` | `(interpreter, output)` | The machine reaches a top-level final state |
 
@@ -318,7 +320,7 @@ def on_guard_error(self, interpreter, guard_name, event, error):
 
 #### `on_unhandled_event(interpreter, event, active_state_ids, disposition)`
 
-Fires when an event matches no transition in any active state, regardless of `onUnhandled` policy. `disposition` is `"ignored"`, `"deferred"`, `"errored"`, or `"dropped"` (the defer buffer was full and the oldest entry was evicted). See [Interpreters — Unhandled Events](../interpreters/#unhandled-events).
+Fires when an event matches no transition in any active state, regardless of `onUnhandled` policy. `disposition` is `"ignored"` (the state declares no handler for this event), `"guard_denied"` (a handler *is* declared but every candidate's guard returned `False` — 0.8.1, #153), `"deferred"`, `"errored"`, or `"dropped"` (the defer buffer was full and the oldest entry was evicted). The same distinction is on the receipt as `Receipt.denied`. See [Interpreters — Unhandled Events](../interpreters/#unhandled-events).
 
 ```python
 def on_unhandled_event(self, interpreter, event, active_state_ids, disposition):

@@ -424,6 +424,20 @@ class LogicLoader:
             normalized_map.setdefault(norm, impl)
             normalized_candidates.setdefault(norm, []).append(key)
 
+        # 🎭 #155: a `spawn_<key>` action name that the user actually
+        #    IMPLEMENTS is an action, not a spawn. Discovery routed every
+        #    such name to `services["<key>"]` unconditionally; move the ones
+        #    with a matching implementation back to `actions` so the runtime
+        #    (which now checks `logic.actions` first) finds them.
+        for name in list(required_services):
+            for candidate in (f"spawn_{name}", f"spawn_blocking_{name}"):
+                if candidate in logic_map or (
+                    normalize_logic_name(candidate) in normalized_map
+                ):
+                    required_services.discard(name)
+                    required_actions.add(candidate)
+                    break
+
         for logic_type, required_set, discovered_dict in logic_definitions:
             for name in required_set:
                 if name in logic_map:

@@ -43,7 +43,14 @@ def test_after_event_lateness_never_negative():
 
 
 def test_after_event_defaults_to_zero_lateness():
-    assert AfterEvent(type="after.5.m.a").lateness_ms == 0.0
+    # #118: unknown telemetry is None, never an affirmative 0.0
+    assert AfterEvent(type="after.5.m.a").lateness_ms is None
+    assert (
+        AfterEvent(
+            type="after.5.m.a", scheduled_for=1.0, fired_at=1.0
+        ).lateness_ms
+        == 0.0
+    )
 
 
 def test_receipt_is_a_plain_value_object():

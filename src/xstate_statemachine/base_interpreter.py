@@ -67,6 +67,8 @@ from .events import (
 from .exceptions import (
     InvalidEventError,
     SnapshotMidStepError,
+    SnapshotCorruptError,
+    SnapshotSerializationError,
     NotSupportedError,
     InvalidEventPayloadError,
     UnknownEventError,
@@ -511,6 +513,14 @@ class BaseInterpreter(Generic[TContext]):
         #: 🛡️ #51: effective strictness -- the ctor flag wins over config.
         self.strict: bool = machine.strict if strict is None else bool(strict)
         self.parent: Optional["BaseInterpreter[Any]"] = None
+        #: 🎯 #156: the `invoke.id` this actor was invoked under, as the
+        #: PARENT declared (or defaulted) it. `escalate` reports this as
+        #: `ErrorEvent.src` so the parent's `onError` collector matches it
+        #: by id. Parsing it back out of the runtime actor id worked only
+        #: when the id was explicit (`parent:kid`); an anonymous invoke's
+        #: runtime id is `parent:<src>:<uuid>`, whose first segment is the
+        #: SERVICE key, not the invoke id.
+        self._invoked_as: Optional[str] = None
 
         # 🌳 State & Actor Management
         self._active_state_nodes: Set[StateNode] = set()
@@ -535,6 +545,12 @@ class BaseInterpreter(Generic[TContext]):
         #: 🔔 #133: a non-fatal built-in failure recorded mid-transition and
         #: published by the transition epilogue.
         self._step_soft_error: Optional[BaseException] = None
+        #: 🛡️ #152: a guard that RAISED under ``guardErrorPolicy: "raise"``
+        #: during the current selection pass. Selection treats that
+        #: candidate as unsatisfied and keeps walking (SCXML §5.9), so an
+        #: unguarded fallback is still taken; the exception is re-raised by
+        #: `_process_event` once the pass -- and the fallback -- has run.
+        self._pending_guard_error: Optional[BaseException] = None
         #: ⏱️ Live clock handles per owning state id. Declared here so the
         #: shared restore / dormancy logic (#128) can read it; each engine
         #: re-binds the same attribute in its own `__init__`.
@@ -561,6 +577,11 @@ class BaseInterpreter(Generic[TContext]):
         #: cleared at the start of every step, so it never outgrows one
         #: step's worth of deferrals.
         self._deferred_this_step: List[Any] = []
+        #: 🚦 #153: set by `_collect_eligible_transitions` when a candidate
+        #: MATCHED the event type but its guard said no. Read by
+        #: `_handle_unhandled_event` (disposition) and by the receipt
+        #: builders (`Receipt.denied`); cleared per step like `_deferred_this_step`.
+        self._guard_denied_this_step: bool = False
         #: Listeners registered via :meth:`on`, keyed by emitted event type.
         self._emit_listeners: Dict[str, List[Callable[[Any], None]]] = {}
         #: Cancellation callbacks for pending delayed sends, keyed by send id.
@@ -1045,10 +1066,77 @@ class BaseInterpreter(Generic[TContext]):
         snapshot = self.get_persisted_snapshot()
         # Use a default handler to gracefully handle non-serializable types.
         json_snapshot = json.dumps(snapshot, indent=2, default=str)
-        logger.debug(
-            "🖼️ Snapshot for '%s' captured: %s", self.id, json_snapshot
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            # 🔒 #160: the raw blob carries the whole `context`. Log a
+            #    REDACTED rendering -- turning on DEBUG in staging must not
+            #    write every secret in context to the log, with or without
+            #    a `LoggingInspector` attached.
+            from .plugins import redact
+
+            logger.debug(
+                "🖼️ Snapshot for '%s' captured: %s",
+                self.id,
+                json.dumps(redact(snapshot), indent=2, default=str),
+            )
         return json_snapshot
+
+    def _report_unresolved_target(
+        self, action: str, to: Any, undelivered: Any
+    ) -> None:
+        """An addressed event reached no live actor (#133): `sendTo` and
+        `forwardTo` share this so the two siblings cannot drift.
+
+        An accepted-for-delivery event with no destination is a DROP, and
+        every other drop site fires `on_event_dropped`. It is also recorded
+        as this step's SOFT error -- the transition still commits (its other
+        actions ran), but the epilogue must not report a clean step, so a
+        `Receipt` / `last_error` shows the transition did not do what it
+        said. `_step_soft_error` survives the epilogue's
+        `last_transition_ok = True` reset.
+        """
+        logger.warning(
+            "⚠️ %s could not resolve target %r; event '%s' dropped.",
+            action,
+            to,
+            getattr(undelivered, "type", undelivered),
+        )
+        for plugin in self._plugins:
+            plugin.on_event_dropped(self, undelivered, "unresolved_target")
+        self._step_soft_error = ActorSpawningError(
+            f"{action} target {to!r} did not resolve to a live actor; "
+            f"'{getattr(undelivered, 'type', undelivered)}' was not delivered."
+        )
+
+    def _persist_event_reporting(self, event: Any) -> Dict[str, Any]:
+        # 🔔 #159: `persist_event` raises `SnapshotSerializationError` (#131)
+        #    for a pending event with non-JSON data; this is the one place it
+        #    enters the snapshot, so report it via `on_snapshot_error` before
+        #    re-raising -- the caller still gets the exception.
+        try:
+            return persist_event(event)
+        except SnapshotSerializationError as exc:
+            self._report_snapshot_error(exc)
+            raise
+
+    def _prepare_event_reporting(self, raw: Any, **payload: Any) -> AnyEvent:
+        # 🔔 #159: the public entry points (`send`, `send_threadsafe`,
+        #    `send_events`) go through this so a plugin bound to every hook
+        #    sees a refused event; the caller still gets `InvalidEventError`.
+        try:
+            return self._prepare_event(raw, **payload)
+        except InvalidEventError as exc:
+            self._report_invalid_event(exc, raw)
+            raise
+
+    def _report_snapshot_error(self, exc: BaseException) -> None:
+        """Fire `on_snapshot_error` before a snapshot refusal propagates (#159)."""
+        for plugin in self._plugins:
+            plugin.on_snapshot_error(self, exc)
+
+    def _report_invalid_event(self, exc: BaseException, raw: Any) -> None:
+        """Fire `on_invalid_event` before an `InvalidEventError` propagates (#159)."""
+        for plugin in self._plugins:
+            plugin.on_invalid_event(self, exc, raw)
 
     def _report_resolve_error(self, exc: BaseException, event: Any) -> None:
         """Fire `on_resolve_error` for an unresolvable transition target (#134).
@@ -1119,7 +1207,7 @@ class BaseInterpreter(Generic[TContext]):
         deadline = time.monotonic() + timeout_s
         while (
             self._step_in_flight()
-            and not self._active_leaf_present()
+            and not self._configuration_is_legal()
             and time.monotonic() < deadline
         ):
             time.sleep(0.0005)
@@ -1130,6 +1218,42 @@ class BaseInterpreter(Generic[TContext]):
             getattr(self, "_processing", False)
             or getattr(self, "_is_processing", False)
         )
+
+    def _configuration_is_legal(self) -> bool:
+        """SCXML configuration legality: exactly one active leaf per region.
+
+        🏛️ #142 / #143: `_active_leaf_present` ("some atomic node is
+        active") is not legality. In a `parallel` machine one region can
+        be mid-transition with no leaf while another region's leaf keeps
+        the any-leaf test true. The rule is recursive:
+
+        * an active **atomic/final** node is legal;
+        * an active **compound** node is legal iff exactly one of its
+          children is active and that child is legal;
+        * an active **parallel** node is legal iff every non-history
+          child is active and legal.
+
+        The machine root is a compound (or parallel) node like any other.
+        An empty configuration is illegal.
+        """
+        active = self._active_state_nodes
+        if not active:
+            return False
+
+        def legal(node: StateNode) -> bool:
+            if node.type == "parallel":
+                regions = [
+                    c for c in node.states.values() if c.type != "history"
+                ]
+                return bool(regions) and all(
+                    c in active and legal(c) for c in regions
+                )
+            if node.states and node.type != "final":
+                live = [c for c in node.states.values() if c in active]
+                return len(live) == 1 and legal(live[0])
+            return True
+
+        return legal(self.machine)
 
     def _active_leaf_present(self) -> bool:
         """``True`` when the configuration contains at least one atomic
@@ -1175,9 +1299,15 @@ class BaseInterpreter(Generic[TContext]):
         #    a non-blocking sync child runs on its own thread and may be
         #    mid-microstep at any instant. Wait briefly for it to settle
         #    rather than fail the parent's whole snapshot on a race.
-        if self._step_in_flight() and not self._active_leaf_present():
+        # 🛡️ #142: the test is configuration LEGALITY (one leaf per
+        #    region), not "some leaf exists" -- in a parallel machine one
+        #    region mid-transition left the other region's leaf to satisfy
+        #    the any-leaf test, and the snapshot recorded a torn region.
+        if self._step_in_flight() and not self._configuration_is_legal():
             if _seen is None:
-                raise SnapshotMidStepError(self.id)
+                exc = SnapshotMidStepError(self.id)
+                self._report_snapshot_error(exc)  # #159
+                raise exc
             self._await_settled_for_snapshot()
         # 🔁 Guard against an actor cycle. The registry makes a cycle
         #    constructible, and unbounded recursion would blow the stack
@@ -1215,7 +1345,9 @@ class BaseInterpreter(Generic[TContext]):
             "error": str(self.error) if self.error is not None else None,
             # 📨 Deferred events survive a crash: drained on start()
             #    before any invoke is re-driven.
-            "deferred": [persist_event(e) for e in self._deferred_events],
+            "deferred": [
+                self._persist_event_reporting(e) for e in self._deferred_events
+            ],
             # 📬 #47: the inbox. Events `send()` ACCEPTED but has not yet
             #    processed. Without this a crash between accept and process
             #    lost them with no trace; with it a restored machine resumes
@@ -1224,7 +1356,9 @@ class BaseInterpreter(Generic[TContext]):
             #    `ErrorEvent` / `AfterEvent` and engine-minted `Event`s
             #    carry a `kind` discriminator so an accepted invoke failure
             #    is not silently dropped and provenance survives a restore.
-            "pending_events": [persist_event(e) for e in self.pending_events],
+            "pending_events": [
+                self._persist_event_reporting(e) for e in self.pending_events
+            ],
             # 🕰️ Remembered history, so a restored machine can still honour a
             #    later transition to a history state.
             "history": {
@@ -1396,6 +1530,13 @@ class BaseInterpreter(Generic[TContext]):
         #    expected to handle. Leaking `json.JSONDecodeError` meant
         #    `except XStateMachineError` — the documented way to catch this
         #    library's failures — silently missed it.
+        # 🛡️ #146: a non-`str` payload (None, bytes, an already-parsed
+        #    dict) raised TypeError from `json.loads` itself.
+        if not isinstance(snapshot_str, str):
+            raise SnapshotCorruptError(
+                f"Snapshot payload must be a JSON string, got "
+                f"{type(snapshot_str).__name__}."
+            )
         try:
             snapshot = json.loads(snapshot_str)
         except json.JSONDecodeError as e:
@@ -1482,10 +1623,25 @@ class BaseInterpreter(Generic[TContext]):
                 raise StateNotFoundError(target=state_id)
 
         # 🏁 Restore completion output and any recorded error.
+        # 🛡️ #143: the WRITE side refuses a leafless configuration (#102);
+        #    the READ side must too, or a truncated `configuration` list
+        #    restores as a `running` machine with no active leaf that is
+        #    permanently inert. Legality is per REGION, not "any leaf".
+        if (
+            snapshot["status"] == "running"
+            and not interpreter._configuration_is_legal()
+        ):
+            raise SnapshotCorruptError(
+                "Snapshot is malformed: status is 'running' but the "
+                "configuration has no active leaf in every region "
+                f"(restored {sorted(n.id for n in interpreter._active_state_nodes)!r}). "
+                "The 'configuration' list has lost its leaf entries."
+            )
+
         interpreter.output = snapshot.get("output")
         recorded_error = snapshot.get("error")
         interpreter._deferred_events = [
-            restore_event(d) for d in snapshot.get("deferred", [])
+            restore_event(d) for d in (snapshot.get("deferred") or [])
         ]
         # 📬 #47: re-enqueue the persisted inbox in original order.
         for record in snapshot.get("pending_events") or []:
@@ -1928,6 +2084,17 @@ class BaseInterpreter(Generic[TContext]):
                     f"Event 'type' must be a non-empty str, got "
                     f"{type(event_type).__name__}: {event_type!r}."
                 )
+            # 🛡️ #161: the mapping form validates `type` and the KEY shape
+            #    only. Non-`str` keys cannot be JSON-persisted (#131) and
+            #    are almost certainly a caller bug; payload VALUES are the
+            #    caller's -- their semantics are domain-specific and belong
+            #    to `event_schemas` (#51), not to this shape check.
+            bad_keys = [k for k in data if not isinstance(k, str)]
+            if bad_keys:
+                raise InvalidEventError(
+                    f"Event '{event_type}' payload keys must be str; got "
+                    f"{bad_keys!r}."
+                )
             return Event(type=event_type, payload=data)
 
         # 3️⃣ Input is already a native Event instance: use as-is.
@@ -2049,10 +2216,38 @@ class BaseInterpreter(Generic[TContext]):
             event (AnyEvent): The event to process.
         """
         # 1. Select every transition this event triggers (one per region).
+        self._pending_guard_error = None
         transitions = self._select_transitions(event)
-        if not transitions:
-            self._handle_unhandled_event(event)
+        guard_error = self._pending_guard_error
+        self._pending_guard_error = None
+        if transitions:
+            await self._execute_selected(transitions, event)
+        if guard_error is None:
+            if not transitions:
+                self._handle_unhandled_event(event)
             return
+        # 🛡️ #152: a guard raised under "raise" during this pass. The
+        #    fallback (if any) has already run above -- that is the point.
+        #    Now report the raise on the surface that matches the trigger:
+        #    * a CALLER-driven event propagates, so the sync `send()` caller
+        #      / async `wait=True` receipt receive it (the documented
+        #      "raise" contract);
+        #    * an ENGINE-driven event (`done.invoke`, `after`, `always`)
+        #      has no caller to receive it -- raising would escape
+        #      `start()`/the run loop for a completion the machine itself
+        #      produced. Record it on `last_transition_ok` / `last_error`
+        #      (the same channel a failed action uses) and carry on; the
+        #      `on_guard_error` hook already fired.
+        if is_system_event(event):
+            self.last_transition_ok = False
+            self._last_action_error = guard_error
+            return
+        raise guard_error
+
+    async def _execute_selected(
+        self, transitions: List[TransitionDefinition], event: AnyEvent
+    ) -> None:
+        """Execute an already-selected transition set (split out for #152)."""
 
         # 2. Execute each selected transition in isolation. A transition may
         #    be invalidated by an earlier one in the same macrostep (its source
@@ -2574,9 +2769,14 @@ class BaseInterpreter(Generic[TContext]):
         if target_state is None:
             # Name the SOURCE too, so the failing transition is identifiable
             # from the exception alone (the sync engine always did this).
-            raise StateNotFoundError(
+            exc = StateNotFoundError(
                 transition.target_str, transition.source.id
             )
+            # 🔔 #134: fire `on_resolve_error` HERE, at the one place both
+            #    engines raise it, so the hook cannot fire on one engine and
+            #    not the other (it used to live in the async loop only).
+            self._report_resolve_error(exc, event)
+            raise exc
 
         # 3. A self-transition without `reenter: True` is an "internal" transition.
         # It executes actions but does not exit or re-enter the source state.
@@ -2862,9 +3062,18 @@ class BaseInterpreter(Generic[TContext]):
 
             # 👶 Spawning is a built-in ACTION shape on both engines (#41:
             #    `spawn_blocking_` is a distinct mode, not a longer prefix).
-            if action_def.type.startswith(
-                (SPAWN_BLOCKING_PREFIX, "spawn_")
-            ) and not is_builtin(action_def.type):
+            # 🎭 #155: the `spawn_` prefix is a BUILT-IN like `log` /
+            #    `assign`, and built-ins are used only when the user has NOT
+            #    supplied an action of the same name. Checking the prefix
+            #    before consulting `logic.actions` was the single place that
+            #    claimed a name out of the user's own namespace: a user
+            #    action `spawn_place_order` was hijacked into a spawn of a
+            #    service called "place_order" that did not exist.
+            if (
+                action_def.type.startswith((SPAWN_BLOCKING_PREFIX, "spawn_"))
+                and not is_builtin(action_def.type)
+                and action_def.type not in self.machine.logic.actions
+            ):
                 # A spawn that cannot be satisfied (unknown service, bad
                 # factory) is a CONFIGURATION error and stays fatal, like a
                 # missing action -- both engines behaved this way before.
@@ -2972,26 +3181,8 @@ class BaseInterpreter(Generic[TContext]):
             actor = self._resolve_actor_target(params.get("to"), event)
             target_event = self._resolve_event_spec(params.get("event"), event)
             if actor is None:
-                # 🔔 #133: an accepted-for-delivery event that reaches no
-                #    destination is a DROP, and every other drop site fires
-                #    the hook. Also record it as this step's error so a
-                #    `Receipt` / `last_error` shows the transition did not do
-                #    what it said.
-                logger.warning(
-                    "⚠️ sendTo could not resolve target %r; event dropped.",
-                    params.get("to"),
-                )
-                for plugin in self._plugins:
-                    plugin.on_event_dropped(
-                        self, target_event, "unresolved_target"
-                    )
-                # Recorded as a SOFT step error: the transition still commits
-                # (the other actions ran), but the epilogue must not report
-                # a clean step. `_step_soft_error` survives the epilogue's
-                # `last_transition_ok = True` reset.
-                self._step_soft_error = ActorSpawningError(
-                    f"sendTo target {params.get('to')!r} did not resolve to a "
-                    f"live actor; '{target_event.type}' was not delivered."
+                self._report_unresolved_target(
+                    "sendTo", params.get("to"), target_event
                 )
                 return
             delay = self._resolve_delay(params.get("delay"), event)
@@ -3010,9 +3201,10 @@ class BaseInterpreter(Generic[TContext]):
         elif canonical == FORWARD_TO:
             actor = self._resolve_actor_target(params.get("to"), event)
             if actor is None:
-                logger.warning(
-                    "⚠️ forwardTo could not resolve target %r.",
-                    params.get("to"),
+                # 🔔 #133 (reopened): the SIBLING of sendTo went through
+                #    the same silent-drop surface. One helper for both.
+                self._report_unresolved_target(
+                    "forwardTo", params.get("to"), event
                 )
                 return
             await self._deliver(actor, event, None, None)
@@ -3034,11 +3226,15 @@ class BaseInterpreter(Generic[TContext]):
             #    reaches `onError` exactly like a child that ended in
             #    `error` does. The event `type` keeps the runtime id -- a
             #    literal `on: {"xstate.error.actor.p:kid": ...}` still works.
-            declared = self.id
-            if self.parent is not None and declared.startswith(
-                self.parent.id + ":"
-            ):
-                declared = declared[len(self.parent.id) + 1 :].split(":")[0]
+            # 🎯 #130 / #156: `src` is the invoke id the parent knows this
+            #    actor by. Prefer what the parent recorded at spawn
+            #    (`_invoked_as`); fall back to the explicit-id runtime shape
+            #    for a `spawnChild` actor that was never `invoke`d.
+            declared = self._invoked_as or self.id
+            if self._invoked_as is None and self.parent is not None:
+                prefix = self.parent.id + ":"
+                if declared.startswith(prefix):
+                    declared = declared[len(prefix) :].split(":")[0]
             escalate_event = ErrorEvent(
                 type=f"xstate.error.actor.{self.id}", error=err, src=declared
             )
@@ -3184,7 +3380,7 @@ class BaseInterpreter(Generic[TContext]):
         except _RollbackRequested as cause:
             err = TransitionFailedError(cause.action_def.type, self.machine.id)
             err.__cause__ = cause.original
-            self._fail(err)
+            self._stop_failed(err)
 
     # -------------------------------------------------------------------------
     # ⏯️ State Management Sub-Routines
@@ -3702,7 +3898,14 @@ class BaseInterpreter(Generic[TContext]):
             return
 
         logger.debug("🍃 No transition found for event '%s'.", event.type)
-        self._notify_unhandled(event, active, "ignored")
+        # 🚦 #153: "ignored" meant both "no handler declared" and "declared
+        #    but every guard refused". A caller auditing per-event outcomes
+        #    could not tell a typo'd event from a business-rule refusal.
+        self._notify_unhandled(
+            event,
+            active,
+            "guard_denied" if self._guard_denied_this_step else "ignored",
+        )
 
     def _notify_unhandled(
         self, event: Event, active: Set[str], disposition: str
@@ -3849,7 +4052,7 @@ class BaseInterpreter(Generic[TContext]):
                 cause.action_def.type, transition.source.id
             )
             err.__cause__ = cause.original
-            self._fail(err)
+            self._stop_failed(err)
         return True
 
     def _set_timeout(
@@ -3867,6 +4070,42 @@ class BaseInterpreter(Generic[TContext]):
                 fn, delay_sec, owner=owner, sync=self._clock_sync_lane
             )
         return self.clock.set_timeout(fn, delay_sec, owner=owner)
+
+    def _stop_failed(self, error: TransitionFailedError) -> None:
+        """``actionErrorPolicy: "fail"`` -- STOP the machine (#145).
+
+        🏛️ The documented contract ("also stops with
+        `TransitionFailedError`") is a specific outcome: ``status ==
+        "stopped"``, configuration cleared, children reaped, timers
+        cancelled. Routing this through `_fail` instead produced
+        ``status == "error"`` with a *running-shaped* configuration still
+        naming the pre-transition leaf -- a machine that looked resumable,
+        answered every `send()` with a no-op, and persisted as such. The
+        ``"error"`` status is for an invoked service that died (where the
+        configuration legitimately still says where); a policy-driven halt
+        is a stop. The exception is retained on ``error`` so the reason is
+        readable after the fact; `on_error` fires because this is a
+        failure, then `on_interpreter_stop` because the machine stopped.
+        """
+        if self.status not in ("running", "uninitialized"):
+            return
+        self.error = error
+        logger.error(
+            "🛑 Machine '%s' stopped by actionErrorPolicy='fail': %r",
+            self.id,
+            error,
+        )
+        for plugin in self._plugins:
+            plugin.on_error(self, error)
+        # 🧹 The configuration is gone: the failed transition rolled it back,
+        #    and a stopped machine has no active state by definition. This
+        #    is what makes `current_state_ids` stop lying about the leaf.
+        self._active_state_nodes.clear()
+        self.status = "stopped"
+        self._notify_subscribers()
+        self._on_terminal("stopped")
+        for plugin in self._plugins:
+            plugin.on_interpreter_stop(self)
 
     def _fail(self, error: BaseException) -> None:
         """Puts the machine into the terminal `error` status.
@@ -4070,6 +4309,9 @@ class BaseInterpreter(Generic[TContext]):
                             break
                         if _passes(t):
                             eligible.append(t)
+                        elif t.guard_def is not None:
+                            # 🚦 #153: declared, matched, refused by guard.
+                            self._guard_denied_this_step = True
                     if blocked:
                         break
                 if blocked:
@@ -4578,7 +4820,20 @@ class BaseInterpreter(Generic[TContext]):
             for plugin in self._plugins:
                 plugin.on_guard_error(self, guard.type, event, exc)
             if policy == "raise":
-                raise
+                # 🛡️ #152: do NOT propagate out of the selection pass. That
+                #    cancelled every lower-priority candidate in the same
+                #    transition array -- the unguarded fallback that exists
+                #    to catch a failing check was never evaluated, and on an
+                #    engine-driven event (`invoke.onDone`) the completion was
+                #    simply lost. Record it; `_process_event` raises it after
+                #    the pass, so the caller-facing contract ("the exception
+                #    propagates") holds while the fallback is still taken.
+                if self._pending_guard_error is None:
+                    self._pending_guard_error = exc
+                # A raised guard has no RESULT to report: `on_guard_error`
+                # already fired, and the pre-#152 trace never followed it
+                # with `on_guard_evaluated`. Keep that surface stable.
+                return False
             result = policy == "true"
 
         # 📉 #55: DEBUG, not INFO. This runs on EVERY guard evaluation; at

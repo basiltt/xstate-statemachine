@@ -112,20 +112,21 @@ class TestActionErrorPolicyCoversAllSlots(_Quiet):
         for shape in self.SHAPES:
             with self.subTest(shape=shape):
                 i = self._run_sync("fail", shape)
-                self.assertEqual(i.status, "error", shape)
+                # #145: "fail" STOPS the machine; configuration is cleared.
+                self.assertEqual(i.status, "stopped", shape)
                 self.assertIsInstance(i.error, TransitionFailedError)
                 self.assertEqual(i.context["n"], 0, "context not rolled back")
-                self.assertEqual(i.current_state_ids, {"m.a"})
+                self.assertEqual(i.current_state_ids, set())
                 self.assertFalse(i.last_transition_ok)
 
     def test_fail_policy_every_shape_async(self) -> None:
         for shape in self.SHAPES:
             with self.subTest(shape=shape):
                 state, ctx, status, ok, err = self._run_async("fail", shape)
-                self.assertEqual(status, "error", shape)
+                self.assertEqual(status, "stopped", shape)  # #145
                 self.assertIsInstance(err, TransitionFailedError)
                 self.assertEqual(ctx["n"], 0)
-                self.assertEqual(state, {"m.a"})
+                self.assertEqual(state, set())
                 self.assertFalse(ok)
 
     def test_rollback_policy_every_shape_sync(self) -> None:
@@ -180,7 +181,7 @@ class TestActionErrorPolicyCoversAllSlots(_Quiet):
         cfg = _cfg("fail", {"a": {"entry": ["boom"]}})
         i = SyncInterpreter(create_machine(cfg, logic=_boom_logic()))
         i.start()
-        self.assertEqual(i.status, "error")
+        self.assertEqual(i.status, "stopped")  # #145
         self.assertIsInstance(i.error, TransitionFailedError)
 
 

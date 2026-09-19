@@ -202,6 +202,14 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #: before the next external event (SCXML internal queue).
         self._internal_queue: Deque[AnyEvent] = deque()
         self._is_processing: bool = False
+        #: 📨 #125: deferred events whose replay was EARNED by the drain in
+        #: progress (a configuration change) but must not run inside it --
+        #: the caller's `Receipt` is built from the drain's result, and a
+        #: replay folding into it made `send("ARM")` report the state the
+        #: replayed event reached. Held here, run as a separate drain by the
+        #: public entry point once the receipt is final. Mirrors the async
+        #: engine's `_replay_pending`.
+        self._held_replays: List[AnyEvent] = []
         # 🏛️ #50: `_after_threads` / `_after_events` / `_pending_send_cancels`
         #    are gone. Timers no longer own threads; see `_after_timer`.
 
@@ -272,6 +280,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             #    inline, so this both re-invokes and processes their results.
             # ⏱️ #128: restart_timers re-arms `after` deadlines from zero.
             logger.info("♻️ Resuming restored interpreter '%s'...", self.id)
+            # 🕰️ #154: the restore branches returned BEFORE the normal
+            #    path's `clock._attach(self.tick)`, so a deadline re-armed
+            #    by `restart_timers=True` sat on a `SimulatedClock` that had
+            #    no settler -- `increment()` fired nothing. Attach first.
+            self._attach_clock()
             if self._restart_services_on_start:
                 self._restart_services_on_start = False
                 self._restart_dormant_invocations()
@@ -290,6 +303,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             #    in order -- the async engine's run loop does the same the
             #    moment it starts.
             logger.info("♻️ Resuming restored interpreter '%s'...", self.id)
+            self._attach_clock()  # #154: see above
             self._process_event_queue()
             self._process_transient_transitions()
             return self
@@ -304,8 +318,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         self.status = "running"
         # 🧪 A SimulatedClock drives us through `tick()` after each increment
         #    so `clock.increment(ms)` leaves the machine settled (#49).
-        if isinstance(self.clock, SimulatedClock):
-            self.clock._attach(self.tick)
+        self._attach_clock()
 
         # ✅ Define a pseudo-transition for the initial state entry
         initial_transition = TransitionDefinition(
@@ -490,6 +503,15 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         :class:`Receipt` for API symmetry with the async engine (#39);
         `priority` is accepted and irrelevant (there is no backlog to
         jump -- the queue is drained before `send()` returns).
+
+        Event shapes and what is validated (#113 / #161): a ``str`` is the
+        type; a ``dict`` must carry a non-empty ``str`` ``"type"`` and every
+        other key must be a ``str`` (those become the payload; their VALUES
+        are not inspected -- payload semantics are domain-specific and belong
+        to ``event_schemas``); an `Event` / `DoneEvent` / `AfterEvent` /
+        `ErrorEvent` is passed through. Anything else raises
+        `InvalidEventError` (also a `TypeError`), and `on_invalid_event`
+        fires first (#159).
         """
         if self.status != "running":
             # 🔔 #123: parity with the async engine -- a send to a stopped /
@@ -504,7 +526,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 plugin.on_event_dropped(self, dropped, "not_running")
             return None
 
-        event_obj = self._prepare_event(event_or_type, **payload)
+        event_obj = self._prepare_event_reporting(event_or_type, **payload)
         self._warn_reserved_payload_keys(event_obj)
         self._check_strict(event_obj)  # #51
         config_before = frozenset(self._active_state_nodes)
@@ -517,6 +539,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         self.last_transition_ok = True
         step_error: Optional[BaseException] = None
         self._deferred_this_step.clear()  # #106: per-step scope
+        self._guard_denied_this_step = False  # #153: per-step scope
         # ⏰ #50: deliver every deadline that has elapsed BEFORE this event,
         #    on this thread, in due order -- the pump.
         self._pump_timers()
@@ -533,6 +556,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 raise
             step_error = exc
         if not wait:
+            self._run_held_replays()
             return None
         if step_error is None and not self.last_transition_ok:
             step_error = self._last_action_error
@@ -540,9 +564,26 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             context_before is not None and self.context != context_before
         )
         deferred = any(ev is event_obj for ev in self._deferred_this_step)
-        return Receipt(
-            frozenset(self.current_state_ids), changed, step_error, deferred
+        receipt = Receipt(
+            frozenset(self.current_state_ids),
+            changed,
+            step_error,
+            deferred,
+            denied=not changed and self._guard_denied_this_step,
         )
+        # 📨 #125: the caller's receipt is FINAL before any replay runs.
+        self._run_held_replays()
+        return receipt
+
+    def _run_held_replays(self) -> None:
+        """Run deferred events earned by the last drain, as their own
+        macrostep(s) (#125). Each replay may itself earn further replays;
+        loop until none are held. Bounded by the drain's own chain budget.
+        """
+        while self._held_replays and self.status == "running":
+            held, self._held_replays = self._held_replays, []
+            self._event_queue.extend(held)
+            self._process_event_queue()
 
     # -------------------------------------------------------------------------
     # 🏁 Reaping (#57)
@@ -608,10 +649,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             return
 
         for event_or_type in events:
-            event_obj = self._prepare_event(event_or_type)
+            event_obj = self._prepare_event_reporting(event_or_type)
             self._event_queue.append(event_obj)
 
         self._process_event_queue()
+        self._run_held_replays()  # #125
 
     def _process_event_queue(self) -> None:
         """Processes all events in the queue until it is empty.
@@ -711,6 +753,18 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                     #    internal events and is reset per macrostep.
                     generated = 0
                     tripped = False
+                    # 🔁 #151: the `always`-settle budget is per MACROSTEP
+                    #    (per user event), not per drain. Reset once per
+                    #    drain (#103), two independent events that each
+                    #    legitimately settle in 40 hops under a limit of 50
+                    #    shared one allowance inside `send_events([A, B])`,
+                    #    and B tripped where `send(A); send(B)` did not.
+                    #    #103's terminating property is preserved: the
+                    #    settle budget for the *generated* tail of a chain is
+                    #    still not renewed, because only an external event
+                    #    resets it.
+                    self._settle_iterations = 0
+                    self._settle_tripped = False
                 if is_generated:
                     generated += 1
                 if is_generated and (tripped or generated > limit):
@@ -805,9 +859,23 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 #    (parity with the async `_raise_depth` reset). `tripped`
                 #    is cleared here too: the runaway is over once it stops
                 #    regenerating.
+                #
+                # 🛡️ #144: "produced nothing" is not enough on its own. A
+                #    conservative cycle -- a step that dequeues one event and
+                #    enqueues one (a nested invoke whose `onDone` re-enters
+                #    the ancestor and re-arms both invokes: one step grows
+                #    the queue by one, the next shrinks it by one) -- made
+                #    every second step look like the end of a chain, so the
+                #    budget reset on every lap and `start()` never returned,
+                #    regardless of `maxIterations`. A chain has genuinely
+                #    ended only when the step generated nothing AND no
+                #    self-generated work remains queued: the internal queue
+                #    is empty (the inbox may still hold the caller's own
+                #    events, which are not part of any chain).
                 if (
                     len(self._internal_queue) + len(self._event_queue)
                     <= queued_before
+                    and not self._internal_queue
                 ):
                     generated = 0
                     tripped = False
@@ -818,10 +886,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 #    still unhandled in the new state come straight back
                 #    through `_handle_unhandled_event` and are re-deferred.
                 if before != frozenset(self._active_state_nodes):
-                    held = self._take_deferred_for_replay()
-                    if held:
-                        self._event_queue.extendleft(reversed(held))
-                        external_budget += len(held)
+                    # 📨 #125: do NOT re-queue into this drain. Park the
+                    #    replays; `_run_held_replays` (called by `send` /
+                    #    `send_events` / `tick` after the receipt is built)
+                    #    runs them as their own macrostep.
+                    self._held_replays.extend(self._take_deferred_for_replay())
         finally:
             self._is_processing = False
             if debug:
@@ -1108,6 +1177,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         )
         child.parent = self
         child.id = actor_id
+        # 🎯 #156: an `invoke`d child (spawned with `on_complete`) is known
+        #    to the parent by its invoke id; record it for `escalate`.
+        child._invoked_as = on_complete
         # 🌐 Register under a systemId so siblings can address it.
         self._register_in_system(spawn_params.get("systemId"), child)
         self._actors[actor_id] = child
@@ -1188,7 +1260,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         Uses the shared terminal-listener hook (#43) rather than polling
         `status`, so completion is observed the instant it happens.
         """
-        if child.status in ("done", "error"):
+        if child.status in ("done", "error", "stopped"):
             return
         # 🧭 A child with nothing in flight -- no `after` timers and no
         #    actors of its own -- has already done everything `start()`
@@ -1228,7 +1300,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    fall through as "did not reach final". Same shape as the async
         #    engine's `_deliver_invoked_completion`; with no handler the
         #    parent fails like it does for a failing callable service.
-        if child.status == "error":
+        # 💥 `error`, or `stopped` BY a policy failure (#145) -- see the
+        #    async engine's `_deliver_invoked_completion`.
+        if child.status == "error" or (
+            child.status == "stopped" and child.error is not None
+        ):
             failure = child.error or RuntimeError(
                 f"Invoked machine '{child.id}' failed."
             )
@@ -1347,8 +1423,29 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         """
         return self.clock.pump()
 
+    def _attach_clock(self) -> None:
+        """Register `tick` as this interpreter's settler on a `SimulatedClock`.
+
+        Idempotent (the clock de-duplicates by identity). Every path that
+        leaves `start()` with the machine running must call this -- the
+        fresh start and BOTH restore branches (#154) -- or a virtual-time
+        `increment()` fires deadlines that nothing drains.
+        """
+        if isinstance(self.clock, SimulatedClock):
+            self.clock._attach(self.tick)
+
     def tick(self) -> None:
-        """Deliver every `after` / delayed send whose deadline has passed.
+        """Deliver every `after` / delayed send whose deadline is DUE NOW.
+
+        Contract (#122): one call drains every deadline that has elapsed at
+        the current clock reading, including a chain of zero-delay
+        deadlines armed by the transitions it takes. It does NOT advance
+        time: a ladder of real delays (``after: 50`` -> ``after: 50`` ->
+        ...) needs one `tick()` per rung, each after that rung's delay has
+        actually passed on a `RealClock` -- no synchronous call can
+        honestly make wall time pass. For deterministic chains use a
+        `SimulatedClock` and `increment()`, which settles every rung that
+        becomes due.
 
         🏛️ #50: with no timer threads, a machine that receives no events
         needs a caller to advance it. `tick()` is that pump: it fires due
@@ -1372,6 +1469,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             fired = self._pump_timers()
             if self._event_queue:
                 self._process_event_queue()
+                self._run_held_replays()  # #125
                 self._process_transient_transitions()
                 continue  # the step may have armed an already-due timer
             if not fired:

@@ -668,6 +668,7 @@ Interpreter(
     max_queue_size: Optional[int] = None,
     overflow_policy: OverflowPolicy = OverflowPolicy.RAISE,
     strict: Optional[bool] = None,
+    service_executor: Optional[concurrent.futures.Executor] = None,
 )
 ```
 
@@ -689,6 +690,7 @@ ensuring clean cancellation when states are exited.
 | `max_queue_size` | `Optional[int]` | `None` | Bound on the inbox. `None` keeps the unbounded queue; when set, `overflow_policy` decides what a full inbox does to `send()` **[wave 3]** (#38). |
 | `overflow_policy` | `OverflowPolicy` | `OverflowPolicy.RAISE` | `RAISE` / `BLOCK` / `DROP_NEWEST`; ignored when no `max_queue_size` is set. The priority lane (`send(priority=True)`) is never bounded **[wave 3]** (#38). |
 | `strict` | `Optional[bool]` | `None` | When `True`, an event type not declared anywhere in the machine raises `UnknownEventError` at the `send()` call site instead of silently no-opping **[wave 3]** (#51). |
+| `service_executor` | `Optional[concurrent.futures.Executor]` | `None` | **[0.8.1]** (#149) Where a plain (non-coroutine) `invoke` service runs. `None` lazily creates a small `ThreadPoolExecutor` owned by the interpreter and shut down with it; pass a shared / bounded pool or a `ProcessPoolExecutor` for CPU-bound work. The entering macrostep still *awaits* the result — so a plain service's `done.invoke` lands ahead of any event already in the inbox exactly as on the sync engine (#116) — but the event loop is free for the duration. |
 
 #### Methods
 
@@ -698,7 +700,7 @@ ensuring clean cancellation when states are exited.
 | `await .stop(drain=False, timeout=None)` | `(bool, Optional[float]) -> None` | `None` | Gracefully stops the event loop, cancels all tasks and child actors. `drain=True` processes the inbox to empty first, bounded by `timeout` seconds (`None` waits until empty). Idempotent; a no-op on an already-`"done"`/`"stopped"` interpreter. |
 | `await .send(event, *, wait=False, priority=False, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent, ErrorEvent], bool, bool, **Any) -> Optional[Receipt]` | `Optional[Receipt]` | Sends an event to the queue. Accepts a string, dict, or `Event` object. Non-blocking unless `overflow_policy=OverflowPolicy.BLOCK`. `wait=True` **[wave 3]** (#39) makes the returned awaitable resolve to a `Receipt` once the event's macrostep has fully run; `False` (default) resolves immediately to `None`. `priority=True` **[wave 3]** (#39) delivers the event ahead of every already-queued external event and exempts it from `max_queue_size`. Raises `WrongThreadError` when called from a thread other than the one whose event loop owns this interpreter, and `QueueOverflowError` when the inbox is bounded, full, and the policy is `RAISE` **[wave 3]** (#38). |
 | `await .send_priority(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent, ErrorEvent], **Any) -> Optional[Receipt]` | `Optional[Receipt]` | Shorthand for `send(event, wait=True, priority=True, **payload)` (#39) -- ask an urgent question and get a `Receipt` back once it settles, jumping ahead of any backlog. Pass `wait=False` for a fire-and-forget priority send. |
-| `.send_threadsafe(event, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent, ErrorEvent], **Any) -> concurrent.futures.Future[None]` | `concurrent.futures.Future[None]` | Sends an event from **any** thread by routing the enqueue through the interpreter's owning event loop. Returns a `Future` you may `.result()` on to block until the event is queued (not processed). |
+| `.send_threadsafe(event, *, internal=None, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent, ErrorEvent], Optional[bool], **Any) -> concurrent.futures.Future[None]` | `concurrent.futures.Future[None]` | Sends an event from **any** thread by routing the enqueue through the interpreter's owning event loop. Returns a `Future` you may `.result()` on to block until the event is queued (not processed). **[0.8.1]** Under a bounded inbox with `OverflowPolicy.RAISE`, a full inbox raises `QueueOverflowError` **on the calling thread** (#157) — backpressure at the call site, not on a future a fire-and-forget producer never reads. `internal` (#150): `None` classifies the send by context — issued from inside one of this interpreter's own actions (or a thread/executor that inherited that `contextvars` context) it is a self-send charged to `maxIterations`; a plain `threading.Thread` does *not* inherit the context, so an action handing its own re-trigger to one must pass `internal=True` (or start the thread with `contextvars.copy_context().run`). |
 | `await .send_events(events)` | `(List[Union[str, Dict, Event]]) -> None` | `None` | Sends a list of events to the queue. Non-blocking. |
 | `.matches(state)` | `(Union[str, Dict[str, Any]]) -> bool` | `bool` | Reports whether *state* is part of the active configuration. Accepts a string id (fully-qualified, `#`-prefixed, or trailing partial path) or a partial `.value` dict. |
 | `.can(event)` | `(Union[str, Event, Dict[str, Any]]) -> bool` | `bool` | Reports whether sending *event* right now would cause a transition. Guards are evaluated, so this predicts accurately rather than checking structure only; has no side effects. |
@@ -1197,7 +1199,7 @@ is_system_event(system_event("___xstate_statemachine_init___"))  # True
 
 ---
 
-### `Receipt(state_ids, changed, error=None, deferred=False)` **[wave 3, 0.8.1]**
+### `Receipt(state_ids, changed, error=None, deferred=False, denied=False)` **[wave 3, 0.8.1]**
 
 ```python
 class Receipt(NamedTuple):
@@ -1205,6 +1207,7 @@ class Receipt(NamedTuple):
     changed: bool
     error: Optional[BaseException] = None
     deferred: bool = False
+    denied: bool = False
 ```
 
 What `send(..., wait=True)` resolves to once the event's macrostep has run to
@@ -1215,7 +1218,8 @@ completion (#39).
 | `state_ids` | `FrozenSet[str]` | The active leaf ids the instant processing finished. |
 | `changed` | `bool` | `True` if a transition was taken (configuration or context changed) for THIS event. |
 | `error` | `Optional[BaseException]` | The exception raised while processing this event -- an action that raised, an unresolvable target, a `sendTo` with no live target -- or `None`. The machine may still be `"running"` (per `actionErrorPolicy`); the receipt tells the caller its request did not run cleanly. |
-| `deferred` | `bool` | **[0.8.1]** `True` when this event selected no transition and was parked under `onUnhandled: "defer"` (#84). It will be replayed, as its own macrostep, after the next event that changes the configuration; the replay does not fold into that event's receipt (#125). |
+| `deferred` | `bool` | **[0.8.1]** `True` when this event selected no transition and was parked under `onUnhandled: "defer"` (#84). It will be replayed, as its own macrostep, after the next event that changes the configuration; the replay does not fold into that event's receipt (#125, both engines). |
+| `denied` | `bool` | **[0.8.1]** `True` when the active state *declared* a handler for this event but every candidate's guard returned `False` (#153). Distinguishes "a business rule refused it" from "this event does not apply here" (`denied=False`, `changed=False`), which are otherwise identical receipts. |
 
 > ⚠️ **0.8.1 arity change.** `Receipt` grew from three fields to four. A positional destructure written for 0.8.0 — `state_ids, changed, error = receipt` — now raises `ValueError`; read fields by attribute (#119).
 
@@ -1784,7 +1788,7 @@ specific exception types.
 | `SnapshotCorruptError` **[0.8.1]** | A snapshot is structurally unusable (#110). | Missing key, non-object `context`, unknown `status`, or `status="running"` with an empty configuration. |
 | `SnapshotSerializationError` **[0.8.1]** | A pending event's data is not JSON-native (#131). | `Decimal` / `datetime` in a queued `DoneEvent.data` when `get_snapshot()` runs. |
 | `InvalidEventError` **[0.8.1]** | `send()` was given something that is not an event: a non-`str` type, a dict without `"type"`, … (#113). Also a `TypeError`, so pre-0.8.1 handlers still catch it. | `send(123)`, `send({"kind": "X"})`. |
-| `RootTargetError` **[0.8.1]** | A transition targets the machine root, which would empty the configuration (#108). Subclass of `InvalidConfigError`. | `"always": "#machine"` or `"on": {"X": "#machine"}` at `create_machine()`. |
+| `RootTargetError` **[0.8.1]** | A transition targets the machine root, which would empty the configuration (#108). Subclass of `InvalidConfigError`. Raised regardless of `strict_targets` — the escape hatch downgrades *unresolvable* targets only, never this (#147). | `"always": "#machine"` or `"on": {"X": "#machine"}` at `create_machine()`. |
 
 ### `QueueOverflowError` attributes **[wave 3]**
 
@@ -1913,7 +1917,9 @@ All hooks have empty default implementations -- override only those you need.
 | `on_service_error` | `(self, interpreter: TInterpreter, invocation: InvokeDefinition, error: Exception) -> None` | A service fails with an error. |
 | `on_transition_failed` | `(self, interpreter: TInterpreter, transition: TransitionDefinition, failed_actions: List[Tuple[ActionDefinition, BaseException]]) -> None` | A transition's action list did not run to completion (`actionErrorPolicy` `"rollback"`/`"fail"`). |
 | `on_guard_error` | `(self, interpreter: TInterpreter, guard_name: str, event: Event, error: BaseException) -> None` | A guard raised instead of returning, before the substituted result (per `guardErrorPolicy`) is reported. |
-| `on_unhandled_event` | `(self, interpreter: TInterpreter, event: Event, active_state_ids: Set[str], disposition: str) -> None` | An event selects no transition. `disposition` is `"ignored"`, `"deferred"`, `"errored"`, or `"dropped"`. |
+| `on_unhandled_event` | `(self, interpreter: TInterpreter, event: Event, active_state_ids: Set[str], disposition: str) -> None` | An event selects no transition. `disposition` is `"ignored"` (no handler declared), `"guard_denied"` **[0.8.1]** (a handler was declared but every guard refused — #153), `"deferred"`, `"errored"`, or `"dropped"`. |
+| `on_invalid_event` **[0.8.1]** | `(self, interpreter: TInterpreter, error: BaseException, raw_event: Any) -> None` | `send()` refused a malformed event; fires immediately before the `InvalidEventError` propagates to the caller (#159). Observability, not containment. |
+| `on_snapshot_error` **[0.8.1]** | `(self, interpreter: TInterpreter, error: BaseException) -> None` | A snapshot was refused — `SnapshotMidStepError` or `SnapshotSerializationError` — fires immediately before it propagates (#159). |
 | `on_event_dropped` **[wave 3, 0.8.1]** | `(self, interpreter: TInterpreter, event: Event, reason: str) -> None` | An event was discarded unprocessed. `reason` is one of `"queue_full"` (bounded inbox, `DROP_NEWEST`), `"not_running"` (sent to a stopped/done/errored machine), `"chain_budget"` (`maxIterations` cut), `"stopped"` (abandoned by `stop()`, including producers parked on a full `BLOCK` inbox), `"unresolved_target"` (`sendTo` to no live actor). Fires on **both** engines for every loss site (#38, #123, #129, #133). Also logged at WARNING. |
 | `on_resolve_error` **[0.8.1]** | `(self, interpreter: TInterpreter, error: BaseException, event: Event) -> None` | A transition's target could not be resolved at runtime (`strict_targets=False` only). The third per-transition failure category alongside `on_action_error` / `on_guard_error` (#134). |
 | `on_plugin_error` **[0.8.1]** | `(self, interpreter: TInterpreter, plugin: PluginBase, hook: str, error: BaseException) -> None` | **Another** plugin's hook raised, or was `async def` and could not be awaited. Never fires for the plugin that failed. The same triple is on `interpreter.last_plugin_error` (#127). |
