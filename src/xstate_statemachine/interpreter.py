@@ -254,6 +254,9 @@ class Interpreter(BaseInterpreter[TContext]):
         "_priority_queue",
         "_processing",
         "_raise_depth",
+        "_chain_tripped",
+        "_settle_iterations",
+        "_settle_tripped",
         "_receipts",
         "_replay_pending",
         "_service_executor",
@@ -375,6 +378,14 @@ class Interpreter(BaseInterpreter[TContext]):
         #: a macrostep completes without having done so. Bounds a runaway
         #: `raise` without ever throttling external `send()` traffic.
         self._raise_depth: int = 0
+        #: 🔁 #166: per-macrostep `always`-settle budget (mirrors the sync
+        #: engine's `_settle_iterations` / `_settle_tripped`, #103 / #151).
+        self._settle_iterations: int = 0
+        self._settle_tripped: bool = False
+        #: 🛟 #168: set when the chain budget trips; spares exactly one
+        #: pending engine completion at the trip, then cuts every further
+        #: self-generated event until an external event ends the chain.
+        self._chain_tripped: bool = False
         #: 🔗 #150: self-issued `send_threadsafe` deliveries accepted on a
         #: worker thread but not yet landed on the loop. A macrostep that
         #: "raised nothing" must not end the chain while one is in flight.
@@ -1446,7 +1457,24 @@ class Interpreter(BaseInterpreter[TContext]):
                 #    construction; mirror that here. It still counts toward
                 #    the depth (below) so a rollback->re-arm cycle stays
                 #    bounded.
-                if self._raise_depth > limit and not is_system_event(event):
+                # 🛟 #168: `not is_system_event(event)` exempted EVERY
+                #    completion, so an invoke cycle (`ver -> arm -> ver`) ran
+                #    unbounded and silent here while the sync engine tripped.
+                #    Mirror the sync rule: the FIRST completion that arrives
+                #    at the trip is spared (finished work must land, #120),
+                #    every later self-generated event -- completion or not --
+                #    is cut until an external event resets the chain.
+                over = self._raise_depth > limit
+                if over and is_system_event(event) and not self._chain_tripped:
+                    self._chain_tripped = True
+                    logger.warning(
+                        "🛟 Chain budget reached on '%s' while an engine "
+                        "completion ('%s') was pending; delivering it, then "
+                        "cutting the self-generated tail.",
+                        self.id,
+                        event.type,
+                    )
+                elif over:
                     logger.error(
                         "🛑 Exceeded %d chained self-raised events on '%s'. "
                         "This means an action raises the event that triggers "
@@ -1455,7 +1483,10 @@ class Interpreter(BaseInterpreter[TContext]):
                         limit,
                         self.id,
                     )
-                    self._raise_depth = 0
+                    # 🔗 Sticky within the chain (#88): the runaway keeps
+                    #    regenerating until an external event resets the
+                    #    depth below; do not hand it a fresh budget per drop.
+                    self._chain_tripped = True
                     # 🔔 #77 criterion 6: observable, not just logged.
                     for plugin in self._plugins:
                         plugin.on_event_dropped(self, event, "chain_budget")
@@ -1471,6 +1502,21 @@ class Interpreter(BaseInterpreter[TContext]):
                     )
                     if from_inbox:
                         self._event_queue.task_done()
+                    # 🏁 A drop that leaves NO self-generated work pending
+                    #    ends the chain -- the sync drain would have
+                    #    returned here. Without this the trip stayed sticky
+                    #    across idle time, and a service that finished
+                    #    50 ms later (#120) was cut as if it were the
+                    #    runaway. A cycle made of completions (#167/#168)
+                    #    stays bounded: the dropped completion is the only
+                    #    thing that could have re-armed it.
+                    if (
+                        not self._internal_queue
+                        and not self._priority_queue
+                        and not self._threadsafe_self_sends_in_flight
+                    ):
+                        self._raise_depth = 0
+                        self._chain_tripped = False
                     continue
 
                 logger.debug(
@@ -1518,6 +1564,12 @@ class Interpreter(BaseInterpreter[TContext]):
                 self.last_transition_ok = True
                 self._deferred_this_step.clear()  # #106: per-step scope
                 self._guard_denied_this_step = False  # #153: per-step scope
+                if not is_system_event(event) or from_inbox:
+                    # 🔁 #166 / #151: a user event (or anything the CALLER
+                    #    queued) starts a fresh settle budget; a self-
+                    #    generated completion continues the running one.
+                    self._settle_iterations = 0
+                    self._settle_tripped = False
                 try:
                     self._processing = True
                     depth_before = self._raise_depth
@@ -1532,9 +1584,11 @@ class Interpreter(BaseInterpreter[TContext]):
                     if (
                         self._raise_depth == depth_before
                         and not self._internal_queue
+                        and not self._priority_queue
                         and not self._threadsafe_self_sends_in_flight
                     ):
                         self._raise_depth = 0
+                        self._chain_tripped = False
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -1709,18 +1763,32 @@ class Interpreter(BaseInterpreter[TContext]):
         #    v5.31.0. `max_iterations` is configurable on the machine.
         if not self.machine.has_always_transitions:
             return  # ⚡ nothing to settle; see MachineNode.has_always_transitions
-        iterations = 0
         limit = getattr(self.machine, "max_iterations", 1000)
         while True:
-            iterations += 1
-            if iterations > limit:
-                logger.error(
-                    "🔁 Exceeded %d microsteps while settling transient "
-                    "transitions in '%s'. Aborting to avoid an infinite "
-                    "loop; check for mutually-targeting 'always' transitions.",
-                    limit,
-                    self.id,
-                )
+            # 🛟 #166: the budget is per MACROSTEP on the instance, not a
+            #    local counter per call. A local counter restarted at 0 on
+            #    every completion-driven re-entry (an `always` into an
+            #    invoking child whose service finishes inside the settle
+            #    re-delivers `done.invoke`, which re-settles...), so the
+            #    async loop spun for ever while the sync engine -- whose
+            #    counter lives on the instance (#103 / #151) -- tripped in
+            #    milliseconds. Reset by the run loop when an EXTERNAL event
+            #    begins its macrostep; a trip is observable (#112).
+            self._settle_iterations += 1
+            if self._settle_iterations > limit:
+                if not self._settle_tripped:
+                    logger.error(
+                        "🔁 Exceeded %d microsteps while settling transient "
+                        "transitions in '%s'. Aborting to avoid an infinite "
+                        "loop; check for mutually-targeting 'always' "
+                        "transitions or an 'always' into an invoking state.",
+                        limit,
+                        self.id,
+                    )
+                self._settle_tripped = True
+                self.last_transition_ok = False
+                self._last_action_error = RunawayChainError(self.id, limit, 0)
+                self._repair_configuration()
                 break
             transient_event = Event(type="")
             # 🧠 Use the memoised selection path so a transient transition on
@@ -2127,7 +2195,19 @@ class Interpreter(BaseInterpreter[TContext]):
             await self._wakeup.wait()
 
     def _deliver_priority(self, event: AnyEvent) -> None:
-        """Place *event* at the head of processing and wake the run loop."""
+        """Place *event* at the head of processing and wake the run loop.
+
+        🛟 #166 / #167 / #168: a completion the machine produced WHILE
+        processing (a plain service that finished inside the entering
+        macrostep, a rollback that re-armed an invoke, an ``always`` that
+        re-entered an invoking child) is self-generated work and is charged
+        to the chain budget exactly as the sync engine charges it. Only a
+        delivery from OUTSIDE a step (a due timer firing on an idle loop, a
+        task finishing later) is free -- that is external time, not the
+        machine feeding itself.
+        """
+        if self._processing:
+            self._raise_depth += 1
         self._priority_queue.append(event)
         if self._wakeup is not None:
             self._wakeup.set()
