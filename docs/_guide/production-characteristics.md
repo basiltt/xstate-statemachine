@@ -7,7 +7,7 @@ Most of this guide describes what a machine *means*. This page describes how the
 
 Three facts, each with the measurement behind it. Every number below was produced by [`benchmarks/production_characteristics.py`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/production_characteristics.py); run it on your own hardware and trust your figures over ours.
 
-> **Measured on:** CPython 3.14.6, Windows 11, Intel x86-64 laptop (2.5 GHz), a trivial single-action macrostep, `tracemalloc` **off**, best-of-3. Treat these as order-of-magnitude, not guarantees.
+> **Measured on:** 0.8.1 (2026-09-19), CPython 3.14.6, Windows 11, Intel Core i7-11850H laptop, a trivial single-action macrostep, `tracemalloc` **off**, best-of-3. Treat these as order-of-magnitude, not guarantees. For how the runtime compares with other Python state-machine libraries on identical machine shapes, see the [cross-library benchmark](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md) (summary on the [home page](../../#how-it-compares)).
 
 ---
 
@@ -28,12 +28,12 @@ The consequence: **throughput is a per-process budget, not a per-machine capacit
 
 | Interpreters | Aggregate ev/s | Per-interpreter ev/s |
 |---:|---:|---:|
-| 1 | ~31,000 | ~31,000 |
-| 10 | ~32,500 | ~3,250 |
-| 100 | ~22,500 | ~225 |
-| 1,000 | ~22,000 | ~22 |
+| 1 | ~33,000 | ~33,000 |
+| 10 | ~35,500 | ~3,550 |
+| 100 | ~33,500 | ~335 |
+| 1,000 | ~30,000 | ~30 |
 
-The aggregate barely moves across three orders of magnitude; the per-machine share collapses. This is the correct and unavoidable behaviour of a single-threaded core — it is how XState's actor system behaves too, and it is not something a library change can "fix" without a different architecture.
+The aggregate barely moves across three orders of magnitude (0.8.1 closed the dip at 100–1,000 machines that 0.8.0 showed — the per-child manager task and the settle-hook accumulation are gone); the per-machine share collapses. This is the correct and unavoidable behaviour of a single-threaded core — it is how XState's actor system behaves too, and it is not something a library change can "fix" without a different architecture.
 
 ### Sizing rule
 
@@ -42,6 +42,8 @@ The aggregate barely moves across three orders of magnitude; the per-machine sha
 3. Divide by your **machine count**.
 
 If the result is below the per-machine event rate you need, **scale by process** — shard machines across a worker pool. Adding interpreters to one process will not help.
+
+An external producer that sends *during* another machine's slow step is never charged to that machine's `maxIterations` (0.8.1, #105); the budget counts only events an interpreter's own actions issue, so a busy loop cannot make a healthy machine trip its chain guard.
 
 ### Two things that make it worse
 
@@ -77,16 +79,16 @@ On the async engine a timer is scheduled through the interpreter's [`Clock`](../
 
 | Busy machines in the process | `after: 10` fires late by |
 |---:|---:|
-| 0 | ~0.2 ms |
+| 0 | ~0.1 ms |
 | 10 | ~1 ms |
-| 100 | ~8 ms |
-| 500 | ~46 ms |
+| 100 | ~9 ms |
+| 500 | ~50 ms |
 
 (Before 0.8.0 the timer's continuation shared the inbox and the same run measured ~35 ms and ~180 ms; the priority lane and the 0.8.0 hot-path work together cut the lateness by roughly 4x. Lateness tracks per-event cost -- every event the loop processes faster is a timer that fires sooner -- so it will keep moving with throughput. `AfterEvent.lateness_ms` reports the actual figure for each firing.)
 
 Two properties of that curve matter for design:
 
-- **The error is roughly constant in absolute terms across delay sizes.** A 10 ms timer and a 10 s timer are each ~45 ms late at 500 busy machines — so *short* deadlines degrade worst *relatively*. A 10 ms timeout at 500 machines is meaningless; a 30 s one is fine.
+- **The error is roughly constant in absolute terms across delay sizes.** A 10 ms timer and a 10 s timer are each ~50 ms late at 500 busy machines — so *short* deadlines degrade worst *relatively*. A 10 ms timeout at 500 machines is meaningless; a 30 s one is fine.
 - **The OS floor.** On Windows the default timer resolution is ~15.6 ms; an `after: 5` cannot fire at 5 ms on an idle loop there. Linux and macOS are ~1 ms.
 
 ### What to use `after` for
@@ -103,7 +105,7 @@ On the `SyncInterpreter`, `after` timers are not on an event loop at all — the
 
 - `send()` runs the whole macrostep — guards, actions, entry/exit, `always` chains — synchronously on the **calling thread**, and returns when it is done. Two `send()` calls from one thread cannot overlap. That is the guarantee, and it is what makes the sync engine ideal for tests and step-through debugging.
 - **`after` timers and delayed sends do not own a thread.** Since 0.8.0 (#50) a delay is a deadline recorded on the interpreter's `Clock`; a due deadline is delivered on the **caller's thread** at the top of the next `send()`, inside the macrostep loop, or when you call `tick()` explicitly. Nothing fires between your own statements. (Before 0.8.0 each timer was a `threading.Thread` that re-entered the machine without a lock.) This holds **regardless of whether an asyncio loop is running on the constructing thread** — since 0.8.1 (#76) the clock lane follows the owning engine, so a sync machine built inside an async test or an async app's hot path still delivers its deadlines through `tick()`.
-- **Non-blocking `spawn_<key>` children still run on a background thread.** Each such child has a daemon runner thread that pumps its `tick()`; the child's actions execute on that thread. The parent is only re-entered through the child's completion event or `sendParent`, both of which go through the parent's inbox and are processed on the parent's next `send()`/`tick()`.
+- **Non-blocking `spawn_<key>` children still run on a background thread.** The child is *started* on the spawning thread (0.8.1 — so its entry actions and grandchildren exist when the spawn action returns), then a daemon runner thread pumps its `tick()`; the child's later actions execute on that thread. The parent is only re-entered through the child's completion event or `sendParent`, both of which go through the parent's inbox and are processed on the parent's next `send()`/`tick()`.
 
 So a machine that uses `after` and delayed sends is single-threaded end-to-end; only `spawn_<key>` (non-blocking) children introduce a second thread, and that thread runs the *child's* code, not the parent's.
 

@@ -708,7 +708,7 @@ ensuring clean cancellation when states are exited.
 | `.on(event_type, listener)` | `(str, Callable[[Event], None]) -> Callable[[], None]` | `Callable[[], None]` | Registers a listener for events published via the `emit` action. `event_type` may be `"*"` to catch every emitted event. Returns an unsubscribe function. |
 | `.use(plugin)` | `(PluginBase) -> Interpreter` | `Interpreter` | Registers a plugin. Returns `self` for chaining. |
 | `.get_snapshot()` | `() -> str` | `str` | Returns a JSON string snapshot of current state, context, and status. |
-| `.get_persisted_snapshot()` | `() -> Dict[str, Any]` | `Dict[str, Any]` | Returns a deep, JSON-serialisable snapshot as a dict, including the full actor hierarchy (child actors, history, output). Mirrors XState's `actor.getPersistedSnapshot()`; `get_snapshot()` above is the JSON-string convenience wrapper around this. |
+| `.get_persisted_snapshot()` | `() -> Dict[str, Any]` | `Dict[str, Any]` | Returns a deep, JSON-serialisable snapshot as a dict, including the full actor hierarchy (child actors, history, output) and every accepted-but-unprocessed event, fired timers included (#107). Mirrors XState's `actor.getPersistedSnapshot()`; `get_snapshot()` above is the JSON-string convenience wrapper around this. Raises `SnapshotMidStepError` **[0.8.1]** (#102) if called while a macrostep is in flight (e.g. from inside an action) — snapshot after `send(wait=True)` resolves, from an `on_transition` hook, or after `stop(drain=True)`. Raises `SnapshotSerializationError` **[0.8.1]** (#131) if a pending event carries non-JSON-native data (`Decimal`, `datetime`, …) instead of silently stringifying it. |
 | `await .drain_pending()` | `() -> List[Union[Event, DoneEvent, AfterEvent, ErrorEvent]]` | `list` | Removes and returns every accepted-but-unprocessed event, without processing it. |
 | `await .wait_done()` | `() -> asyncio.Future[str]` | `Future[str]` | Resolves to `"done"`/`"error"` the instant the machine reaches a terminal status. Already-resolved if the machine is terminal now. |
 | `.pending_invocations()` | `() -> List[PendingInvocation]` | `list` | Invokes in the active configuration that have NO live service -- the truthful list of what a static `from_snapshot()` restore left dormant **[wave 3]** (#44). Empty on a live machine and after `restart_services=True`. |
@@ -717,7 +717,7 @@ ensuring clean cancellation when states are exited.
 
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
-| `Interpreter.from_snapshot(json_str, machine, *, verify_machine_hash=True, restart_services=False, restart_timers=None, clock=None)` | `(str, MachineNode, bool, bool) -> Interpreter` | `Interpreter` | Restores an interpreter from a snapshot. Does **not** re-run entry actions or restart timers/services by default. Raises `SnapshotVersionError` for a snapshot newer than this library supports, and `SnapshotDriftError` on a machine id or structural-hash mismatch (skip the hash check with `verify_machine_hash=False`). `restart_services=True` **[wave 3]** (#44) makes the restored interpreter's `start()` re-invoke every `invoke` in the restored configuration from scratch (not resumed) -- opt in only when the service is safe to run again (e.g. guarded by a client-supplied idempotency key). |
+| `Interpreter.from_snapshot(json_str, machine, *, verify_machine_hash=True, restart_services=False, restart_timers=None, clock=None)` | `(str, MachineNode, bool, bool, Optional[bool], Optional[Clock]) -> Interpreter` | `Interpreter` | Restores an interpreter from a snapshot. Does **not** re-run entry actions, and by default restarts neither services nor timers. Raises `SnapshotVersionError` for a snapshot newer than this library supports, `SnapshotDriftError` on a machine id or structural-hash mismatch (skip the hash check with `verify_machine_hash=False`), and `SnapshotCorruptError` **[0.8.1]** (#110) for a malformed blob (missing key, non-object `context`, unknown `status`, `running` with an empty configuration). `restart_services=True` **[wave 3]** (#44) makes the restored interpreter's `start()` re-invoke every `invoke` in the restored configuration from scratch (not resumed) -- opt in only when the service is safe to run again. `restart_timers` **[0.8.1]** (#128) does the same for dormant `after` timers, re-armed **from zero**; `None` (default) follows `restart_services`. `clock` **[0.8.1]** (#117) is the `Clock` the restored interpreter runs on (default `RealClock`); pass the `SimulatedClock` you mean for deterministic replay. After a static restore `.status` reports the persisted value immediately and is **not a liveness signal** — consult `.has_dormant_invocations` / `.has_dormant_timers` (#135). |
 
 #### Properties
 
@@ -732,7 +732,11 @@ ensuring clean cancellation when states are exited.
 | `.parent` | `Optional[BaseInterpreter]` | Reference to parent interpreter (for spawned child actors), otherwise `None`. |
 | `.system` | `ActorSystem` | The actor system this interpreter belongs to; exposes `.get(id)` and `.get_all()` for looking up sibling/child actors registered under a `systemId`. |
 | `.plugins` | `List[PluginBase]` | The list of plugin instances attached to this interpreter. Assigning a new list replaces the whole set (the form `.use()` builds on). |
-| `.last_transition_ok` | `bool` | Whether the most recently processed transition's actions all ran to completion, given `actionErrorPolicy`. |
+| `.last_transition_ok` | `bool` | Whether the most recently processed transition's actions all ran to completion, given `actionErrorPolicy`. Also `False` after a settle-budget trip (#112) or a `sendTo` with no live target (#133). |
+| `.last_error` | `Optional[BaseException]` | The exception behind the most recent `last_transition_ok=False` — an action's exception, a `RunawayChainError`, an `ActorSpawningError` for an unresolved `sendTo` — or `None`. |
+| `.last_plugin_error` | `Optional[Tuple[str, str, BaseException]]` | **[0.8.1]** `(plugin_class_name, hook_name, error)` for the most recent plugin hook that raised or was an un-awaitable `async def` (#127). Plugin failures never stop the machine; this is where they surface, alongside `on_plugin_error`. |
+| `.has_dormant_invocations` | `bool` | **[wave 3]** `True` when an active state declares an `invoke` that has no live service — the state of a static `from_snapshot()` restore before `start()`, or after it without `restart_services=True` (#44). |
+| `.has_dormant_timers` | `bool` | **[0.8.1]** `True` when an active state declares an `after` timer that is not armed — the timer counterpart of `has_dormant_invocations`; cleared by `start()` with `restart_timers=True` (#128). |
 | `.deferred_count` | `int` | Number of events currently buffered under `onUnhandled: "defer"`. |
 | `Interpreter.DEFER_MAX` | `int` | Class attribute bounding the deferral buffer's size; oldest entries are evicted once full. |
 | `Interpreter.MAX_ACTION_DEPTH` | `int` | Class attribute (default `50`) bounding nested action expansion (`pure` / `choose` / `enqueueActions` returning further actions), guarding against a callback that re-enqueues itself. |
@@ -1140,11 +1144,16 @@ def store_error(interpreter, context, event, action_def):
 
 ---
 
-### `AfterEvent(type)`
+### `AfterEvent(type, scheduled_for=0.0, fired_at=0.0)`
 
 ```python
 class AfterEvent(NamedTuple):
     type: str
+    scheduled_for: float = 0.0   # clock time the deadline was set for
+    fired_at: float = 0.0        # clock time the timer actually fired
+
+    @property
+    def lateness_ms(self) -> float: ...
 ```
 
 An internal event for delayed (`after`) transitions. Created and sent
@@ -1154,6 +1163,9 @@ configuration. **Users never create this event manually.**
 | Field | Type | Description |
 |-------|------|-------------|
 | `type` | `str` | Internally generated name in the format `"after.<delay>.<machineId>.<stateId>"`. |
+| `scheduled_for` | `float` | The `Clock` reading the deadline was armed for. |
+| `fired_at` | `float` | The `Clock` reading when it actually fired. |
+| `lateness_ms` | `float` (property) | `max(0, fired_at - scheduled_for) * 1000` — how late the timer ran, the figure behind [Production Characteristics § 2](../guide/production-characteristics/#2-after-timers-are-best-effort-and-starve-under-load). Both timestamps survive a snapshot round-trip (#118). |
 
 #### Format examples
 
@@ -1164,13 +1176,35 @@ configuration. **Users never create this event manually.**
 
 ---
 
-### `Receipt(state_ids, changed, error=None)` **[wave 3]**
+### Engine provenance: `is_system_event`, `system_event`, `ENGINE_EVENT_SHAPES` **[0.8.1]**
+
+```python
+def is_system_event(event: Any) -> bool: ...
+def system_event(event_type: str, **payload: Any) -> Event: ...
+
+ENGINE_EVENT_SHAPES: Tuple[str, ...]   # ("done.invoke.", "done.state.", "error.platform.", "after.", "xstate.", "___xstate")
+SYSTEM_EVENT_PREFIXES: Tuple[str, ...]  # coarser legacy prefixes, kept for compatibility
+```
+
+Three behaviours — wildcard matching (`"*"` / `"prefix.*"`), `onUnhandled: "error"` / `"defer"`, and `strict=True` — treat events *minted by the engine* differently from yours. Since 0.8.1 (#79, #137) that decision is made by **provenance**, not by name: `is_system_event` is the single predicate all three consult, and `system_event(...)` is the only way to mint a plain `Event` that satisfies it. An event you name `done.review` is user traffic. The marker survives `deepcopy`, `pickle`, `send(wait=True)` and a snapshot round-trip (#111, #138). `ENGINE_EVENT_SHAPES` lists the name shapes the engine produces, for build-time checks and documentation only.
+
+```python
+from xstate_statemachine import Event, is_system_event, system_event
+
+is_system_event(Event("done.review"))                            # False
+is_system_event(system_event("___xstate_statemachine_init___"))  # True
+```
+
+---
+
+### `Receipt(state_ids, changed, error=None, deferred=False)` **[wave 3, 0.8.1]**
 
 ```python
 class Receipt(NamedTuple):
     state_ids: FrozenSet[str]
     changed: bool
     error: Optional[BaseException] = None
+    deferred: bool = False
 ```
 
 What `send(..., wait=True)` resolves to once the event's macrostep has run to
@@ -1180,7 +1214,10 @@ completion (#39).
 |-------|------|-------------|
 | `state_ids` | `FrozenSet[str]` | The active leaf ids the instant processing finished. |
 | `changed` | `bool` | `True` if a transition was taken (configuration or context changed) for THIS event. |
-| `error` | `Optional[BaseException]` | The exception raised while processing this event -- an action that raised, an unresolvable target -- or `None`. The machine may still be `"running"` (per `actionErrorPolicy`); the receipt tells the caller its request did not run cleanly. |
+| `error` | `Optional[BaseException]` | The exception raised while processing this event -- an action that raised, an unresolvable target, a `sendTo` with no live target -- or `None`. The machine may still be `"running"` (per `actionErrorPolicy`); the receipt tells the caller its request did not run cleanly. |
+| `deferred` | `bool` | **[0.8.1]** `True` when this event selected no transition and was parked under `onUnhandled: "defer"` (#84). It will be replayed, as its own macrostep, after the next event that changes the configuration; the replay does not fold into that event's receipt (#125). |
+
+> ⚠️ **0.8.1 arity change.** `Receipt` grew from three fields to four. A positional destructure written for 0.8.0 — `state_ids, changed, error = receipt` — now raises `ValueError`; read fields by attribute (#119).
 
 ```python
 receipt = await interpreter.send("SUBMIT", wait=True)
@@ -1741,6 +1778,13 @@ specific exception types.
 | `UnknownEventError` **[wave 3]** | `send()` was called with an event type not declared anywhere in the machine. | `strict=True` on the interpreter and the event type matches no `on` key, `after` delay, or `invoke` completion descriptor (#51). |
 | `InvalidEventPayloadError` **[wave 3]** | An event's payload failed its declared schema. | `event_schemas` is set on `create_machine()` and an incoming event's payload does not satisfy the validator registered for its type (#51). |
 | `InterpreterStoppedError` **[wave 3]** | A `send(wait=True)` receipt cannot resolve because the interpreter stopped, or dropped the event, before it was processed. | `interpreter.send(event, wait=True)` is awaited/blocked on and the interpreter is stopped, or the event is dropped by an overflow policy, before that event is processed (#39). |
+| `RestoredError` | Carries the error *message* recovered from a snapshot persisted in the `error` status; the original type cannot survive JSON. | `from_snapshot()` of a machine that had failed; `interpreter.last_error` is a `RestoredError`. |
+| `RunawayChainError` **[0.8.1]** | A self-generated event chain exceeded `maxIterations` and was cut (#77, #103). The machine stays `running`; the trip is reported here. | An action `raise`s the event that triggers it, or a cross-region `always` keeps re-arming an invoke. Surfaces as `receipt.error` / `last_error`, never as a raised exception. |
+| `SnapshotMidStepError` **[0.8.1]** | `get_persisted_snapshot()` was called while a macrostep is in flight; the configuration has no leaf to persist (#102). | Snapshotting from inside an action. Snapshot after `send(wait=True)`, from `on_transition`, or after `stop(drain=True)`. |
+| `SnapshotCorruptError` **[0.8.1]** | A snapshot is structurally unusable (#110). | Missing key, non-object `context`, unknown `status`, or `status="running"` with an empty configuration. |
+| `SnapshotSerializationError` **[0.8.1]** | A pending event's data is not JSON-native (#131). | `Decimal` / `datetime` in a queued `DoneEvent.data` when `get_snapshot()` runs. |
+| `InvalidEventError` **[0.8.1]** | `send()` was given something that is not an event: a non-`str` type, a dict without `"type"`, … (#113). Also a `TypeError`, so pre-0.8.1 handlers still catch it. | `send(123)`, `send({"kind": "X"})`. |
+| `RootTargetError` **[0.8.1]** | A transition targets the machine root, which would empty the configuration (#108). Subclass of `InvalidConfigError`. | `"always": "#machine"` or `"on": {"X": "#machine"}` at `create_machine()`. |
 
 ### `QueueOverflowError` attributes **[wave 3]**
 
@@ -1777,7 +1821,6 @@ specific exception types.
 ```
 Exception
  +-- XStateMachineError
-      +-- InvalidConfigError
       +-- StateNotFoundError
       +-- ImplementationMissingError
       +-- ActorSpawningError
@@ -1791,6 +1834,14 @@ Exception
       +-- UnknownEventError
       +-- InvalidEventPayloadError
       +-- InterpreterStoppedError
+      +-- RestoredError
+      +-- RunawayChainError            [0.8.1]
+      +-- SnapshotMidStepError         [0.8.1]
+      +-- SnapshotCorruptError         [0.8.1]
+      +-- SnapshotSerializationError   [0.8.1]
+      +-- InvalidEventError            [0.8.1]  (also a TypeError)
+      +-- InvalidConfigError
+           +-- RootTargetError         [0.8.1]
 ```
 
 ### Error handling example
@@ -1863,7 +1914,9 @@ All hooks have empty default implementations -- override only those you need.
 | `on_transition_failed` | `(self, interpreter: TInterpreter, transition: TransitionDefinition, failed_actions: List[Tuple[ActionDefinition, BaseException]]) -> None` | A transition's action list did not run to completion (`actionErrorPolicy` `"rollback"`/`"fail"`). |
 | `on_guard_error` | `(self, interpreter: TInterpreter, guard_name: str, event: Event, error: BaseException) -> None` | A guard raised instead of returning, before the substituted result (per `guardErrorPolicy`) is reported. |
 | `on_unhandled_event` | `(self, interpreter: TInterpreter, event: Event, active_state_ids: Set[str], disposition: str) -> None` | An event selects no transition. `disposition` is `"ignored"`, `"deferred"`, `"errored"`, or `"dropped"`. |
-| `on_event_dropped` **[wave 3]** | `(self, interpreter: TInterpreter, event: Event, reason: str) -> None` | An accepted-looking event was discarded unprocessed: `reason="queue_full"` under `OverflowPolicy.DROP_NEWEST` with a full bounded inbox, or `reason="not_running"` when a send reaches a stopped/done/errored machine. Also logged at WARNING. The observability hook for load shedding (#38). |
+| `on_event_dropped` **[wave 3, 0.8.1]** | `(self, interpreter: TInterpreter, event: Event, reason: str) -> None` | An event was discarded unprocessed. `reason` is one of `"queue_full"` (bounded inbox, `DROP_NEWEST`), `"not_running"` (sent to a stopped/done/errored machine), `"chain_budget"` (`maxIterations` cut), `"stopped"` (abandoned by `stop()`, including producers parked on a full `BLOCK` inbox), `"unresolved_target"` (`sendTo` to no live actor). Fires on **both** engines for every loss site (#38, #123, #129, #133). Also logged at WARNING. |
+| `on_resolve_error` **[0.8.1]** | `(self, interpreter: TInterpreter, error: BaseException, event: Event) -> None` | A transition's target could not be resolved at runtime (`strict_targets=False` only). The third per-transition failure category alongside `on_action_error` / `on_guard_error` (#134). |
+| `on_plugin_error` **[0.8.1]** | `(self, interpreter: TInterpreter, plugin: PluginBase, hook: str, error: BaseException) -> None` | **Another** plugin's hook raised, or was `async def` and could not be awaited. Never fires for the plugin that failed. The same triple is on `interpreter.last_plugin_error` (#127). |
 | `on_error` | `(self, interpreter: TInterpreter, error: BaseException) -> None` | The interpreter enters the terminal `"error"` status. |
 | `on_done` | `(self, interpreter: TInterpreter, output: Any) -> None` | The machine reaches a top-level final state. |
 
@@ -1897,16 +1950,28 @@ metrics.report()  # Events: 1, Transitions: 1
 
 ---
 
-### `LoggingInspector`
+### `LoggingInspector(*, redact_keys=DEFAULT_REDACT_KEYS, log_context=True)`
 
 ```python
 class LoggingInspector(PluginBase[Any]):
-    ...
+    def __init__(
+        self,
+        *,
+        redact_keys: Tuple[str, ...] = DEFAULT_REDACT_KEYS,
+        log_context: bool = True,
+    ) -> None: ...
 ```
 
 A built-in plugin for detailed, real-time inspection of machine execution.
 Works with both `Interpreter` and `SyncInterpreter`. All messages are
 emitted through Python's standard `logging` module at `INFO` level.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `redact_keys` | `DEFAULT_REDACT_KEYS` | **[0.8.1]** (#126) Substrings matched case-insensitively against every key in a logged context or payload, recursively; matches are written as `"***"`. The default list covers `password`, `secret`, `token`, `api_key`, `authorization`, `credential`, `card`, `cvv`, …. Extend with `(*DEFAULT_REDACT_KEYS, "ssn")`; pass `()` to opt out explicitly. |
+| `log_context` | `True` | Set `False` to skip the per-transition context dump on machines with a large context. |
+
+The standalone `redact(value, keys=DEFAULT_REDACT_KEYS)` helper is exported for your own plugins.
 
 #### Output format
 

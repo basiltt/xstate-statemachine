@@ -983,8 +983,8 @@ Python has good state machine libraries. Here's an honest read on when to pick w
 | Compound (nested) states | ✅ | ✅ | ✅ |
 | Parallel regions | ✅ | ✅ | ✅ |
 | History states | ✅ | ✅ | ✅ |
-| `invoke` services + `onDone`/`onError` | ✅ built-in | ⚙️ DIY | ⚙️ DIY |
-| Delayed transitions (`after`) | ✅ built-in | ⚙️ DIY | ⚙️ DIY |
+| `invoke` services + `onDone`/`onError` | ✅ built-in | ⚙️ DIY | ⚙️ `invoke` (callables) |
+| Delayed transitions (`after`) | ✅ built-in | ⚙️ `Timeout` extension (one OS thread per entry) | ✅ `delay=` |
 | Actor model / spawning | ✅ | ❌ | ❌ |
 | Snapshot persistence | ✅ | ⚙️ DIY | ⚙️ DIY |
 | Sync **and** async runtimes | ✅ two engines | ✅ | ✅ |
@@ -992,7 +992,7 @@ Python has good state machine libraries. Here's an honest read on when to pick w
 | CLI code generator | ✅ | ❌ | ❌ |
 | Virtual clock for tests | ✅ `SimulatedClock` | ❌ | ❌ |
 | Bounded inbox / backpressure | ✅ `max_queue_size` | — | — |
-| Runtime dependencies | **0** | 0 (core) | few |
+| Runtime dependencies | **0** | 1 (`six`) | 0 |
 
 **Pick `transitions`** if you want the most battle-tested option and a simple FSM bolted onto
 an existing class. It's mature, widely deployed, and excellent at that job.
@@ -1004,6 +1004,26 @@ real alternative, not a strawman.
 **Pick this library** when you want XState/Stately JSON to run in Python unchanged, or you
 want `invoke`, `after`, actors and snapshots as first-class primitives instead of patterns
 you assemble yourself.
+
+### Speed
+
+Same machine shape, each library through its own idiomatic API, all measured in one session
+on 0.8.1 (Python 3.14, median of 7 runs, GC disabled, setup excluded). Events per second;
+**bold** is fastest in the row.
+
+| Scenario | **xstate-statemachine** (sync) | transitions 0.9.3 | python-statemachine 3.2.1 | sismic 1.6.11 |
+|:--|--:|--:|--:|--:|
+| Flat toggle | 48,644 | **163,395** | 11,076 | 15,051 |
+| 3-level nested | **20,817** | 9,801 | 3,138 | 5,866 |
+| Parallel regions | **37,643** | 7,017 | 4,509 | 5,455 |
+| Delayed transitions (timers/s) | **6,805** | 70 | 4,708 | 6,775 |
+| Construction (machines/s) | 5,850 | **10,564** | 1,784 | 343 |
+
+`transitions` is a transition table, not a statechart engine, and wins every *flat* scenario
+by 2–3×. The moment states nest or run in parallel it has to emulate the SCXML algorithm and
+this library is 2–7× faster than everything else. Construction is slower here because
+`create_machine()` runs the full build-time validator. Full table, method and caveats:
+[`benchmarks/competitors/`](benchmarks/competitors/README.md).
 
 ### When *not* to use this
 

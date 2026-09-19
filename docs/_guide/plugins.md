@@ -327,7 +327,17 @@ def on_unhandled_event(self, interpreter, event, active_state_ids, disposition):
 
 #### `on_event_dropped(interpreter, event, reason)`
 
-Fires when an event is discarded unprocessed rather than being queued. `reason` is `"queue_full"` (the interpreter was constructed with a bounded `max_queue_size` and `OverflowPolicy.DROP_NEWEST`, and the inbox was full) or `"not_running"` (the event was sent to an interpreter that is already stopped/done/errored). The drop is also logged at `WARNING`. This hook is only meaningful on the async `Interpreter`, since `max_queue_size`/`overflow_policy` are its constructor arguments. See [Interpreters — Unhandled Events](../interpreters/#unhandled-events).
+Fires when an event is discarded unprocessed. `reason` is one of:
+
+| `reason` | Engine | When |
+|---|---|---|
+| `"queue_full"` | async | Bounded `max_queue_size` with `OverflowPolicy.DROP_NEWEST`, inbox full |
+| `"not_running"` | both | Sent to an interpreter that is already stopped/done/errored |
+| `"chain_budget"` | both | A self-generated event chain hit `maxIterations` and its tail was cut |
+| `"stopped"` | both | `stop()` abandoned an event still in the inbox — including a producer parked on a full `BLOCK` inbox |
+| `"unresolved_target"` | both | A `sendTo` named an actor that is not alive |
+
+The drop is also logged at `WARNING`. Since 0.8.1 every loss site on **both** engines fires this hook; before, the `SyncInterpreter` dropped silently in several of these cases. See [Interpreters — Unhandled Events](../interpreters/#unhandled-events).
 
 ```python
 def on_event_dropped(self, interpreter, event, reason):

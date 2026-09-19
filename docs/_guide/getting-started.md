@@ -328,6 +328,28 @@ xstate-statemachine/
 pip install --upgrade xstate-statemachine
 ```
 
+**From v0.8.0 to v0.8.1:**
+
+A hardening release: every defect reported across three re-verification rounds,
+each reproduced before it was fixed and pinned by a regression test. Two
+changes are visible to existing code:
+
+- **`Receipt` has four fields.** `send(wait=True)` now resolves a
+  `Receipt(state_ids, changed, error, deferred)`. A positional destructure
+  written for 0.8.0 — `state_ids, changed, error = receipt` — raises
+  `ValueError`; read fields by attribute.
+- **`asyncio.run_coroutine_threadsafe(interp.send(...), loop)` is rejected**
+  with `WrongThreadError` (the thread check runs before the coroutine is
+  scheduled). Use `interp.send_threadsafe(...)` from other threads — this was
+  already the documented path in 0.8.0.
+
+Everything else is additive or a bug fix: new typed exceptions
+(`SnapshotMidStepError`, `SnapshotCorruptError`, `SnapshotSerializationError`,
+`InvalidEventError` — also a `TypeError` — and `RootTargetError`), new plugin
+hooks (`on_resolve_error`, `on_plugin_error`), `from_snapshot(clock=,
+restart_timers=)`, and redaction in `LoggingInspector`. See
+[What's New in 0.8.1](#whats-new-in-081) below.
+
 **From v0.5.x to v0.6.0:**
 
 v0.6.0 closes the remaining XState v5 feature gaps and repairs a family of
@@ -411,6 +433,36 @@ asyncio.run(main())
 > has actually been processed (see [Receipts and priority sends](../interpreters/#receipts-and-priority-sends-39)).
 
 > **Tip:** Use `SyncInterpreter` for scripts, CLI tools, and testing. Use `Interpreter` for web servers, event loops, and real-time applications.
+
+## 🆕 What's New in 0.8.1
+
+The 0.8.1 release is the follow-through on 0.8.0: every finding from three
+independent re-verification rounds fixed, with the engines brought
+into lock-step. Highlights:
+
+- **[Engine parity](../interpreters/)** &mdash; the async `Interpreter` and
+  `SyncInterpreter` now agree on when a plain-sync `invoke` completes, what an
+  unhandled child failure does to the parent, which hooks fire on `stop()`
+  and on a send to a stopped machine, and the init `on_transition` record.
+- **[Snapshots you can trust](../snapshots/)** &mdash; a mid-macrostep snapshot
+  is refused (`SnapshotMidStepError`) instead of persisting an inert machine;
+  fired timers are persisted; malformed blobs raise `SnapshotCorruptError`;
+  `from_snapshot(clock=, restart_timers=)` and `has_dormant_timers`.
+- **[Provenance, not names](../core-concepts/#engine-events-and-provenance)**
+  &mdash; wildcards, `onUnhandled` and `strict` decide "engine event" by who
+  minted it (`is_system_event`), and the marker survives `deepcopy`, `pickle`
+  and `wait=True`.
+- **[Observability](../plugins/)** &mdash; `on_event_dropped` fires on both
+  engines for every loss site with a typed `reason`; new `on_resolve_error`
+  and `on_plugin_error`; `LoggingInspector` redacts secrets by default.
+- **[Build-time safety](../troubleshooting/)** &mdash; a transition to the
+  machine root, a self-referential config, an ambiguous bare `stateIn` and a
+  non-`str` event are all typed errors now.
+- **`maxIterations` is a chain budget** &mdash; an external producer sending
+  during a slow step is never charged to it, and engine completions are never
+  cut by it.
+
+See the [full changelog](../changelog/) for every change in this release.
 
 ## 🆕 What's New in 0.8.0
 

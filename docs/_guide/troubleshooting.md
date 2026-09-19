@@ -17,16 +17,18 @@ flowchart TB
     root --> build & run & snap
     subgraph build["🏗️ build time"]
         direction TB
-        InvalidConfigError --- StateNotFoundError --- ImplementationMissingError --- NotSupportedError
+        InvalidConfigError --- RootTargetError --- StateNotFoundError --- ImplementationMissingError --- NotSupportedError
     end
     subgraph run["⚡ runtime"]
         direction TB
-        UnhandledEventError --- UnknownEventError --- InvalidEventPayloadError --- TransitionFailedError
-        TransitionFailedError --- ActorSpawningError --- WrongThreadError --- QueueOverflowError --- InterpreterStoppedError
+        UnhandledEventError --- UnknownEventError --- InvalidEventPayloadError --- InvalidEventError
+        InvalidEventError --- TransitionFailedError --- RunawayChainError --- ActorSpawningError
+        ActorSpawningError --- WrongThreadError --- QueueOverflowError --- InterpreterStoppedError
     end
     subgraph snap["💾 snapshots"]
         direction TB
-        SnapshotVersionError --- SnapshotDriftError --- RestoredError
+        SnapshotVersionError --- SnapshotDriftError --- SnapshotCorruptError
+        SnapshotCorruptError --- SnapshotMidStepError --- SnapshotSerializationError --- RestoredError
     end
     linkStyle default stroke-width:0px
     linkStyle 0,1,2 stroke-width:1.5px
@@ -34,7 +36,8 @@ flowchart TB
 
 | Exception | Raised when |
 |---|---|
-| `InvalidConfigError` | Machine configuration is structurally invalid |
+| `InvalidConfigError` | Machine configuration is structurally invalid — including a config dict that contains itself (aliased cycle), which used to escape as `RecursionError` (0.8.1) |
+| `RootTargetError` | A transition targets the machine root, which would empty the configuration; subclass of `InvalidConfigError` (0.8.1) |
 | `StateNotFoundError` | Target state ID doesn't exist |
 | `ImplementationMissingError` | Action/guard/service function not provided |
 | `NotSupportedError` | Feature not available in current mode (e.g. async action in `SyncInterpreter`) |
@@ -42,12 +45,17 @@ flowchart TB
 | `UnhandledEventError` | Event matched no transition and `onUnhandled="error"` |
 | `UnknownEventError` | `strict=True` and the event type isn't declared anywhere |
 | `InvalidEventPayloadError` | Event payload failed its declared `event_schemas` validator |
+| `InvalidEventError` | `send()` was given something that is not an event — a non-`str` type, a dict without `"type"`. Also a `TypeError` (0.8.1) |
+| `RunawayChainError` | A self-generated event chain exceeded `maxIterations`; reported on `receipt.error` / `last_error`, never raised (0.8.1) |
 | `TransitionFailedError` | Action raised and `actionErrorPolicy="fail"` |
 | `WrongThreadError` | `Interpreter.send()` called from a foreign thread |
 | `QueueOverflowError` | `send()` refused: bounded inbox is full |
 | `InterpreterStoppedError` | `send(wait=True)` receipt resolved after the interpreter stopped |
 | `SnapshotVersionError` | Snapshot's version is newer than this library supports |
 | `SnapshotDriftError` | Snapshot doesn't belong to the machine restoring it |
+| `SnapshotMidStepError` | `get_persisted_snapshot()` called while a macrostep is in flight — e.g. from inside an action (0.8.1) |
+| `SnapshotCorruptError` | Snapshot is structurally unusable: missing key, non-object `context`, unknown `status`, `running` with an empty configuration (0.8.1) |
+| `SnapshotSerializationError` | A pending event carries non-JSON-native data (`Decimal`, `datetime`) at `get_snapshot()` time (0.8.1) |
 | `RestoredError` | Wraps an error message recovered from a persisted snapshot |
 
 ### Importing Exceptions
@@ -311,7 +319,7 @@ not
 **What it looks like:**
 
 ```
-xstate_statemachine.exceptions.WrongThreadError: Interpreter 'm' is bound to the event loop on thread 'MainThread'; send() was called from thread 'Thread-1'. Events sent this way would be silently lost. Use send_threadsafe() from other threads.
+xstate_statemachine.exceptions.WrongThreadError: Interpreter 'm' is bound to the event loop on thread 'MainThread'; send() was called from thread 'Thread-1'. send() must run on the interpreter's own loop thread. From another thread use send_threadsafe(). Note that asyncio.run_coroutine_threadsafe(interp.send(...), loop) is also rejected since 0.8.0, because this check runs before the coroutine is scheduled; replace it with send_threadsafe().
 ```
 
 **Why it happens:** The async `Interpreter.send()` is bound to the event loop that started it. Calling it from a different thread cannot be awaited there, and before 0.8.0 the event was silently lost.
@@ -510,6 +518,47 @@ if restored.status == "error":
     assert isinstance(restored.error, RestoredError)
     print(f"Restored in error state: {restored.error}")
 ```
+
+---
+
+### `SnapshotMidStepError`
+
+**What it looks like:**
+
+```
+xstate_statemachine.exceptions.SnapshotMidStepError: Interpreter 'order' is mid-macrostep: a transition's actions are still running and the configuration has no leaf. Snapshot it once the step settles (await send(..., wait=True), or from on_transition).
+```
+
+**Why it happens:** Between a transition's exit set and its entry set the machine has no leaf state. A snapshot taken there — typically from inside an *action* — used to persist `state_ids: []` and restore as a permanently inert machine that still reported `running`. Since 0.8.1 the call is refused instead.
+
+**How to fix it:** Move the snapshot out of the action. Snapshot from an `on_transition` plugin hook, after `await interp.send(..., wait=True)` returns, or after `stop(drain=True)`. Child actors caught mid-step by a *parent's* snapshot are waited for, so this only fires for the interpreter you call it on.
+
+---
+
+### `SnapshotCorruptError` / `SnapshotSerializationError`
+
+**What they look like:**
+
+```
+xstate_statemachine.exceptions.SnapshotCorruptError: Snapshot is malformed: missing required key 'context'.
+xstate_statemachine.exceptions.SnapshotSerializationError: Pending event 'done.invoke.pay' carries data that is not JSON-serialisable (Object of type Decimal is not JSON serializable). Snapshots refuse to coerce values silently; make the data JSON-native or snapshot from a quiesced interpreter.
+```
+
+**Why they happen:** `from_snapshot()` validates the blob's shape before touching the machine (0.8.1) — a truncated or hand-edited snapshot is refused with a typed error rather than a `KeyError` deep inside restore. `get_snapshot()` refuses to *write* a pending event whose data JSON cannot represent faithfully; before 0.8.1 a `Decimal` silently became a `str` and the restored handler received the wrong type.
+
+**How to fix it:** For `SnapshotCorruptError`, treat the blob as lost and rebuild from your source of truth. For `SnapshotSerializationError`, return JSON-native values from services (convert `Decimal` → `str`/`float`, `datetime` → ISO string) or snapshot after the pending event has been processed.
+
+---
+
+### `InvalidEventError`
+
+**What it looks like:**
+
+```
+xstate_statemachine.exceptions.InvalidEventError: Unsupported event type passed to send(): int. Pass a str, a dict with a 'type' key, or an Event.
+```
+
+**Why it happens:** `send(123)` or `send({"kind": "X"})`. Before 0.8.1 the malformed value could travel into the hierarchy before failing. The error is also a `TypeError`, so code that caught `TypeError` keeps working.
 
 ---
 

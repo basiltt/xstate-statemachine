@@ -500,11 +500,13 @@ print(receipt.changed)    # True if this event caused a transition or context ch
 print(receipt.error)      # the exception raised while processing THIS event, or None
 ```
 
-`Receipt` is a `NamedTuple` with three fields:
+`Receipt` is a `NamedTuple` with four fields (three before 0.8.1 — a positional destructure written as `state_ids, changed, error = receipt` now raises `ValueError`; read fields by attribute):
 
 - `state_ids: FrozenSet[str]` — the active leaf state IDs when the instant processing this event finished.
 - `changed: bool` — `True` if a transition was taken (configuration or context changed) *for this event*.
 - `error: Optional[BaseException]` — set when an action raised or a target was unresolvable while processing this event; otherwise `None`. The machine can still be `running` when `error` is set (depending on `actionErrorPolicy`) — the receipt only reports whether *this caller's* event was processed cleanly.
+
+- `deferred: bool` — `True` when this event selected no transition and was parked under `onUnhandled: "defer"`. It is replayed as its *own* macrostep after the next event that changes the configuration; the replay never folds into that event's receipt (0.8.1).
 
 `error` is also set (to `InterpreterStoppedError`) if the interpreter is stopped, refuses the event, or tears down before a pending receipt resolves, so a caller awaiting `wait=True` never hangs on shutdown.
 

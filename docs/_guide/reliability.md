@@ -191,7 +191,7 @@ assert interp.active_state_ids == {"gate.waiting"}  # did NOT fall through to 'd
 interp.stop()
 ```
 
-Every failure path also fires a `PluginBase` hook — `on_action_error`, `on_guard_error`, `on_unhandled_event`, `on_event_dropped`, `on_transition_failed` — so you can ship metrics without touching machine code.
+Every failure path also fires a `PluginBase` hook — `on_action_error`, `on_guard_error`, `on_resolve_error` (an unresolvable target under `strict_targets=False`), `on_unhandled_event`, `on_event_dropped`, `on_transition_failed`, and `on_plugin_error` for a failure inside *another* plugin — so you can ship metrics without touching machine code.
 
 ---
 
