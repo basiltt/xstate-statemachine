@@ -190,8 +190,10 @@ def create_machine(
         logger.error(
             "❌ Machine configuration validation failed: 'id' is missing or not a non-empty string."
         )
+        # 📝 Same wording as `MachineNode.__init__`'s own check, which is
+        #    what callers saw before the single-build change (doctested).
         raise InvalidConfigError(
-            "❌ Machine configuration must have a root 'id' (a non-empty string)."
+            "❌ Machine configuration must have a root 'id'."
         )
 
     # The 'states' dictionary is the fundamental building block of any state machine.
