@@ -669,12 +669,12 @@ class TestPlainServiceOffLoop(_Quiet):
             ).start()
             blocked = time.monotonic() - t0
             base = ticks["n"]
-            # Wait for the service to COMPLETE (observable), not a fixed
-            # window: slow runners stretch a 0.3 s sleep well past 0.35 s.
-            for _ in range(600):
-                if i.value == "d":
-                    break
-                await asyncio.sleep(0.005)
+            # Wait for the service to COMPLETE (observable) against a wall
+            # clock DEADLINE -- not an iteration count: `asyncio.sleep(0.005)`
+            # rounds to ~0 on Windows/3.9, so 600 iterations passed in 30 ms.
+            deadline = time.monotonic() + 5.0
+            while i.value != "d" and time.monotonic() < deadline:
+                await asyncio.sleep(0.01)
             during = ticks["n"] - base
             t.cancel()
             v = i.value
@@ -719,9 +719,8 @@ class TestPlainServiceOffLoop(_Quiet):
             i = await Interpreter(
                 _mk(cfg, logic=MachineLogic(services={"svc": svc}))
             ).start()
-            for _ in range(50):
-                if i.value in ("d", "e"):
-                    break
+            deadline = time.monotonic() + 5.0
+            while i.value not in ("d", "e") and time.monotonic() < deadline:
                 await asyncio.sleep(0.01)
             v = i.value
             await i.stop()
