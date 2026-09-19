@@ -83,7 +83,12 @@ async def main() -> None:
         snapshot, machine_with_logic, restart_services=True
     )
     await restarted.start()
-    await asyncio.sleep(0.05)
+    # ⏳ Settle on the OBSERVABLE condition, not a fixed sleep: a slow CI
+    #    runner can take longer than 50 ms to run a 20 ms service.
+    for _ in range(400):
+        if "order.live" in restarted.current_state_ids:
+            break
+        await asyncio.sleep(0.005)
     logger.info(f"After restart, calls: {calls}")
     logger.info(f"State: {restarted.current_state_ids}")
     assert calls.count("place") == 2  # original attempt + the restart

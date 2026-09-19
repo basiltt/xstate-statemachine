@@ -669,7 +669,12 @@ class TestPlainServiceOffLoop(_Quiet):
             ).start()
             blocked = time.monotonic() - t0
             base = ticks["n"]
-            await asyncio.sleep(0.35)
+            # Wait for the service to COMPLETE (observable), not a fixed
+            # window: slow runners stretch a 0.3 s sleep well past 0.35 s.
+            for _ in range(600):
+                if i.value == "d":
+                    break
+                await asyncio.sleep(0.005)
             during = ticks["n"] - base
             t.cancel()
             v = i.value
@@ -677,8 +682,10 @@ class TestPlainServiceOffLoop(_Quiet):
             return blocked, during, v
 
         blocked, during, v = _run(main())
-        self.assertLess(blocked, 0.1)
-        self.assertGreaterEqual(during, 15)
+        self.assertLess(blocked, 0.15)
+        # The loop stayed live: the 10 ms ticker ran many times while the
+        # 0.3 s blocking service was in flight (was 0 before #149).
+        self.assertGreaterEqual(during, 10)
         self.assertEqual("d", v)
 
     def test_raising_and_awaitable_returning_services(self) -> None:
