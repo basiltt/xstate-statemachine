@@ -486,6 +486,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     page, README, `benchmarks/competitors/results.json`,
     Production Characteristics) are from a fresh clean-venv run of the
     final tree.
+  - **Construction and 1,000-instance fan-out** -- the two rows where the
+    table was a coin-flip against `transitions` -- are now won by a margin
+    that survives harness noise (six interleaved runs in both adapter
+    orders: 1.16-1.25x and 1.12-1.19x). Two PR-sized pieces:
+    - *Parser single-pass.* `StateNode.__init__` reads every optional key
+      in one `items()` pass (`_prefetch_node_keys`) and hands the values to
+      the `_parse_*` helpers instead of each re-probing the dict; the two
+      post-parse whole-tree walks (`_mark_subtree_actions`,
+      `_scan_tree_features`) are folded into the parse as post-order
+      accumulation; `_on_partials` is computed only when a `.*` key
+      exists; parser / resolver / build-path INFO and DEBUG records sit
+      behind one level check each; auto-discovery hands `MachineNode` a
+      shared placeholder logic. A structural fingerprint of 154 configs is
+      byte-identical before/after. `create_machine()` on the 7-node
+      benchmark machine: 87 -> 77 us.
+    - *Thin interpreter.* `__slots__` on `BaseInterpreter` /
+      `SyncInterpreter` / `Interpreter` (1.6 KB -> 400 B per instance;
+      `__dict__` kept for subclasses and ad-hoc attributes); the deadline
+      heap's `threading.Lock` is allocated on first push; six per-instance
+      INFO records gated; the init `on_transition` record is only built
+      when a plugin is attached; `StateNode.owns_tasks` lets entry/exit
+      skip the task schedule/cancel round-trip for states that declare
+      neither `after` nor `invoke`; init/exit trigger events are shared
+      sentinels; a flat immutable initial context is `dict()`-copied.
+    - Every row moved: flat toggle 55k -> 83k, nested 23k -> 34k, parallel
+      40k -> 56k, construction 8.5k -> 12.4k, 1,000 instances 27k -> 52k,
+      timers 8.7k -> 11.6k, async `send(wait=True)` 23k -> 32k. Our own
+      per-process budget (Production Characteristics) 44k -> 59k ev/s and
+      `after` lateness at 500 busy machines 62 -> 36 ms.
   - Net, full cross-library harness (median of 7, GC off, same session):
     flat toggle 48.6k → 62.4k ev/s (+28%), nested 20.8k → 25.9k (+24%),
     parallel 37.6k → 44.5k (+18%), construction 5.9k → 9.4k machines/s

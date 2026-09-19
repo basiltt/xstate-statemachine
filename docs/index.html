@@ -329,24 +329,25 @@ interp.stop()</code></pre>
         </tr>
       </thead>
       <tbody>
-        <tr><td>Flat toggle <span class="perf-unit">events/s</span></td><td>54,647</td><td class="perf-best">139,048</td><td>9,797</td><td>13,156</td></tr>
-        <tr><td>Guard + action <span class="perf-unit">events/s</span></td><td>57,223</td><td class="perf-best">117,725</td><td>8,497</td><td>12,212</td></tr>
-        <tr><td>3-level nested <span class="perf-unit">events/s</span></td><td class="perf-best">22,632</td><td>8,694</td><td>2,728</td><td>5,134</td></tr>
-        <tr><td>Parallel regions <span class="perf-unit">events/s</span></td><td class="perf-best">40,372</td><td>6,194</td><td>3,934</td><td>4,822</td></tr>
-        <tr><td>Delayed transitions <span class="perf-unit">timers/s</span></td><td class="perf-best">8,712</td><td>68</td><td>3,915</td><td>5,892</td></tr>
-        <tr><td>1,000 instances <span class="perf-unit">instances/s</span></td><td>26,553</td><td class="perf-best">37,001</td><td>3,685</td><td>7,762</td></tr>
-        <tr><td>Construction <span class="perf-unit">machines/s</span></td><td>8,529</td><td class="perf-best">8,635</td><td>1,502</td><td>281</td></tr>
-        <tr><td>Native asyncio <span class="perf-unit">events/s</span></td><td>23,116</td><td class="perf-best">36,979</td><td>6,776</td><td>&mdash;</td></tr>
+        <tr><td>Flat toggle <span class="perf-unit">events/s</span></td><td>82,562</td><td class="perf-best">173,287</td><td>11,850</td><td>16,155</td></tr>
+        <tr><td>Guard + action <span class="perf-unit">events/s</span></td><td>75,926</td><td class="perf-best">146,365</td><td>10,170</td><td>14,978</td></tr>
+        <tr><td>3-level nested <span class="perf-unit">events/s</span></td><td class="perf-best">34,023</td><td>10,485</td><td>3,302</td><td>6,248</td></tr>
+        <tr><td>Parallel regions <span class="perf-unit">events/s</span></td><td class="perf-best">56,239</td><td>7,468</td><td>4,751</td><td>5,930</td></tr>
+        <tr><td>Delayed transitions <span class="perf-unit">timers/s</span></td><td class="perf-best">11,609</td><td>72</td><td>4,664</td><td>6,805</td></tr>
+        <tr><td>1,000 instances <span class="perf-unit">instances/s</span></td><td class="perf-best">51,923</td><td>47,326</td><td>4,852</td><td>9,307</td></tr>
+        <tr><td>Construction <span class="perf-unit">machines/s</span></td><td class="perf-best">12,442</td><td>10,475</td><td>1,813</td><td>362</td></tr>
+        <tr><td>Native asyncio <span class="perf-unit">events/s</span></td><td>32,107</td><td class="perf-best">47,620</td><td>8,339</td><td>&mdash;</td></tr>
       </tbody>
     </table>
   </div>
   <p class="perf-note">
     <code>transitions</code> is faster on <em>flat</em> machines because it is a transition table, not a statechart
     engine &mdash; no configuration set, no entry/exit ordering, no internal queue. The moment states nest or run in
-    parallel, that algorithm is what the others have to emulate, and XState-StateMachine is 2.6&ndash;6.5&times; faster
-    than every library that does implement statecharts. Construction and 1,000-instance fan-out are a coin-flip against
-    <code>transitions</code> (within ~10% either way, run to run) while still running the full build-time validator on every
-    <code>create_machine()</code>. Measured 2026-09-19 on 0.8.1 after the round-5 hardening, all libraries in one session:
+    parallel, that algorithm is what the others have to emulate, and XState-StateMachine is 3.2&ndash;7.5&times; faster
+    than every library that does implement statecharts. Since 0.8.1 it is also the fastest of the four to <em>construct</em>
+    (1.19&times; <code>transitions</code>) and to fan out to 1,000 instances (1.10&times;) &mdash; a single-pass parser and
+    slotted interpreters &mdash; while still running the full build-time validator on every <code>create_machine()</code>.
+    Measured 2026-09-19 on 0.8.1, all libraries in one session:
     Python 3.14, median of 7 runs, GC disabled, setup excluded. Reproduce with <code>benchmarks/competitors/run.py</code>;
     full table and caveats in the
     <a href="https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md">benchmark README</a>,
