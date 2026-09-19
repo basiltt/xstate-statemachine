@@ -28,6 +28,7 @@ from __future__ import (
 
 from typing import (
     TYPE_CHECKING,
+    Dict,
     Any,
     Generic,
     List,  # Core typing utilities
@@ -244,6 +245,52 @@ class PluginBase(Generic[TInterpreter]):
         """
         pass  # pragma: no cover
 
+    def on_resolve_error(
+        self,
+        interpreter: TInterpreter,
+        error: BaseException,
+        event: "AnyEvent",
+    ) -> None:
+        """Called when a transition's target cannot be resolved at runtime.
+
+        Only reachable under ``create_machine(strict_targets=False)``, where
+        an unresolvable target string is deferred to runtime instead of
+        rejected at build. The third per-transition failure category
+        alongside :meth:`on_action_error` and :meth:`on_guard_error` (#134);
+        the same failure is also on ``interpreter.last_error`` and the
+        event's `Receipt`.
+
+        Args:
+            interpreter: The interpreter instance.
+            error: The `StateNotFoundError` describing the target.
+            event: The event whose transition failed to resolve.
+        """
+        pass  # pragma: no cover
+
+    def on_plugin_error(
+        self,
+        interpreter: TInterpreter,
+        plugin: Any,
+        hook: str,
+        error: BaseException,
+    ) -> None:
+        """Called when ANOTHER plugin's hook failed and was contained (#127).
+
+        Plugin failures never propagate into the interpreter; this hook is
+        the programmatic surface for them, so an observability plugin can
+        count or alert on failures in its peers. It is never invoked for the
+        plugin that failed (no recursion). The same triple is on
+        ``interpreter.last_plugin_error``.
+
+        Args:
+            interpreter: The interpreter instance.
+            plugin: The plugin instance whose hook failed.
+            hook: The hook method name (``"on_transition"``, …).
+            error: The exception raised, or the `TypeError` describing an
+                ``async def`` hook that was never awaited.
+        """
+        pass  # pragma: no cover
+
     def on_guard_error(
         self,
         interpreter: TInterpreter,
@@ -401,6 +448,44 @@ class PluginBase(Generic[TInterpreter]):
 # -----------------------------------------------------------------------------
 # 🕵️ Built-in Logging Plugin
 # -----------------------------------------------------------------------------
+#: Default redaction denylist for `LoggingInspector` (#126). Any context or
+#: payload KEY containing one of these substrings (case-insensitive) is
+#: logged as ``"***"``. Extend with ``LoggingInspector(redact_keys=[...])``.
+DEFAULT_REDACT_KEYS: Tuple[str, ...] = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "authorization",
+    "auth",
+    "credential",
+    "private_key",
+    "ssn",
+    "card",
+    "cvv",
+)
+
+
+def redact(value: Any, keys: Tuple[str, ...] = DEFAULT_REDACT_KEYS) -> Any:
+    """Return *value* with sensitive mapping keys replaced by ``"***"``.
+
+    Recurses into nested dicts and lists; leaves everything else untouched.
+    Keys are matched by case-insensitive substring so ``apiKey``,
+    ``API_KEY`` and ``x-api-key`` all redact. Pure; never mutates input.
+    """
+    if isinstance(value, dict):
+        out: Dict[Any, Any] = {}
+        for k, v in value.items():
+            ks = str(k).lower()
+            out[k] = "***" if any(s in ks for s in keys) else redact(v, keys)
+        return out
+    if isinstance(value, (list, tuple)):
+        return type(value)(redact(v, keys) for v in value)
+    return value
+
+
 class LoggingInspector(PluginBase[Any]):
     """A built-in plugin for detailed, real-time inspection of a machine.
 
@@ -409,7 +494,41 @@ class LoggingInspector(PluginBase[Any]):
     machines. It serves as a canonical example of how to implement a
     `PluginBase` subclass. It uses `Generic[Any]` to work with both the
     sync and async interpreters.
+
+    🔒 #126: context and event payloads are **redacted** before logging.
+    Any key matching :data:`DEFAULT_REDACT_KEYS` (``password``, ``token``,
+    ``secret``, ``api_key``, …) is written as ``"***"``. Pass
+    ``redact_keys=(...)`` to extend or replace the list, or
+    ``redact_keys=()`` to log everything verbatim -- an explicit opt-in,
+    because a debugging plugin attached "just for a minute" is exactly how
+    credentials end up in a log aggregator.
+
+    Args:
+        redact_keys: Substrings (case-insensitive) of keys to redact.
+            Defaults to :data:`DEFAULT_REDACT_KEYS`.
+        log_context: Log the full (redacted) context after each
+            transition. ``True`` by default; set ``False`` for high-volume
+            machines where the context is large.
     """
+
+    def __init__(
+        self,
+        *,
+        redact_keys: Tuple[str, ...] = DEFAULT_REDACT_KEYS,
+        log_context: bool = True,
+    ) -> None:
+        self._redact_keys = tuple(redact_keys)
+        self._log_context = log_context
+
+    def _log_ctx(self, interpreter: Any) -> None:
+        if self._log_context:
+            logger.info(
+                "🕵️ [INSPECT] New Context: %s",
+                self._safe(interpreter.context),
+            )
+
+    def _safe(self, value: Any) -> Any:
+        return redact(value, self._redact_keys) if self._redact_keys else value
 
     def on_event_received(
         self, interpreter: "BaseInterpreter[Any]", event: "AnyEvent"
@@ -429,7 +548,7 @@ class LoggingInspector(PluginBase[Any]):
         #    For a standard `Event`, the data is in the `payload` attribute.
         data_to_log: Any
         if isinstance(event, Event):
-            data_to_log = event.payload
+            data_to_log = self._safe(event.payload)
         #    `ErrorEvent` carries the exception on `.error` (#80); reading
         #    its deprecated `.data` alias here tripped the library's own
         #    DeprecationWarning under `-W error` (#95).
@@ -475,14 +594,14 @@ class LoggingInspector(PluginBase[Any]):
                 sorted(list(to_ids)),
                 transition.event,
             )
-            logger.info("🕵️ [INSPECT] New Context: %s", interpreter.context)
+            self._log_ctx(interpreter)
         # внутрішній (Internal) transition: No state change, but actions ran.
         elif transition.actions:
             logger.info(
                 "🕵️ [INSPECT] Internal transition on Event '%s'",
                 transition.event,
             )
-            logger.info("🕵️ [INSPECT] New Context: %s", interpreter.context)
+            self._log_ctx(interpreter)
 
     def on_action_execute(
         self,

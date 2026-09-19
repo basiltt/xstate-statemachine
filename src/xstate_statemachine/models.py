@@ -719,6 +719,15 @@ class InvokeDefinition:
 # -----------------------------------------------------------------------------
 
 
+#: 🛡️ #136: ids of the config dicts on the CURRENT construction descent.
+#: Module-level (not per-instance) because `StateNode.__init__` recurses
+#: before the parent exists; cleared on every unwind, so it is empty
+#: between `create_machine()` calls. Not thread-safe across concurrent
+#: machine builds, which is acceptable: a false positive here would be a
+#: typed error naming the state, never a wrong machine.
+_config_stack: Set[int] = set()
+
+
 class StateNode(Generic[TContext]):
     """Represents a single state in the state machine graph.
 
@@ -964,10 +973,27 @@ class StateNode(Generic[TContext]):
                     self.id,
                 )
 
-        self.states = {
-            state_key: StateNode(machine, state_config, state_key, self)
-            for state_key, state_config in raw_states.items()
-        }
+        # 🛡️ #136: a hand-built config dict that contains ITSELF as a
+        #    descendant (aliased cycle -- impossible in JSON, easy in Python)
+        #    used to blow the call stack with a bare RecursionError. Track
+        #    the ids of every config dict on the current descent and refuse
+        #    with a typed error naming the state instead.
+        self.states = {}
+        for state_key, state_config in raw_states.items():
+            if id(state_config) in _config_stack:
+                raise InvalidConfigError(
+                    f"State '{self.id}.{state_key}' is defined by a config "
+                    f"dict that is already one of its own ancestors (an "
+                    f"aliased cycle). Each state must have its own config "
+                    f"object; copy the template instead of reusing it."
+                )
+            _config_stack.add(id(state_config))
+            try:
+                self.states[state_key] = StateNode(
+                    machine, state_config, state_key, self
+                )
+            finally:
+                _config_stack.discard(id(state_config))
         logger.debug(
             "✅ StateNode '%s' and its children initialized.", self.id
         )
@@ -1583,6 +1609,17 @@ class MachineNode(StateNode[TContext]):
 
             self._structure_hash = structure_hash(self)
         return self._structure_hash
+
+    def state_ids_by_bare_name(self, bare: str) -> List[str]:
+        """Every state id in the machine whose last segment is *bare* (#132)."""
+        out: List[str] = []
+        stack: List[StateNode] = [self]
+        while stack:
+            node = stack.pop()
+            if node is not self and node.key == bare:
+                out.append(node.id)
+            stack.extend(node.states.values())
+        return out
 
     def get_state_by_id(self, state_id: str) -> Optional[StateNode]:
         """Finds a state node by its fully qualified ID.

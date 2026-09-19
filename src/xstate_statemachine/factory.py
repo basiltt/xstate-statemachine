@@ -24,6 +24,7 @@ configuration dictionary and associated business logic.
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
 import copy
+import warnings
 from types import ModuleType
 from typing import Any, Dict, List, Optional, Type, Union, overload
 
@@ -33,7 +34,11 @@ from typing import Any, Dict, List, Optional, Type, Union, overload
 from .exceptions import InvalidConfigError
 from .logic_loader import LogicLoader
 from .logger import logger
-from .machine_logic import MachineLogic, resolve_aliases
+from .machine_logic import (
+    MachineLogic,
+    normalize_logic_name,
+    resolve_aliases,
+)
 from ._typing import TContext
 from .models import MachineNode
 from .validation import validate_machine
@@ -213,11 +218,15 @@ def create_machine(
     #    never touches the caller's object. `copy.copy` keeps the subclass
     #    (auto-registered methods stay bound) and shares the callables; only
     #    the three registry dicts are replaced by `_alias_logic_names`.
-    owned_logic = (
-        copy.copy(final_logic)
-        if isinstance(final_logic, MachineLogic)
-        else final_logic  # duck-typed: leave as-is
-    )
+    # 🦆 #121: a duck-typed logic object (anything with `.actions` /
+    #    `.guards` / `.services` dicts) gets the same treatment as a
+    #    `MachineLogic` -- the "never mutate the caller" contract makes no
+    #    distinction. `copy.copy` works for any plain object; the three
+    #    registries are re-bound to owned copies by `_alias_logic_names`.
+    try:
+        owned_logic = copy.copy(final_logic)
+    except TypeError:  # pragma: no cover -- exotic objects refusing copy
+        owned_logic = final_logic
     machine = MachineNode(config, owned_logic)
     # 🔤 Bind snake_case implementations to the camelCase names the config
     #    uses (and vice versa) once, here, so every interpreter lookup stays
@@ -277,3 +286,31 @@ def _alias_logic_names(machine: MachineNode[Any]) -> None:
             owned = dict(registry)
             resolve_aliases(owned, required)
             setattr(logic, attr, owned)
+            _warn_collapsed_config_names(attr, required, owned)
+
+
+def _warn_collapsed_config_names(
+    kind: str, required: set, registry: Dict[str, Any]
+) -> None:
+    """#91 (config side): two distinct names the CONFIG asks for that
+    normalise equal and resolve to ONE callable almost certainly mean a
+    typo (``store_user`` here, ``storeUser`` there). Nothing binds
+    incorrectly -- both call the one implementation -- so this is a
+    warning, not an error; but a reader of the JSON sees two actions
+    where the runtime has one."""
+    by_key: Dict[str, List[str]] = {}
+    for name in required:
+        if name in registry:
+            by_key.setdefault(normalize_logic_name(name), []).append(name)
+    for key, names in by_key.items():
+        if len(names) < 2:
+            continue
+        impls = {id(registry[n]) for n in names}
+        if len(impls) == 1:
+            warnings.warn(
+                f"Config {kind} names {sorted(names)} differ only by case or "
+                f"separators and resolve to the same implementation. If "
+                f"they are meant to be one {kind[:-1]}, spell it one way.",
+                UserWarning,
+                stacklevel=3,
+            )

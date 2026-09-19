@@ -83,6 +83,27 @@ interpreter.send_events(["STEP_1", "STEP_2", "STEP_3"])
 
 ---
 
+## 🏷️ Engine events and provenance
+
+Some events are minted by the engine itself: `done.invoke.<id>` / `done.state.<id>` (`DoneEvent`), `error.platform.<id>` and `xstate.error.actor.<id>` (`ErrorEvent`), `after.<ms>` (`AfterEvent`), and the init/exit sentinels. Three behaviours turn on the distinction between those and *your* events:
+
+| Behaviour | Engine event | Your event |
+|---|---|---|
+| `"*"` / `"prefix.*"` wildcard | matched only by an exact `on` key | matched by wildcards |
+| `onUnhandled: "error"` / `"defer"` | exempt | applies |
+| `strict=True` | never rejected | must be declared |
+
+The decision is made by **provenance — who created the event — not by its name**. `is_system_event(event)` is the single predicate all three consult; `system_event(type, **payload)` is the only way to mint a plain `Event` that passes it. Both are exported from the package root. A user event you happen to name `done.review` is user traffic; the marker cannot be forged from a name, and it survives `deepcopy`, `pickle`, `send(wait=True)` and a snapshot round-trip.
+
+```python
+from xstate_statemachine import Event, is_system_event, system_event
+
+is_system_event(Event("done.review"))                     # False — yours
+is_system_event(system_event("___xstate_statemachine_init___"))  # True
+```
+
+`ENGINE_EVENT_SHAPES` lists the name shapes the engine produces, for build-time checks and documentation; it is not what the runtime keys on.
+
 ## 🚨 Error & Unhandled-Event Policies
 
 By default, an event that doesn't match any transition from the current state is dropped silently, and an action or guard that raises an exception propagates as-is. For most apps that's the right default, but a few config keys let you change this per machine:

@@ -62,9 +62,28 @@ from .actions import (
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from .base_interpreter import AnyEvent, BaseInterpreter
-from .exceptions import RunawayChainError
+from .exceptions import RunawayChainError, StateNotFoundError
+import contextvars
+
+#: 🧭 #105: set to the interpreter whose user action is CURRENTLY running
+#: on this task. A `send()` on that same interpreter is a self-send and
+#: belongs to the internal chain; a `send()` from any other task (a
+#: concurrent external producer) is user traffic even while the run loop is
+#: busy. `_processing` alone could not tell those apart, so an external
+#: producer during a slow step was charged to `maxIterations` and dropped.
+_ACTIVE_ACTION_OWNER: (
+    "contextvars.ContextVar[Optional[BaseInterpreter[Any]]]"
+) = contextvars.ContextVar("xsm_active_action_owner", default=None)
 from .clock import Clock, SimulatedClock
-from .events import AfterEvent, DoneEvent, ErrorEvent, Event, Receipt
+from .events import (
+    AfterEvent,
+    DoneEvent,
+    ErrorEvent,
+    Event,
+    Receipt,
+    is_system_event,
+    system_event,
+)
 from .exceptions import (
     ActorSpawningError,
     ImplementationMissingError,
@@ -74,6 +93,7 @@ from .exceptions import (
     WrongThreadError,
 )
 from .models import (
+    TransitionDefinition,
     DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS,
     SPAWN_BLOCKING_PREFIX,
     ActionDefinition,
@@ -130,6 +150,44 @@ class _PreStartQueue:
 
     def peek(self) -> List[AnyEvent]:
         return list(self._items)
+
+
+def _is_plain_sync_callable(fn: Any) -> bool:
+    """``True`` for a callable that will return its result synchronously.
+
+    🏛️ #116: `inspect.iscoroutinefunction` is the wrong test on its own --
+    it says False for an `AsyncMock` (before 3.12), a `functools.partial`
+    of a coroutine function, or any callable object whose `__call__` is a
+    coroutine function -- and treating those as plain would run them
+    inline and drop their awaitable. Look through the common wrappers and
+    require a genuine synchronous function.
+    """
+    target = fn
+    # unwrap functools.partial / bound methods / mock wrappers
+    for _ in range(4):
+        inner = (
+            getattr(target, "func", None)
+            or getattr(target, "__func__", None)
+            or getattr(target, "__wrapped__", None)
+        )
+        if inner is None or inner is target:
+            break
+        target = inner
+    if inspect.iscoroutinefunction(target) or inspect.isasyncgenfunction(
+        target
+    ):
+        return False
+    # `AsyncMock` / awaitable-returning mock objects
+    if getattr(type(fn), "__module__", "").startswith("unittest.mock"):
+        return False
+    call = getattr(type(fn), "__call__", None)
+    if call is not None and inspect.iscoroutinefunction(call):
+        return False
+    return (
+        inspect.isfunction(target)
+        or inspect.isbuiltin(target)
+        or (callable(fn) and not inspect.isclass(fn))
+    )
 
 
 def _completed() -> "asyncio.Future[None]":
@@ -267,6 +325,9 @@ class Interpreter(BaseInterpreter[TContext]):
         #: a macrostep completes without having done so. Bounds a runaway
         #: `raise` without ever throttling external `send()` traffic.
         self._raise_depth: int = 0
+        #: 📨 #125: set when a step changed the configuration while events
+        #: were deferred; the run loop replays them as separate macrosteps.
+        self._replay_pending: bool = False
         #: True while `_run_event_loop` is inside `_process_event...`.
         self._processing: bool = False
 
@@ -338,6 +399,17 @@ class Interpreter(BaseInterpreter[TContext]):
                 if self._restart_services_on_start:
                     self._restart_services_on_start = False
                     self._restart_dormant_invocations()
+                # ⏱️ #128: opt-in re-arm of `after` timers, from zero.
+                if self._restart_timers_on_start:
+                    self._restart_timers_on_start = False
+                    armed = self._rearm_dormant_timers()
+                    if armed:
+                        logger.info(
+                            "⏱️ Re-armed %d dormant 'after' timer state(s) "
+                            "on restored interpreter '%s'.",
+                            armed,
+                            self.id,
+                        )
             # 👶 Resume restored child actors too, so a whole hierarchy comes
             #    back alive rather than just its root.
             for actor in list(self._actors.values()):
@@ -379,7 +451,8 @@ class Interpreter(BaseInterpreter[TContext]):
             # 🚀 Enter the initial state(s) of the machine.
             # We use a synthetic init event to allow any entry actions on the
             # root state to execute.
-            init_event = Event(type="___xstate_statemachine_init___")
+            init_event = system_event("___xstate_statemachine_init___")
+            pre_states = set(self._active_state_nodes)
             await self._enter_states([self.machine], init_event)
 
             # ⚡ Settle eventless ("always") transitions before returning.
@@ -391,6 +464,24 @@ class Interpreter(BaseInterpreter[TContext]):
             # unrelated event happened to nudge it. `start()` must return a
             # settled configuration in BOTH engines.
             await self._settle_transient_transitions()
+
+            # 🔌 #124: the sync engine reports entering the initial
+            #    configuration as an `on_transition` record for the init
+            #    event; a hook-based audit trace from the two engines had one
+            #    record fewer here and misaligned at index 0. Emit the same
+            #    record with the same shape.
+            init_transition = TransitionDefinition(
+                event="___xstate_statemachine_init___",
+                config={},
+                source=self.machine,
+            )
+            for plugin in self._plugins:
+                plugin.on_transition(
+                    self,
+                    pre_states,
+                    set(self._active_state_nodes),
+                    init_transition,
+                )
 
             logger.info(
                 "✅ Interpreter '%s' started successfully. Current states: %s",
@@ -458,6 +549,16 @@ class Interpreter(BaseInterpreter[TContext]):
                 self.id,
                 pending,
             )
+        # 🔔 #129: every other loss site fires `on_event_dropped`; `stop()`
+        #    was the exception. Each accepted-but-unprocessed event (inbox,
+        #    priority lane, internal queue) is reported with reason
+        #    "stopped", and any receipt attached to it is failed so no
+        #    awaiter hangs. Producers parked in `_enqueue_blocking` observe
+        #    the status flip on their next spin and fail their own receipt.
+        for ev in self._snapshot_pending_events():
+            for plugin in self._plugins:
+                plugin.on_event_dropped(self, ev, "stopped")
+            self._fail_receipt(ev, "dropped: interpreter stopped")
 
         logger.info("🛑 Gracefully stopping interpreter '%s'...", self.id)
         self.status = "stopped"
@@ -617,11 +718,26 @@ class Interpreter(BaseInterpreter[TContext]):
             #    an internal event (#36) -- route it there. The internal
             #    queue is unbounded by design and drained before the next
             #    external event, so ordering matches SCXML `raise`.
-            if self._processing and not self._refuse_if_not_running(event_obj):
+            if (
+                self._issued_from_own_action()
+                and not self._refuse_if_not_running(event_obj)
+            ):
                 self._raise_depth += 1
                 self._internal_queue.append(event_obj)
                 return receipt if receipt is not None else _completed()
-            # ⏸️ BLOCK is the one policy that must genuinely await.
+            # ⏸️ BLOCK must genuinely await ONLY when the inbox is full.
+            #    #104: returning the un-started coroutine unconditionally
+            #    meant a fire-and-forget `interp.send("GO")` under BLOCK
+            #    never ran its put -- the event vanished with no hook and no
+            #    log, even on an EMPTY inbox. Enqueue eagerly when there is
+            #    room, exactly like the other two policies; fall back to the
+            #    awaiting path only when we would actually have to wait.
+            if self._refuse_if_not_running(event_obj):
+                # Refused: the receipt (if any) was failed by the refusal.
+                return receipt if receipt is not None else _completed()
+            if not self._inbox_is_full():
+                self._put_inbox(event_obj)
+                return receipt if receipt is not None else _completed()
             return self._enqueue_blocking(event_obj, receipt)
         else:
             # 🏛️ #90: a `send()` issued FROM AN ACTION on this interpreter is
@@ -630,7 +746,10 @@ class Interpreter(BaseInterpreter[TContext]):
             #    routed internally), so `async def act(i,...): await
             #    i.send(...)` spun unbounded while the sync engine stopped at
             #    the limit. Route it to the internal queue and count it.
-            if self._processing and not self._refuse_if_not_running(event_obj):
+            if (
+                self._issued_from_own_action()
+                and not self._refuse_if_not_running(event_obj)
+            ):
                 self._raise_depth += 1
                 self._internal_queue.append(event_obj)
                 return receipt if receipt is not None else _completed()
@@ -711,7 +830,13 @@ class Interpreter(BaseInterpreter[TContext]):
         long as it is in flight, because the receipt map holds it.
         """
         if isinstance(event_obj, Event):
-            return dataclasses.replace(event_obj)
+            # 🏷️ #111: `dataclasses.replace` re-runs `__init__`, which cannot
+            #    carry the `init=False` provenance slot -- so an engine event
+            #    sent with `wait=True` silently became user traffic and
+            #    failed an `onUnhandled: "error"` machine. Copy the marker.
+            fresh = dataclasses.replace(event_obj)
+            object.__setattr__(fresh, "_provenance", event_obj._provenance)
+            return fresh
         replace = getattr(event_obj, "_replace", None)  # NamedTuple events
         return replace() if callable(replace) else copy.copy(event_obj)
 
@@ -824,6 +949,12 @@ class Interpreter(BaseInterpreter[TContext]):
             return await receipt if receipt is not None else None
         while self._inbox_is_full():
             if self.status != "running":
+                # 🔔 #129: a producer parked on a full inbox when the machine
+                #    stopped never delivered its event -- that is a drop and
+                #    fires the hook like every other one. Its receipt (if
+                #    any) is failed; a fire-and-forget caller gets the hook.
+                for plugin in self._plugins:
+                    plugin.on_event_dropped(self, event_obj, "stopped")
                 self._fail_receipt(
                     event_obj, "stopped while blocked on a full inbox"
                 )
@@ -981,6 +1112,7 @@ class Interpreter(BaseInterpreter[TContext]):
 
         Shared by `stop()` and by reaching a terminal status (#57).
         """
+        self._detach_clock()  # #115
         for actor in list(self._actors.values()):
             _stopped = actor.stop()
             if _stopped is not None:
@@ -1019,11 +1151,19 @@ class Interpreter(BaseInterpreter[TContext]):
     ) -> List[AnyEvent]:
         q = self._event_queue
         if isinstance(q, _PreStartQueue):
-            return q.peek()
-        # 🔍 `asyncio.Queue` keeps its items in a deque named `_queue`. This
-        #    is CPython-internal but stable since 3.4 and read-only here; a
-        #    public alternative would mean re-implementing the queue.
-        return list(getattr(q, "_queue", ()))
+            inbox = q.peek()
+        else:
+            # 🔍 `asyncio.Queue` keeps its items in a deque named `_queue`.
+            #    This is CPython-internal but stable since 3.4 and read-only
+            #    here; a public alternative would mean re-implementing the
+            #    queue.
+            inbox = list(getattr(q, "_queue", ()))
+        # 📬 #107: a FIRED `after` timer waits in the priority lane, ahead of
+        #    the inbox. It is accepted-but-unprocessed work exactly like an
+        #    inbox event, and omitting it lost the deadline across a
+        #    snapshot with no trace. Priority first, preserving delivery
+        #    order on restore.
+        return list(self._priority_queue) + inbox
 
     def _enqueue_restored(self, event: Event) -> None:
         self._put_inbox(event)
@@ -1170,7 +1310,14 @@ class Interpreter(BaseInterpreter[TContext]):
                 #    any depth cannot delay them past this point.
                 event, from_inbox = await self._next_event()
 
-                if self._raise_depth > limit:
+                # 🏛️ #120: an engine completion (`done.invoke`,
+                #    `error.platform`, a due `after`) is finished work and
+                #    cannot self-feed; dropping it strands the machine in
+                #    the invoking state. The sync engine spares these by
+                #    construction; mirror that here. It still counts toward
+                #    the depth (below) so a rollback->re-arm cycle stays
+                #    bounded.
+                if self._raise_depth > limit and not is_system_event(event):
                     logger.error(
                         "🛑 Exceeded %d chained self-raised events on '%s'. "
                         "This means an action raises the event that triggers "
@@ -1236,6 +1383,7 @@ class Interpreter(BaseInterpreter[TContext]):
                 )
                 step_error: Optional[BaseException] = None
                 self.last_transition_ok = True
+                self._deferred_this_step.clear()  # #106: per-step scope
                 try:
                     self._processing = True
                     depth_before = self._raise_depth
@@ -1258,6 +1406,8 @@ class Interpreter(BaseInterpreter[TContext]):
                     #    left the two engines disagreeing on an error path.
                     self.last_transition_ok = False
                     self._last_action_error = exc
+                    if isinstance(exc, StateNotFoundError):
+                        self._report_resolve_error(exc, event)  # #134
                     logger.error(
                         "💥 Error processing event '%s' on '%s'; the "
                         "interpreter remains running. %s",
@@ -1275,15 +1425,41 @@ class Interpreter(BaseInterpreter[TContext]):
                         frozenset(self._active_state_nodes) != config_before
                         or self.context != context_before
                     )
-                    deferred = id(event) in self._deferred_this_step
-                    self._deferred_this_step.discard(id(event))
+                    deferred = any(
+                        ev is event for ev in self._deferred_this_step
+                    )
                     self._resolve_receipt(event, changed, step_error, deferred)
+                # 📨 #125: replay deferred events as their OWN macrosteps,
+                #    after this event's receipt has been resolved, so the
+                #    receipt describes THIS event's transition and not the
+                #    consequences of replaying an older one.
+                if self._replay_pending:
+                    self._replay_pending = False
+                    # `_deliver_priority` APPENDS, so feed in original order
+                    # (LC-18: replay must preserve arrival order).
+                    for ev in self._take_deferred_for_replay():
+                        self._deliver_priority(ev)
 
                 if from_inbox:
                     self._event_queue.task_done()
 
         except asyncio.CancelledError:
-            # This is an expected, clean shutdown triggered by `stop()`.
+            # 🏛️ #114: cancellation reaching here is EITHER an orderly
+            #    `stop()` (status already "stopped"/"done"/"error") OR
+            #    something killed the loop task from outside while the
+            #    machine believed it was running. In the second case the
+            #    machine is dead but every probe says healthy and every
+            #    pending receipt hangs forever. Plugin-hook CancelledError is
+            #    contained upstream (`_SafePlugin`), so what remains here is
+            #    a genuine external cancel: publish it.
+            if self.status == "running":
+                self._die(
+                    RuntimeError(
+                        f"Interpreter '{self.id}' run loop was cancelled "
+                        f"while running; the machine is no longer processing "
+                        f"events."
+                    )
+                )
             #
             # 🏛️ Architecture decision: deliberately do NOT touch `status`
             # here, and do not use a `finally` clause to force it to
@@ -1348,17 +1524,17 @@ class Interpreter(BaseInterpreter[TContext]):
         #    asyncio.Queue. Anything still unhandled in the new state is
         #    re-deferred by `_handle_unhandled_event`, not re-dropped.
         #    Bounded by the same microstep limit as `always` loops.
-        if before != frozenset(self._active_state_nodes):
-            limit = getattr(self.machine, "max_iterations", 1000)
-            rounds = 0
-            while self._deferred_events and rounds < limit:
-                rounds += 1
-                snapshot = frozenset(self._active_state_nodes)
-                for deferred in self._take_deferred_for_replay():
-                    await self._process_event(deferred)
-                    await self._settle_transient_transitions()
-                if snapshot == frozenset(self._active_state_nodes):
-                    break  # nothing moved; remaining ones stay deferred
+        # 🏛️ #125: replay is NOT folded into this event's macrostep any more.
+        #    Doing so made the triggering event's `Receipt` describe the
+        #    replayed event's transition (ARM's receipt said `c`, the state
+        #    LATE's replay reached). The run loop replays each held event as
+        #    its own macrostep -- ahead of live traffic via the priority
+        #    lane, in original order -- right after this receipt resolves.
+        if (
+            before != frozenset(self._active_state_nodes)
+            and self._deferred_events
+        ):
+            self._replay_pending = True
 
     async def _settle_transient_transitions(self) -> None:
         """Runs eventless ("always") transitions until the state is stable.
@@ -1410,11 +1586,43 @@ class Interpreter(BaseInterpreter[TContext]):
         action_def: ActionDefinition,
         event: Any,
     ) -> None:
-        """Leaf: call one action, awaiting it if it is a coroutine function."""
-        if inspect.iscoroutinefunction(impl):
-            await impl(self, self.context, event, action_def)
-        else:
-            impl(self, self.context, event, action_def)
+        """Leaf: call one action, awaiting it if it is a coroutine function.
+
+        Marks this interpreter as the active-action owner for the duration
+        (#105), so a `send()` the action issues on `self` is recognised as a
+        self-send by identity of the running task, not by the loop being
+        busy.
+        """
+        token = _ACTIVE_ACTION_OWNER.set(self)
+        try:
+            if inspect.iscoroutinefunction(impl):
+                await impl(self, self.context, event, action_def)
+            else:
+                impl(self, self.context, event, action_def)
+        finally:
+            _ACTIVE_ACTION_OWNER.reset(token)
+
+    def _die(self, error: BaseException) -> None:
+        """The run loop is gone without an orderly `stop()` (#114).
+
+        Flip `status` so `is_running` / `_refuse_if_not_running` tell the
+        truth, record the cause on `error`, fail every pending receipt so
+        no awaiter hangs, and fire `on_error` -- the same surface a fatal
+        `actionErrorPolicy="fail"` uses.
+        """
+        self.status = "error"
+        self.error = error
+        for key in list(self._receipts):
+            fut = self._receipts.pop(key, None)
+            if fut is not None and not fut.done():
+                fut.set_exception(error)
+        for plugin in self._plugins:
+            plugin.on_error(self, error)
+
+    def _issued_from_own_action(self) -> bool:
+        """``True`` when the current task is inside one of THIS interpreter's
+        user actions (#105) -- the only case a `send()` is self-generated."""
+        return _ACTIVE_ACTION_OWNER.get() is self
 
     async def _dispatch_internal(self, event: Any) -> None:
         self._enqueue(event)
@@ -1901,6 +2109,21 @@ class Interpreter(BaseInterpreter[TContext]):
             return
 
         # 📞 Case 2: The service is a standard callable.
+        #
+        # 🏛️ #116: a PLAIN (non-coroutine) callable runs INLINE, exactly as
+        #    the sync engine runs it -- inside the macrostep that enters the
+        #    invoking state, with its `done.invoke` delivered ahead of any
+        #    event already waiting in the inbox. Wrapping it in a task
+        #    deferred the call until after the run loop yielded, so an
+        #    external event queued behind the entry (CANCEL) was processed
+        #    BEFORE the completion, and the identical (GO, CANCEL) script
+        #    diverged between engines. Coroutine services still run as
+        #    tasks: they genuinely await, and that is the async engine's
+        #    whole reason to exist.
+        if _is_plain_sync_callable(service):
+            self._invoke_plain_service_inline(invocation, service, owner_id)
+            return
+
         async def _invoke_wrapper() -> None:
             # This sleep(0) is a critical best practice to prevent a race
             # condition, ensuring the task is registered before the service
@@ -1911,6 +2134,96 @@ class Interpreter(BaseInterpreter[TContext]):
         task = asyncio.create_task(_invoke_wrapper())
         # Register the task with its owner for lifecycle management.
         self.task_manager.add(owner_id, task)
+
+    def _report_service_failure(
+        self, invocation: InvokeDefinition, exc: Exception
+    ) -> None:
+        """Deliver `error.platform.<id>` for a failed service and, with no
+        `onError` declared, fail the parent (shared by the inline and
+        late-awaitable paths of #116)."""
+        logger.error(
+            "💥 Service '%s' (ID: '%s') failed: %s",
+            invocation.src,
+            invocation.id,
+            exc,
+            exc_info=True,
+        )
+        error_event = ErrorEvent(
+            type=f"error.platform.{invocation.id}",
+            error=exc,
+            src=invocation.id,
+        )
+        handled = self._has_error_handler(invocation)
+        self._deliver_priority(error_event)
+        for plugin in self._plugins:
+            plugin.on_service_error(self, invocation, exc)
+        if not handled:
+            self._fail(exc)
+
+    def _invoke_plain_service_inline(
+        self,
+        invocation: InvokeDefinition,
+        service: Callable[..., Any],
+        owner_id: str,
+    ) -> None:
+        """Run a non-coroutine service synchronously (#116).
+
+        Mirrors `SyncInterpreter._invoke_service`'s callable branch: call,
+        then deliver `done.invoke` / `error.platform` through the priority
+        lane so the completion lands ahead of the inbox backlog. If the
+        callable returns an awaitable after all (a plain `def` returning a
+        coroutine), fall back to the task path so it is awaited.
+        """
+        for plugin in self._plugins:
+            plugin.on_service_start(self, invocation)
+        try:
+            invoke_event = Event(
+                type=f"invoke.{invocation.id}",
+                payload={
+                    "input": invocation.resolve_input(self.context, None) or {}
+                },
+            )
+            produced = service(self, self.context, invoke_event)
+        except Exception as exc:  # noqa: BLE001 -- user code
+            self._report_service_failure(invocation, exc)
+            return
+        if inspect.isawaitable(produced):
+            # A `def` that returned an awaitable after all: await it in a
+            # task, with the same success / failure handling as the
+            # coroutine path (`_invoke_service_task`).
+            async def _finish() -> None:
+                try:
+                    result = await produced
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 -- user code
+                    self._report_service_failure(invocation, exc)
+                    return
+                await self.send(
+                    DoneEvent(
+                        type=f"done.invoke.{invocation.id}",
+                        data=result,
+                        src=invocation.id,
+                    )
+                )
+                for plugin in self._plugins:
+                    plugin.on_service_done(self, invocation, result)
+
+            self.task_manager.add(owner_id, asyncio.create_task(_finish()))
+            return
+        done_event = DoneEvent(
+            type=f"done.invoke.{invocation.id}",
+            data=produced,
+            src=invocation.id,
+        )
+        self._deliver_priority(done_event)
+        logger.info(
+            "✅ Service '%s' (ID: '%s') completed inline.",
+            invocation.src,
+            invocation.id,
+        )
+        for plugin in self._plugins:
+            plugin.on_service_done(self, invocation, produced)
 
     async def _start_invoked_actor(
         self,
@@ -2061,6 +2374,11 @@ class Interpreter(BaseInterpreter[TContext]):
                 "💥 Invoked machine '%s' ended in error; firing onError.",
                 invocation.src,
             )
+            # 🏛️ #99: with no `onError` declared the failure must not park
+            #    the parent at `status="running"` forever -- indistinguishable
+            #    from a healthy machine waiting on a slow child. Mirror the
+            #    callable-service path (and the sync engine): fail the parent.
+            handled = self._has_error_handler(invocation)
             await self.send(
                 ErrorEvent(
                     type=f"error.platform.{invocation.id}",
@@ -2070,12 +2388,18 @@ class Interpreter(BaseInterpreter[TContext]):
             )
             for plugin in self._plugins:
                 plugin.on_service_error(self, invocation, failure)
+            if not handled:
+                self._fail(failure)
             return
-        # ✅ Reached a top-level final state: `onDone` carries the child's
-        #    final context, as before.
+        # ✅ Reached a top-level final state. `onDone` carries the child's
+        #    OUTPUT (#109) -- the value its final state declared -- not its
+        #    private context. XState: "the output of a done actor is the
+        #    output of its final state". Falls back to the context only for
+        #    a child that declares no output, preserving 0.8.0 behaviour for
+        #    machines that never used `output`.
         done_event = DoneEvent(
             type=f"done.invoke.{invocation.id}",
-            data=child.context,
+            data=child.output if child.output is not None else child.context,
             src=invocation.id,
         )
         await self.send(done_event)

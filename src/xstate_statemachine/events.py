@@ -237,7 +237,36 @@ ENGINE_EVENT_TYPES: Tuple[type, ...] = ()  # populated below, after defs
 
 #: Engine-private provenance sentinel. Compared by IDENTITY; it is not
 #: exported, not a bool, and cannot be reconstructed from a name.
-_ENGINE_MARK: Any = object()
+class _EngineMark:
+    """The engine-private provenance sentinel (#85, #138).
+
+    A class with a module-level singleton, not a bare ``object()``, so that
+    ``copy.deepcopy`` and ``pickle`` reconstruct the SAME object:
+    ``__reduce__`` names the module attribute, and ``__deepcopy__`` returns
+    ``self``. Identity comparison in `is_system_event` therefore survives a
+    deep copy or a pickle round-trip -- which a persisted inbox, a
+    multiprocessing hand-off or a defensive `deepcopy` in user code all
+    perform. Still unforgeable from a NAME: user code cannot obtain the
+    instance except by holding an engine event that already carries it, and
+    copying that event is the legitimate case.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover -- debugging aid
+        return "<engine-provenance>"
+
+    def __deepcopy__(self, memo: Dict[int, Any]) -> "_EngineMark":
+        return self
+
+    def __copy__(self) -> "_EngineMark":
+        return self
+
+    def __reduce__(self) -> str:
+        return "_ENGINE_MARK"  # pickle resolves this module attribute
+
+
+_ENGINE_MARK: Any = _EngineMark()
 
 
 def is_system_event(event: Any) -> bool:
@@ -299,7 +328,30 @@ def persist_event(event: Any) -> Dict[str, Any]:
     elif kind == "error":
         rec["error"] = repr(event.error)
         rec["src"] = event.src
+    elif kind == "after":
+        # 📏 #118: the lateness telemetry is real data. Dropping it made a
+        #    restored timer event claim it fired exactly on schedule (0.0).
+        rec["scheduled_for"] = event.scheduled_for
+        rec["fired_at"] = event.fired_at
+    # 🛡️ #131: `get_snapshot()` used `json.dumps(default=str)`, which turned a
+    #    `Decimal` / `datetime` in a pending `DoneEvent.data` into a STRING
+    #    silently -- the restored handler got a `str` where the live one got
+    #    a `Decimal`. Fail loudly at persist time instead: a value that
+    #    cannot round-trip must not be persisted as something else.
+    _assert_json_safe(rec, event)
     return rec
+
+
+def _assert_json_safe(record: Dict[str, Any], event: Any) -> None:
+    """Raise `SnapshotSerializationError` if *record* is not JSON-native."""
+    import json
+
+    try:
+        json.dumps(record)
+    except (TypeError, ValueError) as exc:
+        from .exceptions import SnapshotSerializationError
+
+        raise SnapshotSerializationError(event.type, exc) from exc
 
 
 def restore_event(record: Dict[str, Any]) -> Any:
@@ -328,7 +380,11 @@ def restore_event(record: Dict[str, Any]) -> Any:
             src=record.get("src", ""),
         )
     if kind == "after":
-        return AfterEvent(type=etype)
+        return AfterEvent(
+            type=etype,
+            scheduled_for=float(record.get("scheduled_for", 0.0)),
+            fired_at=float(record.get("fired_at", 0.0)),
+        )
     payload = record.get("payload") or {}
     if kind == "system":
         return system_event(etype, **payload)

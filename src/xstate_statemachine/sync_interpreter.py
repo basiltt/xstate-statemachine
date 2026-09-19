@@ -184,6 +184,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             clock=clock,
             strict=strict,
         )
+        #: 🔁 #103: settle-loop budget for the CURRENT drain; reset per drain.
+        self._settle_iterations: int = 0
+        self._settle_tripped: bool = False
         #: ⏱️ #76: the sync engine only ever drains the clock's heap (via
         #: `tick()` and the pump in `send()`), so its deadlines must land
         #: there even when it is constructed inside a running asyncio loop.
@@ -262,12 +265,19 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 f"restarted. Create a new interpreter, or restore one with "
                 f"`SyncInterpreter.from_snapshot(...)`."
             )
-        if self.status == "running" and self._restart_services_on_start:
+        if self.status == "running" and (
+            self._restart_services_on_start or self._restart_timers_on_start
+        ):
             # 🔁 #44: restored with restart_services=True. Sync services run
             #    inline, so this both re-invokes and processes their results.
-            self._restart_services_on_start = False
+            # ⏱️ #128: restart_timers re-arms `after` deadlines from zero.
             logger.info("♻️ Resuming restored interpreter '%s'...", self.id)
-            self._restart_dormant_invocations()
+            if self._restart_services_on_start:
+                self._restart_services_on_start = False
+                self._restart_dormant_invocations()
+            if self._restart_timers_on_start:
+                self._restart_timers_on_start = False
+                self._rearm_dormant_timers()
             self._process_event_queue()
             self._process_transient_transitions()
             return self
@@ -378,6 +388,12 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 self.id,
                 len(self._event_queue),
             )
+            # 🔔 #129: every other loss site fires the hook; `stop()` was
+            #    the one that did not. An accepted event that will never run
+            #    is a drop, reason "stopped".
+            for ev in list(self._event_queue):
+                for plugin in self._plugins:
+                    plugin.on_event_dropped(self, ev, "stopped")
 
         logger.info(
             "🛑 Stopping sync interpreter '%s' and its actors…", self.id
@@ -476,7 +492,16 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         jump -- the queue is drained before `send()` returns).
         """
         if self.status != "running":
+            # 🔔 #123: parity with the async engine -- a send to a stopped /
+            #    done / errored machine is a DROP and fires the hook, so an
+            #    audit trail built from plugin hooks sees it on both engines.
             logger.warning("🚫 Cannot send event. Interpreter is not running.")
+            try:
+                dropped = self._prepare_event(event_or_type, **payload)
+            except Exception:  # noqa: BLE001 -- malformed AND misdirected
+                return None
+            for plugin in self._plugins:
+                plugin.on_event_dropped(self, dropped, "not_running")
             return None
 
         event_obj = self._prepare_event(event_or_type, **payload)
@@ -486,6 +511,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         context_before = copy.deepcopy(self.context) if wait else None
         self.last_transition_ok = True
         step_error: Optional[BaseException] = None
+        self._deferred_this_step.clear()  # #106: per-step scope
         # ⏰ #50: deliver every deadline that has elapsed BEFORE this event,
         #    on this thread, in due order -- the pump.
         self._pump_timers()
@@ -509,8 +535,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             frozenset(self._active_state_nodes) != config_before
             or self.context != context_before
         )
-        deferred = id(event_obj) in self._deferred_this_step
-        self._deferred_this_step.discard(id(event_obj))
+        deferred = any(ev is event_obj for ev in self._deferred_this_step)
         return Receipt(
             frozenset(self.current_state_ids), changed, step_error, deferred
         )
@@ -528,6 +553,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
 
         Shared by `stop()` and by reaching a terminal status (#57).
         """
+        self._detach_clock()  # #115
         # 1️⃣ Stop every child actor (blocking & non-blocking).
         for actor_id, actor in list(self._actors.items()):
             try:
@@ -593,6 +619,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             return
 
         self._is_processing = True
+        # 🔁 #103: one settle budget per drain (see
+        #    `_process_transient_transitions`).
+        self._settle_iterations = 0
+        self._settle_tripped = False
         # 🛟 Bound the macrostep. The `raise` built-in re-enters this queue, so
         #    an action that raises its own trigger event feeds itself forever.
         #    `max_iterations` previously guarded only the eventless (`always`)
@@ -809,18 +839,34 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         # 🛟 Bound the microstep loop. A pair of `always` transitions that
         #    target each other spins forever; XState added the same guard in
         #    v5.31.0. `max_iterations` is configurable on the machine.
-        iterations = 0
+        # 🏛️ #103: the counter lives on the INSTANCE and is reset by
+        #    `_process_event_queue` at the start of each drain, not here.
+        #    A settle pass that re-arms an `invoke` whose sync completion
+        #    lands on the queue returns to the drain, which calls back in;
+        #    a per-call counter restarted at 0 every time, so the budget
+        #    tripped repeatedly and terminated never -- `start()` hung.
         limit = getattr(self.machine, "max_iterations", 1000)
         while True:
-            iterations += 1
-            if iterations > limit:
-                logger.error(
-                    "🔁 Exceeded %d microsteps while settling transient "
-                    "transitions in '%s'. Aborting to avoid an infinite "
-                    "loop; check for mutually-targeting 'always' transitions.",
-                    limit,
-                    self.id,
-                )
+            self._settle_iterations += 1
+            if self._settle_iterations > limit:
+                if not self._settle_tripped:
+                    logger.error(
+                        "🔁 Exceeded %d microsteps while settling transient "
+                        "transitions in '%s'. Aborting to avoid an infinite "
+                        "loop; check for mutually-targeting 'always' "
+                        "transitions or an 'always' into an invoking state.",
+                        limit,
+                        self.id,
+                    )
+                # 🔔 #112: the trip is OBSERVABLE, like the chain budget.
+                self._settle_tripped = True
+                self.last_transition_ok = False
+                self._last_action_error = RunawayChainError(self.id, limit, 0)
+                # 🧹 #112: a half-applied microstep can leave a leaf whose
+                #    ancestors are inactive. Re-derive the configuration
+                #    from its leaves so the live machine matches what a
+                #    restore would rebuild.
+                self._repair_configuration()
                 break
             # 👻 Use a dummy event for guard evaluation in "always" transitions.
             transient_event = Event(type="")  # Empty type signifies "always".
@@ -866,6 +912,24 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             )
         impl(self, self.context, event, action_def)
         return _Done(None)
+
+    def _deliver_completion(self, event: AnyEvent) -> None:
+        """Queue a service completion produced INSIDE the current macrostep.
+
+        🏛️ #116: a plain-sync service finishes while the state that invoked
+        it is still being entered. Its `done.invoke` is a consequence of
+        THIS step and must run before any external event already waiting
+        in the inbox -- otherwise `send_events(["GO", "X"])` delivered `X`
+        before the completion while `send("GO"); send("X")` (and the async
+        engine) delivered the completion first. Route it through the
+        internal queue, which the drain empties before touching the inbox
+        (#36 ordering). Outside a drain -- a completion arriving from a
+        non-blocking actor thread -- `send()` is the correct entry.
+        """
+        if self._is_processing:
+            self._internal_queue.append(event)
+        else:
+            self.send(event)
 
     def _dispatch_internal(  # type: ignore[override]
         self, event: Any
@@ -1066,11 +1130,21 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             return
 
         # --- Non-Blocking Execution Path (via a background thread) ---
+        # 🚀 Start the child HERE, on the spawning thread, before the pump
+        #    thread exists. Starting it on the runner made "spawned" and
+        #    "started" two different instants: a parent that snapshotted,
+        #    `sendTo`'d or `stop_child`'d right after the spawn action could
+        #    observe a registered child whose entry actions (and its own
+        #    grandchildren) did not exist yet -- a rare, load-dependent
+        #    flake. The async engine starts a spawned child in the same loop
+        #    turn; this restores that parity. `start()` on a sync child is
+        #    bounded work (entry actions; `after` timers arm, they do not
+        #    block), so the parent's own step is not held up.
+        child.start()
+
         def _runner() -> None:
-            """Starts the child and cleans up when it's done or stopped."""
+            """Pumps the already-started child until it ends or is stopped."""
             try:
-                # 🚀 Start the actor in the background thread.
-                child.start()
                 # 🔄 Keep the thread alive while the child runs. This thread
                 #    is the child's pump: with no timer threads (#50), the
                 #    child's `after` deadlines fire only when someone calls
@@ -1174,9 +1248,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             )
             return
 
+        # 📤 #109: `onDone` carries the child's declared OUTPUT, not its
+        #    private context (same rule as the async engine).
         done_event = DoneEvent(
             type=f"done.invoke.{invoke_id}",
-            data=child.context,
+            data=child.output if child.output is not None else child.context,
             src=invoke_id,
         )
         logger.info("🏁 Child actor '%s' completed; firing onDone.", child.id)
@@ -1270,12 +1346,27 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         deadlines onto the queue and processes them, all on the calling
         thread. It is also the seam a `SimulatedClock` drives.
         """
-        if self.status != "running":
+        if self.status != "running" or self._is_processing:
             return
-        self._pump_timers()
-        if self._event_queue and not self._is_processing:
-            self._process_event_queue()
-            self._process_transient_transitions()
+        # 🔁 #122: a deadline delivered by this tick may take a transition
+        #    into a state whose OWN deadline is already due -- or is armed
+        #    NOW and due by the time this call returns. `tick()` means
+        #    "process everything that is due"; the caller (a poll loop, a
+        #    test) reads the state right after it returns, so we drain
+        #    until a pump delivers nothing. The wall clock keeps moving
+        #    during the drain, so a 50 ms ladder of three rungs that is
+        #    already 250 ms late walks all three in one call, exactly as
+        #    the async engine's settle does. Bounded by `maxIterations`
+        #    so a genuine zero-delay cycle cannot spin.
+        limit = getattr(self.machine, "max_iterations", 1000)
+        for _ in range(limit):
+            fired = self._pump_timers()
+            if self._event_queue:
+                self._process_event_queue()
+                self._process_transient_transitions()
+                continue  # the step may have armed an already-due timer
+            if not fired:
+                break
 
     def _invoke_service(
         self,
@@ -1372,7 +1463,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             done_event = DoneEvent(
                 f"done.invoke.{invocation.id}", data=result, src=invocation.id
             )
-            self.send(done_event)
+            self._deliver_completion(done_event)
             logger.info(
                 "✅ Sync service '%s' completed successfully.", invocation.src
             )
@@ -1393,7 +1484,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             # 🚨 Unhandled service failures must be observable, not just
             #    logged. See BaseInterpreter._fail.
             handled = self._has_error_handler(invocation)
-            self.send(error_event)
+            self._deliver_completion(error_event)
             for plugin in self._plugins:
                 plugin.on_service_error(self, invocation, e)
             if not handled:

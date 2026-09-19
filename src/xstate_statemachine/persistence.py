@@ -141,6 +141,61 @@ def check_version(snapshot: Dict[str, Any]) -> int:
     return version
 
 
+_VALID_STATUSES = frozenset(
+    {"uninitialized", "running", "stopped", "done", "error"}
+)
+
+
+def check_shape(snapshot: Dict[str, Any]) -> None:
+    """Reject a structurally invalid payload with a typed error (#110).
+
+    Runs after `check_version` / `check_identity` and before any field is
+    read, so a corrupted blob cannot surface as a bare ``KeyError`` or be
+    restored into an impossible state. Checks are shape-only: required keys
+    present, ``context`` a mapping, ``status`` one of the five known values,
+    ``configuration`` / ``state_ids`` lists of strings, and a ``running``
+    snapshot that names at least one state.
+    """
+    from .exceptions import SnapshotCorruptError
+
+    def fail(msg: str) -> None:
+        raise SnapshotCorruptError(f"Snapshot is malformed: {msg}.")
+
+    if not isinstance(snapshot, dict):
+        fail(f"payload is {type(snapshot).__name__}, expected an object")
+    for key in ("status", "context", "state_ids"):
+        if key not in snapshot:
+            fail(f"missing required key '{key}'")
+    status = snapshot["status"]
+    if status not in _VALID_STATUSES:
+        fail(
+            f"unknown status {status!r}; expected one of {sorted(_VALID_STATUSES)}"
+        )
+    if not isinstance(snapshot["context"], dict):
+        fail(
+            f"'context' is {type(snapshot['context']).__name__}, expected an object"
+        )
+    for key in ("state_ids", "configuration"):
+        val = snapshot.get(key)
+        if val is None and key == "configuration":
+            continue
+        if not isinstance(val, list) or not all(
+            isinstance(x, str) for x in val
+        ):
+            fail(f"'{key}' must be a list of state-id strings")
+    if status == "running" and not (
+        snapshot.get("configuration") or snapshot["state_ids"]
+    ):
+        fail("status is 'running' but the configuration is empty")
+    for key in ("pending_events", "deferred"):
+        val = snapshot.get(key)
+        if val is not None and (
+            not isinstance(val, list)
+            or not all(isinstance(r, dict) and "type" in r for r in val)
+        ):
+            fail(f"'{key}' must be a list of event records with a 'type'")
+
+
 def check_identity(
     snapshot: Dict[str, Any], machine: "MachineNode", *, verify_hash: bool
 ) -> None:
