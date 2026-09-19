@@ -33,6 +33,7 @@ from typing import (
     Callable,
     Deque,
     Dict,
+    FrozenSet,
     Generic,
     List,
     Optional,
@@ -529,17 +530,22 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         event_obj = self._prepare_event_reporting(event_or_type, **payload)
         self._warn_reserved_payload_keys(event_obj)
         self._check_strict(event_obj)  # #51
-        config_before = frozenset(self._active_state_nodes)
-        # ⚡ see Interpreter._run_event_loop: no actions -> context is fixed.
-        context_before = (
-            copy.deepcopy(self.context)
-            if wait and not self.machine.context_is_immutable
-            else None
-        )
+        # ⚡ Everything that exists only to build a `Receipt` is skipped for
+        #    the fire-and-forget (`wait=False`) shape: the before-snapshot
+        #    of the configuration, the context deep-copy (see
+        #    Interpreter._run_event_loop: no actions -> context is fixed) and
+        #    the per-step bookkeeping flags are read by nobody when no
+        #    receipt is returned.
+        config_before: Optional[FrozenSet[StateNode]] = None
+        context_before: Optional[Any] = None
+        if wait:
+            config_before = frozenset(self._active_state_nodes)
+            if not self.machine.context_is_immutable:
+                context_before = copy.deepcopy(self.context)
+            self._deferred_this_step.clear()  # #106: per-step scope
+            self._guard_denied_this_step = False  # #153: per-step scope
         self.last_transition_ok = True
         step_error: Optional[BaseException] = None
-        self._deferred_this_step.clear()  # #106: per-step scope
-        self._guard_denied_this_step = False  # #153: per-step scope
         # ⏰ #50: deliver every deadline that has elapsed BEFORE this event,
         #    on this thread, in due order -- the pump.
         self._pump_timers()
@@ -580,6 +586,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         macrostep(s) (#125). Each replay may itself earn further replays;
         loop until none are held. Bounded by the drain's own chain budget.
         """
+        # ⚡ Common case: nothing held -- one attribute read, no loop.
+        if not self._held_replays:
+            return
         while self._held_replays and self.status == "running":
             held, self._held_replays = self._held_replays, []
             self._event_queue.extend(held)

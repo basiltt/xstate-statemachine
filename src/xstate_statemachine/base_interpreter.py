@@ -1122,6 +1122,11 @@ class BaseInterpreter(Generic[TContext]):
         # 🔔 #159: the public entry points (`send`, `send_threadsafe`,
         #    `send_events`) go through this so a plugin bound to every hook
         #    sees a refused event; the caller still gets `InvalidEventError`.
+        # ⚡ `str` is the overwhelmingly common shape and cannot be invalid
+        #    (a non-empty str IS an event type; an empty one is caught by
+        #    `_prepare_event`); skip the try/except frame for it.
+        if type(raw) is str and raw:
+            return Event(type=raw, payload=payload)
         try:
             return self._prepare_event(raw, **payload)
         except InvalidEventError as exc:
@@ -2219,12 +2224,34 @@ class BaseInterpreter(Generic[TContext]):
         self._pending_guard_error = None
         transitions = self._select_transitions(event)
         guard_error = self._pending_guard_error
-        self._pending_guard_error = None
-        if transitions:
-            await self._execute_selected(transitions, event)
-        if guard_error is None:
-            if not transitions:
+        if guard_error is not None:
+            self._pending_guard_error = None
+        if not transitions:
+            if guard_error is None:
                 self._handle_unhandled_event(event)
+                return
+        # 2. Execute each selected transition in isolation. A transition may
+        #    be invalidated by an earlier one in the same macrostep (its source
+        #    is no longer active), so re-check liveness before executing.
+        #    (⚡ Inlined rather than a helper coroutine: on the sync engine's
+        #    trampoline every extra `async def` frame is ~0.7 µs per event.)
+        for transition in transitions:
+            if (
+                len(transitions) > 1
+                and transition.source not in self._active_state_nodes
+            ):
+                logger.debug(
+                    "⏭️  Skipping stale transition from '%s'.",
+                    transition.source.id,
+                )
+                continue
+            await self._execute_transition(transition, event)
+
+        # -------------------------------------------------------------------------
+        # 🎬 Built-in Action Support
+        # -------------------------------------------------------------------------
+
+        if guard_error is None:
             return
         # 🛡️ #152: a guard raised under "raise" during this pass. The
         #    fallback (if any) has already run above -- that is the point.
@@ -2243,30 +2270,6 @@ class BaseInterpreter(Generic[TContext]):
             self._last_action_error = guard_error
             return
         raise guard_error
-
-    async def _execute_selected(
-        self, transitions: List[TransitionDefinition], event: AnyEvent
-    ) -> None:
-        """Execute an already-selected transition set (split out for #152)."""
-
-        # 2. Execute each selected transition in isolation. A transition may
-        #    be invalidated by an earlier one in the same macrostep (its source
-        #    is no longer active), so re-check liveness before executing.
-        for transition in transitions:
-            if (
-                len(transitions) > 1
-                and transition.source not in self._active_state_nodes
-            ):
-                logger.debug(
-                    "⏭️  Skipping stale transition from '%s'.",
-                    transition.source.id,
-                )
-                continue
-            await self._execute_transition(transition, event)
-
-    # -------------------------------------------------------------------------
-    # 🎬 Built-in Action Support
-    # -------------------------------------------------------------------------
 
     def _resolve_event_spec(self, spec: Any, event: AnyEvent) -> Event:
         """Turns an event specification from action params into an `Event`.
