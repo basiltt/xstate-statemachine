@@ -483,6 +483,17 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
     one; the #48 fairness bound for `call_later` timers is now N events
     (microseconds) rather than one, and `send(wait=True)` throughput rises
     ~35%. Priority and internal lanes are still checked before each take.
+  - After the round-5 hardening (per-region configuration legality on
+    every snapshot, the conservative-cycle chain check, the guard-denied
+    flag, the receipt-hook wrappers) the hot path was re-measured with an
+    interleaved A/B against the pre-round-5 tree: an initial 5–9% cost was
+    clawed back to ~2% by inlining the split-out `_execute_selected`
+    coroutine, a `str` fast path in `_prepare_event_reporting`, an early
+    return in `_run_held_replays`, and skipping receipt-only bookkeeping
+    for `send(wait=False)` on the sync engine. Published numbers (home
+    page, README, `benchmarks/competitors/results.json`,
+    Production Characteristics) are from a fresh clean-venv run of the
+    final tree.
   - Net, full cross-library harness (median of 7, GC off, same session):
     flat toggle 48.6k → 62.4k ev/s (+28%), nested 20.8k → 25.9k (+24%),
     parallel 37.6k → 44.5k (+18%), construction 5.9k → 9.4k machines/s
