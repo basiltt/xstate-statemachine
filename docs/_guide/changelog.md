@@ -17,6 +17,15 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Fixed
 
+- **Loop-side `RAISE` refusals from `send_threadsafe()` are observable**
+  (#157, reopened). The call-site `qsize()` check is optimistic; under
+  load — the only time backpressure matters — a concurrent producer is
+  refused *on the loop*, and that refusal landed only on the future the
+  fire-and-forget pattern never reads: correct load shedding with a hidden
+  shed rate. The future still carries the error; the interpreter now also
+  logs a WARNING and fires `on_event_dropped(reason="queue_full")` for
+  each such refusal. Same-thread `send()` under `RAISE` is unchanged — the
+  exception reaches the caller and *is* the signal.
 - **Round-6 re-verification findings** (#166–#175; reopened #122). Every one
   reproduced against `main` with an independent probe before the fix and
   pinned in `tests/test_round6_findings.py`, both engines wherever parity is
