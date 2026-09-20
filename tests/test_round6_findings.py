@@ -551,3 +551,79 @@ class TestReceiptsRacingStop(_Quiet):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# =============================================================================
+# #157 (reopened) — loop-side RAISE refusals from send_threadsafe are observable
+# =============================================================================
+class TestThreadsafeLoopSideRefusalObservable(_Quiet):
+    def test_warning_and_hook_for_loop_side_refusal(self) -> None:
+        from src.xstate_statemachine import OverflowPolicy, QueueOverflowError
+
+        cfg = {
+            "id": "ctr",
+            "initial": "a",
+            "states": {"a": {"on": {"PING": {"actions": ["slow"]}}}},
+        }
+
+        async def slow(i: Any, c: Any, e: Any, a: Any) -> None:
+            await asyncio.sleep(0.05)
+
+        pkg = SyncInterpreter.__module__.rsplit(".", 1)[0]
+        records: List[logging.LogRecord] = []
+
+        class _Cap(logging.Handler):
+            def emit(self, r: logging.LogRecord) -> None:
+                records.append(r)
+
+        async def main() -> Any:
+            d = _Drops()
+            i = Interpreter(
+                _mk(cfg, logic=MachineLogic(actions={"slow": slow})),
+                max_queue_size=2,
+                overflow_policy=OverflowPolicy.RAISE,
+            ).use(d)
+            await i.start()
+            for _ in range(2):
+                await i.send("PING")
+            # The optimistic call-site check refuses a VISIBLY full inbox on
+            # the producer thread; the reopen is about the racing producer
+            # whose check passed and who is refused ON THE LOOP. Drive that
+            # path directly.
+            futs = [
+                asyncio.run_coroutine_threadsafe(_deliver_full(i), i._loop)
+                for _ in range(5)
+            ]
+            refused = 0
+            await asyncio.sleep(0.02)
+            for f in futs:
+                if f.done() and isinstance(f.exception(), QueueOverflowError):
+                    refused += 1
+            out = (refused, list(d.dropped))
+            await i.stop()
+            return out
+
+        async def _deliver_full(i: Any) -> None:
+            i._enqueue_from_thread(Event("PING"))
+
+        logging.disable(logging.NOTSET)
+        lg = logging.getLogger(pkg)
+        h = _Cap()
+        lg.addHandler(h)
+        old = lg.level
+        lg.setLevel(logging.WARNING)
+        try:
+            refused, dropped = _run(main())
+        finally:
+            lg.removeHandler(h)
+            lg.setLevel(old)
+            logging.disable(logging.CRITICAL)
+
+        self.assertGreater(refused, 0)
+        self.assertEqual(dropped.count("queue_full"), refused)
+        warned = [
+            r
+            for r in records
+            if r.levelno == logging.WARNING and "refused" in r.getMessage()
+        ]
+        self.assertEqual(len(warned), refused)

@@ -1108,6 +1108,35 @@ class Interpreter(BaseInterpreter[TContext]):
         # 📥 Place the standardized event object into the async queue.
         self._put_inbox(event_obj)
 
+    def _enqueue_from_thread(self, event_obj: AnyEvent) -> None:
+        """`_enqueue` for a cross-thread send (#157): a refusal is OBSERVABLE.
+
+        On the loop thread a `RAISE` refusal reaches the caller as an
+        exception -- the exception *is* the signal. From `send_threadsafe`
+        it lands on a `concurrent.futures.Future` the documented
+        fire-and-forget pattern never reads, so under load a producer could
+        shed the majority of its sends with no warning, no hook and no
+        unretrieved-exception traceback: correct load shedding with a
+        hidden shed rate. The future still carries the error for callers
+        who do read it; this adds a WARNING and `on_event_dropped(reason=
+        "queue_full")` so the shed is measurable either way.
+        """
+        try:
+            self._enqueue(event_obj)
+        except QueueOverflowError:
+            logger.warning(
+                "📉 Interpreter '%s' inbox full (%d/%d); cross-thread event "
+                "'%s' refused (OverflowPolicy.RAISE). The error is on the "
+                "future send_threadsafe() returned.",
+                self.id,
+                self._event_queue.qsize(),
+                self._max_queue_size,
+                event_obj.type,
+            )
+            for plugin in self._plugins:
+                plugin.on_event_dropped(self, event_obj, "queue_full")
+            raise
+
     def send_threadsafe(
         self,
         event_or_type: Union[
@@ -1204,7 +1233,7 @@ class Interpreter(BaseInterpreter[TContext]):
                     if self._wakeup is not None:
                         self._wakeup.set()
                 return
-            self._enqueue(event_obj)
+            self._enqueue_from_thread(event_obj)
 
         fut = asyncio.run_coroutine_threadsafe(_deliver(), self._loop)
         if self_issued:
