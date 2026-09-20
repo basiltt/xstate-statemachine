@@ -30,6 +30,7 @@ import copy
 import inspect
 import json
 import logging
+import threading
 import time
 import warnings
 from typing import (
@@ -1270,22 +1271,35 @@ class BaseInterpreter(Generic[TContext]):
                 self._active_state_nodes.add(ancestor)
                 ancestor = ancestor.parent
 
-    def _await_settled_for_snapshot(self, timeout_s: float = 0.5) -> None:
-        """Block (briefly) until a child actor's in-flight step finishes.
+    def _await_settled_for_snapshot(self, timeout_s: float = 0.5) -> bool:
+        """Block (briefly) until this actor's in-flight step finishes.
 
-        Only used when snapshotting a CHILD recursively (#102). A sync
-        child's step runs on its actor thread and completes in
-        microseconds; a bound keeps a pathological child from hanging the
-        parent's snapshot -- after it we snapshot whatever is there, which
-        the restore-time repair (`_repair_configuration`) makes legal.
+        Only used when snapshotting a CHILD recursively (#102), and only
+        when that child runs on a DIFFERENT thread from the caller (a
+        non-blocking `SyncInterpreter` actor on its pump thread), because
+        that is the only case in which waiting can let it progress. A
+        child on the caller's own thread (an async child on the same event
+        loop, a blocking sync child) cannot advance while the caller spins
+        -- #184: an earlier version did exactly that on the event-loop
+        thread, burned the full budget and then returned the torn blob
+        anyway. Such a child is refused instead (see the caller).
+
+        🛡️ #183: the wait is for SETTLED, not merely legal. Inside an entry
+        action the configuration is legal while the context is
+        half-written; a snapshot there is torn on the read side (#169).
+
+        Returns:
+            bool: ``True`` when the child settled within the budget.
         """
         deadline = time.monotonic() + timeout_s
-        while (
-            self._step_in_flight()
-            and not self._configuration_is_legal()
-            and time.monotonic() < deadline
-        ):
+        while self._step_in_flight() and time.monotonic() < deadline:
             time.sleep(0.0005)
+        return not self._step_in_flight()
+
+    def _step_thread_ident(self) -> Optional[int]:
+        """Engine hook: ident of the thread that runs this actor's steps, or
+        ``None`` when steps run on whichever thread calls in (#183/#184)."""
+        return None
 
     def _step_in_flight(self) -> bool:
         """Engine hook: is a macrostep currently executing? (#102)"""
@@ -1391,8 +1405,24 @@ class BaseInterpreter(Generic[TContext]):
                 exc = SnapshotMidStepError(self.id)
                 self._report_snapshot_error(exc)  # #159
                 raise exc
-            if not self._configuration_is_legal():
-                self._await_settled_for_snapshot()
+            # 👶 A CHILD caught mid-step by its parent's snapshot (#183):
+            #    its half-applied context would be harvested into the
+            #    parent's blob and restore cleanly, because its
+            #    configuration is legal. If the child steps on another
+            #    thread, wait (bounded) for it to settle; if it steps on
+            #    THIS thread it cannot settle while we hold the thread
+            #    (#184), so the parent's snapshot is refused -- honestly,
+            #    and instantly, rather than after a blocked half-second.
+            own = self._step_thread_ident()
+            settled = (
+                own is not None
+                and own != threading.get_ident()
+                and self._await_settled_for_snapshot()
+            )
+            if not settled:
+                exc = SnapshotMidStepError(self.id, child=True)
+                self._report_snapshot_error(exc)  # #159
+                raise exc
         # 🔁 Guard against an actor cycle. The registry makes a cycle
         #    constructible, and unbounded recursion would blow the stack
         #    instead of failing cleanly.
@@ -1637,7 +1667,10 @@ class BaseInterpreter(Generic[TContext]):
         #    refused restore leaves nothing half-built behind.
         version = persistence.check_version(snapshot)
         persistence.check_identity(
-            snapshot, machine, verify_hash=verify_machine_hash
+            snapshot,
+            machine,
+            verify_hash=verify_machine_hash,
+            version=version,  # #185: bypass keyed on declared version
         )
         snapshot = persistence.upcast(snapshot, version)
 
@@ -3961,6 +3994,15 @@ class BaseInterpreter(Generic[TContext]):
         if policy == "error":
             err = UnhandledEventError(event.type, active)
             self._notify_unhandled(event, active, "errored")
+            # 🧾 #189: the SENDER must see the kill on its receipt. `_fail`
+            #    flips `status`/`error`, but the receipt is built from the
+            #    step's `last_transition_ok` / `_last_action_error`, so a
+            #    success-shaped `Receipt(changed=False, error=None)` went
+            #    back to the very caller whose event stopped the machine.
+            #    Record it as this step's failure: `Receipt.error` is the
+            #    `UnhandledEventError`, on both engines.
+            self.last_transition_ok = False
+            self._last_action_error = err
             self._fail(err)
             return
 

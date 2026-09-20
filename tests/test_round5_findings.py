@@ -556,7 +556,9 @@ class TestHostileSnapshotFieldsAreTyped(_Quiet):
                 }
                 with self.assertRaises(SnapshotCorruptError):
                     SyncInterpreter.from_snapshot(
-                        json.dumps(blob), _mk(self.CFG)
+                        json.dumps(blob),
+                        _mk(self.CFG),
+                        verify_machine_hash=False,  # #185: hand-built v1
                     )
         with self.assertRaises(SnapshotCorruptError):
             restore_event({"kind": "event", "type": 42})
@@ -1106,8 +1108,13 @@ class TestSyncRestoreAttachesClock(_Quiet):
             "pending_events": [{"kind": "event", "type": "GO", "payload": {}}],
         }
         clock = SimulatedClock()
+        # Hand-built v1 blob with no `machine_hash`: opt out of the drift
+        # check explicitly (#185 refuses a versioned blob that lost it).
         r = SyncInterpreter.from_snapshot(
-            json.dumps(blob), _mk(cfg), clock=clock
+            json.dumps(blob),
+            _mk(cfg),
+            clock=clock,
+            verify_machine_hash=False,
         ).start()
         self.assertEqual(1, len(clock._settlers))
         clock.increment(20)
