@@ -792,18 +792,19 @@ class TestChildMidStepSnapshot(_Quiet):
     }
 
     def test_root_snapshot_refuses_while_async_child_is_mid_step(self) -> None:
-        gate = asyncio.Event()
-        started = asyncio.Event()
+        box: Dict[str, asyncio.Event] = {}
 
         async def pair(i: Any, c: Any, e: Any, a: Any) -> None:
             c["q"] = 100
-            started.set()
-            await gate.wait()
+            box["started"].set()
+            await box["gate"].wait()
             c["p"] = 101
 
         async def main() -> Any:
-            nonlocal gate, started
-            gate, started = asyncio.Event(), asyncio.Event()
+            # Created INSIDE the running loop: on 3.9 an `asyncio.Event()`
+            # built at test-definition time binds to no loop and raises.
+            box["gate"], box["started"] = asyncio.Event(), asyncio.Event()
+            gate, started = box["gate"], box["started"]
             kid = create_machine(
                 self.CHILD, logic=MachineLogic(actions={"pair": pair})
             )
@@ -1157,9 +1158,9 @@ class TestStopResolvesQueuedDuplicateInstanceReceipts(_Quiet):
         # the loop has run. Every receipt resolves InterpreterStoppedError.
         for kind in KINDS:
             with self.subTest(kind=kind):
-                body = lambda i, c: c.__setitem__(
-                    "n", c["n"] + 1
-                )  # noqa: E731
+
+                def body(i: Any, c: Any) -> None:
+                    c["n"] += 1
 
                 async def main() -> Any:
                     i = await Interpreter(

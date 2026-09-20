@@ -625,27 +625,26 @@ class TestThreadsafeLoopSideRefusalObservable(_Quiet):
                 overflow_policy=OverflowPolicy.RAISE,
             ).use(d)
             await i.start()
+            # One event keeps the loop busy for 50 ms; two more fill the
+            # bounded inbox behind it. Deterministic: nothing is dequeued
+            # until the slow step ends.
+            await i.send("PING")
+            await asyncio.sleep(0.005)
             for _ in range(2):
                 await i.send("PING")
             # The optimistic call-site check refuses a VISIBLY full inbox on
             # the producer thread; the reopen is about the racing producer
             # whose check passed and who is refused ON THE LOOP. Drive that
-            # path directly.
-            futs = [
-                asyncio.run_coroutine_threadsafe(_deliver_full(i), i._loop)
-                for _ in range(5)
-            ]
+            # path directly, on the loop, with the inbox full.
             refused = 0
-            await asyncio.sleep(0.02)
-            for f in futs:
-                if f.done() and isinstance(f.exception(), QueueOverflowError):
+            for _ in range(5):
+                try:
+                    i._enqueue_from_thread(Event("PING"))
+                except QueueOverflowError:
                     refused += 1
             out = (refused, list(d.dropped))
             await i.stop()
             return out
-
-        async def _deliver_full(i: Any) -> None:
-            i._enqueue_from_thread(Event("PING"))
 
         logging.disable(logging.NOTSET)
         lg = logging.getLogger(pkg)
