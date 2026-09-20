@@ -30,6 +30,7 @@ import dataclasses
 import inspect
 import logging
 import threading
+import time
 import uuid
 from collections import deque
 from typing import (
@@ -211,6 +212,12 @@ def _completed() -> "asyncio.Future[None]":
 #: ``Interpreter(..., service_pool_size=N)``.
 DEFAULT_SERVICE_POOL_SIZE: int = 4
 
+#: ⏳ #181: seconds `Interpreter.start()` waits for the initial configuration's
+#: invoked child actors to finish their bring-up before returning with a
+#: WARNING. A child's bring-up runs its entry actions -- user code -- so the
+#: wait is bounded by default. Override per call: ``start(children_timeout=)``.
+DEFAULT_CHILDREN_TIMEOUT: float = 2.0
+
 
 class Interpreter(BaseInterpreter[TContext]):
     """Brings a state machine to life by interpreting it asynchronously.
@@ -265,6 +272,7 @@ class Interpreter(BaseInterpreter[TContext]):
         "_chain_tripped",
         "_settle_iterations",
         "_settle_tripped",
+        "_chain_owed",
         "_receipts",
         "_replay_pending",
         "_service_executor",
@@ -405,6 +413,13 @@ class Interpreter(BaseInterpreter[TContext]):
         #: engine's `_settle_iterations` / `_settle_tripped`, #103 / #151).
         self._settle_iterations: int = 0
         self._settle_tripped: bool = False
+        #: 🔗 #179: engine completions (coroutine services, child actors)
+        #: that a step of the CURRENT chain armed and that have not landed
+        #: yet. While non-zero the chain is alive even though no step is
+        #: open, so the completion is charged when it arrives and the
+        #: "raised nothing" reset does not fire under it. Reset with the
+        #: chain; never counts plain-`def` services (awaited in-step).
+        self._chain_owed: int = 0
         #: 🛟 #168: set when the chain budget trips; spares exactly one
         #: pending engine completion at the trip, then cuts every further
         #: self-generated event until an external event ends the chain.
@@ -447,13 +462,29 @@ class Interpreter(BaseInterpreter[TContext]):
             and not self._event_loop_task.done()
         )
 
-    async def start(self) -> "Interpreter[TContext]":
+    async def start(
+        self, *, children_timeout: Optional[float] = DEFAULT_CHILDREN_TIMEOUT
+    ) -> "Interpreter[TContext]":
         """Starts the interpreter and its main event-processing loop.
 
         This method initializes the machine by transitioning it to its initial
         state and begins the main event loop to process events from the queue.
         It is idempotent; calling `start` on an already running or stopped
         interpreter has no effect and will simply return.
+
+        Args:
+            children_timeout: Upper bound, in seconds, on how long
+                ``start()`` waits for the initial configuration's invoked
+                child actors to finish their own bring-up (#171 / #181).
+                A child's bring-up runs its entry actions, which are
+                arbitrary user code; without a bound a slow ``async def``
+                entry action held ``await start()`` for its whole
+                duration while ``status`` already read ``"running"``.
+                Default ``DEFAULT_CHILDREN_TIMEOUT`` (2 s); ``None`` waits
+                without bound. On timeout a WARNING is logged and
+                ``start()`` returns with the interpreter running and the
+                child still starting; the child becomes addressable when
+                its bring-up completes.
 
         Returns:
             Interpreter[TContext]: The interpreter instance (`self`),
@@ -539,6 +570,15 @@ class Interpreter(BaseInterpreter[TContext]):
             # root state to execute.
             init_event = system_event("___xstate_statemachine_init___")
             pre_states = set(self._active_state_nodes)
+            # 🛡️ #182: the initial descent IS a macrostep -- entry actions
+            #    run, context is written -- and the mid-step snapshot
+            #    refusal (#102/#169) keys on `_processing`. Leaving it
+            #    False here made a `get_persisted_snapshot()` from an
+            #    initial entry action ACCEPTED on this engine while the
+            #    sync engine refused it, and the blob was torn. The flag
+            #    is cleared in the `finally` below so a failing entry
+            #    action never leaves it stuck.
+            self._processing = True
             await self._enter_states([self.machine], init_event)
 
             # ⚡ Settle eventless ("always") transitions before returning.
@@ -558,7 +598,16 @@ class Interpreter(BaseInterpreter[TContext]):
             #    async engine only. A plain-`def` service's RESULT is not
             #    awaited here: #149 requires `start()` to return while it
             #    runs; its `done.invoke` lands through the priority lane.
-            await self._await_actor_bringups()
+            await self._await_actor_bringups(timeout=children_timeout)
+            # ✅ Settled: the initial macrostep is complete and observable.
+            self._processing = False
+            # 🔗 Raises the INITIAL entry queued were counted while the flag
+            #    was up, but they are the seed of the machine's first chain,
+            #    not its self-generated tail: the sync drain gives events
+            #    already queued when it opens "user standing" so the count
+            #    starts at their FIRST descendant (#77). Match it, or the
+            #    async engine cuts a deep entry-raise chain one link early.
+            self._raise_depth = 0
 
             # 🔌 #124: the sync engine reports entering the initial
             #    configuration as an `on_transition` record for the init
@@ -593,6 +642,8 @@ class Interpreter(BaseInterpreter[TContext]):
             if self._event_loop_task and not self._event_loop_task.done():
                 self._event_loop_task.cancel()
             raise  # Re-raise the original exception to the caller.
+        finally:
+            self._processing = False  # #182: never left stuck by a raise
 
         return self
 
@@ -1644,15 +1695,19 @@ class Interpreter(BaseInterpreter[TContext]):
                 self.last_transition_ok = True
                 self._deferred_this_step.clear()  # #106: per-step scope
                 self._guard_denied_this_step = False  # #153: per-step scope
-                if not is_system_event(event) or from_inbox:
-                    # 🔁 #166 / #151: a user event (or anything the CALLER
-                    #    queued) starts a fresh settle budget; a self-
-                    #    generated completion continues the running one.
+                if not is_system_event(event):
+                    # 🔁 #166 / #151 / #179: a USER event starts a fresh
+                    #    settle budget; an engine completion continues the
+                    #    running one. Provenance only -- the old
+                    #    `or from_inbox` disjunct let a completion that
+                    #    happened to travel via the inbox clear the budget
+                    #    on every lap.
                     self._settle_iterations = 0
                     self._settle_tripped = False
                 try:
                     self._processing = True
                     depth_before = self._raise_depth
+                    owed_before = self._chain_owed  # #179
                     await self._process_event_and_transient_transitions(event)
                     # ✅ A macrostep that raised nothing ends the chain --
                     #    provided no self-generated work is still queued.
@@ -1661,8 +1716,18 @@ class Interpreter(BaseInterpreter[TContext]):
                     #    "raised nothing during the step" was true on every
                     #    lap and the chain never accumulated. The internal
                     #    queue being non-empty means the chain is alive.
+                    # 🔗 #179: a step that ARMED engine work whose
+                    #    completion has not landed yet (an `async def`
+                    #    service, a child actor) has not finished
+                    #    generating: its completion is the next link. Only
+                    #    THIS step's arming counts -- work outstanding from
+                    #    an earlier, unrelated step (a long poll running
+                    #    beside independent user traffic) must not keep a
+                    #    chain open, or legitimate one-deep raises would
+                    #    accumulate into a false trip.
                     if (
                         self._raise_depth == depth_before
+                        and self._chain_owed == owed_before
                         and not self._internal_queue
                         and not self._priority_queue
                         and not self._threadsafe_self_sends_in_flight
@@ -2274,19 +2339,50 @@ class Interpreter(BaseInterpreter[TContext]):
                 continue
             await self._wakeup.wait()
 
-    def _deliver_priority(self, event: AnyEvent) -> None:
+    def _deliver_priority(
+        self, event: AnyEvent, *, engine_completion: bool = False
+    ) -> None:
         """Place *event* at the head of processing and wake the run loop.
 
-        🛟 #166 / #167 / #168: a completion the machine produced WHILE
-        processing (a plain service that finished inside the entering
-        macrostep, a rollback that re-armed an invoke, an ``always`` that
-        re-entered an invoking child) is self-generated work and is charged
-        to the chain budget exactly as the sync engine charges it. Only a
-        delivery from OUTSIDE a step (a due timer firing on an idle loop, a
-        task finishing later) is free -- that is external time, not the
-        machine feeding itself.
+        Args:
+            event: The event to deliver ahead of the inbox.
+            engine_completion: ``True`` when the ENGINE produced *event*
+                as the result of work the machine itself started -- a
+                service's ``done.invoke`` / ``error.platform``, a child
+                actor's completion, a due ``after`` timer. ``False`` for a
+                caller's ``send(..., priority=True)`` and for deferred
+                events being replayed.
+
+        🏛️ Chain-budget accounting is decided by PROVENANCE, never by
+        timing (#180). An earlier version charged whatever arrived while
+        ``_processing`` was true; an external producer whose send happened
+        to land mid-macrostep was then treated as a self-feeding chain and
+        shed as ``chain_budget`` -- the exact failure #105 had fixed on the
+        inbox lane, resurfacing on this one. The public priority lane is
+        external traffic and is never charged, whatever the loop is doing.
+
+        🛟 #166 / #167 / #168 / #179: an engine completion the machine
+        produced WHILE processing (a service that finished inside the
+        entering macrostep, a rollback that re-armed an invoke, an
+        ``always`` that re-entered an invoking child, an ``async def``
+        service whose completion lands inside a step) is self-generated
+        work and IS charged, exactly as the sync engine charges it -- for
+        every service kind, on this single lane (#179). A completion that
+        lands on an idle loop (no step open) is free: that is external time
+        passing, not the machine feeding itself, and the next step's
+        "raised nothing" check ends any chain it might have belonged to.
         """
-        if self._processing:
+        if engine_completion:
+            # 🔗 #179: EVERY engine completion is charged, as on the sync
+            #    engine, where a completion is by construction generated
+            #    by the drain that armed it. Whether the chain it belongs
+            #    to is over is decided after the step that consumes it:
+            #    "raised nothing, armed nothing, owes nothing" ends the
+            #    chain and clears the count -- so N independent one-deep
+            #    completions never accumulate, while `a -> done -> b ->
+            #    done -> a` does, for `def` and `async def` alike.
+            if self._chain_owed:
+                self._chain_owed -= 1
             self._raise_depth += 1
         self._priority_queue.append(event)
         if self._wakeup is not None:
@@ -2351,7 +2447,7 @@ class Interpreter(BaseInterpreter[TContext]):
                 self.id,
                 fired.lateness_ms,
             )
-            self._deliver_priority(fired)
+            self._deliver_priority(fired, engine_completion=True)
 
         handle = self._set_timeout(_fire, delay_sec, owner=owner_id)
         self._timer_handles.setdefault(owner_id, []).append(handle)
@@ -2405,13 +2501,22 @@ class Interpreter(BaseInterpreter[TContext]):
                 await produced if inspect.isawaitable(produced) else produced
             )
 
-            # ✅ Service completed, send a 'done' event with the result data.
+            # ✅ Service completed: publish its 'done' event.
+            #
+            # 🛟 #179: through the PRIORITY lane, marked as an engine
+            #    completion, NOT `send()`. `send()` put it on the public
+            #    inbox, where (a) it was never charged to the chain budget
+            #    and (b) it arrived `from_inbox` and reset the settle
+            #    budget every lap -- so `maxIterations` was inert for any
+            #    machine whose services were `async def`, the style the
+            #    docs recommend, while the identical `def` service tripped.
+            #    One lane for every service kind; one accounting rule.
             done_event = DoneEvent(
                 type=f"done.invoke.{invocation.id}",
                 data=result,
                 src=invocation.id,
             )
-            await self.send(done_event)
+            self._publish_completion(done_event)
             logger.info(
                 "✅ Service '%s' (ID: '%s') completed successfully.",
                 invocation.src,
@@ -2447,7 +2552,7 @@ class Interpreter(BaseInterpreter[TContext]):
             # 🚨 If nothing handles the error event, the failure is
             #    unhandled and must be observable rather than merely logged.
             handled = self._has_error_handler(invocation)
-            await self.send(error_event)
+            self._publish_completion(error_event)  # #179: charged lane
             for plugin in self._plugins:
                 plugin.on_service_error(self, invocation, e)
             if not handled:
@@ -2486,6 +2591,9 @@ class Interpreter(BaseInterpreter[TContext]):
             # The bring-up task is transient (microseconds) and is tracked
             # only so an exit racing the start cancels it cleanly.
             self.task_manager.add(owner_id, task)
+            # (Not `_owe_completion`: a child's terminal may legitimately
+            #  never come -- a long-lived child is stopped by exit -- so
+            #  it cannot be a debt. Its terminal IS charged when it lands.)
             # 👶 #171: the ENTERING macrostep (and `start()`) awaits the
             #    bring-up, so the child is addressable -- `sendTo("kid")`
             #    resolves, `_actors` lists it -- by the time the step that
@@ -2522,6 +2630,7 @@ class Interpreter(BaseInterpreter[TContext]):
         task = asyncio.create_task(_invoke_wrapper())
         # Register the task with its owner for lifecycle management.
         self.task_manager.add(owner_id, task)
+        self._owe_completion(task)
 
     def _report_service_failure(
         self, invocation: InvokeDefinition, exc: Exception
@@ -2542,11 +2651,49 @@ class Interpreter(BaseInterpreter[TContext]):
             src=invocation.id,
         )
         handled = self._has_error_handler(invocation)
-        self._deliver_priority(error_event)
+        self._publish_completion(error_event)
         for plugin in self._plugins:
             plugin.on_service_error(self, invocation, exc)
         if not handled:
             self._fail(exc)
+
+    def _owe_completion(self, task: "asyncio.Task[Any]") -> None:
+        """#179: the current step armed a coroutine service whose completion
+        will land on a later loop turn. Count it so the step's "raised
+        nothing, armed nothing" chain-end test knows the chain is not over.
+
+        Every coroutine service task ends in exactly one of: a `done.invoke`
+        / `error.platform` published through `_publish_completion` (which
+        settles the debt as it charges), or cancellation because the owning
+        state was exited (settled here without a completion). So the count
+        can never leak. Child actors are deliberately NOT counted: a
+        long-lived child is stopped by an exit and never produces a
+        terminal, so its bring-up cannot be a debt.
+        """
+        if not self._processing:
+            return
+        self._chain_owed += 1
+
+        def _settle_if_cancelled(t: "asyncio.Task[Any]") -> None:
+            if t.cancelled() and self._chain_owed:
+                self._chain_owed -= 1
+
+        task.add_done_callback(_settle_if_cancelled)
+
+    def _publish_completion(self, event: AnyEvent) -> None:
+        """Publish an ENGINE completion (`done.invoke`, `error.platform`).
+
+        🏛️ #179: the ONE place every service kind's completion goes
+        through -- plain `def` (inline, via the executor), `async def`
+        (its own task), a plain `def` that returned an awaitable, and an
+        invoked child actor's terminal event. Routing them all here is
+        what makes the chain budget a property of the machine rather than
+        of how a service happens to be spelled. Refused (not queued) once
+        the machine is no longer running, like every other delivery.
+        """
+        if self._refuse_if_not_running(event):
+            return
+        self._deliver_priority(event, engine_completion=True)
 
     def _get_service_executor(self) -> concurrent.futures.Executor:
         """The executor plain services run on; created on first use (#149)."""
@@ -2583,15 +2730,49 @@ class Interpreter(BaseInterpreter[TContext]):
             await asyncio.gather(*pending, return_exceptions=True)
             await self._await_actor_bringups()
 
-    async def _await_actor_bringups(self) -> None:
+    async def _await_actor_bringups(
+        self, *, timeout: Optional[float] = None
+    ) -> None:
         """#171: block the current step until invoked children are registered.
 
         A bring-up cancelled by an exit racing the start is a normal
         outcome here, not an error to surface.
+
+        Args:
+            timeout: #181 -- bound the wait. A bring-up awaits the child's
+                ``start()``, i.e. its entry actions, which are arbitrary
+                user code; unbounded, a slow child held the caller for
+                its whole duration. On timeout the bring-ups keep running
+                (they are the children's own tasks), a WARNING names them,
+                and the caller proceeds; the children register when they
+                finish.
         """
+        deadline = None if timeout is None else time.monotonic() + timeout
         while self._actor_bringups:
             pending, self._actor_bringups = self._actor_bringups, []
-            await asyncio.gather(*pending, return_exceptions=True)
+            if deadline is None:
+                await asyncio.gather(*pending, return_exceptions=True)
+                continue
+            remaining = deadline - time.monotonic()
+            done, not_done = await asyncio.wait(
+                pending, timeout=max(0.0, remaining)
+            )
+            if not_done:
+                logger.warning(
+                    "⏳ Interpreter '%s': %d invoked child actor(s) still "
+                    "starting after %.3fs; start() returns with them "
+                    "in progress (#181).",
+                    self.id,
+                    len(not_done),
+                    timeout,
+                )
+                # 🏁 They are the children's OWN tasks and finish on
+                #    their own; each registers its child on completion.
+                #    Do NOT re-queue them for the next step to await --
+                #    that made the first event after a timed-out start()
+                #    block for the rest of the slow bring-up, turning a
+                #    bounded start() into an unbounded first send.
+                return
 
     def _invoke_plain_service_inline(
         self,
@@ -2670,7 +2851,7 @@ class Interpreter(BaseInterpreter[TContext]):
                 except Exception as exc:  # noqa: BLE001 -- user code
                     self._report_service_failure(invocation, exc)
                     return
-                await self.send(
+                self._publish_completion(  # #179: charged lane
                     DoneEvent(
                         type=f"done.invoke.{invocation.id}",
                         data=result,
@@ -2687,7 +2868,7 @@ class Interpreter(BaseInterpreter[TContext]):
             data=produced,
             src=invocation.id,
         )
-        self._deliver_priority(done_event)
+        self._publish_completion(done_event)
         logger.info(
             "✅ Service '%s' (ID: '%s') completed (plain service).",
             invocation.src,
@@ -2811,7 +2992,7 @@ class Interpreter(BaseInterpreter[TContext]):
                 await self._retire_invoked_child(
                     owner_id, child_interpreter, stop=True
                 )
-            await self.send(
+            self._publish_completion(  # #179: charged lane
                 ErrorEvent(
                     type=f"error.platform.{invocation.id}",
                     error=e,
@@ -2856,7 +3037,7 @@ class Interpreter(BaseInterpreter[TContext]):
             #    from a healthy machine waiting on a slow child. Mirror the
             #    callable-service path (and the sync engine): fail the parent.
             handled = self._has_error_handler(invocation)
-            await self.send(
+            self._publish_completion(  # #179: charged lane
                 ErrorEvent(
                     type=f"error.platform.{invocation.id}",
                     error=failure,
@@ -2879,7 +3060,7 @@ class Interpreter(BaseInterpreter[TContext]):
             data=child.output if child.output is not None else child.context,
             src=invocation.id,
         )
-        await self.send(done_event)
+        self._publish_completion(done_event)  # #179: charged lane
         for plugin in self._plugins:
             plugin.on_service_done(self, invocation, done_event.data)
 

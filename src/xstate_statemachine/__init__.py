@@ -75,7 +75,11 @@ Example:
 from .factory import create_machine
 from .base_interpreter import PendingInvocation
 from .base_interpreter import BaseInterpreter
-from .interpreter import Interpreter
+from .interpreter import (
+    DEFAULT_CHILDREN_TIMEOUT,
+    DEFAULT_SERVICE_POOL_SIZE,
+    Interpreter,
+)
 from .sync_interpreter import SyncInterpreter
 from .machine_logic import MachineLogic
 from .logic_loader import LogicLoader
@@ -207,6 +211,8 @@ __all__ = [
     "create_machine",
     "BaseInterpreter",
     "Interpreter",
+    "DEFAULT_CHILDREN_TIMEOUT",
+    "DEFAULT_SERVICE_POOL_SIZE",
     "SyncInterpreter",
     "MachineLogic",
     "LogicLoader",

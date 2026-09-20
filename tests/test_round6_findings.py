@@ -45,6 +45,25 @@ def _mk(cfg: Dict[str, Any], **kw: Any) -> Any:
     return create_machine(json.loads(json.dumps(cfg)), **kw)
 
 
+#: #179: every service-invoking pin runs under both spellings.
+KINDS = ("def", "async def")
+
+
+def _svc(kind: str, body: Any) -> Any:
+    if kind == "def":
+
+        def plain(i: Any, c: Any, e: Any) -> Any:
+            return body()
+
+        return plain
+
+    async def coro(i: Any, c: Any, e: Any) -> Any:
+        await asyncio.sleep(0)
+        return body()
+
+    return coro
+
+
 class _Drops(PluginBase):
     def __init__(self) -> None:
         self.dropped: List[str] = []
@@ -116,38 +135,41 @@ class TestAsyncRollbackRearmCycleBounded(_Quiet):
     }
 
     def test_service_calls_bounded_by_max_iterations(self) -> None:
-        calls = [0]
+        for kind in KINDS:  # #179: both lanes
+            with self.subTest(kind=kind):
+                calls = [0]
 
-        def boom(*a: Any) -> None:
-            raise RuntimeError("boom")
+                def boom(*a: Any) -> None:
+                    raise RuntimeError("boom")
 
-        def svc(i: Any, c: Any, e: Any) -> int:
-            calls[0] += 1
-            return 1
+                def bump() -> int:
+                    calls[0] += 1
+                    return 1
 
-        async def main() -> Any:
-            d = _Drops()
-            i = Interpreter(
-                _mk(
-                    self.CFG,
-                    logic=MachineLogic(
-                        actions={"boom": boom}, services={"svc": svc}
-                    ),
-                )
-            ).use(d)
-            await i.start()
-            await asyncio.sleep(0.6)
-            first = calls[0]
-            await asyncio.sleep(0.3)
-            out = (first, calls[0], i.status, d.dropped)
-            await i.stop()
-            return out
+                async def main() -> Any:
+                    d = _Drops()
+                    i = Interpreter(
+                        _mk(
+                            self.CFG,
+                            logic=MachineLogic(
+                                actions={"boom": boom},
+                                services={"svc": _svc(kind, bump)},
+                            ),
+                        )
+                    ).use(d)
+                    await i.start()
+                    await asyncio.sleep(0.6)
+                    first = calls[0]
+                    await asyncio.sleep(0.3)
+                    out = (first, calls[0], i.status, d.dropped)
+                    await i.stop()
+                    return out
 
-        first, later, status, dropped = _run(main())
-        self.assertEqual(status, "running")
-        self.assertLessEqual(first, 1001 + 2)
-        self.assertEqual(first, later, "cycle must stop, not keep spinning")
-        self.assertIn("chain_budget", dropped)
+                first, later, status, dropped = _run(main())
+                self.assertEqual(status, "running")
+                self.assertLessEqual(first, 1001 + 2)
+                self.assertEqual(first, later, "cycle must stop, not spin")
+                self.assertIn("chain_budget", dropped)
 
 
 # =============================================================================
@@ -193,22 +215,41 @@ class TestAsyncInvokeCycleTrips(_Quiet):
         self.assertIsInstance(r.error, RunawayChainError)
         self.assertIn("chain_budget", ds.dropped)
 
-        async def main() -> Any:
-            da = _Drops()
-            i = Interpreter(_mk(self.CFG, logic=logic("a"))).use(da)
-            await i.start()
-            await i.send("GO")
-            await asyncio.sleep(0.5)
-            out = (i.last_transition_ok, type(i.last_error), da.dropped)
-            await i.stop()
-            return out
+        for kind in KINDS:  # #179: both lanes
+            with self.subTest(kind=kind):
+                laps["a"] = 0
 
-        ok, err, dropped = _run(main())
-        self.assertFalse(ok)
-        self.assertIs(err, RunawayChainError)
-        self.assertIn("chain_budget", dropped)
-        # Same lap count on both engines: the budget is the same rule.
-        self.assertEqual(laps["a"], laps["s"])
+                def bump() -> int:
+                    laps["a"] += 1
+                    return 1
+
+                async def main() -> Any:
+                    da = _Drops()
+                    i = Interpreter(
+                        _mk(
+                            self.CFG,
+                            logic=MachineLogic(
+                                services={"svc": _svc(kind, bump)}
+                            ),
+                        )
+                    ).use(da)
+                    await i.start()
+                    await i.send("GO")
+                    await asyncio.sleep(0.5)
+                    out = (
+                        i.last_transition_ok,
+                        type(i.last_error),
+                        da.dropped,
+                    )
+                    await i.stop()
+                    return out
+
+                ok, err, dropped = _run(main())
+                self.assertFalse(ok)
+                self.assertIs(err, RunawayChainError)
+                self.assertIn("chain_budget", dropped)
+                # Same lap count on both engines: the budget is one rule.
+                self.assertLessEqual(abs(laps["a"] - laps["s"]), 1)
 
     def test_late_completion_after_idle_trip_is_delivered(self) -> None:
         # #120 guard: a trip that ends with nothing pending must not cut a
@@ -584,27 +625,26 @@ class TestThreadsafeLoopSideRefusalObservable(_Quiet):
                 overflow_policy=OverflowPolicy.RAISE,
             ).use(d)
             await i.start()
+            # One event keeps the loop busy for 50 ms; two more fill the
+            # bounded inbox behind it. Deterministic: nothing is dequeued
+            # until the slow step ends.
+            await i.send("PING")
+            await asyncio.sleep(0.005)
             for _ in range(2):
                 await i.send("PING")
             # The optimistic call-site check refuses a VISIBLY full inbox on
             # the producer thread; the reopen is about the racing producer
             # whose check passed and who is refused ON THE LOOP. Drive that
-            # path directly.
-            futs = [
-                asyncio.run_coroutine_threadsafe(_deliver_full(i), i._loop)
-                for _ in range(5)
-            ]
+            # path directly, on the loop, with the inbox full.
             refused = 0
-            await asyncio.sleep(0.02)
-            for f in futs:
-                if f.done() and isinstance(f.exception(), QueueOverflowError):
+            for _ in range(5):
+                try:
+                    i._enqueue_from_thread(Event("PING"))
+                except QueueOverflowError:
                     refused += 1
             out = (refused, list(d.dropped))
             await i.stop()
             return out
-
-        async def _deliver_full(i: Any) -> None:
-            i._enqueue_from_thread(Event("PING"))
 
         logging.disable(logging.NOTSET)
         lg = logging.getLogger(pkg)

@@ -17,6 +17,88 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Fixed
 
+- **Round-7 re-verification findings** (#179–#190; reopened #167, #168,
+  #175). Every one reproduced against `main` @ `221ce7c` with the
+  reporter's standalone repro before the fix (all twelve exited 1) and
+  pinned in `tests/test_round7_findings.py` (37 tests). **Every test that
+  involves a service or an action is parametrised over `def` / `async def`**
+  and runs both engines where parity is the point — the round-6 pins were
+  spelled `def` only and were structurally blind to the coroutine lane; the
+  #167/#168 pins are retrofitted the same way.
+  - **One charged lane for every completion (#179; reopened #167/#168).**
+    An `async def` service's `done.invoke` (and an invoked child's terminal,
+    and `error.platform` on every path) was published via `send()` onto the
+    public inbox, where it was never charged to the chain budget and, arriving
+    `from_inbox`, reset the settle budget on every lap — so `maxIterations`
+    was inert for any machine whose services were `async def`, the style the
+    docs recommend, while the identical `def` service tripped. All
+    completions now go through `_publish_completion` → the priority lane,
+    marked as engine completions and charged. A step that armed a coroutine
+    service keeps its chain open until the completion lands
+    (`_chain_owed`); a step that armed nothing still ends the chain, so a
+    long service beside independent traffic never accumulates. Both service
+    kinds now trip at the same lap count as the sync engine.
+  - **External `send(priority=True)` is never charged (#180).** The priority
+    lane charged whatever arrived while a step was open — provenance by
+    *timing*. A producer whose send landed mid-macrostep lost ~50% of its
+    events as `chain_budget`, the failure #105 fixed on the inbox lane
+    resurfacing here. Accounting is by *who issued it*: only engine
+    completions and self-raised events count.
+  - **`start()` bounds the wait for invoked children (#181).**
+    `start(children_timeout=)`, default `DEFAULT_CHILDREN_TIMEOUT` (2 s); a
+    slow child's `async def` entry action no longer holds `await start()`
+    for its whole duration. On timeout a WARNING is logged, `start()`
+    returns with the machine running, and the child registers when its
+    bring-up completes.
+  - **The in-flight flag covers `start()` (#182) and every action hook
+    (#187).** The initial descent runs entry actions and writes context, but
+    `_processing` was left `False`, so a snapshot from an initial entry
+    action was accepted and torn on the async engine while the sync engine
+    refused it. The flag is set for the whole descent and cleared in a
+    `finally`. `on_action_execute` is inside the refusal window on both
+    engines.
+  - **A child mid-step is never harvested half-applied (#183), and the wait
+    never spins the event loop (#184).** The child branch tested
+    configuration *legality*, which is true inside an entry action while
+    the context is half-written; and `_await_settled_for_snapshot` spun
+    `time.sleep` on the event-loop thread, so an async child could not
+    progress, the wait burned its full 0.5 s and then returned the torn
+    blob anyway. Now: a child stepping on another thread (a non-blocking
+    sync actor) is waited for until *settled*; a child on the caller's own
+    thread is refused instantly with `SnapshotMidStepError(child=True)`.
+  - **Null/absent `machine_hash` on a versioned payload is drift (#185).**
+    The v0 bypass was keyed on the field's presence, so a `version: 2` blob
+    that lost its hash in transit restored into a drifted machine silently.
+    The bypass is keyed on the declared version; `verify_machine_hash=False`
+    remains the explicit opt-out.
+  - **A `configuration` that contradicts `state_ids` is corrupt (#186).**
+    `configuration or state_ids` let an emptied or rewritten
+    `configuration` silently win or silently lose; the two must agree or
+    the blob is refused with `SnapshotCorruptError`.
+  - **`SyncInterpreter` clears its per-step scopes on every step (#188).**
+    `_deferred_this_step` was cleared only on the `wait=True` path and grew
+    unbounded under fire-and-forget sends, contaminating the next receipt's
+    `deferred`.
+  - **The `onUnhandled: "error"` kill is on the sender's receipt (#189).**
+    `Receipt.error` is the `UnhandledEventError`; a success-shaped receipt
+    no longer goes back to the caller whose event stopped the machine.
+  - **A `"*"` handler does not defeat `strict` (#190).** `is_known_event()`
+    answered the *dispatch* question ("would some handler match?") so one
+    wildcard anywhere silently disabled event-name enforcement for the whole
+    chart. It now answers the *declaration* question; the validator's
+    `raise` check asks the dispatch question explicitly
+    (`wildcard_matches=True`). Dispatch is unchanged.
+  - **#175 case D pinned as filed:** N sends of one reused `Event` instance
+    followed by `stop()` before the loop runs resolve every receipt as
+    `InterpreterStoppedError`; across the racing window a receipt is `ok`
+    iff its event was applied and every event still queued at `stop()` is
+    stopped.
+  - **#174 re-measured on the fixed tree:** `after: 50` under a 100-event
+    busy loop on the same machine, and under 100 busy machines sharing the
+    loop, is 0–1 ms late (median of 5). The plain-`def`-service case is
+    unchanged and documented; `async def` — now budget-safe — is the
+    documented remedy and fires on time (122 ms for `after: 100` beside a
+    500 ms service).
 - **Loop-side `RAISE` refusals from `send_threadsafe()` are observable**
   (#157, reopened). The call-site `qsize()` check is optimistic; under
   load — the only time backpressure matters — a concurrent producer is

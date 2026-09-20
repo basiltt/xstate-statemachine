@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import TYPE_CHECKING, Any, Dict, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from .exceptions import SnapshotDriftError, SnapshotVersionError
 
@@ -205,6 +205,27 @@ def check_shape(snapshot: Dict[str, Any]) -> None:
         snapshot.get("configuration") or snapshot["state_ids"]
     ):
         fail("status is 'running' but the configuration is empty")
+    # 🛡️ #186: `configuration` (leaves + ancestors) and `state_ids`
+    #    (leaves) describe the SAME configuration; the library writes both.
+    #    When both are present they must agree -- every leaf in `state_ids`
+    #    is in `configuration`, and `configuration` is not empty while
+    #    `state_ids` is not. A blob where they disagree was edited or
+    #    corrupted, and restoring from whichever one "wins" is a guess.
+    configuration = snapshot.get("configuration")
+    if configuration is not None:
+        leaves = set(snapshot["state_ids"])
+        full = set(configuration)
+        if leaves and not full:
+            fail(
+                "'configuration' is empty while 'state_ids' names "
+                f"{sorted(leaves)} -- the two fields contradict each other"
+            )
+        missing = leaves - full
+        if missing:
+            fail(
+                f"'state_ids' names {sorted(missing)} which 'configuration' "
+                f"does not contain -- the two fields contradict each other"
+            )
     # 🛡️ #145 (read side): an "error" machine always knows WHY -- `_fail`
     #    and `_die` both set `error`. A blob claiming "error" with nothing
     #    to say is not one this library wrote.
@@ -256,16 +277,40 @@ def check_shape(snapshot: Dict[str, Any]) -> None:
 
 
 def check_identity(
-    snapshot: Dict[str, Any], machine: "MachineNode", *, verify_hash: bool
+    snapshot: Dict[str, Any],
+    machine: "MachineNode",
+    *,
+    verify_hash: bool,
+    version: Optional[int] = None,
 ) -> None:
     """Refuse to restore a snapshot into a machine it was not taken from.
 
-    Version-0 payloads carry neither field and are accepted unchecked --
-    they cannot be drift-checked, which is precisely why the fields exist.
+    Version-0 payloads (no ``version`` key) carry neither field and are
+    accepted unchecked -- they cannot be drift-checked, which is precisely
+    why the fields exist.
+
+    🛡️ #185: the bypass is keyed on the DECLARED VERSION, not on whether
+    the field happens to be present. Every ``version >= 1`` payload this
+    library writes carries ``machine_hash``; one that arrives with the
+    key missing or ``null`` has lost it in transit (a JSON round-trip that
+    drops nulls, a column default, a lossy migration) and can no longer be
+    drift-checked -- so under ``verify_hash`` it is refused, exactly as a
+    wrong hash is. Keying on presence turned "the fingerprint was lost"
+    into "skip the fingerprint", and a drifted machine restored silently
+    with the wrong active states.
+
+    Args:
+        snapshot: The decoded payload.
+        machine: The machine being restored into.
+        verify_hash: When ``True`` (the default at the call site) the
+            structural hash must be present and match.
+        version: The payload's declared version (from `check_version`).
+            ``None`` / ``0`` selects the legacy unchecked path.
 
     Raises:
         SnapshotDriftError: machine id differs, or (when *verify_hash*)
-            the structural hash differs.
+            the structural hash differs or is missing from a versioned
+            payload.
     """
     snap_id = snapshot.get("machine_id")
     if snap_id is not None and snap_id != machine.id:
@@ -273,16 +318,29 @@ def check_identity(
             f"snapshot was taken from machine '{snap_id}' but is being "
             f"restored into '{machine.id}'"
         )
+    if not verify_hash:
+        return
     snap_hash = snapshot.get("machine_hash")
-    if verify_hash and snap_hash is not None:
-        current = machine.structure_hash
-        if snap_hash != current:
-            raise SnapshotDriftError(
-                f"machine '{machine.id}' structure changed since this "
-                f"snapshot was taken ({snap_hash} != {current}). Migrate the "
-                f"snapshot, or pass verify_machine_hash=False if the change "
-                f"is known to be compatible."
-            )
+    versioned = bool(version)
+    if snap_hash is None:
+        if not versioned:
+            return  # v0: nothing to check against, by design
+        raise SnapshotDriftError(
+            f"snapshot declares version {version} but carries no "
+            f"'machine_hash', so it cannot be checked against machine "
+            f"'{machine.id}' (#185). The field was lost in transit; "
+            f"restore from an intact copy, or pass "
+            f"verify_machine_hash=False if the machine is known to be "
+            f"unchanged."
+        )
+    current = machine.structure_hash
+    if snap_hash != current:
+        raise SnapshotDriftError(
+            f"machine '{machine.id}' structure changed since this "
+            f"snapshot was taken ({snap_hash} != {current}). Migrate the "
+            f"snapshot, or pass verify_machine_hash=False if the change "
+            f"is known to be compatible."
+        )
 
 
 def upcast(snapshot: Dict[str, Any], version: int) -> Dict[str, Any]:

@@ -430,13 +430,30 @@ class SnapshotMidStepError(XStateMachineError):
     such as ``on_transition``, or after ``stop(drain=True)``.
     """
 
-    def __init__(self, machine_id: str):
-        super().__init__(
-            f"Interpreter '{machine_id}' is mid-macrostep: a transition's "
-            f"actions are still running and the configuration has no leaf. "
-            f"Snapshot it once the step settles (await send(..., wait=True), "
-            f"or from on_transition)."
-        )
+    def __init__(self, machine_id: str, *, child: bool = False):
+        self.machine_id = machine_id
+        #: ``True`` when the mid-step actor is a CHILD of the interpreter
+        #: the snapshot was requested on (#183): the root was settled, but
+        #: a deep capture would have harvested the child's half-applied
+        #: context.
+        self.child = child
+        if child:
+            msg = (
+                f"Child actor '{machine_id}' is mid-macrostep: its actions "
+                f"are still running, so a snapshot of its parent would "
+                f"persist a half-applied child context. Snapshot once the "
+                f"child settles (await its send(..., wait=True), or from "
+                f"an on_transition hook on the child)."
+            )
+        else:
+            msg = (
+                f"Interpreter '{machine_id}' is mid-macrostep: a "
+                f"transition's actions are still running and the "
+                f"configuration has no leaf. Snapshot it once the step "
+                f"settles (await send(..., wait=True), or from "
+                f"on_transition)."
+            )
+        super().__init__(msg)
 
 
 class InvalidEventError(XStateMachineError, TypeError):

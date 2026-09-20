@@ -165,6 +165,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     __slots__ = (
         "_held_replays",
         "_is_processing",
+        "_pump_thread_ident",
         "_settle_iterations",
         "_settle_tripped",
     )
@@ -213,6 +214,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #: before the next external event (SCXML internal queue).
         self._internal_queue: Deque[AnyEvent] = deque()
         self._is_processing: bool = False
+        #: 🧵 #183/#184: ident of the pump thread when this interpreter runs
+        #: as a non-blocking child actor; `None` when steps run on the
+        #: caller's thread. Read by a parent's snapshot to decide whether a
+        #: bounded wait can let a mid-step child settle.
+        self._pump_thread_ident: Optional[int] = None
         #: 📨 #125: deferred events whose replay was EARNED by the drain in
         #: progress (a configuration change) but must not run inside it --
         #: the caller's `Receipt` is built from the drain's result, and a
@@ -563,12 +569,20 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    receipt is returned.
         config_before: Optional[FrozenSet[StateNode]] = None
         context_before: Optional[Any] = None
+        # 🧹 #188: the per-step scopes are reset on EVERY step, not only
+        #    when a receipt will read them. `_deferred_this_step` is a list
+        #    that `_defer_event` appends to; skipping the clear on the
+        #    fire-and-forget path let it grow by one entry per deferred
+        #    event for the life of the process and left the next `wait=True`
+        #    receipt reading a `deferred` flag contaminated by earlier steps.
+        #    Two O(1) writes; the deep-copy below is the only thing worth
+        #    gating on `wait`.
+        self._deferred_this_step.clear()  # #106: per-step scope
+        self._guard_denied_this_step = False  # #153: per-step scope
         if wait:
             config_before = frozenset(self._active_state_nodes)
             if not self.machine.context_is_immutable:
                 context_before = copy.deepcopy(self.context)
-            self._deferred_this_step.clear()  # #106: per-step scope
-            self._guard_denied_this_step = False  # #153: per-step scope
         self.last_transition_ok = True
         step_error: Optional[BaseException] = None
         # ⏰ #50: deliver every deadline that has elapsed BEFORE this event,
@@ -1292,9 +1306,15 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 self._actors.pop(actor_id, None)
                 logger.info("🧹 Actor thread for '%s' cleaned up.", actor_id)
 
-        # 🚀 Start the thread
+        # 🚀 Start the thread. #183/#184: the child records the thread its
+        #    steps run on, so a parent snapshot that catches it mid-step
+        #    knows a bounded wait CAN let it settle.
+        def _runner_recording() -> None:
+            child._pump_thread_ident = threading.get_ident()
+            _runner()
+
         threading.Thread(
-            target=_runner, daemon=True, name=f"actor-{actor_id}"
+            target=_runner_recording, daemon=True, name=f"actor-{actor_id}"
         ).start()
 
     def _wait_for_child_terminal(self, child: "SyncInterpreter") -> None:
@@ -1465,6 +1485,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         fired. Does NOT process the queue; the caller does.
         """
         return self.clock.pump()
+
+    def _step_thread_ident(self) -> Optional[int]:
+        """A non-blocking actor steps on its pump thread (#183/#184)."""
+        return self._pump_thread_ident
 
     def _attach_clock(self) -> None:
         """Register `tick` as this interpreter's settler on a `SimulatedClock`.

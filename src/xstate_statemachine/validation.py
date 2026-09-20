@@ -240,7 +240,11 @@ def _collect_unknown_raises(machine: "MachineNode") -> List[str]:
     def check(actions, where: str) -> None:
         for action in actions:
             event_type = _static_raise_event_type(action)
-            if event_type is None or machine.is_known_event(event_type):
+            # #190: a `raise` is DISPATCHED, so a wildcard handler does
+            #    catch it -- the dispatch question, not the strict one.
+            if event_type is None or machine.is_known_event(
+                event_type, wildcard_matches=True
+            ):
                 continue
             findings.append(
                 f"  {where}: raise {event_type!r} names an event no state "

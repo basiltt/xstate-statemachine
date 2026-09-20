@@ -1743,18 +1743,42 @@ class MachineNode(StateNode[TContext]):
         return self._known_events
 
     def is_known_event(
-        self, event_type: str, *, user_sent: bool = False
+        self,
+        event_type: str,
+        *,
+        user_sent: bool = False,
+        wildcard_matches: bool = False,
     ) -> bool:
-        """True if *event_type* matches a declared descriptor (#51).
+        """True if *event_type* is a DECLARED event name (#51).
 
-        Honours the same matching rules as dispatch: an exact key, a
-        partial ``"prefix.*"`` whose prefix matches by dot-segment, or the
-        bare ``"*"`` wildcard, which makes EVERY event known. Engine-
-        synthesised events (``done.``, ``error.``, ``after.``, ``xstate.``,
-        the init sentinel) are always known.
+        Answers "is this name declared?", not "would some handler match?":
+        an exact key, or a partial ``"prefix.*"`` whose prefix matches by
+        dot-segment. Engine-synthesised events (``done.``, ``error.``,
+        ``after.``, ``xstate.``, the init sentinel) are always known.
+
+        🛡️ #190: the bare ``"*"`` wildcard does NOT make every name known.
+        It used to, so one ``"*": {...}`` handler anywhere in the chart --
+        common defensive scaffolding -- silently disabled ``strict`` event-
+        name enforcement for the whole machine: a typo'd ``"CANCLE"`` was
+        accepted and routed through the wildcard instead of rejected. The
+        wildcard is a DISPATCH rule; `strict` is a DECLARATION rule. Dispatch
+        is unchanged: with ``strict`` off the wildcard still catches
+        undeclared events.
+
+        Args:
+            event_type: The event name to test.
+            user_sent: ``True`` when the caller already knows the event is
+                user traffic (a `strict` interpreter); engine name-shapes
+                are then not implicitly known (#79/#98).
+            wildcard_matches: ``True`` asks the DISPATCH question -- "would
+                some handler catch this?" -- where a bare ``"*"`` counts.
+                Used by the build-time ``raise`` validator, whose concern
+                is a raised event nobody handles.
         """
         known = self.known_events
-        if "*" in known or event_type in known:
+        if wildcard_matches and "*" in known:
+            return True
+        if event_type in known and event_type != "*":
             return True
         # 🏛️ #79/#98: engine shapes are implicitly known ONLY when the
         #    caller is asking about a name in the abstract (`user_sent=False`,

@@ -139,16 +139,46 @@ class TestUnknownEvents(_Quiet):
 
         self.assertEqual(_run(main()), ({"order.filled"}, "done"))
 
-    def test_wildcard_descriptor_disables_unknown_check(self) -> None:
+    def test_wildcard_descriptor_does_not_disable_unknown_check(self) -> None:
+        # #190: `strict` is a DECLARATION rule; a `"*"` DISPATCH handler
+        # must not silently switch it off for the whole machine.
+        from src.xstate_statemachine import UnknownEventError
+
         cfg = {"id": "m", "initial": "a", "states": {"a": {"on": {"*": {}}}}}
 
         async def main():
             i = await Interpreter(create_machine(cfg), strict=True).start()
-            await i.send("ANYTHING_AT_ALL")
-            await i.stop()
+            try:
+                with self.assertRaises(UnknownEventError):
+                    await i.send("ANYTHING_AT_ALL")
+            finally:
+                await i.stop()
             return "ok"
 
         self.assertEqual(_run(main()), "ok")
+
+    def test_wildcard_still_dispatches_when_not_strict(self) -> None:
+        hits = []
+        cfg = {
+            "id": "m",
+            "initial": "a",
+            "states": {"a": {"on": {"*": {"actions": ["hit"]}}}},
+        }
+
+        async def main():
+            i = await Interpreter(
+                create_machine(
+                    cfg,
+                    logic=MachineLogic(
+                        actions={"hit": lambda i, c, e, a: hits.append(e.type)}
+                    ),
+                )
+            ).start()
+            await i.send("ANYTHING_AT_ALL", wait=True)
+            await i.stop()
+
+        _run(main())
+        self.assertEqual(hits, ["ANYTHING_AT_ALL"])
 
     def test_partial_descriptor_counts_as_known(self) -> None:
         cfg = {
