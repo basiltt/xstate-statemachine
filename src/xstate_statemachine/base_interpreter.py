@@ -1378,12 +1378,21 @@ class BaseInterpreter(Generic[TContext]):
         #    region), not "some leaf exists" -- in a parallel machine one
         #    region mid-transition left the other region's leaf to satisfy
         #    the any-leaf test, and the snapshot recorded a torn region.
-        if self._step_in_flight() and not self._configuration_is_legal():
+        # 🛡️ #169: at the ROOT, "in flight" alone refuses. Legality is a
+        #    necessary condition, not a sufficient one: inside an ENTRY
+        #    action the new leaf is already active (legal) while the context
+        #    that entry is still writing is half-applied -- a snapshot there
+        #    persisted `filled` with `filled_qty=0` and restored cleanly.
+        #    The documented contract ("from inside an action -> refused")
+        #    is what callers rely on; legality stays the test for the
+        #    bounded wait on a CHILD caught mid-step by its parent.
+        if self._step_in_flight():
             if _seen is None:
                 exc = SnapshotMidStepError(self.id)
                 self._report_snapshot_error(exc)  # #159
                 raise exc
-            self._await_settled_for_snapshot()
+            if not self._configuration_is_legal():
+                self._await_settled_for_snapshot()
         # 🔁 Guard against an actor cycle. The registry makes a cycle
         #    constructible, and unbounded recursion would blow the stack
         #    instead of failing cleanly.
@@ -4387,8 +4396,16 @@ class BaseInterpreter(Generic[TContext]):
                             break
                         if _passes(t):
                             eligible.append(t)
-                        elif t.guard_def is not None:
+                        elif (
+                            t.guard_def is not None
+                            and self._pending_guard_error is None
+                        ):
                             # 🚦 #153: declared, matched, refused by guard.
+                            # 🧯 #170: a guard that CRASHED under
+                            #    guardErrorPolicy="raise" is not a denial;
+                            #    `Receipt.error` carries that case and
+                            #    `denied` stays False, as documented ("the
+                            #    guard returned False").
                             self._guard_denied_this_step = True
                     if blocked:
                         break

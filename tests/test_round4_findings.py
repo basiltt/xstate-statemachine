@@ -486,7 +486,10 @@ class TestPriorityLanePersisted(_Quiet):
             i = Interpreter(build(), clock=clock)
             await i.start()
             await asyncio.sleep(0.02)
-            i._processing = True
+            # Freeze the loop by cancelling its task (the fixture used to
+            # also force `_processing = True`; since #169 a root snapshot
+            # is refused whenever a step is in flight, so that flag is no
+            # longer a usable freeze).
             t, i._event_loop_task = i._event_loop_task, None
             t.cancel()
             try:
@@ -500,7 +503,6 @@ class TestPriorityLanePersisted(_Quiet):
             recs = [
                 r["type"] for r in i.get_persisted_snapshot()["pending_events"]
             ]
-            i._processing = False
             return recs
 
         recs = _run(main())

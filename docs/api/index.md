@@ -669,6 +669,7 @@ Interpreter(
     overflow_policy: OverflowPolicy = OverflowPolicy.RAISE,
     strict: Optional[bool] = None,
     service_executor: Optional[concurrent.futures.Executor] = None,
+    service_pool_size: int = DEFAULT_SERVICE_POOL_SIZE,
 )
 ```
 
@@ -691,6 +692,7 @@ ensuring clean cancellation when states are exited.
 | `overflow_policy` | `OverflowPolicy` | `OverflowPolicy.RAISE` | `RAISE` / `BLOCK` / `DROP_NEWEST`; ignored when no `max_queue_size` is set. The priority lane (`send(priority=True)`) is never bounded **[wave 3]** (#38). |
 | `strict` | `Optional[bool]` | `None` | When `True`, an event type not declared anywhere in the machine raises `UnknownEventError` at the `send()` call site instead of silently no-opping **[wave 3]** (#51). |
 | `service_executor` | `Optional[concurrent.futures.Executor]` | `None` | **[0.8.1]** (#149) Where a plain (non-coroutine) `invoke` service runs. `None` lazily creates a small `ThreadPoolExecutor` owned by the interpreter and shut down with it; pass a shared / bounded pool or a `ProcessPoolExecutor` for CPU-bound work. The entering macrostep still *awaits* the result — so a plain service's `done.invoke` lands ahead of any event already in the inbox exactly as on the sync engine (#116) — but the event loop is free for the duration. |
+| `service_pool_size` | `int` | `DEFAULT_SERVICE_POOL_SIZE` (= 4) | **[0.8.1]** (#173) Worker count of the executor created when `service_executor` is `None`. The (N+1)-th concurrently-running plain service waits for a worker, and because the entering macrostep awaits its result that wait also blocks the macrostep — size it to the number of plain services one configuration can have in flight (a parallel machine with 9 invoking regions wants 9). Ignored when an executor is supplied. Must be ≥ 1. |
 
 #### Methods
 
@@ -1219,7 +1221,7 @@ completion (#39).
 | `changed` | `bool` | `True` if a transition was taken (configuration or context changed) for THIS event. |
 | `error` | `Optional[BaseException]` | The exception raised while processing this event -- an action that raised, an unresolvable target, a `sendTo` with no live target -- or `None`. The machine may still be `"running"` (per `actionErrorPolicy`); the receipt tells the caller its request did not run cleanly. |
 | `deferred` | `bool` | **[0.8.1]** `True` when this event selected no transition and was parked under `onUnhandled: "defer"` (#84). It will be replayed, as its own macrostep, after the next event that changes the configuration; the replay does not fold into that event's receipt (#125, both engines). |
-| `denied` | `bool` | **[0.8.1]** `True` when the active state *declared* a handler for this event but every candidate's guard returned `False` (#153). Distinguishes "a business rule refused it" from "this event does not apply here" (`denied=False`, `changed=False`), which are otherwise identical receipts. |
+| `denied` | `bool` | **[0.8.1]** `True` when the active state *declared* a handler for this event but every candidate's guard returned `False` (#153). Distinguishes "a business rule refused it" from "this event does not apply here" (`denied=False`, `changed=False`), which are otherwise identical receipts. A guard that *crashed* under `guardErrorPolicy: "raise"` is a third case: `denied=False` and `error` carries the exception (#170). `(denied, error is None)` therefore discriminates all three. Note that under `onUnhandled: "defer"` a denied event enters the defer buffer (`deferred=True` too) and is re-evaluated after the next state change. |
 
 > ⚠️ **0.8.1 arity change.** `Receipt` grew from three fields to four. A positional destructure written for 0.8.0 — `state_ids, changed, error = receipt` — now raises `ValueError`; read fields by attribute (#119).
 

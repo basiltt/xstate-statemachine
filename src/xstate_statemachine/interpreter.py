@@ -206,6 +206,12 @@ def _completed() -> "asyncio.Future[None]":
     return fut
 
 
+#: 🧵 #173: workers in the executor an `Interpreter` creates for plain-`def`
+#: services when none is supplied. Override per instance with
+#: ``Interpreter(..., service_pool_size=N)``.
+DEFAULT_SERVICE_POOL_SIZE: int = 4
+
+
 class Interpreter(BaseInterpreter[TContext]):
     """Brings a state machine to life by interpreting it asynchronously.
 
@@ -245,15 +251,20 @@ class Interpreter(BaseInterpreter[TContext]):
         "_event_loop_task",
         "_inbox_streak",
         "_inline_service_futures",
+        "_actor_bringups",
         "_invoked_children",
         "_loop",
         "_loop_thread_name",
         "_max_queue_size",
         "_overflow_policy",
         "_owns_service_executor",
+        "_service_pool_size",
         "_priority_queue",
         "_processing",
         "_raise_depth",
+        "_chain_tripped",
+        "_settle_iterations",
+        "_settle_tripped",
         "_receipts",
         "_replay_pending",
         "_service_executor",
@@ -271,6 +282,7 @@ class Interpreter(BaseInterpreter[TContext]):
         overflow_policy: "OverflowPolicy" = OverflowPolicy.RAISE,
         strict: Optional[bool] = None,
         service_executor: Optional[concurrent.futures.Executor] = None,
+        service_pool_size: int = DEFAULT_SERVICE_POOL_SIZE,
     ) -> None:
         """Initializes a new asynchronous Interpreter instance.
 
@@ -294,6 +306,15 @@ class Interpreter(BaseInterpreter[TContext]):
                 a plain service's ``done.invoke`` lands ahead of any event
                 already waiting in the inbox exactly as on the sync engine
                 (#116) -- but the event loop is free for the duration.
+            service_pool_size: Worker count of the executor this
+                interpreter creates when ``service_executor`` is ``None``
+                (#173). Default ``DEFAULT_SERVICE_POOL_SIZE`` (= 4). The
+                (N+1)-th concurrently-running plain service waits for a
+                worker, and because the entering macrostep awaits its
+                result, that wait also blocks the macrostep: size the
+                pool to the number of plain services a single
+                configuration can have in flight. Ignored when an
+                executor is supplied.
 
         Args:
             machine (MachineNode[TContext]): The `MachineNode` instance
@@ -336,9 +357,14 @@ class Interpreter(BaseInterpreter[TContext]):
             service_executor
         )
         self._owns_service_executor: bool = service_executor is None
+        if service_pool_size < 1:
+            raise ValueError("service_pool_size must be >= 1")
+        self._service_pool_size: int = service_pool_size
         #: 🧵 #149: plain-service results the CURRENT macrostep must await
         #: before it completes (see `_process_event_and_transient_transitions`).
         self._inline_service_futures: List["asyncio.Future[Any]"] = []
+        #: 👶 #171: invoked-child bring-up tasks the current step awaits.
+        self._actor_bringups: List["asyncio.Task[Any]"] = []
         #: 🧾 #39: receipts awaiting the macrostep of a specific event,
         #: keyed by the event object's identity (events are NamedTuples and
         #: may compare equal; identity is what distinguishes two sends of
@@ -375,6 +401,14 @@ class Interpreter(BaseInterpreter[TContext]):
         #: a macrostep completes without having done so. Bounds a runaway
         #: `raise` without ever throttling external `send()` traffic.
         self._raise_depth: int = 0
+        #: 🔁 #166: per-macrostep `always`-settle budget (mirrors the sync
+        #: engine's `_settle_iterations` / `_settle_tripped`, #103 / #151).
+        self._settle_iterations: int = 0
+        self._settle_tripped: bool = False
+        #: 🛟 #168: set when the chain budget trips; spares exactly one
+        #: pending engine completion at the trip, then cuts every further
+        #: self-generated event until an external event ends the chain.
+        self._chain_tripped: bool = False
         #: 🔗 #150: self-issued `send_threadsafe` deliveries accepted on a
         #: worker thread but not yet landed on the loop. A macrostep that
         #: "raised nothing" must not end the chain while one is in flight.
@@ -516,6 +550,15 @@ class Interpreter(BaseInterpreter[TContext]):
             # unrelated event happened to nudge it. `start()` must return a
             # settled configuration in BOTH engines.
             await self._settle_transient_transitions()
+            # 👶 #171: `start()` means "the machine is up": the children
+            #    its initial configuration invoked are registered and
+            #    addressable, as after `SyncInterpreter.start()`. That was
+            #    left to the FIRST event's macrostep, so `await start();
+            #    send("POKE")` lost the poke to `unresolved_target` on the
+            #    async engine only. A plain-`def` service's RESULT is not
+            #    awaited here: #149 requires `start()` to return while it
+            #    runs; its `done.invoke` lands through the priority lane.
+            await self._await_actor_bringups()
 
             # 🔌 #124: the sync engine reports entering the initial
             #    configuration as an `on_transition` record for the init
@@ -1155,7 +1198,6 @@ class Interpreter(BaseInterpreter[TContext]):
 
         async def _deliver() -> None:
             if self_issued:
-                self._threadsafe_self_sends_in_flight -= 1
                 if not self._refuse_if_not_running(event_obj):
                     self._raise_depth += 1
                     self._internal_queue.append(event_obj)
@@ -1164,7 +1206,19 @@ class Interpreter(BaseInterpreter[TContext]):
                 return
             self._enqueue(event_obj)
 
-        return asyncio.run_coroutine_threadsafe(_deliver(), self._loop)
+        fut = asyncio.run_coroutine_threadsafe(_deliver(), self._loop)
+        if self_issued:
+            # 🧮 #172: balance the increment on EVERY terminal outcome --
+            #    delivered, refused, cancelled, loop stopped before the
+            #    coroutine ran. Decrementing inside `_deliver` leaked one
+            #    per send that never ran, and the leaked count gated the
+            #    `_raise_depth` reset for the rest of the machine's life.
+            fut.add_done_callback(self._threadsafe_self_send_settled)
+        return fut
+
+    def _threadsafe_self_send_settled(self, _fut: Any) -> None:
+        """#172: one self-issued `send_threadsafe` reached a terminal state."""
+        self._threadsafe_self_sends_in_flight -= 1
 
     def _bind_loop(self) -> None:
         """Record the loop (and thread) that owns this interpreter.
@@ -1434,6 +1488,14 @@ class Interpreter(BaseInterpreter[TContext]):
         limit = getattr(self.machine, "max_iterations", 1000)
         try:
             while self.status == "running":
+                # 🧵 #171 / #116: a plain service the INITIAL configuration
+                #    invoked is still running when `start()` returns (#149
+                #    forbids blocking there). Its completion must still land
+                #    ahead of the first inbox event, as every later step's
+                #    does -- so await it here, before the inbox is read. The
+                #    loop stays live: this is an await, not a block.
+                if self._inline_service_futures:
+                    await self._await_inline_services()
                 # ⚡ #48: due timers first. They were delivered by the clock
                 #    straight into the priority lane; an external backlog of
                 #    any depth cannot delay them past this point.
@@ -1446,7 +1508,24 @@ class Interpreter(BaseInterpreter[TContext]):
                 #    construction; mirror that here. It still counts toward
                 #    the depth (below) so a rollback->re-arm cycle stays
                 #    bounded.
-                if self._raise_depth > limit and not is_system_event(event):
+                # 🛟 #168: `not is_system_event(event)` exempted EVERY
+                #    completion, so an invoke cycle (`ver -> arm -> ver`) ran
+                #    unbounded and silent here while the sync engine tripped.
+                #    Mirror the sync rule: the FIRST completion that arrives
+                #    at the trip is spared (finished work must land, #120),
+                #    every later self-generated event -- completion or not --
+                #    is cut until an external event resets the chain.
+                over = self._raise_depth > limit
+                if over and is_system_event(event) and not self._chain_tripped:
+                    self._chain_tripped = True
+                    logger.warning(
+                        "🛟 Chain budget reached on '%s' while an engine "
+                        "completion ('%s') was pending; delivering it, then "
+                        "cutting the self-generated tail.",
+                        self.id,
+                        event.type,
+                    )
+                elif over:
                     logger.error(
                         "🛑 Exceeded %d chained self-raised events on '%s'. "
                         "This means an action raises the event that triggers "
@@ -1455,7 +1534,10 @@ class Interpreter(BaseInterpreter[TContext]):
                         limit,
                         self.id,
                     )
-                    self._raise_depth = 0
+                    # 🔗 Sticky within the chain (#88): the runaway keeps
+                    #    regenerating until an external event resets the
+                    #    depth below; do not hand it a fresh budget per drop.
+                    self._chain_tripped = True
                     # 🔔 #77 criterion 6: observable, not just logged.
                     for plugin in self._plugins:
                         plugin.on_event_dropped(self, event, "chain_budget")
@@ -1471,6 +1553,21 @@ class Interpreter(BaseInterpreter[TContext]):
                     )
                     if from_inbox:
                         self._event_queue.task_done()
+                    # 🏁 A drop that leaves NO self-generated work pending
+                    #    ends the chain -- the sync drain would have
+                    #    returned here. Without this the trip stayed sticky
+                    #    across idle time, and a service that finished
+                    #    50 ms later (#120) was cut as if it were the
+                    #    runaway. A cycle made of completions (#167/#168)
+                    #    stays bounded: the dropped completion is the only
+                    #    thing that could have re-armed it.
+                    if (
+                        not self._internal_queue
+                        and not self._priority_queue
+                        and not self._threadsafe_self_sends_in_flight
+                    ):
+                        self._raise_depth = 0
+                        self._chain_tripped = False
                     continue
 
                 logger.debug(
@@ -1518,6 +1615,12 @@ class Interpreter(BaseInterpreter[TContext]):
                 self.last_transition_ok = True
                 self._deferred_this_step.clear()  # #106: per-step scope
                 self._guard_denied_this_step = False  # #153: per-step scope
+                if not is_system_event(event) or from_inbox:
+                    # 🔁 #166 / #151: a user event (or anything the CALLER
+                    #    queued) starts a fresh settle budget; a self-
+                    #    generated completion continues the running one.
+                    self._settle_iterations = 0
+                    self._settle_tripped = False
                 try:
                     self._processing = True
                     depth_before = self._raise_depth
@@ -1532,9 +1635,11 @@ class Interpreter(BaseInterpreter[TContext]):
                     if (
                         self._raise_depth == depth_before
                         and not self._internal_queue
+                        and not self._priority_queue
                         and not self._threadsafe_self_sends_in_flight
                     ):
                         self._raise_depth = 0
+                        self._chain_tripped = False
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -1709,18 +1814,32 @@ class Interpreter(BaseInterpreter[TContext]):
         #    v5.31.0. `max_iterations` is configurable on the machine.
         if not self.machine.has_always_transitions:
             return  # ⚡ nothing to settle; see MachineNode.has_always_transitions
-        iterations = 0
         limit = getattr(self.machine, "max_iterations", 1000)
         while True:
-            iterations += 1
-            if iterations > limit:
-                logger.error(
-                    "🔁 Exceeded %d microsteps while settling transient "
-                    "transitions in '%s'. Aborting to avoid an infinite "
-                    "loop; check for mutually-targeting 'always' transitions.",
-                    limit,
-                    self.id,
-                )
+            # 🛟 #166: the budget is per MACROSTEP on the instance, not a
+            #    local counter per call. A local counter restarted at 0 on
+            #    every completion-driven re-entry (an `always` into an
+            #    invoking child whose service finishes inside the settle
+            #    re-delivers `done.invoke`, which re-settles...), so the
+            #    async loop spun for ever while the sync engine -- whose
+            #    counter lives on the instance (#103 / #151) -- tripped in
+            #    milliseconds. Reset by the run loop when an EXTERNAL event
+            #    begins its macrostep; a trip is observable (#112).
+            self._settle_iterations += 1
+            if self._settle_iterations > limit:
+                if not self._settle_tripped:
+                    logger.error(
+                        "🔁 Exceeded %d microsteps while settling transient "
+                        "transitions in '%s'. Aborting to avoid an infinite "
+                        "loop; check for mutually-targeting 'always' "
+                        "transitions or an 'always' into an invoking state.",
+                        limit,
+                        self.id,
+                    )
+                self._settle_tripped = True
+                self.last_transition_ok = False
+                self._last_action_error = RunawayChainError(self.id, limit, 0)
+                self._repair_configuration()
                 break
             transient_event = Event(type="")
             # 🧠 Use the memoised selection path so a transient transition on
@@ -2127,7 +2246,19 @@ class Interpreter(BaseInterpreter[TContext]):
             await self._wakeup.wait()
 
     def _deliver_priority(self, event: AnyEvent) -> None:
-        """Place *event* at the head of processing and wake the run loop."""
+        """Place *event* at the head of processing and wake the run loop.
+
+        🛟 #166 / #167 / #168: a completion the machine produced WHILE
+        processing (a plain service that finished inside the entering
+        macrostep, a rollback that re-armed an invoke, an ``always`` that
+        re-entered an invoking child) is self-generated work and is charged
+        to the chain budget exactly as the sync engine charges it. Only a
+        delivery from OUTSIDE a step (a due timer firing on an idle loop, a
+        task finishing later) is free -- that is external time, not the
+        machine feeding itself.
+        """
+        if self._processing:
+            self._raise_depth += 1
         self._priority_queue.append(event)
         if self._wakeup is not None:
             self._wakeup.set()
@@ -2326,6 +2457,14 @@ class Interpreter(BaseInterpreter[TContext]):
             # The bring-up task is transient (microseconds) and is tracked
             # only so an exit racing the start cancels it cleanly.
             self.task_manager.add(owner_id, task)
+            # 👶 #171: the ENTERING macrostep (and `start()`) awaits the
+            #    bring-up, so the child is addressable -- `sendTo("kid")`
+            #    resolves, `_actors` lists it -- by the time the step that
+            #    entered the invoking state is observable, as on the sync
+            #    engine. Kept apart from plain-service futures: `start()`
+            #    must await registration (microseconds) but NOT a plain
+            #    service's result (#149 -- the loop stays live).
+            self._actor_bringups.append(task)
             return
 
         # 📞 Case 2: The service is a standard callable.
@@ -2385,8 +2524,12 @@ class Interpreter(BaseInterpreter[TContext]):
         if self._service_executor is None:
             # 🧵 Small and explicit: the number of concurrently-running
             #    plain services is a property of the machine, not the host.
+            #    #173: the size is public (`service_pool_size=`) because a
+            #    fifth concurrent service otherwise waited in a wave, and
+            #    each wave blocked a macrostep -- slower than serial.
             self._service_executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=4, thread_name_prefix=f"xsm-svc-{self.id}"
+                max_workers=self._service_pool_size,
+                thread_name_prefix=f"xsm-svc-{self.id}",
             )
             self._owns_service_executor = True
         return self._service_executor
@@ -2402,11 +2545,23 @@ class Interpreter(BaseInterpreter[TContext]):
         A service that itself enters another invoking state (via its
         completion) is picked up by the loop's next iteration.
         """
+        await self._await_actor_bringups()
         while self._inline_service_futures:
             pending, self._inline_service_futures = (
                 self._inline_service_futures,
                 [],
             )
+            await asyncio.gather(*pending, return_exceptions=True)
+            await self._await_actor_bringups()
+
+    async def _await_actor_bringups(self) -> None:
+        """#171: block the current step until invoked children are registered.
+
+        A bring-up cancelled by an exit racing the start is a normal
+        outcome here, not an error to surface.
+        """
+        while self._actor_bringups:
+            pending, self._actor_bringups = self._actor_bringups, []
             await asyncio.gather(*pending, return_exceptions=True)
 
     def _invoke_plain_service_inline(
