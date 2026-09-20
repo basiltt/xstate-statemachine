@@ -17,6 +17,75 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Fixed
 
+- **Round-6 re-verification findings** (#166–#175; reopened #122). Every one
+  reproduced against `main` with an independent probe before the fix and
+  pinned in `tests/test_round6_findings.py`, both engines wherever parity is
+  the point. Three of the four candidate blockers were "fixed on the engine
+  the issue was filed against"; the fixes below are on the async engine and
+  each test runs the sync engine alongside it.
+  - **Every self-generated cycle is bounded on `Interpreter`.** An `always`
+    into a child whose plain service finished inside the settle pass hung
+    `send(wait=True)` for ever (#166): the settle budget was a local
+    counter per call, restarting at 0 on every completion-driven re-entry.
+    It is now per macrostep on the instance, reset only when an external
+    event begins its step — the sync engine's #103/#151 rule — and a trip
+    is observable (`last_error` is `RunawayChainError`). A completion the
+    machine produced *while processing* (a rollback that re-armed an
+    invoke, #167; an invoke ping-pong `ver -> arm -> ver`, #168) is charged
+    to the chain budget, and only the first completion that arrives at the
+    trip is spared (#120). A drop that leaves nothing self-generated
+    pending ends the chain, so a service that finishes later after an idle
+    trip is still delivered. The invoke cycle now trips at the same lap
+    count on both engines.
+  - **`get_persisted_snapshot()` from inside an entry/exit action is
+    refused** on both engines (#169). The guard was `in flight AND
+    illegal`; inside an entry action the new leaf is already active
+    (legal) while the context that entry is still writing is half-applied,
+    so a torn "filled with `filled_qty=0`" blob persisted and restored
+    cleanly. At the root, in flight alone now refuses; legality remains the
+    test for the bounded wait on a child caught mid-step by its parent.
+  - **`Receipt.denied` is `False` for a guard that *crashed*** under
+    `guardErrorPolicy: "raise"` (#170); `error` carries the exception, so
+    `(denied, error is None)` discriminates all three cases. Documented,
+    with the note that a denied event under `onUnhandled: "defer"` enters
+    the defer buffer.
+  - **`await Interpreter.start()` returns with the initial configuration's
+    invoked children registered** (#171), so `sendTo("kid")` on the first
+    event resolves as it does after `SyncInterpreter.start()`. A plain
+    service the initial state invoked still runs while `start()` returns
+    (#149), but its completion is awaited before the first inbox event is
+    read, so `start(); send("CANCEL")` orders identically on both engines
+    (#116).
+  - **`send_threadsafe(internal=True)` in-flight counter balances on every
+    terminal outcome** (#172) — delivered, refused, cancelled, loop
+    stopped before the coroutine ran — via a done-callback on the returned
+    future. A leaked count gated the chain-budget reset for the rest of
+    the machine's life.
+  - **`tick()` on a `RealClock` real-delay ladder** (#122, reopened): closed
+    as working as designed. `tick()` drains what is *due at the current
+    reading*; no synchronous call can make wall time pass, so a 50 ms
+    ladder needs one `tick()` per rung (or a `SimulatedClock`). The repro
+    encoded the async engine's *wall-clock wait* as a sync expectation.
+
+### Added
+
+- **`Interpreter(service_pool_size=N)`** and `DEFAULT_SERVICE_POOL_SIZE`
+  (#173). The executor plain-`def` services run on was a hard-coded pool
+  of 4; the fifth concurrent service waited in a wave, and because the
+  entering macrostep awaits the result each wave blocked a macrostep —
+  nine 0.2 s services took 5 s, worse than serial. The size is now public
+  and its interaction with macrostep blocking is documented.
+
+### Changed
+
+- **Production Characteristics** documents that a plain-`def` service
+  blocks its own machine's `after` timers for its whole duration (#174) —
+  an `after: 100` armed alongside a 500 ms plain service fires at ~500 ms;
+  make the service a coroutine if a timer must interrupt it — and that the
+  `maxIterations` settle budget bounds microsteps, not wall-clock lateness.
+
+### Fixed
+
 - **Round-5 re-verification findings** (#142–#162; reopened #118, #122,
   #125, #133, #134). Twenty-six issues, every one reproduced against
   `main` with an independent probe before the fix and pinned in

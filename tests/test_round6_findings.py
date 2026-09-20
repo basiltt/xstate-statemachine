@@ -16,12 +16,16 @@ import warnings
 from typing import Any, Dict, List
 
 from src.xstate_statemachine import (
+    Event,
     Interpreter,
     MachineLogic,
     RunawayChainError,
+    SnapshotMidStepError,
     SyncInterpreter,
     create_machine,
 )
+from src.xstate_statemachine.exceptions import InterpreterStoppedError
+from src.xstate_statemachine.interpreter import DEFAULT_SERVICE_POOL_SIZE
 from src.xstate_statemachine.plugins import PluginBase
 
 
@@ -243,6 +247,306 @@ class TestAsyncInvokeCycleTrips(_Quiet):
             return v
 
         self.assertEqual(_run(main()), "ok")
+
+
+# =============================================================================
+# #169 — a snapshot from inside an entry action is refused on both engines
+# =============================================================================
+class TestEntryActionSnapshotRefused(_Quiet):
+    CFG = {
+        "id": "oms",
+        "initial": "open",
+        "context": {"filled_qty": 0},
+        "states": {
+            "open": {"on": {"FILL": "filled"}},
+            "filled": {"entry": ["record_fill"]},
+        },
+    }
+
+    def _logic(self, res: Dict[str, Any]) -> MachineLogic:
+        def record_fill(i: Any, c: Any, e: Any, a: Any) -> None:
+            c["filled_qty"] = 0
+            try:
+                i.get_persisted_snapshot()
+                res["r"] = "ACCEPTED"
+            except SnapshotMidStepError:
+                res["r"] = "REFUSED"
+            c["filled_qty"] = 100
+
+        return MachineLogic(actions={"record_fill": record_fill})
+
+    def test_sync(self) -> None:
+        res: Dict[str, Any] = {}
+        s = SyncInterpreter(_mk(self.CFG, logic=self._logic(res))).start()
+        s.send("FILL")
+        self.assertEqual(res["r"], "REFUSED")
+        self.assertEqual(s.context["filled_qty"], 100)
+        snap = s.get_persisted_snapshot()  # settled: fine
+        self.assertEqual(snap["context"]["filled_qty"], 100)
+
+    def test_async(self) -> None:
+        res: Dict[str, Any] = {}
+
+        async def main() -> int:
+            i = Interpreter(_mk(self.CFG, logic=self._logic(res)))
+            await i.start()
+            await i.send("FILL", wait=True)
+            qty = i.get_persisted_snapshot()["context"]["filled_qty"]
+            await i.stop()
+            return qty
+
+        self.assertEqual(_run(main()), 100)
+        self.assertEqual(res["r"], "REFUSED")
+
+
+# =============================================================================
+# #170 — a guard that CRASHED under "raise" is not `denied`
+# =============================================================================
+class TestCrashedGuardIsNotDenied(_Quiet):
+    CFG = {
+        "id": "g",
+        "initial": "a",
+        "guardErrorPolicy": "raise",
+        "states": {
+            "a": {"on": {"EV": {"target": "b", "guard": "raises"}}},
+            "b": {},
+        },
+    }
+
+    @staticmethod
+    def _logic() -> MachineLogic:
+        def raises(c: Any, e: Any) -> bool:
+            raise RuntimeError("guard boom")
+
+        return MachineLogic(guards={"raises": raises})
+
+    def test_sync(self) -> None:
+        s = SyncInterpreter(_mk(self.CFG, logic=self._logic())).start()
+        try:
+            r = s.send("EV", wait=True)
+        except RuntimeError:
+            r = None
+        if r is not None:
+            self.assertFalse(r.denied)
+            self.assertIsInstance(r.error, RuntimeError)
+        self.assertFalse(s._guard_denied_this_step)
+
+    def test_async(self) -> None:
+        async def main() -> Any:
+            i = await Interpreter(_mk(self.CFG, logic=self._logic())).start()
+            r = await i.send("EV", wait=True)
+            await i.stop()
+            return r
+
+        r = _run(main())
+        self.assertFalse(r.denied)
+        self.assertIsInstance(r.error, RuntimeError)
+
+    def test_false_guard_is_still_denied(self) -> None:
+        logic = MachineLogic(guards={"raises": lambda c, e: False})
+        s = SyncInterpreter(_mk(self.CFG, logic=logic)).start()
+        self.assertTrue(s.send("EV", wait=True).denied)
+
+
+# =============================================================================
+# #171 — async start() returns with initial children registered / services done
+# =============================================================================
+class TestAsyncStartAwaitsInitialInvokes(_Quiet):
+    def test_child_actor_registered_before_start_returns(self) -> None:
+        child = {
+            "id": "kid",
+            "initial": "w",
+            "states": {"w": {"on": {"POKE": "p"}}, "p": {}},
+        }
+        cfg = {
+            "id": "par",
+            "initial": "s",
+            "states": {
+                "s": {
+                    "invoke": {"id": "kid", "src": "kidm"},
+                    "on": {
+                        "GO": {
+                            "actions": [
+                                {
+                                    "type": "sendTo",
+                                    "params": {"to": "kid", "event": "POKE"},
+                                }
+                            ]
+                        }
+                    },
+                }
+            },
+        }
+
+        async def main() -> Any:
+            i = Interpreter(
+                _mk(cfg, logic=MachineLogic(services={"kidm": _mk(child)}))
+            )
+            await i.start()
+            actors = sorted(i._actors)
+            await i.send("GO", wait=True)
+            await asyncio.sleep(0.02)
+            kid_value = i._actors["par:kid"].value
+            await i.stop()
+            return actors, kid_value
+
+        actors, kid_value = _run(main())
+        self.assertEqual(actors, ["par:kid"])
+        self.assertEqual(kid_value, "p")
+
+    def test_initial_plain_service_completion_precedes_first_event(
+        self,
+    ) -> None:
+        # #149 requires `start()` to return while a plain service runs; the
+        # parity #171 asks for is that its completion still lands AHEAD of
+        # the first event the caller sends after `start()` (#116).
+        cfg = {
+            "id": "m",
+            "initial": "a",
+            "states": {
+                "a": {
+                    "invoke": {"id": "s", "src": "svc", "onDone": "b"},
+                    "on": {"CANCEL": "c"},
+                },
+                "b": {"on": {"CANCEL": "b_cancelled"}},
+                "b_cancelled": {},
+                "c": {},
+            },
+        }
+        logic = MachineLogic(services={"svc": lambda i, c, e: 1})
+        s = SyncInterpreter(_mk(cfg, logic=logic)).start()
+        s.send("CANCEL")
+        self.assertEqual(s.value, "b_cancelled")
+
+        async def main() -> Any:
+            i = await Interpreter(_mk(cfg, logic=logic)).start()
+            await i.send("CANCEL", wait=True)
+            v = i.value
+            await i.stop()
+            return v
+
+        self.assertEqual(_run(main()), "b_cancelled")
+
+
+# =============================================================================
+# #172 — threadsafe self-send counter balances on every outcome
+# =============================================================================
+class TestThreadsafeInFlightCounterBalances(_Quiet):
+    def test_counter_zero_after_stop_with_undelivered_sends(self) -> None:
+        cfg = {
+            "id": "m",
+            "initial": "a",
+            "states": {"a": {"on": {"EV": {"actions": []}}}},
+        }
+
+        async def main() -> int:
+            i = await Interpreter(_mk(cfg)).start()
+            for _ in range(5):
+                i.send_threadsafe("EV", internal=True)
+            await i.stop()
+            await asyncio.sleep(0.05)
+            return i._threadsafe_self_sends_in_flight
+
+        self.assertEqual(_run(main()), 0)
+
+
+# =============================================================================
+# #173 — service_pool_size is public and honoured
+# =============================================================================
+class TestServicePoolSize(_Quiet):
+    def test_default_and_override(self) -> None:
+        cfg = {"id": "m", "initial": "a", "states": {"a": {}}}
+        self.assertEqual(DEFAULT_SERVICE_POOL_SIZE, 4)
+        i = Interpreter(_mk(cfg), service_pool_size=9)
+        ex = i._get_service_executor()
+        self.assertEqual(ex._max_workers, 9)  # type: ignore[attr-defined]
+        ex.shutdown(wait=False)
+        with self.assertRaises(ValueError):
+            Interpreter(_mk(cfg), service_pool_size=0)
+
+    def test_nine_concurrent_plain_services_run_in_one_wave(self) -> None:
+        regions = {
+            f"r{k}": {
+                "initial": "w",
+                "states": {
+                    "w": {
+                        "invoke": {
+                            "id": f"s{k}",
+                            "src": "svc",
+                            "onDone": "d",
+                        }
+                    },
+                    "d": {"type": "final"},
+                },
+            }
+            for k in range(9)
+        }
+        cfg = {"id": "fan", "type": "parallel", "states": regions}
+
+        def svc(i: Any, c: Any, e: Any) -> int:
+            time.sleep(0.15)
+            return 1
+
+        async def main() -> float:
+            i = Interpreter(
+                _mk(cfg, logic=MachineLogic(services={"svc": svc})),
+                service_pool_size=9,
+            )
+            t0 = time.monotonic()
+            await i.start()
+            while not all(v == "d" for v in i.value.values()):
+                await asyncio.sleep(0.005)
+            took = time.monotonic() - t0
+            await i.stop()
+            return took
+
+        # with the old pool of 4 this is >= 3 waves (0.45 s)
+        self.assertLess(_run(main()), 0.15 * 2.5)
+
+
+# =============================================================================
+# #175 — receipts racing stop(): "ok" iff the event was applied
+# =============================================================================
+class TestReceiptsRacingStop(_Quiet):
+    def test_ok_receipts_equal_applied_events(self) -> None:
+        cfg = {
+            "id": "m",
+            "initial": "a",
+            "context": {"n": 0},
+            "states": {
+                "a": {"on": {"EV": {"target": "b", "actions": ["slow"]}}},
+                "b": {"on": {"EV": {"target": "a", "actions": ["slow"]}}},
+            },
+        }
+
+        async def slow(i: Any, c: Any, e: Any, a: Any) -> None:
+            await asyncio.sleep(0.001)
+            c["n"] += 1
+
+        async def trial(delay: float) -> None:
+            i = await Interpreter(
+                _mk(cfg, logic=MachineLogic(actions={"slow": slow}))
+            ).start()
+            ev = Event("EV")  # one instance, reused: the #175 shape
+            tasks = [
+                asyncio.ensure_future(i.send(ev, wait=True)) for _ in range(12)
+            ]
+            await asyncio.sleep(delay)
+            await i.stop()
+            applied = i.context["n"]
+            res = await asyncio.gather(*tasks)
+            ok = sum(1 for r in res if r.error is None)
+            stopped = sum(
+                1 for r in res if isinstance(r.error, InterpreterStoppedError)
+            )
+            self.assertEqual(ok, applied)
+            self.assertEqual(ok + stopped, 12)
+
+        async def main() -> None:
+            for d in (0.0, 0.002, 0.005, 0.009, 0.015):
+                await trial(d)
+
+        _run(main())
 
 
 if __name__ == "__main__":

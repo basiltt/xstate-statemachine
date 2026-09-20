@@ -90,6 +90,9 @@ Two properties of that curve matter for design:
 
 - **The error is roughly constant in absolute terms across delay sizes.** A 10 ms timer and a 10 s timer are each ~36 ms late at 500 busy machines — so *short* deadlines degrade worst *relatively*. A 10 ms timeout at 500 machines is meaningless; a 30 s one is fine.
 - **The OS floor.** On Windows the default timer resolution is ~15.6 ms; an `after: 5` cannot fire at 5 ms on an idle loop there. Linux and macOS are ~1 ms.
+- **A plain-`def` service blocks its own machine's timers for its whole duration** (#174). A non-coroutine `invoke` runs on a worker thread, but the macrostep that entered the invoking state *awaits its result* before it completes (that is what puts `done.invoke` ahead of the inbox, #116/#149). A due `after` on that machine is delivered only when that macrostep ends, so an `after: 100` armed alongside a 500 ms plain service fires at ~500 ms, not 100. Other machines on the loop are unaffected. If a timer has to interrupt a long service, make the service a coroutine (`async def`) — it then runs as a task and the timer fires on time.
+
+What the `maxIterations` settle budget bounds is the *number of microsteps* a macrostep may take, not its wall-clock duration; a budget is not a deadline.
 
 ### What to use `after` for
 

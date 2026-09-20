@@ -206,6 +206,12 @@ def _completed() -> "asyncio.Future[None]":
     return fut
 
 
+#: 🧵 #173: workers in the executor an `Interpreter` creates for plain-`def`
+#: services when none is supplied. Override per instance with
+#: ``Interpreter(..., service_pool_size=N)``.
+DEFAULT_SERVICE_POOL_SIZE: int = 4
+
+
 class Interpreter(BaseInterpreter[TContext]):
     """Brings a state machine to life by interpreting it asynchronously.
 
@@ -245,12 +251,14 @@ class Interpreter(BaseInterpreter[TContext]):
         "_event_loop_task",
         "_inbox_streak",
         "_inline_service_futures",
+        "_actor_bringups",
         "_invoked_children",
         "_loop",
         "_loop_thread_name",
         "_max_queue_size",
         "_overflow_policy",
         "_owns_service_executor",
+        "_service_pool_size",
         "_priority_queue",
         "_processing",
         "_raise_depth",
@@ -274,6 +282,7 @@ class Interpreter(BaseInterpreter[TContext]):
         overflow_policy: "OverflowPolicy" = OverflowPolicy.RAISE,
         strict: Optional[bool] = None,
         service_executor: Optional[concurrent.futures.Executor] = None,
+        service_pool_size: int = DEFAULT_SERVICE_POOL_SIZE,
     ) -> None:
         """Initializes a new asynchronous Interpreter instance.
 
@@ -297,6 +306,15 @@ class Interpreter(BaseInterpreter[TContext]):
                 a plain service's ``done.invoke`` lands ahead of any event
                 already waiting in the inbox exactly as on the sync engine
                 (#116) -- but the event loop is free for the duration.
+            service_pool_size: Worker count of the executor this
+                interpreter creates when ``service_executor`` is ``None``
+                (#173). Default ``DEFAULT_SERVICE_POOL_SIZE`` (= 4). The
+                (N+1)-th concurrently-running plain service waits for a
+                worker, and because the entering macrostep awaits its
+                result, that wait also blocks the macrostep: size the
+                pool to the number of plain services a single
+                configuration can have in flight. Ignored when an
+                executor is supplied.
 
         Args:
             machine (MachineNode[TContext]): The `MachineNode` instance
@@ -339,9 +357,14 @@ class Interpreter(BaseInterpreter[TContext]):
             service_executor
         )
         self._owns_service_executor: bool = service_executor is None
+        if service_pool_size < 1:
+            raise ValueError("service_pool_size must be >= 1")
+        self._service_pool_size: int = service_pool_size
         #: 🧵 #149: plain-service results the CURRENT macrostep must await
         #: before it completes (see `_process_event_and_transient_transitions`).
         self._inline_service_futures: List["asyncio.Future[Any]"] = []
+        #: 👶 #171: invoked-child bring-up tasks the current step awaits.
+        self._actor_bringups: List["asyncio.Task[Any]"] = []
         #: 🧾 #39: receipts awaiting the macrostep of a specific event,
         #: keyed by the event object's identity (events are NamedTuples and
         #: may compare equal; identity is what distinguishes two sends of
@@ -527,6 +550,15 @@ class Interpreter(BaseInterpreter[TContext]):
             # unrelated event happened to nudge it. `start()` must return a
             # settled configuration in BOTH engines.
             await self._settle_transient_transitions()
+            # 👶 #171: `start()` means "the machine is up": the children
+            #    its initial configuration invoked are registered and
+            #    addressable, as after `SyncInterpreter.start()`. That was
+            #    left to the FIRST event's macrostep, so `await start();
+            #    send("POKE")` lost the poke to `unresolved_target` on the
+            #    async engine only. A plain-`def` service's RESULT is not
+            #    awaited here: #149 requires `start()` to return while it
+            #    runs; its `done.invoke` lands through the priority lane.
+            await self._await_actor_bringups()
 
             # 🔌 #124: the sync engine reports entering the initial
             #    configuration as an `on_transition` record for the init
@@ -1166,7 +1198,6 @@ class Interpreter(BaseInterpreter[TContext]):
 
         async def _deliver() -> None:
             if self_issued:
-                self._threadsafe_self_sends_in_flight -= 1
                 if not self._refuse_if_not_running(event_obj):
                     self._raise_depth += 1
                     self._internal_queue.append(event_obj)
@@ -1175,7 +1206,19 @@ class Interpreter(BaseInterpreter[TContext]):
                 return
             self._enqueue(event_obj)
 
-        return asyncio.run_coroutine_threadsafe(_deliver(), self._loop)
+        fut = asyncio.run_coroutine_threadsafe(_deliver(), self._loop)
+        if self_issued:
+            # 🧮 #172: balance the increment on EVERY terminal outcome --
+            #    delivered, refused, cancelled, loop stopped before the
+            #    coroutine ran. Decrementing inside `_deliver` leaked one
+            #    per send that never ran, and the leaked count gated the
+            #    `_raise_depth` reset for the rest of the machine's life.
+            fut.add_done_callback(self._threadsafe_self_send_settled)
+        return fut
+
+    def _threadsafe_self_send_settled(self, _fut: Any) -> None:
+        """#172: one self-issued `send_threadsafe` reached a terminal state."""
+        self._threadsafe_self_sends_in_flight -= 1
 
     def _bind_loop(self) -> None:
         """Record the loop (and thread) that owns this interpreter.
@@ -1445,6 +1488,14 @@ class Interpreter(BaseInterpreter[TContext]):
         limit = getattr(self.machine, "max_iterations", 1000)
         try:
             while self.status == "running":
+                # 🧵 #171 / #116: a plain service the INITIAL configuration
+                #    invoked is still running when `start()` returns (#149
+                #    forbids blocking there). Its completion must still land
+                #    ahead of the first inbox event, as every later step's
+                #    does -- so await it here, before the inbox is read. The
+                #    loop stays live: this is an await, not a block.
+                if self._inline_service_futures:
+                    await self._await_inline_services()
                 # ⚡ #48: due timers first. They were delivered by the clock
                 #    straight into the priority lane; an external backlog of
                 #    any depth cannot delay them past this point.
@@ -2406,6 +2457,14 @@ class Interpreter(BaseInterpreter[TContext]):
             # The bring-up task is transient (microseconds) and is tracked
             # only so an exit racing the start cancels it cleanly.
             self.task_manager.add(owner_id, task)
+            # 👶 #171: the ENTERING macrostep (and `start()`) awaits the
+            #    bring-up, so the child is addressable -- `sendTo("kid")`
+            #    resolves, `_actors` lists it -- by the time the step that
+            #    entered the invoking state is observable, as on the sync
+            #    engine. Kept apart from plain-service futures: `start()`
+            #    must await registration (microseconds) but NOT a plain
+            #    service's result (#149 -- the loop stays live).
+            self._actor_bringups.append(task)
             return
 
         # 📞 Case 2: The service is a standard callable.
@@ -2465,8 +2524,12 @@ class Interpreter(BaseInterpreter[TContext]):
         if self._service_executor is None:
             # 🧵 Small and explicit: the number of concurrently-running
             #    plain services is a property of the machine, not the host.
+            #    #173: the size is public (`service_pool_size=`) because a
+            #    fifth concurrent service otherwise waited in a wave, and
+            #    each wave blocked a macrostep -- slower than serial.
             self._service_executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=4, thread_name_prefix=f"xsm-svc-{self.id}"
+                max_workers=self._service_pool_size,
+                thread_name_prefix=f"xsm-svc-{self.id}",
             )
             self._owns_service_executor = True
         return self._service_executor
@@ -2482,11 +2545,23 @@ class Interpreter(BaseInterpreter[TContext]):
         A service that itself enters another invoking state (via its
         completion) is picked up by the loop's next iteration.
         """
+        await self._await_actor_bringups()
         while self._inline_service_futures:
             pending, self._inline_service_futures = (
                 self._inline_service_futures,
                 [],
             )
+            await asyncio.gather(*pending, return_exceptions=True)
+            await self._await_actor_bringups()
+
+    async def _await_actor_bringups(self) -> None:
+        """#171: block the current step until invoked children are registered.
+
+        A bring-up cancelled by an exit racing the start is a normal
+        outcome here, not an error to surface.
+        """
+        while self._actor_bringups:
+            pending, self._actor_bringups = self._actor_bringups, []
             await asyncio.gather(*pending, return_exceptions=True)
 
     def _invoke_plain_service_inline(
