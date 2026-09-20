@@ -2591,7 +2591,9 @@ class Interpreter(BaseInterpreter[TContext]):
             # The bring-up task is transient (microseconds) and is tracked
             # only so an exit racing the start cancels it cleanly.
             self.task_manager.add(owner_id, task)
-            self._owe_completion(task, child_actor=True)
+            # (Not `_owe_completion`: a child's terminal may legitimately
+            #  never come -- a long-lived child is stopped by exit -- so
+            #  it cannot be a debt. Its terminal IS charged when it lands.)
             # 👶 #171: the ENTERING macrostep (and `start()`) awaits the
             #    bring-up, so the child is addressable -- `sendTo("kid")`
             #    resolves, `_actors` lists it -- by the time the step that
@@ -2655,17 +2657,18 @@ class Interpreter(BaseInterpreter[TContext]):
         if not handled:
             self._fail(exc)
 
-    def _owe_completion(
-        self, task: "asyncio.Task[Any]", *, child_actor: bool = False
-    ) -> None:
-        """#179: a step of an OPEN chain armed engine work whose completion
-        will land on a later loop turn. Count it so the chain stays alive
-        until that completion arrives and is charged.
+    def _owe_completion(self, task: "asyncio.Task[Any]") -> None:
+        """#179: the current step armed a coroutine service whose completion
+        will land on a later loop turn. Count it so the step's "raised
+        nothing, armed nothing" chain-end test knows the chain is not over.
 
-        Cancellation (the owning state was exited) settles the debt without
-        a completion; a child actor's debt is settled by its terminal
-        listener publishing `done.invoke` / `error.platform`, or by
-        `_retire_invoked_child` when it is stopped without one.
+        Every coroutine service task ends in exactly one of: a `done.invoke`
+        / `error.platform` published through `_publish_completion` (which
+        settles the debt as it charges), or cancellation because the owning
+        state was exited (settled here without a completion). So the count
+        can never leak. Child actors are deliberately NOT counted: a
+        long-lived child is stopped by an exit and never produces a
+        terminal, so its bring-up cannot be a debt.
         """
         if not self._processing:
             return
@@ -2675,8 +2678,7 @@ class Interpreter(BaseInterpreter[TContext]):
             if t.cancelled() and self._chain_owed:
                 self._chain_owed -= 1
 
-        if not child_actor:
-            task.add_done_callback(_settle_if_cancelled)
+        task.add_done_callback(_settle_if_cancelled)
 
     def _publish_completion(self, event: AnyEvent) -> None:
         """Publish an ENGINE completion (`done.invoke`, `error.platform`).
