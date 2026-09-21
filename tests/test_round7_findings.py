@@ -216,8 +216,12 @@ class TestInvokeCycleBoundedForEveryServiceKind(_Quiet):
                     await i.stop()
 
                 _run(main())
-                # Two chained completions were charged before `c` was entered.
-                self.assertEqual(seen, [2])
+                # #201: the FIRST completion of a chain that starts from the
+                # initial state is the SEED (user standing, like the sync
+                # drain's seed rule); its descendant -- the second
+                # completion -- is generated event #1. So `c` is entered at
+                # depth 1, matching the sync engine's lap count exactly.
+                self.assertEqual(seen, [1])
 
     def test_independent_completions_do_not_accumulate(self) -> None:
         # Converse: a long-running service beside heavy independent traffic
@@ -1006,11 +1010,18 @@ class TestContradictoryConfigurationRefused(_Quiet):
         with self.assertRaises(SnapshotCorruptError):
             SyncInterpreter.from_snapshot(json.dumps(blob), _mk(self.CFG))
 
-    def test_agreeing_fields_and_absent_configuration_restore(self) -> None:
+    def test_agreeing_fields_restore_and_v0_may_omit_configuration(
+        self,
+    ) -> None:
         blob = self._blob()
         SyncInterpreter.from_snapshot(json.dumps(blob), _mk(self.CFG))
+        # #198: a VERSIONED blob must carry `configuration`; only a v0
+        # (pre-`configuration`) payload may restore from `state_ids` alone.
         del blob["configuration"]
-        r = SyncInterpreter.from_snapshot(json.dumps(blob), _mk(self.CFG))
+        with self.assertRaises(SnapshotCorruptError):
+            SyncInterpreter.from_snapshot(json.dumps(blob), _mk(self.CFG))
+        v0 = {"status": "running", "context": {}, "state_ids": ["m.a"]}
+        r = SyncInterpreter.from_snapshot(json.dumps(v0), _mk(self.CFG))
         self.assertEqual(r.value, "a")
 
 

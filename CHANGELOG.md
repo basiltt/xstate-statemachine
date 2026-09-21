@@ -9,6 +9,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Round-8 re-verification findings** (#192–#201; reopened #181, #186).
+  Every one reproduced against `main` @ `6db65d8` with the reporter's
+  standalone repro before the fix and pinned in
+  `tests/test_round8_findings.py` (29 tests, every service/action test
+  parametrised over `def` / `async def`, both engines where parity is the
+  point).
+  - **The priority lane sheds by provenance, not position (#192).** #180
+    taught the *charge* site who issued an event; the *shed* site still cut
+    whatever sat at the head of the FIFO when a chain tripped, so an
+    external `send(priority=True)` could be destroyed as `chain_budget` by
+    a runaway it had nothing to do with, and a priority send issued from an
+    action was never charged at all. Each lane item now carries its
+    provenance; only self-generated items are ever shed, and an
+    action-issued priority send is charged like a `raise`.
+  - **A `def` service is unwound by rollback and roll-forward (#193).** The
+    executor handoff moved from arm time into the task the engine holds,
+    so a transition that arms the invoke and is then rolled back
+    (`actionErrorPolicy: "rollback"`) or rolled forward (an `always` out of
+    the state) cancels it before the callable is submitted — as a coroutine
+    service's task is never started. A result that arrives for an exited
+    state is ignored (SCXML §6.4.2). The cancellation half of the report is
+    the documented plain-`def` contract on **both** engines — the entering
+    step awaits the service, so an event cannot pre-empt it — and
+    Production Characteristics § 2 now says so; `async def` remains the
+    interruptible kind.
+  - **`children_timeout` is per child and always reports an overrun
+    (#194; reopened #181).** The bound was aggregate and its WARNING sat on
+    the same timeout path, so a non-yielding `def` entry action both defeated
+    the bound and silenced the warning. N coroutine children settle in ~D;
+    the WARNING fires whenever the allowance was exceeded, including the
+    single-threaded case a bound cannot pre-empt — which the docs now state.
+  - **`DoneEvent` / `ErrorEvent` / `AfterEvent` carry provenance (#195).**
+    They were public NamedTuples trusted on a bare `isinstance`, so a
+    hand-built `DoneEvent("done.invoke.fill", ...)` bypassed `strict` and
+    `onUnhandled` and drove a real `onDone` while the genuine service was
+    still running — in-process, or reconstituted from a snapshot record by
+    `restore_event()`. The engine now mints private subclasses
+    (`engine_done` / `engine_error` / `engine_after`), `is_system_event`
+    requires them, a user-built one is refused under `strict` with a message
+    naming it as an engine-generated name, and persisted completions carry
+    `"engine": true` so a genuine round-trip keeps its provenance while a
+    forged record restores as user traffic.
+  - **An `always` never competes for a named event (#196).** Eventless
+    transitions were eligible candidates for *named* events, and a deeper
+    `always` outranked a shallower handler, so under a spinning `always`
+    every external event was consumed by a transition unrelated to it and
+    its own actions never ran — with `last_error` clean. Eventless
+    transitions are now selected only in the eventless settle pass (SCXML
+    §3.13); the settle trip is reported on every step it affects. The
+    reporter's parity gap was #179's inbox-lane reset, closed in round 7.
+    Surfaced alongside: `SyncInterpreter` did not stop the child actor an
+    exited state's `invoke` had started (the async engine has since #43),
+    so the re-entering cycle leaked one pump thread per lap; it now keeps
+    the same owner map and reaps invoked children on exit and on `stop()`.
+  - **#197 pinned.** `send(wait=True)` never resolves over an empty
+    configuration on either engine or lane (property test, 15 laps × 2
+    kinds × 2 engines); the window closed with #179/#182.
+  - **Versioned payloads carry both configuration fields (#198; reopened
+    #186).** The agreement rule short-circuited on an *empty* field, so
+    emptying `state_ids` — a strictly simpler mutation than contradicting
+    it — let a forged `configuration` relocate the machine. On a
+    `version >= 1` running snapshot both fields must be present and
+    non-empty; v0 payloads keep the `state_ids`-only shape.
+  - **`on_interpreter_start` is inside the in-flight window (#199).** The
+    hook fired a few lines before #182's guard was raised, with
+    `status="running"` and no configuration; a snapshot from it was the
+    exact torn shape #182 closed. The flag is up before the hook on both
+    engines.
+  - **The owed-completion ledger is task-keyed and leak-free (#200).** A
+    bare counter was decremented by whichever completion arrived next and
+    leaked when a service task ended with a `BaseException` that was
+    neither `Exception` nor `CancelledError`. Each debt is now the owing
+    task itself, settled by that task's done-callback on every terminal
+    outcome; one invocation's completion can never pay another's debt.
+  - **Lap parity, stated exactly (#201).** The round-7 sentence "both
+    service kinds trip at the same lap count as the sync engine" was one
+    lap off for a cycle starting from the *initial* state (22 vs 23): the
+    first completion the initial descent produces is the chain's seed
+    (user standing, the sync drain's #77 rule), not a link. Fixed; all
+    three lanes now agree at every limit tested. What is *not* promised:
+    on `rollback + onDone` the sync engine does not re-arm a rolled-back
+    invoke inside the same drain and stops after the first rollback with
+    that `RuntimeError`, while both async lanes trip `RunawayChainError`
+    at the same lap. The pin states both facts.
 - **Round-7 re-verification findings** (#179–#190; reopened #167, #168,
   #175). Every one reproduced against `main` @ `221ce7c` with the
   reporter's standalone repro before the fix (all twelve exited 1) and

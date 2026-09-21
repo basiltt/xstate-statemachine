@@ -55,11 +55,14 @@ from typing import (
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from .events import (
-    SYSTEM_EVENT_PREFIXES,
     AfterEvent,
     DoneEvent,
     ErrorEvent,
     Event,
+    SYSTEM_EVENT_PREFIXES,
+    engine_after,
+    engine_done,
+    engine_error,
     is_system_event,
     persist_event,
     restore_event,
@@ -634,7 +637,7 @@ class BaseInterpreter(Generic[TContext]):
         ] = []
         #: Events held back under ``onUnhandled: "defer"``, replayed after
         #: the next successful transition. Empty under other policies.
-        self._deferred_events: List[Event] = []
+        self._deferred_events: List[AnyEvent] = []
         #: 🧾 #84/#106: the event objects `onUnhandled: "defer"` held during
         #: the CURRENT step, so `send(wait=True)` can report `deferred=True`.
         #: Holds references (not `id()`s -- an id is recycled the moment
@@ -1677,7 +1680,7 @@ class BaseInterpreter(Generic[TContext]):
         # 🛡️ #110: validate the payload SHAPE before touching it, so a
         #    corrupted blob is a typed `SnapshotCorruptError` rather than a
         #    bare KeyError/AttributeError -- or, worse, silently accepted.
-        persistence.check_shape(snapshot)
+        persistence.check_shape(snapshot, version=version)  # #198
 
         # 🧪 Create a new instance of the correct interpreter class (sync/async)
         # ⏱️ #117: honour an injected clock -- the other half of the
@@ -1868,6 +1871,24 @@ class BaseInterpreter(Generic[TContext]):
     ) -> bool:
         """Engine-specific: is a service/actor currently running for this?"""
         raise NotImplementedError  # pragma: no cover
+
+    def _completion_is_for_live_invocation(
+        self, state: StateNode, invocation: InvokeDefinition, event: Any
+    ) -> bool:
+        """#195: may *event* drive this invocation's `onDone` / `onError`?
+
+        Only a completion the ENGINE minted may -- provenance by type
+        identity, exactly as `system_event` marks a plain `Event`. A
+        hand-built `DoneEvent` / `ErrorEvent` naming the invocation, live
+        or not, is user traffic: it never drives `onDone`, and with no
+        other handler declared for its name it falls to `onUnhandled` /
+        `strict` like any other undeclared event. The engine mints exactly
+        one completion per invocation, at the instant the work finishes,
+        so a genuine completion is by construction for a live invocation;
+        a completion that reaches this point for a state that was exited
+        is impossible because exiting cancels the work (SCXML 6.4.2, #193).
+        """
+        return is_system_event(event)
 
     @property
     def has_dormant_timers(self) -> bool:
@@ -2110,7 +2131,21 @@ class BaseInterpreter(Generic[TContext]):
         #    provenance test so the hot path is one attribute read.
         if not self.strict and not self.machine.event_schemas:
             return
-        if is_system_event(event) or not isinstance(event, Event):
+        if is_system_event(event):
+            return
+        # 🛡️ #195: a caller-built `DoneEvent` / `ErrorEvent` / `AfterEvent`
+        #    is USER traffic (engine-minted ones are recognised above by
+        #    provenance). It is name-checked like any other user event; it
+        #    is not a plain `Event`, so it has no payload for a schema.
+        if not isinstance(event, Event):
+            if self.strict and not self.machine.is_known_event(
+                event.type, user_sent=True
+            ):
+                raise UnknownEventError(
+                    event.type,
+                    self.machine.id,
+                    sorted(self.machine.known_events),
+                )
             return
         if self.strict and not self.machine.is_known_event(
             event.type, user_sent=True
@@ -3350,7 +3385,7 @@ class BaseInterpreter(Generic[TContext]):
                 prefix = self.parent.id + ":"
                 if declared.startswith(prefix):
                     declared = declared[len(prefix) :].split(":")[0]
-            escalate_event = ErrorEvent(
+            escalate_event = engine_error(
                 type=f"xstate.error.actor.{self.id}", error=err, src=declared
             )
             if self.parent is not None:
@@ -3853,7 +3888,7 @@ class BaseInterpreter(Generic[TContext]):
                 )
                 # 📨 Create and send the synthetic `done.state.*` event,
                 #    carrying the final state's `output` as done data.
-                done_event = DoneEvent(
+                done_event = engine_done(
                     type=f"done.state.{ancestor.id}",
                     data=self._resolve_output(final_state),
                     src=ancestor.id,
@@ -3979,10 +4014,11 @@ class BaseInterpreter(Generic[TContext]):
         the machine did not ask for them and cannot be blamed for not
         handling them.
         """
-        # 🏛️ #79: exempt by PROVENANCE, not by name. A user-sent
-        #    `Event("done.review")` is user traffic and must trip the policy;
-        #    only events the engine minted are excused.
-        if is_system_event(event) or not isinstance(event, Event):
+        # 🏛️ #79 / #195: exempt by PROVENANCE, not by name or by type. A
+        #    user-sent `Event("done.review")` -- or a user-BUILT
+        #    `DoneEvent("done.invoke.k", ...)` -- is user traffic and must
+        #    trip the policy; only events the engine minted are excused.
+        if is_system_event(event):
             logger.debug("🍃 No transition for system event '%s'.", event.type)
             return
 
@@ -4037,8 +4073,11 @@ class BaseInterpreter(Generic[TContext]):
         )
 
     def _notify_unhandled(
-        self, event: Event, active: Set[str], disposition: str
+        self, event: AnyEvent, active: Set[str], disposition: str
     ) -> None:
+        # #195: a caller-built `DoneEvent` / `AfterEvent` is user traffic
+        # and reaches the policy like a plain `Event`; the hook's annotated
+        # `Event` type is widened accordingly.
         for plugin in self._plugins:
             plugin.on_unhandled_event(self, event, active, disposition)
 
@@ -4047,7 +4086,7 @@ class BaseInterpreter(Generic[TContext]):
         """Events currently held under ``onUnhandled: "defer"``."""
         return len(self._deferred_events)
 
-    def _take_deferred_for_replay(self) -> List[Event]:
+    def _take_deferred_for_replay(self) -> List[AnyEvent]:
         """Detach the deferral buffer for replay after a state change.
 
         Returns the held events in original order and clears the buffer.
@@ -4416,9 +4455,6 @@ class BaseInterpreter(Generic[TContext]):
             return guard_cache[key]
 
         # 🧭 Determine which transition flavours are in play for this event.
-        is_transient_check = not event.type.startswith(
-            ("done.", "error.", "after.")
-        )
         is_explicit_transient_event = event.type == ""
 
         current: Optional[StateNode] = state
@@ -4461,7 +4497,19 @@ class BaseInterpreter(Generic[TContext]):
                     break
 
             # ⚡ Transient `""` ("always") transitions.
-            if is_transient_check and "" in current.on:
+            #
+            # 🏛️ #196: eligible ONLY for the eventless selection pass
+            #    (`event.type == ""`, run by `_settle_transient_transitions`
+            #    after every macrostep), never as a candidate for a NAMED
+            #    event. SCXML 3.13: eventless transitions are selected in
+            #    their own microstep once the event's own transitions have
+            #    been taken. Letting an `always` compete for a named event
+            #    meant a deeper `always` OUTRANKED a shallower handler for
+            #    that event (deepest-source wins), so the event was
+            #    consumed by a transition that had nothing to do with it and
+            #    its own handler's actions never ran -- under a spinning
+            #    `always` every external event silently "applied" nothing.
+            if is_explicit_transient_event and "" in current.on:
                 for t in current.on[""]:
                     if _passes(t):
                         eligible.append(t)
@@ -4485,11 +4533,21 @@ class BaseInterpreter(Generic[TContext]):
                 for inv in current.invoke:
                     if event.src != inv.id:
                         continue
+                    # 🛡️ #195: a completion drives `onDone` / `onError`
+                    #    only for an invocation that is OUTSTANDING. A
+                    #    `done.invoke.<id>` naming a finished, never-
+                    #    started or foreign invocation -- however it was
+                    #    produced -- matches nothing (SCXML 6.4.2: events
+                    #    from a cancelled invocation are ignored).
+                    if not self._completion_is_for_live_invocation(
+                        current, inv, event
+                    ):
+                        continue
                     for t in inv.on_done + inv.on_error:
                         if t.event == event.type and _passes(t):
                             eligible.append(t)
                     # 🎯 #130: an `escalate` from the invoked child arrives as
-                    #    `ErrorEvent(type="xstate.error.actor.<runtime id>")`,
+                    #    `engine_error(type="xstate.error.actor.<runtime id>")`,
                     #    not `error.platform.<id>`. It is a failure of THIS
                     #    invocation and XState routes it to `onError`; match
                     #    the declared `onError` transitions by `src` alone.
@@ -4813,7 +4871,7 @@ class BaseInterpreter(Generic[TContext]):
                 delay_sec = float(resolved_ms) / 1000.0
                 # 📏 #48: record the deadline so the fired event can report
                 #    its own lateness.
-                after_event = AfterEvent(
+                after_event = engine_after(
                     type=t_def.event,
                     scheduled_for=self.clock.now() + delay_sec,
                 )
