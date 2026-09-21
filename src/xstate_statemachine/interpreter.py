@@ -277,6 +277,7 @@ class Interpreter(BaseInterpreter[TContext]):
         "_settle_iterations",
         "_settle_tripped",
         "_chain_owed_tasks",
+        "_armed_this_step",
         "_seed_pending",
         "_receipts",
         "_replay_pending",
@@ -433,6 +434,15 @@ class Interpreter(BaseInterpreter[TContext]):
         #: has not finished generating; see the chain-end test in the run
         #: loop. Plain-`def` services are awaited in-step and never owe.
         self._chain_owed_tasks: "Set[asyncio.Task[Any]]" = set()
+        #: 🔗 #179 / #200: how many coroutine-service tasks the CURRENT
+        #: step armed. Read by the chain-end test: a step that armed work
+        #: whose completion has not landed has not finished generating.
+        #: A count of *arming*, not a size delta of the ledger -- the step
+        #: that consumes completion N also lets N's done-callback pop it
+        #: while arming N+1, so the ledger size is unchanged (1 -> 1) and a
+        #: delta-based test wrongly ended the chain (the exact point at
+        #: which the callback runs also differs between Python versions).
+        self._armed_this_step: int = 0
         #: 🌱 #201: `True` between `start()` returning and the loop's first
         #: turn when the initial configuration invoked a plain-`def` service
         #: whose completion is still in flight; that completion is the seed
@@ -1774,7 +1784,7 @@ class Interpreter(BaseInterpreter[TContext]):
                 try:
                     self._processing = True
                     depth_before = self._raise_depth
-                    owed_before = len(self._chain_owed_tasks)  # #179
+                    self._armed_this_step = 0  # #179 / #200
                     await self._process_event_and_transient_transitions(event)
                     # ✅ A macrostep that raised nothing ends the chain --
                     #    provided no self-generated work is still queued.
@@ -1794,7 +1804,7 @@ class Interpreter(BaseInterpreter[TContext]):
                     #    accumulate into a false trip.
                     if (
                         self._raise_depth == depth_before
-                        and len(self._chain_owed_tasks) == owed_before
+                        and not self._armed_this_step
                         and not self._internal_queue
                         and not self._priority_queue
                         and not self._threadsafe_self_sends_in_flight
@@ -2765,6 +2775,7 @@ class Interpreter(BaseInterpreter[TContext]):
         if not self._processing:
             return
         self._chain_owed_tasks.add(task)
+        self._armed_this_step += 1
         task.add_done_callback(self._chain_owed_tasks.discard)
 
     def _publish_completion(self, event: AnyEvent) -> None:
