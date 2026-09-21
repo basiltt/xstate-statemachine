@@ -162,7 +162,7 @@ _VALID_STATUSES = frozenset(
 )
 
 
-def check_shape(snapshot: Dict[str, Any]) -> None:
+def check_shape(snapshot: Dict[str, Any], *, version: int = 0) -> None:
     """Reject a structurally invalid payload with a typed error (#110).
 
     Runs after `check_version` / `check_identity` and before any field is
@@ -212,8 +212,35 @@ def check_shape(snapshot: Dict[str, Any]) -> None:
     #    `state_ids` is not. A blob where they disagree was edited or
     #    corrupted, and restoring from whichever one "wins" is a guess.
     configuration = snapshot.get("configuration")
+    leaves = set(snapshot["state_ids"])
+    # 🛡️ #198 (reopen of #186): a `version >= 1` payload DECLARES that it
+    #    carries both fields -- every writer since v1 has -- so on such a
+    #    payload an absent or empty field is not "no opinion", it is
+    #    disagreement, and the strictly simpler mutation of emptying one
+    #    field must be refused exactly like contradicting it. Only a v0
+    #    payload (no `version` key; written before `configuration`
+    #    existed) may carry `state_ids` alone.
+    versioned = version >= 1
+    if versioned and status == "running":
+        if configuration is None:
+            fail(
+                "version >= 1 snapshot of a running machine has no "
+                "'configuration' field -- the writer always records it, so "
+                "the field was dropped"
+            )
+        if not configuration:
+            fail(
+                "version >= 1 snapshot of a running machine has an empty "
+                "'configuration' -- the two fields contradict each other"
+            )
+        if not leaves:
+            fail(
+                "version >= 1 snapshot of a running machine has an empty "
+                "'state_ids' while 'configuration' names "
+                f"{sorted(configuration or [])} -- the two fields "
+                f"contradict each other"
+            )
     if configuration is not None:
-        leaves = set(snapshot["state_ids"])
         full = set(configuration)
         if leaves and not full:
             fail(

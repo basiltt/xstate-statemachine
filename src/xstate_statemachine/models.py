@@ -1779,6 +1779,15 @@ class MachineNode(StateNode[TContext]):
         if wildcard_matches and "*" in known:
             return True
         if event_type in known and event_type != "*":
+            # 🛡️ #195: the engine-generated names (`done.invoke.<id>`,
+            #    `error.platform.<id>`, `after.<ms>.<state>`) are declared
+            #    by the chart for the ENGINE to send. A caller asking about
+            #    them as USER traffic (`user_sent=True`, i.e. a `strict`
+            #    interpreter checking a hand-built `DoneEvent`) is an
+            #    undeclared name like `done.invoke.NEVER`: only the engine
+            #    may author a completion.
+            if user_sent and event_type.startswith(ENGINE_EVENT_SHAPES):
+                return False
             return True
         # 🏛️ #79/#98: engine shapes are implicitly known ONLY when the
         #    caller is asking about a name in the abstract (`user_sent=False`,

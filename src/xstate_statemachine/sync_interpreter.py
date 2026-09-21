@@ -56,6 +56,9 @@ from .events import (
     ErrorEvent,
     Event,
     Receipt,
+    engine_after,
+    engine_done,
+    engine_error,
     is_system_event,
 )
 from .exceptions import (
@@ -166,6 +169,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         "_held_replays",
         "_is_processing",
         "_pump_thread_ident",
+        "_invoked_children",
         "_settle_iterations",
         "_settle_tripped",
     )
@@ -214,6 +218,12 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #: before the next external event (SCXML internal queue).
         self._internal_queue: Deque[AnyEvent] = deque()
         self._is_processing: bool = False
+        #: 👶 #196: child actors started by a state's `invoke`, keyed by the
+        #: owning state id, so exiting the state stops them (SCXML 3.9) --
+        #: the async engine has kept this map since #43. Without it a
+        #: re-entering cycle (`always -> invoking child -> onDone -> ...`)
+        #: leaked one live child (and its pump thread) per lap.
+        self._invoked_children: Dict[str, List["SyncInterpreter[Any]"]] = {}
         #: 🧵 #183/#184: ident of the pump thread when this interpreter runs
         #: as a non-blocking child actor; `None` when steps run on the
         #: caller's thread. Read by a parent's snapshot to decide whether a
@@ -357,6 +367,13 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             else None
         )
 
+        # 🛡️ #199: the in-flight flag is up for the WHOLE initial macrostep,
+        #    including the `on_interpreter_start` hook below, which runs
+        #    with `status="running"` and no configuration yet. A snapshot
+        #    from that hook was accepted torn (`state_ids: []`). The flag
+        #    is re-asserted (idempotently) by the guarded descent below and
+        #    cleared in its `finally`.
+        self._is_processing = True
         # 🔌 Notify plugins about the interpreter start
         for plugin in plugins:
             plugin.on_interpreter_start(self)
@@ -648,6 +665,14 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         """
         self._detach_clock()  # #115
         # 1️⃣ Stop every child actor (blocking & non-blocking).
+        # 👶 #196: invoked children are reaped through their owner map too,
+        #    so a child evicted from `_actors` by an id collision (or one
+        #    mid-bring-up) is still stopped with its parent.
+        for children in self._invoked_children.values():
+            for child in children:
+                if child.status == "running":
+                    child.stop()
+        self._invoked_children.clear()
         for actor_id, actor in list(self._actors.items()):
             try:
                 actor.stop()
@@ -1172,6 +1197,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         action_def: ActionDefinition,
         event: Event,
         on_complete: Optional[str] = None,
+        owner_id: Optional[str] = None,
     ) -> None:
         """Spawns a child state machine actor in blocking or non-blocking mode.
 
@@ -1241,6 +1267,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         self._register_in_system(spawn_params.get("systemId"), child)
         self._actors[actor_id] = child
         self._actor_sources[actor_id] = key
+        if owner_id is not None:
+            # 👶 #196: an `invoke`d child belongs to its state; exiting the
+            #    state stops it (see `_cancel_state_tasks_sync`).
+            self._invoked_children.setdefault(owner_id, []).append(child)
 
         # 🧹 Review F3: a child that finishes on its own leaves the map.
         # 🩹 mypy: an explicit statement body (rather than a lambda whose
@@ -1249,7 +1279,8 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    `_terminal_listeners`, instead of leaking the popped actor's
         #    type into the lambda's return annotation.
         def _on_child_terminal(_s: str, aid: str = actor_id) -> None:
-            self._actors.pop(aid, None)
+            if self._actors.get(aid) is child:  # #196: this child only
+                self._actors.pop(aid, None)
 
         child._terminal_listeners.append(_on_child_terminal)
 
@@ -1303,7 +1334,12 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 if on_complete is not None:
                     self._queue_actor_done(child, on_complete)
                 child.stop()
-                self._actors.pop(actor_id, None)
+                # 🧹 #196: unregister THIS child only. With an explicit
+                #    invoke id the address is stable across re-entries, so
+                #    a retiring child's thread must not evict the successor
+                #    that has since been registered under the same id.
+                if self._actors.get(actor_id) is child:
+                    self._actors.pop(actor_id, None)
                 logger.info("🧹 Actor thread for '%s' cleaned up.", actor_id)
 
         # 🚀 Start the thread. #183/#184: the child records the thread its
@@ -1375,7 +1411,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 "💥 Invoked machine '%s' ended in error; firing onError.",
                 child.id,
             )
-            error_event = ErrorEvent(
+            error_event = engine_error(
                 type=f"error.platform.{invoke_id}",
                 error=failure,
                 src=invoke_id,
@@ -1398,7 +1434,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
 
         # 📤 #109: `onDone` carries the child's declared OUTPUT, not its
         #    private context (same rule as the async engine).
-        done_event = DoneEvent(
+        done_event = engine_done(
             type=f"done.invoke.{invoke_id}",
             data=child.output if child.output is not None else child.context,
             src=invoke_id,
@@ -1416,7 +1452,8 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         return _Done(None)
 
     def _cancel_state_tasks_sync(self, state: StateNode) -> None:
-        """Cancel every clock timer (`after`, delayed send) a state owns."""
+        """Cancel every clock timer (`after`, delayed send) a state owns,
+        and stop every child actor its `invoke` started (SCXML 3.9)."""
         handles = self._timer_handles.pop(state.id, [])
         for handle in handles:
             self.clock.clear_timeout(handle)
@@ -1426,6 +1463,16 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 len(handles),
                 state.id,
             )
+        # 👶 #196: stop the child actors this state's `invoke` started. A
+        #    child stopped because its state was exited is "cancelled", not
+        #    "done": `_queue_actor_done` only reports `done.invoke` for a
+        #    child that reached a top-level final state, so no completion
+        #    lands in a state the machine has left (SCXML 6.4.2).
+        for child in self._invoked_children.pop(state.id, []):
+            self._actors.pop(child.id, None)
+            self._actor_sources.pop(child.id, None)
+            if child.status == "running":
+                child.stop()
 
     def _after_timer(
         self, delay_sec: float, event: AfterEvent, owner_id: str
@@ -1589,7 +1636,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 child_input = invocation.resolve_input(self.context, None)
             except Exception as exc:  # noqa: BLE001 -- user code
                 self.send(
-                    ErrorEvent(
+                    engine_error(
                         type=f"error.platform.{invocation.id}",
                         error=exc,
                         src=invocation.id,
@@ -1604,6 +1651,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 ),
                 Event(type=f"invoke.{invocation.id}"),
                 on_complete=invocation.id,
+                owner_id=owner_id,
             )
             return
 
@@ -1634,7 +1682,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             # 🚀 Execute the synchronous service.
             result = service(self, self.context, invoke_event)
             # ✅ On success, immediately queue a 'done' event with the result.
-            done_event = DoneEvent(
+            done_event = engine_done(
                 f"done.invoke.{invocation.id}", data=result, src=invocation.id
             )
             self._deliver_completion(done_event)
@@ -1652,7 +1700,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 e,
                 exc_info=True,
             )
-            error_event = ErrorEvent(
+            error_event = engine_error(
                 f"error.platform.{invocation.id}", error=e, src=invocation.id
             )
             # 🚨 Unhandled service failures must be observable, not just

@@ -356,7 +356,7 @@ class PluginBase(Generic[TInterpreter]):
     def on_unhandled_event(
         self,
         interpreter: TInterpreter,
-        event: "Event",
+        event: "AnyEvent",
         active_state_ids: Set[str],
         disposition: str,
     ) -> None:
@@ -815,7 +815,7 @@ class LoggingInspector(PluginBase[Any]):
     def on_unhandled_event(
         self,
         interpreter: "BaseInterpreter[Any]",
-        event: "Event",
+        event: "AnyEvent",
         active_state_ids: Set[str],
         disposition: str,
     ) -> None:

@@ -272,12 +272,15 @@ _ENGINE_MARK: Any = _EngineMark()
 def is_system_event(event: Any) -> bool:
     """``True`` for events the ENGINE synthesised (#79).
 
-    Provenance, not spelling: a `DoneEvent` / `ErrorEvent` / `AfterEvent`
-    is always engine-made; a plain `Event` is engine-made only when it was
-    created via :func:`system_event` (init/exit sentinels, `escalate`,
-    restore). A user `Event("done.review")` is user traffic.
+    Provenance, not spelling -- and not public type either (#195). A
+    `DoneEvent` / `ErrorEvent` / `AfterEvent` the engine minted is an
+    instance of a private subclass (`engine_done` / `engine_error` /
+    `engine_after`); one built by hand from the public class is USER
+    traffic, subject to `strict` and `onUnhandled` like any other event.
+    A plain `Event` is engine-made only when created via
+    :func:`system_event` (init/exit sentinels, `escalate`, restore).
     """
-    if isinstance(event, ENGINE_EVENT_TYPES):
+    if isinstance(event, _ENGINE_MINTED_TYPES):
         return True
     return isinstance(event, Event) and event._provenance is _ENGINE_MARK
 
@@ -320,6 +323,13 @@ def persist_event(event: Any) -> Dict[str, Any]:
     """
     kind = event_kind(event)
     rec: Dict[str, Any] = {"kind": kind, "type": event.type}
+    # 🏷️ #195: an engine-minted completion persists its provenance so the
+    #    round-trip restores it as engine-minted (and a record without the
+    #    flag -- hand-written, or from a pre-#195 writer -- restores as the
+    #    PUBLIC class, i.e. user traffic). `Event` provenance is already
+    #    carried by `kind == "system"`.
+    if kind in ("done", "error", "after") and is_system_event(event):
+        rec["engine"] = True
     if kind in ("event", "system"):
         rec["payload"] = copy.deepcopy(event.payload)
     elif kind == "done":
@@ -389,29 +399,57 @@ def restore_event(record: Dict[str, Any]) -> Any:
         #    system is the init sentinel; everything else re-persists as
         #    v2 on the next save. See the 0.8.1 changelog migration note.
         kind = "system" if etype.startswith("___xstate") else "event"
+    # 🏷️ #195: provenance is restored exactly as persisted. A `done` /
+    #    `error` / `after` record carrying ``"engine": true`` was written by
+    #    `persist_event` from an engine-minted completion and restores as
+    #    one, so a persisted `done.invoke` still drives its `onDone` after a
+    #    round-trip. A record WITHOUT the flag -- hand-authored, or written
+    #    by a pre-#195 library -- restores as the PUBLIC class: user
+    #    traffic, subject to `strict` / `onUnhandled`, never a trusted
+    #    completion. The flag is not a secret; what it closes is the
+    #    accidental laundering of "I have a dict shaped like a completion"
+    #    into "the engine said this happened". A caller who can write
+    #    arbitrary snapshot records already controls `state_ids` and
+    #    `context` outright (#185), so this is the correct trust boundary.
+    trusted = record.get("engine") is True
+    return _restore(record, etype, kind, trusted=trusted)
+
+
+def _restore(
+    record: Dict[str, Any], etype: str, kind: Any, *, trusted: bool
+) -> Any:
+    """Body of `restore_event` (#195).
+
+    ``trusted`` selects engine-minted classes for engine kinds; otherwise
+    the plain public NamedTuples are built, which `is_system_event`
+    reports as user traffic.
+    """
     if kind == "done":
-        return DoneEvent(
-            type=etype, data=record.get("data"), src=record.get("src", "")
-        )
+        args = (etype, record.get("data"), record.get("src", ""))
+        return engine_done(*args) if trusted else DoneEvent(*args)
     if kind == "error":
         from .exceptions import RestoredError
 
-        return ErrorEvent(
-            type=etype,
-            error=RestoredError(record.get("error") or "unknown error"),
-            src=record.get("src", ""),
+        eargs = (
+            etype,
+            RestoredError(record.get("error") or "unknown error"),
+            record.get("src", ""),
         )
+        return engine_error(*eargs) if trusted else ErrorEvent(*eargs)
     if kind == "after":
         # 📏 #118: absent telemetry restores as None, never 0.0.
         sched = record.get("scheduled_for")
         fired = record.get("fired_at")
-        return AfterEvent(
-            type=etype,
-            scheduled_for=None if sched is None else float(sched),
-            fired_at=None if fired is None else float(fired),
+        aargs = (
+            etype,
+            None if sched is None else float(sched),
+            None if fired is None else float(fired),
         )
+        return engine_after(*aargs) if trusted else AfterEvent(*aargs)
     payload = record.get("payload") or {}
     if kind == "system":
+        # `kind == "system"` IS the persisted provenance for a plain
+        # `Event` (#86/#162); it needs no separate flag.
         return system_event(etype, **payload)
     return Event(type=etype, payload=payload)
 
@@ -507,3 +545,66 @@ class AfterEvent(NamedTuple):
 
 # 🧩 Filled in here, once every class above is defined (#79).
 ENGINE_EVENT_TYPES = (DoneEvent, ErrorEvent, AfterEvent)
+
+
+# -----------------------------------------------------------------------------
+# 🏷️ #195: engine-minted completions carry provenance by TYPE IDENTITY
+# -----------------------------------------------------------------------------
+# The public `DoneEvent` / `ErrorEvent` / `AfterEvent` are documented,
+# exported NamedTuples; anyone can construct one. Before #195 the engine
+# trusted them on a bare `isinstance`, so a hand-built
+# `DoneEvent("done.invoke.fill", data=..., src="fill")` bypassed `strict` and
+# `onUnhandled` and drove a real `onDone` while the genuine service was still
+# running. The engine now mints PRIVATE subclasses. To user code they are
+# indistinguishable from the public class -- `isinstance(ev, DoneEvent)`,
+# field access, equality, `_replace`, pickle and deepcopy all behave the same
+# and preserve the subclass -- but `is_system_event` requires the subclass,
+# so only what the engine (or `restore_event` on a persisted engine record)
+# produced is system traffic. The classes are not exported and have no
+# public name; construct through the `engine_*` helpers only.
+
+
+class _EngineDone(DoneEvent):
+    """A `DoneEvent` the engine minted (#195). Not public."""
+
+    __slots__ = ()
+
+
+class _EngineError(ErrorEvent):
+    """An `ErrorEvent` the engine minted (#195). Not public."""
+
+    __slots__ = ()
+
+
+class _EngineAfter(AfterEvent):
+    """An `AfterEvent` the engine minted (#195). Not public."""
+
+    __slots__ = ()
+
+
+_ENGINE_MINTED_TYPES: Tuple[type, ...] = (
+    _EngineDone,
+    _EngineError,
+    _EngineAfter,
+)
+
+
+def engine_done(type: str, data: Any, src: str) -> DoneEvent:  # noqa: A002
+    """Mint an engine-owned `DoneEvent` (#195). The ONLY sanctioned way."""
+    return _EngineDone(type, data, src)
+
+
+def engine_error(
+    type: str, error: BaseException, src: str  # noqa: A002
+) -> ErrorEvent:
+    """Mint an engine-owned `ErrorEvent` (#195). The ONLY sanctioned way."""
+    return _EngineError(type, error, src)
+
+
+def engine_after(
+    type: str,  # noqa: A002
+    scheduled_for: Optional[float] = None,
+    fired_at: Optional[float] = None,
+) -> AfterEvent:
+    """Mint an engine-owned `AfterEvent` (#195). The ONLY sanctioned way."""
+    return _EngineAfter(type, scheduled_for, fired_at)

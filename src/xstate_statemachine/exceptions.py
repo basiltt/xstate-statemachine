@@ -347,9 +347,25 @@ class UnknownEventError(XStateMachineError):
     def __init__(self, event_type: str, machine_id: str, known: "list[str]"):
         import difflib
 
+        from .events import ENGINE_EVENT_SHAPES
+
         self.event_type = event_type
         self.machine_id = machine_id
         self.known = known
+        if event_type.startswith(ENGINE_EVENT_SHAPES):
+            # 🛡️ #195: the name is one only the ENGINE may author. Say so
+            #    instead of suggesting the caller "meant" the very name it
+            #    sent -- a `DoneEvent("done.invoke.k", ...)` built by hand
+            #    is refused as user traffic, not as a typo.
+            super().__init__(
+                f"Event '{event_type}' is an engine-generated name and "
+                f"cannot be sent as user traffic to machine '{machine_id}'. "
+                f"Completions (`done.invoke.*`, `error.platform.*`), "
+                f"timers (`after.*`) and engine sentinels are minted by "
+                f"the interpreter when the work they describe actually "
+                f"happens; a hand-built one is refused under strict mode."
+            )
+            return
         hint = difflib.get_close_matches(event_type, known, n=1, cutoff=0.6)
         suggestion = f" Did you mean '{hint[0]}'?" if hint else ""
         shown = ", ".join(known[:20]) + (" ..." if len(known) > 20 else "")
