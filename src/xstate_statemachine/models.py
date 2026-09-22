@@ -1808,6 +1808,14 @@ class MachineNode(StateNode[TContext]):
     def structure_hash(self) -> str:
         """A 16-hex-char fingerprint of this machine's behavioural structure.
 
+        🔐 #205: a CHECKSUM against accidental drift -- a snapshot restored
+        into a machine whose states or transitions have since changed --
+        not an authentication tag. It is a public function of the config;
+        anyone holding the config can compute it, and a party who controls
+        a snapshot payload can write a matching one. To authenticate a
+        snapshot, sign the whole payload outside the library and pass the
+        fingerprint you hold as ``from_snapshot(expected_machine_hash=)``.
+
         Stable across `meta` / `description` edits and key reordering;
         changes when a state, transition, guard NAME, action NAME, invoke or
         `after` delay is added, removed or renamed. Written into every

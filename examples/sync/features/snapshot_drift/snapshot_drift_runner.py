@@ -22,8 +22,9 @@ sys.path.insert(
     0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
 )
 from xstate_statemachine import (
-    SyncInterpreter,
     SnapshotDriftError,
+    SnapshotVersionError,
+    SyncInterpreter,
     create_machine,
 )
 
@@ -63,6 +64,49 @@ def main() -> None:
     logger.info(f"Restored despite drift: {restored.current_state_ids}")
     assert "m.a" in restored.current_state_ids
     restored.stop()
+
+    # 🔐 The trust boundary (#205). `machine_hash` is a FINGERPRINT against
+    #    accidental drift, not an authentication tag: a party who controls
+    #    the payload can write a consistent one, or strip `version` so the
+    #    check is skipped as a legacy v0 blob. A caller who does not trust
+    #    the source pins both from values THEY hold.
+    import json
+
+    blob = json.loads(snapshot)
+    known_hash = machine_v1.structure_hash  # record this when you persist
+
+    tampered = dict(blob)
+    tampered.pop("version")  # a "downgrade": looks like a pre-hash payload
+    tampered.pop("machine_hash")
+    try:
+        SyncInterpreter.from_snapshot(
+            json.dumps(tampered), machine_v1, minimum_version=1
+        )
+    except SnapshotVersionError as exc:
+        logger.info(f"❌ Downgrade refused as expected: {exc}")
+    else:  # pragma: no cover
+        raise AssertionError("expected SnapshotVersionError")
+
+    forged = dict(blob)
+    forged["machine_hash"] = "0" * 16
+    try:
+        SyncInterpreter.from_snapshot(
+            json.dumps(forged), machine_v1, expected_machine_hash=known_hash
+        )
+    except SnapshotDriftError as exc:
+        logger.info(f"❌ Fingerprint mismatch refused as expected: {exc}")
+    else:  # pragma: no cover
+        raise AssertionError("expected SnapshotDriftError")
+
+    # ✅ The honest payload passes both pins.
+    pinned = SyncInterpreter.from_snapshot(
+        snapshot,
+        machine_v1,
+        minimum_version=1,
+        expected_machine_hash=known_hash,
+    )
+    logger.info(f"Restored with pinned version + hash: {pinned.value}")
+    pinned.stop()
 
     print("\n--- ✅ Simulation Complete ---")
 

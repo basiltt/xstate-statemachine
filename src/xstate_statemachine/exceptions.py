@@ -267,20 +267,38 @@ class TransitionFailedError(XStateMachineError):
 
 
 class SnapshotVersionError(XStateMachineError):
-    """Raised when a snapshot was written by a NEWER library than this one.
+    """Raised when a snapshot's ``version`` is outside what the caller accepts.
 
     A snapshot's ``version`` is an integer bumped only when the payload
     layout changes. Older versions are upcast transparently; a newer one
     cannot be read safely, so restoring it is refused rather than guessed.
 
+    #205: also raised when the version is BELOW the caller's
+    ``from_snapshot(minimum_version=...)`` floor. A version-0 payload
+    carries no ``machine_hash`` and is accepted without a drift check by
+    design; a caller who never wrote v0 payloads can refuse them (a
+    "downgrade" of a tampered blob) by setting ``minimum_version=1``.
+
     Attributes:
         found: The version recorded in the snapshot.
         supported: The highest version this library can read.
+        minimum: The caller's floor, when that is what was violated.
     """
 
-    def __init__(self, found: int, supported: int):
+    def __init__(
+        self, found: int, supported: int, *, minimum: Optional[int] = None
+    ):
         self.found = found
         self.supported = supported
+        self.minimum = minimum
+        if minimum is not None:
+            super().__init__(
+                f"Snapshot version {found} is below the caller's "
+                f"minimum_version={minimum}. A payload this old carries "
+                f"no drift fingerprint; refuse it, or lower the floor if "
+                f"the source is trusted."
+            )
+            return
         super().__init__(
             f"Snapshot version {found} is newer than the supported version "
             f"{supported}. Upgrade xstate-statemachine to restore it."
@@ -422,16 +440,37 @@ class RunawayChainError(XStateMachineError):
     Attributes:
         limit: The ``maxIterations`` that was exceeded.
         dropped: How many self-generated events were discarded.
+        stranded: #207 -- invoke ids whose completion was among the
+            discarded events while their state stayed active. Such an
+            invocation will never complete: the machine rests in a state
+            that declares `invoke` with nothing running. The same fact is
+            reported through `on_invocation_stranded` and is readable
+            afterwards from `has_dormant_invocations` /
+            `pending_invocations()`.
     """
 
-    def __init__(self, machine_id: str, limit: int, dropped: int):
+    def __init__(
+        self,
+        machine_id: str,
+        limit: int,
+        dropped: int,
+        stranded: Optional[Iterable[str]] = None,
+    ):
         self.limit = limit
         self.dropped = dropped
+        self.stranded: tuple = tuple(stranded or ())
+        tail = (
+            f" The cut stranded invocation(s) {list(self.stranded)}: their "
+            f"state is still active with no service running, and no "
+            f"onDone/onError will arrive."
+            if self.stranded
+            else ""
+        )
         super().__init__(
             f"Machine '{machine_id}' exceeded {limit} chained self-generated "
             f"events in one macrostep and discarded {dropped} of them. An "
             f"action raises or sends the event that triggers it; break the "
-            f"cycle or raise 'maxIterations'."
+            f"cycle or raise 'maxIterations'.{tail}"
         )
 
 

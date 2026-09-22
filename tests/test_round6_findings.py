@@ -158,17 +158,27 @@ class TestAsyncRollbackRearmCycleBounded(_Quiet):
                         )
                     ).use(d)
                     await i.start()
-                    await asyncio.sleep(0.6)
-                    first = calls[0]
-                    await asyncio.sleep(0.3)
-                    out = (first, calls[0], i.status, d.dropped)
+                    # #210: wait for CONVERGENCE (five consecutive stable
+                    # reads), not a fixed sleep -- on a loaded host the
+                    # `def` lane is still climbing at 0.6 s and the old
+                    # fixed samples failed while the behaviour was correct.
+                    plateau, stable, deadline = -1, 0, time.monotonic() + 20
+                    while stable < 5 and time.monotonic() < deadline:
+                        await asyncio.sleep(0.1)
+                        if calls[0] == plateau:
+                            stable += 1
+                        else:
+                            plateau, stable = calls[0], 0
+                    out = (plateau, i.status, d.dropped)
                     await i.stop()
                     return out
 
-                first, later, status, dropped = _run(main())
+                plateau, status, dropped = _run(main(), timeout=40)
                 self.assertEqual(status, "running")
-                self.assertLessEqual(first, 1001 + 2)
-                self.assertEqual(first, later, "cycle must stop, not spin")
+                # Bounded at the default limit and identical to the sync
+                # engine on the same chart (initial descent + seed + the
+                # limit+1 cut = maxIterations + 3 service calls).
+                self.assertEqual(plateau, 1000 + 3)
                 self.assertIn("chain_budget", dropped)
 
 

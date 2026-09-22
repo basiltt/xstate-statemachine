@@ -1233,86 +1233,79 @@ class TestLapParityStatedExactly(_Quiet):
                     self.assertEqual(n, sync_n)
                     self.assertIs(err, RunawayChainError)
 
-    def test_rollback_ondone_async_lanes_identical_sync_stops_early(
-        self,
-    ) -> None:
-        # Stated exactly: the two async lanes trip at the same lap; the
-        # SYNC engine does not re-arm a rolled-back invoke inside the same
-        # drain and stops after the first rollback with that RuntimeError.
-        cfg = {
-            "id": "lv",
-            "initial": "a",
-            "maxIterations": 20,
-            "actionErrorPolicy": "rollback",
-            "states": {
-                "a": {
-                    "invoke": [
-                        {
-                            "id": "k",
-                            "src": "svc",
-                            "onDone": {"target": "b", "actions": ["blow"]},
-                        }
-                    ]
-                },
-                "b": {"always": {"target": "a"}},
-            },
-        }
-
+    def test_rollback_ondone_all_three_lanes_identical(self) -> None:
+        # #201 / #209 / #204: with invokes armed at the END of the macrostep
+        # (SCXML 6.1) the sync engine re-arms a rolled-back invoke exactly
+        # as the async engine does, so all three lanes trip at the same
+        # service-call count -- at odd AND even limits.
         def blow(*a: Any) -> None:
             raise RuntimeError("rollback")
 
-        calls = {"s": 0}
-        s = SyncInterpreter(
-            _mk(
-                cfg,
-                logic=MachineLogic(
-                    actions={"blow": blow},
-                    services={
-                        "svc": lambda i, c, e: calls.__setitem__(
-                            "s", calls["s"] + 1
-                        )
-                        or 1
+        for limit in (3, 4, 19, 20):
+            cfg = {
+                "id": "lv",
+                "initial": "a",
+                "maxIterations": limit,
+                "actionErrorPolicy": "rollback",
+                "states": {
+                    "a": {
+                        "invoke": [
+                            {
+                                "id": "k",
+                                "src": "svc",
+                                "onDone": {"target": "b", "actions": ["blow"]},
+                            }
+                        ]
                     },
-                ),
-            )
-        ).start()
-        self.assertIsInstance(s.last_error, RuntimeError)
-        self.assertLessEqual(calls["s"], 2)
+                    "b": {"always": {"target": "a"}},
+                },
+            }
+            n = [0]
 
-        laps: Dict[str, int] = {}
-        for kind in KINDS:
-            with self.subTest(kind=kind):
-                n = [0]
+            def bump() -> int:
+                n[0] += 1
+                return 1
 
-                async def main() -> Any:
-                    d = _Drops()
-                    i = Interpreter(
-                        _mk(
-                            cfg,
-                            logic=MachineLogic(
-                                actions={"blow": blow},
-                                services={
-                                    "svc": _svc(
-                                        kind,
-                                        lambda: n.__setitem__(0, n[0] + 1)
-                                        or 1,
-                                    )
-                                },
-                            ),
-                        )
-                    ).use(d)
-                    await i.start()
-                    await asyncio.sleep(0.4)
-                    # `last_error` is per step and the rollback's own
-                    # RuntimeError may be the most recent one; the trip is
-                    # asserted through the drop hook, which is cumulative.
-                    out = [r for _, r in d.dropped]
-                    await i.stop()
-                    return out
+            s = SyncInterpreter(
+                _mk(
+                    cfg,
+                    logic=MachineLogic(
+                        actions={"blow": blow},
+                        services={"svc": _svc("def", bump)},
+                    ),
+                )
+            ).start()
+            sync_n = n[0]
+            self.assertIsInstance(s.last_error, RunawayChainError)
+            for kind in KINDS:
+                with self.subTest(limit=limit, kind=kind):
+                    n[0] = 0
 
-                self.assertIn("chain_budget", _run(main()))
-                laps[kind] = n[0]
-        self.assertEqual(laps["def"], laps["async def"])
+                    async def main() -> Any:
+                        d = _Drops()
+                        i = Interpreter(
+                            _mk(
+                                cfg,
+                                logic=MachineLogic(
+                                    actions={"blow": blow},
+                                    services={"svc": _svc(kind, bump)},
+                                ),
+                            )
+                        ).use(d)
+                        await i.start()
+                        deadline = time.monotonic() + 5
+                        while (
+                            "chain_budget" not in [r for _, r in d.dropped]
+                            and time.monotonic() < deadline
+                        ):
+                            await asyncio.sleep(0.02)
+                        await asyncio.sleep(0.1)
+                        out = [r for _, r in d.dropped]
+                        await i.stop()
+                        return out
+
+                    self.assertIn("chain_budget", _run(main()))
+                    self.assertEqual(n[0], sync_n)
 
 
 if __name__ == "__main__":

@@ -893,9 +893,16 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                         for plugin in self._plugins:
                             plugin.on_event_dropped(self, ev, "chain_budget")
                     self.last_transition_ok = False
-                    self._last_action_error = RunawayChainError(
-                        self.id, limit, dropped_total
+                    # 🧷 #207: see `_stranded_by_cut`.
+                    stranded = self._stranded_by_cut(victims)
+                    err = RunawayChainError(
+                        self.id,
+                        limit,
+                        dropped_total,
+                        [iid for _, iid in stranded],
                     )
+                    self._last_action_error = err
+                    self._report_stranded(stranded, err)
                     tripped = True
                     if not spare:
                         continue
@@ -994,7 +1001,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         state configuration is stable.
         """
         if not self.machine.has_always_transitions:
-            return  # ⚡ nothing to settle; see MachineNode.has_always_transitions
+            # ⚡ nothing to settle; see MachineNode.has_always_transitions.
+            self._arm_pending_invokes()  # #204: still the macrostep's end
+            return
         logger.debug("🔍 Checking for transient ('always') transitions...")
         # 🛟 Bound the microstep loop. A pair of `always` transitions that
         #    target each other spins forever; XState added the same guard in
@@ -1049,6 +1058,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                     "🧘 State is stable. No more transient transitions."
                 )
                 break
+        # 📞 #204 (SCXML 6.1): stable -- arm invokes for the states this
+        #    macrostep entered and did not exit. A plain service armed here
+        #    completes inline and queues its `done.invoke`; the drain that
+        #    called us picks it up (#103 / #116).
+        self._arm_pending_invokes()
 
     # -------------------------------------------------------------------------
     # ➡️⬅️ State Lifecycle Hooks (Private)
