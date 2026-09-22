@@ -36,6 +36,7 @@ import warnings
 from typing import (
     cast,
     Any,
+    Iterable,
     Awaitable,
     NamedTuple,
     Callable,
@@ -492,6 +493,7 @@ class BaseInterpreter(Generic[TContext]):
         "_pending_guard_error",
         "_plugins",
         "_restart_services_on_start",
+        "_states_to_invoke",
         "_restart_timers_on_start",
         "_scheduled_sends",
         "_step_soft_error",
@@ -670,6 +672,15 @@ class BaseInterpreter(Generic[TContext]):
         #: the engine's `start()` resume path, which re-invokes every
         #: dormant invoke in the restored configuration.
         self._restart_services_on_start: bool = False
+        #: 📞 #204 -- SCXML 6.1 `statesToInvoke`. States entered in the
+        #: current macrostep whose `invoke`s have NOT been armed yet. Entry
+        #: records here; `_arm_pending_invokes` (run once the eventless
+        #: settle is stable) arms the ones still active. A state entered
+        #: and exited within one macrostep -- an `always` rolled forward,
+        #: a rollback -- therefore never submits its service, on either
+        #: engine and for either service kind: "it does not make sense to
+        #: start an invocation in a state that will be exited immediately".
+        self._states_to_invoke: List[StateNode] = []
         #: ⏱️ #128: re-arm `after` timers of the restored configuration on
         #: the next `start()`.
         self._restart_timers_on_start: bool = False
@@ -1572,8 +1583,24 @@ class BaseInterpreter(Generic[TContext]):
         restart_services: bool = False,
         restart_timers: Optional[bool] = None,
         clock: Optional[Clock] = None,
+        minimum_version: int = 0,
+        expected_machine_hash: Optional[str] = None,
     ) -> TInterpreter:
         """Creates and restores an interpreter instance from a saved snapshot.
+
+        🔐 Trust boundary (#205). A snapshot is TRUSTED INPUT: its
+        ``state_ids`` / ``configuration`` and ``context`` are applied
+        verbatim, because they are the machine's own state and the library
+        has no way to know what the "right" state is. The checks performed
+        here -- shape (#110 / #186 / #198), identity and structural drift
+        (#45 / #185) -- catch corruption and accidental drift; they are
+        NOT authentication. ``machine_hash`` is a fingerprint of the
+        machine's structure, not a MAC over the payload: a party who
+        controls the whole blob can write a consistent one. If a snapshot
+        crosses a trust boundary, authenticate it OUTSIDE (an HMAC over
+        the JSON, a signed envelope) before calling this, and use
+        ``minimum_version`` / ``expected_machine_hash`` below so the
+        payload cannot select its own level of checking.
 
         This factory method reconstructs an interpreter's state from a JSON
         snapshot. It deserializes the snapshot, finds the corresponding state
@@ -1623,6 +1650,20 @@ class BaseInterpreter(Generic[TContext]):
                 (#117). The other half of construct-then-restore: without
                 it every restored machine ran on `RealClock`, which broke
                 `SimulatedClock`-based deterministic replay.
+            minimum_version (int): #205 -- refuse a payload whose declared
+                ``version`` is below this (``SnapshotVersionError``).
+                Version-0 payloads carry no ``machine_hash`` and restore
+                without a drift check by design; a caller who never wrote
+                v0 (every 0.8.1 writer records the version) should pass
+                ``1`` so a version-stripped blob cannot downgrade its way
+                past the check. Default ``0`` keeps legacy payloads
+                loadable.
+            expected_machine_hash (Optional[str]): #205 -- the fingerprint
+                the payload MUST carry, held by the caller (record
+                ``machine.structure_hash`` when you persist). Compared
+                instead of trusting the payload's own ``machine_hash`` to
+                validate itself; a mismatch or an absent field is
+                ``SnapshotDriftError`` regardless of version.
 
         Returns:
             BaseInterpreter[TContext]: A new interpreter instance
@@ -1634,9 +1675,11 @@ class BaseInterpreter(Generic[TContext]):
             InvalidConfigError: If the snapshot string is not valid JSON, or
                 does not decode to a JSON object.
             SnapshotVersionError: The snapshot was written by a newer
-                library version.
+                library version, or is older than ``minimum_version``.
             SnapshotDriftError: The snapshot belongs to a different machine
-                id, or the machine's structure has changed.
+                id, the machine's structure has changed, or (with
+                ``expected_machine_hash``) the fingerprint does not match
+                the caller's.
         """
         logger.info(
             "🔄 Restoring interpreter for machine '%s' from snapshot...",
@@ -1669,11 +1712,14 @@ class BaseInterpreter(Generic[TContext]):
         # 📦 #45: envelope checks FIRST, before any state is touched, so a
         #    refused restore leaves nothing half-built behind.
         version = persistence.check_version(snapshot)
+        persistence.check_minimum_version(version, minimum_version)  # #205
         persistence.check_identity(
             snapshot,
             machine,
-            verify_hash=verify_machine_hash,
+            verify_hash=verify_machine_hash
+            or expected_machine_hash is not None,
             version=version,  # #185: bypass keyed on declared version
+            expected_hash=expected_machine_hash,  # #205
         )
         snapshot = persistence.upcast(snapshot, version)
 
@@ -1871,6 +1917,50 @@ class BaseInterpreter(Generic[TContext]):
     ) -> bool:
         """Engine-specific: is a service/actor currently running for this?"""
         raise NotImplementedError  # pragma: no cover
+
+    def _stranded_by_cut(
+        self, dropped: Iterable[Any]
+    ) -> List[Tuple[str, str]]:
+        """#207: ``(state_id, invoke_id)`` for each engine completion in
+        *dropped* whose invocation is still declared by an ACTIVE state.
+
+        Discarding such a completion is what wedges a machine: the state
+        keeps declaring `invoke`, nothing runs, and no completion can ever
+        arrive. Computed on the ids the events carry, so it is exact for
+        the events actually cut rather than a guess from the configuration.
+        """
+        out: List[Tuple[str, str]] = []
+        cut_ids = {
+            ev.src
+            for ev in dropped
+            if isinstance(ev, (DoneEvent, ErrorEvent)) and ev.src
+        }
+        if not cut_ids:
+            return out
+        for state in self._active_state_nodes:
+            for inv in state.invoke:
+                if inv.id in cut_ids and not self._invocation_is_live(
+                    state, inv
+                ):
+                    out.append((state.id, inv.id))
+        return out
+
+    def _report_stranded(
+        self, stranded: List[Tuple[str, str]], error: BaseException
+    ) -> None:
+        """#207: log + fire `on_invocation_stranded` for each stranded pair."""
+        for state_id, invoke_id in stranded:
+            logger.error(
+                "🧷 Machine '%s' rests in state '%s' whose invocation '%s' "
+                "was cut by the chain budget and will never complete "
+                "(#207). Exit the state with an event, or raise "
+                "'maxIterations' if the cycle is expected to converge.",
+                self.id,
+                state_id,
+                invoke_id,
+            )
+            for plugin in self._plugins:
+                plugin.on_invocation_stranded(self, state_id, invoke_id, error)
 
     def _completion_is_for_live_invocation(
         self, state: StateNode, invocation: InvokeDefinition, event: Any
@@ -3804,6 +3894,11 @@ class BaseInterpreter(Generic[TContext]):
                 )
             # 🗑️ Finally, remove from the active set.
             self._active_state_nodes.discard(state)
+            # 📞 #204: exited before its macrostep settled -> never invoked.
+            if self._states_to_invoke:
+                self._states_to_invoke = [
+                    s for s in self._states_to_invoke if s is not state
+                ]
 
     # -------------------------------------------------------------------------
     # 🔎 State Evaluation & Pathfinding Helpers
@@ -4520,7 +4615,13 @@ class BaseInterpreter(Generic[TContext]):
                     eligible.append(current.on_done)
 
             # ⏰ `after` transitions for timed events.
-            if isinstance(event, AfterEvent):
+            #
+            # 🛡️ #203: matched on PROVENANCE, like `done` / `error` below
+            #    (#195). A hand-built or forged-record `AfterEvent` is user
+            #    traffic and must not fire a timer whose deadline has not
+            #    elapsed; only the engine's own `_fire` (which mints via
+            #    `engine_after`) may drive an `after` transition.
+            if isinstance(event, AfterEvent) and is_system_event(event):
                 for transitions in current.after.values():
                     for t in transitions:
                         if t.event == event.type and _passes(t):
@@ -4847,7 +4948,30 @@ class BaseInterpreter(Generic[TContext]):
             state (StateNode): The state being entered.
         """
         self._schedule_state_timers(state)
-        self._schedule_state_invokes(state)
+        # 📞 #204: invokes are DEFERRED to the end of the macrostep (SCXML
+        #    6.1); see `_arm_pending_invokes`.
+        self._states_to_invoke.append(state)
+
+    def _arm_pending_invokes(self) -> None:
+        """Arm `invoke`s for states entered this macrostep and still active.
+
+        🏛️ #204 -- SCXML 6.1 / Algorithm `statesToInvoke`: invocation
+        happens after the macrostep's eventless transitions have settled,
+        for the states that were entered *and not exited*. Called by both
+        engines at the end of their settle pass. A state exited before this
+        point (rolled forward by an `always`, rolled back by
+        `actionErrorPolicy`) is simply skipped: its service is never
+        started, so nothing has to be cancelled or unwound -- exactly the
+        coroutine-lane outcome, now for every service kind on every engine.
+        Idempotent: the record is drained.
+        """
+        if not self._states_to_invoke:
+            return
+        pending, self._states_to_invoke = self._states_to_invoke, []
+        active = self._active_state_nodes
+        for state in pending:
+            if state in active and state.invoke:
+                self._schedule_state_invokes(state)
 
     def _schedule_state_timers(self, state: StateNode) -> None:
         """Arm every ``after`` timer *state* declares (#128 split).

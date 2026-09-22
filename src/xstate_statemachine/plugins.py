@@ -380,6 +380,33 @@ class PluginBase(Generic[TInterpreter]):
         """
         pass  # pragma: no cover
 
+    def on_invocation_stranded(
+        self,
+        interpreter: TInterpreter,
+        state_id: str,
+        invoke_id: str,
+        error: BaseException,
+    ) -> None:
+        """Called when a chain-budget cut leaves an invocation that can
+        never complete (#207).
+
+        The `maxIterations` guard discarded a `done.invoke` /
+        `error.platform` for an invocation whose state is still active.
+        Nothing is running for it and no completion will ever arrive, so
+        the machine rests in a state that declares `invoke` -- a state it
+        was never meant to come to rest in. Distinguishes "the storm
+        settled" from "the storm was cut and the machine is parked".
+        `has_dormant_invocations` / `pending_invocations()` answer the same
+        question on demand; this is the push notification.
+
+        Args:
+            interpreter: The interpreter instance.
+            state_id: The active state whose invocation was stranded.
+            invoke_id: The invocation's `id`.
+            error: The `RunawayChainError` carrying the cut.
+        """
+        pass  # pragma: no cover
+
     def on_event_dropped(
         self, interpreter: TInterpreter, event: "AnyEvent", reason: str
     ) -> None:

@@ -277,6 +277,7 @@ class Interpreter(BaseInterpreter[TContext]):
         "_settle_iterations",
         "_settle_tripped",
         "_chain_owed_tasks",
+        "_chain_owed_sends",
         "_armed_this_step",
         "_seed_pending",
         "_receipts",
@@ -434,6 +435,14 @@ class Interpreter(BaseInterpreter[TContext]):
         #: has not finished generating; see the chain-end test in the run
         #: loop. Plain-`def` services are awaited in-step and never owe.
         self._chain_owed_tasks: "Set[asyncio.Task[Any]]" = set()
+        #: ⏲️ #206: delayed self-`send`s a step of the current chain armed
+        #: that have not fired yet, keyed by their clock handle. The same
+        #: debt as a coroutine service (#179): the step that armed one has
+        #: not finished generating, so the chain stays open, and the firing
+        #: is charged as engine-generated work (see `_deliver`). Settled on
+        #: fire OR cancel (state exited, `cancel(id)`, superseded id), so it
+        #: cannot leak.
+        self._chain_owed_sends: "Set[Any]" = set()
         #: 🔗 #179 / #200: how many coroutine-service tasks the CURRENT
         #: step armed. Read by the chain-end test: a step that armed work
         #: whose completion has not landed has not finished generating.
@@ -1650,9 +1659,17 @@ class Interpreter(BaseInterpreter[TContext]):
                     #    maxIterations=20, not 22). A user event arriving
                     #    first does not consume the standing -- on the sync
                     #    engine it never could, because the completion had
-                    #    already landed inside `start()`.
+                    #    already landed inside `start()`. The same standing
+                    #    applies to the SETTLE budget (#209): on the sync
+                    #    engine the seed's descendants are settled inside
+                    #    the drain that `start()` opened, whose budget was
+                    #    reset at the drain's start -- so the initial
+                    #    descent's own settle work is not charged against
+                    #    the chain the seed begins.
                     self._seed_pending = False
                     self._raise_depth = 0
+                    self._settle_iterations = 0
+                    self._settle_tripped = False
 
                 # 🏛️ #120: an engine completion (`done.invoke`,
                 #    `error.platform`, a due `after`) is finished work and
@@ -1699,9 +1716,17 @@ class Interpreter(BaseInterpreter[TContext]):
                     for plugin in self._plugins:
                         plugin.on_event_dropped(self, event, "chain_budget")
                     self.last_transition_ok = False
-                    self._last_action_error = RunawayChainError(
-                        self.id, limit, 1
+                    # 🧷 #207: a discarded completion for a still-active
+                    #    invoking state leaves the machine parked with
+                    #    nothing running. Name it, on the error and via the
+                    #    hook, so "cut and stranded" is distinguishable from
+                    #    "settled".
+                    stranded = self._stranded_by_cut([event])
+                    err = RunawayChainError(
+                        self.id, limit, 1, [iid for _, iid in stranded]
                     )
+                    self._last_action_error = err
+                    self._report_stranded(stranded, err)
                     # 🧾 The dropped event may carry a receipt; never hang it.
                     self._fail_receipt(
                         event,
@@ -1841,6 +1866,22 @@ class Interpreter(BaseInterpreter[TContext]):
                 if id(event) in self._receipts:
                     if step_error is None and not self.last_transition_ok:
                         step_error = self._last_action_error
+                    # 🛡️ #208: a receipt is resolved only here, AFTER the
+                    #    in-flight flag is down, so it can never coincide
+                    #    with a mid-step snapshot refusal. Belt and braces:
+                    #    a running machine whose step ended over an EMPTY
+                    #    configuration is a torn result, never a success --
+                    #    the receipt says so instead of `ok`.
+                    if (
+                        step_error is None
+                        and self.status == "running"
+                        and not self._configuration_is_legal()
+                    ):
+                        step_error = self._last_action_error or RuntimeError(
+                            f"'{event.type}' left machine '{self.id}' with "
+                            f"no legal configuration (#208)"
+                        )
+                        self.last_transition_ok = False
                     changed = frozenset(
                         self._active_state_nodes
                     ) != config_before or (
@@ -1986,7 +2027,9 @@ class Interpreter(BaseInterpreter[TContext]):
         #    target each other spins forever; XState added the same guard in
         #    v5.31.0. `max_iterations` is configurable on the machine.
         if not self.machine.has_always_transitions:
-            return  # ⚡ nothing to settle; see MachineNode.has_always_transitions
+            # ⚡ nothing to settle; see MachineNode.has_always_transitions.
+            self._arm_pending_invokes()  # #204: still the macrostep's end
+            return
         limit = getattr(self.machine, "max_iterations", 1000)
         while True:
             # 🛟 #166: the budget is per MACROSTEP on the instance, not a
@@ -2028,6 +2071,11 @@ class Interpreter(BaseInterpreter[TContext]):
                 await self._process_event(transient_event)
             else:
                 break  # No more transient transitions; state is stable.
+        # 📞 #204 (SCXML 6.1): the macrostep is stable -- arm the invokes of
+        #    the states it entered and did not exit. Also reached when the
+        #    settle budget trips: the states still active are the machine's
+        #    real configuration and must invoke.
+        self._arm_pending_invokes()
 
     # -------------------------------------------------------------------------
     # 🤖 Asynchronous Task Implementations (Actors, Timers, Services)
@@ -2158,6 +2206,20 @@ class Interpreter(BaseInterpreter[TContext]):
             return
 
         key = str(send_id) if send_id else None
+        # ⏲️ #206: a DELAYED send to ourselves, issued from our own action,
+        #    is self-generated work exactly like a zero-delay `raise` -- the
+        #    delay changes WHEN it lands, not WHO produced it. Charging it at
+        #    delivery as external (#192's provenance tag) made a
+        #    `raise(delay=1)` ping-pong un-sheddable and un-charged: a cycle
+        #    `maxIterations` could not bound. It is a debt of the arming
+        #    step (like a coroutine service, #179) and its firing is charged
+        #    as engine-generated (like a completion).
+        self_armed = actor is self and self._processing
+        handle_box: List[Any] = []
+
+        def _settle_debt() -> None:
+            if handle_box:
+                self._chain_owed_sends.discard(handle_box[0])
 
         def _fire() -> None:
             """Deliver once the clock says the delay has elapsed (#49)."""
@@ -2167,19 +2229,27 @@ class Interpreter(BaseInterpreter[TContext]):
             #    and leave the newer send uncancellable.
             if key is not None and self._scheduled_sends.get(key) is _cancel:
                 self._scheduled_sends.pop(key, None)
+            _settle_debt()
             if self.status != "running":
                 return
             if actor is self:
-                self._deliver_priority(target_event)
+                self._deliver_priority(
+                    target_event, engine_completion=self_armed
+                )
             else:
                 asyncio.ensure_future(self._send_to_actor(actor, target_event))
 
         handle = self._set_timeout(_fire, delay / 1000.0, owner=self.id)
+        handle_box.append(handle)
         self._timer_handles.setdefault(self.id, []).append(handle)
+        if self_armed:
+            self._chain_owed_sends.add(handle)
+            self._armed_this_step += 1
 
         def _cancel() -> None:
             """Cancels this specific delayed send."""
             self.clock.clear_timeout(handle)
+            _settle_debt()
 
         if key is not None:
             # 🔁 Reusing a send id supersedes the earlier send. Without this

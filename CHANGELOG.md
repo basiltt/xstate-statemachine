@@ -9,6 +9,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Round-9 re-verification findings** (#203–#210). Every one
+  reproduced against `main` @ `f28719c` with the reporter's standalone
+  repro before the fix and pinned in `tests/test_round9_findings.py`
+  (19 tests, parametrised over `def` / `async def`, both engines where
+  parity is the point).
+  - **`invoke` runs after eventless transitions settle (#204; SCXML §6.1
+    `statesToInvoke`).** Entry recorded the state; the settle pass, once
+    stable, arms invokes for the recorded states still active. A state
+    entered and exited within one macrostep — rolled forward by an
+    `always`, rolled back by `actionErrorPolicy` — never submits its
+    service, on either engine and for either service kind. This closes
+    the roll-forward half of #193 that had landed on one engine only.
+  - **`after` transitions match on provenance (#203).** #195 minted
+    `_EngineAfter` but selection still matched the public `AfterEvent`
+    class, so a hand-built event or a forged snapshot record fired a
+    60-second timer instantly. Only an engine-minted `AfterEvent` drives
+    an `after` transition, as `done`/`error` already required.
+  - **A delayed self-`send` is self-generated work (#206).** A
+    `raise(delay=)` to the machine itself was charged to no budget and
+    tagged external by #192, so a 1 ms-delay ping-pong was a cycle
+    `maxIterations` could not bound. It is now a debt of the arming step
+    (like a coroutine service) and its firing is charged as engine work;
+    cancellation settles the debt. The cycle trips at the same lap as the
+    zero-delay `raise` cycle (±1). A delayed send from *outside* an action
+    stays external. On the `SyncInterpreter` a timer-paced self-send is
+    driven by the caller's `tick()` and has user standing by construction
+    — stated in the pin.
+  - **A chain cut that strands an invocation is observable (#207).** A
+    `rollback + onDone` storm cut at `maxIterations` left the machine
+    parked in the invoking state with nothing running and no completion
+    that could ever arrive, distinguishable from "waiting on a slow
+    service" only by polling the configuration against the chart. Both
+    engines now name it: `RunawayChainError.stranded` carries the invoke
+    ids, the new `on_invocation_stranded(interpreter, state_id, invoke_id,
+    error)` hook fires, an ERROR log names the state, and
+    `has_dormant_invocations` / `pending_invocations()` answer on demand.
+    The reporter's "self-terminates below the limit" reading was the
+    plateau sampled at 0.45 s while the `def` lane was still climbing; the
+    cycle trips at exactly `maxIterations + 2` on both lanes.
+  - **A receipt is never success-shaped over an empty configuration
+    (#208).** Receipts are resolved after the in-flight flag is down, so
+    the reported coincidence with a `SnapshotMidStepError` cannot occur on
+    this tree (the repro's own run shows 0 hits); the receipt path now also
+    refuses to report `ok` when the step ended with an illegal
+    configuration, as belt and braces.
+  - **Lap parity, stated exactly and pinned as a sweep (#209).** The
+    sync engine ran two laps more than async at every *odd* limit on
+    `rollback + onDone` because the initial descent's settle work was
+    charged against the seed chain on the async engine only. The seed's
+    standing now covers the settle budget too; all three lanes agree at
+    limits 1–25, odd and even, on both shapes. The #201 changelog sentence
+    is corrected.
+  - **`TestAsyncRollbackRearmCycleBounded` waits for convergence (#210)**
+    instead of sampling at fixed 0.6 s / 0.9 s, and asserts the exact
+    plateau (`maxIterations + 3`, identical to the sync engine).
+
+### Added
+
+- **`from_snapshot(minimum_version=0, expected_machine_hash=None)`**
+  (#205). A snapshot is trusted input by contract; `machine_hash` is a
+  fingerprint against accidental drift, not a MAC. A caller who does not
+  trust the payload can refuse a version-0 downgrade
+  (`SnapshotVersionError`, new `.minimum` attribute) and compare the
+  fingerprint against a value *they* hold (`SnapshotDriftError` on
+  mismatch or absence, regardless of version), so the payload cannot
+  select its own level of checking. The trust boundary is stated in the
+  `from_snapshot` docstring, the API reference, the snapshot guide and
+  `structure_hash`.
+- **`PluginBase.on_invocation_stranded`** (#207) and
+  **`RunawayChainError.stranded`**.
+
+### Fixed
+
 - **Round-8 re-verification findings** (#192–#201; reopened #181, #186).
   Every one reproduced against `main` @ `6db65d8` with the reporter's
   standalone repro before the fix and pinned in
@@ -88,11 +161,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     lap off for a cycle starting from the *initial* state (22 vs 23): the
     first completion the initial descent produces is the chain's seed
     (user standing, the sync drain's #77 rule), not a link. Fixed; all
-    three lanes now agree at every limit tested. What is *not* promised:
-    on `rollback + onDone` the sync engine does not re-arm a rolled-back
-    invoke inside the same drain and stops after the first rollback with
-    that `RuntimeError`, while both async lanes trip `RunawayChainError`
-    at the same lap. The pin states both facts.
+    three lanes agreed on the shapes tested at the time. (Round 9, #209,
+    found the sync engine two laps ahead at every *odd* limit on the
+    `rollback + onDone` shape; with invokes armed at the end of the
+    macrostep (#204) and the initial descent's settle work given seed
+    standing, all three lanes now agree at every limit, odd and even, on
+    both the ping-pong and rollback shapes -- pinned as a sweep.)
 - **Round-7 re-verification findings** (#179–#190; reopened #167, #168,
   #175). Every one reproduced against `main` @ `221ce7c` with the
   reporter's standalone repro before the fix (all twelve exited 1) and

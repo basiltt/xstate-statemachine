@@ -157,6 +157,19 @@ def check_version(snapshot: Dict[str, Any]) -> int:
     return version
 
 
+def check_minimum_version(version: int, minimum: int) -> None:
+    """#205: refuse a payload older than the caller's floor.
+
+    ``version`` is the value `check_version` returned. A caller who never
+    persisted version-0 payloads (every 0.8.1 writer records ``version``
+    and ``machine_hash``) can set ``minimum=1`` so a blob that has had its
+    version key stripped -- the one shape the drift check cannot cover --
+    is refused instead of restored unchecked.
+    """
+    if minimum and version < minimum:
+        raise SnapshotVersionError(version, SNAPSHOT_VERSION, minimum=minimum)
+
+
 _VALID_STATUSES = frozenset(
     {"uninitialized", "running", "stopped", "done", "error"}
 )
@@ -309,6 +322,7 @@ def check_identity(
     *,
     verify_hash: bool,
     version: Optional[int] = None,
+    expected_hash: Optional[str] = None,
 ) -> None:
     """Refuse to restore a snapshot into a machine it was not taken from.
 
@@ -333,6 +347,10 @@ def check_identity(
             structural hash must be present and match.
         version: The payload's declared version (from `check_version`).
             ``None`` / ``0`` selects the legacy unchecked path.
+        expected_hash: #205 -- a fingerprint the CALLER holds. When given,
+            the payload's ``machine_hash`` must equal it (and it must equal
+            the machine's), regardless of version; the payload's own claim
+            is never trusted to validate itself.
 
     Raises:
         SnapshotDriftError: machine id differs, or (when *verify_hash*)
@@ -348,6 +366,25 @@ def check_identity(
     if not verify_hash:
         return
     snap_hash = snapshot.get("machine_hash")
+    # 🔐 #205: when the CALLER supplies the fingerprint the payload must
+    #    match, it is compared against THAT -- a value the caller holds --
+    #    rather than letting an attacker-controlled field validate itself.
+    #    Absent or different is drift; the payload's own claim is not
+    #    consulted.
+    if expected_hash is not None:
+        if snap_hash != expected_hash:
+            raise SnapshotDriftError(
+                f"snapshot 'machine_hash' {snap_hash!r} does not match the "
+                f"caller's expected_machine_hash {expected_hash!r} for "
+                f"machine '{machine.id}' (#205)."
+            )
+        if expected_hash != machine.structure_hash:
+            raise SnapshotDriftError(
+                f"caller's expected_machine_hash {expected_hash!r} does not "
+                f"match machine '{machine.id}' ({machine.structure_hash}); "
+                f"the machine changed since that fingerprint was recorded."
+            )
+        return
     versioned = bool(version)
     if snap_hash is None:
         if not versioned:
