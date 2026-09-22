@@ -407,6 +407,32 @@ class PluginBase(Generic[TInterpreter]):
         """
         pass  # pragma: no cover
 
+    def on_chain_budget_exceeded(
+        self,
+        interpreter: TInterpreter,
+        error: BaseException,
+        event: "AnyEvent",
+    ) -> None:
+        """Called once per chain-budget (or settle-budget) trip (#222).
+
+        `maxIterations` cut the machine's self-generated work: a
+        `raise` / self-`send` cycle, a completion storm, or an `always`
+        loop. Work was discarded and the machine may now rest in a state
+        it was never meant to rest in. `last_error` carries the same
+        `RunawayChainError` but only until the next clean event, so this
+        hook -- with the sticky `interpreter.chain_trips` and
+        `interpreter.last_chain_error` -- is the supervisor's signal. Fires
+        ONCE per trip however many events that trip drops
+        (`on_event_dropped(..., "chain_budget")` still fires per event).
+
+        Args:
+            interpreter: The interpreter instance.
+            error: The `RunawayChainError` (``.limit``, ``.dropped``,
+                ``.stranded``).
+            event: The first event cut, or ``Event("")`` for a settle trip.
+        """
+        pass  # pragma: no cover
+
     def on_event_dropped(
         self, interpreter: TInterpreter, event: "AnyEvent", reason: str
     ) -> None:

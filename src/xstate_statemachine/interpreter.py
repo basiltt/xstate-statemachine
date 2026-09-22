@@ -91,6 +91,7 @@ from .events import (
 )
 from .exceptions import (
     ActorSpawningError,
+    ReentrantWaitError,
     ImplementationMissingError,
     InterpreterStoppedError,
     InvalidConfigError,
@@ -952,6 +953,17 @@ class Interpreter(BaseInterpreter[TContext]):
             #    collide in the receipt map.
             event_obj = self._detach(event_obj)
         receipt = self._make_receipt(event_obj) if wait else None
+        if receipt is not None and self._issued_from_own_action():
+            # 🔒 #219: an action that AWAITS a receipt on its own interpreter
+            #    deadlocks by construction -- the receipt resolves when the
+            #    run loop processes the event, and the loop cannot advance
+            #    until this action returns (mid-run; and from `start()` too
+            #    since the #215 descent gate). Handing the receipt out is
+            #    fine (`asyncio.ensure_future(i.send(..., wait=True))` and
+            #    awaiting it LATER is a supported shape, #27); awaiting it
+            #    inside the step is the hang. Wrap it so the in-step await
+            #    raises `ReentrantWaitError` instead of parking for ever.
+            receipt = self._guard_reentrant_await(receipt, event_obj.type)
         if priority:
             # 🚦 #192: the priority lane asks the SAME provenance question
             #    the inbox lane asks (#90): a `send(priority=True)` issued
@@ -1096,6 +1108,47 @@ class Interpreter(BaseInterpreter[TContext]):
             return fresh
         replace = getattr(event_obj, "_replace", None)  # NamedTuple events
         return replace() if callable(replace) else copy.copy(event_obj)
+
+    def _guard_reentrant_await(
+        self, receipt: "asyncio.Future[Receipt]", event_type: str
+    ) -> "asyncio.Future[Receipt]":
+        """#219: a receipt issued from inside one of THIS interpreter's
+        actions, made safe to hand out but fatal to await in-step.
+
+        The returned future resolves exactly as the original does. If it is
+        awaited while the issuing action is still running -- detectable as
+        "the current task is still inside our action context and the run
+        loop has not processed the event" -- it raises `ReentrantWaitError`
+        at once instead of hanging. Awaiting it after the action returned
+        (from another task, or after the step) behaves normally.
+        """
+        loop = asyncio.get_running_loop()
+        guarded: "asyncio.Future[Receipt]" = loop.create_future()
+
+        def _forward(src: "asyncio.Future[Receipt]") -> None:
+            if guarded.done():
+                return
+            if src.cancelled():
+                guarded.cancel()
+            elif src.exception() is not None:
+                guarded.set_exception(src.exception())  # type: ignore[arg-type]
+            else:
+                guarded.set_result(src.result())
+
+        receipt.add_done_callback(_forward)
+
+        class _Awaitable:
+            __slots__ = ()
+
+            def __await__(inner) -> Any:  # noqa: N805
+                if _ACTIVE_ACTION_OWNER.get() is self and not receipt.done():
+                    raise ReentrantWaitError(self.id, event_type)
+                return guarded.__await__()
+
+            def __getattr__(inner, name: str) -> Any:  # noqa: N805
+                return getattr(guarded, name)
+
+        return _Awaitable()  # type: ignore[return-value]
 
     def _make_receipt(self, event_obj: Any) -> "asyncio.Future[Receipt]":
         loop = asyncio.get_running_loop()
@@ -1815,6 +1868,7 @@ class Interpreter(BaseInterpreter[TContext]):
                         self.id, limit, 1, [iid for _, iid in stranded]
                     )
                     self._last_action_error = err
+                    self._note_chain_trip(err, event)  # #222 sticky
                     self._report_stranded(stranded, err)
                     # 🧾 The dropped event may carry a receipt; never hang it.
                     self._fail_receipt(
@@ -1839,6 +1893,7 @@ class Interpreter(BaseInterpreter[TContext]):
                     ):
                         self._raise_depth = 0
                         self._chain_tripped = False
+                        self._chain_trip_open = False  # #222
                     continue
 
                 logger.debug(
@@ -1935,6 +1990,7 @@ class Interpreter(BaseInterpreter[TContext]):
                     ):
                         self._raise_depth = 0
                         self._chain_tripped = False
+                        self._chain_trip_open = False  # #222
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -2151,9 +2207,13 @@ class Interpreter(BaseInterpreter[TContext]):
                         limit,
                         self.id,
                     )
+                first_trip = not self._settle_tripped
                 self._settle_tripped = True
                 self.last_transition_ok = False
                 self._last_action_error = RunawayChainError(self.id, limit, 0)
+                if first_trip:  # #222 sticky, once per settle storm
+                    self._chain_trip_open = False
+                    self._note_chain_trip(self._last_action_error, Event(""))
                 self._repair_configuration()
                 break
             transient_event = Event(type="")
@@ -2320,6 +2380,7 @@ class Interpreter(BaseInterpreter[TContext]):
             if handle_box:
                 self._chain_owed_sends.discard(handle_box[0])
                 self._armed_self_sends.pop(handle_box[0], None)  # #213
+                self._release_timer_handle(self.id, handle_box[0])  # #218
 
         def _fire() -> None:
             """Deliver once the clock says the delay has elapsed (#49)."""

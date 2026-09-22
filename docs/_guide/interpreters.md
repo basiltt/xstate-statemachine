@@ -511,6 +511,17 @@ print(receipt.error)      # the exception raised while processing THIS event, or
 
 `error` is also set (to `InterpreterStoppedError`) if the interpreter is stopped, refuses the event, or tears down before a pending receipt resolves, so a caller awaiting `wait=True` never hangs on shutdown.
 
+**Do not await your own receipt from inside an action.** An action runs *inside* the macrostep the run loop is executing; the receipt for an event it sends resolves only when the loop processes that event, and the loop cannot advance until the action returns. Awaiting `i.send("GO", wait=True)` inside an `entry` action is therefore a deadlock by construction, and since 0.8.1 (#219) it raises `ReentrantWaitError` at the call site instead of hanging. Send without `wait` (the event is queued as self-generated work and runs after the current step), or schedule the receipt and await it later from outside the step:
+
+```python
+async def kick(i, ctx, event, action):
+    i.send("GO")                                   # fine: queued, runs next
+    fut = asyncio.ensure_future(i.send("GO", wait=True))  # fine: awaited elsewhere
+    await i.send("GO", wait=True)                  # ReentrantWaitError
+```
+
+The `SyncInterpreter` raises the same error for the same shape: there the call would have returned a receipt describing the *running* step, not the event's.
+
 ### `send(priority=True)`
 
 Pass `priority=True` to jump an event to the head of processing, ahead of every already-queued external event (priority events are FIFO among themselves), and exempt from `max_queue_size`:

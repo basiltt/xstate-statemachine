@@ -185,6 +185,7 @@ Every hook receives the `interpreter` instance as its first argument, giving plu
 | `on_transition_failed` | `(interpreter, transition, failed_actions)` | A transition's action list did not run to completion |
 | `on_guard_error` | `(interpreter, guard_name, event, error)` | A guard raised instead of returning |
 | `on_unhandled_event` | `(interpreter, event, active_state_ids, disposition)` | An event selected no transition |
+| `on_chain_budget_exceeded` | `(interpreter, error, event)` | **[0.8.1]** Once per `maxIterations` trip (#222). The sticky signal that work was discarded; `interpreter.chain_trips` / `.last_chain_error` carry the same fact for polling |
 | `on_event_dropped` | `(interpreter, event, reason)` | An event was discarded unprocessed. `reason` is one of `queue_full`, `not_running`, `chain_budget`, `stopped` (abandoned by `stop()`, incl. producers parked on a full `BLOCK` inbox), `unresolved_target` (`sendTo` to no live actor). Fires on **both** engines for every loss site (0.8.1) |
 | `on_resolve_error` | `(interpreter, error, event)` | A transition's target could not be resolved at runtime (`strict_targets=False` only) — the third per-transition failure category alongside `on_action_error` / `on_guard_error` (0.8.1) |
 | `on_plugin_error` | `(interpreter, plugin, hook, error)` | **Another** plugin's hook raised (or was `async def` and could not be awaited). Never fires for the plugin that failed. The same triple is on `interpreter.last_plugin_error` (0.8.1) |
@@ -325,6 +326,18 @@ Fires when an event matches no transition in any active state, regardless of `on
 ```python
 def on_unhandled_event(self, interpreter, event, active_state_ids, disposition):
     print(f"'{event.type}' unhandled in {active_state_ids}: {disposition}")
+```
+
+#### `on_chain_budget_exceeded(interpreter, error, event)`
+
+Fires **once per trip** when `maxIterations` cuts the machine's self-generated work — a zero-delay `raise` cycle, a completion storm, or an `always` loop (0.8.1, #222). `error` is the `RunawayChainError` (`.limit`, `.dropped`, `.stranded`); `event` is the first event cut, or `Event("")` for a settle-budget trip.
+
+Use this — or poll `interpreter.chain_trips` (a monotonic counter) / `interpreter.last_chain_error` (a latch you clear with `clear_chain_error()`) — rather than `last_error`, which is recomputed per processed event and is erased by the next benign event. A machine with a heartbeat guarantees that event arrives, so a supervisor polling `last_error` loses the race every time.
+
+```python
+def on_chain_budget_exceeded(self, interpreter, error, event):
+    metrics.increment("chain_trips", tags={"machine": interpreter.id})
+    alert(f"{interpreter.id} cut {error.dropped} event(s) at {error.limit}; first: {event.type}")
 ```
 
 #### `on_event_dropped(interpreter, event, reason)`

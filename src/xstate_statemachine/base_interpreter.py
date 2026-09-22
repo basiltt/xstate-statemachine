@@ -498,6 +498,9 @@ class BaseInterpreter(Generic[TContext]):
         "_scheduled_sends",
         "_armed_self_sends",
         "_restored_self_sends",
+        "_chain_trip_open",
+        "_last_chain_error",
+        "chain_trips",
         "_step_soft_error",
         "_subscribers",
         "_system",
@@ -614,6 +617,14 @@ class BaseInterpreter(Generic[TContext]):
         self.last_transition_ok: bool = True
         #: The exception behind the most recent `last_transition_ok=False`.
         self._last_action_error: Optional[BaseException] = None
+        #: 🔒 #222: chain-budget trips are STICKY. `last_error` is a per-step
+        #: read that the next clean event resets, so a supervisor polling it
+        #: raced the machine's own heartbeat and lost. These do not reset.
+        self.chain_trips: int = 0
+        self._last_chain_error: Optional[BaseException] = None
+        #: True from the first cut of a trip until the chain resets, so one
+        #: trip that drops many events is counted once.
+        self._chain_trip_open: bool = False
         #: 🔔 #133: a non-fatal built-in failure recorded mid-transition and
         #: published by the transition epilogue.
         self._step_soft_error: Optional[BaseException] = None
@@ -1232,9 +1243,21 @@ class BaseInterpreter(Generic[TContext]):
         return True
 
     def _persist_scheduled_sends(self) -> List[Dict[str, Any]]:
-        """#213: records for every armed, unfired delayed send to self."""
+        """#213: records for every armed, unfired delayed send to self.
+
+        #221: plus every record `from_snapshot` parked that `start()` has
+        not yet re-armed. Restore -> re-persist WITHOUT `start()` is what a
+        journal-compaction or storage-migration job does, and it used to
+        drop every deadline in every snapshot it touched. The parked
+        records are re-emitted verbatim: no clock is bound, so no time is
+        charged against them.
+        """
+        out: List[Dict[str, Any]] = [
+            dict(r) for r in self._restored_self_sends
+        ]
+        if not self._armed_self_sends:
+            return out
         now = self.clock.now()
-        out: List[Dict[str, Any]] = []
         for event, deadline, send_id in self._armed_self_sends.values():
             rec = self._persist_event_reporting(event)
             rec["remaining_ms"] = max(0.0, (deadline - now) * 1000.0)
@@ -2047,6 +2070,42 @@ class BaseInterpreter(Generic[TContext]):
                     out.append((state.id, inv.id))
         return out
 
+    def _note_chain_trip(self, error: BaseException, event: Any) -> None:
+        """#222: latch a chain-budget trip and notify plugins, once per trip.
+
+        `last_error` is recomputed per processed event, so one benign,
+        correctly-handled event erased the only programmatic record that
+        the machine had discarded work -- and post-#212 a heartbeat
+        guarantees such an event arrives. This increments `chain_trips`,
+        sets `last_chain_error`, and fires `on_chain_budget_exceeded`; a
+        trip that cuts several events in a row is reported once, until the
+        chain resets (an external event lands / the macrostep ends).
+        """
+        if self._chain_trip_open:
+            self._last_chain_error = error
+            return
+        self._chain_trip_open = True
+        self.chain_trips += 1
+        self._last_chain_error = error
+        for plugin in self._plugins:
+            plugin.on_chain_budget_exceeded(self, error, event)
+
+    @property
+    def last_chain_error(self) -> Optional[BaseException]:
+        """#222: the `RunawayChainError` of the most recent chain-budget or
+        settle-budget trip, or ``None`` if none has tripped.
+
+        A LATCH, unlike `last_error`: it survives every later event and is
+        cleared only by `clear_chain_error()`. Pair with `chain_trips` (a
+        monotonic count a supervisor can sample at any interval and diff).
+        """
+        return self._last_chain_error
+
+    def clear_chain_error(self) -> None:
+        """#222: acknowledge the latched chain trip (`chain_trips` keeps
+        counting)."""
+        self._last_chain_error = None
+
     def _report_stranded(
         self, stranded: List[Tuple[str, str]], error: BaseException
     ) -> None:
@@ -2100,6 +2159,26 @@ class BaseInterpreter(Generic[TContext]):
             for state in self._active_state_nodes
             if state.after
         )
+
+    def _release_timer_handle(self, owner: Any, handle: Any) -> None:
+        """#218: forget one clock handle once it has fired or been cancelled.
+
+        `after` timers are pruned wholesale on state exit (`_timer_handles
+        .pop(state.id)`); a delayed *send* is registered under the
+        INTERPRETER id, which never exits, so its list was append-only and
+        grew by one dead handle per beat for the interpreter's life. Called
+        from both `_fire` and `_cancel`; O(n) in the number of live delayed
+        sends, which is small by construction.
+        """
+        handles = self._timer_handles.get(owner)
+        if not handles:
+            return
+        try:
+            handles.remove(handle)
+        except ValueError:
+            return
+        if not handles:
+            self._timer_handles.pop(owner, None)
 
     def _rearm_dormant_timers(self) -> int:
         """Arm every ``after`` timer of the active configuration that has
@@ -4170,6 +4249,11 @@ class BaseInterpreter(Generic[TContext]):
         raised under ``actionErrorPolicy``, an unresolvable transition
         target (#31), a missing implementation, or a `RunawayChainError`
         (#77). Reset to ``None`` at the start of each processed event.
+
+        ⚠️ A per-step read, NOT a latch: the next cleanly handled event
+        clears it, and a heartbeat guarantees one arrives (#222). To detect
+        that the machine has discarded work at any point, use the sticky
+        `chain_trips` / `last_chain_error` or `on_chain_budget_exceeded`.
         """
         return None if self.last_transition_ok else self._last_action_error
 
