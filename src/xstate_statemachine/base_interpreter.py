@@ -496,6 +496,8 @@ class BaseInterpreter(Generic[TContext]):
         "_states_to_invoke",
         "_restart_timers_on_start",
         "_scheduled_sends",
+        "_armed_self_sends",
+        "_restored_self_sends",
         "_step_soft_error",
         "_subscribers",
         "_system",
@@ -656,6 +658,20 @@ class BaseInterpreter(Generic[TContext]):
         self._emit_listeners: Dict[str, List[Callable[[Any], None]]] = {}
         #: Cancellation callbacks for pending delayed sends, keyed by send id.
         self._scheduled_sends: Dict[str, Callable[[], None]] = {}
+        #: ⏲️ #213: every armed, unfired delayed send to SELF, keyed by its
+        #: clock handle: ``(event, deadline_clock_seconds, send_id)``. This
+        #: is the ONE place a pending self-delay is visible outside the
+        #: clock, so `get_persisted_snapshot()` can serialise it (a fired
+        #: timer sits in a queue; an armed one used to exist nowhere the
+        #: snapshot could see, and was silently discharged). Entries are
+        #: removed on fire and on cancel.
+        self._armed_self_sends: Dict[Any, Tuple[Any, float, Optional[str]]] = (
+            {}
+        )
+        #: ⏲️ #213: records restored from a snapshot's `scheduled_sends`,
+        #: re-armed with their REMAINING delay by `start()` (the clock the
+        #: restored interpreter runs on is only bound then).
+        self._restored_self_sends: List[Dict[str, Any]] = []
         #: Actor-system registry. Only the ROOT interpreter's copy is used;
         #: children reach it by walking up `parent`.
         self._system: Dict[str, "BaseInterpreter[Any]"] = {}
@@ -1192,13 +1208,82 @@ class BaseInterpreter(Generic[TContext]):
             f"'{getattr(undelivered, 'type', undelivered)}' was not delivered."
         )
 
-    def _persist_event_reporting(self, event: Any) -> Dict[str, Any]:
+    def _admit_restored(self, event: Any) -> bool:
+        """#214: apply `strict` to a restored event; ``False`` if refused.
+
+        Mirrors the `send()` call-site check. The refusal is reported the
+        way an invalid `send()` is (`on_invalid_event`) and recorded on
+        `last_error` so a restore that dropped traffic is never silent.
+        """
+        try:
+            self._check_strict(event)
+        except UnknownEventError as exc:
+            logger.warning(
+                "🚫 Restored event '%s' refused by strict mode on '%s' and "
+                "dropped (#214): %s",
+                getattr(event, "type", event),
+                self.id,
+                exc,
+            )
+            self._report_invalid_event(exc, event)
+            self.last_transition_ok = False
+            self._last_action_error = exc
+            return False
+        return True
+
+    def _persist_scheduled_sends(self) -> List[Dict[str, Any]]:
+        """#213: records for every armed, unfired delayed send to self."""
+        now = self.clock.now()
+        out: List[Dict[str, Any]] = []
+        for event, deadline, send_id in self._armed_self_sends.values():
+            rec = self._persist_event_reporting(event)
+            rec["remaining_ms"] = max(0.0, (deadline - now) * 1000.0)
+            if send_id is not None:
+                rec["send_id"] = send_id
+            out.append(rec)
+        return out
+
+    def _rearm_restored_self_sends(self) -> int:
+        """#213: re-arm the delayed self-sends a snapshot recorded.
+
+        Called by `start()` once the clock is bound. Each is scheduled with
+        the REMAINING delay the snapshot captured (0 fires on the next
+        pump), through the same `_deliver` path a live `raise(delay=)`
+        uses, so the event carries the standing it had (engine-generated,
+        charged to the chain budget, #206). Returns how many were armed.
+        """
+        records, self._restored_self_sends = self._restored_self_sends, []
+        for rec in records:
+            event = restore_event(rec)
+            delay_ms = float(rec.get("remaining_ms") or 0.0)
+            self._arm_restored_self_send(
+                event, max(delay_ms, 0.001), rec.get("send_id")
+            )
+        return len(records)
+
+    def _arm_restored_self_send(
+        self, event: Any, delay_ms: float, send_id: Optional[str]
+    ) -> None:
+        """Engine hook: schedule a restored delayed self-send (#213)."""
+        raise NotImplementedError  # pragma: no cover
+
+    def _persist_pending_events(self) -> List[Dict[str, Any]]:
+        """Records for every accepted-but-unprocessed event, with lane (#214).
+
+        Engine hook: the async engine overrides this to tag priority-lane
+        items so they restore into the lane; the sync engine has one queue.
+        """
+        return [self._persist_event_reporting(e) for e in self.pending_events]
+
+    def _persist_event_reporting(
+        self, event: Any, *, lane: Optional[str] = None
+    ) -> Dict[str, Any]:
         # 🔔 #159: `persist_event` raises `SnapshotSerializationError` (#131)
         #    for a pending event with non-JSON data; this is the one place it
         #    enters the snapshot, so report it via `on_snapshot_error` before
         #    re-raising -- the caller still gets the exception.
         try:
-            return persist_event(event)
+            return persist_event(event, lane=lane)
         except SnapshotSerializationError as exc:
             self._report_snapshot_error(exc)
             raise
@@ -1484,9 +1569,11 @@ class BaseInterpreter(Generic[TContext]):
             #    `ErrorEvent` / `AfterEvent` and engine-minted `Event`s
             #    carry a `kind` discriminator so an accepted invoke failure
             #    is not silently dropped and provenance survives a restore.
-            "pending_events": [
-                self._persist_event_reporting(e) for e in self.pending_events
-            ],
+            "pending_events": self._persist_pending_events(),
+            # ⏲️ #213: armed-but-unfired delayed self-sends, with the delay
+            #    REMAINING at snapshot time, so a restore re-arms them and a
+            #    state whose only exit is a delayed self-raise is not wedged.
+            "scheduled_sends": self._persist_scheduled_sends(),
             # 🕰️ Remembered history, so a restored machine can still honour a
             #    later transition to a history state.
             "history": {
@@ -1809,9 +1896,24 @@ class BaseInterpreter(Generic[TContext]):
         interpreter._deferred_events = [
             restore_event(d) for d in (snapshot.get("deferred") or [])
         ]
+        # ⏲️ #213: armed delayed self-sends are re-armed by `start()`,
+        #    with their remaining delay, once the clock is bound.
+        interpreter._restored_self_sends = [
+            dict(r) for r in (snapshot.get("scheduled_sends") or [])
+        ]
         # 📬 #47: re-enqueue the persisted inbox in original order.
+        # 🛡️ #214: a restored USER event is checked against `strict` like a
+        #    sent one -- the restore path used to bypass the call-site check
+        #    entirely, so `strict: True` was not restore-safe. A violation
+        #    is reported (`on_invalid_event`, `last_error`) and the event is
+        #    not enqueued; engine completions are never "unknown".
         for record in snapshot.get("pending_events") or []:
-            interpreter._enqueue_restored(restore_event(record))
+            ev = restore_event(record)
+            if not interpreter._admit_restored(ev):
+                continue
+            interpreter._enqueue_restored(
+                ev, priority=record.get("lane") == "priority"
+            )
         if recorded_error:
             # 📝 The original exception type cannot survive JSON, so the
             #    message is preserved in a dedicated wrapper. Without this a
@@ -2109,8 +2211,15 @@ class BaseInterpreter(Generic[TContext]):
         """Return the queue contents WITHOUT removing them. Engine-specific."""
         raise NotImplementedError  # pragma: no cover
 
-    def _enqueue_restored(self, event: Event) -> None:
-        """Place a persisted inbox event back on the queue (restore path)."""
+    def _enqueue_restored(
+        self, event: AnyEvent, *, priority: bool = False
+    ) -> None:
+        """Place a persisted event back on its queue (restore path).
+
+        ``priority`` (#214) is ``True`` for a record persisted from the
+        async engine's priority lane; that engine restores it into the
+        lane, the sync engine has one queue and ignores the flag.
+        """
         raise NotImplementedError  # pragma: no cover
 
     def send(

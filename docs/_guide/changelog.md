@@ -17,6 +17,67 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Fixed
 
+- **Round-10 re-verification findings** (#212–#216). Every one
+  reproduced against `main` @ `19cb1f1` with the reporter's standalone
+  repro before the fix and pinned in `tests/test_round10_findings.py`
+  (15 tests, parametrised over `def` / `async def`, both engines where
+  parity is the point).
+  - **A delayed self-send is a timer, not a chain (#212; supersedes the
+    #206 rule).** #206 charged a `raise(delay=)` self-send as a debt of
+    the arming step; #212 showed that killed every self-paced heartbeat or
+    poller at `maxIterations` beats regardless of period — the charge was
+    time-blind. The rule is now the `after` rule: arming a delay ends the
+    step's chain, the firing is a clock event. A `raise(delay=)` heartbeat
+    of any period runs indefinitely, exactly as an `after` one does, and a
+    1 ms `raise(delay=)` ping-pong is a periodic process exactly as an
+    `after: 1` ping-pong has always been. `maxIterations` bounds work the
+    machine feeds itself *within* a step (zero-delay `raise`, self-`send`,
+    completions re-arming invokes) — stated in `json-config.md`,
+    Production Characteristics § 2 and the round-9 pins, which are
+    rewritten to the new rule.
+  - **An armed, unfired delayed self-send survives a snapshot (#213).**
+    It existed nowhere the snapshot could see and was silently
+    discharged, so a state whose only exit was a delayed self-raise
+    restored permanently parked. Snapshot layout **v3** adds
+    `scheduled_sends`: each armed self-send with its *remaining* delay and
+    id; `start()` re-arms them, on both engines, with the standing they
+    had. Cancelled sends leave no record.
+  - **The restore path applies `strict`, keeps legacy `after` deadlines,
+    and restores the priority lane as a lane (#214).** Restored user
+    events pass the same `strict` check a `send()` does; a refusal is
+    reported (`on_invalid_event`, `last_error`) and the event dropped.
+    A v2 (0.8.0-era) `done` / `error` / `after` record is upcast as
+    engine-minted — only the engine could have written one — so a
+    persisted deadline still fires rather than being silently demoted by
+    #203's gate; a v3 record without the flag stays user traffic. Records
+    carry `lane`, so a fired timer restores ahead of the inbox.
+  - **Three-lane lap parity on an engine-work-only chart (#215).** Two
+    async-only defects: the settle budget reset on a self-raised plain
+    event (the sync drain keeps it for anything the machine generated),
+    and the run loop consumed the initial descent's own `raise` while an
+    `async def` entry action was still yielding — interleaving two
+    macrosteps the sync engine's re-entrancy guard forbids. The reset now
+    keys on external provenance; the loop waits for the descent to settle;
+    descent-queued raises get seed standing. `always` + zero-delay `raise`
+    agrees on all three lanes at limits 1–25, pinned as a sweep.
+  - **Unknown top-level config keys are caught (#216).** A misspelled
+    policy key (`actionErrorPolicyy`, `Strict`, `maxIteration`,
+    `onUnhandledEvent`) was silently dropped and the policy reverted to
+    its permissive default. Default: WARNING with a "did you mean" hint;
+    `create_machine(strict_config=True)` or config-level
+    `"strictConfig": true`: `InvalidConfigError`. `x-`-prefixed keys and
+    `meta` / `description` / `tags` / `version` are always accepted.
+    `KNOWN_MACHINE_KEYS` is the single list.
+
+### Changed
+
+- **Snapshot layout version 2 → 3** (#213, #214): adds `scheduled_sends`,
+  per-record `engine` provenance and `lane`. v2 payloads upcast
+  transparently; `from_snapshot(minimum_version=3)` refuses anything
+  older.
+
+### Fixed
+
 - **Round-9 re-verification findings** (#203–#210). Every one
   reproduced against `main` @ `f28719c` with the reporter's standalone
   repro before the fix and pinned in `tests/test_round9_findings.py`
@@ -34,16 +95,15 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
     class, so a hand-built event or a forged snapshot record fired a
     60-second timer instantly. Only an engine-minted `AfterEvent` drives
     an `after` transition, as `done`/`error` already required.
-  - **A delayed self-`send` is self-generated work (#206).** A
-    `raise(delay=)` to the machine itself was charged to no budget and
-    tagged external by #192, so a 1 ms-delay ping-pong was a cycle
-    `maxIterations` could not bound. It is now a debt of the arming step
-    (like a coroutine service) and its firing is charged as engine work;
-    cancellation settles the debt. The cycle trips at the same lap as the
-    zero-delay `raise` cycle (±1). A delayed send from *outside* an action
-    stays external. On the `SyncInterpreter` a timer-paced self-send is
-    driven by the caller's `tick()` and has user standing by construction
-    — stated in the pin.
+  - **A delayed self-`send` is self-generated work (#206) — superseded
+    by #212 in round 10.** #206 made a `raise(delay=)` self-send a debt of
+    the arming step so a 1 ms ping-pong would trip; #212 showed that rule
+    was time-blind and killed every self-paced heartbeat at
+    `maxIterations` beats. The shipped rule is the `after` rule (see the
+    round-10 entry): a delayed self-send is a timer, its firing is a clock
+    event, and a delayed ping-pong of any period is a periodic process —
+    as an `after: 1` ping-pong has always been. `maxIterations` bounds
+    work generated *within* a step.
   - **A chain cut that strands an invocation is observable (#207).** A
     `rollback + onDone` storm cut at `maxIterations` left the machine
     parked in the invoking state with nothing running and no completion

@@ -313,8 +313,13 @@ def event_kind(event: Any) -> str:
     return "system" if is_system_event(event) else "event"
 
 
-def persist_event(event: Any) -> Dict[str, Any]:
+def persist_event(event: Any, *, lane: Optional[str] = None) -> Dict[str, Any]:
     """JSON-safe record for a pending/deferred event (#86/#87).
+
+    ``lane`` (#214) records where the event was waiting -- ``"priority"``
+    for a fired timer / engine completion in the async engine's priority
+    lane -- so a restore puts it back ahead of the inbox rather than
+    demoting it to plain inbox traffic. Absent (``None``) means the inbox.
 
     Round-trips every engine event kind instead of silently dropping the
     NamedTuple ones. `ErrorEvent.error` is an exception and cannot be
@@ -330,6 +335,8 @@ def persist_event(event: Any) -> Dict[str, Any]:
     #    carried by `kind == "system"`.
     if kind in ("done", "error", "after") and is_system_event(event):
         rec["engine"] = True
+    if lane is not None:
+        rec["lane"] = lane
     if kind in ("event", "system"):
         rec["payload"] = copy.deepcopy(event.payload)
     elif kind == "done":

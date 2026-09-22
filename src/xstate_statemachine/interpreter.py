@@ -280,6 +280,8 @@ class Interpreter(BaseInterpreter[TContext]):
         "_chain_owed_sends",
         "_armed_this_step",
         "_seed_pending",
+        "_seed_internal",
+        "_descent_done",
         "_receipts",
         "_replay_pending",
         "_service_executor",
@@ -457,6 +459,20 @@ class Interpreter(BaseInterpreter[TContext]):
         #: whose completion is still in flight; that completion is the seed
         #: of the machine's first chain (sync parity, #77), not a link.
         self._seed_pending: bool = False
+        #: 🌱 #215: how many internal-queue items the initial descent left
+        #: behind; each is processed with SEED standing (the sync drain's
+        #: `seed_internal`, #77), so the chain count starts at their first
+        #: descendant and both engines cut an entry-raise cycle at the same
+        #: lap.
+        self._seed_internal: int = 0
+        #: 🚦 #215: set by `start()` once the initial descent has settled.
+        #: The run loop is spawned BEFORE the descent (so the machine is
+        #: live during it) but must not consume the descent's own raises
+        #: while it is still running -- an `async def` entry action yields,
+        #: and the loop took the queued `raise` mid-descent, interleaving
+        #: two macrosteps. The sync engine's re-entrancy guard forbids the
+        #: same interleaving.
+        self._descent_done: Optional["asyncio.Event"] = None
         #: 🛟 #168: set when the chain budget trips; spares exactly one
         #: pending engine completion at the trip, then cuts every further
         #: self-generated event until an external event ends the chain.
@@ -556,6 +572,10 @@ class Interpreter(BaseInterpreter[TContext]):
             if self.status == "running":
                 self._bind_loop()
                 self._event_loop_task = self._spawn_run_loop()
+                # ⏲️ #213: re-arm delayed self-sends with their remaining
+                #    delay -- unconditional, unlike `after` timers (#128):
+                #    the snapshot recorded exactly how long was left.
+                self._rearm_restored_self_sends()
                 # 🔁 #44: opt-in re-drive of invokes the snapshot left parked.
                 if self._restart_services_on_start:
                     self._restart_services_on_start = False
@@ -602,6 +622,7 @@ class Interpreter(BaseInterpreter[TContext]):
         self.status = "running"
         # 🌀 Launch the main event loop as a background task.
         self._bind_loop()
+        self._descent_done = asyncio.Event()  # #215: loop waits on this
         self._event_loop_task = self._spawn_run_loop()
 
         try:
@@ -660,6 +681,16 @@ class Interpreter(BaseInterpreter[TContext]):
             self._priority_queue = deque(
                 (ev, False) for ev, _ in self._priority_queue
             )
+            # 🔁 #215: the descent's own `always` settle work belongs to the
+            #    descent. On the sync engine the drain that `start()` opens
+            #    resets the settle budget before it processes the raises the
+            #    descent queued; give the first chain the same clean budget.
+            self._settle_iterations = 0
+            self._settle_tripped = False
+            # 🌱 A `raise` the descent queued is likewise the seed (#77):
+            #    the internal queue's items get the standing of events
+            #    "already queued when the drain opens".
+            self._seed_internal = len(self._internal_queue)
             # A service the initial configuration invoked -- plain `def`
             # (still running, #149) or `async def` (its own task) -- has
             # not completed yet; its completion lands on a later loop turn
@@ -686,6 +717,7 @@ class Interpreter(BaseInterpreter[TContext]):
                     set(self._active_state_nodes),
                     init_transition,
                 )
+            self._descent_done.set()  # #215: the loop may now consume
 
             logger.info(
                 "✅ Interpreter '%s' started successfully. Current states: %s",
@@ -704,6 +736,8 @@ class Interpreter(BaseInterpreter[TContext]):
             raise  # Re-raise the original exception to the caller.
         finally:
             self._processing = False  # #182: never left stuck by a raise
+            if self._descent_done is not None:
+                self._descent_done.set()  # never leave the loop parked
 
         return self
 
@@ -1364,6 +1398,33 @@ class Interpreter(BaseInterpreter[TContext]):
             fut.add_done_callback(self._threadsafe_self_send_settled)
         return fut
 
+    def _arm_restored_self_send(
+        self, event: Any, delay_ms: float, send_id: Optional[str]
+    ) -> None:
+        """#213: schedule a restored delayed self-send on this loop.
+
+        Runs the same `_deliver` a live `raise(delay=)` uses. `_processing`
+        is raised for the call so the send keeps its self-generated standing
+        (#206): it was armed by one of this machine's own actions before
+        the snapshot, and restoring does not change who produced it.
+        """
+        was = self._processing
+        self._processing = True
+        try:
+            # `_deliver`'s delayed branch arms the clock synchronously (no
+            # await before `_set_timeout`), so driving the coroutine one
+            # step here arms it NOW, under the raised flag -- a task would
+            # run after the flag is lowered and lose the standing.
+            coro = self._deliver(self, event, delay_ms, send_id)
+            try:
+                coro.send(None)
+            except StopIteration:
+                pass
+            else:  # pragma: no cover -- the delayed branch never awaits
+                self._loop_create_task(coro)
+        finally:
+            self._processing = was
+
     def _threadsafe_self_send_settled(self, _fut: Any) -> None:
         """#172: one self-issued `send_threadsafe` reached a terminal state."""
         self._threadsafe_self_sends_in_flight -= 1
@@ -1496,8 +1557,32 @@ class Interpreter(BaseInterpreter[TContext]):
         #    order on restore.
         return [ev for ev, _ in self._priority_queue] + inbox
 
-    def _enqueue_restored(self, event: Event) -> None:
+    def _enqueue_restored(
+        self, event: AnyEvent, *, priority: bool = False
+    ) -> None:
+        # 🛣️ #214: an item persisted from the priority lane (a fired timer,
+        #    an engine completion) goes back into the lane, ahead of the
+        #    inbox, with engine standing -- not demoted to inbox traffic.
+        if priority:
+            self._priority_queue.append((event, is_system_event(event)))
+            if self._wakeup is not None:
+                self._wakeup.set()
+            return
         self._put_inbox(event)
+
+    def _persist_pending_events(self) -> List[Dict[str, Any]]:
+        """#214: priority-lane items are tagged so they restore as a lane."""
+        out = [
+            self._persist_event_reporting(ev, lane="priority")
+            for ev, _ in self._priority_queue
+        ]
+        out.extend(
+            self._persist_event_reporting(ev)
+            for ev in self._snapshot_pending_events()[
+                len(self._priority_queue) :
+            ]
+        )
+        return out
 
     def _put_inbox(self, event: AnyEvent) -> None:
         """Enqueue on the inbox AND wake a run loop parked on an empty one.
@@ -1635,6 +1720,10 @@ class Interpreter(BaseInterpreter[TContext]):
         #    any volume is never throttled.
         limit = getattr(self.machine, "max_iterations", 1000)
         try:
+            if self._descent_done is not None:
+                # 🚦 #215: let `start()` finish the initial descent before
+                #    taking anything it queued (see `_descent_done`).
+                await self._descent_done.wait()
             while self.status == "running":
                 # 🧵 #171 / #116: a plain service the INITIAL configuration
                 #    invoked is still running when `start()` returns (#149
@@ -1797,13 +1886,23 @@ class Interpreter(BaseInterpreter[TContext]):
                 self.last_transition_ok = True
                 self._deferred_this_step.clear()  # #106: per-step scope
                 self._guard_denied_this_step = False  # #153: per-step scope
-                if not is_system_event(event):
-                    # 🔁 #166 / #151 / #179: a USER event starts a fresh
-                    #    settle budget; an engine completion continues the
-                    #    running one. Provenance only -- the old
-                    #    `or from_inbox` disjunct let a completion that
-                    #    happened to travel via the inbox clear the budget
-                    #    on every lap.
+                if self._seed_internal and self_generated:
+                    # 🌱 #215: a `raise` the initial descent queued is the
+                    #    seed, not a link -- the count starts at its first
+                    #    descendant, as on the sync engine (#77).
+                    self._seed_internal -= 1
+                    self._raise_depth = 0
+                if not self_generated and not is_system_event(event):
+                    # 🔁 #166 / #151 / #179 / #215: an EXTERNAL user event
+                    #    starts a fresh settle budget; anything the machine
+                    #    produced itself -- an engine completion OR a
+                    #    self-`raise`d plain event -- continues the running
+                    #    one. That is the sync drain's rule (`is_generated`
+                    #    keeps the budget): #215 found the async engine
+                    #    resetting on a raised `GO`, so an `always` +
+                    #    `raise` cycle got a fresh settle allowance every
+                    #    lap and ran ~2x the sync engine's laps before the
+                    #    chain budget caught it.
                     self._settle_iterations = 0
                     self._settle_tripped = False
                 try:
@@ -2220,6 +2319,7 @@ class Interpreter(BaseInterpreter[TContext]):
         def _settle_debt() -> None:
             if handle_box:
                 self._chain_owed_sends.discard(handle_box[0])
+                self._armed_self_sends.pop(handle_box[0], None)  # #213
 
         def _fire() -> None:
             """Deliver once the clock says the delay has elapsed (#49)."""
@@ -2233,6 +2333,16 @@ class Interpreter(BaseInterpreter[TContext]):
             if self.status != "running":
                 return
             if actor is self:
+                # ⏲️ #212: a delayed self-send that fires is a CLOCK event
+                #    with exactly the standing of an `after` firing: engine-
+                #    generated (charged +1 like any completion, shed-able if
+                #    it lands on an already-tripped chain), but the delay
+                #    itself ended the arming step's chain -- see the arming
+                #    branch above. So a self-paced heartbeat of any period
+                #    runs for ever, and so does a 1 ms `raise(delay=)` ping-
+                #    pong, exactly as an `after: 1` ping-pong does: both are
+                #    periodic processes driven by the clock, not chains the
+                #    machine feeds itself within a step.
                 self._deliver_priority(
                     target_event, engine_completion=self_armed
                 )
@@ -2243,13 +2353,37 @@ class Interpreter(BaseInterpreter[TContext]):
         handle_box.append(handle)
         self._timer_handles.setdefault(self.id, []).append(handle)
         if self_armed:
+            # 🔗 #206 -> #212: a delayed self-send is a TIMER, and gets the
+            #    `after` rule. Its firing is charged as engine work (see
+            #    `_fire`), but ARMING it does not keep the step's chain
+            #    open: a step that armed a deadline has finished generating
+            #    -- the clock, not the machine, produces the next event. An
+            #    `after` that re-arms itself every lap is a periodic process,
+            #    not a runaway; a `raise(delay=)` heartbeat is the same shape
+            #    spelled differently. #206 counted the arming as
+            #    `_armed_this_step`, so the chain-end test was false on every
+            #    lap and a 250 ms heartbeat died at `maxIterations` beats;
+            #    the time-blind charge could not tell a 1 ms ping-pong from a
+            #    poller -- and neither is a chain: `maxIterations` bounds
+            #    work the machine feeds itself WITHIN a step (zero-delay
+            #    `raise`, `send` to self, completions re-arming invokes),
+            #    which is what `after: 1` ping-pongs have always been exempt
+            #    from too. The handle is still recorded so a snapshot sees
+            #    the debt (#213) and cancellation is clean.
             self._chain_owed_sends.add(handle)
-            self._armed_this_step += 1
+        if actor is self:
+            # ⏲️ #213: visible to the snapshot until it fires or is cancelled.
+            self._armed_self_sends[handle] = (
+                target_event,
+                self.clock.now() + delay / 1000.0,
+                key,
+            )
 
         def _cancel() -> None:
             """Cancels this specific delayed send."""
             self.clock.clear_timeout(handle)
             _settle_debt()
+            self._armed_self_sends.pop(handle, None)
 
         if key is not None:
             # 🔁 Reusing a send id supersedes the earlier send. Without this
