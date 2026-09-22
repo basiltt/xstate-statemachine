@@ -271,19 +271,21 @@ def _suggest_event(event_type: str, machine: "MachineNode") -> str:
     return f". Did you mean {close[0]!r}?" if close else ""
 
 
-#: 🗝️ #216: every top-level key `MachineNode` / `StateNode` READ. A key
-#: not in this set (and not `x-`-prefixed) is silently dropped by the
-#: parser, so a misspelled safety policy quietly reverts to its default --
-#: `actionErrorPolicyy` -> `continue`, `Strict` -> `False`. Kept next to
-#: the validator so adding a key to the parser means adding it here.
-KNOWN_MACHINE_KEYS: frozenset = frozenset(
+#: 🏷️ Metadata keys: never behavioural, accepted at every level.
+_METADATA_KEYS: frozenset = frozenset({"meta", "description", "tags"})
+
+#: 🗝️ #216 / #220: every key a STATE node reads (`StateNode.__init__`,
+#: `_prefetch_node_keys`). A key not in this set (and not `x-`-prefixed)
+#: is silently dropped by the parser: a misspelled `entry` is an action
+#: that never runs, a misspelled `on` a transition that does not exist,
+#: a misspelled `after` a deadline that never fires. Kept next to the
+#: validator so adding a key to the parser means adding it here.
+KNOWN_STATE_KEYS: frozenset = frozenset(
     {
-        # identity / structure
         "id",
         "initial",
         "states",
         "type",
-        "context",
         "output",
         "on",
         "entry",
@@ -293,6 +295,18 @@ KNOWN_MACHINE_KEYS: frozenset = frozenset(
         "invoke",
         "onDone",
         "history",
+        "target",  # history state's default target
+    }
+    | _METADATA_KEYS
+)
+
+#: 🗝️ Every key the ROOT reads: the state keys plus `context`, the 0.8.0
+#: policies and `version`. Policies are read from the root only, so a
+#: policy key under a state is reported there too (it would be inert).
+KNOWN_ROOT_KEYS: frozenset = KNOWN_STATE_KEYS | frozenset(
+    {
+        "context",
+        "version",
         # policies (0.8.0+)
         "actionErrorPolicy",
         "guardErrorPolicy",
@@ -302,57 +316,140 @@ KNOWN_MACHINE_KEYS: frozenset = frozenset(
         "strict",
         "strictTargets",
         "strictConfig",
-        # metadata -- never behavioural, always allowed
-        "meta",
-        "description",
-        "tags",
-        "version",
     }
 )
 
+#: Back-compat alias for the 0.8.1 (#216) name.
+KNOWN_MACHINE_KEYS: frozenset = KNOWN_ROOT_KEYS
 
-def validate_top_level_keys(
-    config: Dict[str, Any], *, strict_config: bool
-) -> None:
-    """#216: refuse (or warn about) top-level keys the parser does not read.
+#: 🗝️ #220: keys `TransitionDefinition` / `_create_transition` read.
+KNOWN_TRANSITION_KEYS: frozenset = (
+    frozenset({"target", "actions", "guard", "cond", "internal", "reenter"})
+    | _METADATA_KEYS
+)
 
-    A bad VALUE for a known key has always been refused with
-    `InvalidConfigError`; a bad KEY was never looked up at all, so a
-    one-character typo in a safety policy passed a clean build and the
-    policy degraded to its permissive default. Keys starting with ``x-``
-    are a reserved namespace for caller metadata and are never reported.
+#: 🗝️ #220: keys `InvokeDefinition` / `_parse_invoke` read.
+KNOWN_INVOKE_KEYS: frozenset = (
+    frozenset({"id", "src", "input", "systemId", "onDone", "onError"})
+    | _METADATA_KEYS
+)
 
-    Args:
-        config: The raw top-level machine config.
-        strict_config: ``True`` raises `InvalidConfigError`; ``False``
-            (the 0.8.x default, for callers who attach ad-hoc keys) logs a
-            WARNING per unknown key with a "did you mean" hint.
-    """
+
+def _unknown_keys(config: Dict[str, Any], known: frozenset) -> List[str]:
+    """Human-readable hints for the keys of *config* not in *known*."""
     import difflib
 
     unknown = sorted(
         k
         for k in config
-        if isinstance(k, str)
-        and k not in KNOWN_MACHINE_KEYS
-        and not k.startswith("x-")
+        if isinstance(k, str) and k not in known and not k.startswith("x-")
     )
-    if not unknown:
-        return
     hints = []
     for key in unknown:
-        close = difflib.get_close_matches(
-            key, sorted(KNOWN_MACHINE_KEYS), n=1, cutoff=0.6
-        )
+        close = difflib.get_close_matches(key, sorted(known), n=1, cutoff=0.6)
         hints.append(
             f"'{key}'" + (f" (did you mean '{close[0]}'?)" if close else "")
         )
+    return hints
+
+
+def _transition_dicts(raw: Any) -> Iterator[Dict[str, Any]]:
+    """Yield the dict forms of a transition config (string shorthand and
+    `None` (forbidden) carry no keys to check)."""
+    items = raw if isinstance(raw, list) else [raw]
+    for item in items:
+        if isinstance(item, dict):
+            yield item
+
+
+def _collect_unknown_keys(
+    config: Dict[str, Any], path: str, known: frozenset, out: List[str]
+) -> None:
+    """#220: walk one state node (root included) and its transitions and
+    invokes, appending one line per offending config object to *out*."""
+    hints = _unknown_keys(config, known)
+    if hints:
+        out.append(f"{path}: {', '.join(hints)}")
+    # transitions: on / always / after / onDone
+    on = config.get("on")
+    if isinstance(on, dict):
+        for event, raw in on.items():
+            for t in _transition_dicts(raw):
+                h = _unknown_keys(t, KNOWN_TRANSITION_KEYS)
+                if h:
+                    out.append(f"{path} on['{event}']: {', '.join(h)}")
+    for t in _transition_dicts(config.get("always")):
+        h = _unknown_keys(t, KNOWN_TRANSITION_KEYS)
+        if h:
+            out.append(f"{path} always: {', '.join(h)}")
+    after = config.get("after")
+    if isinstance(after, dict):
+        for delay, raw in after.items():
+            for t in _transition_dicts(raw):
+                h = _unknown_keys(t, KNOWN_TRANSITION_KEYS)
+                if h:
+                    out.append(f"{path} after[{delay!r}]: {', '.join(h)}")
+    for t in _transition_dicts(config.get("onDone")):
+        h = _unknown_keys(t, KNOWN_TRANSITION_KEYS)
+        if h:
+            out.append(f"{path} onDone: {', '.join(h)}")
+    # invokes
+    invoke = config.get("invoke")
+    invokes = invoke if isinstance(invoke, list) else [invoke]
+    for i, inv in enumerate(invokes):
+        if not isinstance(inv, dict):
+            continue
+        ipath = f"{path} invoke[{inv.get('id', i)}]"
+        h = _unknown_keys(inv, KNOWN_INVOKE_KEYS)
+        if h:
+            out.append(f"{ipath}: {', '.join(h)}")
+        for label in ("onDone", "onError"):
+            for t in _transition_dicts(inv.get(label)):
+                h = _unknown_keys(t, KNOWN_TRANSITION_KEYS)
+                if h:
+                    out.append(f"{ipath} {label}: {', '.join(h)}")
+    # children
+    states = config.get("states")
+    if isinstance(states, dict):
+        for key, child in states.items():
+            if isinstance(child, dict):
+                _collect_unknown_keys(
+                    child, f"{path}.{key}", KNOWN_STATE_KEYS, out
+                )
+
+
+def validate_top_level_keys(
+    config: Dict[str, Any], *, strict_config: bool
+) -> None:
+    """#216 / #220: refuse (or warn about) config keys the parser does not
+    read -- at the root AND in every state, transition and invoke.
+
+    A bad VALUE for a known key has always been refused with
+    `InvalidConfigError`; a bad KEY was never looked up at all, so a
+    one-character typo passed a clean build: a misspelled policy degraded
+    to its permissive default (#216); a misspelled `entry` / `on` / `after`
+    inside a state built a machine in which something simply never
+    happened (#220). Keys starting with ``x-`` are a reserved namespace
+    for caller metadata and are never reported, at any level.
+
+    Args:
+        config: The raw top-level machine config.
+        strict_config: ``True`` raises `InvalidConfigError` listing every
+            offending key; ``False`` (the 0.8.x default, for callers who
+            attach ad-hoc keys) logs one WARNING with the same list and a
+            "did you mean" hint per key.
+    """
     machine_id = config.get("id", "<machine>")
+    findings: List[str] = []
+    _collect_unknown_keys(config, str(machine_id), KNOWN_ROOT_KEYS, findings)
+    if not findings:
+        return
     msg = (
-        f"Machine '{machine_id}' has unknown top-level key(s) "
-        f"{', '.join(hints)}. Unknown keys are ignored by the parser, so a "
-        f"misspelled policy silently reverts to its default. Use the 'x-' "
-        f"prefix for custom metadata, or 'meta'."
+        f"Machine '{machine_id}' has unknown config key(s) -- "
+        f"{'; '.join(findings)}. Unknown keys are ignored by the parser, "
+        f"so a misspelled key silently does nothing (a policy reverts to "
+        f"its default; an action, transition or deadline never exists). "
+        f"Use the 'x-' prefix for custom metadata, or 'meta'."
     )
     if strict_config:
         raise InvalidConfigError(msg)

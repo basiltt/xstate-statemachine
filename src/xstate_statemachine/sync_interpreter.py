@@ -48,7 +48,7 @@ from typing import (
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from .base_interpreter import AnyEvent, BaseInterpreter, _RollbackRequested
-from .exceptions import RunawayChainError
+from .exceptions import ReentrantWaitError, RunawayChainError
 from .clock import Clock, SimulatedClock
 from .events import (
     AfterEvent,
@@ -582,6 +582,14 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         event_obj = self._prepare_event_reporting(event_or_type, **payload)
         self._warn_reserved_payload_keys(event_obj)
         self._check_strict(event_obj)  # #51
+        if wait and self._is_processing:
+            # 🔒 #219 (parity): a `send(wait=True)` from inside an action is
+            #    re-entrant -- the event is queued behind the running step
+            #    and the receipt this call could build would describe THAT
+            #    step's state, not the event's. The async engine refuses the
+            #    same shape (there it is a deadlock); refuse here too rather
+            #    than hand back a receipt for a step that has not happened.
+            raise ReentrantWaitError(self.id, event_obj.type)
         # ⚡ Everything that exists only to build a `Receipt` is skipped for
         #    the fire-and-forget (`wait=False`) shape: the before-snapshot
         #    of the configuration, the context deep-copy (see
@@ -910,6 +918,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                         [iid for _, iid in stranded],
                     )
                     self._last_action_error = err
+                    if not tripped:  # #222 sticky, once per macrostep trip
+                        self._chain_trip_open = False
+                    self._note_chain_trip(err, current_event)
                     self._report_stranded(stranded, err)
                     tripped = True
                     if not spare:
@@ -1036,9 +1047,13 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                         self.id,
                     )
                 # 🔔 #112: the trip is OBSERVABLE, like the chain budget.
+                first_trip = not self._settle_tripped
                 self._settle_tripped = True
                 self.last_transition_ok = False
                 self._last_action_error = RunawayChainError(self.id, limit, 0)
+                if first_trip:  # #222 sticky, once per settle storm
+                    self._chain_trip_open = False
+                    self._note_chain_trip(self._last_action_error, Event(""))
                 # 🧹 #112: a half-applied microstep can leave a leaf whose
                 #    ancestors are inactive. Re-derive the configuration
                 #    from its leaves so the live machine matches what a
@@ -1175,11 +1190,13 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         def _cancel() -> None:
             self.clock.clear_timeout(handle)
             self._armed_self_sends.pop(handle, None)  # #213
+            self._release_timer_handle(self.id, handle)  # #218
 
         def _fire() -> None:
             if key is not None and self._scheduled_sends.get(key) is _cancel:
                 self._scheduled_sends.pop(key, None)
             self._armed_self_sends.pop(handle, None)  # #213
+            self._release_timer_handle(self.id, handle)  # #218
             if self.status != "running":
                 return
             if actor is self:

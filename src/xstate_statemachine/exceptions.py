@@ -423,6 +423,35 @@ class WrongThreadError(XStateMachineError):
     pass
 
 
+class ReentrantWaitError(XStateMachineError):
+    """An action awaited a ``send(..., wait=True)`` receipt on its OWN
+    interpreter (#219).
+
+    A receipt resolves when the run loop finishes processing the event. An
+    action runs *inside* a macrostep the run loop is executing (or inside
+    `start()`'s initial descent, which the loop waits for, #215), so the
+    loop cannot take the new event until the action returns -- and the
+    action will not return until the receipt resolves. That is a deadlock
+    with no error and ``status == "running"``, which this exception raises
+    eagerly at the call site instead. Use ``send()`` / ``raise`` without
+    ``wait`` from inside an action: the event is queued as self-generated
+    work and processed after the current step, and its receipt is not the
+    caller's to await.
+    """
+
+    def __init__(self, machine_id: str, event_type: str):
+        self.machine_id = machine_id
+        self.event_type = event_type
+        super().__init__(
+            f"Action on '{machine_id}' awaited send('{event_type}', "
+            f"wait=True) on its own interpreter. The receipt resolves only "
+            f"when the run loop processes the event, and the loop cannot "
+            f"advance until this action returns -- that is a deadlock. Send "
+            f"without wait=True from inside an action (the event runs after "
+            f"the current step), or await the receipt from outside."
+        )
+
+
 class RunawayChainError(XStateMachineError):
     """The self-generated event chain exceeded ``maxIterations`` (#77).
 

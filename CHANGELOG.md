@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Round-11 re-verification findings** (#218–#222). Every one
+  reproduced against `main` @ `c78ce99` with the reporter's standalone
+  repro before the fix and pinned in `tests/test_round11_findings.py`
+  (23 tests, parametrised over `def` / `async def`, both engines where
+  parity is the point).
+  - **A delayed self-send releases its clock handle when it fires or is
+    cancelled (#218).** The handle was registered under the interpreter
+    id (so `stop()` could clear it) but the only pruner ran on *state*
+    exit, so the list grew by one dead handle per beat for the life of a
+    `raise(delay=)` heartbeat — unbounded now that #212 made such cycles
+    legal. Both engines; a 200-beat heartbeat holds at most one handle.
+  - **An action that awaits `send(..., wait=True)` on its own interpreter
+    gets `ReentrantWaitError`, not a deadlock (#219).** The receipt
+    resolves only when the run loop processes the event, and the loop
+    cannot advance until the action returns; #215's descent gate made the
+    hang reachable from `start()`. The receipt can still be handed out
+    (`asyncio.ensure_future(i.send(..., wait=True))`) and awaited later;
+    only the in-step await is refused. The sync engine refuses the same
+    shape for parity (there the receipt would have described the wrong
+    step).
+  - **Unknown config keys are checked in every state, transition and
+    invoke, not only at the root (#220).** #216 iterated the root dict
+    only, so `{"states": {"a": {"entyr": [...], "onn": {...}}}}` built a
+    clean machine with no entry action and no transition, with no WARNING,
+    under every strict setting. The check now recurses (nested `states`,
+    parallel regions, `on` / `always` / `after` / `onDone` transition
+    bodies, `invoke` entries and their `onDone` / `onError`) with a
+    per-level known set — `KNOWN_ROOT_KEYS`, `KNOWN_STATE_KEYS`,
+    `KNOWN_TRANSITION_KEYS`, `KNOWN_INVOKE_KEYS` (`KNOWN_MACHINE_KEYS` is
+    kept as an alias of the root set). Findings name the path
+    (`m.r2.y.z: 'tpye' (did you mean 'type'?)`); one WARNING or one
+    `InvalidConfigError` lists them all. `x-` keys and `meta` /
+    `description` / `tags` are accepted at every level.
+  - **Restore → re-persist without `start()` keeps armed delayed
+    self-sends (#221).** `from_snapshot` parked the v3 `scheduled_sends`
+    records for `start()` to re-arm, but `get_persisted_snapshot` read
+    only the live armed set — so a journal-compaction or migration job
+    that loads and rewrites blobs without starting a machine silently
+    dropped every deadline it touched. The parked records are now
+    re-emitted verbatim until `start()` consumes them.
+  - **A chain-budget trip is sticky (#222).** `last_error` is recomputed
+    per processed event, so one benign handled event erased the only
+    record that the machine had discarded work — and post-#212 a heartbeat
+    guarantees such an event arrives. New on both engines:
+    `interpreter.chain_trips` (monotonic count), `interpreter.
+    last_chain_error` (a latch, cleared only by `clear_chain_error()`)
+    and `PluginBase.on_chain_budget_exceeded(interpreter, error, event)`,
+    fired once per trip (settle-budget trips included). `last_error` is
+    documented as the per-step read it always was.
+
 - **Round-10 re-verification findings** (#212–#216). Every one
   reproduced against `main` @ `19cb1f1` with the reporter's standalone
   repro before the fix and pinned in `tests/test_round10_findings.py`
