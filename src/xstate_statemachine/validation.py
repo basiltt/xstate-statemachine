@@ -22,7 +22,8 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Iterator, List, Optional, Tuple
+import logging
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
 
 from .actions import RAISE, resolve_builtin
 from .exceptions import (
@@ -39,6 +40,8 @@ if TYPE_CHECKING:  # pragma: no cover
         StateNode,
         TransitionDefinition,
     )
+
+logger = logging.getLogger(__name__)
 
 
 def walk(node: "StateNode") -> Iterator["StateNode"]:
@@ -266,6 +269,94 @@ def _suggest_event(event_type: str, machine: "MachineNode") -> str:
         event_type, sorted(machine.known_events), n=1, cutoff=0.6
     )
     return f". Did you mean {close[0]!r}?" if close else ""
+
+
+#: 🗝️ #216: every top-level key `MachineNode` / `StateNode` READ. A key
+#: not in this set (and not `x-`-prefixed) is silently dropped by the
+#: parser, so a misspelled safety policy quietly reverts to its default --
+#: `actionErrorPolicyy` -> `continue`, `Strict` -> `False`. Kept next to
+#: the validator so adding a key to the parser means adding it here.
+KNOWN_MACHINE_KEYS: frozenset = frozenset(
+    {
+        # identity / structure
+        "id",
+        "initial",
+        "states",
+        "type",
+        "context",
+        "output",
+        "on",
+        "entry",
+        "exit",
+        "after",
+        "always",
+        "invoke",
+        "onDone",
+        "history",
+        # policies (0.8.0+)
+        "actionErrorPolicy",
+        "guardErrorPolicy",
+        "onUnhandled",
+        "maxIterations",
+        "spawnBlockingTimeout",
+        "strict",
+        "strictTargets",
+        "strictConfig",
+        # metadata -- never behavioural, always allowed
+        "meta",
+        "description",
+        "tags",
+        "version",
+    }
+)
+
+
+def validate_top_level_keys(
+    config: Dict[str, Any], *, strict_config: bool
+) -> None:
+    """#216: refuse (or warn about) top-level keys the parser does not read.
+
+    A bad VALUE for a known key has always been refused with
+    `InvalidConfigError`; a bad KEY was never looked up at all, so a
+    one-character typo in a safety policy passed a clean build and the
+    policy degraded to its permissive default. Keys starting with ``x-``
+    are a reserved namespace for caller metadata and are never reported.
+
+    Args:
+        config: The raw top-level machine config.
+        strict_config: ``True`` raises `InvalidConfigError`; ``False``
+            (the 0.8.x default, for callers who attach ad-hoc keys) logs a
+            WARNING per unknown key with a "did you mean" hint.
+    """
+    import difflib
+
+    unknown = sorted(
+        k
+        for k in config
+        if isinstance(k, str)
+        and k not in KNOWN_MACHINE_KEYS
+        and not k.startswith("x-")
+    )
+    if not unknown:
+        return
+    hints = []
+    for key in unknown:
+        close = difflib.get_close_matches(
+            key, sorted(KNOWN_MACHINE_KEYS), n=1, cutoff=0.6
+        )
+        hints.append(
+            f"'{key}'" + (f" (did you mean '{close[0]}'?)" if close else "")
+        )
+    machine_id = config.get("id", "<machine>")
+    msg = (
+        f"Machine '{machine_id}' has unknown top-level key(s) "
+        f"{', '.join(hints)}. Unknown keys are ignored by the parser, so a "
+        f"misspelled policy silently reverts to its default. Use the 'x-' "
+        f"prefix for custom metadata, or 'meta'."
+    )
+    if strict_config:
+        raise InvalidConfigError(msg)
+    logger.warning("⚠️ %s", msg)
 
 
 def validate_machine(machine: "MachineNode", *, strict_targets: bool) -> None:

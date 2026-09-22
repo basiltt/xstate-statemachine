@@ -64,6 +64,21 @@ def _svc(kind: str, body: Callable[[], Any]) -> Callable[..., Any]:
     return coro
 
 
+def _act(kind: str, body: Callable[[Any, Any], None]) -> Callable[..., Any]:
+    if kind == "def":
+
+        def plain(i: Any, c: Any, e: Any, a: Any) -> None:
+            body(i, c)
+
+        return plain
+
+    async def coro(i: Any, c: Any, e: Any, a: Any) -> None:
+        await asyncio.sleep(0)
+        body(i, c)
+
+    return coro
+
+
 class _Drops(PluginBase):
     def __init__(self) -> None:
         self.dropped: List[Tuple[str, str]] = []
@@ -363,94 +378,112 @@ class TestSnapshotAuthenticityAffordances(_Quiet):
 
 
 # =============================================================================
-# #206 — a delayed self-send is self-generated work
+# #206 -> #212 — a delayed self-send is a TIMER: never charged as a chain
 # =============================================================================
-class TestDelayedSelfSendIsCharged(_Quiet):
-    CFG = {
-        "id": "m",
-        "initial": "a",
-        "maxIterations": 20,
-        "context": {"n": 0},
-        "states": {
-            "a": {
-                "entry": [
-                    {"type": "raise", "params": {"event": "GO", "delay": 1}}
-                ],
-                "on": {"GO": "b"},
-                "exit": ["tick"],
-            },
-            "b": {
-                "entry": [
-                    {"type": "raise", "params": {"event": "GO", "delay": 1}}
-                ],
-                "on": {"GO": "a"},
-                "exit": ["tick"],
-            },
-        },
-    }
+class TestDelayedSelfSendIsATimer(_Quiet):
+    """#206 charged a `raise(delay=)` self-send as a chain link; #212 showed
+    that killed every self-paced heartbeat at `maxIterations` beats. The rule
+    is now the `after` rule: the delay ends the arming step's chain, and the
+    firing is a clock event. A 1 ms `raise(delay=)` ping-pong is a periodic
+    process exactly as an `after: 1` ping-pong is; `maxIterations` bounds
+    work the machine feeds itself WITHIN a step."""
 
-    def test_delayed_selfsend_cycle_trips(self) -> None:
+    @staticmethod
+    def _raise_cfg(period: int, limit: int = 8) -> Dict[str, Any]:
+        arm = {"type": "raise", "params": {"event": "BEAT", "delay": period}}
+        return {
+            "id": "hb",
+            "initial": "up",
+            "maxIterations": limit,
+            "context": {"n": 0},
+            "states": {
+                "up": {"entry": [arm, "beat"], "on": {"BEAT": "down"}},
+                "down": {"entry": [arm, "beat"], "on": {"BEAT": "up"}},
+            },
+        }
+
+    @staticmethod
+    def _after_cfg(period: int, limit: int = 8) -> Dict[str, Any]:
+        return {
+            "id": "hb",
+            "initial": "up",
+            "maxIterations": limit,
+            "context": {"n": 0},
+            "states": {
+                "up": {"entry": ["beat"], "after": {period: "down"}},
+                "down": {"entry": ["beat"], "after": {period: "up"}},
+            },
+        }
+
+    def _beats(self, cfg: Dict[str, Any], kind: str, window: float) -> Any:
+        def bump(i: Any, c: Any) -> None:
+            c["n"] += 1
+
         async def main() -> Any:
             d = _Drops()
             i = Interpreter(
                 _mk(
-                    self.CFG,
-                    logic=MachineLogic(
-                        actions={
-                            "tick": lambda i, c, e, a: c.__setitem__(
-                                "n", c["n"] + 1
-                            )
-                        }
-                    ),
+                    cfg, logic=MachineLogic(actions={"beat": _act(kind, bump)})
                 )
             ).use(d)
             await i.start()
-            n = await _plateau(lambda: i.context["n"])
-            out = (n, type(i.last_error), [r for _, r in d.dropped])
+            await asyncio.sleep(window)
+            out = (i.context["n"], i.last_error, [r for _, r in d.dropped])
             await i.stop()
             return out
 
-        n, err, drops = _run(main())
-        self.assertIs(err, RunawayChainError)
-        self.assertIn("chain_budget", drops)
-        self.assertLess(n, 3 * 20)
+        return _run(main())
 
-    def test_delayed_matches_immediate_selfraise_lap_count(self) -> None:
-        # The delayed cycle is charged like the zero-delay one: the two trip
-        # within one lap of each other (the first delayed hop lands on an
-        # idle loop and is the chain's seed; the zero-delay raise is
-        # charged from the very first hop).
-        imm = json.loads(json.dumps(self.CFG))
-        for st in imm["states"].values():
-            st["entry"] = [{"type": "raise", "params": {"event": "GO"}}]
+    def test_raise_delay_heartbeat_survives_max_iterations(self) -> None:
+        # #212: with maxIterations 8, every period must beat PAST 8 with no
+        # error and no drop, for both action kinds. The window is sized per
+        # period so the floor is comfortably above the old cut-off (9).
+        for kind in KINDS:
+            for period, window, floor in (
+                (30, 1.0, 20),
+                (100, 2.0, 14),
+                (250, 3.5, 10),
+            ):
+                with self.subTest(kind=kind, period=period):
+                    n, err, drops = self._beats(
+                        self._raise_cfg(period), kind, window
+                    )
+                    self.assertGreater(n, floor)
+                    self.assertIsNone(err)
+                    self.assertNotIn("chain_budget", drops)
 
-        async def laps(cfg: Dict[str, Any]) -> int:
-            i = await Interpreter(
-                _mk(
-                    cfg,
-                    logic=MachineLogic(
-                        actions={
-                            "tick": lambda i, c, e, a: c.__setitem__(
-                                "n", c["n"] + 1
-                            )
-                        }
-                    ),
-                )
-            ).start()
-            n = await _plateau(lambda: i.context["n"])
-            await i.stop()
-            return n
+    def test_raise_delay_matches_after_idiom(self) -> None:
+        # The two spellings of a heartbeat behave alike (within jitter).
+        for kind in KINDS:
+            with self.subTest(kind=kind):
+                r, _, _ = self._beats(self._raise_cfg(30), kind, 1.0)
+                a, _, _ = self._beats(self._after_cfg(30), kind, 1.0)
+                self.assertGreater(r, 15)
+                self.assertGreater(a, 15)
+                self.assertLess(abs(r - a), max(6, a // 3))
 
-        async def main() -> Tuple[int, int]:
-            return await laps(self.CFG), await laps(imm)
+    def test_after_heartbeat_unaffected(self) -> None:
+        for kind in KINDS:
+            with self.subTest(kind=kind):
+                n, err, drops = self._beats(self._after_cfg(30), kind, 1.0)
+                self.assertGreater(n, 20)
+                self.assertIsNone(err)
+                self.assertEqual(drops, [])
 
-        delayed, immediate = _run(main())
-        self.assertLessEqual(abs(delayed - immediate), 1)
-        self.assertLess(delayed, 3 * 20)
+    def test_zero_delay_raise_cycle_still_trips(self) -> None:
+        # The chain budget's actual target is untouched: a same-step
+        # self-raise cycle trips at maxIterations on both action kinds.
+        cfg = self._raise_cfg(0)
+        for st in cfg["states"].values():
+            st["entry"][0] = {"type": "raise", "params": {"event": "BEAT"}}
+        for kind in KINDS:
+            with self.subTest(kind=kind):
+                n, err, drops = self._beats(cfg, kind, 0.5)
+                self.assertIs(type(err), RunawayChainError)
+                self.assertIn("chain_budget", drops)
+                self.assertLess(n, 3 * 8)
 
     def test_external_delayed_send_is_not_charged(self) -> None:
-        # A delayed send from OUTSIDE an action (the caller's own timer)
-        # is external traffic: never charged, never shed.
         cfg = {
             "id": "m",
             "initial": "a",
@@ -486,18 +519,15 @@ class TestDelayedSelfSendIsCharged(_Quiet):
         self.assertEqual(drops, [])
 
     def test_sync_engine_timer_paced_cycle_is_a_periodic_process(self) -> None:
-        # On the SyncInterpreter every delayed delivery arrives through a
-        # caller-driven `tick()` / `send()` drain and therefore has user
-        # standing: a timer-paced self-send is a periodic process the caller
-        # advances, not a self-feeding chain -- the same rule the async
-        # engine applies to an `after`-driven poller. Stated explicitly.
-        clock = SimulatedClock()  # virtual time: no OS timer floor
+        # Same rule on the SyncInterpreter: a timer-paced self-send is
+        # driven by the caller's `tick()` and is a periodic process.
+        clock = SimulatedClock()
         s = SyncInterpreter(
             _mk(
-                self.CFG,
+                self._raise_cfg(1, 20),
                 logic=MachineLogic(
                     actions={
-                        "tick": lambda i, c, e, a: c.__setitem__(
+                        "beat": lambda i, c, e, a: c.__setitem__(
                             "n", c["n"] + 1
                         )
                     }

@@ -315,6 +315,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             #    by `restart_timers=True` sat on a `SimulatedClock` that had
             #    no settler -- `increment()` fired nothing. Attach first.
             self._attach_clock()
+            self._rearm_restored_self_sends()  # #213
             if self._restart_services_on_start:
                 self._restart_services_on_start = False
                 self._restart_dormant_invocations()
@@ -324,7 +325,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             self._process_event_queue()
             self._process_transient_transitions()
             return self
-        if self.status == "running" and self._event_queue:
+        if self.status == "running" and (
+            self._event_queue or self._restored_self_sends  # #213
+        ):
             # ♻️ Restored from a snapshot WITH a persisted inbox (review F8):
             #    `from_snapshot` sets status "running" and re-enqueues the
             #    events, so the plain "already running" early-return below
@@ -334,6 +337,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             #    moment it starts.
             logger.info("♻️ Resuming restored interpreter '%s'...", self.id)
             self._attach_clock()  # #154: see above
+            self._rearm_restored_self_sends()  # #213
             self._process_event_queue()
             self._process_transient_transitions()
             return self
@@ -698,7 +702,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     ) -> List[AnyEvent]:
         return list(self._event_queue)
 
-    def _enqueue_restored(self, event: Event) -> None:
+    def _enqueue_restored(
+        self, event: AnyEvent, *, priority: bool = False
+    ) -> None:
+        # The sync engine has one queue; a priority-lane record restores
+        # at its recorded position (the lane is persisted first).
         self._event_queue.append(event)
 
     def drain_pending(self) -> List[AnyEvent]:
@@ -1166,10 +1174,12 @@ class SyncInterpreter(BaseInterpreter[TContext]):
 
         def _cancel() -> None:
             self.clock.clear_timeout(handle)
+            self._armed_self_sends.pop(handle, None)  # #213
 
         def _fire() -> None:
             if key is not None and self._scheduled_sends.get(key) is _cancel:
                 self._scheduled_sends.pop(key, None)
+            self._armed_self_sends.pop(handle, None)  # #213
             if self.status != "running":
                 return
             if actor is self:
@@ -1186,6 +1196,13 @@ class SyncInterpreter(BaseInterpreter[TContext]):
 
         handle = self._set_timeout(_fire, delay / 1000.0, owner=self.id)
         self._timer_handles.setdefault(self.id, []).append(handle)
+        if actor is self:
+            # ⏲️ #213: visible to the snapshot until it fires or is cancelled.
+            self._armed_self_sends[handle] = (
+                target_event,
+                self.clock.now() + delay / 1000.0,
+                key,
+            )
 
         # 🔁 Reusing a send id supersedes the earlier send. Without this the
         #    first timer is orphaned: the registry entry is overwritten, so
@@ -1546,6 +1563,12 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         fired. Does NOT process the queue; the caller does.
         """
         return self.clock.pump()
+
+    def _arm_restored_self_send(
+        self, event: Any, delay_ms: float, send_id: Optional[str]
+    ) -> None:
+        """#213: schedule a restored delayed self-send on this clock."""
+        self._deliver_sync(self, event, delay_ms, send_id)
 
     def _step_thread_ident(self) -> Optional[int]:
         """A non-blocking actor steps on its pump thread (#183/#184)."""

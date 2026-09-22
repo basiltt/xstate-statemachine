@@ -43,7 +43,7 @@ if TYPE_CHECKING:  # pragma: no cover
 #:        so engine events and provenance round-trip (#86, #87). ``done``
 #:        records add ``data`` + ``src``; ``error`` records add ``error``
 #:        (repr) + ``src``.
-SNAPSHOT_VERSION: int = 2
+SNAPSHOT_VERSION: int = 3
 
 
 # -----------------------------------------------------------------------------
@@ -271,7 +271,7 @@ def check_shape(snapshot: Dict[str, Any], *, version: int = 0) -> None:
     #    to say is not one this library wrote.
     if status == "error" and not snapshot.get("error"):
         fail("status is 'error' but no 'error' message is recorded")
-    for key in ("pending_events", "deferred"):
+    for key in ("pending_events", "deferred", "scheduled_sends"):
         val = snapshot.get(key)
         if val is not None and (
             not isinstance(val, list)
@@ -423,4 +423,22 @@ def upcast(snapshot: Dict[str, Any], version: int) -> Dict[str, Any]:
         # re-derives those by name when `kind` is absent; leave the records
         # untouched and let it decide.
         pass
+    if version < 3:
+        # 2 -> 3 (#214): records gain `engine` (provenance, #195) and `lane`.
+        # A v2 writer had exactly ONE minter of `done` / `error` / `after`
+        # records -- the engine itself; the public NamedTuples could not
+        # reach `pending_events` except through it. So a v2 record of those
+        # kinds IS an engine completion and is upcast as one, keeping the
+        # persisted deadline it represents instead of demoting it to inert
+        # user traffic (#203's gate then silently dropped a 0.8.0-era
+        # `after`). Only a v3 record can carry a deliberately unflagged
+        # (hand-written) completion.
+        for key in ("pending_events", "deferred"):
+            for rec in snapshot.get(key) or []:
+                if isinstance(rec, dict) and rec.get("kind") in (
+                    "done",
+                    "error",
+                    "after",
+                ):
+                    rec.setdefault("engine", True)
     return snapshot

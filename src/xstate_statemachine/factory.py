@@ -42,7 +42,7 @@ from .machine_logic import (
 )
 from ._typing import TContext
 from .models import MachineNode
-from .validation import validate_machine
+from .validation import validate_machine, validate_top_level_keys
 
 # -----------------------------------------------------------------------------
 # 🏭 Factory Function
@@ -77,6 +77,7 @@ def create_machine(
     logic_providers: Optional[List[Any]] = None,
     strict_targets: bool = True,
     event_schemas: Optional[Dict[str, Any]] = None,
+    strict_config: Optional[bool] = None,
 ) -> MachineNode[TContext]:  # noqa: E704
     ...
 
@@ -90,8 +91,18 @@ def create_machine(
     logic_providers: Optional[List[Any]] = None,
     strict_targets: bool = True,
     event_schemas: Optional[Dict[str, Any]] = None,
+    strict_config: Optional[bool] = None,
 ) -> MachineNode[Any]:
     """Creates, validates, and assembles a state machine instance.
+
+    🗝️ ``strict_config`` (#216): ``True`` refuses an unrecognised
+    TOP-LEVEL config key with `InvalidConfigError` -- a misspelled
+    ``actionErrorPolicyy`` / ``onUnhandledEvent`` / ``Strict`` otherwise
+    passes a clean build and the policy silently reverts to its permissive
+    default. ``None`` (default) reads the config's own ``"strictConfig"``
+    key, else ``False``: unknown keys are logged at WARNING with a
+    "did you mean" hint. Keys prefixed ``x-`` (and ``meta`` /
+    ``description`` / ``tags`` / ``version``) are always accepted.
 
     🧷 Type safety: pass ``context_type=MyCtx`` (a ``TypedDict`` or any
     ``Mapping`` subtype) and the returned ``MachineNode[MyCtx]`` carries
@@ -289,6 +300,16 @@ def create_machine(
     #    Wiring the kwarg into the config flag would turn the opt-in into the
     #    default and reject every legitimate `.sibling` machine.
     validate_machine(machine, strict_targets=strict_targets)
+    # 🗝️ #216: after the tree is built (so the id in the message is the
+    #    validated one) and before the machine is handed out.
+    validate_top_level_keys(
+        config,
+        strict_config=(
+            bool(config.get("strictConfig", False))
+            if strict_config is None
+            else strict_config
+        ),
+    )
     return machine
 
 
