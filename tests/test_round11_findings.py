@@ -203,6 +203,13 @@ class TestReentrantWaitIsRefused(_Quiet):
     def test_async_action_awaiting_own_receipt_raises_not_hangs(self) -> None:
         seen: List[str] = []
 
+        class _Errs(PluginBase):
+            def __init__(self) -> None:
+                self.errors: List[BaseException] = []
+
+            def on_action_error(self, i: Any, action: Any, error: Any) -> None:
+                self.errors.append(error)
+
         async def act(i: Any, c: Any, e: Any, a: Any) -> None:
             try:
                 await i.send("GO", wait=True)
@@ -210,28 +217,31 @@ class TestReentrantWaitIsRefused(_Quiet):
                 seen.append(str(exc))
                 raise
 
-        async def go() -> Tuple[str, Any]:
+        async def go() -> Tuple[str, List[BaseException], str]:
+            errs = _Errs()
             i = Interpreter(
                 _mk(self.CFG, logic=MachineLogic(actions={"act": act}))
-            )
+            ).use(errs)
             try:
                 await asyncio.wait_for(i.start(), 5)
             except ReentrantWaitError:
                 pass
-            status = i.status
-            if i.status == "running":
+            # the send itself was accepted (only the in-step await is
+            # refused), so the machine goes on to process GO
+            await asyncio.sleep(0.05)
+            status, value = i.status, i.value
+            if status == "running":
                 await i.stop()
-            return status, i.last_error
+            return status, errs.errors, value
 
-        status, err = _run(go())
+        status, errors, value = _run(go())
         self.assertEqual(len(seen), 1)
         self.assertIn("GO", seen[0])
         self.assertIn("deadlock", seen[0])
-        # whichever way the engine surfaces it, nothing hung and it is named
-        self.assertTrue(
-            isinstance(err, ReentrantWaitError) or status == "error",
-            (status, err),
-        )
+        # nothing hung; the refusal is reported as the action's error
+        self.assertEqual(status, "running")
+        self.assertEqual([type(e) for e in errors], [ReentrantWaitError])
+        self.assertEqual(value, "y")
 
     def test_handing_out_the_receipt_and_awaiting_later_is_fine(self) -> None:
         box: Dict[str, Any] = {}
