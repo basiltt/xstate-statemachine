@@ -80,6 +80,7 @@ from .exceptions import (
     ActorSpawningError,
     ImplementationMissingError,
     InvalidConfigError,
+    RestoredChainError,
     RestoredError,
     StateNotFoundError,
     TransitionFailedError,
@@ -493,6 +494,7 @@ class BaseInterpreter(Generic[TContext]):
         "_pending_guard_error",
         "_plugins",
         "_restart_services_on_start",
+        "_restored_from_snapshot",
         "_states_to_invoke",
         "_restart_timers_on_start",
         "_scheduled_sends",
@@ -699,6 +701,9 @@ class BaseInterpreter(Generic[TContext]):
         #: the engine's `start()` resume path, which re-invokes every
         #: dormant invoke in the restored configuration.
         self._restart_services_on_start: bool = False
+        #: ♻️ #240: set by `from_snapshot`; read by `restored_from_snapshot`
+        #: so an `on_interpreter_start` plugin can tell bring-up from resume.
+        self._restored_from_snapshot: bool = False
         #: 📞 #204 -- SCXML 6.1 `statesToInvoke`. States entered in the
         #: current macrostep whose `invoke`s have NOT been armed yet. Entry
         #: records here; `_arm_pending_invokes` (run once the eventless
@@ -1906,6 +1911,7 @@ class BaseInterpreter(Generic[TContext]):
         #    / `has_dormant_timers` (#128), documented on both. See the
         #    `restart_services` note in the docstring.
         interpreter.status = snapshot["status"]
+        interpreter._restored_from_snapshot = True  # #240
         # ⏱️ #128: `after` timers are not persisted (a deadline is relative
         #    to a clock that no longer exists). Opt in to re-arming them from
         #    zero on `start()`; defaults to the `restart_services` choice so
@@ -1992,8 +1998,11 @@ class BaseInterpreter(Generic[TContext]):
         #    blob written before #226) restore to 0 / None.
         interpreter.chain_trips = int(snapshot.get("chain_trips") or 0)
         latched = snapshot.get("last_chain_error")
+        # 🧬 #243: `RestoredChainError` is a `RestoredError` AND a
+        #    `RunawayChainError`, so a live-machine isinstance guard keeps
+        #    firing after the restart. Shape was validated by `check_shape`.
         interpreter._last_chain_error = (
-            RestoredError(str(latched)) if latched else None
+            RestoredChainError(latched) if latched else None
         )
 
         # 🕰️ Restore remembered history so a later transition to a history
@@ -2068,6 +2077,20 @@ class BaseInterpreter(Generic[TContext]):
             for inv in state.invoke
             if not self._invocation_is_live(state, inv)
         ]
+
+    @property
+    def restored_from_snapshot(self) -> bool:
+        """``True`` if this instance was built by `from_snapshot` (#240).
+
+        `on_interpreter_start` fires on a resumed interpreter exactly as on
+        a fresh one -- the hook says "`start()` was called", and `start()`
+        is the documented way to resume. Bring-up and resume usually want
+        different telemetry, so a plugin reads this to tell them apart::
+
+            def on_interpreter_start(self, interp):
+                kind = "resume" if interp.restored_from_snapshot else "boot"
+        """
+        return self._restored_from_snapshot
 
     @property
     def has_dormant_invocations(self) -> bool:
@@ -2158,6 +2181,18 @@ class BaseInterpreter(Generic[TContext]):
         """#222: acknowledge the latched chain trip (`chain_trips` keeps
         counting)."""
         self._last_chain_error = None
+
+    def _notify_interpreter_start(self) -> None:
+        """Fire `on_interpreter_start` on every registered plugin (#240).
+
+        One call site per `start()` path -- fresh bring-up AND each
+        restore/resume branch -- so the lifecycle pair is balanced: before
+        this the resume branches returned above the hook loop and a plugin
+        attached to a restored actor observed a `stop` with no `start`.
+        Plugins are `_SafePlugin`-wrapped, so a raising hook is contained.
+        """
+        for plugin in self._plugins:
+            plugin.on_interpreter_start(self)
 
     def _report_stranded(
         self, stranded: List[Tuple[str, str]], error: BaseException

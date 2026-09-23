@@ -433,6 +433,28 @@ class PluginBase(Generic[TInterpreter]):
         """
         pass  # pragma: no cover
 
+    def on_receipt_dropped(
+        self, interpreter: TInterpreter, event_type: str
+    ) -> None:
+        """Called when a `send(wait=True)` receipt issued from inside an
+        action is discarded without ever being awaited or handed out
+        (#232 / #244).
+
+        A plain ``def`` action cannot ``await``; one that wrote
+        ``r = i.send("B", wait=True)`` received an awaitable it could
+        never read. The engine also emits a ``RuntimeWarning``, but that
+        comes from a finaliser and CPython routes finaliser exceptions to
+        ``sys.unraisablehook`` -- so ``-W error`` cannot turn it into a
+        failure. This hook, and ``interpreter.dropped_receipts``, are the
+        deterministic signal: fail a test or a health check on either.
+        Async engine only (the sync engine refuses the call instead).
+
+        Args:
+            interpreter: The interpreter instance.
+            event_type: The type of the event whose receipt was dropped.
+        """
+        pass  # pragma: no cover
+
     def on_event_dropped(
         self, interpreter: TInterpreter, event: "AnyEvent", reason: str
     ) -> None:

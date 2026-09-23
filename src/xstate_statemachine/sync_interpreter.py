@@ -139,6 +139,16 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     sequentially and immediately within the `send` method call. It is suitable
     for simpler, blocking workflows where asynchronous operations are not needed.
 
+    📮 No inbox bound (#245). ``max_queue_size`` / ``overflow_policy`` are an
+    async-`Interpreter` feature by design: that engine's inbox is fed by
+    concurrent producers while its run loop drains it, so it can fill. Here
+    `send()` processes the event to completion on the caller's thread
+    before returning -- there is no backlog to bound and no consumer to be
+    slower than. The two keywords are accepted for signature parity and a
+    non-``None`` bound raises `ValueError`; a sync caller under bursty or
+    untrusted input applies admission control in its own wrapper around
+    `send()`.
+
     **Key Characteristics**:
     - **Blocking Execution**: The `send` method blocks until the current event
       and all resulting transitions (including transient "always" transitions)
@@ -169,6 +179,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         "_held_replays",
         "_is_processing",
         "_restored_priority_count",
+        "_start_notified",
         "_pump_thread_ident",
         "_invoked_children",
         "_settle_iterations",
@@ -181,6 +192,8 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         input: Optional[Any] = None,
         clock: Optional[Clock] = None,
         strict: Optional[bool] = None,
+        max_queue_size: Optional[int] = None,
+        overflow_policy: Optional[Any] = None,
     ) -> None:
         """Initializes a new synchronous Interpreter instance.
 
@@ -190,7 +203,29 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             clock: Source of time (#49). Defaults to `RealClock`, whose
                 sync-side timers are a thread-free deadline list drained by
                 :meth:`tick` / :meth:`send` (#50).
+            strict: Refuse undeclared event types at the `send()` call
+                site; ``None`` reads the machine's ``strict`` config key.
+            max_queue_size: Accepted for signature parity with
+                `Interpreter` (#245). The sync engine has no inbox to
+                bound -- `send()` runs the event to completion before it
+                returns -- so any value other than ``None`` raises
+                `ValueError` naming the alternative.
+            overflow_policy: Accepted for signature parity (#245); ignored
+                unless a bound is requested, which is refused.
+
+        Raises:
+            ValueError: ``max_queue_size`` is not ``None`` (#245).
         """
+        if max_queue_size is not None:
+            # 📮 #245: a documented refusal, not an accidental TypeError
+            #    from the keyword not existing. See the class docstring.
+            raise ValueError(
+                "SyncInterpreter has no inbox to bound: send() processes "
+                "each event to completion on the caller's thread before "
+                "returning. max_queue_size / overflow_policy are async-"
+                "Interpreter features (#38); apply admission control in "
+                "your own wrapper around send()."
+            )
         # 🤝 Initialize the base interpreter first
         super().__init__(
             machine,
@@ -223,6 +258,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #: placed at the head of the single queue, so the next one goes
         #: behind them (FIFO within the lane) and ahead of the inbox.
         self._restored_priority_count: int = 0
+        #: ♻️ #240: the plain "already running" resume branch has no other
+        #: state change to key on; guard so a second `start()` is a no-op.
+        self._start_notified: bool = False
         #: 👶 #196: child actors started by a state's `invoke`, keyed by the
         #: owning state id, so exiting the state stops them (SCXML 3.9) --
         #: the async engine has kept this map since #43. Without it a
@@ -315,6 +353,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             #    inline, so this both re-invokes and processes their results.
             # ⏱️ #128: restart_timers re-arms `after` deadlines from zero.
             logger.info("♻️ Resuming restored interpreter '%s'...", self.id)
+            self._notify_interpreter_start()  # #240: balanced with stop()
             # 🕰️ #154: the restore branches returned BEFORE the normal
             #    path's `clock._attach(self.tick)`, so a deadline re-armed
             #    by `restart_timers=True` sat on a `SimulatedClock` that had
@@ -341,12 +380,24 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             #    in order -- the async engine's run loop does the same the
             #    moment it starts.
             logger.info("♻️ Resuming restored interpreter '%s'...", self.id)
+            self._notify_interpreter_start()  # #240: balanced with stop()
             self._attach_clock()  # #154: see above
             self._rearm_restored_self_sends()  # #213
             self._process_event_queue()
             self._process_transient_transitions()
             return self
         if self.status != "uninitialized":
+            if self._restored_from_snapshot and not self._start_notified:
+                # ♻️ #240: a restored interpreter with nothing to replay
+                #    still "starts" here -- the one resume shape the two
+                #    branches above do not cover. Fire the hook once.
+                logger.info(
+                    "♻️ Resuming restored interpreter '%s'...", self.id
+                )
+                self._start_notified = True
+                self._notify_interpreter_start()
+                self._attach_clock()
+                return self
             logger.info(
                 "🚧 Interpreter '%s' already running. Skipping start.",
                 self.id,

@@ -532,7 +532,7 @@ def kick(i, ctx, event, action):
     asyncio.ensure_future(helper(i))
 ```
 
-A plain `def` action cannot `await` at all. If it calls `send(..., wait=True)` and drops the result it gets a `RuntimeWarning` when the unawaited object is finalised (#232) — the same signal Python gives for a never-awaited coroutine. Hand the awaitable out (`asyncio.ensure_future(...)`) or send without `wait`.
+A plain `def` action cannot `await` at all. If it calls `send(..., wait=True)` and drops the result it gets a `RuntimeWarning` when the unawaited object is finalised (#232) — the same signal Python gives for a never-awaited coroutine. Hand the awaitable out (`asyncio.ensure_future(...)`) or send without `wait`. That warning is **best-effort**: it fires from a finaliser, and CPython routes finaliser exceptions to `sys.unraisablehook`, so `-W error` cannot turn it into a failure and `pytest.warns` cannot see it. The gateable signal is `interp.dropped_receipts` (a counter) and the `on_receipt_dropped(interpreter, event_type)` plugin hook (0.9.1, #244) — assert `dropped_receipts == 0` in a test or health check under any warning filter.
 
 The `SyncInterpreter` raises `ReentrantWaitError` for a `send(wait=True)` issued from inside an action: there the call would have returned a receipt describing the *running* step, not the event's.
 

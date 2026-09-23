@@ -290,6 +290,7 @@ class Interpreter(BaseInterpreter[TContext]):
         "_raise_depth",
         "_chain_tripped",
         "_action_tasks",
+        "dropped_receipts",
         "_settle_iterations",
         "_settle_tripped",
         "_chain_owed_tasks",
@@ -500,6 +501,13 @@ class Interpreter(BaseInterpreter[TContext]):
         #: inherited context: a task an action spawns runs concurrently with
         #: it (or outlives it) and is NOT the action.
         self._action_tasks: Dict["asyncio.Task[Any]", int] = {}
+        #: 🔢 #244: how many `send(wait=True)` receipts issued from inside
+        #: an action were dropped without ever being awaited or handed out.
+        #: The #232 RuntimeWarning fires from a finaliser, which CPython
+        #: routes to `sys.unraisablehook` -- invisible to `-W error` and to
+        #: `pytest.warns`. This counter (and `on_receipt_dropped`) is the
+        #: deterministic, gateable signal: assert it is 0 after a step.
+        self.dropped_receipts: int = 0
         #: 🔗 #150: self-issued `send_threadsafe` deliveries accepted on a
         #: worker thread but not yet landed on the loop. A macrostep that
         #: "raised nothing" must not end the chain while one is in flight.
@@ -592,6 +600,7 @@ class Interpreter(BaseInterpreter[TContext]):
             and self._event_loop_task is None
         ):
             logger.info("♻️ Resuming restored interpreter '%s'...", self.id)
+            self._notify_interpreter_start()  # #240: balanced with stop()
             if self.status == "running":
                 self._bind_loop()
                 self._event_loop_task = self._spawn_run_loop()
@@ -661,8 +670,7 @@ class Interpreter(BaseInterpreter[TContext]):
             self._processing = True
 
             # 🔔 Notify plugins that the interpreter is starting.
-            for plugin in self._plugins:
-                plugin.on_interpreter_start(self)
+            self._notify_interpreter_start()
 
             # 🚀 Enter the initial state(s) of the machine.
             # We use a synthetic init event to allow any entry actions on the
@@ -1201,6 +1209,11 @@ class Interpreter(BaseInterpreter[TContext]):
             def __del__(inner) -> None:  # noqa: N805
                 if inner._used:
                     return
+                # 🔢 #244: count and notify BEFORE warning, so the signal
+                #    exists even where the warning is unobservable.
+                self.dropped_receipts += 1
+                for plugin in self._plugins:
+                    plugin.on_receipt_dropped(self, event_type)
                 warnings.warn(
                     f"send('{event_type}', wait=True) on '{machine_id}' "
                     f"was called from inside an action and its receipt was "
@@ -1717,14 +1730,31 @@ class Interpreter(BaseInterpreter[TContext]):
 
         The events are NOT processed. Intended for shutdown paths that must
         persist accepted work durably before the process exits.
+
+        🛣️ #239: the async engine has TWO lanes -- the priority lane
+        (fired `after` timers, engine completions, `send_priority()`) and
+        the inbox. This used to read the inbox only, so the lane's events
+        were omitted from the result AND left queued, where `stop()`'s
+        teardown cleared them: the documented "drain, persist, stop" recipe
+        silently lost every deadline that had fired just before shutdown.
+        Both lanes are drained now, priority first -- the same order
+        `pending_events` reports and a restore replays. A receipt attached
+        to a drained event is failed with `InterpreterStoppedError` so a
+        waiter learns the event will not be processed rather than hanging.
         """
+        drained: List[AnyEvent] = [ev for ev, _ in self._priority_queue]
+        self._priority_queue.clear()
         q = self._event_queue
         if isinstance(q, _PreStartQueue):
-            return q.drain()
-        drained: List[AnyEvent] = []
-        while not q.empty():
-            drained.append(q.get_nowait())
-            q.task_done()
+            drained.extend(q.drain())
+        else:
+            while not q.empty():
+                drained.append(q.get_nowait())
+                q.task_done()
+        # 🧾 A `send(wait=True)` on a drained event can never resolve
+        #    through the run loop; say so instead of leaving it pending.
+        for ev in drained:
+            self._fail_receipt(ev, "drained: removed by drain_pending()")
         return drained
 
     async def _drain_inbox(self, timeout: Optional[float]) -> None:
