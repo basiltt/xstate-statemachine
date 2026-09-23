@@ -7,7 +7,7 @@
 # sentinels) apart from user traffic by NAME PREFIX, and the wildcard
 # matcher, `onUnhandled` and strict mode all consult that one list. That is
 # deliberate and cheap -- but it means a user event that happens to live in
-# one of those namespaces gets system-event semantics. 0.8.1 does not change
+# one of those namespaces gets system-event semantics. 0.9.0 does not change
 # the mechanism; it (a) centralises the list in `events.SYSTEM_EVENT_PREFIXES`,
 # (b) warns at `create_machine()` for `on` keys in a reserved namespace, and
 # (c) pins the current behaviour so it is a contract, not a surprise.

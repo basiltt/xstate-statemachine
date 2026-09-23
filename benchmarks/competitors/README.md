@@ -112,10 +112,10 @@ authoritative numbers reported elsewhere (README, docs). This directory's
 end-to-end; its numbers should not be treated as representative performance
 figures.
 
-## Results (2026-09-19, 0.8.1 after the construction/instance work)
+## Results (2026-09-19, 0.9.0 after the construction/instance work)
 
 Python 3.14.6, Windows 11, Intel Core i7-11850H (laptop, on mains, otherwise idle),
-`xstate-statemachine` 0.8.1 (pre-release wheel built from `main` @ `816600c`) installed in
+`xstate-statemachine` 0.9.0 (pre-release wheel built from `main` @ `816600c`) installed in
 a clean venv next to the other libraries. Median of 7 repetitions, GC disabled, setup
 excluded. All six columns come from the **same session**; compare across a row, not
 against an older table. Higher is better. **Bold** = fastest in the row. Reproduce with

@@ -38,7 +38,7 @@ if TYPE_CHECKING:  # pragma: no cover
 #:   0 -- unversioned 0.7.x payload (implicit; no ``version`` key)
 #:   1 -- 0.8.0: adds ``version``, ``machine_id``, ``machine_hash``,
 #:        ``taken_at``, ``pending_events``, ``value``
-#:   2 -- 0.8.1: every ``pending_events`` / ``deferred`` record carries a
+#:   2 -- 0.9.0: every ``pending_events`` / ``deferred`` record carries a
 #:        ``kind`` (``event`` | ``system`` | ``done`` | ``error`` | ``after``)
 #:        so engine events and provenance round-trip (#86, #87). ``done``
 #:        records add ``data`` + ``src``; ``error`` records add ``error``
@@ -161,7 +161,7 @@ def check_minimum_version(version: int, minimum: int) -> None:
     """#205: refuse a payload older than the caller's floor.
 
     ``version`` is the value `check_version` returned. A caller who never
-    persisted version-0 payloads (every 0.8.1 writer records ``version``
+    persisted version-0 payloads (every 0.9.0 writer records ``version``
     and ``machine_hash``) can set ``minimum=1`` so a blob that has had its
     version key stripped -- the one shape the drift check cannot cover --
     is refused instead of restored unchecked.
@@ -419,7 +419,7 @@ def upcast(snapshot: Dict[str, Any], version: int) -> Dict[str, Any]:
         # 1 -> 2: records gain a `kind`. A v1 record never persisted engine
         # events (they were dropped, #87) and never persisted provenance
         # (#86), so the only thing to recover is the ENGINE-SHAPED plain
-        # `Event`s the 0.8.1 escalate/sentinel paths wrote. `restore_event`
+        # `Event`s the 0.9.0 escalate/sentinel paths wrote. `restore_event`
         # re-derives those by name when `kind` is absent; leave the records
         # untouched and let it decide.
         pass

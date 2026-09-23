@@ -608,7 +608,7 @@ The behavior above is one of three policies, controlled by the machine-config ke
 |-------|----------|
 | `"continue"` (default) | The error is contained: it is logged, the transition still completes, and the machine keeps running. Emits a one-shot `DeprecationWarning` — the default flips to `"rollback"` in 1.0. |
 | `"rollback"` | The transition's configuration *and* context changes are rolled back; the machine stays in its pre-transition state. |
-| `"fail"` | Same rollback, plus the interpreter **stops**: `status` becomes `"stopped"`, the configuration is cleared (a stopped machine has no active leaf — before 0.8.1 it kept reporting the source leaf under `status="error"`, #145), children and timers are torn down, and the `TransitionFailedError` is retained on `interp.error` (`__cause__` is the action's exception). The sync `send()` caller and the async `wait=True` receipt both receive it. A parent that `invoke`d this machine sees the failure on its `onError`. |
+| `"fail"` | Same rollback, plus the interpreter **stops**: `status` becomes `"stopped"`, the configuration is cleared (a stopped machine has no active leaf — before 0.9.0 it kept reporting the source leaf under `status="error"`, #145), children and timers are torn down, and the `TransitionFailedError` is retained on `interp.error` (`__cause__` is the action's exception). The sync `send()` caller and the async `wait=True` receipt both receive it. A parent that `invoke`d this machine sees the failure on its `onError`. |
 
 ```json
 {
@@ -635,7 +635,7 @@ Whichever policy is set, `interpreter.last_transition_ok` reports whether the mo
 | Context mutation | ✅ restored |
 | State configuration (entered / exited states, their `after` timers and `invoke`s) | ✅ restored, timers re-armed |
 | Actor created by `spawn_*` | ✅ stopped and unregistered |
-| Event queued by the `raise` built-in | ✅ withdrawn *(0.8.1)* — it was queued for the machine itself and not yet processed |
+| Event queued by the `raise` built-in | ✅ withdrawn *(0.9.0)* — it was queued for the machine itself and not yet processed |
 | `sendTo` / `send_to` to **another** actor | ❌ **delivered** — the event has already left this machine |
 | Anything your own code did (HTTP call, database write, log line) | ❌ **happened** |
 
@@ -648,7 +648,7 @@ Under `"continue"` the `on_transition_failed` hook fires **once per action slot*
 
 ### Cost of arming `rollback`
 
-`rollback` and `fail` checkpoint the context (a `deepcopy`) before a transition that can run actions. Since 0.8.1 the checkpoint is **skipped when no action can run** — the transition has no `actions`, no exited state has `exit`, and no entered subtree has `entry`/`exit` — so an idle machine on `rollback` runs at ≈ 0.98× of the default. For action-bearing transitions the cost scales with the size of your context; see [Production Characteristics](../production-characteristics/#cost-of-the-failure-policies). Keep large, immutable reference data out of `context` (pass it via `input` or close over it in your logic) if this matters to you.
+`rollback` and `fail` checkpoint the context (a `deepcopy`) before a transition that can run actions. Since 0.9.0 the checkpoint is **skipped when no action can run** — the transition has no `actions`, no exited state has `exit`, and no entered subtree has `entry`/`exit` — so an idle machine on `rollback` runs at ≈ 0.98× of the default. For action-bearing transitions the cost scales with the size of your context; see [Production Characteristics](../production-characteristics/#cost-of-the-failure-policies). Keep large, immutable reference data out of `context` (pass it via `input` or close over it in your logic) if this matters to you.
 
 ## Best Practices
 

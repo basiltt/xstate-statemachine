@@ -319,7 +319,7 @@ KNOWN_ROOT_KEYS: frozenset = KNOWN_STATE_KEYS | frozenset(
     }
 )
 
-#: Back-compat alias for the 0.8.1 (#216) name.
+#: Back-compat alias for the 0.9.0 (#216) name.
 KNOWN_MACHINE_KEYS: frozenset = KNOWN_ROOT_KEYS
 
 #: 🗝️ #220: keys `TransitionDefinition` / `_create_transition` read.
