@@ -77,11 +77,24 @@ jobs:
           import xstate_statemachine as x
           from xstate_statemachine import create_machine, MachineLogic, SyncInterpreter
           print('version:', x.__version__)
-          assert len(x.__all__) == 65, len(x.__all__)
+          # 🛡️ The wheel must expose EVERY name the package declares, and
+          #    the version must be the one the tag names. A pinned
+          #    len(__all__) (0.8.0: 65) can only rot -- it failed the
+          #    0.9.0 release (81 names) for no defect.
+          import importlib.metadata as md
+          assert md.version('xstate-statemachine') == x.__version__, (
+              md.version('xstate-statemachine'), x.__version__)
+          missing = [n for n in x.__all__ if not hasattr(x, n)]
+          assert not missing, missing
+          assert len(x.__all__) >= 65, len(x.__all__)  # never shrinks
           # 0.8.0 surface must be importable from the wheel
           from xstate_statemachine import (
               SimulatedClock, OverflowPolicy, Receipt, RestoredError,
               BaseInterpreter, UnknownEventError,
+          )
+          # 0.9.0 surface
+          from xstate_statemachine import (
+              ReentrantWaitError, RunawayChainError, ErrorEvent,
           )
           m = create_machine(
               {'id': 'ci', 'initial': 'a', 'states': {'a': {'on': {'GO': 'b'}}, 'b': {}}},
