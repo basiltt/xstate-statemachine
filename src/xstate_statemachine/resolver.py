@@ -284,7 +284,7 @@ def resolve_target_state(
             raise StateNotFoundError(target, reference_state.id)
         base = reference_state.parent or reference_state
         resolved = _find_descendant(base, segments)
-        # 📢 #31 (0.8.1): the fallback succeeded, so the machine relies on
+        # 📢 #31 (0.9.0): the fallback succeeded, so the machine relies on
         #    the pre-0.8.0 sibling reading. Say so, once per (source,
         #    target) pair, and name the unambiguous spelling -- this is the
         #    migration path that lets a 0.7.x codebase find its own

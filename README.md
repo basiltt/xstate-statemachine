@@ -1008,7 +1008,7 @@ you assemble yourself.
 ### Speed
 
 Same machine shape, each library through its own idiomatic API, all measured in one session
-on 0.8.1 (Python 3.14, median of 7 runs, GC disabled, setup excluded). Events per second;
+on 0.9.0 (Python 3.14, median of 7 runs, GC disabled, setup excluded). Events per second;
 **bold** is fastest in the row.
 
 | Scenario | **xstate-statemachine** (sync) | transitions 0.9.3 | python-statemachine 3.2.1 | sismic 1.6.11 |

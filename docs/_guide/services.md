@@ -207,11 +207,11 @@ The `onDone` transition can include both a target state and actions — just lik
 When a service raises an exception, the interpreter:
 
 1. Catches the exception
-2. Wraps it in an **`ErrorEvent`** with `type="error.platform.<id>"` and the exception on `.error` (0.8.1, #80 — before that it was a `DoneEvent` carrying the exception in `data`)
+2. Wraps it in an **`ErrorEvent`** with `type="error.platform.<id>"` and the exception on `.error` (0.9.0, #80 — before that it was a `DoneEvent` carrying the exception in `data`)
 3. Sends that event to the machine
 4. The machine matches it against the `onError` transition
 
-If **no** `onError` (and no matching `on`) handles it, the failure is not swallowed: the *parent* interpreter fails — `status` becomes `"error"`, `last_error` holds the exception and `on_error` fires — on **both** engines (0.8.1, #99; before, only the sync engine did this). An unhandled invoked-child failure behaves the same way. Declare an `onError` on every `invoke` whose failure you want to survive.
+If **no** `onError` (and no matching `on`) handles it, the failure is not swallowed: the *parent* interpreter fails — `status` becomes `"error"`, `last_error` holds the exception and `on_error` fires — on **both** engines (0.9.0, #99; before, only the sync engine did this). An unhandled invoked-child failure behaves the same way. Declare an `onError` on every `invoke` whose failure you want to survive.
 
 ### Error State and Error Actions
 
@@ -239,7 +239,7 @@ class Logic(MachineLogic):
         print(f"Loaded user: {user['name']}")
 ```
 
-> **Invoked child machines are different.** When `src` is a `MachineNode` rather than a callable, `event.data` on `done.invoke.<id>` is the child's **declared `output`** — the machine-level `output` if there is one, else the final state's `output` — never the child's private `context` (0.8.1, #109). Declare what the parent is allowed to see.
+> **Invoked child machines are different.** When `src` is a `MachineNode` rather than a callable, `event.data` on `done.invoke.<id>` is the child's **declared `output`** — the machine-level `output` if there is one, else the final state's `output` — never the child's private `context` (0.9.0, #109). Declare what the parent is allowed to see.
 
 ## 🐛 Accessing Error Info
 
@@ -541,7 +541,7 @@ The `<id>` defaults to the state's name if no explicit `id` is provided in the i
 | **Multiple invokes** | Sequential | Can run concurrently |
 | **Async service?** | Raises `NotSupportedError` | Fully supported |
 
-Engine parity note (0.8.1, #116): a plain `def` service — one that returns a value, not an awaitable — completes at the **same point** on both engines. The async `Interpreter` runs it inline instead of on a separate task, and the sync engine queues its completion behind the current macrostep, so a script such as `send("GO"); send("CANCEL")` lands in the same state whichever interpreter you use. A `def` that returns a coroutine, or an `AsyncMock`, still takes the awaited path.
+Engine parity note (0.9.0, #116): a plain `def` service — one that returns a value, not an awaitable — completes at the **same point** on both engines. The async `Interpreter` runs it inline instead of on a separate task, and the sync engine queues its completion behind the current macrostep, so a script such as `send("GO"); send("CANCEL")` lands in the same state whichever interpreter you use. A `def` that returns a coroutine, or an `AsyncMock`, still takes the awaited path.
 
 ## Complete Example: User Data Loader with Retry
 

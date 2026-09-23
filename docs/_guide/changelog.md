@@ -11,7 +11,7 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ---
 
-## [Unreleased] — targeting 0.8.1
+## [Unreleased] — targeting 0.9.0
 
 **Naming, and the site.**
 
@@ -1191,9 +1191,9 @@ preserves 0.7.x semantics, with two deliberate exceptions called out under
 - `SyncInterpreter`: replayed deferred events no longer count against the
   macrostep runaway budget, so replaying a full `DEFER_MAX` buffer cannot
   trigger the overflow guard and discard live events queued behind it.
-  The async engine already behaved correctly. *(0.8.1 note: plain
+  The async engine already behaved correctly. *(0.9.0 note: plain
   external events were still counted and could be discarded — see
-  #77 above; the two engines agree as of 0.8.1.)*
+  #77 above; the two engines agree as of 0.9.0.)*
 - Two tests in the suite declared a target as a sibling of `"states"`; the
   new validator caught them.
 - **[wave 2]** Runtime target resolution no longer falls back to a

@@ -184,7 +184,7 @@ Pass `priority=True` alongside `wait=True` (or use `send_priority()`) to jump
 the queue for a bounded-latency question under backlog.
 
 Without `wait=True` the same per-step outcome is readable afterwards on both
-engines: `interp.last_transition_ok` and `interp.last_error` (0.8.1) report the
+engines: `interp.last_transition_ok` and `interp.last_error` (0.9.0) report the
 most recent step, so a fire-and-forget caller can still detect a failed one.
 
 ### `to_promise` — await completion

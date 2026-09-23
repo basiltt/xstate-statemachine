@@ -583,13 +583,13 @@ This restriction exists because guard evaluation happens in the hot path of tran
 
 ## Error Handling in Guards
 
-If a guard raises an exception, the interpreter treats *that candidate* as decided and moves on to the next one in the array — under every policy, including `"raise"` (0.8.1, #152). What the raising candidate is decided *as*, and whether the exception is surfaced, is controlled by the machine-config key **`guardErrorPolicy`**:
+If a guard raises an exception, the interpreter treats *that candidate* as decided and moves on to the next one in the array — under every policy, including `"raise"` (0.9.0, #152). What the raising candidate is decided *as*, and whether the exception is surfaced, is controlled by the machine-config key **`guardErrorPolicy`**:
 
 | Value | Behavior |
 |-------|----------|
 | `"false"` (default) | The raise is treated as `False` — the transition is skipped, matching pre-0.8.0 behavior. |
 | `"true"` | The raise is treated as `True` — the transition is taken despite the error. |
-| `"raise"` | The raising candidate is skipped (as `False`) and the **rest of the array is still evaluated**, so an unguarded fallback is taken; then the exception is surfaced. For a caller-driven event it reaches the sync `send()` caller / the async `wait=True` receipt. For an engine-driven event (`invoke.onDone`, `after`, `always`) there is no caller: it is recorded on `last_transition_ok` / `last_error` and the machine carries on. Before 0.8.1 the raise aborted the whole selection pass and an `onDone` fallback was never taken, silently dropping the completion (#152). `on_guard_error` fires in every case. |
+| `"raise"` | The raising candidate is skipped (as `False`) and the **rest of the array is still evaluated**, so an unguarded fallback is taken; then the exception is surfaced. For a caller-driven event it reaches the sync `send()` caller / the async `wait=True` receipt. For an engine-driven event (`invoke.onDone`, `after`, `always`) there is no caller: it is recorded on `last_transition_ok` / `last_error` and the machine carries on. Before 0.9.0 the raise aborted the whole selection pass and an `onDone` fallback was never taken, silently dropping the completion (#152). `on_guard_error` fires in every case. |
 
 ```json
 {

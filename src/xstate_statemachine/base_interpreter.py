@@ -577,7 +577,7 @@ class BaseInterpreter(Generic[TContext]):
         #: uses it to pick heap vs `call_later` by owner, not by whether a
         #: loop happens to be running on the constructing thread.
         self._clock_sync_lane: bool = False
-        #: ⏱️ Does `self.clock.set_timeout` accept the 0.8.1 `sync=` kwarg?
+        #: ⏱️ Does `self.clock.set_timeout` accept the 0.9.0 `sync=` kwarg?
         #: Decided ONCE here by inspecting the signature, so `_set_timeout`
         #: is a single call. The previous try/except-TypeError fallback
         #: invoked a clock TWICE when its body raised TypeError for an
@@ -1764,7 +1764,7 @@ class BaseInterpreter(Generic[TContext]):
                 ``version`` is below this (``SnapshotVersionError``).
                 Version-0 payloads carry no ``machine_hash`` and restore
                 without a drift check by design; a caller who never wrote
-                v0 (every 0.8.1 writer records the version) should pass
+                v0 (every 0.9.0 writer records the version) should pass
                 ``1`` so a version-stripped blob cannot downgrade its way
                 past the check. Default ``0`` keeps legacy payloads
                 loadable.

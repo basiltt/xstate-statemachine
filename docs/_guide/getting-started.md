@@ -328,27 +328,47 @@ xstate-statemachine/
 pip install --upgrade xstate-statemachine
 ```
 
-**From v0.8.0 to v0.8.1:**
+**From v0.8.0 to v0.9.0:**
 
-A hardening release: every defect reported across three re-verification rounds,
-each reproduced before it was fixed and pinned by a regression test. Two
-changes are visible to existing code:
+A hardening release: every defect reported across eleven re-verification
+rounds, each reproduced before it was fixed and pinned by a regression test.
+It is a *minor* bump because a handful of changes are visible to code that
+was correct on 0.8.0:
 
-- **`Receipt` has four fields.** `send(wait=True)` now resolves a
-  `Receipt(state_ids, changed, error, deferred)`. A positional destructure
-  written for 0.8.0 — `state_ids, changed, error = receipt` — raises
-  `ValueError`; read fields by attribute.
+- **`Receipt` has five fields.** `send(wait=True)` now resolves a
+  `Receipt(state_ids, changed, error, deferred, denied)`. A positional
+  destructure written for 0.8.0 — `state_ids, changed, error = receipt` —
+  raises `ValueError`; read fields by attribute.
+- **`actionErrorPolicy: "fail"` leaves `status == "stopped"`**, not
+  `"error"`, with the configuration cleared (#145). Check `"stopped"` or
+  `interp.error is not None`; `"error"` remains the status for a service
+  that died.
+- **`guardErrorPolicy: "raise"` takes the fallback candidate** before
+  surfacing the exception (#152), instead of aborting the whole array.
+- **Awaiting your own receipt inside an action raises `ReentrantWaitError`**
+  (#219) instead of deadlocking; the sync engine refuses the same shape.
+  Send without `wait`, or await the receipt from outside the step.
+- **Unknown config keys are reported at every level** (#216, #220) — a
+  WARNING by default, `InvalidConfigError` under `strict_config=True`. A
+  config carrying ad-hoc keys will start logging; move them under `meta`
+  or an `x-` prefix.
 - **`asyncio.run_coroutine_threadsafe(interp.send(...), loop)` is rejected**
   with `WrongThreadError` (the thread check runs before the coroutine is
   scheduled). Use `interp.send_threadsafe(...)` from other threads — this was
   already the documented path in 0.8.0.
+- **Snapshot layout is v3.** Older blobs upcast transparently on load; a
+  v3 blob does not load on 0.8.0.
 
 Everything else is additive or a bug fix: new typed exceptions
-(`SnapshotMidStepError`, `SnapshotCorruptError`, `SnapshotSerializationError`,
-`InvalidEventError` — also a `TypeError` — and `RootTargetError`), new plugin
-hooks (`on_resolve_error`, `on_plugin_error`), `from_snapshot(clock=,
-restart_timers=)`, and redaction in `LoggingInspector`. See
-[What's New in 0.8.1](#whats-new-in-081) below.
+(`RunawayChainError`, `ErrorEvent`, `SnapshotMidStepError`,
+`SnapshotCorruptError`, `SnapshotSerializationError`, `InvalidEventError` —
+also a `TypeError` — and `RootTargetError`), new plugin hooks
+(`on_resolve_error`, `on_plugin_error`, `on_invocation_stranded`,
+`on_chain_budget_exceeded`, `on_invalid_event`, `on_snapshot_error`),
+`from_snapshot(clock=, restart_timers=, minimum_version=)`, sticky
+`chain_trips` / `last_chain_error`, `Interpreter(service_pool_size=)`,
+`MachineLogic(strict=True)` and redaction in `LoggingInspector`. See
+[What's New in 0.9.0](#whats-new-in-090) below.
 
 **From v0.5.x to v0.6.0:**
 
@@ -434,9 +454,9 @@ asyncio.run(main())
 
 > **Tip:** Use `SyncInterpreter` for scripts, CLI tools, and testing. Use `Interpreter` for web servers, event loops, and real-time applications.
 
-## 🆕 What's New in 0.8.1
+## 🆕 What's New in 0.9.0
 
-The 0.8.1 release is the follow-through on 0.8.0: every finding from three
+The 0.9.0 release is the follow-through on 0.8.0: every finding from eleven
 independent re-verification rounds fixed, with the engines brought
 into lock-step. Highlights:
 

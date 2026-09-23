@@ -1,4 +1,4 @@
-"""Pins for the 0.8.1 hot-path performance work.
+"""Pins for the 0.9.0 hot-path performance work.
 
 Every optimisation here changes *how* the engine computes something it
 already computed; none may change *what* it observes. These tests pin the

@@ -57,7 +57,7 @@ def main() -> None:
     interpreter.send("BOOM")
     logger.info(f"Status after BOOM: {interpreter.status}")
     logger.info(f"Original error: {interpreter.error}")
-    # 🛑 0.8.1 (#145): `actionErrorPolicy: "fail"` STOPS the machine rather
+    # 🛑 0.9.0 (#145): `actionErrorPolicy: "fail"` STOPS the machine rather
     #    than parking it in "error" with a stale configuration; the failure
     #    itself is retained on `.error` and survives the snapshot below.
     assert interpreter.status == "stopped"

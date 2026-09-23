@@ -150,7 +150,7 @@ class TestDriveNeverSuspends(_Quiet):
                 return suspends()
 
         # The entry action is what routes `start()` through the leaf: an
-        # empty action list never creates the coroutine (perf, 0.8.1).
+        # empty action list never creates the coroutine (perf, 0.9.0).
         i = Bad(
             create_machine(
                 {

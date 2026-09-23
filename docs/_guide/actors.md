@@ -327,18 +327,18 @@ actors.
 > **Note:** A child invoked with `invoke` fires the parent's `onDone` only when
 > it reaches a **top-level final state**, and `onError` if it ends in an error.
 > The `done.invoke.<id>` payload is the child's **declared `output`** (machine-level
-> `output` wins over the final state's), never its raw `context` (0.8.1, #109).
+> `output` wins over the final state's), never its raw `context` (0.9.0, #109).
 > Stopping a child early does not fire either. As of 0.8.0, invoked child
 > completion is detected immediately via a terminal-listener callback, not by
 > polling — the old `_ACTOR_POLL_INTERVAL` no longer exists.
 
-> **Unresolvable `to` (0.8.1, #133).** A `sendTo` whose `to` names no live actor does
+> **Unresolvable `to` (0.9.0, #133).** A `sendTo` whose `to` names no live actor does
 > **not** raise. The send is dropped, `on_event_dropped(reason="unresolved_target")`
 > fires, and the step is marked: `last_transition_ok` is `False` and
 > `receipt.error` / `last_error` carry an `ActorSpawningError` naming the target.
 > `escalate` from an invoked child reaches the parent's `onError` (#130).
 
-> **Threading (sync engine, 0.8.1).** A non-blocking `spawnChild` on `SyncInterpreter`
+> **Threading (sync engine, 0.9.0).** A non-blocking `spawnChild` on `SyncInterpreter`
 > *starts* the child on the spawning thread — its entry actions and any grandchildren
 > exist by the time the spawn action returns — and hands it to a background pump
 > thread afterwards. Only the child's later ticks run on that thread.

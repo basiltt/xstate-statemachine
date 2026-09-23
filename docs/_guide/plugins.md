@@ -39,7 +39,7 @@ interp.start()
 
 The library ships with `LoggingInspector`, a ready-to-use plugin that emits detailed, emoji-prefixed log messages for every significant machine event. It is invaluable for debugging complex state machines.
 
-> 🔒 **Redaction (0.8.1).** `LoggingInspector` redacts sensitive keys before logging context or event payloads: any key containing `password`, `secret`, `token`, `api_key`, `authorization`, `credential`, `card`, `cvv`, … (see `DEFAULT_REDACT_KEYS`) is written as `"***"`, recursively. Extend the list with `LoggingInspector(redact_keys=(*DEFAULT_REDACT_KEYS, "ssn"))`, or opt out explicitly with `redact_keys=()`. Pass `log_context=False` to skip the per-transition context dump on large machines. The `redact()` helper is exported for your own plugins.
+> 🔒 **Redaction (0.9.0).** `LoggingInspector` redacts sensitive keys before logging context or event payloads: any key containing `password`, `secret`, `token`, `api_key`, `authorization`, `credential`, `card`, `cvv`, … (see `DEFAULT_REDACT_KEYS`) is written as `"***"`, recursively. Extend the list with `LoggingInspector(redact_keys=(*DEFAULT_REDACT_KEYS, "ssn"))`, or opt out explicitly with `redact_keys=()`. Pass `log_context=False` to skip the per-transition context dump on large machines. The `redact()` helper is exported for your own plugins.
 
 ### Setup and Usage
 
@@ -185,18 +185,18 @@ Every hook receives the `interpreter` instance as its first argument, giving plu
 | `on_transition_failed` | `(interpreter, transition, failed_actions)` | A transition's action list did not run to completion |
 | `on_guard_error` | `(interpreter, guard_name, event, error)` | A guard raised instead of returning |
 | `on_unhandled_event` | `(interpreter, event, active_state_ids, disposition)` | An event selected no transition |
-| `on_chain_budget_exceeded` | `(interpreter, error, event)` | **[0.8.1]** Once per `maxIterations` trip (#222). The sticky signal that work was discarded; `interpreter.chain_trips` / `.last_chain_error` carry the same fact for polling |
-| `on_event_dropped` | `(interpreter, event, reason)` | An event was discarded unprocessed. `reason` is one of `queue_full`, `not_running`, `chain_budget`, `stopped` (abandoned by `stop()`, incl. producers parked on a full `BLOCK` inbox), `unresolved_target` (`sendTo` to no live actor). Fires on **both** engines for every loss site (0.8.1) |
-| `on_resolve_error` | `(interpreter, error, event)` | A transition's target could not be resolved at runtime (`strict_targets=False` only) — the third per-transition failure category alongside `on_action_error` / `on_guard_error` (0.8.1) |
-| `on_plugin_error` | `(interpreter, plugin, hook, error)` | **Another** plugin's hook raised (or was `async def` and could not be awaited). Never fires for the plugin that failed. The same triple is on `interpreter.last_plugin_error` (0.8.1) |
-| `on_invalid_event` | `(interpreter, error, raw_event)` | `send()` refused a malformed event (`InvalidEventError`); fires before the exception propagates to the caller (0.8.1, #159) |
-| `on_snapshot_error` | `(interpreter, error)` | A snapshot was refused (`SnapshotMidStepError` / `SnapshotSerializationError`); fires before the exception propagates (0.8.1, #159) |
+| `on_chain_budget_exceeded` | `(interpreter, error, event)` | **[0.9.0]** Once per `maxIterations` trip (#222). The sticky signal that work was discarded; `interpreter.chain_trips` / `.last_chain_error` carry the same fact for polling |
+| `on_event_dropped` | `(interpreter, event, reason)` | An event was discarded unprocessed. `reason` is one of `queue_full`, `not_running`, `chain_budget`, `stopped` (abandoned by `stop()`, incl. producers parked on a full `BLOCK` inbox), `unresolved_target` (`sendTo` to no live actor). Fires on **both** engines for every loss site (0.9.0) |
+| `on_resolve_error` | `(interpreter, error, event)` | A transition's target could not be resolved at runtime (`strict_targets=False` only) — the third per-transition failure category alongside `on_action_error` / `on_guard_error` (0.9.0) |
+| `on_plugin_error` | `(interpreter, plugin, hook, error)` | **Another** plugin's hook raised (or was `async def` and could not be awaited). Never fires for the plugin that failed. The same triple is on `interpreter.last_plugin_error` (0.9.0) |
+| `on_invalid_event` | `(interpreter, error, raw_event)` | `send()` refused a malformed event (`InvalidEventError`); fires before the exception propagates to the caller (0.9.0, #159) |
+| `on_snapshot_error` | `(interpreter, error)` | A snapshot was refused (`SnapshotMidStepError` / `SnapshotSerializationError`); fires before the exception propagates (0.9.0, #159) |
 | `on_error` | `(interpreter, error)` | The interpreter enters the `"error"` status |
 | `on_done` | `(interpreter, output)` | The machine reaches a top-level final state |
 
 `LoggingInspector` implements `on_event_received`, `on_transition`, `on_action_execute`, `on_guard_evaluated`, `on_service_start`/`on_service_done`/`on_service_error`, `on_transition_failed`, `on_guard_error`, `on_unhandled_event`, `on_error`, and `on_done`. It does **not** implement `on_interpreter_start`, `on_interpreter_stop`, `on_action_error`, or `on_event_dropped` — action failures and dropped events pass through silently unless you add your own plugin for them.
 
-> ⚠️ **Hooks are synchronous callbacks.** An `async def` override is never awaited — the engine dispatches hooks from inside a transition and cannot suspend there. Since 0.8.1 such a hook is closed explicitly and reported through `on_plugin_error` / `interpreter.last_plugin_error` as a `TypeError`, instead of vanishing with only a Python `RuntimeWarning`. If a hook needs async work, keep it `def` and schedule a task inside it.
+> ⚠️ **Hooks are synchronous callbacks.** An `async def` override is never awaited — the engine dispatches hooks from inside a transition and cannot suspend there. Since 0.9.0 such a hook is closed explicitly and reported through `on_plugin_error` / `interpreter.last_plugin_error` as a `TypeError`, instead of vanishing with only a Python `RuntimeWarning`. If a hook needs async work, keep it `def` and schedule a task inside it.
 >
 > Plugin failures of any kind — including a hook raising `asyncio.CancelledError` — are **contained**: the interpreter keeps running, and the failure is visible to other plugins via `on_plugin_error`.
 
@@ -321,7 +321,7 @@ def on_guard_error(self, interpreter, guard_name, event, error):
 
 #### `on_unhandled_event(interpreter, event, active_state_ids, disposition)`
 
-Fires when an event matches no transition in any active state, regardless of `onUnhandled` policy. `disposition` is `"ignored"` (the state declares no handler for this event), `"guard_denied"` (a handler *is* declared but every candidate's guard returned `False` — 0.8.1, #153), `"deferred"`, `"errored"`, or `"dropped"` (the defer buffer was full and the oldest entry was evicted). The same distinction is on the receipt as `Receipt.denied`. See [Interpreters — Unhandled Events](../interpreters/#unhandled-events).
+Fires when an event matches no transition in any active state, regardless of `onUnhandled` policy. `disposition` is `"ignored"` (the state declares no handler for this event), `"guard_denied"` (a handler *is* declared but every candidate's guard returned `False` — 0.9.0, #153), `"deferred"`, `"errored"`, or `"dropped"` (the defer buffer was full and the oldest entry was evicted). The same distinction is on the receipt as `Receipt.denied`. See [Interpreters — Unhandled Events](../interpreters/#unhandled-events).
 
 ```python
 def on_unhandled_event(self, interpreter, event, active_state_ids, disposition):
@@ -330,7 +330,7 @@ def on_unhandled_event(self, interpreter, event, active_state_ids, disposition):
 
 #### `on_chain_budget_exceeded(interpreter, error, event)`
 
-Fires **once per trip** when `maxIterations` cuts the machine's self-generated work — a zero-delay `raise` cycle, a completion storm, or an `always` loop (0.8.1, #222). `error` is the `RunawayChainError` (`.limit`, `.dropped`, `.stranded`); `event` is the first event cut, or `Event("")` for a settle-budget trip.
+Fires **once per trip** when `maxIterations` cuts the machine's self-generated work — a zero-delay `raise` cycle, a completion storm, or an `always` loop (0.9.0, #222). `error` is the `RunawayChainError` (`.limit`, `.dropped`, `.stranded`); `event` is the first event cut, or `Event("")` for a settle-budget trip.
 
 Use this — or poll `interpreter.chain_trips` (a monotonic counter) / `interpreter.last_chain_error` (a latch you clear with `clear_chain_error()`) — rather than `last_error`, which is recomputed per processed event and is erased by the next benign event. A machine with a heartbeat guarantees that event arrives, so a supervisor polling `last_error` loses the race every time.
 
@@ -352,7 +352,7 @@ Fires when an event is discarded unprocessed. `reason` is one of:
 | `"stopped"` | both | `stop()` abandoned an event still in the inbox — including a producer parked on a full `BLOCK` inbox |
 | `"unresolved_target"` | both | A `sendTo` named an actor that is not alive |
 
-The drop is also logged at `WARNING`. Since 0.8.1 every loss site on **both** engines fires this hook; before, the `SyncInterpreter` dropped silently in several of these cases. See [Interpreters — Unhandled Events](../interpreters/#unhandled-events).
+The drop is also logged at `WARNING`. Since 0.9.0 every loss site on **both** engines fires this hook; before, the `SyncInterpreter` dropped silently in several of these cases. See [Interpreters — Unhandled Events](../interpreters/#unhandled-events).
 
 ```python
 def on_event_dropped(self, interpreter, event, reason):

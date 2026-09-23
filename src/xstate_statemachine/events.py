@@ -54,7 +54,7 @@ SYSTEM_EVENT_PREFIXES: Tuple[str, ...] = (
     "___xstate",
 )
 
-#: The exact name SHAPES the engine synthesises. Since 0.8.1 (#79) system
+#: The exact name SHAPES the engine synthesises. Since 0.9.0 (#79) system
 #: status is decided by provenance (`is_system_event`), not by name; this
 #: list exists for the one place a name is all we have -- build-time
 #: `strict` validation of `raise`/`on` keys -- and for documentation.
@@ -189,7 +189,7 @@ class ErrorEvent(NamedTuple):
     """A failure delivered by the engine: an invoked service or child actor
     raised, or a child machine ended in the ``error`` status (#80).
 
-    🏛️ Architecture decision: before 0.8.1 failures rode in a `DoneEvent`
+    🏛️ Architecture decision: before 0.9.0 failures rode in a `DoneEvent`
     whose `data` happened to hold an exception, so an `onError` handler and
     an `onDone` handler received the same shape and consumers had to
     string-prefix the type to tell them apart. XState v5 delivers
@@ -377,7 +377,7 @@ def restore_event(record: Dict[str, Any]) -> Any:
     A v1 record has no ``kind``. For those, provenance is re-derived from
     the NAME for the exact engine shapes only -- the one place a name is
     all we have, and only at this boundary -- so an escalate event or init
-    sentinel persisted by 0.8.1 is not turned into user traffic that fails
+    sentinel persisted by 0.9.0 is not turned into user traffic that fails
     an `onUnhandled: "error"` machine on restore.
     """
     from .exceptions import SnapshotCorruptError
@@ -404,7 +404,7 @@ def restore_event(record: Dict[str, Any]) -> Any:
         #    user's `after.hours` from `onUnhandled`/`strict`. The one
         #    shape the engine itself persisted under v1 that must stay
         #    system is the init sentinel; everything else re-persists as
-        #    v2 on the next save. See the 0.8.1 changelog migration note.
+        #    v2 on the next save. See the 0.9.0 changelog migration note.
         kind = "system" if etype.startswith("___xstate") else "event"
     # 🏷️ #195: provenance is restored exactly as persisted. A `done` /
     #    `error` / `after` record carrying ``"engine": true`` was written by

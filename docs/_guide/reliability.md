@@ -44,7 +44,7 @@ When an action raises mid-transition, three things could happen. You choose.
 |---|---|---|---|
 | `"continue"` *(0.7 default)* | committed | partially mutated | running |
 | `"rollback"` *(1.0 default)* | **restored** | **restored** | running |
-| `"fail"` | cleared | restored | `status == "stopped"`, `interp.error` is the `TransitionFailedError` (0.8.1, #145 — was `"error"` with the pre-transition leaf still reported) |
+| `"fail"` | cleared | restored | `status == "stopped"`, `interp.error` is the `TransitionFailedError` (0.9.0, #145 — was `"error"` with the pre-transition leaf still reported) |
 
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
@@ -159,7 +159,7 @@ interp.stop()
 
 ## 3. Guards that raise — `guardErrorPolicy`
 
-A guard that throws used to be treated as `False`, which quietly picked the *other* branch. Now you pick: `"false"` (0.7 behaviour), `"true"`, or `"raise"`. With `"raise"` the exception reaches the `send()` caller (sync) or the `wait=True` receipt (async) — but it cancels **only its own candidate** (0.8.1, #152): lower-priority candidates in the same array are still evaluated, so an unguarded fallback is taken, and `last_error` carries the guard's exception. Before 0.8.1 the raise aborted the whole selection pass, which silently dropped engine-driven events such as an `invoke.onDone` whose guarded branch failed.
+A guard that throws used to be treated as `False`, which quietly picked the *other* branch. Now you pick: `"false"` (0.7 behaviour), `"true"`, or `"raise"`. With `"raise"` the exception reaches the `send()` caller (sync) or the `wait=True` receipt (async) — but it cancels **only its own candidate** (0.9.0, #152): lower-priority candidates in the same array are still evaluated, so an unguarded fallback is taken, and `last_error` carries the guard's exception. Before 0.9.0 the raise aborted the whole selection pass, which silently dropped engine-driven events such as an `invoke.onDone` whose guarded branch failed.
 
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic

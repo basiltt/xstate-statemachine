@@ -220,7 +220,7 @@ interp.stop()
 | `.has_tag(tag)` | method | `True` if any active state carries `tag`. |
 | `.get_meta()` | method | Returns a `{state_id: meta_dict}` mapping merged from every active state's `meta`. |
 | `.pending_invocations()` | method | Lists in-flight `invoke`s from the active configuration that have no live service backing them — most relevant right after `from_snapshot()`. |
-| `.has_dormant_invocations` | `bool` | `True` when `pending_invocations()` is non-empty. **`status` is not a liveness signal after a restore** — a statically restored machine reports `"running"` while its invokes are parked; check this in health checks instead. *(0.8.1)* |
+| `.has_dormant_invocations` | `bool` | `True` when `pending_invocations()` is non-empty. **`status` is not a liveness signal after a restore** — a statically restored machine reports `"running"` while its invokes are parked; check this in health checks instead. *(0.9.0)* |
 | `.MAX_ACTION_DEPTH` | `int` | The recursion guard rail for self-triggered actions (default `50`) — raised when actions keep re-sending events into the same transition. |
 
 ### Checking Transitions, Tags, and Metadata
@@ -500,18 +500,18 @@ print(receipt.changed)    # True if this event caused a transition or context ch
 print(receipt.error)      # the exception raised while processing THIS event, or None
 ```
 
-`Receipt` is a `NamedTuple` with four fields (three before 0.8.1 — a positional destructure written as `state_ids, changed, error = receipt` now raises `ValueError`; read fields by attribute):
+`Receipt` is a `NamedTuple` with four fields (three before 0.9.0 — a positional destructure written as `state_ids, changed, error = receipt` now raises `ValueError`; read fields by attribute):
 
 - `state_ids: FrozenSet[str]` — the active leaf state IDs when the instant processing this event finished.
 - `changed: bool` — `True` if a transition was taken (configuration or context changed) *for this event*.
 - `error: Optional[BaseException]` — set when an action raised or a target was unresolvable while processing this event; otherwise `None`. The machine can still be `running` when `error` is set (depending on `actionErrorPolicy`) — the receipt only reports whether *this caller's* event was processed cleanly.
 
-- `deferred: bool` — `True` when this event selected no transition and was parked under `onUnhandled: "defer"`. It is replayed as its *own* macrostep after the next event that changes the configuration; the replay never folds into that event's receipt (0.8.1, both engines — the sync engine now holds replays until the caller's receipt is final, #125).
-- `denied: bool` — `True` when the active state *declared* a handler for this event but every guard said no (0.8.1, #153). Without it, a business-rule refusal and an event that simply does not apply in this state produce byte-identical receipts. A guard that *raised* under `guardErrorPolicy: "raise"` is neither: `denied=False`, and the exception is on `error` (#170). Under `onUnhandled: "defer"` a denied event is also deferred (`deferred=True`) and replayed against the next configuration — scope `defer` to the states that need it if your guards encode business rules.
+- `deferred: bool` — `True` when this event selected no transition and was parked under `onUnhandled: "defer"`. It is replayed as its *own* macrostep after the next event that changes the configuration; the replay never folds into that event's receipt (0.9.0, both engines — the sync engine now holds replays until the caller's receipt is final, #125).
+- `denied: bool` — `True` when the active state *declared* a handler for this event but every guard said no (0.9.0, #153). Without it, a business-rule refusal and an event that simply does not apply in this state produce byte-identical receipts. A guard that *raised* under `guardErrorPolicy: "raise"` is neither: `denied=False`, and the exception is on `error` (#170). Under `onUnhandled: "defer"` a denied event is also deferred (`deferred=True`) and replayed against the next configuration — scope `defer` to the states that need it if your guards encode business rules.
 
 `error` is also set (to `InterpreterStoppedError`) if the interpreter is stopped, refuses the event, or tears down before a pending receipt resolves, so a caller awaiting `wait=True` never hangs on shutdown.
 
-**Do not await your own receipt from inside an action.** An action runs *inside* the macrostep the run loop is executing; the receipt for an event it sends resolves only when the loop processes that event, and the loop cannot advance until the action returns. Awaiting `i.send("GO", wait=True)` inside an `entry` action is therefore a deadlock by construction, and since 0.8.1 (#219) it raises `ReentrantWaitError` at the call site instead of hanging. Send without `wait` (the event is queued as self-generated work and runs after the current step), or schedule the receipt and await it later from outside the step:
+**Do not await your own receipt from inside an action.** An action runs *inside* the macrostep the run loop is executing; the receipt for an event it sends resolves only when the loop processes that event, and the loop cannot advance until the action returns. Awaiting `i.send("GO", wait=True)` inside an `entry` action is therefore a deadlock by construction, and since 0.9.0 (#219) it raises `ReentrantWaitError` at the call site instead of hanging. Send without `wait` (the event is queued as self-generated work and runs after the current step), or schedule the receipt and await it later from outside the step:
 
 ```python
 async def kick(i, ctx, event, action):
@@ -1019,7 +1019,7 @@ Per XState, an event that selects no transition in any active state is silently 
 
 Whatever the policy, every unhandled event fires the `on_unhandled_event(interpreter, event, active_state_ids, disposition)` plugin hook, with `disposition` one of `"ignored"`, `"deferred"`, `"errored"`, or `"dropped"` (buffer was full). See [Plugins](../plugins/#plugin-hooks-reference).
 
-> **Exempt: engine events — by provenance.** `onUnhandled` never applies to events the engine minted for itself (`done.invoke.*`, `error.platform.*`, `after.*`, `xstate.*`, the init/exit sentinels) — the machine did not ask for a `done.invoke.fetch` it has no handler for and cannot be blamed for ignoring it. Since 0.8.1 the check is *who created the event*, not its name: a **user** event you happen to call `done.review` is user traffic and **does** trip `"error"` / get `"defer"`red like any other (#79). See [Core Concepts → How Events Work](../core-concepts/#how-events-work).
+> **Exempt: engine events — by provenance.** `onUnhandled` never applies to events the engine minted for itself (`done.invoke.*`, `error.platform.*`, `after.*`, `xstate.*`, the init/exit sentinels) — the machine did not ask for a `done.invoke.fetch` it has no handler for and cannot be blamed for ignoring it. Since 0.9.0 the check is *who created the event*, not its name: a **user** event you happen to call `done.review` is user traffic and **does** trip `"error"` / get `"defer"`red like any other (#79). See [Core Concepts → How Events Work](../core-concepts/#how-events-work).
 
 ---
 
@@ -1039,7 +1039,7 @@ To deliver an event from another thread, use `send_threadsafe()`:
 interp.send_threadsafe("TICK")
 ```
 
-It routes the enqueue through the interpreter's owning event loop and returns a `concurrent.futures.Future` you may `.result()` on to block until the event is queued (not processed). Since 0.8.1 it applies the same `strict` / `event_schemas` validation as `send()`, raising `UnknownEventError` / `InvalidEventPayloadError` on the **calling** thread before anything is queued.
+It routes the enqueue through the interpreter's owning event loop and returns a `concurrent.futures.Future` you may `.result()` on to block until the event is queued (not processed). Since 0.9.0 it applies the same `strict` / `event_schemas` validation as `send()`, raising `UnknownEventError` / `InvalidEventPayloadError` on the **calling** thread before anything is queued.
 
 > **Changed in 0.8.0 — the manual idiom no longer works.** In 0.7.x the correct way to send across threads was
 > `asyncio.run_coroutine_threadsafe(interp.send("E"), loop).result()`. That pattern **raises `WrongThreadError` on 0.8.0+**, because the thread check runs eagerly inside `send()` on the calling thread, before the coroutine is ever handed to the loop. It is not possible to accept that form while still rejecting the bare `interp.send()` that silently lost events. Replace it with `send_threadsafe()`; the two are otherwise equivalent.

@@ -7,7 +7,7 @@ Most of this guide describes what a machine *means*. This page describes how the
 
 Three facts, each with the measurement behind it. Every number below was produced by [`benchmarks/production_characteristics.py`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/production_characteristics.py); run it on your own hardware and trust your figures over ours.
 
-> **Measured on:** 0.8.1 (2026-09-19, `main` @ `816600c`), CPython 3.14.6, Windows 11, Intel Core i7-11850H laptop, a trivial single-action macrostep, `tracemalloc` **off**, best-of-3. Treat these as order-of-magnitude, not guarantees. For how the runtime compares with other Python state-machine libraries on identical machine shapes, see the [cross-library benchmark](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md) (summary on the [home page](../../#how-it-compares)).
+> **Measured on:** 0.9.0 (2026-09-19, `main` @ `816600c`), CPython 3.14.6, Windows 11, Intel Core i7-11850H laptop, a trivial single-action macrostep, `tracemalloc` **off**, best-of-3. Treat these as order-of-magnitude, not guarantees. For how the runtime compares with other Python state-machine libraries on identical machine shapes, see the [cross-library benchmark](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md) (summary on the [home page](../../#how-it-compares)).
 
 ---
 
@@ -33,7 +33,7 @@ The consequence: **throughput is a per-process budget, not a per-machine capacit
 | 100 | ~57,000 | ~570 |
 | 1,000 | ~52,000 | ~52 |
 
-The aggregate barely moves across three orders of magnitude (0.8.1 closed the dip at 100–1,000 machines that 0.8.0 showed — the per-child manager task and the settle-hook accumulation are gone — and the run loop now yields to the event loop every 16 inbox events instead of every one, which is most of the ~30% lift over the first 0.8.1 measurement); the per-machine share collapses. This is the correct and unavoidable behaviour of a single-threaded core — it is how XState's actor system behaves too, and it is not something a library change can "fix" without a different architecture.
+The aggregate barely moves across three orders of magnitude (0.9.0 closed the dip at 100–1,000 machines that 0.8.0 showed — the per-child manager task and the settle-hook accumulation are gone — and the run loop now yields to the event loop every 16 inbox events instead of every one, which is most of the ~30% lift over the first 0.9.0 measurement); the per-machine share collapses. This is the correct and unavoidable behaviour of a single-threaded core — it is how XState's actor system behaves too, and it is not something a library change can "fix" without a different architecture.
 
 ### Sizing rule
 
@@ -43,7 +43,7 @@ The aggregate barely moves across three orders of magnitude (0.8.1 closed the di
 
 If the result is below the per-machine event rate you need, **scale by process** — shard machines across a worker pool. Adding interpreters to one process will not help.
 
-An external producer that sends *during* another machine's slow step is never charged to that machine's `maxIterations` (0.8.1, #105); the budget counts only events an interpreter's own actions issue, so a busy loop cannot make a healthy machine trip its chain guard.
+An external producer that sends *during* another machine's slow step is never charged to that machine's `maxIterations` (0.9.0, #105); the budget counts only events an interpreter's own actions issue, so a busy loop cannot make a healthy machine trip its chain guard.
 
 ### Two things that make it worse
 
@@ -58,14 +58,14 @@ Measured on a 5-state cycle machine, `SyncInterpreter`, 20 000 events, policy *a
 |---|---:|
 | defaults | 1.00× |
 | `onUnhandled: "defer"` | ≈ 0.98× |
-| `actionErrorPolicy: "rollback"`, transitions with **no** actions | ≈ 0.98× *(0.8.1; was 0.78× in 0.8.0)* |
+| `actionErrorPolicy: "rollback"`, transitions with **no** actions | ≈ 0.98× *(0.9.0; was 0.78× in 0.8.0)* |
 | `actionErrorPolicy: "rollback"`, transitions with `entry` actions | ≈ 0.84× |
 
 `rollback` / `fail` take a `deepcopy` of `context` before any transition that can run an action. The cost is proportional to the size of your context — keep bulky, read-only reference data out of it. `defer` is nearly free when nothing defers. Because the 1.0 default flips to `rollback`, budget for the second-to-last row now.
 
 ### Resource budget per invoked child (async engine)
 
-Each `invoke`d child machine costs **one asyncio task** while it is alive — its own run loop — and nothing else. Completion is *pushed*: the child's terminal listener fires the instant its `status` flips and dispatches `onDone` / `onError` to the parent from a short-lived task, so there is no per-child waiter and there are **no periodic wake-ups** (the 5 ms status poll went in 0.8.0; the manager task went in 0.8.1 — #43). An idle child costs memory, not CPU. If you cap concurrent children on a task budget, the number to plan for is `children + 1`. Exiting the owning state stops its children directly.
+Each `invoke`d child machine costs **one asyncio task** while it is alive — its own run loop — and nothing else. Completion is *pushed*: the child's terminal listener fires the instant its `status` flips and dispatches `onDone` / `onError` to the parent from a short-lived task, so there is no per-child waiter and there are **no periodic wake-ups** (the 5 ms status poll went in 0.8.0; the manager task went in 0.9.0 — #43). An idle child costs memory, not CPU. If you cap concurrent children on a task budget, the number to plan for is `children + 1`. Exiting the owning state stops its children directly.
 
 The `SyncInterpreter` is different in kind, not degree: it processes each `send()` to completion on the *calling* thread. Its throughput is whatever the calling thread can do, but two sync interpreters driven from two threads genuinely run in parallel (subject to the GIL) — see §3 for what that does and does not buy you.
 
@@ -84,7 +84,7 @@ On the async engine a timer is scheduled through the interpreter's [`Clock`](../
 | 100 | ~7 ms |
 | 500 | ~36 ms |
 
-(The 0.8.1 run loop yields to the event loop every `Interpreter._INBOX_YIELD_EVERY` = 16 inbox events rather than every one — set the class attribute to `1` to restore the per-event yield if you would rather trade throughput for timer punctuality. The construction/instance work that followed made every macrostep cheaper, which pulled lateness back down: every event the loop processes faster is a timer that fires sooner. Before 0.8.0 the timer's continuation shared the inbox and the same run measured ~35 ms and ~180 ms; the priority lane and the 0.8.0 hot-path work together cut the lateness by roughly 4x. Lateness tracks per-event cost -- every event the loop processes faster is a timer that fires sooner -- so it will keep moving with throughput. `AfterEvent.lateness_ms` reports the actual figure for each firing.)
+(The 0.9.0 run loop yields to the event loop every `Interpreter._INBOX_YIELD_EVERY` = 16 inbox events rather than every one — set the class attribute to `1` to restore the per-event yield if you would rather trade throughput for timer punctuality. The construction/instance work that followed made every macrostep cheaper, which pulled lateness back down: every event the loop processes faster is a timer that fires sooner. Before 0.8.0 the timer's continuation shared the inbox and the same run measured ~35 ms and ~180 ms; the priority lane and the 0.8.0 hot-path work together cut the lateness by roughly 4x. Lateness tracks per-event cost -- every event the loop processes faster is a timer that fires sooner -- so it will keep moving with throughput. `AfterEvent.lateness_ms` reports the actual figure for each firing.)
 
 Two properties of that curve matter for design:
 
@@ -94,7 +94,7 @@ Two properties of that curve matter for design:
 
 What the `maxIterations` settle budget bounds is the *number of microsteps* a macrostep may take, not its wall-clock duration; a budget is not a deadline. The converse holds too (#212): a **delayed** self-send (`raise` with `delay`) is a timer with exactly the standing of `after` — the delay ends the arming step's chain and the firing is a clock event — so a self-paced `raise(delay=)` heartbeat or poller is a periodic process the budget never counts, whatever its period. `maxIterations` bounds work the machine feeds itself *within* a step: zero-delay `raise`, `send` to self, and completions re-arming invokes.
 
-A trip is **sticky** (0.8.1, #222). `last_error` carries the `RunawayChainError` only until the next cleanly handled event — it is a per-step read, and a heartbeat guarantees the eraser arrives — so a supervisor should read `interpreter.chain_trips` (monotonic), `interpreter.last_chain_error` (latched until `clear_chain_error()`), or subscribe to `on_chain_budget_exceeded`, which fires once per trip on both engines.
+A trip is **sticky** (0.9.0, #222). `last_error` carries the `RunawayChainError` only until the next cleanly handled event — it is a per-step read, and a heartbeat guarantees the eraser arrives — so a supervisor should read `interpreter.chain_trips` (monotonic), `interpreter.last_chain_error` (latched until `clear_chain_error()`), or subscribe to `on_chain_budget_exceeded`, which fires once per trip on both engines.
 
 - **The same rule means a plain-`def` service cannot be cancelled by an event** (#193). On both engines a non-coroutine service is *part of the macrostep that entered its state*: the sync engine runs it inline, the async engine awaits its worker-thread result before the step ends. An event that arrives during that step — `CANCEL`, say — is not processed until the step is over, and by then the service has completed and its `done.invoke` is already at the head of the priority lane. So the machine takes `onDone` first, and `CANCEL` is processed in the *new* state; the service's result is never applied to a state that has been exited (SCXML §6.4.2 holds), but the exit could not pre-empt the service either. That is the documented plain-`def` contract — identical on both engines (#116) — not a defect of one of them. A service that must be interruptible by an event is an `async def`: it runs as its own task, the macrostep ends at once, and exiting the state cancels the task. Where the async engine *does* now match the coroutine lane: a `def` service armed by a transition that is then rolled back (`actionErrorPolicy: "rollback"`) or rolled forward (an `always` out of the state before it stabilises) is never submitted to the pool.
 
@@ -111,8 +111,8 @@ On the `SyncInterpreter`, `after` timers are not on an event loop at all — the
 `SyncInterpreter` is single-threaded **for event processing only**.
 
 - `send()` runs the whole macrostep — guards, actions, entry/exit, `always` chains — synchronously on the **calling thread**, and returns when it is done. Two `send()` calls from one thread cannot overlap. That is the guarantee, and it is what makes the sync engine ideal for tests and step-through debugging.
-- **`after` timers and delayed sends do not own a thread.** Since 0.8.0 (#50) a delay is a deadline recorded on the interpreter's `Clock`; a due deadline is delivered on the **caller's thread** at the top of the next `send()`, inside the macrostep loop, or when you call `tick()` explicitly. Nothing fires between your own statements. (Before 0.8.0 each timer was a `threading.Thread` that re-entered the machine without a lock.) This holds **regardless of whether an asyncio loop is running on the constructing thread** — since 0.8.1 (#76) the clock lane follows the owning engine, so a sync machine built inside an async test or an async app's hot path still delivers its deadlines through `tick()`.
-- **Non-blocking `spawn_<key>` children still run on a background thread.** The child is *started* on the spawning thread (0.8.1 — so its entry actions and grandchildren exist when the spawn action returns), then a daemon runner thread pumps its `tick()`; the child's later actions execute on that thread. The parent is only re-entered through the child's completion event or `sendParent`, both of which go through the parent's inbox and are processed on the parent's next `send()`/`tick()`.
+- **`after` timers and delayed sends do not own a thread.** Since 0.8.0 (#50) a delay is a deadline recorded on the interpreter's `Clock`; a due deadline is delivered on the **caller's thread** at the top of the next `send()`, inside the macrostep loop, or when you call `tick()` explicitly. Nothing fires between your own statements. (Before 0.8.0 each timer was a `threading.Thread` that re-entered the machine without a lock.) This holds **regardless of whether an asyncio loop is running on the constructing thread** — since 0.9.0 (#76) the clock lane follows the owning engine, so a sync machine built inside an async test or an async app's hot path still delivers its deadlines through `tick()`.
+- **Non-blocking `spawn_<key>` children still run on a background thread.** The child is *started* on the spawning thread (0.9.0 — so its entry actions and grandchildren exist when the spawn action returns), then a daemon runner thread pumps its `tick()`; the child's later actions execute on that thread. The parent is only re-entered through the child's completion event or `sendParent`, both of which go through the parent's inbox and are processed on the parent's next `send()`/`tick()`.
 
 So a machine that uses `after` and delayed sends is single-threaded end-to-end; only `spawn_<key>` (non-blocking) children introduce a second thread, and that thread runs the *child's* code, not the parent's.
 
