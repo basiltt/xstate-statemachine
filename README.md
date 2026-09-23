@@ -149,6 +149,17 @@ pip install xstate-statemachine
 
 That's the whole story. **Zero runtime dependencies** — pure standard library, Python 3.9 → 3.14.
 
+Releases are published from GitHub Actions through PyPI **Trusted Publishing** (no long-lived
+token) and carry **PEP 740 build provenance attestations** binding each wheel and sdist to the
+exact run, commit and workflow that built it. To verify an artefact instead of trusting a
+diff you ran yourself:
+
+```bash
+pip install pypi-attestations
+pypi-attestations verify pypi --repository https://github.com/basiltt/xstate-statemachine \
+  pypi:xstate_statemachine-0.9.1-py3-none-any.whl   # prints "OK: <file>" on success
+```
+
 ```bash
 xsm info          # verify the install
 ```
@@ -1612,7 +1623,7 @@ assert interp.matches("job.timedout")
 | `create_machine(config, *, context_type=None, logic=None, logic_modules=None, logic_providers=None, strict_targets=True, event_schemas=None, strict_config=None)` | Build a machine from a dict/JSON config. `strict_targets=False` downgrades unresolvable transition targets to a `DeprecationWarning` (removed in 1.0). `event_schemas={'FILL': Fill}` adds opt-in payload validation — a callable that raises to reject, a dataclass, or anything with a `model_validate`-style constructor — raising `InvalidEventPayloadError` at the `send()` call site regardless of `strict`. `strict_config=True` (or config `"strictConfig": true`) refuses an unknown key anywhere in the config with `InvalidConfigError`; the default logs a WARNING with a "did you mean" hint and the path |
 | `MachineLogic(actions=, guards=, services=, delays=, *, strict=False)` | Bind names in the config to Python callables. `snake_case` and `camelCase` names match each other; two *different* callables whose names differ only by case/separators are rejected. `strict=True` refuses undecorated registrations |
 | `Interpreter(machine, input=None, clock=None, max_queue_size=None, overflow_policy=OverflowPolicy.RAISE, strict=None, service_executor=None, service_pool_size=4)` | **Async** engine — `await .start(children_timeout=2.0)`, `.send()`, `.stop()`. Plain-`def` services run on a private thread pool of `service_pool_size` workers (or your `service_executor`) so a blocking service cannot stall the loop |
-| `SyncInterpreter(machine, input=None, clock=None, strict=None)` | **Sync** engine — no event loop anywhere |
+| `SyncInterpreter(machine, input=None, clock=None, strict=None, max_queue_size=None, overflow_policy=None)` | **Sync** engine — no event loop anywhere. No inbox bound by design (`send()` runs each event to completion before returning); the two bound kwargs exist for parity and a non-`None` bound raises `ValueError` |
 | `LogicLoader` | Auto-discover logic by name from modules |
 | `MachineNode` | The parsed machine; has `.to_mermaid()` / `.to_plantuml()` |
 
@@ -1658,7 +1669,9 @@ they're registered automatically by arity: `(ctx, event)` is a guard,
 | `.last_plugin_error` | `(plugin_class, hook, error)` for the most recent plugin hook that raised; plugin failures never stop the machine |
 | `.has_dormant_invocations` / `.has_dormant_timers` | `True` after a static restore left an active `invoke` with no live service / an `after` timer not armed |
 | `.pending_invocations()` | `List[PendingInvocation]` — every active state with no live service/child actor (e.g. after a static restore) |
-| `.drain_pending()` | Remove every pending/deferred event without processing it |
+| `.drain_pending()` | Remove and return every pending event without processing it — both lanes on the async engine, priority first (fired timers, completions, `send_priority()`); the receipt on a drained `wait=True` event is failed |
+| `.dropped_receipts` | **Async only** — count of `send(wait=True)` receipts a `def` action dropped unawaited; the gateable form of the `RuntimeWarning` (see also `on_receipt_dropped`) |
+| `.restored_from_snapshot` | `True` on an instance built by `from_snapshot()`; `on_interpreter_start` fires on resume too, so read this to tell it from bring-up |
 | `.wait_done()` | **Async only** — a future that resolves the instant the machine reaches `done`/`error` |
 | `.get_snapshot()` / `.get_persisted_snapshot()` | Serialize (JSON string / dict) — layout **v3**: `version`, `machine_id`, `machine_hash`, `taken_at`, `value`, `configuration`, `context`, `pending_events` (with `lane` and engine provenance), `deferred`, `scheduled_sends`, `history`, `actors`, `error`, `chain_trips`, `last_chain_error`. Raises `SnapshotMidStepError` mid-transition and `SnapshotSerializationError` for non-JSON data |
 | `.from_snapshot(snap, machine, *, verify_machine_hash=True, restart_services=False, restart_timers=None, clock=None, minimum_version=0, expected_machine_hash=None, plugins=None)` | Restore (classmethod). Older layouts upcast transparently; `SnapshotVersionError` for a newer one or one below `minimum_version`; `SnapshotDriftError` on an id/hash mismatch; `SnapshotCorruptError` for a malformed blob. `restart_services` / `restart_timers` re-drive dormant work; `plugins=` registers plugins *before* restored events are admitted so a `strict`/schema refusal reaches `on_invalid_event` |
@@ -1724,7 +1737,7 @@ transition/action/guard/service/lifecycle ones):
 `on_service_start` · `on_service_done` · `on_service_error` · `on_transition_failed` ·
 `on_unhandled_event` · `on_event_dropped` · `on_error` · `on_done` ·
 `on_resolve_error` · `on_plugin_error` · `on_invalid_event` · `on_snapshot_error` ·
-`on_invocation_stranded` · `on_chain_budget_exceeded`
+`on_invocation_stranded` · `on_chain_budget_exceeded` · `on_receipt_dropped`
 
 Hooks are synchronous callbacks; an `async def` hook is never awaited and is reported through
 `on_plugin_error` / `last_plugin_error`.
@@ -1734,7 +1747,7 @@ Hooks are synchronous callbacks; an `async def` hook is never awaited and is rep
 | Name | Purpose |
 |:--|:--|
 | `Receipt(state_ids, changed, error, deferred, denied)` | Returned by `send(wait=True)` once the macrostep for that event has run. Five fields — read by attribute; a positional destructure written for fewer raises `ValueError` |
-| `Event` / `DoneEvent` / `ErrorEvent` / `AfterEvent` | The event types an action or hook receives. Service and child failures arrive as `ErrorEvent(type, error, src)`. `is_system_event(ev)` is `True` only for events the engine minted — a hand-built `DoneEvent("done.invoke.x", ...)` is user traffic and is refused under `strict` |
+| `Event` / `DoneEvent` / `ErrorEvent` / `AfterEvent` | The event types an action or hook receives. Service and child failures arrive as `ErrorEvent(type, error, src)`. `is_system_event(ev)` is `True` only for events the engine minted — a hand-built `DoneEvent("done.invoke.x", ...)` is user traffic and is refused under `strict`. `ev._replace(...)` on an engine event is a one-way demotion to user traffic; `re_mint(ev, **fields)` is the sanctioned way to patch a field and keep provenance (it accepts only an engine-minted input) |
 | `OverflowPolicy` | `RAISE` (default once `max_queue_size` is set) · `BLOCK` · `DROP_NEWEST` |
 | `PendingInvocation(state_id, invoke_id, src)` | An active state with no live service/child actor |
 | `ActionDefinition(config)` | The 4th positional arg every action callable receives — `.type` (action name) and `.params` (static params from the config, if any) |
@@ -1745,6 +1758,7 @@ Hooks are synchronous callbacks; an `async def` hook is never awaited and is rep
 `TransitionFailedError` · `WrongThreadError` · `QueueOverflowError` ·
 `InterpreterStoppedError` · `UnknownEventError` · `InvalidEventError` (also a `TypeError`) ·
 `InvalidEventPayloadError` · `RunawayChainError` · `ReentrantWaitError` · `RestoredError` ·
+`RestoredChainError` (both a `RestoredError` and a `RunawayChainError`) ·
 `SnapshotDriftError` · `SnapshotVersionError` · `SnapshotCorruptError` ·
 `SnapshotMidStepError` · `SnapshotSerializationError`
 

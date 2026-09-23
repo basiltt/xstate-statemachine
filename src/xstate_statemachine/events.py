@@ -582,6 +582,13 @@ ENGINE_EVENT_TYPES = (DoneEvent, ErrorEvent, AfterEvent)
 # not carry the engine's standing. The engine's own two `fired_at` stamps
 # go through `_engine_after` and keep provenance. pickle / deepcopy still
 # preserve the subclass: they reproduce the same value, not a new one.
+#
+# 🔁 #248: the demotion is deliberately ONE-WAY through `_replace`. The
+# sanctioned way to change a field and keep provenance is `re_mint(ev,
+# **fields)` below, which is public and refuses anything that is not
+# already system-minted -- so it can patch a genuine event (redact `data`
+# before logging and re-emit) but cannot manufacture standing for a
+# hand-built one. The `_engine_*` factories remain private.
 
 
 class _EngineDone(DoneEvent):
@@ -649,6 +656,50 @@ def _engine_after(
     Private (#235): calling this from application code forges provenance.
     """
     return _EngineAfter(type, scheduled_for, fired_at)
+
+
+def re_mint(original: Any, **fields: Any) -> Any:
+    """Return a copy of an ENGINE-MINTED event with *fields* changed, keeping
+    engine provenance (#248).
+
+    `_replace` on an engine event deliberately returns the public class
+    (#235): a caller-chosen variant is user traffic. That closed a forgery
+    hole but left no supported route for the legitimate case -- a plugin
+    that must patch one field of an in-flight system event (redact
+    ``data``, say) and re-emit it. This is that route, and it is safe
+    because it is gated on the INPUT: ``original`` must already satisfy
+    `is_system_event`, so provenance can only be carried forward from an
+    event the engine produced, never created.
+
+    Args:
+        original: A `DoneEvent` / `ErrorEvent` / `AfterEvent` the engine
+            minted (`is_system_event(original)` is ``True``).
+        **fields: Field overrides, as for ``NamedTuple._replace``.
+
+    Returns:
+        A new engine-minted event of the same kind.
+
+    Raises:
+        TypeError: *original* is not an engine-minted `DoneEvent` /
+            `ErrorEvent` / `AfterEvent` -- a plain `Event`, a hand-built
+            completion, or a value demoted by `_replace`.
+    """
+    if not isinstance(original, _ENGINE_MINTED_TYPES):
+        raise TypeError(
+            f"re_mint() keeps engine provenance and therefore accepts only "
+            f"an event the engine minted; got {type(original).__name__} "
+            f"(is_system_event={is_system_event(original)}). A hand-built "
+            f"or _replace()-demoted event is user traffic by design (#235)."
+        )
+    # 🧭 `_replace` on the engine subclass returns the PUBLIC class (#235);
+    #    that gives us the patched field tuple, which the private
+    #    constructor of the same kind re-mints.
+    if isinstance(original, _EngineDone):
+        return _EngineDone(*original._replace(**fields))
+    if isinstance(original, _EngineError):
+        return _EngineError(*original._replace(**fields))
+    assert isinstance(original, _EngineAfter)  # exhaustive: see the gate
+    return _EngineAfter(*original._replace(**fields))
 
 
 def _deprecated_mint(

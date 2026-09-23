@@ -96,6 +96,7 @@ from .events import (
     Event,
     Receipt,
     is_system_event,
+    re_mint,
     system_event,
 )
 from .models import ActionDefinition, MachineNode, OverflowPolicy
@@ -118,6 +119,7 @@ from .exceptions import (
     NotSupportedError,
     QueueOverflowError,
     ReentrantWaitError,
+    RestoredChainError,
     RestoredError,
     RootTargetError,
     RunawayChainError,
@@ -197,7 +199,7 @@ from .helpers import transition as pure_transition
 # -----------------------------------------------------------------------------
 
 # 📦 The official version number for the library.
-__version__ = "0.9.0"
+__version__ = "0.9.1"
 
 # -----------------------------------------------------------------------------
 # 🌐 Public API Definition
@@ -224,6 +226,7 @@ __all__ = [
     "AfterEvent",
     "DoneEvent",
     "is_system_event",
+    "re_mint",
     "system_event",
     "ErrorEvent",
     "ActionDefinition",
@@ -249,6 +252,7 @@ __all__ = [
     "WrongThreadError",
     "SnapshotDriftError",
     "SnapshotVersionError",
+    "RestoredChainError",
     "RestoredError",
     "QueueOverflowError",
     "InterpreterStoppedError",

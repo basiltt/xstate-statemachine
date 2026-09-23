@@ -137,7 +137,22 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          attestations: true  # #247: same provenance on the rehearsal target
+          print-hash: true
 
       - name: 🚀 Publish to PyPI
         if: github.event_name == 'release' || inputs.target == 'pypi'
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # 🔏 #247: PEP 740 build provenance. The action turns this on by
+          #    default under Trusted Publishing (0.9.0 already carries a
+          #    verifiable attestation), but the release's supply-chain
+          #    guarantee should be a declared setting, not a default that a
+          #    future action version could quietly change. Sigstore-signed
+          #    with the same OIDC identity that authenticates the upload;
+          #    binds each dist to this run, commit and workflow. Verify:
+          #      pypi-attestations verify pypi           #        --repository https://github.com/basiltt/xstate-statemachine           #        pypi:xstate_statemachine-<version>-py3-none-any.whl
+          attestations: true
+          # 🧾 Print the digests so the run log is a second, independent
+          #    record of exactly which bytes were uploaded.
+          print-hash: true

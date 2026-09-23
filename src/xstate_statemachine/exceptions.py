@@ -498,8 +498,10 @@ class RunawayChainError(XStateMachineError):
         dropped: int,
         stranded: Optional[Iterable[str]] = None,
     ):
-        self.limit = limit
-        self.dropped = dropped
+        # 🧭 `Optional` because `RestoredChainError` (#243) carries the
+        #    persisted MESSAGE only -- JSON kept no limit / dropped count.
+        self.limit: Optional[int] = limit
+        self.dropped: Optional[int] = dropped
         self.stranded: tuple = tuple(stranded or ())
         tail = (
             f" The cut stranded invocation(s) {list(self.stranded)}: their "
@@ -514,6 +516,30 @@ class RunawayChainError(XStateMachineError):
             f"action raises or sends the event that triggers it; break the "
             f"cycle or raise 'maxIterations'.{tail}"
         )
+
+
+class RestoredChainError(RestoredError, RunawayChainError):
+    """The chain-trip latch (`last_chain_error`) recovered from a snapshot.
+
+    #243: `RestoredError` alone put the restored latch OUTSIDE the
+    `RunawayChainError` hierarchy, so the natural live-machine guard
+    ``isinstance(interp.last_chain_error, RunawayChainError)`` was ``True``
+    while the process ran and silently ``False`` the moment the same
+    machine was restored -- precisely at the restart a supervisor is
+    watching for. Subclassing both, a restored latch satisfies BOTH
+    checks. ``.limit`` / ``.dropped`` are
+    ``None`` and ``.stranded`` is empty: JSON kept only the message. The
+    stable, type-independent signal remains ``chain_trips > 0``.
+    """
+
+    limit: Optional[int] = None
+    dropped: Optional[int] = None
+    stranded: tuple = ()
+
+    def __init__(self, message: str):
+        # 🧭 Bypass `RunawayChainError.__init__` (it composes its message
+        #    from limit / dropped); the persisted message is the message.
+        XStateMachineError.__init__(self, message)
 
 
 class SnapshotMidStepError(XStateMachineError):

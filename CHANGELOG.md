@@ -5,6 +5,88 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-09-24
+
+### Fixed
+
+- **Round-13 re-verification findings** (#239–#248). Every bug
+  reproduced against `v0.9.0` with the reporter's standalone repro before
+  the fix and pinned in `tests/test_round13_findings.py` (24 tests, both
+  engines where parity is the point).
+  - **`Interpreter.drain_pending()` drains the priority lane too (#239).**
+    It read the inbox only, so fired timers, engine completions and
+    `send_priority()` events were omitted from the result *and* left
+    queued, where `stop()` cleared them — the documented "drain, persist,
+    stop" recipe silently lost every deadline that fired just before
+    shutdown. Both lanes are drained now, priority first (the order
+    `pending_events` reports); a `wait=True` receipt on a drained event is
+    failed with `InterpreterStoppedError` instead of hanging.
+  - **`on_interpreter_start` fires on a restored interpreter (#240).**
+    Every resume branch of `start()` on both engines returned above the
+    hook loop, so a lifecycle plugin saw a `stop` with no `start`. The
+    hook now fires on every path, once; `interpreter.restored_from_snapshot`
+    tells a plugin bring-up from resume.
+  - **Malformed `chain_trips` / `last_chain_error` are
+    `SnapshotCorruptError` (#241).** The #226 fields were read after the
+    validator had passed the blob, so `"NaN"`, a list or a dict escaped
+    `from_snapshot` as a raw `ValueError` / `TypeError` and broke the
+    `except SnapshotCorruptError: quarantine` idiom. `check_shape` now
+    requires a non-negative integer (a numeric string is accepted; `bool`
+    is not) and a string-or-null message.
+  - **The restored chain latch is a `RestoredChainError`, which IS a
+    `RunawayChainError` (#243).** It also remains a `RestoredError`, so
+    the live-machine guard `isinstance(interp.last_chain_error,
+    RunawayChainError)` keeps firing across a restart instead of going
+    silently `False`. `.limit` / `.dropped` are `None` on a restored
+    latch (JSON kept the message); `chain_trips > 0` remains the
+    type-independent signal. The generic `error` field is unchanged.
+  - **A dropped `wait=True` receipt is observable deterministically
+    (#244).** The #232 `RuntimeWarning` comes from a finaliser, which
+    CPython routes to `sys.unraisablehook` — invisible to `-W error` and
+    `pytest.warns`. New: `Interpreter.dropped_receipts` (a counter) and
+    `PluginBase.on_receipt_dropped(interpreter, event_type)`, both driven
+    from the same finaliser, so a test or health check can assert on them
+    under any warning filter. Transition behaviour is unchanged.
+
+### Added
+
+- **`events.re_mint(original, **fields)`** (#248) — the sanctioned way to
+  change a field of an engine-minted event and keep engine provenance
+  (redact `data` before re-emitting, say). Gated on the input: it accepts
+  only an event that already `is_system_event`, so it can carry
+  provenance forward but never create it. `_replace()` stays a deliberate
+  one-way demotion (#235) and the design note now says so.
+- **`SyncInterpreter(max_queue_size=None, overflow_policy=None)`** (#245)
+  for signature parity with `Interpreter`. The sync engine has no inbox to
+  bound — `send()` runs each event to completion before returning — so a
+  non-`None` bound raises a documented `ValueError` naming the alternative
+  (admission control in the caller's wrapper) instead of a bare
+  `TypeError` from a missing keyword. The class docstring and the API
+  reference state the asymmetry.
+- **`benchmarks/production_characteristics.py --json` / `--json-file
+  PATH`** (#246) emits one JSON object with the host description
+  (`library_version`, `python_version`, `platform`, `machine`,
+  `processor`, `cpu_count`, `method`) and every measured row, so a CI job
+  can gate on `lateness_ms` for its own hardware instead of scraping the
+  table. The guide's "Measured on" line is that host block.
+
+### Changed
+
+- **Release provenance (#247).** Releases are published through PyPI
+  Trusted Publishing (OIDC, no long-lived token — already the case since
+  0.8.0) and now carry **PEP 740 build provenance attestations**
+  (`attestations: true`, Sigstore-signed), binding each wheel and sdist to
+  the GitHub Actions run, commit and workflow that built it. Verify with
+  `pypi-attestations verify pypi --repository
+  https://github.com/basiltt/xstate-statemachine <dist-url>` (see the
+  README *Install* section).
+- **Docs (#242, #243).** `snapshots.md` states the latch's type change in
+  the same sentence as its restart survival, recommends `chain_trips > 0`
+  for restart-safe guards, and spells out that `chain_trips` /
+  `last_chain_error` are restored verbatim inside the #205 trust boundary
+  — a party who can write the blob can manufacture or suppress a
+  chain-trip alert.
+
 ## [0.9.0] - 2026-09-23 — Adopted
 
 ### Fixed
@@ -2252,7 +2334,8 @@ existing.
 <!-- Without these definitions they render as literal bracketed text.  -->
 <!-- ---------------------------------------------------------------- -->
 
-[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/basiltt/xstate-statemachine/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.6.0...v0.7.0

@@ -5,9 +5,9 @@ description: "How the runtime actually behaves under load: one event loop, a per
 
 Most of this guide describes what a machine *means*. This page describes how the runtime *behaves* when you run many machines, lean on `after` timers, or mix threads — the properties you cannot infer from the API and will otherwise discover in production.
 
-Three facts, each with the measurement behind it. Every number below was produced by [`benchmarks/production_characteristics.py`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/production_characteristics.py); run it on your own hardware and trust your figures over ours.
+Three facts, each with the measurement behind it. Every number below was produced by [`benchmarks/production_characteristics.py`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/production_characteristics.py); run it on your own hardware and trust your figures over ours. `--json` (or `--json-file PATH`) emits the same run as one JSON object — the host block above plus every measured row — so a CI job can gate on, say, `timer_lateness_ms[*].lateness_ms < 100` for its own target hardware instead of scraping the table (0.9.1, #246).
 
-> **Measured on:** 0.9.0 (2026-09-19, `main` @ `816600c`), CPython 3.14.6, Windows 11, Intel Core i7-11850H laptop, a trivial single-action macrostep, `tracemalloc` **off**, best-of-3. Treat these as order-of-magnitude, not guarantees. For how the runtime compares with other Python state-machine libraries on identical machine shapes, see the [cross-library benchmark](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md) (summary on the [home page](../../#how-it-compares)).
+> **Measured on:** 0.9.0 (2026-09-19, `main` @ `816600c`), CPython 3.14.6, `Windows-11-10.0.26200-SP0` / `AMD64`, `Intel64 Family 6 Model 141` (Core i7-11850H, 16 logical CPUs), a trivial single-action macrostep, `tracemalloc` **off**, best-of-3. Treat these as order-of-magnitude, not guarantees. For how the runtime compares with other Python state-machine libraries on identical machine shapes, see the [cross-library benchmark](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md) (summary on the [home page](../../#how-it-compares)).
 
 ---
 

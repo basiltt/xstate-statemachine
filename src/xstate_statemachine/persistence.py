@@ -296,6 +296,33 @@ def check_shape(snapshot: Dict[str, Any], *, version: int = 0) -> None:
         val = snapshot.get(key)
         if val is not None and not isinstance(val, dict):
             fail(f"'{key}' is {type(val).__name__}, expected an object")
+    # 🛡️ #241: the #226 chain-trip fields. They were read and coerced
+    #    AFTER this validator had passed the blob, so a malformed value
+    #    escaped `from_snapshot` as a bare ValueError / TypeError and broke
+    #    the `except SnapshotCorruptError: quarantine` idiom. `chain_trips`
+    #    is a non-negative integer (a JSON writer may have stored it as a
+    #    numeric string; `bool` is an int subclass and is NOT a count);
+    #    `last_chain_error` is the latched message or null.
+    trips = snapshot.get("chain_trips")
+    if trips is not None:
+        if isinstance(trips, bool) or not isinstance(trips, (int, str)):
+            fail(
+                f"'chain_trips' is {type(trips).__name__}, expected a "
+                f"non-negative integer"
+            )
+        try:
+            count = int(trips)
+        except ValueError:
+            fail(f"'chain_trips' {trips!r} is not an integer")
+        else:
+            if count < 0:
+                fail(f"'chain_trips' {count} is negative")
+    latched = snapshot.get("last_chain_error")
+    if latched is not None and not isinstance(latched, str):
+        fail(
+            f"'last_chain_error' is {type(latched).__name__}, expected a "
+            f"string message or null"
+        )
     history = snapshot.get("history") or {}
     if not all(
         isinstance(k, str)
