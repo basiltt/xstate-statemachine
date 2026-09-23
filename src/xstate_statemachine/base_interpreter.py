@@ -61,9 +61,9 @@ from .events import (
     ErrorEvent,
     Event,
     SYSTEM_EVENT_PREFIXES,
-    engine_after,
-    engine_done,
-    engine_error,
+    _engine_after,
+    _engine_done,
+    _engine_error,
     is_system_event,
     persist_event,
     restore_event,
@@ -1228,10 +1228,14 @@ class BaseInterpreter(Generic[TContext]):
         """
         try:
             self._check_strict(event)
-        except UnknownEventError as exc:
+        except (UnknownEventError, InvalidEventPayloadError) as exc:
+            # 🛡️ #227: a registered event schema is part of the same
+            #    call-site contract as `strict`; `_check_strict` raises
+            #    `InvalidEventPayloadError` for it, which used to escape
+            #    `from_snapshot` as a hard failure of the whole restore.
             logger.warning(
-                "🚫 Restored event '%s' refused by strict mode on '%s' and "
-                "dropped (#214): %s",
+                "🚫 Restored event '%s' refused by strict mode / event "
+                "schema on '%s' and dropped (#214, #227): %s",
                 getattr(event, "type", event),
                 self.id,
                 exc,
@@ -1273,16 +1277,29 @@ class BaseInterpreter(Generic[TContext]):
         the REMAINING delay the snapshot captured (0 fires on the next
         pump), through the same `_deliver` path a live `raise(delay=)`
         uses, so the event carries the standing it had (engine-generated,
-        charged to the chain budget, #206). Returns how many were armed.
+        charged to the chain budget, #206). Returns how many were ARMED.
+
+        🛡️ #227: every record is checked against `strict` / the event
+        schemas exactly as a restored `pending_events` record is (#214) --
+        the two restore lanes used to disagree about the same record, and
+        this lane admitted an undeclared type silently. A refusal is
+        reported (`on_invalid_event`, `last_error`) and the send dropped,
+        so a restore that discarded a deadline is never silent. A genuine
+        `raise(delay=)` self-send is a declared event of the machine, so it
+        still re-arms; only traffic `send()` would have refused is refused.
         """
         records, self._restored_self_sends = self._restored_self_sends, []
+        armed = 0
         for rec in records:
             event = restore_event(rec)
+            if not self._admit_restored(event):
+                continue
             delay_ms = float(rec.get("remaining_ms") or 0.0)
             self._arm_restored_self_send(
                 event, max(delay_ms, 0.001), rec.get("send_id")
             )
-        return len(records)
+            armed += 1
+        return armed
 
     def _arm_restored_self_send(
         self, event: Any, delay_ms: float, send_id: Optional[str]
@@ -1579,6 +1596,18 @@ class BaseInterpreter(Generic[TContext]):
             ),
             "output": self.output,
             "error": str(self.error) if self.error is not None else None,
+            # 🔒 #226: the #222 chain-trip latch crosses the process
+            #    boundary. It exists so a supervisor can see that work was
+            #    discarded; a restart is the event a supervisor most often
+            #    reacts to, and it used to reset both fields to 0 / None
+            #    with nobody having called `clear_chain_error()`. Additive
+            #    to layout v3 -- an old blob upcasts to the defaults.
+            "chain_trips": self.chain_trips,
+            "last_chain_error": (
+                str(self._last_chain_error)
+                if self._last_chain_error is not None
+                else None
+            ),
             # 📨 Deferred events survive a crash: drained on start()
             #    before any invoke is re-driven.
             "deferred": [
@@ -1695,6 +1724,7 @@ class BaseInterpreter(Generic[TContext]):
         clock: Optional[Clock] = None,
         minimum_version: int = 0,
         expected_machine_hash: Optional[str] = None,
+        plugins: Optional[Iterable[PluginBase[Any]]] = None,
     ) -> TInterpreter:
         """Creates and restores an interpreter instance from a saved snapshot.
 
@@ -1774,6 +1804,14 @@ class BaseInterpreter(Generic[TContext]):
                 instead of trusting the payload's own ``machine_hash`` to
                 validate itself; a mismatch or an absent field is
                 ``SnapshotDriftError`` regardless of version.
+            plugins (Optional[Iterable[PluginBase]]): #230 -- plugins to
+                register BEFORE the persisted events are admitted, so a
+                restore-time refusal (`strict`, an event schema; #214 /
+                #227) reaches `on_invalid_event` like a runtime one does.
+                Without this the refusal was decided inside this call,
+                strictly before the caller could `.use()` anything, and
+                was observable only by polling `last_error`. Same effect
+                as calling `.use(p)` on the result, just early enough.
 
         Returns:
             BaseInterpreter[TContext]: A new interpreter instance
@@ -1845,6 +1883,9 @@ class BaseInterpreter(Generic[TContext]):
         interpreter = (
             cls(machine, clock=clock) if clock is not None else cls(machine)
         )
+        # 🔌 #230: attach plugins before any admission check runs.
+        for plugin in plugins or ():
+            interpreter.use(plugin)
         # 🧊 #46: layer the persisted context over the machine's CURRENT
         #    defaults, and deep-copy so the caller's parsed dict does not
         #    alias live state. Persisted values win for every key present;
@@ -1944,6 +1985,16 @@ class BaseInterpreter(Generic[TContext]):
             #    so no caller could discover what went wrong — the exact
             #    observability the error-snapshot feature exists to provide.
             interpreter.error = RestoredError(str(recorded_error))
+        # 🔒 #226: the chain-trip latch. `chain_trips` stays monotonic
+        #    across the restart (a later trip is previous + 1) and the
+        #    latched error comes back as a `RestoredError` carrying the
+        #    message -- the same precedent `error` uses. Absent keys (every
+        #    blob written before #226) restore to 0 / None.
+        interpreter.chain_trips = int(snapshot.get("chain_trips") or 0)
+        latched = snapshot.get("last_chain_error")
+        interpreter._last_chain_error = (
+            RestoredError(str(latched)) if latched else None
+        )
 
         # 🕰️ Restore remembered history so a later transition to a history
         #    state still resolves after a restart.
@@ -2095,9 +2146,11 @@ class BaseInterpreter(Generic[TContext]):
         """#222: the `RunawayChainError` of the most recent chain-budget or
         settle-budget trip, or ``None`` if none has tripped.
 
-        A LATCH, unlike `last_error`: it survives every later event and is
-        cleared only by `clear_chain_error()`. Pair with `chain_trips` (a
-        monotonic count a supervisor can sample at any interval and diff).
+        A LATCH, unlike `last_error`: it survives every later event AND a
+        snapshot round-trip (#226; restored as a `RestoredError` carrying
+        the message), and is cleared only by `clear_chain_error()`. Pair
+        with `chain_trips` (a monotonic count -- across restarts too -- a
+        supervisor can sample at any interval and diff).
         """
         return self._last_chain_error
 
@@ -3663,7 +3716,7 @@ class BaseInterpreter(Generic[TContext]):
                 prefix = self.parent.id + ":"
                 if declared.startswith(prefix):
                     declared = declared[len(prefix) :].split(":")[0]
-            escalate_event = engine_error(
+            escalate_event = _engine_error(
                 type=f"xstate.error.actor.{self.id}", error=err, src=declared
             )
             if self.parent is not None:
@@ -4171,7 +4224,7 @@ class BaseInterpreter(Generic[TContext]):
                 )
                 # 📨 Create and send the synthetic `done.state.*` event,
                 #    carrying the final state's `output` as done data.
-                done_event = engine_done(
+                done_event = _engine_done(
                     type=f"done.state.{ancestor.id}",
                     data=self._resolve_output(final_state),
                     src=ancestor.id,
@@ -4813,7 +4866,7 @@ class BaseInterpreter(Generic[TContext]):
             #    (#195). A hand-built or forged-record `AfterEvent` is user
             #    traffic and must not fire a timer whose deadline has not
             #    elapsed; only the engine's own `_fire` (which mints via
-            #    `engine_after`) may drive an `after` transition.
+            #    `_engine_after`) may drive an `after` transition.
             if isinstance(event, AfterEvent) and is_system_event(event):
                 for transitions in current.after.values():
                     for t in transitions:
@@ -4841,7 +4894,7 @@ class BaseInterpreter(Generic[TContext]):
                         if t.event == event.type and _passes(t):
                             eligible.append(t)
                     # 🎯 #130: an `escalate` from the invoked child arrives as
-                    #    `engine_error(type="xstate.error.actor.<runtime id>")`,
+                    #    `_engine_error(type="xstate.error.actor.<runtime id>")`,
                     #    not `error.platform.<id>`. It is a failure of THIS
                     #    invocation and XState routes it to `onError`; match
                     #    the declared `onError` transitions by `src` alone.
@@ -5188,7 +5241,7 @@ class BaseInterpreter(Generic[TContext]):
                 delay_sec = float(resolved_ms) / 1000.0
                 # 📏 #48: record the deadline so the fired event can report
                 #    its own lateness.
-                after_event = engine_after(
+                after_event = _engine_after(
                     type=t_def.event,
                     scheduled_for=self.clock.now() + delay_sec,
                 )

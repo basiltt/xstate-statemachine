@@ -32,7 +32,7 @@ would affect all subsequently created events.
 from dataclasses import dataclass, field
 import copy
 import warnings
-from typing import Any, Dict, FrozenSet, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, NamedTuple, Optional, Tuple
 
 # -----------------------------------------------------------------------------
 # 🏛️ Reserved event namespaces
@@ -565,10 +565,23 @@ ENGINE_EVENT_TYPES = (DoneEvent, ErrorEvent, AfterEvent)
 # running. The engine now mints PRIVATE subclasses. To user code they are
 # indistinguishable from the public class -- `isinstance(ev, DoneEvent)`,
 # field access, equality, `_replace`, pickle and deepcopy all behave the same
-# and preserve the subclass -- but `is_system_event` requires the subclass,
-# so only what the engine (or `restore_event` on a persisted engine record)
-# produced is system traffic. The classes are not exported and have no
-# public name; construct through the `engine_*` helpers only.
+# pickle and deepcopy all behave the same and preserve the subclass -- but
+# `is_system_event` requires the subclass, so only what the engine (or
+# `restore_event` on a persisted engine record) produced is system traffic.
+# The classes are not exported and have no public name; construct through
+# the `_engine_*` helpers only -- underscore-prefixed (#235) so nothing in
+# this module that mints TRUSTED events reads as an ordinary public
+# function.
+#
+# 🛡️ #235: `_replace` on an engine-minted event returns the PUBLIC class.
+# `NamedTuple._replace` is an everyday operation, and preserving the
+# private subclass through it meant a caller who legitimately held one
+# genuine engine event (a plugin, an action) could derive an unbounded
+# family of system-trusted events from it. A replaced copy is a NEW value
+# the caller chose the fields of; the engine did not mint it, so it does
+# not carry the engine's standing. The engine's own two `fired_at` stamps
+# go through `_engine_after` and keep provenance. pickle / deepcopy still
+# preserve the subclass: they reproduce the same value, not a new one.
 
 
 class _EngineDone(DoneEvent):
@@ -576,17 +589,29 @@ class _EngineDone(DoneEvent):
 
     __slots__ = ()
 
+    def _replace(self, **kwargs: Any) -> DoneEvent:  # type: ignore[override]
+        # #235: a caller-chosen variant is user traffic (see design note).
+        return DoneEvent(*self)._replace(**kwargs)
+
 
 class _EngineError(ErrorEvent):
     """An `ErrorEvent` the engine minted (#195). Not public."""
 
     __slots__ = ()
 
+    def _replace(self, **kwargs: Any) -> ErrorEvent:  # type: ignore[override]
+        # #235: a caller-chosen variant is user traffic (see design note).
+        return ErrorEvent(*self)._replace(**kwargs)
+
 
 class _EngineAfter(AfterEvent):
     """An `AfterEvent` the engine minted (#195). Not public."""
 
     __slots__ = ()
+
+    def _replace(self, **kwargs: Any) -> AfterEvent:  # type: ignore[override]
+        # #235: a caller-chosen variant is user traffic (see design note).
+        return AfterEvent(*self)._replace(**kwargs)
 
 
 _ENGINE_MINTED_TYPES: Tuple[type, ...] = (
@@ -596,22 +621,57 @@ _ENGINE_MINTED_TYPES: Tuple[type, ...] = (
 )
 
 
-def engine_done(type: str, data: Any, src: str) -> DoneEvent:  # noqa: A002
-    """Mint an engine-owned `DoneEvent` (#195). The ONLY sanctioned way."""
+def _engine_done(type: str, data: Any, src: str) -> DoneEvent:  # noqa: A002
+    """Mint an engine-owned `DoneEvent` (#195). The ONLY sanctioned way.
+
+    Private (#235): calling this from application code forges provenance.
+    """
     return _EngineDone(type, data, src)
 
 
-def engine_error(
+def _engine_error(
     type: str, error: BaseException, src: str  # noqa: A002
 ) -> ErrorEvent:
-    """Mint an engine-owned `ErrorEvent` (#195). The ONLY sanctioned way."""
+    """Mint an engine-owned `ErrorEvent` (#195). The ONLY sanctioned way.
+
+    Private (#235): calling this from application code forges provenance.
+    """
     return _EngineError(type, error, src)
 
 
-def engine_after(
+def _engine_after(
     type: str,  # noqa: A002
     scheduled_for: Optional[float] = None,
     fired_at: Optional[float] = None,
 ) -> AfterEvent:
-    """Mint an engine-owned `AfterEvent` (#195). The ONLY sanctioned way."""
+    """Mint an engine-owned `AfterEvent` (#195). The ONLY sanctioned way.
+
+    Private (#235): calling this from application code forges provenance.
+    """
     return _EngineAfter(type, scheduled_for, fired_at)
+
+
+def _deprecated_mint(
+    name: str, target: Callable[..., Any]
+) -> Callable[..., Any]:
+    """#235: one-release shim for the pre-0.9.0 unprefixed helper names."""
+
+    def shim(*args: Any, **kwargs: Any) -> Any:
+        warnings.warn(
+            f"`xstate_statemachine.events.{name}` is internal and was "
+            f"renamed `_{name}` (#235). It mints engine-trusted events and "
+            f"was never part of the public API; the unprefixed alias is "
+            f"removed in 1.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return target(*args, **kwargs)
+
+    shim.__name__ = name
+    shim.__doc__ = f"Deprecated alias of `_{name}` (#235)."
+    return shim
+
+
+engine_done = _deprecated_mint("engine_done", _engine_done)
+engine_error = _deprecated_mint("engine_error", _engine_error)
+engine_after = _deprecated_mint("engine_after", _engine_after)

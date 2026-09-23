@@ -56,9 +56,9 @@ from .events import (
     ErrorEvent,
     Event,
     Receipt,
-    engine_after,
-    engine_done,
-    engine_error,
+    _engine_after,
+    _engine_done,
+    _engine_error,
     is_system_event,
 )
 from .exceptions import (
@@ -168,6 +168,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     __slots__ = (
         "_held_replays",
         "_is_processing",
+        "_restored_priority_count",
         "_pump_thread_ident",
         "_invoked_children",
         "_settle_iterations",
@@ -218,6 +219,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #: before the next external event (SCXML internal queue).
         self._internal_queue: Deque[AnyEvent] = deque()
         self._is_processing: bool = False
+        #: 🚦 #233: how many priority-lane records `from_snapshot` has
+        #: placed at the head of the single queue, so the next one goes
+        #: behind them (FIFO within the lane) and ahead of the inbox.
+        self._restored_priority_count: int = 0
         #: 👶 #196: child actors started by a state's `invoke`, keyed by the
         #: owning state id, so exiting the state stops them (SCXML 3.9) --
         #: the async engine has kept this map since #43. Without it a
@@ -713,9 +718,22 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     def _enqueue_restored(
         self, event: AnyEvent, *, priority: bool = False
     ) -> None:
-        # The sync engine has one queue; a priority-lane record restores
-        # at its recorded position (the lane is persisted first).
-        self._event_queue.append(event)
+        """#214 / #233: re-admit one persisted event, honouring its lane.
+
+        The sync engine has ONE queue, so "the priority lane" is the head
+        of it: a `lane == "priority"` record is inserted after any
+        priority record already restored and before every plain-inbox
+        record (FIFO among priority events, ahead of the inbox -- the same
+        order the async engine's two lanes give). The old body appended
+        unconditionally and the `priority` flag was accepted but never
+        read, so a restored control signal was demoted to inbox order on
+        this engine only.
+        """
+        if not priority:
+            self._event_queue.append(event)
+            return
+        self._event_queue.insert(self._restored_priority_count, event)
+        self._restored_priority_count += 1
 
     def drain_pending(self) -> List[AnyEvent]:
         """Remove and return every accepted-but-unprocessed event.
@@ -1459,7 +1477,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 "💥 Invoked machine '%s' ended in error; firing onError.",
                 child.id,
             )
-            error_event = engine_error(
+            error_event = _engine_error(
                 type=f"error.platform.{invoke_id}",
                 error=failure,
                 src=invoke_id,
@@ -1482,7 +1500,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
 
         # 📤 #109: `onDone` carries the child's declared OUTPUT, not its
         #    private context (same rule as the async engine).
-        done_event = engine_done(
+        done_event = _engine_done(
             type=f"done.invoke.{invoke_id}",
             data=child.output if child.output is not None else child.context,
             src=invoke_id,
@@ -1557,7 +1575,13 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 s.id == owner_id for s in self._active_state_nodes
             ):
                 return
-            self._event_queue.append(event._replace(fired_at=self.clock.now()))
+            # 🏷️ #235: re-mint rather than `_replace` so the fired event
+            #    keeps engine provenance.
+            self._event_queue.append(
+                _engine_after(
+                    event.type, event.scheduled_for, self.clock.now()
+                )
+            )
 
         handle = self._set_timeout(_fire, delay_sec, owner=owner_id)
         self._timer_handles.setdefault(owner_id, []).append(handle)
@@ -1690,7 +1714,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 child_input = invocation.resolve_input(self.context, None)
             except Exception as exc:  # noqa: BLE001 -- user code
                 self.send(
-                    engine_error(
+                    _engine_error(
                         type=f"error.platform.{invocation.id}",
                         error=exc,
                         src=invocation.id,
@@ -1736,7 +1760,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             # 🚀 Execute the synchronous service.
             result = service(self, self.context, invoke_event)
             # ✅ On success, immediately queue a 'done' event with the result.
-            done_event = engine_done(
+            done_event = _engine_done(
                 f"done.invoke.{invocation.id}", data=result, src=invocation.id
             )
             self._deliver_completion(done_event)
@@ -1754,7 +1778,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 e,
                 exc_info=True,
             )
-            error_event = engine_error(
+            error_event = _engine_error(
                 f"error.platform.{invocation.id}", error=e, src=invocation.id
             )
             # 🚨 Unhandled service failures must be observable, not just

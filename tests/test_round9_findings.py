@@ -798,6 +798,14 @@ class TestLapParityAtEveryLimit(_Quiet):
         }
 
     def _nested(self, mi: int) -> Dict[str, Any]:
+        # 🔁 #228: `i2`'s completion RE-ENTERS the outer `a` (not its child
+        #    `a`), so `a` is exited and `i1` re-arms: a genuine completion
+        #    cycle whose call count scales with `maxIterations` (mi + 3)
+        #    and trips the guard. The pre-#228 shape targeted `#m0.a.a`
+        #    from inside `a`, never exited `a`, fired exactly 2 calls at
+        #    every limit and could not fail -- a constant agreeing with
+        #    itself. `TestLivelockPinsAreLimitDependent` guards against
+        #    that shape coming back.
         return {
             "id": "m0",
             "initial": "a",
@@ -816,7 +824,7 @@ class TestLapParityAtEveryLimit(_Quiet):
                             "invoke": {
                                 "id": "i2",
                                 "src": "svc",
-                                "onDone": {"target": "#m0.a.a"},
+                                "onDone": {"target": "#m0.a", "reenter": True},
                             }
                         },
                     },
@@ -863,6 +871,55 @@ class TestLapParityAtEveryLimit(_Quiet):
                             return p
 
                         self.assertEqual(_run(main()), sync_n)
+
+
+# =============================================================================
+# #228 — meta-test: every livelock / runaway pin in this file MUST have
+# dynamic range across the limit it claims to sweep
+# =============================================================================
+class TestLivelockPinsAreLimitDependent(_Quiet):
+    """A pin that fires the same count at every `maxIterations` cannot
+    fail however the chain accounting changes, so a green result proves
+    nothing (#228). For each shape the lap-parity sweep uses, assert that
+    the call count DIFFERS between two limits and that at least one limit
+    trips the guard (`chain_trips >= 1`)."""
+
+    LOW, HIGH = 1, 10
+
+    def _count(self, cfg: Dict[str, Any]) -> Tuple[int, int]:
+        n = [0]
+
+        def bump() -> int:
+            n[0] += 1
+            return 1
+
+        s = SyncInterpreter(
+            _mk(cfg, logic=MachineLogic(services={"svc": _svc("def", bump)}))
+        ).start()
+        trips = s.chain_trips
+        s.stop()
+        return n[0], trips
+
+    def test_every_lap_parity_shape_varies_with_the_limit(self) -> None:
+        shapes = TestLapParityAtEveryLimit()
+        for name, mk in (
+            ("rollback_ondone", shapes._rollback),
+            ("nested_invoke", shapes._nested),
+        ):
+            with self.subTest(shape=name):
+                low_n, low_t = self._count(mk(self.LOW))
+                high_n, high_t = self._count(mk(self.HIGH))
+                self.assertNotEqual(
+                    low_n,
+                    high_n,
+                    f"{name}: {low_n} calls at limit {self.LOW} and at "
+                    f"limit {self.HIGH} -- the pin is inert",
+                )
+                self.assertGreaterEqual(
+                    max(low_t, high_t),
+                    1,
+                    f"{name}: never trips the runaway guard at either limit",
+                )
 
 
 if __name__ == "__main__":

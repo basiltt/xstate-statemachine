@@ -5,9 +5,90 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — targeting 0.9.0
+## [0.9.0] - 2026-09-23 — Adopted
 
 ### Fixed
+
+- **Round-12 re-verification findings** (#225–#235). Every one
+  reproduced against `main` @ `f4067b6` with the reporter's standalone
+  repro before the fix and pinned in `tests/test_round12_findings.py`
+  (31 tests, parametrised over `def` / `async def`, both engines where
+  parity is the point).
+  - **Self-send provenance is decided by task identity, not an inherited
+    context (#225).** The #105 "issued from one of my actions" predicate
+    rode a `ContextVar`, and `asyncio.ensure_future` / `create_task` copy
+    the context, so a helper task spawned from an action was treated as
+    the action for its whole life: its later `send(wait=True)` was refused
+    by the #219 guard, and its plain `send()` was routed to the internal
+    queue — drained only inside a macrostep — so with the loop idle the
+    event sat there and the machine never advanced. The documented
+    `ensure_future(i.send(..., wait=True))` escape hatch also flipped to
+    a refusal whenever the spawning action awaited again afterwards. Both
+    predicates now ask "is the *current task* running one of my actions?"
+    (`_action_tasks`, per task with a nesting depth); the `ContextVar` is
+    gone. A worker that outlives its action, and the hand-out idiom
+    whether or not the action yields, are ordinary external traffic; the
+    genuine in-step await is still refused.
+  - **A `def` action that drops its `wait=True` receipt is told so
+    (#232).** A synchronous action cannot await, so
+    `r = i.send("B", wait=True)` handed it the #219 guard object and
+    nothing ever said so. The object now emits a `RuntimeWarning` if it
+    is finalised without ever being awaited or handed out — exactly as
+    CPython does for a never-awaited coroutine. `ensure_future(...)`,
+    `.add_done_callback`, `.result()` and `await` all count as use, so
+    the supported shapes stay silent.
+  - **The chain-trip latch survives a snapshot (#226).** `chain_trips`
+    and `last_chain_error` are v3 envelope fields (additive; old blobs
+    upcast to `0` / `None`). A restore reports the same count and a
+    `RestoredError` carrying the message — the `error` precedent — and
+    `clear_chain_error()` remains the only thing that clears it. The
+    counter stays monotonic across the restart.
+  - **`strict` and event schemas apply to restored `scheduled_sends`
+    (#227).** `_rearm_restored_self_sends` re-armed every record
+    unchecked, so an undeclared type in that lane was admitted silently
+    on a `strict: True` machine while the same record in
+    `pending_events` was refused (#214). Both lanes now go through
+    `_admit_restored`; the refusal fires `on_invalid_event` and lands on
+    `last_error`; the function returns how many were *armed*. A schema
+    refusal (`InvalidEventPayloadError`) on either lane is now caught
+    and reported the same way instead of aborting the whole restore.
+  - **`from_snapshot(plugins=...)` (#230).** Plugins are registered
+    *before* the persisted events are admitted, so a restore-time refusal
+    reaches `on_invalid_event` like a runtime one. Same effect as `.use()`
+    on the result, just early enough; the parameter is optional.
+  - **The sync engine honours the priority lane on restore (#233).**
+    `SyncInterpreter._enqueue_restored` accepted `priority` and ignored
+    it; a `lane: "priority"` record now restores at the head of the
+    single queue (FIFO within the lane, ahead of the inbox), the order the
+    async engine's two lanes give.
+  - **An inline-dict `invoke.src` is refused by name (#231).** The
+    XState-JS inline-machine shape died as
+    `TypeError: unhashable type: 'dict'` inside `logic_loader`. The parser
+    now raises `InvalidConfigError` naming the state, the invoke id, the
+    type it got and the supported alternative (build with
+    `create_machine`, register in `MachineLogic(services=...)`).
+  - **Engine mint helpers are private; `_replace` demotes to the public
+    class (#235).** `events.engine_done` / `engine_error` / `engine_after`
+    are renamed `_engine_*`; the unprefixed names remain as
+    `DeprecationWarning` shims until 1.0. `_replace()` on an engine-minted
+    event returns a plain `DoneEvent` / `ErrorEvent` / `AfterEvent` with
+    `is_system_event(...) == False`: a caller-chosen variant is user
+    traffic. `pickle` / `deepcopy` still preserve provenance (they
+    reproduce the same value). The engine's own `fired_at` stamps re-mint.
+  - **Test quality (#228).** The `nested_invoke` lap-parity shape in
+    `tests/test_round9_findings.py` never exited its initial state and
+    fired exactly two calls at every `maxIterations` — a constant agreeing
+    with itself. It now re-enters the outer state (call count `mi + 3`,
+    trips the guard, agrees on all three lanes). Every other limit sweep in
+    the round pins (rounds 3, 5, 8, 9, 10) was audited: each asserts a
+    `RunawayChainError` or a limit-derived landing state, so none is
+    inert. `TestLivelockPinsAreLimitDependent` asserts, for each shape the
+    sweep uses, that the count differs between two limits and at least one
+    trips — so a future inert shape fails CI.
+  - **Docs (#229).** `interpreters.md` states what the hand-out idiom
+    requires and that a spawned helper may talk back to the machine;
+    `snapshots.md` and Production Characteristics § 2 record that the
+    chain-trip latch now crosses a restart.
 
 - **Round-11 re-verification findings** (#218–#222). Every one
   reproduced against `main` @ `c78ce99` with the reporter's standalone
@@ -25,8 +106,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     resolves only when the run loop processes the event, and the loop
     cannot advance until the action returns; #215's descent gate made the
     hang reachable from `start()`. The receipt can still be handed out
-    (`asyncio.ensure_future(i.send(..., wait=True))`) and awaited later;
-    only the in-step await is refused. The sync engine refuses the same
+    (`asyncio.ensure_future(i.send(..., wait=True))`) and awaited later,
+    from any other task; only an await performed by the action's own
+    task, while it runs, is refused (predicate narrowed in #225). The sync engine refuses the same
     shape for parity (there the receipt would have described the wrong
     step).
   - **Unknown config keys are checked in every state, transition and
@@ -229,7 +311,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `onUnhandled` and drove a real `onDone` while the genuine service was
     still running — in-process, or reconstituted from a snapshot record by
     `restore_event()`. The engine now mints private subclasses
-    (`engine_done` / `engine_error` / `engine_after`), `is_system_event`
+    (`_engine_done` / `_engine_error` / `_engine_after`, private since #235), `is_system_event`
     requires them, a user-built one is refused under `strict` with a message
     naming it as an engine-generated name, and persisted completions carry
     `"engine": true` so a genuine round-trip keeps its provenance while a
@@ -2170,7 +2252,8 @@ existing.
 <!-- Without these definitions they render as literal bracketed text.  -->
 <!-- ---------------------------------------------------------------- -->
 
-[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.5.1...v0.6.0
