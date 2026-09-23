@@ -1822,7 +1822,8 @@ does not exist.
 
 ```python
 create_machine({"id": "c"})        # InvalidConfigError: 'states' key is missing
-create_machine({..., "states": {"a": {"entyr": ["x"]}}}, strict_config=True)
+create_machine({"id": "c", "initial": "a", "states": {"a": {"entyr": ["x"]}}},
+               strict_config=True)
 # InvalidConfigError: Machine 'c' has unknown config key(s) -- c.a: 'entyr'
 #   (did you mean 'entry'?) ...
 ```
