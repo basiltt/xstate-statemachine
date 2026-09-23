@@ -437,6 +437,19 @@ class ReentrantWaitError(XStateMachineError):
     ``wait`` from inside an action: the event is queued as self-generated
     work and processed after the current step, and its receipt is not the
     caller's to await.
+
+    A plain ``def`` action that calls ``send(..., wait=True)`` and drops the
+    result gets a ``RuntimeWarning`` at finalisation instead (#232) -- the
+    call is not a deadlock, just a receipt nobody can read -- while handing
+    the awaitable out (``asyncio.ensure_future(...)``) stays silent.
+
+    NOT raised (#225) for a task an action spawned that outlives it and
+    sends later (``asyncio.ensure_future(worker(i))``), nor for the
+    documented hand-out shape ``asyncio.ensure_future(i.send(...,
+    wait=True))`` awaited from outside the step -- whether or not the
+    spawning action awaits again afterwards. Only an await that runs while
+    one of the interpreter's own actions is genuinely on the stack is a
+    deadlock.
     """
 
     def __init__(self, machine_id: str, event_type: str):

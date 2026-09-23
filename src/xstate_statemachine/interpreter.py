@@ -32,6 +32,7 @@ import logging
 import threading
 import time
 import uuid
+import warnings
 from collections import deque
 from typing import (
     Literal,
@@ -67,12 +68,25 @@ from .base_interpreter import AnyEvent, BaseInterpreter
 from .exceptions import RunawayChainError, StateNotFoundError
 import contextvars
 
-#: 🧭 #105: set to the interpreter whose user action is CURRENTLY running
-#: on this task. A `send()` on that same interpreter is a self-send and
-#: belongs to the internal chain; a `send()` from any other task (a
-#: concurrent external producer) is user traffic even while the run loop is
-#: busy. `_processing` alone could not tell those apart, so an external
-#: producer during a slow step was charged to `maxIterations` and dropped.
+#: 🧭 #105 / #225: "is a `send()` self-generated?" is decided by TASK
+#: IDENTITY -- the sending task is one that is, right now, running one of
+#: this interpreter's user actions (`Interpreter._action_tasks`). A
+#: `send()` from any other task (a concurrent external producer, a helper
+#: an action spawned) is user traffic even while the run loop is busy.
+#: `_processing` alone could not tell those apart (#105: an external
+#: producer during a slow step was charged to `maxIterations` and
+#: dropped), and a ContextVar could not either (#225: `ensure_future` /
+#: `create_task` COPY the context, so a helper spawned from an action
+#: inherited "I am the action" for its whole life; its later `send()` was
+#: routed to the internal queue, which is drained only inside a
+#: macrostep, and with the loop idle the event sat there for ever).
+#:
+#: The ContextVar below is kept for ONE path: `send_threadsafe(
+#: internal=None)` from a FOREIGN THREAD (#150). There is no asyncio task
+#: on that thread, so "the thread was started with
+#: `contextvars.copy_context().run(...)` from inside an action" is both
+#: the only signal available and the documented opt-in. It is never
+#: consulted on the loop thread.
 _ACTIVE_ACTION_OWNER: (
     "contextvars.ContextVar[Optional[BaseInterpreter[Any]]]"
 ) = contextvars.ContextVar("xsm_active_action_owner", default=None)
@@ -83,9 +97,9 @@ from .events import (
     ErrorEvent,
     Event,
     Receipt,
-    engine_after,
-    engine_done,
-    engine_error,
+    _engine_after,
+    _engine_done,
+    _engine_error,
     is_system_event,
     system_event,
 )
@@ -275,6 +289,7 @@ class Interpreter(BaseInterpreter[TContext]):
         "_processing",
         "_raise_depth",
         "_chain_tripped",
+        "_action_tasks",
         "_settle_iterations",
         "_settle_tripped",
         "_chain_owed_tasks",
@@ -478,6 +493,13 @@ class Interpreter(BaseInterpreter[TContext]):
         #: pending engine completion at the trip, then cuts every further
         #: self-generated event until an external event ends the chain.
         self._chain_tripped: bool = False
+        #: 🧭 #105 / #225: the asyncio tasks currently running one of THIS
+        #: interpreter's user actions, with a nesting depth each. The single
+        #: source of truth for "is this `send()` self-generated?" and for
+        #: the #219 in-step-await guard. Keyed by task identity, not by an
+        #: inherited context: a task an action spawns runs concurrently with
+        #: it (or outlives it) and is NOT the action.
+        self._action_tasks: Dict["asyncio.Task[Any]", int] = {}
         #: 🔗 #150: self-issued `send_threadsafe` deliveries accepted on a
         #: worker thread but not yet landed on the loop. A macrostep that
         #: "raised nothing" must not end the chain while one is in flight.
@@ -1116,11 +1138,20 @@ class Interpreter(BaseInterpreter[TContext]):
         actions, made safe to hand out but fatal to await in-step.
 
         The returned future resolves exactly as the original does. If it is
-        awaited while the issuing action is still running -- detectable as
-        "the current task is still inside our action context and the run
-        loop has not processed the event" -- it raises `ReentrantWaitError`
-        at once instead of hanging. Awaiting it after the action returned
-        (from another task, or after the step) behaves normally.
+        awaited by the task that is running the issuing action, before the
+        run loop has processed the event, it raises `ReentrantWaitError`
+        at once instead of hanging. Awaiting it from any other task, or
+        after the action returned, behaves normally.
+
+        🧭 #225: the predicate is TASK IDENTITY. Only an await performed
+        BY the task that is running one of our actions cannot make
+        progress, so the guard asks `_issued_from_own_action()` again at
+        await time. Both documented hand-out shapes -- a worker that
+        outlives its action, and `ensure_future(i.send(..., wait=True))`
+        whether or not the action awaits again afterwards -- run on a
+        different task and are admitted. (A ContextVar could not do this:
+        `ensure_future` copies the context, so the spawned task looked
+        like the action for its whole life.)
         """
         loop = asyncio.get_running_loop()
         guarded: "asyncio.Future[Receipt]" = loop.create_future()
@@ -1136,19 +1167,52 @@ class Interpreter(BaseInterpreter[TContext]):
                 guarded.set_result(src.result())
 
         receipt.add_done_callback(_forward)
+        machine_id = self.id
 
-        class _Awaitable:
-            __slots__ = ()
+        class _PendingReceipt:
+            """The awaitable `send(wait=True)` hands an action (#219).
+
+            🔔 #232: like a coroutine, it warns if it is finalised without
+            ever being awaited or otherwise used. A plain `def` action has
+            no `await`; one that wrote ``r = i.send("B", wait=True)``
+            expecting a `Receipt` got this object back and nothing ever
+            told it so -- the call was silently useless. Any use counts
+            (`await`, `asyncio.ensure_future(...)`, `.add_done_callback`,
+            `.result()`), so the documented hand-out shapes stay quiet;
+            only an object dropped on the floor is reported.
+            """
+
+            __slots__ = ("_used",)
+
+            def __init__(inner) -> None:  # noqa: N805
+                inner._used = False
 
             def __await__(inner) -> Any:  # noqa: N805
-                if _ACTIVE_ACTION_OWNER.get() is self and not receipt.done():
-                    raise ReentrantWaitError(self.id, event_type)
+                inner._used = True
+                # 🔒 #225: refuse only if THIS task is running our action.
+                if not receipt.done() and self._issued_from_own_action():
+                    raise ReentrantWaitError(machine_id, event_type)
                 return guarded.__await__()
 
             def __getattr__(inner, name: str) -> Any:  # noqa: N805
+                object.__setattr__(inner, "_used", True)
                 return getattr(guarded, name)
 
-        return _Awaitable()  # type: ignore[return-value]
+            def __del__(inner) -> None:  # noqa: N805
+                if inner._used:
+                    return
+                warnings.warn(
+                    f"send('{event_type}', wait=True) on '{machine_id}' "
+                    f"was called from inside an action and its receipt was "
+                    f"never awaited (#232). A plain `def` action cannot "
+                    f"await, so it received this awaitable, not a Receipt. "
+                    f"Send without wait=True, or hand the awaitable out "
+                    f"(asyncio.ensure_future(...)) to be awaited elsewhere.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
+        return _PendingReceipt()  # type: ignore[return-value]
 
     def _make_receipt(self, event_obj: Any) -> "asyncio.Future[Receipt]":
         loop = asyncio.get_running_loop()
@@ -2248,11 +2312,19 @@ class Interpreter(BaseInterpreter[TContext]):
     ) -> None:
         """Leaf: call one action, awaiting it if it is a coroutine function.
 
-        Marks this interpreter as the active-action owner for the duration
-        (#105), so a `send()` the action issues on `self` is recognised as a
-        self-send by identity of the running task, not by the loop being
-        busy.
+        Records the running TASK in `_action_tasks` for the duration
+        (#105 / #225), so a `send()` issued on `self` from this task is
+        recognised as a self-send by identity of the running task -- not
+        by the loop being busy, and not by an inherited context a spawned
+        helper would carry for its whole life. A depth per task, not a
+        flag, because actions nest (an action that awaits something which
+        runs another action on the same task); a flag would be cleared
+        early by the inner `finally`.
         """
+        task = asyncio.current_task()
+        if task is not None:
+            self._action_tasks[task] = self._action_tasks.get(task, 0) + 1
+        # 🧵 #150: for a thread the action starts with a COPIED context.
         token = _ACTIVE_ACTION_OWNER.set(self)
         try:
             if inspect.iscoroutinefunction(impl):
@@ -2261,6 +2333,12 @@ class Interpreter(BaseInterpreter[TContext]):
                 impl(self, self.context, event, action_def)
         finally:
             _ACTIVE_ACTION_OWNER.reset(token)
+            if task is not None:
+                depth = self._action_tasks[task] - 1
+                if depth:
+                    self._action_tasks[task] = depth
+                else:
+                    del self._action_tasks[task]
 
     def _spawn_run_loop(self) -> "asyncio.Task[None]":
         """Create the run-loop task with death publication attached to the TASK.
@@ -2321,9 +2399,22 @@ class Interpreter(BaseInterpreter[TContext]):
             plugin.on_error(self, error)
 
     def _issued_from_own_action(self) -> bool:
-        """``True`` when the current task is inside one of THIS interpreter's
-        user actions (#105) -- the only case a `send()` is self-generated."""
-        return _ACTIVE_ACTION_OWNER.get() is self
+        """``True`` when the caller is one of THIS interpreter's user
+        actions (#105) -- the only case a `send()` is self-generated.
+
+        On the loop thread the answer is TASK IDENTITY (#225): the current
+        task is one recorded in `_action_tasks`. A task an action spawned
+        is not the action, however much context it inherited. On a
+        FOREIGN thread there is no task; the documented opt-in (#150) is a
+        context copied from the action (`contextvars.copy_context().run`),
+        so the ContextVar decides there -- and only there.
+        """
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            # 🧵 No running loop on this thread: `send_threadsafe` path.
+            return _ACTIVE_ACTION_OWNER.get() is self
+        return task is not None and task in self._action_tasks
 
     async def _dispatch_internal(self, event: Any) -> None:
         self._enqueue(event)
@@ -2796,7 +2887,12 @@ class Interpreter(BaseInterpreter[TContext]):
         def _fire() -> None:
             if self.status != "running":
                 return
-            fired = event._replace(fired_at=self.clock.now())
+            # 🏷️ #235: the engine stamps `fired_at` by re-minting, so the
+            #    fired event keeps engine provenance (`_replace` now
+            #    returns the public class by design).
+            fired = _engine_after(
+                event.type, event.scheduled_for, self.clock.now()
+            )
             logger.info(
                 "🕒 'after' timer fired for event '%s' in '%s' (+%.1f ms).",
                 fired.type,
@@ -2867,7 +2963,7 @@ class Interpreter(BaseInterpreter[TContext]):
             #    machine whose services were `async def`, the style the
             #    docs recommend, while the identical `def` service tripped.
             #    One lane for every service kind; one accounting rule.
-            done_event = engine_done(
+            done_event = _engine_done(
                 type=f"done.invoke.{invocation.id}",
                 data=result,
                 src=invocation.id,
@@ -2900,7 +2996,7 @@ class Interpreter(BaseInterpreter[TContext]):
                 exc_info=True,
             )
             # Send an 'error' event so the machine can transition to a failure state.
-            error_event = engine_error(
+            error_event = _engine_error(
                 type=f"error.platform.{invocation.id}",
                 error=e,
                 src=invocation.id,
@@ -3001,7 +3097,7 @@ class Interpreter(BaseInterpreter[TContext]):
             exc,
             exc_info=True,
         )
-        error_event = engine_error(
+        error_event = _engine_error(
             type=f"error.platform.{invocation.id}",
             error=exc,
             src=invocation.id,
@@ -3261,7 +3357,7 @@ class Interpreter(BaseInterpreter[TContext]):
                     self._report_service_failure(invocation, exc)
                     return
                 self._publish_completion(  # #179: charged lane
-                    engine_done(
+                    _engine_done(
                         type=f"done.invoke.{invocation.id}",
                         data=result,
                         src=invocation.id,
@@ -3272,7 +3368,7 @@ class Interpreter(BaseInterpreter[TContext]):
 
             self.task_manager.add(owner_id, asyncio.create_task(_finish()))
             return
-        done_event = engine_done(
+        done_event = _engine_done(
             type=f"done.invoke.{invocation.id}",
             data=produced,
             src=invocation.id,
@@ -3402,7 +3498,7 @@ class Interpreter(BaseInterpreter[TContext]):
                     owner_id, child_interpreter, stop=True
                 )
             self._publish_completion(  # #179: charged lane
-                engine_error(
+                _engine_error(
                     type=f"error.platform.{invocation.id}",
                     error=e,
                     src=invocation.id,
@@ -3447,7 +3543,7 @@ class Interpreter(BaseInterpreter[TContext]):
             #    callable-service path (and the sync engine): fail the parent.
             handled = self._has_error_handler(invocation)
             self._publish_completion(  # #179: charged lane
-                engine_error(
+                _engine_error(
                     type=f"error.platform.{invocation.id}",
                     error=failure,
                     src=invocation.id,
@@ -3464,7 +3560,7 @@ class Interpreter(BaseInterpreter[TContext]):
         #    output of its final state". Falls back to the context only for
         #    a child that declares no output, preserving 0.8.0 behaviour for
         #    machines that never used `output`.
-        done_event = engine_done(
+        done_event = _engine_done(
             type=f"done.invoke.{invocation.id}",
             data=child.output if child.output is not None else child.context,
             src=invocation.id,

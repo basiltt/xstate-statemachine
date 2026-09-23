@@ -517,10 +517,24 @@ print(receipt.error)      # the exception raised while processing THIS event, or
 async def kick(i, ctx, event, action):
     i.send("GO")                                   # fine: queued, runs next
     fut = asyncio.ensure_future(i.send("GO", wait=True))  # fine: awaited elsewhere
+    await asyncio.sleep(0.1)                       # still fine (#225)
     await i.send("GO", wait=True)                  # ReentrantWaitError
 ```
 
-The `SyncInterpreter` raises the same error for the same shape: there the call would have returned a receipt describing the *running* step, not the event's.
+The rule is about *tasks*, not about code position (#225): only an await performed by the task that is currently running one of the interpreter's actions is refused, because that task is the one the run loop is waiting on. A task the action spawns — the `ensure_future` wrapper above, or a long-lived helper — is a different task and is ordinary external traffic, whether the action returns immediately or awaits again afterwards, and whether the helper sends now or long after the machine has gone idle:
+
+```python
+async def helper(i):
+    await asyncio.sleep(30)
+    receipt = await i.send("POLL", wait=True)      # fine: not the action's task
+
+def kick(i, ctx, event, action):
+    asyncio.ensure_future(helper(i))
+```
+
+A plain `def` action cannot `await` at all. If it calls `send(..., wait=True)` and drops the result it gets a `RuntimeWarning` when the unawaited object is finalised (#232) — the same signal Python gives for a never-awaited coroutine. Hand the awaitable out (`asyncio.ensure_future(...)`) or send without `wait`.
+
+The `SyncInterpreter` raises `ReentrantWaitError` for a `send(wait=True)` issued from inside an action: there the call would have returned a receipt describing the *running* step, not the event's.
 
 ### `send(priority=True)`
 

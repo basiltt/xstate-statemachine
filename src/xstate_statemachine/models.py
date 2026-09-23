@@ -665,7 +665,24 @@ class InvokeDefinition:
             config,
         )
         self.id: str = invoke_id
-        self.src: Optional[str] = config.get("src")
+        raw_src = config.get("src")
+        if raw_src is not None and not isinstance(raw_src, str):
+            # 🛡️ #231: `src` NAMES a service; it is resolved by name from
+            #    `MachineLogic.services` (or discovered). The XState-JS
+            #    inline-machine dict is a natural thing to try and it used
+            #    to die as `TypeError: unhashable type: 'dict'` inside
+            #    `logic_loader` (a `set.add`), naming no machine, state or
+            #    key. Refuse it here, where the value is read, before any
+            #    consumer touches it -- a hard error like a non-dict
+            #    `invoke` entry, whatever `strict_config` says.
+            raise InvalidConfigError(
+                f"State '{source.id}' invoke '{invoke_id}': 'src' must be "
+                f"a service name (str), got {type(raw_src).__name__}. To "
+                f"invoke a nested machine, build it with "
+                f"create_machine(...) and register it under that name in "
+                f"MachineLogic(services={{...}})."
+            )
+        self.src: Optional[str] = raw_src
         #: Input for the invoked child. Either a static value or a
         #: callable resolved per spawn by `resolve_input()` (#42).
         self.input: Any = config.get("input")
