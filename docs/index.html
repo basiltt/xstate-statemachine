@@ -46,7 +46,7 @@ title: Home
         </button>
       </div>
       <ul class="hero-trust" aria-label="At a glance">
-        <li><strong>3,183</strong> tests</li>
+        <li><strong>3,590</strong> tests</li>
         <li><strong>3.9&ndash;3.14</strong> Python</li>
         <li><strong>0</strong> dependencies</li>
         <li><strong>MIT</strong> licensed</li>
@@ -119,7 +119,7 @@ interp  = <span class="k">await</span> Interpreter(machine).start()</code></pre>
       <div class="card-glow" style="--gx:50%;--gy:100%"></div>
       <div class="card-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="m9 12 2 2 4-4"/></svg></div>
       <h3><a href="{{ '/guide/reliability/' | relative_url }}">Failure you can see</a></h3>
-      <p><code>actionErrorPolicy: "rollback"</code> restores state <em>and</em> context. <code>strict</code> mode raises at the call site. <a href="{{ '/guide/reliability/' | relative_url }}">Every policy, with a runnable example →</a></p>
+      <p><code>actionErrorPolicy: "rollback"</code> restores state <em>and</em> context. <code>strict</code> refuses an undeclared event at the call site; <code>strict_config</code> refuses a misspelled key anywhere in the config. A runaway self-send chain is cut and stays on the record. <a href="{{ '/guide/reliability/' | relative_url }}">Every policy, with a runnable example →</a></p>
     </article>
 
     <article class="card reveal">
@@ -138,6 +138,8 @@ interp  = <span class="k">await</span> Interpreter(machine).start()</code></pre>
         <span>state_ids=<b>{'submitted'}</b></span>
         <span>changed=<b>True</b></span>
         <span>error=<b>None</b></span>
+        <span>deferred=<b>False</b></span>
+        <span>denied=<b>False</b></span>
       </div>
     </article>
 
@@ -145,7 +147,7 @@ interp  = <span class="k">await</span> Interpreter(machine).start()</code></pre>
       <div class="card-glow" style="--gx:50%;--gy:0%"></div>
       <div class="card-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></div>
       <h3>Persistence that resumes</h3>
-      <p>Versioned snapshots that refuse a structurally different machine. Pending events survive restarts.</p>
+      <p>Versioned snapshots that refuse a structurally different machine. Pending events, armed delayed sends and the runaway-chain record survive a restart; <code>strict</code> still applies on the way back in.</p>
     </article>
 
     <article class="card reveal">

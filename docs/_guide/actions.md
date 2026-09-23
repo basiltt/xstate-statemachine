@@ -443,7 +443,7 @@ config — each returns a plain action definition, so they also work as raw JSON
 |:--|:--|
 | `assign` | Update context |
 | `log` | Emit a structured log line |
-| `raise_` | Send an event to *this* machine |
+| `raise_` | Send an event to *this* machine — with `delay=` it is a timer like `after`, never counted by `maxIterations`; without, a zero-delay self-cycle is cut at the budget |
 | `send_to` | Send to another actor by id or `systemId` |
 | `send_parent` | Send to the machine that spawned this one |
 | `choose` | Run the first action list whose guard passes |
@@ -524,6 +524,14 @@ The `enqueue` object exposes `assign`, `raise_`, `send_to`, `send_parent`,
 If an action raises, the interpreter **contains** the error: it is logged, the
 transition still completes, and the machine keeps running. A single buggy side
 effect cannot take down a long-lived interpreter or its run loop.
+
+> **Do not await your own receipt inside an action.** `await interp.send(...,
+> wait=True)` issued on the action's *own* task raises `ReentrantWaitError`
+> (0.9.0, #219) — the run loop cannot advance until the action returns, so the
+> receipt could never resolve. Send without `wait`, or hand the receipt to
+> another task (`asyncio.ensure_future(...)`); a helper the action spawns may
+> await freely (#225). A plain `def` action that drops a `wait=True` result gets
+> a `RuntimeWarning` (#232). Details in [Interpreters](../interpreters/#sendwaittrue-and-receipt).
 
 This means `.send()` does **not** re-raise your action's exception:
 

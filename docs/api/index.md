@@ -17,7 +17,7 @@ from xstate_statemachine import create_machine, Interpreter, State  # etc.
 
 ## Factory Functions
 
-### `create_machine(config, *, context_type=None, logic=None, logic_modules=None, logic_providers=None, strict_targets=True, event_schemas=None)`
+### `create_machine(config, *, context_type=None, logic=None, logic_modules=None, logic_providers=None, strict_targets=True, event_schemas=None, strict_config=None)`
 
 Creates, validates, and assembles a state machine instance from an
 XState-compatible JSON configuration dictionary. This is the **primary
@@ -1230,7 +1230,7 @@ completion (#39).
 | `deferred` | `bool` | **[0.9.0]** `True` when this event selected no transition and was parked under `onUnhandled: "defer"` (#84). It will be replayed, as its own macrostep, after the next event that changes the configuration; the replay does not fold into that event's receipt (#125, both engines). |
 | `denied` | `bool` | **[0.9.0]** `True` when the active state *declared* a handler for this event but every candidate's guard returned `False` (#153). Distinguishes "a business rule refused it" from "this event does not apply here" (`denied=False`, `changed=False`), which are otherwise identical receipts. A guard that *crashed* under `guardErrorPolicy: "raise"` is a third case: `denied=False` and `error` carries the exception (#170). `(denied, error is None)` therefore discriminates all three. Note that under `onUnhandled: "defer"` a denied event enters the defer buffer (`deferred=True` too) and is re-evaluated after the next state change. |
 
-> ⚠️ **0.9.0 arity change.** `Receipt` grew from three fields to four. A positional destructure written for 0.8.0 — `state_ids, changed, error = receipt` — now raises `ValueError`; read fields by attribute (#119).
+> ⚠️ **0.9.0 arity change.** `Receipt` grew from three fields to five (`deferred`, then `denied`). A positional destructure written for 0.8.0 — `state_ids, changed, error = receipt` — now raises `ValueError`; read fields by attribute (#119, #153).
 
 ```python
 receipt = await interpreter.send("SUBMIT", wait=True)
@@ -1924,7 +1924,7 @@ All hooks have empty default implementations -- override only those you need.
 | `on_guard_evaluated` | `(self, interpreter: TInterpreter, guard_name: str, event: Event, result: bool) -> None` | After a guard condition is evaluated. |
 | `on_service_start` | `(self, interpreter: TInterpreter, invocation: InvokeDefinition) -> None` | An invoked service is about to start. |
 | `on_service_done` | `(self, interpreter: TInterpreter, invocation: InvokeDefinition, result: Any) -> None` | A service completes successfully. |
-| `on_action_error` | A user action or built-in action creator raised; the error was contained |
+| `on_action_error` | `(self, interpreter: TInterpreter, action: ActionDefinition, error: BaseException) -> None` | A user action or built-in action creator raised; the error was contained per `actionErrorPolicy`. |
 | `on_service_error` | `(self, interpreter: TInterpreter, invocation: InvokeDefinition, error: Exception) -> None` | A service fails with an error. |
 | `on_transition_failed` | `(self, interpreter: TInterpreter, transition: TransitionDefinition, failed_actions: List[Tuple[ActionDefinition, BaseException]]) -> None` | A transition's action list did not run to completion (`actionErrorPolicy` `"rollback"`/`"fail"`). |
 | `on_guard_error` | `(self, interpreter: TInterpreter, guard_name: str, event: Event, error: BaseException) -> None` | A guard raised instead of returning, before the substituted result (per `guardErrorPolicy`) is reported. |
@@ -2180,9 +2180,9 @@ nothing mutates. See [Testing & The Pure API](../guide/testing-and-pure-api/).
 |:--|:--|
 | `.state_ids` | Set of active state ids |
 | `.context` | The context dict |
-| `.status` | `'running'`, `'done'` or `'error'` |
+| `.status` | `'active'`, `'done'` or `'error'` |
 | `.output` | Machine output once a top-level final state is reached |
-| `.configuration` | The active `StateNode` objects |
+| `.configuration` | `Set[str]` of every active state id, ancestors included (`state_ids` is the leaves only) |
 | `.matches(id)` | Test a state id, supporting nested paths |
 
 ```python
@@ -2218,5 +2218,5 @@ Both waiters raise on timeout rather than returning silently.
 
 ```python
 from xstate_statemachine import __version__
-print(__version__)  # "0.7.0"
+print(__version__)  # "0.9.0"
 ```

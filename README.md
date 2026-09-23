@@ -9,8 +9,8 @@
 [![PyPI](https://img.shields.io/pypi/v/xstate-statemachine?style=flat-square&logo=pypi&logoColor=white&color=3775A9)](https://pypi.org/project/xstate-statemachine/)
 [![Python](https://img.shields.io/pypi/pyversions/xstate-statemachine?style=flat-square&logo=python&logoColor=white&color=3776AB)](https://pypi.org/project/xstate-statemachine/)
 [![CI](https://img.shields.io/github/actions/workflow/status/basiltt/xstate-statemachine/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/basiltt/xstate-statemachine/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-3100%2B_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](tests/)
-[![Coverage](https://img.shields.io/badge/coverage-88%25-3fb950?style=flat-square&logo=codecov&logoColor=white)](.github/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-3590_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-93%25-3fb950?style=flat-square&logo=codecov&logoColor=white)](.github/workflows/ci.yml)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-ff8c00?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/pypi/l/xstate-statemachine?style=flat-square&color=yellow)](LICENSE)
 
@@ -48,6 +48,7 @@ and your Python backend. Async **and** sync interpreters. Zero dependencies.
 | 🐍 | [**Pythonic API**](#-prefer-pure-python-three-more-ways-to-define-a-machine) | No JSON required |
 | 🛠️ | [**CLI Generator**](#️-cli-code-generator) | JSON → typed Python, verified |
 | 📚 | [**Cookbook**](#-cookbook) · [**FAQ**](#-faq) | Copy-paste recipes |
+| 🏭 | [**Production**](#-running-it-in-production) · [**API Reference**](#-api-reference) · [**Troubleshooting**](#-troubleshooting) | Failure semantics, every kwarg, every error |
 
 ---
 
@@ -114,8 +115,9 @@ machine before writing it.
 
 **🛡️ Production hardening**
 
-Per-machine `actionErrorPolicy` and `strict` mode turn silent failure into a
-raised, observable error instead of a half-built state.
+Per-machine `actionErrorPolicy`, `strict` events and `strict_config` turn silent
+failure into a raised, observable error. A runaway self-send chain is cut and
+recorded (`chain_trips`); a typo'd config key names itself and its path.
 
 </td>
 <td valign="top">
@@ -1457,12 +1459,15 @@ Each is a **per-machine policy**. The default preserves the historical behaviour
 | What fails | Default | Opt-in policy (machine config key) | How to observe it |
 |:--|:--|:--|:--|
 | An **action** raises (entry, exit, or transition) | Contained; the transition still commits | `actionErrorPolicy`: `"rollback"` restores configuration *and* context · `"fail"` also **stops** the machine (`status == "stopped"`, configuration cleared) with `TransitionFailedError` on `.error` | `on_action_error`, `on_transition_failed`, `interpreter.last_transition_ok` |
-| A **guard** raises | Treated as `False` | `guardErrorPolicy`: `"true"` · `"raise"` | `on_guard_error` (distinct from a guard that *returned* `False`) |
+| A **guard** raises | Treated as `False` | `guardErrorPolicy`: `"true"` · `"raise"` (takes the next candidate transition first, then surfaces the exception) | `on_guard_error` (distinct from a guard that *returned* `False`) |
 | An invoked **service** raises | Routed to `onError` — a normal transition, not a crash | — | `onError` target, `on_service_error` |
 | An **unknown event** arrives | Ignored (XState semantics) | `onUnhandled`: `"defer"` replays it after the next state change · `"error"` stops with `UnhandledEventError` | `on_unhandled_event` fires under *every* policy |
 | A **transition target** does not resolve | Rejected at `create_machine()` | `strict_targets=False` downgrades to a `DeprecationWarning` (removed in 1.0) | `InvalidConfigError` lists every bad target at once |
+| A **config key is misspelled** — at the root *or* inside any state, transition or invoke | Logged at WARNING with a "did you mean" hint and the path (`m.a: 'entyr' (did you mean 'entry'?)`) | `create_machine(..., strict_config=True)` or config `"strictConfig": true` refuses with `InvalidConfigError` | The build log; `x-…` keys and `meta`/`description`/`tags` are always accepted |
+| A **self-generated chain runs away** — a zero-delay `raise`/self-`send` cycle or an `always` loop | Cut at `maxIterations` (default 1000); the machine stays `running` | Tune `maxIterations`; a *delayed* self-send is a timer and is never counted | Sticky: `interpreter.chain_trips`, `interpreter.last_chain_error` (cleared only by `clear_chain_error()`, survives a snapshot), `on_chain_budget_exceeded` once per trip; `on_invocation_stranded` if the cut parked a state whose service will never complete |
+| An action **awaits its own `send(wait=True)`** | — | — | `ReentrantWaitError` at the call site instead of a silent deadlock (both engines); a plain-`def` action that drops the result gets a `RuntimeWarning` |
 | The **inbox is full** | Unbounded (no limit) | `max_queue_size=`, `overflow_policy=OverflowPolicy.RAISE` (default once bounded) · `BLOCK` · `DROP_NEWEST` | `RAISE` raises `QueueOverflowError`; `DROP_NEWEST` calls `on_event_dropped`; `interpreter.queue_depth` |
-| An **undeclared event** is sent under `strict` | N/A — `strict` is opt-in | Machine config `strict: true` or `Interpreter(strict=True)` | `UnknownEventError` at the `send()` call site, before queueing; `event_schemas=` on `create_machine()` raises `InvalidEventPayloadError` for a bad payload regardless of `strict` |
+| An **undeclared event** is sent under `strict` | N/A — `strict` is opt-in | Machine config `strict: true` or `Interpreter(strict=True)` | `UnknownEventError` at the `send()` call site, before queueing; `event_schemas=` on `create_machine()` raises `InvalidEventPayloadError` for a bad payload regardless of `strict`. Both checks also apply to events restored from a snapshot — a refusal fires `on_invalid_event` (pass `from_snapshot(..., plugins=[...])` to see it) and lands on `last_error` |
 
 Containment by default is deliberate: a long-lived machine should not die because one
 side effect had a bad day. The cost is that failures are **invisible unless you look**, so
@@ -1490,12 +1495,21 @@ event's macrostep has run — no polling, no `wait_for()`:
 
 ```python
 receipt = await interp.send("SUBMIT", wait=True)
-# Receipt(state_ids=frozenset({'checkout.paying'}), changed=True, error=None)
+# Receipt(state_ids=frozenset({'checkout.paying'}), changed=True, error=None,
+#         deferred=False, denied=False)
 
 await interp.send_priority("CANCEL")   # ahead of the inbox, exempt from its bound
 ```
 
-`priority=True` on `send()` does the same as `send_priority()`.
+`priority=True` on `send()` does the same as `send_priority()`. A `Receipt` has five
+fields — read them by attribute; `deferred` says the event was parked under
+`onUnhandled: "defer"`, `denied` that a handler existed but every guard said no.
+
+Two rules for `wait=True` **inside an action**: don't `await` your own receipt on the
+action's own task (the run loop can't advance until the action returns, so it raises
+`ReentrantWaitError` rather than deadlocking), and don't drop it from a plain `def`
+action (it warns). Hand it out — `asyncio.ensure_future(i.send("GO", wait=True))` — or
+send without `wait`; a helper task the action spawns may await freely.
 
 ### Waiting for a machine to settle
 
@@ -1530,18 +1544,30 @@ the one thing either engine runs off-thread.
 
 - **Persist on transition,** not on a timer — `get_persisted_snapshot()` in a
   `subscribe()` callback gives you crash-safe resume points.
-- **`after` timers do not survive a snapshot.** Restoring a machine that was mid-timeout
-  will not re-arm it; re-send the triggering event, or model the deadline as data in
-  context and compare against wall-clock on resume.
+- **`after` timers are not re-armed by default.** A snapshot records that a timer was
+  pending, not how far along it was; after a static restore `has_dormant_timers` is
+  `True`. Pass `from_snapshot(..., restart_timers=True)` to re-arm each from zero, or
+  model the deadline as data in context. A timer that had already *fired* is in the
+  snapshot and replays. A **delayed self-send** (`raise`/`send` with `delay`) *is*
+  persisted with its remaining time and resumes where it would have been.
 - **Invokes do not restart on restore either** — `from_snapshot()` is a static rebuild
   that starts nothing by default. Call `pending_invocations()` on the restored
   interpreter to see every `PendingInvocation(state_id, invoke_id, src)` with no live
-  service, and `from_snapshot(..., restart_services=True)` to re-invoke each of them
-  from scratch through the same path a fresh `enter` uses.
-- **Snapshots carry an envelope** (`version`, `machine_id`, `machine_hash`) so a restore
-  against a machine that no longer matches the one that produced the snapshot fails loud
-  with `SnapshotDriftError` instead of resuming into undefined behaviour. Pass
-  `from_snapshot(..., verify_machine_hash=False)` after a deliberate migration.
+  service (`has_dormant_invocations` is the boolean), and
+  `from_snapshot(..., restart_services=True)` to re-invoke each of them from scratch.
+- **Snapshots carry an envelope** (`version` — layout 3 — `machine_id`, `machine_hash`)
+  so a restore against a machine that no longer matches the one that produced the
+  snapshot fails loud with `SnapshotDriftError` instead of resuming into undefined
+  behaviour. Pass `verify_machine_hash=False` after a deliberate migration. The hash is
+  a drift check, not an authentication tag: if a blob crosses a trust boundary, sign it
+  outside and pin `from_snapshot(..., minimum_version=3, expected_machine_hash=...)` so
+  the payload cannot pick its own level of checking.
+- **What else round-trips:** pending events with their lane (priority events restore
+  ahead of the inbox on both engines), deferred events, armed delayed sends, history,
+  child actors, the `error`, and the chain-trip latch (`chain_trips` /
+  `last_chain_error`) — a restart is not an acknowledgement. `strict` and
+  `event_schemas` are applied to every restored event; a refusal is reported, not
+  silently admitted.
 - **Always `stop()`** — it cancels timers and stops spawned actors. In a web app, tie it
   to request teardown; in a worker, to the task's `finally`.
 
@@ -1583,9 +1609,9 @@ assert interp.matches("job.timedout")
 
 | Name | Purpose |
 |:--|:--|
-| `create_machine(config, logic=, logic_modules=[...], strict_targets=True, event_schemas=None)` | Build a machine from a dict/JSON config. `strict_targets=False` downgrades unresolvable transition targets to a `DeprecationWarning` (removed in 1.0). `event_schemas={'FILL': Fill}` adds opt-in payload validation — any object with `validate(payload)` or `__call__`, raising `InvalidEventPayloadError` at the `send()` call site regardless of `strict` |
-| `MachineLogic(actions=, guards=, services=, delays=)` | Bind names in the config to Python callables |
-| `Interpreter(machine, input=None, clock=None, max_queue_size=None, overflow_policy=OverflowPolicy.RAISE, strict=None)` | **Async** engine — `await .start()`, `.send()`, `.stop()` |
+| `create_machine(config, *, context_type=None, logic=None, logic_modules=None, logic_providers=None, strict_targets=True, event_schemas=None, strict_config=None)` | Build a machine from a dict/JSON config. `strict_targets=False` downgrades unresolvable transition targets to a `DeprecationWarning` (removed in 1.0). `event_schemas={'FILL': Fill}` adds opt-in payload validation — a callable that raises to reject, a dataclass, or anything with a `model_validate`-style constructor — raising `InvalidEventPayloadError` at the `send()` call site regardless of `strict`. `strict_config=True` (or config `"strictConfig": true`) refuses an unknown key anywhere in the config with `InvalidConfigError`; the default logs a WARNING with a "did you mean" hint and the path |
+| `MachineLogic(actions=, guards=, services=, delays=, *, strict=False)` | Bind names in the config to Python callables. `snake_case` and `camelCase` names match each other; two *different* callables whose names differ only by case/separators are rejected. `strict=True` refuses undecorated registrations |
+| `Interpreter(machine, input=None, clock=None, max_queue_size=None, overflow_policy=OverflowPolicy.RAISE, strict=None, service_executor=None, service_pool_size=4)` | **Async** engine — `await .start(children_timeout=2.0)`, `.send()`, `.stop()`. Plain-`def` services run on a private thread pool of `service_pool_size` workers (or your `service_executor`) so a blocking service cannot stall the loop |
 | `SyncInterpreter(machine, input=None, clock=None, strict=None)` | **Sync** engine — no event loop anywhere |
 | `LogicLoader` | Auto-discover logic by name from modules |
 | `MachineNode` | The parsed machine; has `.to_mermaid()` / `.to_plantuml()` |
@@ -1612,7 +1638,7 @@ they're registered automatically by arity: `(ctx, event)` is a guard,
 | `.start()` / `.stop(drain=False, timeout=None)` | Lifecycle (await both on `Interpreter`). `stop(drain=True)` processes the inbox to empty first (async also takes `timeout=`) |
 | `.send(event, *, wait=False, priority=False, **payload)` | Send an event; kwargs become `event.payload`. `wait=True` returns (async: awaits) a `Receipt`; `priority=True` delivers ahead of the inbox, exempt from its bound |
 | `.send_priority(event, **payload)` | **Async only** — shorthand for `send(event, priority=True, wait=True, **payload)` |
-| `.send_threadsafe(event, **payload)` | **Async only** — send from a foreign OS thread; returns a `concurrent.futures.Future`. `send()` from a foreign thread raises `WrongThreadError` instead |
+| `.send_threadsafe(event, internal=None, **payload)` | **Async only** — send from a foreign OS thread; returns a `concurrent.futures.Future`. `send()` from a foreign thread — including via `asyncio.run_coroutine_threadsafe` — raises `WrongThreadError` instead. `internal=True` charges the send to `maxIterations` as a self-send (an action that hands its own re-trigger to a plain thread) |
 | `.tick()` | **Sync only** — deliver any timer that has come due since the last call, outside of `send()` |
 | `.current_state_ids` / `.active_state_ids` | Set of active leaf state ids |
 | `.value` | Active configuration in XState's hierarchical form — a leaf key, `{parent: child}`, or one key per parallel region; `{}` before `start()` |
@@ -1627,12 +1653,15 @@ they're registered automatically by arity: `(ctx, event)` is a guard,
 | `.queue_depth` | Current inbox depth (0 for an unbounded queue with nothing pending) |
 | `.pending_events` | Accepted-but-unprocessed events, FIFO |
 | `.deferred_count` | Events buffered by `onUnhandled: "defer"`, awaiting replay |
-| `.last_transition_ok` | `False` after `actionErrorPolicy: "rollback"`/`"fail"` undid the last transition |
+| `.last_transition_ok` / `.last_error` | Per-step: `False` / the exception when the most recent step failed (a raising action under `actionErrorPolicy`, an unresolvable target, a chain cut). **Reset by the next clean event** — not a latch |
+| `.chain_trips` / `.last_chain_error` / `.clear_chain_error()` | Sticky record that `maxIterations` cut work: a monotonic count and the latched `RunawayChainError`. Survive later events *and* a snapshot; only `clear_chain_error()` clears the latch |
+| `.last_plugin_error` | `(plugin_class, hook, error)` for the most recent plugin hook that raised; plugin failures never stop the machine |
+| `.has_dormant_invocations` / `.has_dormant_timers` | `True` after a static restore left an active `invoke` with no live service / an `after` timer not armed |
 | `.pending_invocations()` | `List[PendingInvocation]` — every active state with no live service/child actor (e.g. after a static restore) |
 | `.drain_pending()` | Remove every pending/deferred event without processing it |
 | `.wait_done()` | **Async only** — a future that resolves the instant the machine reaches `done`/`error` |
-| `.get_snapshot()` / `.get_persisted_snapshot()` | Serialize (JSON string / dict) — envelope carries `version`, `machine_id`, `machine_hash`, `taken_at`, `value`, `pending_events` |
-| `.from_snapshot(snap, machine, *, verify_machine_hash=True, restart_services=False)` | Restore (classmethod). Raises `SnapshotVersionError`/`SnapshotDriftError` on a newer version or a machine id/hash mismatch. `restart_services=True` re-invokes every `PendingInvocation` from scratch |
+| `.get_snapshot()` / `.get_persisted_snapshot()` | Serialize (JSON string / dict) — layout **v3**: `version`, `machine_id`, `machine_hash`, `taken_at`, `value`, `configuration`, `context`, `pending_events` (with `lane` and engine provenance), `deferred`, `scheduled_sends`, `history`, `actors`, `error`, `chain_trips`, `last_chain_error`. Raises `SnapshotMidStepError` mid-transition and `SnapshotSerializationError` for non-JSON data |
+| `.from_snapshot(snap, machine, *, verify_machine_hash=True, restart_services=False, restart_timers=None, clock=None, minimum_version=0, expected_machine_hash=None, plugins=None)` | Restore (classmethod). Older layouts upcast transparently; `SnapshotVersionError` for a newer one or one below `minimum_version`; `SnapshotDriftError` on an id/hash mismatch; `SnapshotCorruptError` for a malformed blob. `restart_services` / `restart_timers` re-drive dormant work; `plugins=` registers plugins *before* restored events are admitted so a `strict`/schema refusal reaches `on_invalid_event` |
 
 </details>
 
@@ -1688,27 +1717,36 @@ parent's clock (and its `strict` setting). `SyncInterpreter` never spawns an OS 
 
 <br>
 
-**Plugins — `PluginBase` hooks** (all implemented by `LoggingInspector`):
+**Plugins — `PluginBase` hooks** (22; `LoggingInspector(redact_keys=, log_context=)` implements the
+transition/action/guard/service/lifecycle ones):
 `on_interpreter_start` · `on_interpreter_stop` · `on_transition` · `on_event_received` ·
 `on_action_execute` · `on_action_error` · `on_guard_evaluated` · `on_guard_error` ·
 `on_service_start` · `on_service_done` · `on_service_error` · `on_transition_failed` ·
-`on_unhandled_event` · `on_event_dropped` · `on_error` · `on_done`
+`on_unhandled_event` · `on_event_dropped` · `on_error` · `on_done` ·
+`on_resolve_error` · `on_plugin_error` · `on_invalid_event` · `on_snapshot_error` ·
+`on_invocation_stranded` · `on_chain_budget_exceeded`
+
+Hooks are synchronous callbacks; an `async def` hook is never awaited and is reported through
+`on_plugin_error` / `last_plugin_error`.
 
 **Data classes:**
 
 | Name | Purpose |
 |:--|:--|
-| `Receipt(state_ids, changed, error=None)` | Returned by `send(wait=True)` once the macrostep for that event has run |
+| `Receipt(state_ids, changed, error, deferred, denied)` | Returned by `send(wait=True)` once the macrostep for that event has run. Five fields — read by attribute; a positional destructure written for fewer raises `ValueError` |
+| `Event` / `DoneEvent` / `ErrorEvent` / `AfterEvent` | The event types an action or hook receives. Service and child failures arrive as `ErrorEvent(type, error, src)`. `is_system_event(ev)` is `True` only for events the engine minted — a hand-built `DoneEvent("done.invoke.x", ...)` is user traffic and is refused under `strict` |
 | `OverflowPolicy` | `RAISE` (default once `max_queue_size` is set) · `BLOCK` · `DROP_NEWEST` |
 | `PendingInvocation(state_id, invoke_id, src)` | An active state with no live service/child actor |
 | `ActionDefinition(config)` | The 4th positional arg every action callable receives — `.type` (action name) and `.params` (static params from the config, if any) |
 
-**Exceptions:** `XStateMachineError` (base) · `InvalidConfigError` ·
-`StateNotFoundError` · `ImplementationMissingError` · `ActorSpawningError` ·
-`NotSupportedError` · `UnhandledEventError` · `TransitionFailedError` ·
-`WrongThreadError` · `SnapshotDriftError` · `SnapshotVersionError` ·
-`QueueOverflowError` · `InterpreterStoppedError` · `UnknownEventError` ·
-`InvalidEventPayloadError`
+**Exceptions:** `XStateMachineError` (base) · `InvalidConfigError` (and its subclass
+`RootTargetError`) · `StateNotFoundError` · `ImplementationMissingError` ·
+`ActorSpawningError` · `NotSupportedError` · `UnhandledEventError` ·
+`TransitionFailedError` · `WrongThreadError` · `QueueOverflowError` ·
+`InterpreterStoppedError` · `UnknownEventError` · `InvalidEventError` (also a `TypeError`) ·
+`InvalidEventPayloadError` · `RunawayChainError` · `ReentrantWaitError` · `RestoredError` ·
+`SnapshotDriftError` · `SnapshotVersionError` · `SnapshotCorruptError` ·
+`SnapshotMidStepError` · `SnapshotSerializationError`
 
 **Version:** `from xstate_statemachine import __version__` gives the installed
 version string — the same value `xsm -v` / `xsm info` report.
@@ -1719,7 +1757,7 @@ version string — the same value `xsm -v` / `xsm info` report.
 
 ## 🚨 Troubleshooting
 
-The five errors you are most likely to meet, and what each actually means.
+The errors you are most likely to meet, and what each actually means.
 
 <details>
 <summary><b><code>ImplementationMissingError</code> — "no implementation was found"</b></summary>
@@ -1775,12 +1813,67 @@ Run `xsm validate machine.json` to catch these before runtime.
 
 <br>
 
-Missing `states`, a bad `initial`, two states claiming `initial=True` in the same
-region, or a corrupt snapshot string passed to `from_snapshot`.
+Missing `states`, a bad `initial`, an `invoke.src` that is not a service *name*
+(an inline machine dict, say), or — under `strict_config=True` — a misspelled key anywhere
+in the config. Without `strict_config` a misspelled key is a **WARNING** naming the path
+and the likely intent, and the machine builds with that key ignored, which is why the
+warning exists: `"entyr"` means an entry action that never runs, `"onn"` a transition that
+does not exist.
 
 ```python
 create_machine({"id": "c"})        # InvalidConfigError: 'states' key is missing
+create_machine({"id": "c", "initial": "a", "states": {"a": {"entyr": ["x"]}}},
+               strict_config=True)
+# InvalidConfigError: Machine 'c' has unknown config key(s) -- c.a: 'entyr'
+#   (did you mean 'entry'?) ...
 ```
+
+A corrupt snapshot string is `SnapshotCorruptError`, not this.
+
+</details>
+
+<details>
+<summary><b><code>RunawayChainError</code> — "exceeded N chained self-generated events"</b></summary>
+
+<br>
+
+An action `raise`s (or `send`s to its own machine) the event that triggers it again with
+no delay, or two `always` transitions target each other. The machine cuts the tail at
+`maxIterations` (default 1000), discards it, and **keeps running** — so the only signals
+are the ones you read:
+
+```python
+interp.chain_trips          # monotonic, survives a snapshot
+interp.last_chain_error     # the RunawayChainError, latched until clear_chain_error()
+receipt.error               # on the send(wait=True) that tripped it
+```
+
+`last_error` also carries it, but only until the next clean event. A **delayed**
+self-send (`raise` with `delay`, or `after`) is a timer and never counts: a heartbeat of
+any period runs indefinitely.
+
+</details>
+
+<details>
+<summary><b><code>ReentrantWaitError</code> — "awaited send(..., wait=True) on its own interpreter"</b></summary>
+
+<br>
+
+An action did `await i.send("GO", wait=True)`. The receipt resolves when the run loop
+processes `GO`, and the loop cannot advance until the action returns — a deadlock, so it
+raises immediately instead. Send without `wait` (the event runs right after the current
+step), or hand the receipt to another task:
+
+```python
+async def act(i, ctx, event, action):
+    i.send("GO")                                         # fine
+    fut = asyncio.ensure_future(i.send("GO", wait=True))  # fine: awaited elsewhere
+    await i.send("GO", wait=True)                        # ReentrantWaitError
+```
+
+A helper task the action spawns may await the machine freely — the rule is about the
+action's *own* task. A plain `def` action that calls `send(wait=True)` and drops the result
+gets a `RuntimeWarning` instead: it received an awaitable it cannot await.
 
 </details>
 
@@ -1827,10 +1920,13 @@ If `can()` is `True` but nothing moves, a **guard** is returning `False`. The
 
 <br>
 
-Correct, and intentional. Timers are runtime state, not persisted state — restoring
-a machine that was mid-timeout does **not** re-arm it.
+Correct by default. A snapshot records that a timer was *pending*, not how far along it
+was, so a static restore leaves it dormant (`interp.has_dormant_timers` is `True`). Pass
+`from_snapshot(..., restart_timers=True)` to re-arm every dormant timer from zero on
+`start()`. A timer that had already fired, and a delayed self-`raise`, *are* persisted and
+resume.
 
-If a deadline must survive a restart, model it as data:
+If the exact remaining time must survive a restart, model it as data:
 
 ```jsonc
 "entry": assign({"deadline": lambda a: time.time() + 30}),
@@ -1903,7 +1999,7 @@ Invoked **services** are different — their failures *are* routed back into the
 
 <br>
 
-3,100+ tests, 88% coverage, CI runs Python 3.9–3.14 on Linux, with spot-checks on macOS and Windows. The engine
+3,590 tests, 93% coverage, CI runs the full matrix — Python 3.9–3.14 × Linux, macOS and Windows. The engine
 implements the SCXML transition-selection algorithm and there's a dedicated test suite pinning
 that behaviour, plus one pinning XState v5 parity.
 
@@ -1941,7 +2037,7 @@ print(machine.to_plantuml())
 
 **[basiltt.github.io/xstate-statemachine](https://basiltt.github.io/xstate-statemachine/)**
 
-Guides · API reference · Migration notes · More examples
+Guides · API reference · [What's new in 0.9.0 and the upgrade notes](https://basiltt.github.io/xstate-statemachine/guide/getting-started/#whats-new-in-090) · [Changelog](https://basiltt.github.io/xstate-statemachine/guide/changelog/) · More examples
 
 <br>
 

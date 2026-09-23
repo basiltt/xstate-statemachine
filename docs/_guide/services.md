@@ -533,6 +533,10 @@ The `<id>` defaults to the state's name if no explicit `id` is provided in the i
 
 ## Sync vs Async Services
 
+A plain-`def` service on the async `Interpreter` runs on a private thread pool so it cannot block the event loop — `Interpreter(service_pool_size=4)` (`DEFAULT_SERVICE_POOL_SIZE`) sizes it, or pass your own `service_executor=`. Its completion is delivered with exactly the standing an `async def` service's has (engine-minted, charged to `maxIterations` only when it continues a self-fed chain).
+
+If a `maxIterations` cut discards a service's completion while its state is still active, nothing will ever complete for it: `on_invocation_stranded(interpreter, state_id, invoke_id, error)` fires, `RunawayChainError.stranded` names the ids, and `has_dormant_invocations` is `True` (0.9.0, #207).
+
 | Feature | `SyncInterpreter` | `Interpreter` (async) |
 |---------|-------------------|----------------------|
 | **Service type** | Regular `def` | `async def` |

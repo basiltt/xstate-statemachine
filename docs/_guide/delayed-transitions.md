@@ -527,6 +527,21 @@ One `increment()` call fires timers for **every** interpreter attached to the cl
 
 Before 0.8.0, a fired async timer's continuation had to queue behind every external event already sitting in the inbox, which could add measurable lateness on top of the OS timer floor under heavy load. Both engines now run clock-fired callbacks through a dedicated priority lane, so a due `after` or delayed send is processed promptly even while thousands of `send()` calls are backlogged. This is what makes `after` usable as a watchdog alongside high event volume.
 
+## ⏲️ Delayed Self-Sends Are Timers Too
+
+`raise` (or `send` to the machine itself) with a `delay` is a timer with exactly the standing of `after` (0.9.0, #212): arming it ends the current step's self-generated chain, its firing is a clock event, and it is **never** counted against `maxIterations`. A self-paced heartbeat or poller written either way runs indefinitely:
+
+```json
+"up":   { "entry": [{ "type": "raise", "params": { "event": "BEAT", "delay": 1000 } }], "on": { "BEAT": "down" } },
+"down": { "entry": [{ "type": "raise", "params": { "event": "BEAT", "delay": 1000 } }], "on": { "BEAT": "up" } }
+```
+
+Only a **zero-delay** self-`raise` cycle is charged to the budget and cut with `RunawayChainError`. Give the send an `id` and `cancel` it to disarm; exiting the arming state disarms it too, and the clock handle is released either way (#218).
+
+### Timers and snapshots
+
+A snapshot records that an `after` timer was *pending*, not how far along it was. After a static `from_snapshot()` restore the timer is dormant — `interp.has_dormant_timers` is `True` — until you pass `from_snapshot(..., restart_timers=True)` (defaults to the value of `restart_services`), which re-arms every dormant timer **from zero** on `start()`. A timer that had already *fired* and was waiting in the priority lane is persisted and replays. An armed **delayed self-send** is persisted with its *remaining* delay (`scheduled_sends`, layout v3) and resumes where it would have been — and it survives a restore → re-persist hop that never calls `start()`. See [Snapshots](../snapshots/).
+
 ## 📡 Complete Example: Polling Machine
 
 A machine that polls an API at regular intervals, with error handling and backoff:

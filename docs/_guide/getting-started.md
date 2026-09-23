@@ -27,7 +27,7 @@ poetry add xstate-statemachine
 
 ```bash
 xsm --version
-# Output: xsm 0.8.0
+# Output: xsm 0.9.0
 ```
 
 You can also verify the CLI tool is available:
@@ -317,7 +317,7 @@ xstate-statemachine/
 │       ├── __main__.py       # Entry point (xsm command)
 │       ├── extractor.py      # JSON feature extraction
 │       └── strategies/       # 5 code generation templates
-├── tests/                    # 3,100+ tests
+├── tests/                    # 3,590 tests, 93% coverage
 ├── docs/                     # GitHub Pages documentation
 └── pyproject.toml
 ```

@@ -16,11 +16,13 @@ flowchart LR
     J -. "SnapshotDriftError if the machine changed" .-> X["⛔ refused"]
 ```
 
-A snapshot is a JSON string that captures the essential runtime state of an interpreter:
+A snapshot is a JSON string that captures the runtime state of an interpreter inside a versioned envelope (layout **v3** in 0.9.0 — see [Snapshot Envelope](#snapshot-envelope) for every key). The essentials:
 
 - **`status`** — the interpreter's lifecycle status (`"running"`, `"stopped"`, etc.)
 - **`context`** — the full context dictionary (all mutable data)
-- **`state_ids`** — the list of all currently active state IDs
+- **`state_ids`** / **`configuration`** — the active leaves and the full active configuration
+- **in-flight work** — `pending_events` (with their lane and engine provenance), `deferred` events, armed `scheduled_sends`, `history`, child `actors`
+- **what went wrong** — `error`, and the runaway-chain record `chain_trips` / `last_chain_error`
 
 You create a snapshot with `get_snapshot()` and restore from one with `from_snapshot()`.
 
@@ -231,7 +233,7 @@ except ImplementationMissingError as exc:
 
 ```mermaid
 flowchart LR
-    subgraph env["snapshot envelope (v2)"]
+    subgraph env["snapshot envelope (v3)"]
         direction TB
         H["version · machine_id · machine_hash · taken_at"]
         B["status · state_ids · context"]

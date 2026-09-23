@@ -500,7 +500,7 @@ print(receipt.changed)    # True if this event caused a transition or context ch
 print(receipt.error)      # the exception raised while processing THIS event, or None
 ```
 
-`Receipt` is a `NamedTuple` with four fields (three before 0.9.0 — a positional destructure written as `state_ids, changed, error = receipt` now raises `ValueError`; read fields by attribute):
+`Receipt` is a `NamedTuple` with five fields (three before 0.9.0 — a positional destructure written as `state_ids, changed, error = receipt` now raises `ValueError`; read fields by attribute):
 
 - `state_ids: FrozenSet[str]` — the active leaf state IDs when the instant processing this event finished.
 - `changed: bool` — `True` if a transition was taken (configuration or context changed) *for this event*.
@@ -1053,7 +1053,7 @@ To deliver an event from another thread, use `send_threadsafe()`:
 interp.send_threadsafe("TICK")
 ```
 
-It routes the enqueue through the interpreter's owning event loop and returns a `concurrent.futures.Future` you may `.result()` on to block until the event is queued (not processed). Since 0.9.0 it applies the same `strict` / `event_schemas` validation as `send()`, raising `UnknownEventError` / `InvalidEventPayloadError` on the **calling** thread before anything is queued.
+It routes the enqueue through the interpreter's owning event loop and returns a `concurrent.futures.Future` you may `.result()` on to block until the event is queued (not processed). Since 0.9.0 it applies the same `strict` / `event_schemas` validation as `send()`, raising `UnknownEventError` / `InvalidEventPayloadError` on the **calling** thread before anything is queued. `internal=True` charges the send to the machine's `maxIterations` as a self-send — for an action that hands its own re-trigger to a plain `threading.Thread`, which does not inherit the action's context; `internal=False` forces external accounting; the default `None` decides by context (a thread started with `contextvars.copy_context().run(...)` from inside an action is internal).
 
 > **Changed in 0.8.0 — the manual idiom no longer works.** In 0.7.x the correct way to send across threads was
 > `asyncio.run_coroutine_threadsafe(interp.send("E"), loop).result()`. That pattern **raises `WrongThreadError` on 0.8.0+**, because the thread check runs eagerly inside `send()` on the calling thread, before the coroutine is ever handed to the loop. It is not possible to accept that form while still rejecting the bare `interp.send()` that silently lost events. Replace it with `send_threadsafe()`; the two are otherwise equivalent.
