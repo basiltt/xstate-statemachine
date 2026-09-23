@@ -195,7 +195,7 @@ By default, if a guard function raises an exception, the transition is **blocked
 
 - `"false"` (default) — block the transition, same as a guard returning `False`
 - `"true"` — allow the transition, as if the guard returned `True`
-- `"raise"` — propagate the guard's exception to the caller
+- `"raise"` — propagate the guard's exception to the caller. Only the raising guard's own candidate is dropped: a lower-priority, unguarded fallback in the same transition array still fires first, then the exception surfaces (0.9.0, #152). See [Reliability](../reliability/).
 
 ```python
 def risky_guard(context, event):
@@ -208,7 +208,7 @@ config = {
 }
 ```
 
-Regardless of the chosen policy, any plugin's `on_guard_error` hook (e.g. `LoggingInspector`) fires so you can observe and log the failure. See [JSON Configuration](./json-config.md) for the full list of config keys.
+Regardless of the chosen policy, any plugin's `on_guard_error` hook (e.g. `LoggingInspector`) fires so you can observe and log the failure. See [JSON Configuration](../json-config/) for the full list of config keys.
 
 > **Tip:** Write guards defensively using `.get()` or try/except to avoid unexpected blocked transitions.
 
@@ -314,6 +314,12 @@ By default it is dropped silently (`onUnhandled: "ignore"`, the 0.7 behaviour). 
 ### Can I send an event from inside an action?
 
 Yes, but the event is **queued**, not processed immediately — the current transition finishes first. Use `interp.send(...)` from the action, or the declarative `send` / `raise_` action helpers in JSON. Never call `interp.stop()` from inside an action; return and let the caller do it.
+
+Two things a self-send cannot do: **await its own receipt** — `await interp.send("GO", wait=True)` on the action's own task raises `ReentrantWaitError` (0.9.0) because the run loop cannot advance until the action returns; hand the receipt to another task (`asyncio.ensure_future(...)`) or send without `wait` — and **loop without a delay** forever. A zero-delay `raise` cycle is cut at `maxIterations` (`RunawayChainError`, recorded on `chain_trips` / `last_chain_error`); a `raise` with a `delay` is a timer and runs indefinitely, like `after`.
+
+### Why did `last_error` go back to `None` after my machine tripped `maxIterations`?
+
+Because `last_error` is a **per-step read**, not a latch: it describes the most recently processed event, and the next clean event resets it. For "has this machine ever discarded work" read `interp.chain_trips` (monotonic) or `interp.last_chain_error` (latched until `clear_chain_error()`), or implement `on_chain_budget_exceeded`. Both fields survive a snapshot round-trip.
 
 ---
 
@@ -536,7 +542,7 @@ async def main():
     # Sending "ACTIVITY" resets the timer by re-entering "active"
 ```
 
-> **Note:** `after` transitions work with both interpreters. With the async `Interpreter`, timers run on the event loop. With `SyncInterpreter` (since 0.8.0), timers are thread-free deadlines that fire when you call `send()` or `tick()` — call `tick()` periodically (or after each `send()`) so due timers fire even when no new event arrives. See [Delayed Transitions](./delayed-transitions.md).
+> **Note:** `after` transitions work with both interpreters. With the async `Interpreter`, timers run on the event loop. With `SyncInterpreter` (since 0.8.0), timers are thread-free deadlines that fire when you call `send()` or `tick()` — call `tick()` periodically (or after each `send()`) so due timers fire even when no new event arrives. See [Delayed Transitions](../delayed-transitions/).
 
 ---
 
@@ -552,7 +558,7 @@ Yes. State machines are excellent for managing UI state — form wizards, modals
 
 ### How do I debug my state machine?
 
-See the [Troubleshooting page](./troubleshooting.md#debugging-tips) for detailed debugging strategies. Quick summary:
+See the [Troubleshooting page](../troubleshooting/#debugging-tips) for detailed debugging strategies. Quick summary:
 
 1. Attach `LoggingInspector` to see all transitions
 2. Print `interp.current_state_ids` after each event

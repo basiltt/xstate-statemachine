@@ -231,7 +231,7 @@ The resolved value is deep-copied and passed to the child as its creation `input
 
 If the resolver callable itself raises, the invocation routes to `onError` rather than propagating.
 
-> A completed parent now stops its children too — see [Interpreters — Lifecycle: completion and teardown](interpreters/#lifecycle-completion-and-teardown).
+> A completed parent now stops its children too — see [Interpreters — Lifecycle: completion and teardown](../interpreters/#lifecycle-completion-and-teardown).
 
 ## 🧰 Built-in Actor Actions (v0.6.0)
 
@@ -344,6 +344,28 @@ actors.
 > thread afterwards. Only the child's later ticks run on that thread.
 
 ---
+
+## ⚠️ Actor Failures Arrive as `ErrorEvent`
+
+A child that raises — or an invoked machine that ends in `"error"` — is delivered to the parent as an **`ErrorEvent`** (`type`, `error`, `src`), never as a `DoneEvent` with an error tucked inside (0.9.0, #80). Route it with `onError`, exactly as for a service:
+
+```json
+"invoke": {
+  "id": "worker",
+  "src": "workerMachine",
+  "onDone":  { "target": "finished" },
+  "onError": { "target": "failed", "actions": ["recordError"] }
+}
+```
+
+```python
+def record_error(interp, ctx, event, action):
+    ctx["last_error"] = str(event.error)   # event is an ErrorEvent
+```
+
+With no `onError`, an unhandled child failure escalates to the parent per the parent's own error policy. Provenance is by type identity: a hand-built `ErrorEvent(...)` sent by user code is ordinary user traffic (`is_system_event` is `False`) and is name-checked under `strict` like any other event.
+
+Two knobs on the parent side: `Interpreter.start(children_timeout=2.0)` (`DEFAULT_CHILDREN_TIMEOUT`) bounds how long `start()` waits for children spawned during the initial descent before returning with the machine running; and after a static `from_snapshot()` restore, `has_dormant_invocations` / `pending_invocations()` tell you which child actors are not running yet (`restart_services=True` re-spawns them).
 
 ## 💬 Actor Communication
 
@@ -631,4 +653,4 @@ print(interp.current_state_ids)  # still {'parent.idle'} -- the transition rolle
 print(interp._actors)             # {} -- the spawned child was stopped, not orphaned
 ```
 
-See also [Interpreters — Lifecycle: completion and teardown](interpreters/#lifecycle-completion-and-teardown).
+See also [Interpreters — Lifecycle: completion and teardown](../interpreters/#lifecycle-completion-and-teardown).

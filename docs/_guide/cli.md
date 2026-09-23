@@ -110,7 +110,7 @@ Five templates are available:
 | `class-json` | Class with camelCase methods, JSON loaded at runtime *(default)* |
 | `function-json` | Module-level functions, JSON loaded at runtime |
 
-> **Note:** The `--style` flag (`class` / `function`) is deprecated and maps to `class-json` / `function-json`. It is still present in 0.8.0 and will be removed in a future release. Use `--template` instead.
+> **Note:** The `--style` flag (`class` / `function`) is deprecated and maps to `class-json` / `function-json`. It is still present in 0.9.0 and will be removed in a future release. Use `--template` instead.
 
 #### Async Mode (`-am` / `--async-mode`)
 
@@ -435,7 +435,7 @@ Example output:
 ```
   XState-StateMachine CLI
   ----------------------------------
-  Version:      0.8.0
+  Version:      0.9.0
   Python:       3.12.0
   Platform:     Windows-11
   Install path: C:\...\xstate_statemachine
@@ -569,7 +569,7 @@ Every generated file starts with a provenance header:
 
 Source:    order.json
 Template:  pythonic-builder
-Generator: xstate-statemachine 0.7.0
+Generator: xstate-statemachine 0.9.0
 
 Regenerate with::
 

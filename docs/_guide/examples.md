@@ -1143,12 +1143,12 @@ assert receipt.changed is False
 interp.stop()
 ```
 
-`Receipt` is a `NamedTuple` with `state_ids` (the active leaf ids once processing finished), `changed` (whether this event actually caused a transition), and `error` (the exception raised while processing this event, or `None`). This is the async `Interpreter`'s `send(..., wait=True)` API too — see [Testing & the Pure API](../testing-and-pure-api/) for the fully synchronous, no-interpreter-needed alternative (`pure_transition`, `get_next_snapshot`, etc.).
+`Receipt` is a `NamedTuple` with five fields: `state_ids` (the active leaf ids once processing finished), `changed` (whether this event actually caused a transition), `error` (the exception raised while processing this event, or `None`), `deferred` (parked under `onUnhandled: "defer"`) and `denied` (a handler existed but every guard refused). Read them by attribute — a three- or four-way positional destructure raises `ValueError`. This is the async `Interpreter`'s `send(..., wait=True)` API too — see [Testing & the Pure API](../testing-and-pure-api/) for the fully synchronous, no-interpreter-needed alternative (`pure_transition`, `get_next_snapshot`, etc.).
 
-## Feature examples (0.8.0)
+## Feature examples (0.8.0 – 0.9.0)
 
 Each of these is a small, self-contained, runnable script under `examples/`
-demonstrating one 0.8.0 capability end to end (`python <file>_runner.py`
+demonstrating one capability end to end (`python <file>_runner.py`
 from its own directory, exits `0`):
 
 - [`examples/async/features/escalate/escalate_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/escalate/escalate_runner.py) — `escalate()`: a child actor propagates an error to its parent.
@@ -1172,7 +1172,16 @@ from its own directory, exits `0`):
 - [`examples/sync/features/subscribe/subscribe_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/subscribe/subscribe_runner.py) — `subscribe()`: a listener fired after every settled transition, with unsubscribe.
 - [`examples/sync/features/persisted_snapshot/persisted_snapshot_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/persisted_snapshot/persisted_snapshot_runner.py) — `get_persisted_snapshot()` vs. `get_snapshot()`, and `from_snapshot()`.
 - [`examples/sync/features/strict_targets/strict_targets_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/strict_targets/strict_targets_runner.py) — `strict_targets`: unresolvable transition targets rejected at build time, or downgraded to a warning.
-- [`examples/sync/features/history_shallow_deep/history_shallow_deep_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/history_shallow_deep/history_shallow_deep_runner.py) — `history: "shallow"` vs. `"deep"` pseudostates.
+- [`examples/sync/features/history_shallow_deep/history_shallow_deep_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/history_shallow_deep/history_shallow_deep_runner.py)
+- [`examples/sync/features/strict_mode/strict_mode_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/strict_mode/strict_mode_runner.py) — `strict=True`: an undeclared event raises `UnknownEventError` at the call site
+- [`examples/sync/features/action_error_policy/action_error_policy_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/action_error_policy/action_error_policy_runner.py) — `continue` / `rollback` / `fail` side by side
+- [`examples/sync/features/simulated_clock/simulated_clock_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/simulated_clock/simulated_clock_runner.py) — fire a 30 s `after` in microseconds
+- [`examples/async/features/bounded_inbox/bounded_inbox_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/bounded_inbox/bounded_inbox_runner.py) — `max_queue_size` + `OverflowPolicy`
+- [`examples/async/features/deferred_unhandled_events/deferred_unhandled_events_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/deferred_unhandled_events/deferred_unhandled_events_runner.py) — `onUnhandled: "defer"` and `Receipt.deferred`
+- [`examples/async/features/restart_services/restart_services_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/restart_services/restart_services_runner.py) — `from_snapshot(restart_services=True)` and `pending_invocations()`
+- [`examples/async/features/wait_for_receipt/wait_for_receipt_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/wait_for_receipt/wait_for_receipt_runner.py) — `send(wait=True)` on the async engine
+- [`examples/sync/features/strict_config/strict_config_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/strict_config/strict_config_runner.py) — **0.9.0**: a misspelled key at any level is warned with its path, or refused under `strict_config=True`
+- [`examples/sync/features/chain_trips/chain_trips_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/chain_trips/chain_trips_runner.py) — **0.9.0**: `maxIterations` cuts a runaway chain; `chain_trips` / `last_chain_error` / `on_chain_budget_exceeded` keep the record, across a snapshot — `history: "shallow"` vs. `"deep"` pseudostates.
 - [`examples/sync/features/tags_and_meta/tags_and_meta_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/tags_and_meta/tags_and_meta_runner.py) — `tags`, `meta`, `has_tag()`, and `get_meta()`.
 - [`examples/sync/features/active_state_ids_and_value/active_state_ids_and_value_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/active_state_ids_and_value/active_state_ids_and_value_runner.py) — `current_state_ids`, `active_state_ids`, `value`, and `matches()`.
 - [`examples/sync/features/restored_error/restored_error_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/restored_error/restored_error_runner.py) — `actionErrorPolicy: "fail"` and `RestoredError` after a snapshot restore.

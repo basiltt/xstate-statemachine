@@ -608,7 +608,7 @@ interp.stop()
 
 # Benefits:
 # - Impossible states are impossible (can't be open AND locked)
-# - Invalid events are silently ignored (no crashes)
+# - An event the current state does not handle is a no-op (opt into `strict` to make an undeclared type raise)
 # - The full behavior is visible in the transition definitions
 # - Easy to add new states or events without breaking existing logic
 ```

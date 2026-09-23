@@ -24,6 +24,7 @@ flowchart TB
         UnhandledEventError --- UnknownEventError --- InvalidEventPayloadError --- InvalidEventError
         InvalidEventError --- TransitionFailedError --- RunawayChainError --- ActorSpawningError
         ActorSpawningError --- WrongThreadError --- QueueOverflowError --- InterpreterStoppedError
+        InterpreterStoppedError --- ReentrantWaitError
     end
     subgraph snap["💾 snapshots"]
         direction TB
@@ -51,6 +52,7 @@ flowchart TB
 | `WrongThreadError` | `Interpreter.send()` called from a foreign thread |
 | `QueueOverflowError` | `send()` refused: bounded inbox is full |
 | `InterpreterStoppedError` | `send(wait=True)` receipt resolved after the interpreter stopped |
+| `ReentrantWaitError` | An action awaited its own `send(wait=True)` on the action's own task — a deadlock, refused eagerly (0.9.0) |
 | `SnapshotVersionError` | Snapshot's version is newer than this library supports |
 | `SnapshotDriftError` | Snapshot doesn't belong to the machine restoring it |
 | `SnapshotMidStepError` | `get_persisted_snapshot()` called while a macrostep is in flight — e.g. from inside an action (0.9.0) |
@@ -73,6 +75,7 @@ from xstate_statemachine import (
     InvalidEventPayloadError,  # Event payload failed its event_schemas validator
     TransitionFailedError,     # Action raised, actionErrorPolicy="fail"
     WrongThreadError,          # send() called off the owning event loop's thread
+    ReentrantWaitError,        # awaited own send(wait=True) from inside an action
     QueueOverflowError,        # send() refused by a full bounded inbox
     InterpreterStoppedError,   # send(wait=True) receipt after the interpreter stopped
     SnapshotVersionError,      # Snapshot version newer than SNAPSHOT_VERSION
@@ -314,6 +317,68 @@ not
 
 ---
 
+### `InvalidConfigError` — `invoke.src` must be a service name
+
+**What it looks like:**
+
+```
+xstate_statemachine.exceptions.InvalidConfigError: State 'm.a' invoke 'kid': 'src' must be a service name (str), got dict. To invoke a nested machine, build it with create_machine(...) and register it under that name in MachineLogic(services={...}).
+```
+
+**Why it happens:** `src` *names* a service; the value is looked up in `MachineLogic.services` (or discovered). XState's JS API accepts an inline machine object there — this library does not, and before 0.9.0 the attempt died as a bare `TypeError: unhashable type: 'dict'` from deep inside the logic loader (#231).
+
+**How to fix it:**
+
+```python
+child = create_machine({"id": "kid", "initial": "k", "states": {"k": {}}})
+logic = MachineLogic(services={"kid": child})
+# and in the config: "invoke": {"id": "kid", "src": "kid"}
+```
+
+---
+
+### `InvalidConfigError` / WARNING — unknown config key
+
+**What it looks like:**
+
+```
+WARNING ⚠️ Machine 'm' has unknown config key(s) -- m.a: 'entyr' (did you mean 'entry'?), 'onn' (did you mean 'on'?). Unknown keys are ignored by the parser, so a misspelled key silently does nothing ...
+```
+
+**Why it happens:** the parser reads a fixed set of keys at each level (root, state, transition, invoke) and ignores the rest — a misspelled `entry` is an entry action that never runs, a misspelled `on` a transition that does not exist. Since 0.9.0 every unknown key at every level is reported with its path and the closest known key (#216, #220).
+
+**How to fix it:** correct the key. To make the build refuse instead of warn, pass `create_machine(..., strict_config=True)` or set `"strictConfig": true` in the config. Custom metadata belongs under `meta`, or under a key with the reserved `x-` prefix, which is never reported.
+
+---
+
+### `RunawayChainError`
+
+**What it looks like:**
+
+```
+receipt.error -> RunawayChainError: Machine 'spin' exceeded 6 chained self-generated events in one macrostep and discarded 7 of them. ...
+```
+
+**Why it happens:** an action `raise`s (or `send`s to its own machine) the event that triggers it again with no delay, an `invoke.onDone` ping-pongs between two states, or two `always` transitions target each other. `maxIterations` (default 1000) bounds that self-fed work *within a step*; the tail is discarded and the machine **stays running**. A *delayed* self-send (`raise` with `delay`, or `after`) is a timer and is never counted (#212).
+
+**How to observe it:** the trip is sticky — `interpreter.chain_trips` (monotonic, persisted), `interpreter.last_chain_error` (latched until `clear_chain_error()`, persisted), and `on_chain_budget_exceeded` once per trip. `last_error` / `receipt.error` carry it too, but `last_error` is a per-step read that the next clean event erases. If the cut left a state whose service will never complete, `on_invocation_stranded` fires and `has_dormant_invocations` is `True`.
+
+---
+
+### `ReentrantWaitError`
+
+**What it looks like:**
+
+```
+xstate_statemachine.exceptions.ReentrantWaitError: Action on 'm' awaited send('GO', wait=True) on its own interpreter. The receipt resolves only when the run loop processes the event, and the loop cannot advance until this action returns -- that is a deadlock. ...
+```
+
+**Why it happens:** `await i.send("GO", wait=True)` inside an action, on the action's own task. Before 0.9.0 this hung silently with `status == "running"`.
+
+**How to fix it:** send without `wait` (the event runs right after the current step), or hand the receipt out — `asyncio.ensure_future(i.send("GO", wait=True))` — and await it from another task. A helper task the action spawns may await the machine freely; the rule is about the action's *own* task (#225). A plain `def` action that calls `send(wait=True)` and drops the result gets a `RuntimeWarning` instead (#232). The `SyncInterpreter` raises the same error for a `send(wait=True)` from inside an action.
+
+---
+
 ### `WrongThreadError`
 
 **What it looks like:**
@@ -462,7 +527,7 @@ except InvalidEventPayloadError as e:
 **What it looks like:**
 
 ```
-xstate_statemachine.exceptions.SnapshotVersionError: Snapshot version 999 is newer than the supported version 1. Upgrade xstate-statemachine to restore it.
+xstate_statemachine.exceptions.SnapshotVersionError: Snapshot version 999 is newer than the supported version 3. Upgrade xstate-statemachine to restore it.
 ```
 
 **Why it happens:** The snapshot's `version` field (the payload layout version) is higher than this installed library's `SNAPSHOT_VERSION`. It was written by a newer release and cannot be read safely, so the restore is refused rather than half-applied.
