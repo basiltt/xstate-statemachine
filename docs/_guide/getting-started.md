@@ -27,7 +27,7 @@ poetry add xstate-statemachine
 
 ```bash
 xsm --version
-# Output: xsm 0.9.0
+# Output: xsm 0.9.1
 ```
 
 You can also verify the CLI tool is available:
@@ -368,7 +368,7 @@ also a `TypeError` — and `RootTargetError`), new plugin hooks
 `from_snapshot(clock=, restart_timers=, minimum_version=)`, sticky
 `chain_trips` / `last_chain_error`, `Interpreter(service_pool_size=)`,
 `MachineLogic(strict=True)` and redaction in `LoggingInspector`. See
-[What's New in 0.9.0](#whats-new-in-090) below.
+[What's New in 0.9.0](#whats-new-in-090) and [0.9.1](#whats-new-in-091) below.
 
 **From v0.5.x to v0.6.0:**
 
@@ -453,6 +453,30 @@ asyncio.run(main())
 > has actually been processed (see [Receipts and priority sends](../interpreters/#receipts-and-priority-sends-39)).
 
 > **Tip:** Use `SyncInterpreter` for scripts, CLI tools, and testing. Use `Interpreter` for web servers, event loops, and real-time applications.
+
+## 🆕 What's New in 0.9.1
+
+A patch release from the thirteenth re-verification round. Nothing changes for
+code that was correct on 0.9.0; two additions are worth knowing about:
+
+- **`drain_pending()` now returns *every* pending event** on the async engine —
+  the priority lane (fired timers, completions, `send_priority()`) as well as
+  the inbox. Before, the documented drain → persist → `stop()` recipe silently
+  lost the lane.
+- **`on_interpreter_start` fires on a restored interpreter** too; read
+  `interpreter.restored_from_snapshot` to tell resume from bring-up.
+- **Restored `last_chain_error` is a `RestoredChainError`** — a
+  `RunawayChainError` *and* a `RestoredError` — so an `isinstance` guard survives
+  a restart. Malformed `chain_trips` / `last_chain_error` in a blob are
+  `SnapshotCorruptError`.
+- **`interpreter.dropped_receipts`** and the `on_receipt_dropped` hook are the
+  gateable form of the dropped-receipt `RuntimeWarning`.
+- **`SyncInterpreter(max_queue_size=, overflow_policy=)`** are accepted for
+  parity and refused with a `ValueError` — the sync engine has no inbox to bound.
+- **`re_mint(event, **fields)`** patches a field of an engine-minted event and
+  keeps its provenance; `_replace` remains a one-way demotion.
+- **`benchmarks/production_characteristics.py --json`** for CI gates; releases
+  carry PEP 740 attestations (`pypi-attestations verify pypi …`).
 
 ## 🆕 What's New in 0.9.0
 

@@ -106,6 +106,8 @@ This machine has:
 | `context` | `object` | No | Initial mutable data. Accessible in actions, guards, and services. Deep-copied on each interpreter start. |
 | `states` | `object` | **Yes** | A map of state name → state configuration. At least one state is required. |
 | `strict` | `bool` | No | Default `false`. When `true`, sending an event type the machine has never declared anywhere raises `UnknownEventError`. See [Strict Mode](#strict-mode-unknown-events-and-payload-schemas). |
+| `strictConfig` | `bool` | No | Default `false`. When `true`, an unknown key anywhere in the config — root, state, transition or invoke — is refused with `InvalidConfigError` instead of logged at WARNING (#216, #220). Same as `create_machine(..., strict_config=True)`; the kwarg wins when both are given. |
+| `version` | `string` | No | Free-form version label for your own bookkeeping; carried on `MachineNode` and never interpreted by the engine (the snapshot layout version is a different thing). |
 | `strictTargets` | `bool` | No | Default `false`. When `true`, a plain (non-dotted) transition target must name a sibling or ancestor-scope state — it will no longer fall back to matching an unrelated state elsewhere in the tree that happens to share the same trailing id segment. |
 | `maxIterations` | `int` | No | Default `1000`. Runaway guard for work the machine generates *for itself* **within a step**: eventless (`always`) microsteps while settling, and unbroken chains of zero-delay self-`raise` / self-`send()` / `done.invoke` events. A **delayed** self-send (`raise` with `delay`) is a *timer* like `after` (#212): arming it ends the step's chain, its firing is a clock event, and a self-paced heartbeat or poller of any period runs indefinitely. Counted per **chain** — it resets whenever a step generates nothing — so a batch of any size of independent user events is always processed in full on both engines; only a genuinely self-feeding loop trips it, and only the generated tail is dropped. A trip is **observable** (0.9.0): the triggering `send(wait=True)` receipt carries a `RunawayChainError`, `interp.last_transition_ok` is `False` / `interp.last_error` is set, and `on_event_dropped` fires with `reason="chain_budget"` for each discarded event. Engine completions (`done.invoke`, `error.platform`) are never discarded. |
 | `spawnBlockingTimeout` | `number` | No | Milliseconds a `spawn_blocking_<key>` action waits for the child to reach a final state before giving up, on both engines. Default `30000` (30 s) — never unbounded, so a child that never finishes cannot wedge the parent mid-transition. |
@@ -260,8 +262,10 @@ Add a `target`, `guard`, and/or `actions`:
 | Property | Type | Description |
 |----------|------|-------------|
 | `target` | `string` | Destination state name. |
-| `guard` | `string` | Guard function name — transition only fires if this returns `true`. |
+| `guard` | `string` | Guard function name — transition only fires if this returns `true`. `cond` is accepted as an alias (XState v4 spelling); if both are present `guard` wins. |
 | `actions` | `string \| string[]` | Action(s) to execute during the transition. |
+| `reenter` | `bool` | Default `false`. When `true` a self-transition exits and re-enters the state (running `exit` / `entry` and restarting `after` timers and `invoke`s). `internal` is accepted as the inverted XState v4 alias: `"internal": false` means `reenter: true`. |
+| `meta` / `description` / `tags` | `object` / `string` / `string[]` | Metadata on the transition itself; never behavioural. |
 
 ### Format 3: Array Form (Multiple Transitions)
 

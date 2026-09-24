@@ -737,6 +737,7 @@ ensuring clean cancellation when states are exited.
 | `.id` | `str` | The interpreter's identifier (inherited from machine ID). |
 | `.parent` | `Optional[BaseInterpreter]` | Reference to parent interpreter (for spawned child actors), otherwise `None`. |
 | `.system` | `ActorSystem` | The actor system this interpreter belongs to; exposes `.get(id)` and `.get_all()` for looking up sibling/child actors registered under a `systemId`. |
+| `.task_manager` | `TaskManager` | **Async only.** The registry of `asyncio.Task`s the interpreter owns, grouped by owner (a state id for its services and `after` timers), so exiting a state cancels exactly its tasks and `stop()` leaves nothing orphaned. Read-only for callers; useful in tests to assert nothing is left running. |
 | `.plugins` | `List[PluginBase]` | The list of plugin instances attached to this interpreter. Assigning a new list replaces the whole set (the form `.use()` builds on). |
 | `.last_transition_ok` | `bool` | Whether the most recently processed transition's actions all ran to completion, given `actionErrorPolicy`. Also `False` after a settle-budget trip (#112) or a `sendTo` with no live target (#133). |
 | `.last_error` | `Optional[BaseException]` | The exception behind the most recent `last_transition_ok=False` — an action's exception, a `RunawayChainError`, an `ActorSpawningError` for an unresolved `sendTo` — or `None`. A **per-step read, not a latch**: the next cleanly handled event clears it (#222). For "has this machine ever cut work?" use `chain_trips` / `last_chain_error`. |
@@ -1210,6 +1211,33 @@ from xstate_statemachine import Event, is_system_event, system_event
 is_system_event(Event("done.review"))                            # False
 is_system_event(system_event("___xstate_statemachine_init___"))  # True
 ```
+
+#### `re_mint(original, **fields)` **[0.9.1]**
+
+```python
+def re_mint(original: DoneEvent | ErrorEvent | AfterEvent, **fields: Any) -> DoneEvent | ErrorEvent | AfterEvent: ...
+```
+
+The sanctioned way to change a field of an **engine-minted** event and keep its provenance (#248). `_replace()` on an engine event deliberately returns the public class (#235) — a caller-chosen variant is user traffic — which left no route for the legitimate case: a plugin that redacts `data` before re-emitting a completion. `re_mint` is safe because it is gated on the *input*: `original` must already satisfy `is_system_event`, so provenance can only be carried forward from an event the engine produced, never created. A hand-built event, a plain `Event`, or a `_replace()`-demoted value raises `TypeError`. The original is untouched.
+
+```python
+from xstate_statemachine import re_mint, is_system_event
+
+def on_event_received(self, interp, event):
+    if event.type.startswith("done.invoke."):
+        safe = re_mint(event, data={"redacted": True})
+        assert is_system_event(safe)
+```
+
+#### `event_kind`, `persist_event`, `restore_event` (module `xstate_statemachine.events`)
+
+The record format a snapshot uses for one pending / deferred / scheduled event. Importable for tooling that reads or rewrites journals; the engine's own `get_persisted_snapshot()` / `from_snapshot()` go through them.
+
+| Function | Signature | Description |
+|:--|:--|:--|
+| `event_kind(event)` | `(Any) -> str` | The discriminator persisted with an event: `"event"` (user traffic), `"system"` (an engine-minted plain `Event`), `"done"` / `"error"` / `"after"` (the NamedTuple engine events). |
+| `persist_event(event, *, lane=None)` | `(Any, Optional[str]) -> Dict[str, Any]` | JSON-safe record: `kind`, `type`, `payload` / `data` / `error` / `src` / `scheduled_for` / `fired_at` as the kind requires, `"engine": true` when the event is engine-minted (#195), and `lane` (`"priority"` or absent, #214). Raises `SnapshotSerializationError` for non-JSON-native data. |
+| `restore_event(record)` | `(Dict[str, Any]) -> Any` | Inverse of `persist_event`. Provenance comes from the record's `engine` flag (v3) — a hand-written record without it restores as user traffic; a v2 `done` / `error` / `after` record is trusted because only the engine could have written one (#214). |
 
 ---
 
@@ -1768,7 +1796,12 @@ from xstate_statemachine.persistence import SNAPSHOT_VERSION, structure_hash
 
 | Member | Description |
 |--------|-------------|
-| `SNAPSHOT_VERSION` | `int` constant — the current snapshot payload layout version. Bumped only when the layout changes, never on an ordinary package release. |
+| `check_version(snapshot)` | `(Dict) -> int` — returns the blob's declared layout version; `SnapshotVersionError` if newer than `SNAPSHOT_VERSION`, `SnapshotCorruptError` if not an integer. |
+| `check_minimum_version(version, minimum)` | `(int, int) -> None` — `SnapshotVersionError` if the blob is older than the caller's floor (#205); the `minimum_version=` half of `from_snapshot`. |
+| `check_identity(snapshot, machine, *, verify_hash, version=None, expected_hash=None)` | Refuses a blob from a different machine id, or (when `verify_hash`) a different `machine_hash`; `expected_hash=` pins the fingerprint the caller holds instead of trusting the blob's own (#185, #205). |
+| `check_shape(snapshot, *, version=0)` | `(Dict, int) -> None` — the structural validator: required keys, `status` in the five known values, `context` an object, `state_ids` / `configuration` lists of strings that agree, event-record lists well-formed, `chain_trips` a non-negative integer and `last_chain_error` a string or null (#241). Raises `SnapshotCorruptError`. |
+| `upcast(snapshot, version)` | `(Dict, int) -> Dict` — brings a v0 / v1 / v2 payload up to the current layout in place (pure layout migrations: v2 engine records gain `engine: true`, absent v3 keys take their defaults). |
+| `SNAPSHOT_VERSION` | `int` constant — the current snapshot payload layout version (**3**). Bumped only when the layout changes, never on an ordinary package release. |
 | `structure_hash(machine)` | `(MachineNode) -> str` — computes the 16-hex-char structural fingerprint backing `MachineNode.structure_hash`. |
 
 ---
@@ -2075,6 +2108,15 @@ utilities. Created by `create_machine()`.
 |-----------|------|-------------|
 | `.logic` | `MachineLogic` | The bound logic instance. |
 | `.initial_context` | `Dict` | The initial context (deep-copied for each interpreter). |
+| `.strict` / `.strict_targets` | `bool` | The machine's `strict` and `strictTargets` config keys. |
+| `.event_schemas` | `Dict[str, Any]` | The validators passed to `create_machine(event_schemas=)`, by event type. |
+| `.max_iterations` | `int` | The `maxIterations` chain / settle budget (default 1000). |
+| `.action_error_policy` / `.guard_error_policy` / `.on_unhandled` | `str` | The three per-machine policies, validated at build time. |
+| `.spawn_blocking_timeout_ms` | `Optional[float]` | The `spawnBlockingTimeout` key. |
+| `.known_events` | `FrozenSet[str]` | Every event type the machine declares anywhere — what `strict` checks against. |
+| `.structure_hash` | `str` | 16-hex-char fingerprint of the machine's structure; see `MachineNode.structure_hash` above. |
+| `.context_is_immutable` | `bool` | `True` when no state or transition declares any action, so nothing the engine does can mutate `context`; a `Receipt` then skips the deep-copy it needs to decide `changed`. Lazily computed, cached. |
+| `.state_ids_by_bare_name(bare)` | `(str) -> List[str]` | Every state id whose last segment is `bare` — the lookup behind the "did you mean" hint when a relative target does not resolve (#132). |
 
 ### `TransitionDefinition`
 
@@ -2125,6 +2167,33 @@ The library defines several callable type aliases for documentation purposes:
 
 ---
 
+## Module Map
+
+Everything above is importable from the package root (`from xstate_statemachine import …`; `__all__` has 83 names). The modules exist for readers of the source and for the few tooling imports that are deliberately not re-exported:
+
+| Module | Owns | Import directly for |
+|:--|:--|:--|
+| `factory` | `create_machine` | — |
+| `models` | `MachineNode`, `StateNode`, `TransitionDefinition`, `InvokeDefinition`, `ActionDefinition`, `GuardDefinition` | — |
+| `machine_logic` | `MachineLogic`, the `@action` / `@guard` / `@service` decorators | — |
+| `logic_loader` | `LogicLoader` — auto-discovery by name, snake↔camel matching | — |
+| `interpreter` / `sync_interpreter` / `base_interpreter` | The two engines and their shared base | — |
+| `events` | `Event`, `DoneEvent`, `ErrorEvent`, `AfterEvent`, `Receipt`, provenance (`is_system_event`, `system_event`, `re_mint`), `ENGINE_EVENT_SHAPES` | `event_kind` / `persist_event` / `restore_event` for journal tooling |
+| `persistence` | The snapshot contract | `SNAPSHOT_VERSION`, `structure_hash`, `check_*`, `upcast` |
+| `validation` | Build-time checks | `KNOWN_ROOT_KEYS`, `KNOWN_STATE_KEYS`, `KNOWN_TRANSITION_KEYS`, `KNOWN_INVOKE_KEYS` — the per-level known-key sets (#220) |
+| `actions` | The builtin action creators, `BUILTIN_ACTION_ALIASES`, `BUILTIN_ACTION_PARAM_SPEC` | — |
+| `clock` | `Clock`, `RealClock`, `SimulatedClock` | — |
+| `plugins` | `PluginBase`, `LoggingInspector`, `DEFAULT_REDACT_KEYS`, `redact()` | — |
+| `helpers` | The pure API (`PureSnapshot`, `initial_transition`, `pure_transition`, `get_*_snapshot`) and the waiting helpers | — |
+| `pythonic` | `State`, `StateMachine`, `MachineBuilder`, `Transition`, `build_machine` | — |
+| `resolver` | Transition-target resolution (`#id`, `.child`, sibling fallback + its `DeprecationWarning`) | — |
+| `task_manager` | `TaskManager` (async engine's owned-task registry) | — |
+| `exceptions` | Every exception class | — |
+| `logger` | The package logger, `logging.getLogger("xstate_statemachine")` | — |
+| `cli` | The `xsm` command | — |
+
+---
+
 ## Built-in Action Creators
 
 Added in v0.6.0. Each returns a plain action-definition dict, so they can be
@@ -2147,6 +2216,27 @@ used directly in a config or written as raw JSON. See the
 | `escalate` | `escalate(error) -> dict` |
 | `forward_to` | `forward_to(target: str) -> dict` |
 | `log` | `log(expr='', *, label=None) -> dict` |
+
+#### Canonical action types and accepted spellings
+
+Every creator produces `{"type": "<canonical>", "params": {...}}`. In raw JSON the canonical `xstate.*` name, the XState camelCase name and the Python snake_case name are all accepted (`BUILTIN_ACTION_ALIASES`), and the parameters **must** be nested under `params` — a missing required key is an `InvalidConfigError` at build time naming the action and the keys (`BUILTIN_ACTION_PARAM_SPEC`).
+
+| Canonical type | Also accepted as | Required params | Optional params |
+|:--|:--|:--|:--|
+| `xstate.raise` | `raise`, `raise_` | `event` | `delay`, `id` |
+| `xstate.sendTo` | `sendTo`, `send_to` | `event`, `to` | `delay`, `id` |
+| `xstate.sendParent` | `sendParent`, `send_parent` | `event` | `delay`, `id` |
+| `xstate.forwardTo` | `forwardTo`, `forward_to` | `to` | — |
+| `xstate.escalate` | `escalate` | `error` | — |
+| `xstate.cancel` | `cancel` | `sendId` | — |
+| `xstate.stopChild` | `stopChild`, `stop_child`, `stop` | `id` | — |
+| `xstate.spawnChild` | `spawnChild` | `src` | `id`, `systemId`, `input` |
+| `xstate.emit` | `emit` | `event` | — |
+| `xstate.log` | `log` | — | `expr`, `label` |
+| `xstate.assign` | `assign` | *(assignment is the params object itself)* | |
+| `xstate.pure` / `xstate.choose` / `xstate.enqueueActions` | `pure` / `choose` / `enqueueActions`, `enqueue_actions` | *(callable-only: not expressible in JSON)* | |
+
+A `raise` / `sendTo` / `sendParent` with a `delay` is a **timer** with the standing of `after`: it is never counted by `maxIterations`, it is persisted in `scheduled_sends` with its remaining delay, and `cancel(sendId)` disarms it (#212, #213, #218).
 
 ### `ActionEnqueuer`
 
@@ -2226,5 +2316,5 @@ Both waiters raise on timeout rather than returning silently.
 
 ```python
 from xstate_statemachine import __version__
-print(__version__)  # "0.9.0"
+print(__version__)  # "0.9.1"
 ```
