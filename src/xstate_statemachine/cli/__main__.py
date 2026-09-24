@@ -1092,6 +1092,19 @@ def main() -> None:
         run_diagram(args.json_file, fmt=args.format, output=args.output)
         return
 
+    if args.subcommand in {"simulate", "sim"}:
+        from .commands.simulate import run_simulate
+
+        run_simulate(
+            args.json_file,
+            events=args.events,
+            clock=args.clock,
+            script=args.script,
+            as_json=bool(getattr(args, "json", False)),
+            guards_false=args.guards_false,
+        )
+        return
+
     if args.subcommand == "docs":
         from .commands.docs import run_docs
 

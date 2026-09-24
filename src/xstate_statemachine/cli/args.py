@@ -396,6 +396,36 @@ examples:
         help="Write to this file (or directory) instead of stdout.",
     )
 
+    # 🎮 simulate subcommand
+    sim_parser = subparsers.add_parser(
+        "simulate",
+        aliases=["sim"],
+        parents=[presentation],
+        help="Run a machine live: pick events, advance the clock, inspect context.",
+        description="Interactive on a terminal; scripted with --events / --script / --json for CI.",
+    )
+    sim_parser.add_argument("json_file", help="The machine JSON file.")
+    sim_parser.add_argument(
+        "-e",
+        "--events",
+        help="Comma-separated events to send in order; '+500' advances the clock 500 ms.",
+    )
+    sim_parser.add_argument(
+        "--clock", help="Advance the clock by this many ms at the end."
+    )
+    sim_parser.add_argument(
+        "--script",
+        help='JSON file: a list of {"send"}, {"clock"}, {"guard","value"}, {"undo"} commands.',
+    )
+    sim_parser.add_argument(
+        "--guards-false", help="Comma-separated guard names that return False."
+    )
+    sim_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the final state and history as JSON.",
+    )
+
     # 📄 docs subcommand
     docs_parser = subparsers.add_parser(
         "docs",
