@@ -243,9 +243,29 @@ examples:
         help="Show program's version number and exit.",
     )
 
-    # 📋 Sub-command setup
+    # 🎨 Global presentation flags (#cli-ui). Every command honours them;
+    #    the same switches are also read from NO_COLOR / XSM_NO_COLOR /
+    #    XSM_NO_ANIM, and a non-TTY stdout implies --plain.
+    parser.add_argument(
+        "--plain",
+        action="store_true",
+        help="Plain text: no colour, no box glyphs, no animation (implied when piped).",
+    )
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Keep layout and animation but emit no colour escapes.",
+    )
+    parser.add_argument(
+        "--no-anim",
+        action="store_true",
+        help="Disable spinners and in-place redraws.",
+    )
+
+    # 📋 Sub-command setup. `required=False` so a bare `xsm` on a TTY opens
+    #    the interactive launcher (and prints help when piped).
     subparsers = parser.add_subparsers(
-        dest="subcommand", required=True, help="Available commands"
+        dest="subcommand", required=False, help="Available commands"
     )
     gen_parser = subparsers.add_parser(
         "generate-template",
@@ -260,11 +280,14 @@ examples:
     _add_simulation_option_args(gen_parser)
 
     # 📋 list-templates subcommand
-    subparsers.add_parser(
+    lt_parser = subparsers.add_parser(
         "list-templates",
         aliases=["lt"],
         help="List all available code generation templates.",
         description="Shows available templates with descriptions.",
+    )
+    lt_parser.add_argument(
+        "--json", action="store_true", help="Emit the catalogue as JSON."
     )
 
     # ✅ validate subcommand
@@ -279,12 +302,23 @@ examples:
         nargs="+",
         help="One or more JSON config files to validate.",
     )
+    val_parser.add_argument(
+        "--json", action="store_true", help="Emit findings as JSON."
+    )
+    val_parser.add_argument(
+        "--lenient",
+        action="store_true",
+        help="Report unknown config keys as warnings instead of errors.",
+    )
 
     # ℹ️ info subcommand
-    subparsers.add_parser(
+    info_parser = subparsers.add_parser(
         "info",
         help="Show library version, Python version, and feature summary.",
         description="Displays information about the xstate-statemachine installation.",
+    )
+    info_parser.add_argument(
+        "--json", action="store_true", help="Emit as JSON."
     )
 
     return parser

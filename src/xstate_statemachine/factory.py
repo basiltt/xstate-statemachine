@@ -63,6 +63,7 @@ def create_machine(
     logic_providers: Optional[List[Any]] = None,
     strict_targets: bool = True,
     event_schemas: Optional[Dict[str, Any]] = None,
+    strict_config: Optional[bool] = None,
 ) -> MachineNode[Dict[str, Any]]:  # noqa: E704
     ...
 

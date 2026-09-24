@@ -981,211 +981,56 @@ def _verify_or_refuse(
         )
 
 
-def run_list_templates() -> None:
-    """Lists all available code generation templates with descriptions."""
-    templates = [
-        (
-            "class-json",
-            "Class + JSON",
-            "OOP logic class with MachineLogic, bound to a JSON config loaded at runtime.",
-        ),
-        (
-            "function-json",
-            "Functions + JSON",
-            "Module-level functions with LogicLoader auto-discovery, JSON config at runtime.",
-        ),
-        (
-            "pythonic-class",
-            "Class-Based",
-            "StateMachine subclass with @action, @guard, @service decorators. Pure Python.",
-        ),
-        (
-            "pythonic-builder",
-            "Builder Pattern",
-            "Fluent MachineBuilder API for dynamic, programmatic machine construction.",
-        ),
-        (
-            "pythonic-functional",
-            "Functional",
-            "Simple build_machine() call with explicit state and transition definitions.",
-        ),
-    ]
-    _safe_print("\nAvailable code generation templates:\n")
-    _safe_print(f"  {'Template ID':<24} {'Style':<20} Description")
-    _safe_print(f"  {'-' * 23}  {'-' * 19} {'-' * 55}")
-    for tid, style, desc in templates:
-        _safe_print(f"  {tid:<24} {style:<20} {desc}")
-
-    # 📋 Support matrix. Users previously had no way to know which
-    #    templates re-express the machine as Python (and are therefore
-    #    structurally verified) versus which load the JSON at runtime.
-    _safe_print("\nFeature support:\n")
-    _safe_print(
-        f"  {'Template ID':<24} {'Machine built':<15} "
-        f"{'Verified':<10} Config needed at runtime"
-    )
-    _safe_print(f"  {'-' * 23}  {'-' * 14} {'-' * 9}  {'-' * 24}")
-    for tid, _, _ in templates:
-        inline = builds_machine_inline(tid)
-        _safe_print(
-            f"  {tid:<24} "
-            f"{'in Python' if inline else 'from JSON':<15} "
-            f"{'structural' if inline else 'syntax':<10} "
-            f"{'no' if inline else 'yes -- ship the .json'}"
-        )
-    _safe_print(
-        "\n  All templates support nesting, parallel regions, history, "
-        "guards,\n  timers (numeric and named delays), invoke, tags and "
-        "meta.\n"
-        "  'Verified' is what the generator proves before writing: "
-        "templates that\n  build the machine in Python are executed and "
-        "compared against the source."
-    )
-
-    _safe_print(
-        "\nUsage: xsm generate-template <file.json> --template <template-id>\n"
-    )
-
-
-def run_validate(args: argparse.Namespace) -> None:
-    """Validates one or more XState JSON config files."""
-    errors = 0
-    for jp in args.json_files:
-        path = Path(jp)
-        if not path.exists():
-            _safe_print(f"  x {jp} -- file not found")
-            errors += 1
-            continue
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                conf = json.load(f)
-        except json.JSONDecodeError as e:
-            _safe_print(f"  x {jp} -- invalid JSON: {e}")
-            errors += 1
-            continue
-
-        # Validate structure
-        issues = []
-        actions: Set[str] = set()
-        guards: Set[str] = set()
-        services: Set[str] = set()
-        if not isinstance(conf, dict):
-            issues.append("root must be a JSON object")
-        else:
-            if "id" not in conf:
-                issues.append("missing 'id' field")
-            if "initial" not in conf and conf.get("type") != "parallel":
-                issues.append("missing 'initial' field")
-            if "states" not in conf:
-                issues.append("missing 'states' field")
-            elif not isinstance(conf.get("states"), dict):
-                issues.append("'states' must be an object")
-            else:
-                if (
-                    conf.get("initial")
-                    and conf["initial"] not in conf["states"]
-                ):
-                    issues.append(
-                        f"initial state '{conf['initial']}' not found in states"
-                    )
-
-            # Extract logic names for summary
-            try:
-                actions, guards, services = extract_logic_names(conf)
-            except Exception:
-                pass
-
-        if issues:
-            _safe_print(f"  x {jp} -- {len(issues)} issue(s):")
-            for issue in issues:
-                _safe_print(f"      - {issue}")
-            errors += 1
-        else:
-            state_count = len(conf.get("states", {}))
-            machine_id = conf.get("id", path.stem)
-            _safe_print(f"  ok {jp}")
-            _safe_print(f"      Machine: {machine_id}")
-            _safe_print(f"      States:  {state_count}")
-            if actions:
-                _safe_print(f"      Actions: {', '.join(sorted(actions))}")
-            if guards:
-                _safe_print(f"      Guards:  {', '.join(sorted(guards))}")
-            if services:
-                _safe_print(f"      Services: {', '.join(sorted(services))}")
-
-    if errors:
-        _safe_print(f"\n{errors} file(s) had errors.")
-        raise SystemExit(1)
-    else:
-        _safe_print(f"\nAll {len(args.json_files)} file(s) are valid.")
-
-
-def run_info() -> None:
-    """Displays library information and environment details."""
-    import platform
-    from .. import __version__ as pkg_ver
-
-    _safe_print("\n  XState-StateMachine CLI")
-    _safe_print("  ----------------------------------")
-    _safe_print(f"  Version:      {pkg_ver}")
-    _safe_print(f"  Python:       {platform.python_version()}")
-    _safe_print(f"  Platform:     {platform.system()} {platform.machine()}")
-    _safe_print(f"  Install path: {Path(__file__).resolve().parent.parent}")
-    _safe_print("")
-    _safe_print("  Features:")
-    _safe_print("    * Async + Sync interpreters")
-    _safe_print("    * XState JSON compatibility")
-    _safe_print("    * Pythonic API (class, builder, functional)")
-    _safe_print("    * Hierarchical & parallel states")
-    _safe_print("    * Guards, actions, services, delayed transitions")
-    _safe_print("    * Actor model (spawn child machines)")
-    _safe_print("    * Plugin system & LoggingInspector")
-    _safe_print("    * Snapshot save/restore")
-    _safe_print("    * Diagram export (Mermaid, PlantUML)")
-    _safe_print("    * CLI code generator (5 templates)")
-    _safe_print("    * Zero external dependencies")
-    _safe_print("")
-    _safe_print(
-        "  Documentation: https://basiltt.github.io/xstate-statemachine/"
-    )
-    _safe_print(
-        "  PyPI:          https://pypi.org/project/xstate-statemachine/"
-    )
-    _safe_print(
-        "  GitHub:        https://github.com/basiltt/xstate-statemachine"
-    )
-    _safe_print("")
-
-
 def main() -> None:
-    """Parses CLI arguments and orchestrates the code generation workflow."""
+    """Parses CLI arguments and dispatches to the subcommand modules."""
     # 🪵 Configure console logging only when run as a CLI.
     _configure_cli_logging()
 
     parser = get_parser()
     args = parser.parse_args()
-    validate_args(
-        parser
-    )  # Note: Assuming this validates args based on the parser state.
+    validate_args(parser)
+
+    # 🎨 One console for the whole run, built from the global flags.
+    from .commands import configure_console
+
+    console = configure_console(args)
 
     if args.subcommand in {"generate-template", "gt"}:
         run_generation_workflow(args, parser)
         return
 
     if args.subcommand in {"list-templates", "lt"}:
-        run_list_templates()
+        from .commands.templates import run_list_templates
+
+        run_list_templates(as_json=bool(getattr(args, "json", False)))
         return
 
     if args.subcommand in {"validate", "val"}:
-        run_validate(args)
+        from .commands.validate import run_validate
+
+        run_validate(
+            args.json_files,
+            as_json=bool(getattr(args, "json", False)),
+            lenient=bool(getattr(args, "lenient", False)),
+        )
         return
 
     if args.subcommand == "info":
-        run_info()
+        from .commands.info import run_info
+
+        run_info(as_json=bool(getattr(args, "json", False)))
         return
 
-    # 🆘 Show help if no valid subcommand is given
-    parser.print_help()
+    # 🧭 Bare `xsm`: the interactive launcher on a terminal, help otherwise.
+    if console.interactive:
+        from .commands.launcher import run_launcher
+
+        run_launcher(parser)
+        return
+    parser.error(
+        "the following arguments are required: subcommand "
+        "(run `xsm` in a terminal for the interactive launcher)"
+    )
 
 
 # -----------------------------------------------------------------------------
