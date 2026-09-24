@@ -131,9 +131,13 @@ class TestGenerateWizard(_Launcher):
         # Generate (1) → recent file → template pythonic-class (3) →
         # companions: space on tests, enter → options: keep defaults, enter →
         # output dir typed → confirm yes → back at menu → quit
+        # The default shown by the prompt is the RESOLVED parent of the
+        # recent entry (remember() resolves paths; on the Windows runner
+        # `RUNNER~1` becomes `runneradmin`), so clear exactly that.
+        default = str(pathlib.Path(launcher.load_recent()[0]).parent)
         keys = (
             "1 enter enter 3 enter space enter enter "
-            + " ".join(_spell(str(out_dir), clear=len(str(src.parent))))
+            + " ".join(_spell(str(out_dir), clear=len(default)))
             + " enter y q"
         )
         launcher.run_launcher(self.parser, source=K.scripted(keys))
@@ -147,9 +151,10 @@ class TestGenerateWizard(_Launcher):
     def test_cancel_at_confirm_writes_nothing(self) -> None:
         launcher.remember([str(PAYMENT)])
         out_dir = pathlib.Path(self.tmp.name) / "out2"
+        default = str(pathlib.Path(launcher.load_recent()[0]).parent)
         keys = (
             "1 enter enter enter enter enter "
-            + " ".join(_spell(str(out_dir), clear=len(str(PAYMENT.parent))))
+            + " ".join(_spell(str(out_dir), clear=len(default)))
             + " enter n q"
         )
         launcher.run_launcher(self.parser, source=K.scripted(keys))
