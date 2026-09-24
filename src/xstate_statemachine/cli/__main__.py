@@ -1076,6 +1076,28 @@ def main() -> None:
         )
         return
 
+    if args.subcommand in {"inspect", "ins"}:
+        from .commands.inspect import run_inspect
+
+        run_inspect(
+            args.json_file,
+            as_json=bool(getattr(args, "json", False)),
+            no_events=bool(getattr(args, "no_events", False)),
+        )
+        return
+
+    if args.subcommand in {"diagram", "dia"}:
+        from .commands.diagram import run_diagram
+
+        run_diagram(args.json_file, fmt=args.format, output=args.output)
+        return
+
+    if args.subcommand == "docs":
+        from .commands.docs import run_docs
+
+        run_docs(args.json_files, output=args.output)
+        return
+
     if args.subcommand == "info":
         from .commands.info import run_info
 

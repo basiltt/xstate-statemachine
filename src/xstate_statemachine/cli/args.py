@@ -245,10 +245,15 @@ def get_parser() -> argparse.ArgumentParser:
         allow_abbrev=False,  # Disable partial matching of long options
         epilog="""
 examples:
+  xsm                                   interactive launcher (on a terminal)
   xsm generate-template my_machine.json
-  xsm gt machine.json -t pythonic-class -o ./generated
-  xsm list-templates
+  xsm gt machine.json -t pythonic-class --with-tests --with-types -o ./generated
+  xsm inspect machine.json
+  xsm simulate machine.json
+  xsm diagram machine.json -f mermaid -o docs/
+  xsm docs machine.json -o docs/
   xsm validate machine.json
+  xsm list-templates
   xsm info
             """,
     )
@@ -351,6 +356,60 @@ examples:
     )
     info_parser.add_argument(
         "--json", action="store_true", help="Emit as JSON."
+    )
+
+    # 🔍 inspect subcommand
+    ins_parser = subparsers.add_parser(
+        "inspect",
+        aliases=["ins"],
+        parents=[presentation],
+        help="Show a machine's state tree, transitions, logic and policies.",
+        description="Builds the machine with the real library and renders everything about it.",
+    )
+    ins_parser.add_argument("json_file", help="The machine JSON file.")
+    ins_parser.add_argument(
+        "--json", action="store_true", help="Emit the facts as JSON."
+    )
+    ins_parser.add_argument(
+        "--no-events", action="store_true", help="Skip the transitions table."
+    )
+
+    # 🗺️ diagram subcommand
+    dia_parser = subparsers.add_parser(
+        "diagram",
+        aliases=["dia"],
+        parents=[presentation],
+        help="Export a Mermaid, PlantUML or ASCII diagram.",
+        description="Renders the machine as a diagram, to stdout or a file.",
+    )
+    dia_parser.add_argument("json_file", help="The machine JSON file.")
+    dia_parser.add_argument(
+        "-f",
+        "--format",
+        choices=["mermaid", "plantuml", "ascii"],
+        default="mermaid",
+        help="Diagram syntax. Default: mermaid.",
+    )
+    dia_parser.add_argument(
+        "-o",
+        "--output",
+        help="Write to this file (or directory) instead of stdout.",
+    )
+
+    # 📄 docs subcommand
+    docs_parser = subparsers.add_parser(
+        "docs",
+        parents=[presentation],
+        help="Generate a Markdown reference page per machine.",
+        description="Summary, Mermaid diagram, state and transition tables, logic, policies.",
+    )
+    docs_parser.add_argument(
+        "json_files", nargs="+", help="Machine JSON files."
+    )
+    docs_parser.add_argument(
+        "-o",
+        "--output",
+        help="Directory for <machine-id>.md files (default: stdout).",
     )
 
     return parser

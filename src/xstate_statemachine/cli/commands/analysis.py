@@ -198,8 +198,17 @@ def analyse(path: Path, *, strict_config: bool = True) -> Facts:
         )
 
     cap = _CaptureWarnings()
-    lib_logger = logging.getLogger("xstate_statemachine")
+    # 🧭 Resolve the package logger from the package itself (not a literal
+    #    name) so an import as `src.xstate_statemachine` -- the test-suite
+    #    path -- is captured just like the installed `xstate_statemachine`.
+    lib_logger = logging.getLogger(__name__.rsplit(".cli", 1)[0])
     lib_logger.addHandler(cap)
+    # 🧭 The library's unknown-key report is a WARNING log record. A host
+    #    (or a test) may have `logging.disable()`d everything, which would
+    #    silently drop the one finding this command exists to surface;
+    #    lift the gate for the duration of the build and put it back.
+    disabled_before = logging.root.manager.disable
+    logging.disable(logging.NOTSET)
     try:
         facts.machine = create_machine(
             json.loads(json.dumps(cfg)),
@@ -211,6 +220,7 @@ def analyse(path: Path, *, strict_config: bool = True) -> Facts:
         return facts
     finally:
         lib_logger.removeHandler(cap)
+        logging.disable(disabled_before)
     for rec in cap.records:
         facts.findings.append(
             Finding("warning", rec.getMessage().lstrip("⚠️ ").strip())
@@ -242,5 +252,18 @@ def event_table(machine: MachineNode) -> List[Tuple[str, str, str, str, str]]:
             )
             guard = getattr(t.guard_def, "type", "") if t.guard_def else ""
             acts = ", ".join(a.type for a in t.actions)
-            rows.append((label or "always", node.id, targets, guard, acts))
+            rows.append((_short_label(label), node.id, targets, guard, acts))
     return rows
+
+
+def _short_label(label: str) -> str:
+    """`on 'GO'` -> `GO`; `after 500` / `onDone` / `invoke 'x' onDone` kept."""
+    if label.startswith("on '") and label.endswith("'"):
+        return label[4:-1]
+    return label or "always"
+
+
+def short_id(state_id: str, machine_id: str) -> str:
+    """Drop the machine-id prefix from a state id for compact tables."""
+    prefix = machine_id + "."
+    return state_id[len(prefix) :] if state_id.startswith(prefix) else state_id
