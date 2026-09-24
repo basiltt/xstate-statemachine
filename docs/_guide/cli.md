@@ -699,7 +699,7 @@ xsm info --json
 The page opens with the banner and an environment panel:
 
 ```
-  Version:      0.10.1
+  Version:      0.10.2
   Python:       3.12.0
   Platform:     Windows-11
   Install path: C:\...\xstate_statemachine
@@ -741,6 +741,8 @@ xsm update --json
 The installer runs with your terminal attached so you see its own output. Afterwards `update` asks a *fresh* interpreter for `--version` to confirm the result (the running process still has the old module loaded). On Windows, if the [`setup` shim](#windows-an-application-control-policy-has-blocked-this-file) was in place, `update` re-applies it automatically — pip's upgrade recreates the blocked `xsm.exe`, and without this the machine that needed `setup` would break right after updating.
 
 Off a terminal without `--yes`, `update` prints the command it would run and exits 1 rather than changing anything.
+
+On Windows, when you run `xsm update` through pip's `xsm.exe` launcher, that launcher is the parent of the update process and stays alive until it finishes — so pip cannot delete it and would fail with `WinError 32: The process cannot access the file because it is being used by another process`. `update` detects this and hands the job to a detached `python -m xstate_statemachine update --yes` process (it prints `handing over to …`), which runs pip after the launcher has exited. You see pip's output and the final `✓ updated …` line as usual.
 
 ## ❓ Version and Help
 
@@ -853,7 +855,7 @@ Every generated file starts with a provenance header:
 
 Source:    order.json
 Template:  pythonic-builder
-Generator: xstate-statemachine 0.10.1
+Generator: xstate-statemachine 0.10.2
 
 Regenerate with::
 

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.2] - 2026-09-24
+
+### Fixed
+
+- **`xsm update` failed on Windows when run through `xsm.exe`** with
+  `WinError 32: The process cannot access the file because it is being
+  used by another process: '...\Scripts\xsm.exe'`, leaving the package
+  uninstalled but the launcher present. pip's launcher is the parent of
+  the update process and stays alive until it exits, so pip cannot delete
+  it (pip has the same constraint with itself — hence
+  `python -m pip install --upgrade pip`). `update` now detects that it was
+  started via the launcher (`sys.argv[0]` is `Scripts/xsm[.exe]` next to
+  this interpreter) and hands over to a detached
+  `python -m xstate_statemachine update --yes`, which runs pip after the
+  launcher has exited; the header is printed once and the child prints
+  pip's output and the result. Verified end to end from PowerShell, `cmd`
+  and `python -m` in a fresh venv upgrading 0.10.0 → 0.10.1.
+
 ## [0.10.1] - 2026-09-24
 
 ### Fixed
@@ -2510,7 +2528,8 @@ existing.
 <!-- Without these definitions they render as literal bracketed text.  -->
 <!-- ---------------------------------------------------------------- -->
 
-[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.2...HEAD
+[0.10.2]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/basiltt/xstate-statemachine/compare/v0.9.0...v0.9.1

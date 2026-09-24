@@ -11,6 +11,24 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ---
 
+## [0.10.2] - 2026-09-24
+
+### Fixed
+
+- **`xsm update` failed on Windows when run through `xsm.exe`** with
+  `WinError 32: The process cannot access the file because it is being
+  used by another process: '...\Scripts\xsm.exe'`, leaving the package
+  uninstalled but the launcher present. pip's launcher is the parent of
+  the update process and stays alive until it exits, so pip cannot delete
+  it (pip has the same constraint with itself — hence
+  `python -m pip install --upgrade pip`). `update` now detects that it was
+  started via the launcher (`sys.argv[0]` is `Scripts/xsm[.exe]` next to
+  this interpreter) and hands over to a detached
+  `python -m xstate_statemachine update --yes`, which runs pip after the
+  launcher has exited; the header is printed once and the child prints
+  pip's output and the result. Verified end to end from PowerShell, `cmd`
+  and `python -m` in a fresh venv upgrading 0.10.0 → 0.10.1.
+
 ## [0.10.1] - 2026-09-24
 
 ### Fixed

@@ -186,6 +186,45 @@ def _run(cmd: List[str]) -> int:
     return subprocess.call(cmd)
 
 
+def _started_via_launcher() -> bool:
+    """🪟 True when this process was started through pip's `xsm.exe`.
+
+    That launcher stays alive as our parent until we exit, so pip's
+    uninstall step cannot delete it and fails with `WinError 32` -- and
+    a half-done uninstall leaves the package removed and the launcher
+    present, i.e. a broken install. (pip has the same problem with
+    itself; hence `python -m pip install --upgrade pip`.) Detected from
+    `sys.argv[0]`, which the launcher sets to its own path -- spelled
+    exactly as the shell resolved it: `Scripts/xsm.exe` when typed
+    with the extension, `Scripts/xsm` when typed bare (the common
+    case). So: an absolute path, in this interpreter's `Scripts` folder,
+    named `xsm` with or without `.exe`. `python -m xstate_statemachine`
+    gives a `.py` path and the tests use a bare `xsm`; neither matches.
+    """
+    if not sys.platform.startswith("win"):
+        return False
+    argv0 = Path(sys.argv[0]) if sys.argv and sys.argv[0] else None
+    if argv0 is None or not argv0.is_absolute():
+        return False
+    if argv0.name.lower() not in ("xsm", "xsm.exe"):
+        return False
+    try:
+        return argv0.parent.resolve() == Path(sys.executable).parent.resolve()
+    except OSError:  # pragma: no cover -- unreadable path: assume not
+        return False
+
+
+def _reexec_detached(python: str, extra: List[str]) -> int:
+    """Re-run `update --yes` in a fresh `python -m xstate_statemachine`
+    process that is NOT a child of the launcher: spawn it, return
+    immediately so the launcher exits, and let the child (which inherits
+    the console) do the upgrade. Returns the child's pid."""
+    cmd = [python, "-m", "xstate_statemachine", "update", "--yes", *extra]
+    flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    proc = subprocess.Popen(cmd, creationflags=flags, close_fds=False)
+    return proc.pid
+
+
 def _installed_version(python: str) -> Optional[str]:
     """Ask a FRESH interpreter -- this process still has the old module."""
     try:
@@ -233,7 +272,7 @@ def run_update(
         )
         if check:
             raise SystemExit(1 if newer else 0)
-    else:
+    elif not os.environ.get("XSM_UPDATE_CHILD"):  # the parent printed it
         c.kv(
             [
                 ("Installed:", __version__),
@@ -274,6 +313,27 @@ def run_update(
         else:
             c.info(f"would run: {cmd}   (pass --yes to proceed)")
             raise SystemExit(1)
+
+    # 🪟 Never run pip from under the launcher it must replace. Hand the
+    #    job to a process that outlives us and exit; the child prints the
+    #    rest. (`XSM_UPDATE_CHILD` stops the child re-detaching.)
+    if (
+        _started_via_launcher()
+        and info.kind == "pip"
+        and not os.environ.get("XSM_UPDATE_CHILD")
+    ):
+        os.environ["XSM_UPDATE_CHILD"] = "1"
+        extra = ["--plain"] if as_json or c.caps.plain else []
+        if as_json:
+            extra.append("--json")
+        if not as_json:
+            c.info(
+                "xsm.exe is running the update; handing over to "
+                f"`{Path(info.python).name} -m xstate_statemachine` so pip "
+                "can replace the launcher"
+            )
+        _reexec_detached(info.python, extra)
+        return
 
     # 🪟 Remember the shim state BEFORE pip regenerates xsm.exe.
     from .setup import inspect_shim, install_shim
