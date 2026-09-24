@@ -573,8 +573,12 @@ See the [Troubleshooting page](../troubleshooting/#debugging-tips) for detailed 
 Yes — [Stately.ai](https://stately.ai) is the visual editor for XState machines. Design your machine visually, export as JSON, and use the `xsm` CLI to generate Python code:
 
 ```bash
-xsm gt exported_machine.json --template pythonic-class
+xsm gt exported_machine.json --template pythonic-class --with-tests --with-types
+xsm inspect exported_machine.json     # tree, transitions, logic to implement
+xsm simulate exported_machine.json    # run it live before writing any code
 ```
+
+Or run `xsm` with no arguments on a terminal for the interactive launcher. See the [CLI Tool](../cli/) guide.
 
 ---
 

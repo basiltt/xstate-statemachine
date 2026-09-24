@@ -319,8 +319,25 @@ Timers fire **one at a time**, re-reading the schedule between each — so a tim
 
 ---
 
+## 🛠️ Tests and simulations from the CLI
+
+Two `xsm` commands sit on top of the machinery described above:
+
+```bash
+# A pytest module RECORDED from the engine: the chart is run on a SimulatedClock
+# with stub logic and the state after every reachable step becomes an assertion.
+xsm gt checkout.json -t pythonic-class --with-tests
+
+# Run the machine on a simulated clock -- live on a terminal, or scripted for CI
+xsm simulate checkout.json
+xsm sim checkout.json --events SUBMIT,+2001 --guards-false cartNotEmpty --json
+```
+
+The generated test file uses exactly the pattern from this page (`SyncInterpreter` + `SimulatedClock` + stub `MachineLogic`), so it is a good starting point to extend by hand. See [CLI Tool](../cli/) and the [companion templates](../cli-templates/#companion-templates).
+
 ## See Also
 
+- [CLI Tool](../cli/) — `xsm simulate`, `--with-tests`
 - [Interpreters](../interpreters/) — sync vs async, lifecycle
 - [Snapshots](../snapshots/) — persistence and crash recovery
 - [Plugins](../plugins/) — observing every transition

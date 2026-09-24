@@ -317,7 +317,7 @@ xstate-statemachine/
 │       ├── __main__.py       # Entry point (xsm command)
 │       ├── extractor.py      # JSON feature extraction
 │       └── strategies/       # 5 code generation templates
-├── tests/                    # 3,590 tests, 93% coverage
+├── tests/                    # 3,702 tests, 93% coverage
 ├── docs/                     # GitHub Pages documentation
 └── pyproject.toml
 ```
