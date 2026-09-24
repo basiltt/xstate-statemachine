@@ -327,6 +327,79 @@ class TestUpdateCommand(unittest.TestCase):
         run.assert_not_called()
         self.assertIn("nothing changed", buf.getvalue())
 
+    def test_started_via_launcher_reexecs_detached(self) -> None:
+        """Under pip's xsm.exe the launcher is our parent; pip cannot delete
+        it (WinError 32). update must hand over to a detached
+        `python -m xstate_statemachine update --yes` and exit."""
+        import os
+
+        launcher = os.path.join(os.path.dirname(sys.executable), "xsm")
+        run = mock.MagicMock(return_value=0)
+        reexec = mock.MagicMock(return_value=4242)
+        with (
+            mock.patch.object(U, "fetch_latest", return_value="99.0.0"),
+            mock.patch.object(U, "detect_install", return_value=_pip("py")),
+            mock.patch.object(U, "_run", run),
+            mock.patch.object(U, "_reexec_detached", reexec),
+            mock.patch.object(U.sys, "platform", "win32"),
+            mock.patch.dict(U.os.environ, {}, clear=False),
+        ):
+            U.os.environ.pop("XSM_UPDATE_CHILD", None)
+            saved, sys.argv = sys.argv, [launcher, "update", "-y", "--plain"]
+            buf = io.StringIO()
+            try:
+                with redirect_stdout(buf):
+                    main()
+            finally:
+                sys.argv = saved
+                reset_console()
+        run.assert_not_called()
+        reexec.assert_called_once()
+        self.assertEqual(reexec.call_args.args[0], "py")
+        self.assertIn("handing over", buf.getvalue())
+
+    def test_child_of_reexec_does_not_reexec_again(self) -> None:
+        run = mock.MagicMock(return_value=0)
+        reexec = mock.MagicMock()
+        with (
+            mock.patch.object(U, "fetch_latest", return_value="99.0.0"),
+            mock.patch.object(U, "detect_install", return_value=_pip("py")),
+            mock.patch.object(U, "_run", run),
+            mock.patch.object(U, "_reexec_detached", reexec),
+            mock.patch.object(U, "_installed_version", return_value="99.0.0"),
+            mock.patch.object(U.sys, "platform", "win32"),
+            mock.patch.object(U, "_started_via_launcher", return_value=True),
+            mock.patch.dict(U.os.environ, {"XSM_UPDATE_CHILD": "1"}),
+        ):
+            code, out = _run(["update", "-y", "--plain"])
+        self.assertEqual(code, 0)
+        reexec.assert_not_called()
+        run.assert_called_once()
+        self.assertNotIn("Installed:", out)  # header printed by the parent
+        self.assertIn("updated", out)
+
+    def test_launcher_detection(self) -> None:
+        with mock.patch.object(U.sys, "platform", "win32"):
+            import os
+
+            scripts = os.path.dirname(sys.executable)
+            for name in ("xsm", "xsm.exe", "XSM.EXE"):
+                with mock.patch.object(
+                    U.sys, "argv", [os.path.join(scripts, name)]
+                ):
+                    self.assertTrue(U._started_via_launcher(), name)
+            with mock.patch.object(U.sys, "argv", ["xsm", "update"]):
+                self.assertFalse(U._started_via_launcher())  # bare name
+            with mock.patch.object(
+                U.sys, "argv", [os.path.join(scripts, "..", "other", "xsm")]
+            ):
+                self.assertFalse(U._started_via_launcher())  # other folder
+        with (
+            mock.patch.object(U.sys, "platform", "linux"),
+            mock.patch.object(U.sys, "argv", ["/usr/bin/xsm.exe"]),
+        ):
+            self.assertFalse(U._started_via_launcher())
+
     def test_json_mode_acts_without_asking(self) -> None:
         with (
             mock.patch.object(U, "fetch_latest", return_value="99.0.0"),
