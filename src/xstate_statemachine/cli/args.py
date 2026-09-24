@@ -255,6 +255,7 @@ examples:
   xsm validate machine.json
   xsm list-templates
   xsm info
+  xsm update                            upgrade to the latest release
   python -m xstate_statemachine setup   Windows: fix a blocked xsm.exe launcher
             """,
     )
@@ -357,6 +358,34 @@ examples:
     )
     info_parser.add_argument(
         "--json", action="store_true", help="Emit as JSON."
+    )
+
+    # ⬆️ update subcommand -- self-update via the installer that installed us
+    update_parser = subparsers.add_parser(
+        "update",
+        parents=[presentation],
+        help="Upgrade xstate-statemachine to the latest release on PyPI.",
+        description=(
+            "Checks PyPI for the latest release and upgrades with the tool "
+            "that installed this copy (pip, pipx or uv tool). Refuses to "
+            "touch an editable checkout or a conda-managed environment and "
+            "prints the right command instead. On Windows, re-applies the "
+            "`xsm setup` shim if it was in place, since pip recreates xsm.exe."
+        ),
+    )
+    update_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Only report; exit 1 if a newer release exists (for scripts).",
+    )
+    update_parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Do not ask for confirmation.",
+    )
+    update_parser.add_argument(
+        "--json", action="store_true", help="Emit the result as JSON."
     )
 
     # 🪟 setup subcommand -- make `xsm` work where pip's launcher is blocked

@@ -405,7 +405,7 @@ The runner will start the interpreter, send the `SUBMIT` event, invoke the payme
 
 ```
 xsm [-h] [-v] [--plain] [--no-color] [--no-anim] [--verbose]
-    {generate-template,gt,list-templates,lt,validate,val,info,setup,
+    {generate-template,gt,list-templates,lt,validate,val,info,update,setup,
      inspect,ins,diagram,dia,simulate,sim,docs} ...
 ```
 
@@ -420,6 +420,7 @@ xsm [-h] [-v] [--plain] [--no-color] [--no-anim] [--verbose]
 | `diagram` | `dia` | Mermaid / PlantUML / ASCII diagram to stdout or a file |
 | `docs` | — | A Markdown reference page per machine |
 | `info` | — | Version, environment, feature cards, links |
+| `update` | — | Check PyPI and upgrade to the latest release with the installer that installed you (`--check`, `--yes`) |
 | `setup` | — | Windows: swap pip's blocked `xsm.exe` launcher for a batch shim (`--check`, `--undo`) |
 
 Every command that reports facts also has a `--json` switch (`validate`, `inspect`, `simulate`, `list-templates`, `info`) so the same information can be consumed by scripts.
@@ -442,6 +443,7 @@ On a terminal, a bare `xsm` draws the banner and a menu:
   Docs                 A Markdown reference page per machine
   Templates            Browse the code generation catalogue
   About                Version, environment, links
+  Update               Check PyPI and upgrade to the latest release
   Quit
   ↑↓ move · enter select · esc cancel
 ```
@@ -705,6 +707,40 @@ The page opens with the banner and an environment panel:
 
 followed by feature cards (interpreters, XState compatibility, Pythonic API, hierarchy and parallel regions, actors, plugins, snapshots, diagrams, the CLI itself) and the documentation, PyPI and GitHub links.
 
+
+## ⬆️ Update
+
+```bash
+xsm update            # check PyPI, ask, upgrade
+xsm update --check    # report only; exit 1 if a newer release exists
+xsm update --yes      # no confirmation (scripts, CI images)
+xsm update --json
+```
+
+```
+  Installed:  0.10.0
+  Latest:     0.10.1  (update available)
+  Install:    pip  C:\Python\Python314\Lib\site-packages
+
+  Upgrade to 0.10.1 with `python.exe -m pip install --upgrade xstate-statemachine`? [y/N] y
+  …pip output…
+✓ updated xstate-statemachine 0.10.0 -> 0.10.1
+```
+
+`update` asks PyPI's JSON API for the latest non-prerelease version (stdlib `urllib`, 10 s timeout — offline it says so and exits 1) and then upgrades **with the tool that installed this copy**, because using the wrong one corrupts an environment:
+
+| How you installed | What `update` runs |
+|:--|:--|
+| `pip install` (incl. `uv pip` in a venv) | `<this python> -m pip install --upgrade xstate-statemachine` |
+| `pipx install` | `pipx upgrade xstate-statemachine` |
+| `uv tool install` | `uv tool upgrade xstate-statemachine` |
+| editable checkout (`pip install -e .`) | refuses — a development checkout is updated with `git` |
+| conda environment | refuses — prints `conda update xstate-statemachine` |
+| anything else | refuses — prints the manual `pip` command |
+
+The installer runs with your terminal attached so you see its own output. Afterwards `update` asks a *fresh* interpreter for `--version` to confirm the result (the running process still has the old module loaded). On Windows, if the [`setup` shim](#windows-an-application-control-policy-has-blocked-this-file) was in place, `update` re-applies it automatically — pip's upgrade recreates the blocked `xsm.exe`, and without this the machine that needed `setup` would break right after updating.
+
+Off a terminal without `--yes`, `update` prints the command it would run and exits 1 rather than changing anything.
 
 ## ❓ Version and Help
 

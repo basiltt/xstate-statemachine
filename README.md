@@ -163,6 +163,7 @@ pypi-attestations verify pypi --repository https://github.com/basiltt/xstate-sta
 
 ```bash
 xsm info          # verify the install
+xsm update        # later: upgrade to the latest release
 ```
 
 > **Windows, `xsm.exe` blocked by an Application Control policy?** That is pip's unsigned
@@ -1446,6 +1447,7 @@ xsm docs machines/*.json -o docs/
 | `validate` | `val` | Build each file with the real library; list every finding |
 | `list-templates` | `lt` | The 8 templates, grouped |
 | `info` | | Version and feature summary |
+| `update` | | Check PyPI and upgrade with the installer that installed you (pip / pipx / uv tool) |
 | `setup` | | Windows: make `xsm` work where pip's `xsm.exe` launcher is blocked |
 
 Primary templates: `class-json`, `function-json`, `pythonic-class`, `pythonic-builder`,

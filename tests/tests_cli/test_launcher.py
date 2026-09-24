@@ -77,6 +77,24 @@ class TestMenu(_Launcher):
         self.assertIn("Version:", out)
         self.assertIn("Available code generation templates", out)
 
+    def test_update_menu_item_runs_the_checker(self) -> None:
+        from unittest import mock
+
+        from src.xstate_statemachine import __version__
+        from src.xstate_statemachine.cli.commands import update as U
+
+        # Update is item 9 (index 8); then quit
+        with (
+            mock.patch.object(U, "fetch_latest", return_value=__version__),
+            mock.patch.object(
+                U,
+                "detect_install",
+                return_value=U.InstallInfo("pip", "pip", "/sp", "py", ["py"]),
+            ),
+        ):
+            launcher.run_launcher(self.parser, source=K.scripted("9 enter q"))
+        self.assertIn("is the latest release", self.out())
+
     def test_validate_via_typed_glob(self) -> None:
         keys = f"4 enter enter {' '.join(_spell(str(PAYMENT)))} enter q"
         launcher.run_launcher(self.parser, source=K.scripted(keys))

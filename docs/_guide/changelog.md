@@ -88,6 +88,16 @@ unaffected.
   arrows are transliterated (`->`, `-`, `...`) instead of becoming `?`.
 - **`--json`** on `validate`, `inspect`, `simulate`, `list-templates` and
   `info`.
+- **`xsm update`** — checks PyPI (stdlib `urllib`, 10 s timeout) and
+  upgrades to the latest release **with the installer that installed this
+  copy**: `pip` (incl. `uv pip`), `pipx upgrade`, `uv tool upgrade`. Refuses
+  an editable checkout (use `git`) and a conda environment (prints the
+  `conda` command) rather than corrupt them. Asks on a terminal, prints the
+  command and exits 1 off-terminal without `--yes`, `--check` exits 1 when
+  a newer release exists, `--json` for scripts. Confirms the result by
+  asking a fresh interpreter for `--version`, and on Windows re-applies the
+  `setup` shim afterwards since pip recreates `xsm.exe`. Also on the
+  launcher menu.
 - **`xsm setup`** — makes the `xsm` command work on Windows machines
   whose Application Control / AppLocker / Smart App Control policy blocks
   pip's unsigned `Scripts\xsm.exe` launcher ("An Application Control

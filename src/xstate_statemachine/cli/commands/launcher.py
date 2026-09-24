@@ -49,6 +49,7 @@ MENU: List[Tuple[str, str, str]] = [
     ("docs", "Docs", "A Markdown reference page per machine"),
     ("templates", "Templates", "Browse the code generation catalogue"),
     ("info", "About", "Version, environment, links"),
+    ("update", "Update", "Check PyPI and upgrade to the latest release"),
     ("quit", "Quit", ""),
 ]
 
@@ -381,6 +382,10 @@ def run_launcher(
                 from .info import run_info
 
                 run_info()
+            elif key == "update":
+                from .update import run_update
+
+                run_update()
         except SystemExit:
             # A command signalled failure (exit 1); the launcher keeps going.
             pass

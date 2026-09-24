@@ -477,6 +477,9 @@ terminal toolkit — still with zero runtime dependencies:
 - **`xsm validate`** now builds with `create_machine(strict_config=True)`,
   reports unreachable states and the library's own warnings, and has `--json`
   and `--lenient`.
+- **`xsm update`** — upgrade to the latest release with the installer that
+  installed you (pip / pipx / uv tool); refuses editable and conda installs
+  with the right command instead. `--check` for scripts.
 - **Windows: `xsm` where pip's launcher is blocked** — machines governed by
   Application Control / AppLocker / Smart App Control refuse the unsigned
   `xsm.exe` pip generates. Run `python -m xstate_statemachine setup` once and

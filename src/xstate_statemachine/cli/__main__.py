@@ -1117,6 +1117,16 @@ def main() -> None:
         run_info(as_json=bool(getattr(args, "json", False)))
         return
 
+    if args.subcommand == "update":
+        from .commands.update import run_update
+
+        run_update(
+            check=bool(args.check),
+            yes=bool(args.yes),
+            as_json=bool(getattr(args, "json", False)),
+        )
+        return
+
     if args.subcommand == "setup":
         from pathlib import Path
 
