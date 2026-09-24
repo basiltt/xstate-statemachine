@@ -10,6 +10,9 @@ from .function_json import FunctionJsonStrategy
 from .pythonic_builder import PythonicBuilderStrategy
 from .pythonic_class import PythonicClassStrategy
 from .pythonic_functional import PythonicFunctionalStrategy
+from .pytest_scaffold import PytestScaffoldStrategy
+from .typed import TypedStrategy
+from .plugin_skeleton import PluginSkeletonStrategy
 
 STRATEGY_REGISTRY: Dict[str, Type[BaseStrategy]] = {
     "class-json": ClassJsonStrategy,
@@ -17,6 +20,11 @@ STRATEGY_REGISTRY: Dict[str, Type[BaseStrategy]] = {
     "pythonic-class": PythonicClassStrategy,
     "pythonic-builder": PythonicBuilderStrategy,
     "pythonic-functional": PythonicFunctionalStrategy,
+    # 🧩 Companion outputs: one file each, usable as the primary template or
+    #    added to any other via --with-tests / --with-types / --with-plugin.
+    "pytest": PytestScaffoldStrategy,
+    "typed": TypedStrategy,
+    "plugin": PluginSkeletonStrategy,
 }
 
 

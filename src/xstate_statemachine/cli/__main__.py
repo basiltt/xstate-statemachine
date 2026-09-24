@@ -68,15 +68,23 @@ from .utils import camel_to_snake, module_safe_name, normalize_bool
 logger = logging.getLogger(__name__)
 
 
-def _configure_cli_logging() -> None:
+def _configure_cli_logging(verbose: bool = False) -> None:
     """Configures console logging for the CLI entry point only.
 
     📝 No-op when the root logger already has handlers, so an embedding
     application's configuration is never overridden.
+
+    🔇 The library logs its own progress at INFO ("Starting logic
+    extraction…", "Parsed onDone transition…"). Those are the library's
+    diary, not the CLI's UI: the console renders status itself, so by
+    default only WARNING and above reach the user. `--verbose` restores
+    INFO to stderr for debugging a generation.
     """
     if not logging.root.handlers:
         logging.basicConfig(
-            level=logging.INFO, format="[%(levelname)s] %(message)s"
+            level=logging.INFO if verbose else logging.WARNING,
+            format="[%(levelname)s] %(message)s",
+            stream=sys.stderr,
         )
 
 
@@ -311,18 +319,42 @@ def _check_output_files(
                 fromfile=f"{path} (on disk)",
                 tofile=f"{path} (generated)",
             )
-            _safe_print("".join(rendered))
+            _print_diff("".join(rendered))
 
+    from .commands import get_console
+
+    c = get_console()
     if differences:
         for line in differences:
-            _safe_print(f"✗ {line}")
-        _safe_print(
-            "\nGenerated code is out of date. "
-            "Re-run without --check to update it."
+            c.error(line)
+        c.print(
+            "",
+            "Generated code is out of date. "
+            "Re-run without --check to update it.",
         )
         raise SystemExit(1)
 
-    _safe_print("✓ Generated code is up to date.")
+    c.ok("Generated code is up to date.")
+
+
+def _print_diff(text: str) -> None:
+    """A unified diff with +/-/@@ coloured (plain when not a terminal)."""
+    from .commands import get_console
+
+    c = get_console()
+    out = []
+    for line in text.splitlines():
+        if line.startswith(("+++", "---")):
+            out.append(c.style(line, "title"))
+        elif line.startswith("@@"):
+            out.append(c.style(line, "diff.hunk"))
+        elif line.startswith("+"):
+            out.append(c.style(line, "diff.add"))
+        elif line.startswith("-"):
+            out.append(c.style(line, "diff.del"))
+        else:
+            out.append(line)
+    c.print(*out)
 
 
 def _write_output_files(
@@ -339,23 +371,23 @@ def _write_output_files(
         logic_code (str): The generated logic code.
         runner_code (str): The generated runner code.
     """
-    logger.info("✍️ Writing generated code to disk...")
+    from .commands import get_console
+
+    c = get_console()
     if file_count == 1:
         # 🤝 Merge code into a single file
         combined_code = _combined_output(logic_code, runner_code)
         target_path = paths["single_file"]
-        logger.info(f"💾 Writing combined code to: {target_path}")
         target_path.write_text(combined_code, encoding="utf-8")
-        _safe_print(f"Generated combined file: {target_path}")
+        # 📌 "Generated combined file:" is pinned by tests/tests_cli.
+        c.ok(f"Generated combined file: {c.style(str(target_path), 'path')}")
     else:
         # ✌️ Write to separate logic and runner files
         logic_path, runner_path = paths["logic_file"], paths["runner_file"]
-        logger.info(f"💾 Writing logic code to: {logic_path}")
         logic_path.write_text(logic_code, encoding="utf-8")
-        logger.info(f"💾 Writing runner code to: {runner_path}")
         runner_path.write_text(runner_code, encoding="utf-8")
-        _safe_print(f"Generated logic file: {logic_path}")
-        _safe_print(f"Generated runner file: {runner_path}")
+        c.ok(f"Generated logic file: {c.style(str(logic_path), 'path')}")
+        c.ok(f"Generated runner file: {c.style(str(runner_path), 'path')}")
 
 
 # -----------------------------------------------------------------------------
@@ -842,6 +874,27 @@ def run_generation_workflow(
         loader=settings["loader"],
         style=getattr(args, "style", None),
     )
+    # 🧩 Companion templates (pytest / typed / plugin) are single files
+    #    with their own naming and verification; they may also be ADDED to
+    #    a primary template via --with-*. Handled by `commands.generate`.
+    from .commands.generate import emit_companions, is_companion
+
+    companion_kwargs = dict(
+        out_dir=(
+            Path(args.output) if args.output else Path(json_paths[0]).parent
+        ),
+        base_name=machine_name,
+        json_paths=json_paths,
+        primary=template,
+        check_mode=bool(
+            getattr(args, "check", False) or getattr(args, "diff", False)
+        ),
+    )
+    if is_companion(template):
+        emit_companions(args, ctx, **companion_kwargs)
+        logger.info("✅ Code generation complete.")
+        return
+
     logic_code = strategy.generate_logic(ctx)
     runner_code = strategy.generate_runner(ctx)
 
@@ -878,9 +931,11 @@ def run_generation_workflow(
             runner_code,
             show_diff=getattr(args, "diff", False),
         )
+        emit_companions(args, ctx, **companion_kwargs)
         return
 
     _write_output_files(args.file_count, paths, logic_code, runner_code)
+    emit_companions(args, ctx, **companion_kwargs)
 
 
 def _polish_output(
@@ -984,10 +1039,9 @@ def _verify_or_refuse(
 def main() -> None:
     """Parses CLI arguments and dispatches to the subcommand modules."""
     # 🪵 Configure console logging only when run as a CLI.
-    _configure_cli_logging()
-
     parser = get_parser()
     args = parser.parse_args()
+    _configure_cli_logging(verbose=bool(getattr(args, "verbose", False)))
     validate_args(parser)
 
     # 🎨 One console for the whole run, built from the global flags.

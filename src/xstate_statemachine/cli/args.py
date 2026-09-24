@@ -109,12 +109,31 @@ def _add_generation_option_args(parser: argparse.ArgumentParser) -> None:
             "pythonic-class",
             "pythonic-builder",
             "pythonic-functional",
+            "pytest",
+            "typed",
+            "plugin",
         ],
         default=None,
         help=(
             "Code generation template. Default: class-json. "
-            "Replaces --style (deprecated)."
+            "Replaces --style (deprecated). 'pytest', 'typed' and 'plugin' "
+            "are single-file companions (see also --with-*)."
         ),
+    )
+    parser.add_argument(
+        "--with-tests",
+        action="store_true",
+        help="Also emit test_<machine>.py: a pytest module recorded from the real engine.",
+    )
+    parser.add_argument(
+        "--with-types",
+        action="store_true",
+        help="Also emit <machine>_types.py: Context TypedDict, event/state Literals, typed stubs.",
+    )
+    parser.add_argument(
+        "--with-plugin",
+        action="store_true",
+        help="Also emit <machine>_observer.py: a PluginBase wired for the hooks this chart fires.",
     )
     parser.add_argument(
         "-fc",
@@ -246,21 +265,30 @@ examples:
     # 🎨 Global presentation flags (#cli-ui). Every command honours them;
     #    the same switches are also read from NO_COLOR / XSM_NO_COLOR /
     #    XSM_NO_ANIM, and a non-TTY stdout implies --plain.
-    parser.add_argument(
-        "--plain",
-        action="store_true",
-        help="Plain text: no colour, no box glyphs, no animation (implied when piped).",
-    )
-    parser.add_argument(
-        "--no-color",
-        action="store_true",
-        help="Keep layout and animation but emit no colour escapes.",
-    )
-    parser.add_argument(
-        "--no-anim",
-        action="store_true",
-        help="Disable spinners and in-place redraws.",
-    )
+    # 🧬 Declared once on a parent parser and attached to the root AND every
+    #    subcommand, so `xsm --plain validate x` and `xsm validate x --plain`
+    #    both work. `default=SUPPRESS` on the parents keeps the subcommand's
+    #    value from clobbering the root's with False.
+    presentation = argparse.ArgumentParser(add_help=False)
+    for flag, help_text in (
+        (
+            "--plain",
+            "Plain text: no colour, no box glyphs, no animation (implied when piped).",
+        ),
+        (
+            "--no-color",
+            "Keep layout and animation but emit no colour escapes.",
+        ),
+        ("--no-anim", "Disable spinners and in-place redraws."),
+        ("--verbose", "Show the library's INFO log on stderr while running."),
+    ):
+        parser.add_argument(flag, action="store_true", help=help_text)
+        presentation.add_argument(
+            flag,
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
 
     # 📋 Sub-command setup. `required=False` so a bare `xsm` on a TTY opens
     #    the interactive launcher (and prints help when piped).
@@ -270,6 +298,7 @@ examples:
     gen_parser = subparsers.add_parser(
         "generate-template",
         aliases=["gt"],
+        parents=[presentation],
         help="Generate Python code from an XState JSON file.",
         description="Generates Python code from one or more XState JSON machine definitions.",
     )
@@ -283,6 +312,7 @@ examples:
     lt_parser = subparsers.add_parser(
         "list-templates",
         aliases=["lt"],
+        parents=[presentation],
         help="List all available code generation templates.",
         description="Shows available templates with descriptions.",
     )
@@ -294,6 +324,7 @@ examples:
     val_parser = subparsers.add_parser(
         "validate",
         aliases=["val"],
+        parents=[presentation],
         help="Validate an XState JSON config file.",
         description="Validates that JSON files are well-formed XState machine configs.",
     )
@@ -314,6 +345,7 @@ examples:
     # ℹ️ info subcommand
     info_parser = subparsers.add_parser(
         "info",
+        parents=[presentation],
         help="Show library version, Python version, and feature summary.",
         description="Displays information about the xstate-statemachine installation.",
     )

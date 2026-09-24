@@ -54,9 +54,14 @@ class Console:
             )
 
     def print(self, *lines: str) -> None:
-        """Write lines (plain or pre-styled). Always newline-terminated."""
+        """Write lines (plain or pre-styled). Always newline-terminated.
+
+        🧭 Routes through the builtin ``print`` (with ``file=self.out``) so
+        code that captures output by patching ``builtins.print`` -- the
+        established pattern in this project's CLI tests -- keeps seeing it.
+        """
         for line in lines or ("",):
-            self.out.write(self._encodable(line) + "\n")
+            print(self._encodable(line), file=self.out)
         self.out.flush()
 
     def style(self, text: str, role: str) -> str:
