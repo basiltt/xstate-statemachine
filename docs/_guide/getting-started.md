@@ -477,6 +477,11 @@ terminal toolkit — still with zero runtime dependencies:
 - **`xsm validate`** now builds with `create_machine(strict_config=True)`,
   reports unreachable states and the library's own warnings, and has `--json`
   and `--lenient`.
+- **Windows: `xsm` where pip's launcher is blocked** — machines governed by
+  Application Control / AppLocker / Smart App Control refuse the unsigned
+  `xsm.exe` pip generates. Run `python -m xstate_statemachine setup` once and
+  `xsm` works normally (`--check`, `--undo`); `python -m xstate_statemachine …`
+  always works.
 - **Presentation** — truecolor/256/16-colour tiers, box-drawing, spinners and
   step lists on a terminal; deterministic plain text when piped or with
   `--plain`; `--no-color` / `NO_COLOR`, `--no-anim`, `--verbose`; `--json` on
