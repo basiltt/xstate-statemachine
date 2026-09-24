@@ -252,29 +252,27 @@ PS> xsm
 Program 'xsm.exe' failed to run: An Application Control policy has blocked this file
 ```
 
-**What is happening.** `pip` does not install a Python file called `xsm`; on Windows it materialises a small, generic, *unsigned* launcher — `Scripts\xsm.exe` — that locates `python.exe` and calls into the package. Machines governed by Windows Defender Application Control (WDAC), AppLocker or Smart App Control allow known signed binaries and block executables that appeared on disk unsigned, so the launcher is refused while Python itself runs fine. Every pip-installed console script (`black.exe`, `pytest.exe`, …) is affected in the same way; `pipx` and `uv tool` generate the same kind of stub. This is not something the package can change — the file is produced on your machine at install time.
-
-**Fix 1 — run through the interpreter (always works):**
+**The one-line fix** — run it once, through the interpreter (which the policy already trusts):
 
 ```powershell
-python -m xstate_statemachine                 # launcher
-python -m xstate_statemachine gt machine.json -t pythonic-class
+python -m xstate_statemachine setup
 ```
 
-`xsm info` prints this spelling for your interpreter on its `Also run as:` line.
+```
+  Scripts dir:  C:\Python\Python314\Scripts
+  xsm.exe:      parked as xsm.exe.blocked
+  xsm.cmd:      current
 
-**Fix 2 — a batch shim instead of the .exe.** Batch files run through the trusted `cmd.exe`, which most policies allow. Windows resolves `xsm.exe` *before* `xsm.cmd` in the same folder (`PATHEXT` order), so the blocked launcher has to be renamed out of the way first:
-
-```powershell
-$scripts = python -c "import sysconfig; print(sysconfig.get_path('scripts'))"
-Rename-Item "$scripts\xsm.exe" xsm.exe.blocked        # keep it; pip may recreate it on upgrade
-Set-Content -Path "$scripts\xsm.cmd" -Value '@python -m xstate_statemachine %*'
-xsm info                                              # now resolves to xsm.cmd
+✓ `xsm` now runs through cmd.exe -> python; try `xsm info`
 ```
 
-Verified on a WDAC-managed machine from both PowerShell and `cmd`. Re-run the two lines after `pip install --upgrade`, which regenerates `xsm.exe`. If the policy also enforces script rules you are in a fully managed environment; Fix 1 is the route there, or ask your administrator to allow-list the `Scripts` directory of your Python install.
+From then on `xsm …` works in PowerShell and `cmd` exactly as on any other machine. `pip install --upgrade xstate-statemachine` recreates `xsm.exe`, so re-run the same command after upgrading; `python -m xstate_statemachine setup --check` reports the current state (exit 1 if `xsm` still resolves to the blocked launcher — handy in a login script), and `--undo` restores pip's launcher. On macOS and Linux `setup` is a no-op that says so.
 
-**Fix 3 — a PowerShell function** in your `$PROFILE`, so `xsm` works in every new PowerShell session without touching `PATH`:
+**What is happening.** `pip` does not install a Python file called `xsm`; on Windows it materialises a small, generic, *unsigned* launcher — `Scripts\xsm.exe` — that locates `python.exe` and calls into the package. Machines governed by Windows Defender Application Control (WDAC), AppLocker or Smart App Control allow known signed binaries and block executables that appeared on disk unsigned, so the launcher is refused while Python itself runs fine. Every pip-installed console script (`black.exe`, `pytest.exe`, …) is affected in the same way; `pipx` and `uv tool` generate the same kind of stub. The launcher is produced by pip on your machine at install time, so nothing in the package can sign or replace it automatically — and a signed standalone `xsm.exe` would not help either, because a corporate allow-list trusts specific publishers, not "signed by someone".
+
+**What `setup` does.** Two things, both reversible: it renames the blocked `xsm.exe` to `xsm.exe.blocked` (Windows resolves `.exe` before `.cmd` in the same folder, so the stub has to move aside rather than merely be shadowed), and it writes `xsm.cmd` beside it — a batch file that runs `python -m xstate_statemachine` with the interpreter `setup` was run from, falling back to `python` on `PATH`. Batch files execute through the trusted `cmd.exe`, which these policies allow. Verified on a WDAC-managed machine from both PowerShell and `cmd`.
+
+**If even that is refused** (a policy that also enforces script rules) you are in a fully managed environment: use `python -m xstate_statemachine …` directly — it is functionally identical to `xsm` and `xsm info` prints the exact spelling on its `Also run as:` line — or add a PowerShell function to your `$PROFILE`:
 
 ```powershell
 Add-Content $PROFILE 'function xsm { python -m xstate_statemachine @args }'
@@ -407,7 +405,7 @@ The runner will start the interpreter, send the `SUBMIT` event, invoke the payme
 
 ```
 xsm [-h] [-v] [--plain] [--no-color] [--no-anim] [--verbose]
-    {generate-template,gt,list-templates,lt,validate,val,info,
+    {generate-template,gt,list-templates,lt,validate,val,info,setup,
      inspect,ins,diagram,dia,simulate,sim,docs} ...
 ```
 
@@ -422,6 +420,7 @@ xsm [-h] [-v] [--plain] [--no-color] [--no-anim] [--verbose]
 | `diagram` | `dia` | Mermaid / PlantUML / ASCII diagram to stdout or a file |
 | `docs` | — | A Markdown reference page per machine |
 | `info` | — | Version, environment, feature cards, links |
+| `setup` | — | Windows: swap pip's blocked `xsm.exe` launcher for a batch shim (`--check`, `--undo`) |
 
 Every command that reports facts also has a `--json` switch (`validate`, `inspect`, `simulate`, `list-templates`, `info`) so the same information can be consumed by scripts.
 

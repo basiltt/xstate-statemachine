@@ -255,6 +255,7 @@ examples:
   xsm validate machine.json
   xsm list-templates
   xsm info
+  python -m xstate_statemachine setup   Windows: fix a blocked xsm.exe launcher
             """,
     )
 
@@ -356,6 +357,43 @@ examples:
     )
     info_parser.add_argument(
         "--json", action="store_true", help="Emit as JSON."
+    )
+
+    # 🪟 setup subcommand -- make `xsm` work where pip's launcher is blocked
+    setup_parser = subparsers.add_parser(
+        "setup",
+        parents=[presentation],
+        help="Make the `xsm` command work on Windows machines that block pip's xsm.exe launcher.",
+        description=(
+            "On Windows, pip installs `xsm` as an unsigned Scripts\\xsm.exe "
+            "launcher that Application Control / AppLocker / Smart App Control "
+            "policies may refuse. `setup` parks that launcher as "
+            "xsm.exe.blocked and writes an xsm.cmd batch shim beside it, so "
+            "`xsm` runs through the trusted cmd.exe -> python. Run it as "
+            "`python -m xstate_statemachine setup`; re-run after "
+            "`pip install --upgrade` (which recreates xsm.exe). A no-op on "
+            "other operating systems."
+        ),
+    )
+    setup_group = setup_parser.add_mutually_exclusive_group()
+    setup_group.add_argument(
+        "--undo",
+        action="store_true",
+        help="Remove the shim and restore pip's xsm.exe launcher.",
+    )
+    setup_group.add_argument(
+        "--check",
+        action="store_true",
+        help="Report whether the shim is in place; exit 1 if `xsm` still resolves to xsm.exe.",
+    )
+    setup_parser.add_argument(
+        "--json", action="store_true", help="Emit the state as JSON."
+    )
+    setup_parser.add_argument(
+        "--scripts-dir",
+        metavar="DIR",
+        default=None,
+        help="Override the Scripts directory (default: this interpreter's).",
     )
 
     # 🔍 inspect subcommand

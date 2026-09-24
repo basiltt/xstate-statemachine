@@ -584,13 +584,13 @@ Or run `xsm` with no arguments on a terminal for the interactive launcher. See t
 
 ### `xsm` says "An Application Control policy has blocked this file" on Windows
 
-Windows Defender Application Control / AppLocker / Smart App Control is refusing the unsigned `xsm.exe` launcher that `pip` generates for *every* console script — the package itself is fine. Use the interpreter directly, which is functionally identical:
+Windows Defender Application Control / AppLocker / Smart App Control is refusing the unsigned `xsm.exe` launcher that `pip` generates for *every* console script — the package itself is fine. Run, once:
 
 ```powershell
-python -m xstate_statemachine gt machine.json
+python -m xstate_statemachine setup
 ```
 
-or rename the blocked `xsm.exe` and create an `xsm.cmd` shim (`@python -m xstate_statemachine %*`) beside it. See [CLI Tool → Windows](../cli/#windows-an-application-control-policy-has-blocked-this-file).
+It parks the blocked launcher and installs an `xsm.cmd` batch shim beside it; `xsm` then works normally. Re-run after `pip install --upgrade`; `--undo` reverts. `python -m xstate_statemachine …` is always available as the launcher-free spelling. See [CLI Tool → Windows](../cli/#windows-an-application-control-policy-has-blocked-this-file).
 
 ---
 

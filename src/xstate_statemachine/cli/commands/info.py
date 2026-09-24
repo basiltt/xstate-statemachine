@@ -113,6 +113,16 @@ def run_info(as_json: bool = False) -> None:
             ("Also run as:", c.style(data["module_invocation"], "code")),
         ]
     )
+    if sys.platform.startswith("win"):
+        # 🪟 Discoverability for the one machine class where `xsm` itself
+        #    may be refused (pip's unsigned launcher vs. Application Control).
+        c.print(
+            c.style(
+                "  Windows blocking xsm.exe? Run "
+                f"`{data['module_invocation']} setup` once.",
+                "muted",
+            )
+        )
     c.blank()
     c.cards(
         FEATURES,

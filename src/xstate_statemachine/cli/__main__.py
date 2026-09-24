@@ -1117,6 +1117,19 @@ def main() -> None:
         run_info(as_json=bool(getattr(args, "json", False)))
         return
 
+    if args.subcommand == "setup":
+        from pathlib import Path
+
+        from .commands.setup import run_setup
+
+        run_setup(
+            undo=bool(args.undo),
+            check=bool(args.check),
+            as_json=bool(getattr(args, "json", False)),
+            scripts_dir=Path(args.scripts_dir) if args.scripts_dir else None,
+        )
+        return
+
     # 🧭 Bare `xsm`: the interactive launcher on a terminal, help otherwise.
     if console.interactive:
         from .commands.launcher import run_launcher

@@ -167,8 +167,9 @@ xsm info          # verify the install
 
 > **Windows, `xsm.exe` blocked by an Application Control policy?** That is pip's unsigned
 > launcher stub being refused by WDAC / AppLocker, not the package. Run
-> `python -m xstate_statemachine …` instead (identical behaviour — `python.exe` is trusted), or
-> rename the blocked `xsm.exe` and drop an `xsm.cmd` containing `@python -m xstate_statemachine %*` beside it.
+> `python -m xstate_statemachine setup` once: it parks the blocked launcher and installs a batch
+> shim, after which `xsm` works normally (re-run after `pip install --upgrade`; `--undo` reverts).
+> `python -m xstate_statemachine …` always works too.
 > Details: [CLI → Windows](https://basiltt.github.io/xstate-statemachine/guide/cli/#windows-an-application-control-policy-has-blocked-this-file).
 
 Using the code generator and want its output line-wrapped to match your linter?
@@ -1445,6 +1446,7 @@ xsm docs machines/*.json -o docs/
 | `validate` | `val` | Build each file with the real library; list every finding |
 | `list-templates` | `lt` | The 8 templates, grouped |
 | `info` | | Version and feature summary |
+| `setup` | | Windows: make `xsm` work where pip's `xsm.exe` launcher is blocked |
 
 Primary templates: `class-json`, `function-json`, `pythonic-class`, `pythonic-builder`,
 `pythonic-functional`. Companion templates: `pytest` (a test module **recorded from the
