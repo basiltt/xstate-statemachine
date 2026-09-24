@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-09-24
+
+### Fixed
+
+- **Launcher: pasted Windows paths were reported "not found".** Explorer's
+  *Copy as path* wraps the path in double quotes (and a dragged file may
+  carry single quotes); the file picker handed the quoted string to
+  `Path()` verbatim, which looked for a file literally named `"C:\…"`.
+  Every path prompt in the launcher (machine files, output directories)
+  now normalises its input: surrounding quotes are stripped, `~` is
+  expanded, a `file:///` URI is accepted, and typing a directory selects
+  its `*.json` files. Driven end to end through the launcher with the
+  quoted form in the tests.
+
 ## [0.10.0] - 2026-09-24
 
 A CLI release. The runtime library is unchanged apart from one additive
@@ -2496,7 +2510,8 @@ existing.
 <!-- Without these definitions they render as literal bracketed text.  -->
 <!-- ---------------------------------------------------------------- -->
 
-[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/basiltt/xstate-statemachine/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.8.0...v0.9.0
