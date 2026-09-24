@@ -230,11 +230,18 @@ class TestGeneratedPytestSuitesPass(_Quiet):
                     "-q",
                     "-p",
                     "no:cacheprovider",
+                    # 📌 Pin the rootdir: with none given the child pytest
+                    #    walks up from the temp dir and, on the Windows
+                    #    runner, trips over the junction 'C:\Documents and
+                    #    Settings' (PermissionError) while probing for ini
+                    #    files.
+                    f"--rootdir={out}",
                     str(out),
                 ],
                 capture_output=True,
                 text=True,
                 env=env,
+                cwd=str(out),
                 timeout=600,
             )
             self.assertEqual(
