@@ -11,6 +11,20 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ---
 
+## [0.10.1] - 2026-09-24
+
+### Fixed
+
+- **Launcher: pasted Windows paths were reported "not found".** Explorer's
+  *Copy as path* wraps the path in double quotes (and a dragged file may
+  carry single quotes); the file picker handed the quoted string to
+  `Path()` verbatim, which looked for a file literally named `"C:\…"`.
+  Every path prompt in the launcher (machine files, output directories)
+  now normalises its input: surrounding quotes are stripped, `~` is
+  expanded, a `file:///` URI is accepted, and typing a directory selects
+  its `*.json` files. Driven end to end through the launcher with the
+  quoted form in the tests.
+
 ## [0.10.0] - 2026-09-24
 
 A CLI release. The runtime library is unchanged apart from one additive

@@ -88,6 +88,37 @@ def remember(paths: List[str]) -> None:
 
 
 # =============================================================================
+# typed paths
+# =============================================================================
+def clean_path(text: Optional[str]) -> str:
+    """Normalise a path a user typed or pasted into a prompt.
+
+    🪟 Windows Explorer's "Copy as path" wraps the path in double quotes,
+       and shells leave single quotes on a dragged file -- passing those
+       to `Path()` looks for a file literally named `"C:\\...json"` and
+       the picker reports "not found" for a file that plainly exists.
+       Also expands `~`, and accepts a `file:///` URI dropped from a
+       browser or file manager.
+    """
+    t = (text or "").strip()
+    while len(t) >= 2 and t[0] == t[-1] and t[0] in "\"'":
+        t = t[1:-1].strip()
+    if t.lower().startswith("file:///"):
+        from urllib.parse import unquote
+        from urllib.request import url2pathname
+
+        t = url2pathname(unquote(t[len("file://") :]))
+    return os.path.expanduser(t)
+
+
+def expand_glob(pattern: str) -> List[str]:
+    """Files matching *pattern*; a directory means its `*.json`."""
+    if os.path.isdir(pattern):
+        pattern = os.path.join(pattern, "*.json")
+    return sorted(glob.glob(pattern))
+
+
+# =============================================================================
 # shared prompts
 # =============================================================================
 def _pick_files(
@@ -115,10 +146,10 @@ def _pick_files(
         if idx < len(recent):
             chosen = [recent[idx]]
         else:
-            typed = c.text("Path or glob:", source=source)
+            typed = clean_path(c.text("Path or glob:", source=source))
             if not typed:
                 return None
-            chosen = sorted(glob.glob(typed)) or [typed]
+            chosen = expand_glob(typed) or [typed]
         missing = [p for p in chosen if not Path(p).exists()]
         if missing:
             c.error("not found: " + ", ".join(missing))
@@ -222,6 +253,7 @@ def generate_wizard(
     )
     if out_dir is None:
         return
+    out_dir = clean_path(out_dir)
 
     ns = _default_namespace(files)
     ns.template = template
@@ -368,8 +400,11 @@ def run_launcher(
             elif key == "docs":
                 files = _pick_files(multiple=True, source=source)
                 if files:
-                    out = c.text(
-                        "Output directory (blank = stdout):", source=source
+                    out = clean_path(
+                        c.text(
+                            "Output directory (blank = stdout):",
+                            source=source,
+                        )
                     )
                     from .docs import run_docs
 

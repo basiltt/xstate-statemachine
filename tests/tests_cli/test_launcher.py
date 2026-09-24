@@ -106,6 +106,28 @@ class TestMenu(_Launcher):
             ["AdvancePayment.json"],
         )
 
+    def test_pasted_quoted_windows_path_is_accepted(self) -> None:
+        """Explorer's "Copy as path" wraps the path in double quotes; the
+        picker must strip them instead of reporting the file missing."""
+        quoted = f'"{PAYMENT}"'
+        keys = f"2 enter enter {' '.join(_spell(quoted))} enter q"
+        launcher.run_launcher(self.parser, source=K.scripted(keys))
+        out = self.out()
+        self.assertNotIn("not found", out)
+        self.assertIn("state tree", out)
+
+    def test_directory_means_its_json_files(self) -> None:
+        d = pathlib.Path(self.tmp.name) / "machines"
+        d.mkdir()
+        for n in ("a", "b"):
+            (d / f"{n}.json").write_text(
+                PAYMENT.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+        # Validate (4) -> type the DIRECTORY -> multiselect keeps both -> q
+        keys = f"4 enter enter {' '.join(_spell(str(d)))} enter enter q"
+        launcher.run_launcher(self.parser, source=K.scripted(keys))
+        self.assertIn("All 2 file(s) are valid", self.out())
+
     def test_inspect_from_recent(self) -> None:
         launcher.remember([str(PAYMENT)])
         # Inspect (2) → first recent entry
@@ -160,6 +182,33 @@ class TestGenerateWizard(_Launcher):
         launcher.run_launcher(self.parser, source=K.scripted(keys))
         self.assertIn("nothing written", self.out())
         self.assertFalse(out_dir.exists())
+
+
+class TestCleanPath(unittest.TestCase):
+    def test_strips_quotes_expands_user_and_file_uri(self) -> None:
+        win = r"C:\x\m.json"
+        self.assertEqual(launcher.clean_path(f'"{win}"'), win)
+        self.assertEqual(launcher.clean_path("'m.json'"), "m.json")
+        self.assertEqual(launcher.clean_path('  "a b.json"  '), "a b.json")
+        self.assertEqual(launcher.clean_path(""), "")
+        self.assertEqual(launcher.clean_path(None), "")
+        self.assertEqual(
+            launcher.clean_path("~/m.json"), os.path.expanduser("~/m.json")
+        )
+        got = launcher.clean_path("file:///tmp/a%20b.json")
+        self.assertTrue(got.endswith("a b.json"), got)
+        self.assertNotIn("file:", got)
+
+    def test_expand_glob_directory_and_pattern(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for n in ("b", "a"):
+                pathlib.Path(tmp, f"{n}.json").write_text("{}")
+            pathlib.Path(tmp, "readme.md").write_text("x")
+            names = [pathlib.Path(p).name for p in launcher.expand_glob(tmp)]
+            self.assertEqual(names, ["a.json", "b.json"])
+            self.assertEqual(
+                launcher.expand_glob(str(pathlib.Path(tmp, "zz*"))), []
+            )
 
 
 def _spell(text: str, *, clear: int = 0) -> list:
