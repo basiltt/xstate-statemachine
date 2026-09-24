@@ -264,9 +264,6 @@ class PluginSkeletonStrategy(BaseStrategy):
         ]
         for name, sig, _always, _feat, reason, key in selected:
             args = [a.strip() for a in sig.strip("()").split(",")][1:]
-            args_fmt = ", ".join(
-                f"{a}={{{a}!r}}" for a in args[1:]
-            )  # skip interpreter
             fields = ", ".join(f"{a}={a}" for a in args[1:])
             p += [
                 f"    def {name}{sig} -> None:",

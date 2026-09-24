@@ -154,8 +154,10 @@ class TestInspect(_Quiet):
         )
         lines = render_tree(PLAIN, root)
         self.assertTrue(lines[0].startswith("+ aiWorkflow"))
-        self.assertTrue(any("o draft" in l and "* active" in l for l in lines))
-        self.assertTrue(any("|| production" in l for l in lines))
+        self.assertTrue(
+            any("o draft" in ln and "* active" in ln for ln in lines)
+        )
+        self.assertTrue(any("|| production" in ln for ln in lines))
 
     def test_cli_inspect_plain_and_json(self) -> None:
         code, out = _run(["inspect", str(PAYMENT), "--plain"])

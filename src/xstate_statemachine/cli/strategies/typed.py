@@ -124,7 +124,7 @@ class TypedStrategy(BaseStrategy):
         if context:
             p.append(f"class {cls}Context(TypedDict):")
             p.append(
-                f'    """Shape of `context`, inferred from the chart\'s initial value."""'
+                '    """Shape of `context`, inferred from the chart\'s initial value."""'
             )
             p.append("")
             for k, v in context.items():

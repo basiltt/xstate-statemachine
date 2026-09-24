@@ -156,7 +156,9 @@ class TestBoxTableTree(unittest.TestCase):
             lines = box.panel(
                 caps, ["a", "a much longer line " * 10], title="T", width=40
             )
-            self.assertTrue(all(visible_width(l) == 40 for l in lines), lines)
+            self.assertTrue(
+                all(visible_width(ln) == 40 for ln in lines), lines
+            )
 
     def test_panel_ascii_fallback(self) -> None:
         lines = box.panel(PLAIN, ["x"], title="T", width=20)
@@ -168,7 +170,7 @@ class TestBoxTableTree(unittest.TestCase):
         t = Table([Column("a"), Column("b", align="right"), Column("c")])
         t.add("x" * 30, "1", "y" * 30)
         lines = t.render(caps)
-        self.assertTrue(all(visible_width(l) <= 40 for l in lines))
+        self.assertTrue(all(visible_width(ln) <= 40 for ln in lines))
         self.assertIn("|", lines[1])  # header row uses the vertical glyph
         # right alignment: the "1" sits at the right edge of its cell
         self.assertRegex(lines[3], r"\|\s+1 \|")
@@ -177,14 +179,14 @@ class TestBoxTableTree(unittest.TestCase):
         t = Table([Column("k", role="kind.compound"), Column("v")])
         t.add("compound", "1").add("x", "22")
         lines = t.render(RICH)
-        widths = {visible_width(l) for l in lines}
+        widths = {visible_width(ln) for ln in lines}
         self.assertEqual(len(widths), 1, lines)
 
     def test_tree_connectors(self) -> None:
         root = Node("r", [Node("a", [Node("a1")]), Node("b")])
         plain = render_tree(PLAIN, root)
         self.assertEqual(plain, ["r", "|-- a", "|   `-- a1", "`-- b"])
-        rich = [strip_ansi(l) for l in render_tree(RICH, root)]
+        rich = [strip_ansi(ln) for ln in render_tree(RICH, root)]
         self.assertEqual(rich, ["r", "├── a", "│   └── a1", "└── b"])
 
     def test_cards_grid(self) -> None:
@@ -192,8 +194,8 @@ class TestBoxTableTree(unittest.TestCase):
         lines = box.cards(
             caps, [("A", "1"), ("B", "2"), ("C", "3")], columns=3
         )
-        self.assertTrue(all("+" in l for l in lines[:1]))
-        self.assertEqual(len({visible_width(l) for l in lines}), 1)
+        self.assertTrue(all("+" in ln for ln in lines[:1]))
+        self.assertEqual(len({visible_width(ln) for ln in lines}), 1)
 
 
 class TestProgress(unittest.TestCase):
@@ -340,7 +342,7 @@ class TestBannerAnimate(unittest.TestCase):
         )
         ascii_ = banner.render(PLAIN, "1.0")
         self.assertGreater(len(wide), len(narrow))
-        self.assertTrue(all(ord(ch) < 128 for l in ascii_ for ch in l))
+        self.assertTrue(all(ord(ch) < 128 for ln in ascii_ for ch in ln))
         self.assertIn("v1.0", strip_ansi(wide[-1]))
 
     def test_animations_are_instant_when_plain(self) -> None:
