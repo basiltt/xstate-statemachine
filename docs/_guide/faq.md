@@ -573,8 +573,24 @@ See the [Troubleshooting page](../troubleshooting/#debugging-tips) for detailed 
 Yes — [Stately.ai](https://stately.ai) is the visual editor for XState machines. Design your machine visually, export as JSON, and use the `xsm` CLI to generate Python code:
 
 ```bash
-xsm gt exported_machine.json --template pythonic-class
+xsm gt exported_machine.json --template pythonic-class --with-tests --with-types
+xsm inspect exported_machine.json     # tree, transitions, logic to implement
+xsm simulate exported_machine.json    # run it live before writing any code
 ```
+
+Or run `xsm` with no arguments on a terminal for the interactive launcher. See the [CLI Tool](../cli/) guide.
+
+---
+
+### `xsm` says "An Application Control policy has blocked this file" on Windows
+
+Windows Defender Application Control / AppLocker / Smart App Control is refusing the unsigned `xsm.exe` launcher that `pip` generates for *every* console script — the package itself is fine. Run, once:
+
+```powershell
+python -m xstate_statemachine setup
+```
+
+It parks the blocked launcher and installs an `xsm.cmd` batch shim beside it; `xsm` then works normally. Re-run after `pip install --upgrade`; `--undo` reverts. `python -m xstate_statemachine …` is always available as the launcher-free spelling. See [CLI Tool → Windows](../cli/#windows-an-application-control-policy-has-blocked-this-file).
 
 ---
 

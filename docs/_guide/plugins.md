@@ -123,6 +123,8 @@ Guard evaluation messages include pass/fail indicators:
 
 Create custom plugins by subclassing `PluginBase` and overriding any hooks you need:
 
+> **Shortcut:** `xsm gt machine.json --with-plugin` generates a `PluginBase` subclass that overrides exactly the hooks *that chart* can fire, each logging one JSON line — see the [companion templates](../cli-templates/#companion-templates).
+
 ```python
 from xstate_statemachine import PluginBase
 

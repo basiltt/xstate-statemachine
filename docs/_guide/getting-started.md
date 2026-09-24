@@ -27,7 +27,7 @@ poetry add xstate-statemachine
 
 ```bash
 xsm --version
-# Output: xsm 0.9.1
+# Output: xsm 0.10.0
 ```
 
 You can also verify the CLI tool is available:
@@ -264,7 +264,7 @@ Here's what XState-StateMachine supports — every feature you'd expect from a p
 - **Dual interpreters** — `Interpreter` (async) and `SyncInterpreter` (sync)
 
 ### Developer Tools
-- **CLI code generator** — 5 templates from XState JSON
+- **CLI tool** — generate (8 templates), inspect, simulate, diagram and document machines from XState JSON; interactive launcher on a terminal
 - **Diagram export** — Mermaid, PlantUML
 - **LoggingInspector** plugin — built-in state transition logging
 - **Zero dependencies** — pure Python standard library
@@ -313,11 +313,11 @@ xstate-statemachine/
 │   ├── snapshot.py           # Snapshot save/restore
 │   ├── plugin.py             # Plugin base + LoggingInspector
 │   ├── diagram_exporter.py   # Mermaid, PlantUML export
-│   └── cli/                  # CLI code generator
+│   └── cli/                  # xsm: generate / inspect / simulate / diagram / docs
 │       ├── __main__.py       # Entry point (xsm command)
 │       ├── extractor.py      # JSON feature extraction
 │       └── strategies/       # 5 code generation templates
-├── tests/                    # 3,590 tests, 93% coverage
+├── tests/                    # 3,735 tests, 93% coverage
 ├── docs/                     # GitHub Pages documentation
 └── pyproject.toml
 ```
@@ -368,7 +368,7 @@ also a `TypeError` — and `RootTargetError`), new plugin hooks
 `from_snapshot(clock=, restart_timers=, minimum_version=)`, sticky
 `chain_trips` / `last_chain_error`, `Interpreter(service_pool_size=)`,
 `MachineLogic(strict=True)` and redaction in `LoggingInspector`. See
-[What's New in 0.9.0](#whats-new-in-090) and [0.9.1](#whats-new-in-091) below.
+[What's New in 0.10.0](#whats-new-in-0100), [0.9.0](#whats-new-in-090) and [0.9.1](#whats-new-in-091) below.
 
 **From v0.5.x to v0.6.0:**
 
@@ -453,6 +453,44 @@ asyncio.run(main())
 > has actually been processed (see [Receipts and priority sends](../interpreters/#receipts-and-priority-sends-39)).
 
 > **Tip:** Use `SyncInterpreter` for scripts, CLI tools, and testing. Use `Interpreter` for web servers, event loops, and real-time applications.
+
+## 🆕 What's New in 0.10.0
+
+A CLI release. The library is unchanged (one additive `create_machine(...,
+strict_config=)` overload), and `xsm` grows from a code generator into a
+terminal toolkit — still with zero runtime dependencies:
+
+- **Interactive launcher** — a bare `xsm` on a terminal opens a menu with
+  recent files and a generate wizard that previews the module before writing.
+- **`xsm inspect`** — state tree, transitions table, logic to implement and
+  failure policies for a machine, built with the real library.
+- **`xsm simulate`** — run a machine live on a `SimulatedClock`: pick enabled
+  events, fire timers, flip guards, undo, print history and snapshots. The same
+  engine replays `--events A,+500,B`, `--script file.json` and emits `--json`
+  for CI.
+- **`xsm diagram`** and **`xsm docs`** — Mermaid / PlantUML / ASCII diagrams and
+  a Markdown reference page per machine, to stdout or files.
+- **Companion templates** — `--with-tests` (a pytest module *recorded* from the
+  engine), `--with-types` (`TypedDict` context, `Literal` events, typed stubs)
+  and `--with-plugin` (a `PluginBase` wired for the hooks the chart can fire),
+  alongside any primary template or on their own via `--template`.
+- **`xsm validate`** now builds with `create_machine(strict_config=True)`,
+  reports unreachable states and the library's own warnings, and has `--json`
+  and `--lenient`.
+- **`xsm update`** — upgrade to the latest release with the installer that
+  installed you (pip / pipx / uv tool); refuses editable and conda installs
+  with the right command instead. `--check` for scripts.
+- **Windows: `xsm` where pip's launcher is blocked** — machines governed by
+  Application Control / AppLocker / Smart App Control refuse the unsigned
+  `xsm.exe` pip generates. Run `python -m xstate_statemachine setup` once and
+  `xsm` works normally (`--check`, `--undo`); `python -m xstate_statemachine …`
+  always works.
+- **Presentation** — truecolor/256/16-colour tiers, box-drawing, spinners and
+  step lists on a terminal; deterministic plain text when piped or with
+  `--plain`; `--no-color` / `NO_COLOR`, `--no-anim`, `--verbose`; `--json` on
+  `validate`, `inspect`, `simulate`, `list-templates` and `info`.
+
+See the **[CLI Tool](../cli/)** guide.
 
 ## 🆕 What's New in 0.9.1
 
@@ -548,5 +586,5 @@ Now that you're set up, explore the features:
 - **[Context](../context/)** — Working with machine data
 - **[Guards](../guards/)** — Conditional transitions
 - **[Actions](../actions/)** — Side effects and state mutations
-- **[CLI Generator](../cli/)** — Generate production-ready code from XState JSON
+- **[CLI Tool](../cli/)** — Generate, inspect, simulate and document machines from XState JSON
 - **[Examples](../examples/)** — Real-world patterns and advanced usage

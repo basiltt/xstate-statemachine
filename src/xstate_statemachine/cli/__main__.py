@@ -68,15 +68,23 @@ from .utils import camel_to_snake, module_safe_name, normalize_bool
 logger = logging.getLogger(__name__)
 
 
-def _configure_cli_logging() -> None:
+def _configure_cli_logging(verbose: bool = False) -> None:
     """Configures console logging for the CLI entry point only.
 
     📝 No-op when the root logger already has handlers, so an embedding
     application's configuration is never overridden.
+
+    🔇 The library logs its own progress at INFO ("Starting logic
+    extraction…", "Parsed onDone transition…"). Those are the library's
+    diary, not the CLI's UI: the console renders status itself, so by
+    default only WARNING and above reach the user. `--verbose` restores
+    INFO to stderr for debugging a generation.
     """
     if not logging.root.handlers:
         logging.basicConfig(
-            level=logging.INFO, format="[%(levelname)s] %(message)s"
+            level=logging.INFO if verbose else logging.WARNING,
+            format="[%(levelname)s] %(message)s",
+            stream=sys.stderr,
         )
 
 
@@ -311,18 +319,42 @@ def _check_output_files(
                 fromfile=f"{path} (on disk)",
                 tofile=f"{path} (generated)",
             )
-            _safe_print("".join(rendered))
+            _print_diff("".join(rendered))
 
+    from .commands import get_console
+
+    c = get_console()
     if differences:
         for line in differences:
-            _safe_print(f"✗ {line}")
-        _safe_print(
-            "\nGenerated code is out of date. "
-            "Re-run without --check to update it."
+            c.error(line)
+        c.print(
+            "",
+            "Generated code is out of date. "
+            "Re-run without --check to update it.",
         )
         raise SystemExit(1)
 
-    _safe_print("✓ Generated code is up to date.")
+    c.ok("Generated code is up to date.")
+
+
+def _print_diff(text: str) -> None:
+    """A unified diff with +/-/@@ coloured (plain when not a terminal)."""
+    from .commands import get_console
+
+    c = get_console()
+    out = []
+    for line in text.splitlines():
+        if line.startswith(("+++", "---")):
+            out.append(c.style(line, "title"))
+        elif line.startswith("@@"):
+            out.append(c.style(line, "diff.hunk"))
+        elif line.startswith("+"):
+            out.append(c.style(line, "diff.add"))
+        elif line.startswith("-"):
+            out.append(c.style(line, "diff.del"))
+        else:
+            out.append(line)
+    c.print(*out)
 
 
 def _write_output_files(
@@ -339,23 +371,23 @@ def _write_output_files(
         logic_code (str): The generated logic code.
         runner_code (str): The generated runner code.
     """
-    logger.info("✍️ Writing generated code to disk...")
+    from .commands import get_console
+
+    c = get_console()
     if file_count == 1:
         # 🤝 Merge code into a single file
         combined_code = _combined_output(logic_code, runner_code)
         target_path = paths["single_file"]
-        logger.info(f"💾 Writing combined code to: {target_path}")
         target_path.write_text(combined_code, encoding="utf-8")
-        _safe_print(f"Generated combined file: {target_path}")
+        # 📌 "Generated combined file:" is pinned by tests/tests_cli.
+        c.ok(f"Generated combined file: {c.style(str(target_path), 'path')}")
     else:
         # ✌️ Write to separate logic and runner files
         logic_path, runner_path = paths["logic_file"], paths["runner_file"]
-        logger.info(f"💾 Writing logic code to: {logic_path}")
         logic_path.write_text(logic_code, encoding="utf-8")
-        logger.info(f"💾 Writing runner code to: {runner_path}")
         runner_path.write_text(runner_code, encoding="utf-8")
-        _safe_print(f"Generated logic file: {logic_path}")
-        _safe_print(f"Generated runner file: {runner_path}")
+        c.ok(f"Generated logic file: {c.style(str(logic_path), 'path')}")
+        c.ok(f"Generated runner file: {c.style(str(runner_path), 'path')}")
 
 
 # -----------------------------------------------------------------------------
@@ -842,6 +874,34 @@ def run_generation_workflow(
         loader=settings["loader"],
         style=getattr(args, "style", None),
     )
+    # 🧩 Companion templates (pytest / typed / plugin) are single files
+    #    with their own naming and verification; they may also be ADDED to
+    #    a primary template via --with-*. Handled by `commands.generate`.
+    from .commands.generate import emit_companions, is_companion
+
+    companion_out_dir = (
+        Path(args.output) if args.output else Path(json_paths[0]).parent
+    )
+    companion_check = bool(
+        getattr(args, "check", False) or getattr(args, "diff", False)
+    )
+
+    def _companions() -> None:
+        emit_companions(
+            args,
+            ctx,
+            out_dir=companion_out_dir,
+            base_name=machine_name,
+            json_paths=json_paths,
+            primary=template,
+            check_mode=companion_check,
+        )
+
+    if is_companion(template):
+        _companions()
+        logger.info("✅ Code generation complete.")
+        return
+
     logic_code = strategy.generate_logic(ctx)
     runner_code = strategy.generate_runner(ctx)
 
@@ -878,9 +938,11 @@ def run_generation_workflow(
             runner_code,
             show_diff=getattr(args, "diff", False),
         )
+        _companions()
         return
 
     _write_output_files(args.file_count, paths, logic_code, runner_code)
+    _companions()
 
 
 def _polish_output(
@@ -981,211 +1043,113 @@ def _verify_or_refuse(
         )
 
 
-def run_list_templates() -> None:
-    """Lists all available code generation templates with descriptions."""
-    templates = [
-        (
-            "class-json",
-            "Class + JSON",
-            "OOP logic class with MachineLogic, bound to a JSON config loaded at runtime.",
-        ),
-        (
-            "function-json",
-            "Functions + JSON",
-            "Module-level functions with LogicLoader auto-discovery, JSON config at runtime.",
-        ),
-        (
-            "pythonic-class",
-            "Class-Based",
-            "StateMachine subclass with @action, @guard, @service decorators. Pure Python.",
-        ),
-        (
-            "pythonic-builder",
-            "Builder Pattern",
-            "Fluent MachineBuilder API for dynamic, programmatic machine construction.",
-        ),
-        (
-            "pythonic-functional",
-            "Functional",
-            "Simple build_machine() call with explicit state and transition definitions.",
-        ),
-    ]
-    _safe_print("\nAvailable code generation templates:\n")
-    _safe_print(f"  {'Template ID':<24} {'Style':<20} Description")
-    _safe_print(f"  {'-' * 23}  {'-' * 19} {'-' * 55}")
-    for tid, style, desc in templates:
-        _safe_print(f"  {tid:<24} {style:<20} {desc}")
-
-    # 📋 Support matrix. Users previously had no way to know which
-    #    templates re-express the machine as Python (and are therefore
-    #    structurally verified) versus which load the JSON at runtime.
-    _safe_print("\nFeature support:\n")
-    _safe_print(
-        f"  {'Template ID':<24} {'Machine built':<15} "
-        f"{'Verified':<10} Config needed at runtime"
-    )
-    _safe_print(f"  {'-' * 23}  {'-' * 14} {'-' * 9}  {'-' * 24}")
-    for tid, _, _ in templates:
-        inline = builds_machine_inline(tid)
-        _safe_print(
-            f"  {tid:<24} "
-            f"{'in Python' if inline else 'from JSON':<15} "
-            f"{'structural' if inline else 'syntax':<10} "
-            f"{'no' if inline else 'yes -- ship the .json'}"
-        )
-    _safe_print(
-        "\n  All templates support nesting, parallel regions, history, "
-        "guards,\n  timers (numeric and named delays), invoke, tags and "
-        "meta.\n"
-        "  'Verified' is what the generator proves before writing: "
-        "templates that\n  build the machine in Python are executed and "
-        "compared against the source."
-    )
-
-    _safe_print(
-        "\nUsage: xsm generate-template <file.json> --template <template-id>\n"
-    )
-
-
-def run_validate(args: argparse.Namespace) -> None:
-    """Validates one or more XState JSON config files."""
-    errors = 0
-    for jp in args.json_files:
-        path = Path(jp)
-        if not path.exists():
-            _safe_print(f"  x {jp} -- file not found")
-            errors += 1
-            continue
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                conf = json.load(f)
-        except json.JSONDecodeError as e:
-            _safe_print(f"  x {jp} -- invalid JSON: {e}")
-            errors += 1
-            continue
-
-        # Validate structure
-        issues = []
-        actions: Set[str] = set()
-        guards: Set[str] = set()
-        services: Set[str] = set()
-        if not isinstance(conf, dict):
-            issues.append("root must be a JSON object")
-        else:
-            if "id" not in conf:
-                issues.append("missing 'id' field")
-            if "initial" not in conf and conf.get("type") != "parallel":
-                issues.append("missing 'initial' field")
-            if "states" not in conf:
-                issues.append("missing 'states' field")
-            elif not isinstance(conf.get("states"), dict):
-                issues.append("'states' must be an object")
-            else:
-                if (
-                    conf.get("initial")
-                    and conf["initial"] not in conf["states"]
-                ):
-                    issues.append(
-                        f"initial state '{conf['initial']}' not found in states"
-                    )
-
-            # Extract logic names for summary
-            try:
-                actions, guards, services = extract_logic_names(conf)
-            except Exception:
-                pass
-
-        if issues:
-            _safe_print(f"  x {jp} -- {len(issues)} issue(s):")
-            for issue in issues:
-                _safe_print(f"      - {issue}")
-            errors += 1
-        else:
-            state_count = len(conf.get("states", {}))
-            machine_id = conf.get("id", path.stem)
-            _safe_print(f"  ok {jp}")
-            _safe_print(f"      Machine: {machine_id}")
-            _safe_print(f"      States:  {state_count}")
-            if actions:
-                _safe_print(f"      Actions: {', '.join(sorted(actions))}")
-            if guards:
-                _safe_print(f"      Guards:  {', '.join(sorted(guards))}")
-            if services:
-                _safe_print(f"      Services: {', '.join(sorted(services))}")
-
-    if errors:
-        _safe_print(f"\n{errors} file(s) had errors.")
-        raise SystemExit(1)
-    else:
-        _safe_print(f"\nAll {len(args.json_files)} file(s) are valid.")
-
-
-def run_info() -> None:
-    """Displays library information and environment details."""
-    import platform
-    from .. import __version__ as pkg_ver
-
-    _safe_print("\n  XState-StateMachine CLI")
-    _safe_print("  ----------------------------------")
-    _safe_print(f"  Version:      {pkg_ver}")
-    _safe_print(f"  Python:       {platform.python_version()}")
-    _safe_print(f"  Platform:     {platform.system()} {platform.machine()}")
-    _safe_print(f"  Install path: {Path(__file__).resolve().parent.parent}")
-    _safe_print("")
-    _safe_print("  Features:")
-    _safe_print("    * Async + Sync interpreters")
-    _safe_print("    * XState JSON compatibility")
-    _safe_print("    * Pythonic API (class, builder, functional)")
-    _safe_print("    * Hierarchical & parallel states")
-    _safe_print("    * Guards, actions, services, delayed transitions")
-    _safe_print("    * Actor model (spawn child machines)")
-    _safe_print("    * Plugin system & LoggingInspector")
-    _safe_print("    * Snapshot save/restore")
-    _safe_print("    * Diagram export (Mermaid, PlantUML)")
-    _safe_print("    * CLI code generator (5 templates)")
-    _safe_print("    * Zero external dependencies")
-    _safe_print("")
-    _safe_print(
-        "  Documentation: https://basiltt.github.io/xstate-statemachine/"
-    )
-    _safe_print(
-        "  PyPI:          https://pypi.org/project/xstate-statemachine/"
-    )
-    _safe_print(
-        "  GitHub:        https://github.com/basiltt/xstate-statemachine"
-    )
-    _safe_print("")
-
-
 def main() -> None:
-    """Parses CLI arguments and orchestrates the code generation workflow."""
+    """Parses CLI arguments and dispatches to the subcommand modules."""
     # 🪵 Configure console logging only when run as a CLI.
-    _configure_cli_logging()
-
     parser = get_parser()
     args = parser.parse_args()
-    validate_args(
-        parser
-    )  # Note: Assuming this validates args based on the parser state.
+    _configure_cli_logging(verbose=bool(getattr(args, "verbose", False)))
+    validate_args(parser)
+
+    # 🎨 One console for the whole run, built from the global flags.
+    from .commands import configure_console
+
+    console = configure_console(args)
 
     if args.subcommand in {"generate-template", "gt"}:
         run_generation_workflow(args, parser)
         return
 
     if args.subcommand in {"list-templates", "lt"}:
-        run_list_templates()
+        from .commands.templates import run_list_templates
+
+        run_list_templates(as_json=bool(getattr(args, "json", False)))
         return
 
     if args.subcommand in {"validate", "val"}:
-        run_validate(args)
+        from .commands.validate import run_validate
+
+        run_validate(
+            args.json_files,
+            as_json=bool(getattr(args, "json", False)),
+            lenient=bool(getattr(args, "lenient", False)),
+        )
+        return
+
+    if args.subcommand in {"inspect", "ins"}:
+        from .commands.inspect import run_inspect
+
+        run_inspect(
+            args.json_file,
+            as_json=bool(getattr(args, "json", False)),
+            no_events=bool(getattr(args, "no_events", False)),
+        )
+        return
+
+    if args.subcommand in {"diagram", "dia"}:
+        from .commands.diagram import run_diagram
+
+        run_diagram(args.json_file, fmt=args.format, output=args.output)
+        return
+
+    if args.subcommand in {"simulate", "sim"}:
+        from .commands.simulate import run_simulate
+
+        run_simulate(
+            args.json_file,
+            events=args.events,
+            clock=args.clock,
+            script=args.script,
+            as_json=bool(getattr(args, "json", False)),
+            guards_false=args.guards_false,
+        )
+        return
+
+    if args.subcommand == "docs":
+        from .commands.docs import run_docs
+
+        run_docs(args.json_files, output=args.output)
         return
 
     if args.subcommand == "info":
-        run_info()
+        from .commands.info import run_info
+
+        run_info(as_json=bool(getattr(args, "json", False)))
         return
 
-    # 🆘 Show help if no valid subcommand is given
-    parser.print_help()
+    if args.subcommand == "update":
+        from .commands.update import run_update
+
+        run_update(
+            check=bool(args.check),
+            yes=bool(args.yes),
+            as_json=bool(getattr(args, "json", False)),
+        )
+        return
+
+    if args.subcommand == "setup":
+        from pathlib import Path
+
+        from .commands.setup import run_setup
+
+        run_setup(
+            undo=bool(args.undo),
+            check=bool(args.check),
+            as_json=bool(getattr(args, "json", False)),
+            scripts_dir=Path(args.scripts_dir) if args.scripts_dir else None,
+        )
+        return
+
+    # 🧭 Bare `xsm`: the interactive launcher on a terminal, help otherwise.
+    if console.interactive:
+        from .commands.launcher import run_launcher
+
+        run_launcher(parser)
+        return
+    parser.error(
+        "the following arguments are required: subcommand "
+        "(run `xsm` in a terminal for the interactive launcher)"
+    )
 
 
 # -----------------------------------------------------------------------------

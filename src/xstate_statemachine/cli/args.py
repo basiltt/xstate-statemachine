@@ -109,12 +109,31 @@ def _add_generation_option_args(parser: argparse.ArgumentParser) -> None:
             "pythonic-class",
             "pythonic-builder",
             "pythonic-functional",
+            "pytest",
+            "typed",
+            "plugin",
         ],
         default=None,
         help=(
             "Code generation template. Default: class-json. "
-            "Replaces --style (deprecated)."
+            "Replaces --style (deprecated). 'pytest', 'typed' and 'plugin' "
+            "are single-file companions (see also --with-*)."
         ),
+    )
+    parser.add_argument(
+        "--with-tests",
+        action="store_true",
+        help="Also emit test_<machine>.py: a pytest module recorded from the real engine.",
+    )
+    parser.add_argument(
+        "--with-types",
+        action="store_true",
+        help="Also emit <machine>_types.py: Context TypedDict, event/state Literals, typed stubs.",
+    )
+    parser.add_argument(
+        "--with-plugin",
+        action="store_true",
+        help="Also emit <machine>_observer.py: a PluginBase wired for the hooks this chart fires.",
     )
     parser.add_argument(
         "-fc",
@@ -226,11 +245,18 @@ def get_parser() -> argparse.ArgumentParser:
         allow_abbrev=False,  # Disable partial matching of long options
         epilog="""
 examples:
+  xsm                                   interactive launcher (on a terminal)
   xsm generate-template my_machine.json
-  xsm gt machine.json -t pythonic-class -o ./generated
-  xsm list-templates
+  xsm gt machine.json -t pythonic-class --with-tests --with-types -o ./generated
+  xsm inspect machine.json
+  xsm simulate machine.json
+  xsm diagram machine.json -f mermaid -o docs/
+  xsm docs machine.json -o docs/
   xsm validate machine.json
+  xsm list-templates
   xsm info
+  xsm update                            upgrade to the latest release
+  python -m xstate_statemachine setup   Windows: fix a blocked xsm.exe launcher
             """,
     )
 
@@ -243,13 +269,43 @@ examples:
         help="Show program's version number and exit.",
     )
 
-    # 📋 Sub-command setup
+    # 🎨 Global presentation flags (#cli-ui). Every command honours them;
+    #    the same switches are also read from NO_COLOR / XSM_NO_COLOR /
+    #    XSM_NO_ANIM, and a non-TTY stdout implies --plain.
+    # 🧬 Declared once on a parent parser and attached to the root AND every
+    #    subcommand, so `xsm --plain validate x` and `xsm validate x --plain`
+    #    both work. `default=SUPPRESS` on the parents keeps the subcommand's
+    #    value from clobbering the root's with False.
+    presentation = argparse.ArgumentParser(add_help=False)
+    for flag, help_text in (
+        (
+            "--plain",
+            "Plain text: no colour, no box glyphs, no animation (implied when piped).",
+        ),
+        (
+            "--no-color",
+            "Keep layout and animation but emit no colour escapes.",
+        ),
+        ("--no-anim", "Disable spinners and in-place redraws."),
+        ("--verbose", "Show the library's INFO log on stderr while running."),
+    ):
+        parser.add_argument(flag, action="store_true", help=help_text)
+        presentation.add_argument(
+            flag,
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help=argparse.SUPPRESS,
+        )
+
+    # 📋 Sub-command setup. `required=False` so a bare `xsm` on a TTY opens
+    #    the interactive launcher (and prints help when piped).
     subparsers = parser.add_subparsers(
-        dest="subcommand", required=True, help="Available commands"
+        dest="subcommand", required=False, help="Available commands"
     )
     gen_parser = subparsers.add_parser(
         "generate-template",
         aliases=["gt"],
+        parents=[presentation],
         help="Generate Python code from an XState JSON file.",
         description="Generates Python code from one or more XState JSON machine definitions.",
     )
@@ -260,17 +316,22 @@ examples:
     _add_simulation_option_args(gen_parser)
 
     # 📋 list-templates subcommand
-    subparsers.add_parser(
+    lt_parser = subparsers.add_parser(
         "list-templates",
         aliases=["lt"],
+        parents=[presentation],
         help="List all available code generation templates.",
         description="Shows available templates with descriptions.",
+    )
+    lt_parser.add_argument(
+        "--json", action="store_true", help="Emit the catalogue as JSON."
     )
 
     # ✅ validate subcommand
     val_parser = subparsers.add_parser(
         "validate",
         aliases=["val"],
+        parents=[presentation],
         help="Validate an XState JSON config file.",
         description="Validates that JSON files are well-formed XState machine configs.",
     )
@@ -279,12 +340,173 @@ examples:
         nargs="+",
         help="One or more JSON config files to validate.",
     )
+    val_parser.add_argument(
+        "--json", action="store_true", help="Emit findings as JSON."
+    )
+    val_parser.add_argument(
+        "--lenient",
+        action="store_true",
+        help="Report unknown config keys as warnings instead of errors.",
+    )
 
     # ℹ️ info subcommand
-    subparsers.add_parser(
+    info_parser = subparsers.add_parser(
         "info",
+        parents=[presentation],
         help="Show library version, Python version, and feature summary.",
         description="Displays information about the xstate-statemachine installation.",
+    )
+    info_parser.add_argument(
+        "--json", action="store_true", help="Emit as JSON."
+    )
+
+    # ⬆️ update subcommand -- self-update via the installer that installed us
+    update_parser = subparsers.add_parser(
+        "update",
+        parents=[presentation],
+        help="Upgrade xstate-statemachine to the latest release on PyPI.",
+        description=(
+            "Checks PyPI for the latest release and upgrades with the tool "
+            "that installed this copy (pip, pipx or uv tool). Refuses to "
+            "touch an editable checkout or a conda-managed environment and "
+            "prints the right command instead. On Windows, re-applies the "
+            "`xsm setup` shim if it was in place, since pip recreates xsm.exe."
+        ),
+    )
+    update_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Only report; exit 1 if a newer release exists (for scripts).",
+    )
+    update_parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Do not ask for confirmation.",
+    )
+    update_parser.add_argument(
+        "--json", action="store_true", help="Emit the result as JSON."
+    )
+
+    # 🪟 setup subcommand -- make `xsm` work where pip's launcher is blocked
+    setup_parser = subparsers.add_parser(
+        "setup",
+        parents=[presentation],
+        help="Make the `xsm` command work on Windows machines that block pip's xsm.exe launcher.",
+        description=(
+            "On Windows, pip installs `xsm` as an unsigned Scripts\\xsm.exe "
+            "launcher that Application Control / AppLocker / Smart App Control "
+            "policies may refuse. `setup` parks that launcher as "
+            "xsm.exe.blocked and writes an xsm.cmd batch shim beside it, so "
+            "`xsm` runs through the trusted cmd.exe -> python. Run it as "
+            "`python -m xstate_statemachine setup`; re-run after "
+            "`pip install --upgrade` (which recreates xsm.exe). A no-op on "
+            "other operating systems."
+        ),
+    )
+    setup_group = setup_parser.add_mutually_exclusive_group()
+    setup_group.add_argument(
+        "--undo",
+        action="store_true",
+        help="Remove the shim and restore pip's xsm.exe launcher.",
+    )
+    setup_group.add_argument(
+        "--check",
+        action="store_true",
+        help="Report whether the shim is in place; exit 1 if `xsm` still resolves to xsm.exe.",
+    )
+    setup_parser.add_argument(
+        "--json", action="store_true", help="Emit the state as JSON."
+    )
+    setup_parser.add_argument(
+        "--scripts-dir",
+        metavar="DIR",
+        default=None,
+        help="Override the Scripts directory (default: this interpreter's).",
+    )
+
+    # 🔍 inspect subcommand
+    ins_parser = subparsers.add_parser(
+        "inspect",
+        aliases=["ins"],
+        parents=[presentation],
+        help="Show a machine's state tree, transitions, logic and policies.",
+        description="Builds the machine with the real library and renders everything about it.",
+    )
+    ins_parser.add_argument("json_file", help="The machine JSON file.")
+    ins_parser.add_argument(
+        "--json", action="store_true", help="Emit the facts as JSON."
+    )
+    ins_parser.add_argument(
+        "--no-events", action="store_true", help="Skip the transitions table."
+    )
+
+    # 🗺️ diagram subcommand
+    dia_parser = subparsers.add_parser(
+        "diagram",
+        aliases=["dia"],
+        parents=[presentation],
+        help="Export a Mermaid, PlantUML or ASCII diagram.",
+        description="Renders the machine as a diagram, to stdout or a file.",
+    )
+    dia_parser.add_argument("json_file", help="The machine JSON file.")
+    dia_parser.add_argument(
+        "-f",
+        "--format",
+        choices=["mermaid", "plantuml", "ascii"],
+        default="mermaid",
+        help="Diagram syntax. Default: mermaid.",
+    )
+    dia_parser.add_argument(
+        "-o",
+        "--output",
+        help="Write to this file (or directory) instead of stdout.",
+    )
+
+    # 🎮 simulate subcommand
+    sim_parser = subparsers.add_parser(
+        "simulate",
+        aliases=["sim"],
+        parents=[presentation],
+        help="Run a machine live: pick events, advance the clock, inspect context.",
+        description="Interactive on a terminal; scripted with --events / --script / --json for CI.",
+    )
+    sim_parser.add_argument("json_file", help="The machine JSON file.")
+    sim_parser.add_argument(
+        "-e",
+        "--events",
+        help="Comma-separated events to send in order; '+500' advances the clock 500 ms.",
+    )
+    sim_parser.add_argument(
+        "--clock", help="Advance the clock by this many ms at the end."
+    )
+    sim_parser.add_argument(
+        "--script",
+        help='JSON file: a list of {"send"}, {"clock"}, {"guard","value"}, {"undo"} commands.',
+    )
+    sim_parser.add_argument(
+        "--guards-false", help="Comma-separated guard names that return False."
+    )
+    sim_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the final state and history as JSON.",
+    )
+
+    # 📄 docs subcommand
+    docs_parser = subparsers.add_parser(
+        "docs",
+        parents=[presentation],
+        help="Generate a Markdown reference page per machine.",
+        description="Summary, Mermaid diagram, state and transition tables, logic, policies.",
+    )
+    docs_parser.add_argument(
+        "json_files", nargs="+", help="Machine JSON files."
+    )
+    docs_parser.add_argument(
+        "-o",
+        "--output",
+        help="Directory for <machine-id>.md files (default: stdout).",
     )
 
     return parser

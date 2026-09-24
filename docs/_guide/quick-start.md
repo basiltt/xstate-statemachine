@@ -313,5 +313,5 @@ In every example above, the same pattern plays out:
 - [Actions](../actions/) — Entry, exit, and transition actions
 - [Guards](../guards/) — Conditional transitions
 - [Context](../context/) — Mutable data across transitions
-- [CLI Generator](../cli/) — Generate code from XState JSON
+- [CLI Tool](../cli/) — Generate, inspect and simulate machines from XState JSON
 - [Interpreters](../interpreters/) — Async vs sync execution

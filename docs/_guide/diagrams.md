@@ -377,6 +377,18 @@ audible --> muted : MUTE
 
 ## 📚 Using Diagrams for Documentation
 
+### From the command line
+
+For machines you keep as JSON, the CLI wraps these exporters — no script needed:
+
+```bash
+xsm diagram checkout.json                     # Mermaid to stdout
+xsm diagram checkout.json -f plantuml -o docs/  # docs/checkout.puml
+xsm docs machines/*.json -o docs/             # a Markdown page per machine, diagram embedded
+```
+
+`xsm diagram` calls the same `to_mermaid()` / `to_plantuml()` shown above, so the output is identical to the Python API. See the [CLI Tool](../cli/) guide.
+
 ### Auto-Generate Documentation Script
 
 Create a script that generates diagrams for all your machines:

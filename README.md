@@ -9,7 +9,7 @@
 [![PyPI](https://img.shields.io/pypi/v/xstate-statemachine?style=flat-square&logo=pypi&logoColor=white&color=3775A9)](https://pypi.org/project/xstate-statemachine/)
 [![Python](https://img.shields.io/pypi/pyversions/xstate-statemachine?style=flat-square&logo=python&logoColor=white&color=3776AB)](https://pypi.org/project/xstate-statemachine/)
 [![CI](https://img.shields.io/github/actions/workflow/status/basiltt/xstate-statemachine/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/basiltt/xstate-statemachine/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-3590_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/tests-3735_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-93%25-3fb950?style=flat-square&logo=codecov&logoColor=white)](.github/workflows/ci.yml)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-ff8c00?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/pypi/l/xstate-statemachine?style=flat-square&color=yellow)](LICENSE)
@@ -46,7 +46,7 @@ and your Python backend. Async **and** sync interpreters. Zero dependencies.
 | 🤖 | [**Actors**](#-the-actor-model) · [**Persistence**](#-persistence--snapshots) | Systems of machines |
 | 🔍 | [**Introspection**](#-introspection--plugins) · [**Pure API**](#-the-pure-api--no-interpreter) | Observe and test |
 | 🐍 | [**Pythonic API**](#-prefer-pure-python-three-more-ways-to-define-a-machine) | No JSON required |
-| 🛠️ | [**CLI Generator**](#️-cli-code-generator) | JSON → typed Python, verified |
+| 🛠️ | [**CLI Tool**](#️-cli-tool) | Generate, inspect, simulate, diagram — zero deps |
 | 📚 | [**Cookbook**](#-cookbook) · [**FAQ**](#-faq) | Copy-paste recipes |
 | 🏭 | [**Production**](#-running-it-in-production) · [**API Reference**](#-api-reference) · [**Troubleshooting**](#-troubleshooting) | Failure semantics, every kwarg, every error |
 
@@ -103,10 +103,11 @@ event loop, no sleeping.
 </td>
 <td valign="top">
 
-**🛠️ Verified codegen**
+**🛠️ A terminal toolkit**
 
-`xsm` turns JSON into typed Python and **proves** the result rebuilds your
-machine before writing it.
+`xsm` turns JSON into typed Python — and **proves** the result rebuilds your
+machine before writing it. It also inspects, simulates, diagrams and
+documents your machines, with an interactive launcher on a terminal.
 
 </td>
 </tr>
@@ -157,12 +158,20 @@ diff you ran yourself:
 ```bash
 pip install pypi-attestations
 pypi-attestations verify pypi --repository https://github.com/basiltt/xstate-statemachine \
-  pypi:xstate_statemachine-0.9.1-py3-none-any.whl   # prints "OK: <file>" on success
+  pypi:xstate_statemachine-0.10.0-py3-none-any.whl   # prints "OK: <file>" on success
 ```
 
 ```bash
 xsm info          # verify the install
+xsm update        # later: upgrade to the latest release
 ```
+
+> **Windows, `xsm.exe` blocked by an Application Control policy?** That is pip's unsigned
+> launcher stub being refused by WDAC / AppLocker, not the package. Run
+> `python -m xstate_statemachine setup` once: it parks the blocked launcher and installs a batch
+> shim, after which `xsm` works normally (re-run after `pip install --upgrade`; `--undo` reverts).
+> `python -m xstate_statemachine …` always works too.
+> Details: [CLI → Windows](https://basiltt.github.io/xstate-statemachine/guide/cli/#windows-an-application-control-policy-has-blocked-this-file).
 
 Using the code generator and want its output line-wrapped to match your linter?
 That needs `black` and `isort`, which stay optional so the core install keeps its
@@ -1002,7 +1011,7 @@ Python has good state machine libraries. Here's an honest read on when to pick w
 | Snapshot persistence | ✅ | ⚙️ DIY | ⚙️ DIY |
 | Sync **and** async runtimes | ✅ two engines | ✅ | ✅ |
 | Diagram export | ✅ no binaries | ⚙️ needs graphviz | ✅ |
-| CLI code generator | ✅ | ❌ | ❌ |
+| CLI: generate, inspect, simulate, diagram, docs | ✅ | ❌ | ❌ |
 | Virtual clock for tests | ✅ `SimulatedClock` | ❌ | ❌ |
 | Bounded inbox / backpressure | ✅ `max_queue_size` | — | — |
 | Runtime dependencies | **0** | 1 (`six`) | 0 |
@@ -1411,24 +1420,41 @@ the other two styles.
 
 ---
 
-## 🛠️ CLI Code Generator
+## 🛠️ CLI Tool
 
-Point `xsm` at an XState JSON file and get runnable, typed Python scaffolding — every action,
-guard and service stubbed with the right signature.
+`xsm` is the terminal companion to the library — a code generator, an inspector, a live
+simulator and a diagram/docs exporter in one zero-dependency command. Run it bare on a
+terminal for an interactive launcher with a menu, recent files and a generate wizard that
+previews before it writes; pipe it and every command degrades to clean plain text.
 
 ```bash
-xsm generate-template checkout.json --template pythonic-class -o ./app
+xsm                                                           # interactive launcher
+xsm gt checkout.json -t pythonic-class --with-tests --with-types -o ./app
+xsm inspect checkout.json                                     # tree, transitions, logic, policies
+xsm simulate checkout.json                                    # live: pick events, +clock, undo
+xsm sim checkout.json --events SUBMIT,+2001 --json            # scripted, for CI
+xsm diagram checkout.json -f mermaid -o docs/
+xsm docs machines/*.json -o docs/
 ```
 
 | Command | Alias | Does |
 |:--|:--|:--|
-| `generate-template` | `gt` | Generate Python from a machine JSON |
-| `list-templates` | `lt` | Show the 5 available templates |
-| `validate` | `val` | Check a JSON machine for structural errors |
+| `generate-template` | `gt` | Generate Python from a machine JSON — plus `--with-tests`, `--with-types`, `--with-plugin` companions |
+| `inspect` | `ins` | State tree, transitions table, logic to implement, failure policies |
+| `simulate` | `sim` | Run a machine on a simulated clock — interactively or from `--events` / `--script` |
+| `diagram` | `dia` | Mermaid, PlantUML or ASCII to stdout or a file |
+| `docs` | | A Markdown reference page per machine |
+| `validate` | `val` | Build each file with the real library; list every finding |
+| `list-templates` | `lt` | The 8 templates, grouped |
 | `info` | | Version and feature summary |
+| `update` | | Check PyPI and upgrade with the installer that installed you (pip / pipx / uv tool) |
+| `setup` | | Windows: make `xsm` work where pip's `xsm.exe` launcher is blocked |
 
-Templates: `class-json`, `function-json`, `pythonic-class`, `pythonic-builder`,
-`pythonic-functional`.
+Primary templates: `class-json`, `function-json`, `pythonic-class`, `pythonic-builder`,
+`pythonic-functional`. Companion templates: `pytest` (a test module **recorded from the
+engine** — one test per reachable step, green on day one), `typed` (`TypedDict` context,
+`Literal` events, typed stubs), `plugin` (a `PluginBase` wired for exactly the hooks the
+chart can fire).
 
 **The generator proves its output before writing it.** For templates that build the machine in
 Python, `xsm` compiles the generated code, runs it, and compares the resulting machine against
@@ -1441,6 +1467,10 @@ Add `--check` in CI to catch generated code that has drifted from its source JSO
 ```bash
 xsm generate-template checkout.json --template pythonic-class -o ./app --check
 ```
+
+`--plain`, `--no-color` (also `NO_COLOR`) and `--no-anim` control presentation; `--json` on
+`validate`, `inspect`, `simulate`, `list-templates` and `info` gives scripts the same facts.
+Full reference: **[CLI Tool](https://basiltt.github.io/xstate-statemachine/guide/cli/)**.
 
 <details>
 <summary><b>Why generate instead of hand-write?</b></summary>
@@ -2031,7 +2061,7 @@ Invoked **services** are different — their failures *are* routed back into the
 
 <br>
 
-3,590 tests, 93% coverage, CI runs the full matrix — Python 3.9–3.14 × Linux, macOS and Windows. The engine
+3,735 tests, 93% coverage, CI runs the full matrix — Python 3.9–3.14 × Linux, macOS and Windows. The engine
 implements the SCXML transition-selection algorithm and there's a dedicated test suite pinning
 that behaviour, plus one pinning XState v5 parity.
 
