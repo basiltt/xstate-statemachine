@@ -58,7 +58,7 @@ class TestShimLifecycle(_Tmp):
         self.assertFalse(self.exe.exists())
         self.assertEqual(self.parked.read_bytes(), b"MZ fake launcher")
         body = self.shim.read_bytes().decode("utf-8")
-        self.assertIn('"C:\\Py\\python.exe" -m xstate_statemachine %*', body)
+        self.assertIn(f'"{self.py}" -m xstate_statemachine %*', body)
         self.assertIn("python -m xstate_statemachine %*", body)  # fallback
         self.assertTrue(body.endswith("\r\n"))
         self.assertNotIn("\r\r\n", body)
