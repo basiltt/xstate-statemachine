@@ -87,6 +87,9 @@ def _payload() -> Dict[str, Any]:
             {"title": t, "lines": list(rest)} for t, *rest in FEATURES
         ],
         "links": {"docs": DOCS, "pypi": PYPI, "github": GITHUB},
+        # 🪟 The same command without pip's `xsm.exe` launcher -- for Windows
+        #    machines whose Application Control policy blocks that stub.
+        "module_invocation": f"{Path(sys.executable).name} -m xstate_statemachine",
     }
 
 
@@ -107,6 +110,7 @@ def run_info(as_json: bool = False) -> None:
             ("Install path:", c.style(data["install_path"], "path")),
             ("Templates:", ", ".join(data["templates"])),
             ("Plugin hooks:", str(data["plugin_hooks"])),
+            ("Also run as:", c.style(data["module_invocation"], "code")),
         ]
     )
     c.blank()

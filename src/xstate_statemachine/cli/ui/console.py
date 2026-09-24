@@ -28,7 +28,6 @@ from .table import Column, Table
 from .term import PLAIN, Capabilities, detect
 from .tree import Node, render as _render_tree
 
-
 #: 🔤 ASCII stand-ins for the glyphs the commands use in prose (separators,
 #:    arrows, ellipses). Applied only when the stream cannot encode the
 #:    message, so a `cp1252` or `ascii` console reads "a -> b" rather than

@@ -53,7 +53,7 @@ my_machine_logic.py    # Action, guard, and service stubs
 my_machine_runner.py   # Interpreter bootstrap + event simulation
 ```
 
-> **Tip:** If the `xsm` command is not found after installing the package, use `python -m xstate_statemachine.cli` instead. See [CLI Troubleshooting](#using-with-python-m-if-xsm-not-found) below.
+> **Tip:** If the `xsm` command is not found after installing the package, use `python -m xstate_statemachine` instead. On a Windows machine where `xsm.exe` is *blocked* by an Application Control policy, see [the Windows note](#windows-an-application-control-policy-has-blocked-this-file) below.
 
 ## 📂 What Gets Generated
 
@@ -238,11 +238,47 @@ Generates combined logic and runner files that wire up all three machines. The C
 ### Using with `python -m` If `xsm` Not Found
 
 ```bash
-python -m xstate_statemachine.cli generate-template my_machine.json
-python -m xstate_statemachine.cli gt my_machine.json --template pythonic-class
+python -m xstate_statemachine generate-template my_machine.json
+python -m xstate_statemachine gt my_machine.json --template pythonic-class
+python -m xstate_statemachine            # the interactive launcher
 ```
 
-This is functionally identical to `xsm` and works even if the entry point script is not on your PATH.
+This is functionally identical to `xsm` and works even if the entry point script is not on your PATH. The longer spelling `python -m xstate_statemachine.cli` still works too.
+
+### Windows: "An Application Control policy has blocked this file"
+
+```
+PS> xsm
+Program 'xsm.exe' failed to run: An Application Control policy has blocked this file
+```
+
+**What is happening.** `pip` does not install a Python file called `xsm`; on Windows it materialises a small, generic, *unsigned* launcher — `Scripts\xsm.exe` — that locates `python.exe` and calls into the package. Machines governed by Windows Defender Application Control (WDAC), AppLocker or Smart App Control allow known signed binaries and block executables that appeared on disk unsigned, so the launcher is refused while Python itself runs fine. Every pip-installed console script (`black.exe`, `pytest.exe`, …) is affected in the same way; `pipx` and `uv tool` generate the same kind of stub. This is not something the package can change — the file is produced on your machine at install time.
+
+**Fix 1 — run through the interpreter (always works):**
+
+```powershell
+python -m xstate_statemachine                 # launcher
+python -m xstate_statemachine gt machine.json -t pythonic-class
+```
+
+`xsm info` prints this spelling for your interpreter on its `Also run as:` line.
+
+**Fix 2 — a batch shim instead of the .exe.** Batch files run through the trusted `cmd.exe`, which most policies allow. Windows resolves `xsm.exe` *before* `xsm.cmd` in the same folder (`PATHEXT` order), so the blocked launcher has to be renamed out of the way first:
+
+```powershell
+$scripts = python -c "import sysconfig; print(sysconfig.get_path('scripts'))"
+Rename-Item "$scripts\xsm.exe" xsm.exe.blocked        # keep it; pip may recreate it on upgrade
+Set-Content -Path "$scripts\xsm.cmd" -Value '@python -m xstate_statemachine %*'
+xsm info                                              # now resolves to xsm.cmd
+```
+
+Verified on a WDAC-managed machine from both PowerShell and `cmd`. Re-run the two lines after `pip install --upgrade`, which regenerates `xsm.exe`. If the policy also enforces script rules you are in a fully managed environment; Fix 1 is the route there, or ask your administrator to allow-list the `Scripts` directory of your Python install.
+
+**Fix 3 — a PowerShell function** in your `$PROFILE`, so `xsm` works in every new PowerShell session without touching `PATH`:
+
+```powershell
+Add-Content $PROFILE 'function xsm { python -m xstate_statemachine @args }'
+```
 
 ## 🛠️ Workflow: From Design to Running Code
 

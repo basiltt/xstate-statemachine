@@ -165,6 +165,12 @@ pypi-attestations verify pypi --repository https://github.com/basiltt/xstate-sta
 xsm info          # verify the install
 ```
 
+> **Windows, `xsm.exe` blocked by an Application Control policy?** That is pip's unsigned
+> launcher stub being refused by WDAC / AppLocker, not the package. Run
+> `python -m xstate_statemachine …` instead (identical behaviour — `python.exe` is trusted), or
+> rename the blocked `xsm.exe` and drop an `xsm.cmd` containing `@python -m xstate_statemachine %*` beside it.
+> Details: [CLI → Windows](https://basiltt.github.io/xstate-statemachine/guide/cli/#windows-an-application-control-policy-has-blocked-this-file).
+
 Using the code generator and want its output line-wrapped to match your linter?
 That needs `black` and `isort`, which stay optional so the core install keeps its
 zero-dependency promise:

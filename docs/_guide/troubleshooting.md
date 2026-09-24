@@ -862,7 +862,8 @@ def my_actor_service(interpreter, context, event):
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| `xsm: command not found` | Package not installed, or entry point not on PATH | Run `pip install xstate-statemachine` or use `python -m xstate_statemachine.cli` |
+| `xsm: command not found` | Package not installed, or entry point not on PATH | Run `pip install xstate-statemachine` or use `python -m xstate_statemachine` |
+| `Program 'xsm.exe' failed to run: An Application Control policy has blocked this file` (Windows) | WDAC / AppLocker / Smart App Control refuses pip's unsigned `xsm.exe` launcher; `python.exe` itself is allowed | Use `python -m xstate_statemachine …`, or rename the blocked `xsm.exe` and create an `xsm.cmd` shim containing `@python -m xstate_statemachine %*` beside it. Details in [CLI Tool → Windows](../cli/#windows-an-application-control-policy-has-blocked-this-file) |
 | Files not generated | Output directory doesn't exist, or files already exist | Use `-o ./output/` with an existing directory; use `--force` to overwrite |
 | Wrong template used | Using deprecated `--style` flag | Use `--template pythonic-class` instead of `--style class` |
 | Encoding errors on Windows | Console doesn't support UTF-8 emoji characters | Set `PYTHONIOENCODING=utf-8` or use `chcp 65001` in cmd |

@@ -69,6 +69,55 @@ class TestInfo(_Quiet):
         self.assertIn("basiltt.github.io/xstate-statemachine", out)
         self.assertIn("pypi.org/project/xstate-statemachine", out)
 
+    def test_names_the_launcher_free_invocation(self) -> None:
+        """Windows Application Control policies block pip's `xsm.exe`
+        stub; `info` must tell the user the `python -m` spelling."""
+        code, out = _run(["info"])
+        self.assertEqual(0, code)
+        self.assertIn("-m xstate_statemachine", out)
+        code, out = _run(["info", "--json"])
+        self.assertIn(
+            "-m xstate_statemachine", json.loads(out)["module_invocation"]
+        )
+
+
+class TestModuleEntryPoints(unittest.TestCase):
+    """`python -m xstate_statemachine` and `python -m xstate_statemachine.cli`
+    are the documented way around a blocked `xsm.exe`; both must reach the
+    same `main()` with the same `prog` name in the usage line."""
+
+    def _run_module(self, module: str, *args: str):
+        import os
+        import subprocess
+
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(Path(__file__).resolve().parents[2] / "src")
+        env["PYTHONIOENCODING"] = "utf-8"
+        return subprocess.run(
+            [sys.executable, "-m", module, *args],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=120,
+        )
+
+    def test_top_level_package_is_runnable(self) -> None:
+        from src.xstate_statemachine import __version__
+
+        r = self._run_module("xstate_statemachine", "--version")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(f"xsm {__version__}", r.stdout)
+
+    def test_both_spellings_share_prog_and_dispatch(self) -> None:
+        for module in ("xstate_statemachine", "xstate_statemachine.cli"):
+            r = self._run_module(module, "list-templates", "--plain")
+            self.assertEqual(r.returncode, 0, (module, r.stderr))
+            self.assertIn("pythonic-class", r.stdout, module)
+            r = self._run_module(module, "--help")
+            self.assertTrue(
+                r.stdout.startswith("usage: xsm "), (module, r.stdout[:40])
+            )
+
 
 class TestValidate(_Quiet):
     def setUp(self) -> None:
