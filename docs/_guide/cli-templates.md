@@ -1,11 +1,11 @@
 ---
 title: "CLI Templates Deep Dive"
-description: "All 5 code generation templates explained with complete generated output."
+description: "All 5 primary templates and 3 companion templates explained with complete generated output."
 ---
 
 # CLI Templates Deep Dive
 
-The `xsm` CLI offers five code generation templates, each producing a different code structure and API style. This guide shows the **complete generated output** for each template using the same input JSON, so you can compare them side-by-side and choose the best fit for your project.
+The `xsm` CLI offers five **primary** code generation templates, each producing a different code structure and API style, plus three **companion** templates (`pytest`, `typed`, `plugin`) that add a test module, a typed-context module or a plugin skeleton alongside any of them. This guide shows the **complete generated output** for each template using the same input JSON, so you can compare them side-by-side and choose the best fit for your project.
 
 ## 🧩 Template Overview
 
@@ -16,6 +16,7 @@ flowchart LR
     T --> D["class-json"] & E["function-json"]
     A & B & C --> P["🐍 pure Python — JSON discarded"]
     D & E --> Q["📎 Python + JSON kept side-by-side"]
+    T -. "--with-tests / --with-types / --with-plugin" .-> F["🧪 pytest · 🔤 typed · 🔌 plugin"]
 ```
 
 | Template | API Style | JSON at Runtime? | Logic Pattern | Default Mode |
@@ -76,6 +77,7 @@ This machine has:
 
 The examples on this page focus on `--template`/`-t` and `--async-mode`/`-am`, but `generate-template` (alias `gt`) accepts several other flags worth knowing about:
 
+- `--with-tests`, `--with-types`, `--with-plugin` — Also emit the `pytest`, `typed` and `plugin` companion modules described in [Companion templates](#companion-templates) below. Any combination; they never replace the primary output.
 - `-fc`, `--file-count {1,2}` — Number of output files: `1` (combined) or `2` (logic/runner). Default: `2`. This page's "Generated Logic File" / "Generated Runner File" pairs all assume the default of `2`; pass `--file-count 1` to get a single combined file instead.
 - `--no-verify` — Skip the structural check that generated code rebuilds the source machine. Syntax is still validated. Use only to inspect output the generator would otherwise refuse to write.
 - `--check` — Do not write anything. Exit with status 1 if the files on disk differ from what would be generated. Intended for CI, so generated code can be committed and kept honest.
@@ -1025,6 +1027,181 @@ if __name__ == '__main__':
 ```
 
 > **Key Feature:** Logic binding uses `logic_modules=[checkout_logic]` — the `LogicLoader` scans the module for functions whose `snake_case` names match the `camelCase` names in JSON.
+
+---
+
+## 🧪 Companion templates
+
+The three companion templates each produce **one extra module** next to the primary output. Request them together with any primary template:
+
+```bash
+xsm gt checkout.json -t pythonic-class --with-tests --with-types --with-plugin
+```
+
+```
+OK Generated logic file:  checkout_logic.py
+OK Generated runner file: checkout_runner.py
+OK Generated pytest file: test_checkout.py
+OK Generated typed file:  checkout_types.py
+OK Generated plugin file: checkout_observer.py
+```
+
+…or on their own (`xsm gt checkout.json -t pytest`). Like every other output they are compiled before writing, carry the provenance banner, and are covered by `--check` / `--diff` in CI.
+
+### `pytest` — a test module recorded from the engine
+
+Nothing in this file is guessed. At generation time the chart is built with stub logic (actions record their name, guards return `True`, services no-op), driven along its reachable event sequence on a `SimulatedClock`, and the configuration after every step is written down as an assertion. The suite runs green the moment it is written and goes red the moment the JSON — or the library — behaves differently.
+
+```python
+ACTIONS: List[str] = ["calculateTotal", "clearCart", "showError"]
+GUARDS: List[str] = ["cartNotEmpty"]
+SERVICES: List[str] = ["processPayment"]
+
+
+def stub_logic(ran: List[str], guards_pass: bool = True) -> MachineLogic:
+    """Stub every implementation: actions record, guards decide, services no-op."""
+    ...
+
+
+def test_initial_state(interp) -> None:
+    assert sorted(interp.current_state_ids) == ["checkout.cart"]
+
+
+# Each step replays every step before it, so a test is self-contained and
+# can be run alone. The recorded sequence is the machine's reachable walk.
+
+STEPS = [
+    (
+        "event",
+        "SUBMIT",
+        None,
+        ["checkout.confirmed"],
+        ["calculateTotal", "clearCart"],
+    ),
+]
+
+
+def test_step_01_SUBMIT(interp, clock: SimulatedClock, ran: List[str]) -> None:
+    _replay(interp, clock, 0)
+    ran.clear()
+    interp.send("SUBMIT")
+    assert sorted(interp.current_state_ids) == ["checkout.confirmed"]
+    assert ran == ["calculateTotal", "clearCart"]
+
+
+def test_reaches_final_state(interp, clock: SimulatedClock) -> None:
+    _replay(interp, clock, len(STEPS))
+    assert interp.status == "done"
+
+
+def test_guarded_transitions_are_denied_when_guards_fail(
+    denied_interp, clock: SimulatedClock
+) -> None:
+    ...
+
+
+def test_every_declared_event_is_known(machine) -> None:
+    ...
+
+
+def test_snapshot_round_trip(interp, clock: SimulatedClock, machine) -> None:
+    ...
+
+
+# Events declared by the chart that the recorded walk never fired -- worth
+# a hand-written test each, if they matter to you:
+#   - done.invoke.checkout.payment
+#   - error.platform.checkout.payment
+```
+
+Note the `SUBMIT` step lands in `confirmed` and ran `clearCart`: with a no-op stub service the `invoke` completes synchronously and `onDone` fires within the same `send()`. The recorded walk is exactly what the library does — including the `after` timers it fires by advancing the simulated clock (`("clock", None, 2000, [...], [...])` steps).
+
+### `typed` — `TypedDict` context, `Literal` events, typed stubs
+
+```python
+EventType = Literal["SUBMIT"]
+StateId = Literal["checkout.cart", "checkout.confirmed", "checkout.payment"]
+AnyEvent = Union[Event, DoneEvent, ErrorEvent, AfterEvent]
+
+
+class CheckoutContext(TypedDict):
+    """Shape of `context`, inferred from the chart's initial value."""
+
+    items: List[Any]
+    total: int
+
+
+def calculate_total(
+    interpreter: BaseInterpreter[CheckoutContext],
+    context: CheckoutContext,
+    event: AnyEvent,
+    action: ActionDefinition,
+) -> None:
+    """Action `calculateTotal`."""
+    raise NotImplementedError
+
+
+def cart_not_empty(context: CheckoutContext, event: AnyEvent) -> bool:
+    """Guard `cartNotEmpty`."""
+    raise NotImplementedError
+
+
+def process_payment(
+    interpreter: BaseInterpreter[CheckoutContext],
+    context: CheckoutContext,
+    event: AnyEvent,
+) -> Any:
+    """Service `processPayment`."""
+    raise NotImplementedError
+
+
+def logic() -> MachineLogic:
+    """A MachineLogic bound to the stubs above."""
+    return MachineLogic(
+        actions={
+            "calculateTotal": calculate_total,
+            "clearCart": clear_cart,
+            "showError": show_error,
+        },
+        guards={"cartNotEmpty": cart_not_empty},
+        services={"processPayment": process_payment},
+    )
+```
+
+The context type is inferred from the JSON `context` value (`[]` → `List[Any]`, `0` → `int`, `""` → `str`, a nested object → `Dict[str, Any]`, `null` → `Optional[Any]`); a chart that declares no object context gets `Context = Dict[str, Any]`. The stubs are a typed contract for the logic you go on to implement, and `logic()` binds them so the module is usable as-is once the `NotImplementedError`s are replaced.
+
+### `plugin` — a `PluginBase` wired for this chart
+
+```python
+class CheckoutObserver(PluginBase):
+    """Observes the checkout; see the hook docstrings."""
+
+    def on_transition(
+        self, interpreter, from_states, to_states, transition
+    ) -> None:
+        """every settled transition."""
+        _record("transition", interpreter, from_states=from_states, ...)
+        # TODO: your metrics / alerting here
+
+    def on_action_error(self, interpreter, action, error) -> None:
+        """a user action raised (contained)."""
+        ...
+
+    def on_service_error(self, interpreter, invocation, error) -> None:
+        """an invoke failed."""
+        ...
+
+    def on_chain_budget_exceeded(self, interpreter, error, event) -> None:
+        """maxIterations cut a self-fed chain -- sticky, page on this."""
+        ...
+
+
+# Hooks NOT emitted because the chart does not use the feature:
+#   - on_unhandled_event (an event selected no transition)
+#   - on_transition_failed (actionErrorPolicy rolled back / stopped)
+```
+
+Only hooks the chart can actually fire are generated: `on_service_*` and `on_invocation_stranded` because it invokes something, `on_guard_error` because it has guards, `on_done` because it has a final state, `on_transition_failed` only under a rollback/fail `actionErrorPolicy`, `on_unhandled_event` only when `onUnhandled` is not the default. The always-relevant lifecycle and sticky-signal hooks (`on_transition`, `on_action_error`, `on_chain_budget_exceeded`, `on_invalid_event`, `on_event_dropped`, `on_error`) are always present. Every hook writes one JSON line through `logging` so the skeleton is useful before you touch it; the trailing comment lists what was left out and why.
 
 ---
 

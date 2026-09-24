@@ -414,8 +414,11 @@ class TestDetectAndConsole(unittest.TestCase):
             encoding = "latin-1"
 
         buf = Latin1()
-        Console(PLAIN, buf).print("✓ ok")
-        self.assertIn("? ok", buf.getvalue())
+        c = Console(PLAIN, buf)
+        c.print("✓ ok · a → b …")  # every glyph has an ASCII stand-in
+        self.assertIn("OK ok - a -> b ...", buf.getvalue())
+        c.print("漢")  # none for this one: replaced, never raised
+        self.assertIn("?", buf.getvalue().splitlines()[-1])
 
     def test_console_interactive_requires_tty_stdin(self) -> None:
         self.assertFalse(Console(PLAIN, io.StringIO()).interactive)

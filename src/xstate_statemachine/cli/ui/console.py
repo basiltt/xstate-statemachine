@@ -29,6 +29,28 @@ from .term import PLAIN, Capabilities, detect
 from .tree import Node, render as _render_tree
 
 
+#: 🔤 ASCII stand-ins for the glyphs the commands use in prose (separators,
+#:    arrows, ellipses). Applied only when the stream cannot encode the
+#:    message, so a `cp1252` or `ascii` console reads "a -> b" rather than
+#:    "a ? b". Box/tree glyphs are already gated on `caps.unicode`.
+ASCII_FALLBACK = str.maketrans(
+    {
+        "·": "-",
+        "→": "->",
+        "←": "<-",
+        "…": "...",
+        "✓": "OK",
+        "✗": "X",
+        "⚠": "!",
+        "ℹ": "i",
+        "❯": ">",
+        "•": "*",
+        "—": "-",
+        "–": "-",
+    }
+)
+
+
 class Console:
     """Render text, panels, tables, trees and live status for one stream."""
 
@@ -44,7 +66,16 @@ class Console:
 
     # ---------------------------------------------------------------- basics
     def _encodable(self, msg: str) -> str:
+        """Return *msg* as the stream can encode it: verbatim when possible,
+        transliterated via `ASCII_FALLBACK` next, `?`-replaced as a last
+        resort (never raise from a print)."""
         encoding = getattr(self.out, "encoding", None) or "utf-8"
+        try:
+            msg.encode(encoding)
+            return msg
+        except (UnicodeEncodeError, LookupError):
+            pass
+        msg = msg.translate(ASCII_FALLBACK)
         try:
             msg.encode(encoding)
             return msg

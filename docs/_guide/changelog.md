@@ -11,6 +11,136 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ---
 
+## [0.10.0] - 2026-09-24
+
+A CLI release. The runtime library is unchanged apart from one additive
+overload; `xsm` grows from a code generator into a terminal toolkit — with
+the same **zero runtime dependencies** as the library. Colour, box-drawing,
+spinners, single-key input and Windows VT enablement are all standard
+library. When stdout is not a terminal (or `--plain` is given) every command
+emits deterministic plain text, so existing pipelines and CI logs are
+unaffected.
+
+### Added
+
+- **Interactive launcher.** A bare `xsm` on a terminal opens a menu (arrows or
+  digits, `enter`, `esc`) over every command, with recently used machine
+  files remembered in `~/.xsm/recent.json` (`$XSM_HOME` overrides) and a
+  **generate wizard** that picks files, template, companions and options,
+  shows the head of the module it is about to write in a preview panel and
+  asks before writing. The wizard builds the same `argparse.Namespace` the
+  `gt` command uses, so nothing is implemented twice. Off a terminal, a
+  bare `xsm` still gives the argparse "subcommand required" error.
+- **`xsm inspect` (`ins`).** Builds the machine with the real library and
+  lays out a summary panel, the state tree (kind glyphs, `initial`, `after`
+  and `invoke` annotations), a transitions table (event, from, to, guard as
+  the library resolved it, actions), the logic left to implement and the
+  failure-policy block (`actionErrorPolicy`, `guardErrorPolicy`,
+  `onUnhandled`, `maxIterations`, `strict`, `strictTargets`, event schemas).
+  `--no-events` skips the table; `--json` emits the facts.
+- **`xsm simulate` (`sim`).** One `Session` engine — `SyncInterpreter` on a
+  `SimulatedClock` with stub logic, guard overrides, a snapshot undo stack
+  and a step history — drives two modes. **Live** (on a terminal): a picker
+  of the events `can()` says would do something now, then `t` fire the
+  armed timer, `c` advance the clock, `g` toggle guards, `u` undo (timers
+  re-armed via `from_snapshot(restart_timers=True)`), `r` reset, `h`
+  history table, `s` snapshot, `q` quit; changed states pulse. **Scripted**
+  (`--events A,+500,B`, `--clock`, `--script file.json` with
+  `{"send"}` / `{"clock"}` / `{"guard","value"}` / `{"undo"}` / `{"reset"}`,
+  `--guards-false a,b`, `--json`, or simply no terminal): replays the
+  commands, prints each step and the final state, exits 0/1. The JSON
+  document carries `active`, `value`, `context`, `clock_ms`,
+  `enabled_events`, `chain_trips` and a per-step `history`.
+- **`xsm diagram` (`dia`).** Mermaid (`to_mermaid`), PlantUML
+  (`to_plantuml`) or an ASCII tree-plus-transition-list, to stdout or
+  `-o FILE|DIR` (named `<machine-id>.mmd/.puml/.txt` in a directory).
+- **`xsm docs`.** A Markdown reference page per machine — summary, embedded
+  Mermaid, state tree, transitions, logic to implement, policies and a
+  getting-started snippet — to stdout or `-o DIR`.
+- **Companion templates** `pytest`, `typed`, `plugin`, usable as
+  `--template` on their own or alongside any primary template via
+  `--with-tests` / `--with-types` / `--with-plugin`:
+  - `pytest` → `test_<machine>.py`: a test module **recorded from the
+    engine** — the chart is run with stub logic on a `SimulatedClock` along
+    its reachable event sequence and the configuration and actions after
+    every step become assertions; plus initial-state, final-state,
+    guard-denial, known-events and snapshot-round-trip tests. Runs green on
+    day one and fails only when the chart (or the library) changes. The
+    generated suites are themselves executed against the Stately corpus in
+    the test-suite.
+  - `typed` → `<machine>_types.py`: `Context` as a `TypedDict` inferred from
+    the JSON `context`, `EventType` / `StateId` `Literal` aliases, one
+    correctly annotated stub per action, guard and service, and a `logic()`
+    binder.
+  - `plugin` → `<machine>_observer.py`: a `PluginBase` subclass overriding
+    exactly the hooks the chart can fire (`on_service_*` only with
+    `invoke`, `on_guard_error` only with guards, `on_transition_failed`
+    only under a rollback/fail policy, …), each writing one JSON log line;
+    a trailing comment lists the hooks left out and why.
+  Companions are compiled and import-checked before writing, carry the
+  provenance banner and participate in `--check` / `--diff`.
+- **Presentation flags**, accepted before *or* after the subcommand:
+  `--plain`, `--no-color` (also `NO_COLOR` and `TERM=dumb`), `--no-anim`
+  (also `XSM_NO_ANIM=1`), `--verbose` (INFO log on stderr; default is
+  warnings only). Truecolor when `COLORTERM=truecolor|24bit`, else 256/16
+  colours; Windows consoles get VT processing enabled. Unicode glyphs only
+  when the stream can encode them; on an ASCII console separators and
+  arrows are transliterated (`->`, `-`, `...`) instead of becoming `?`.
+- **`--json`** on `validate`, `inspect`, `simulate`, `list-templates` and
+  `info`.
+- **`xsm validate --lenient`** downgrades unknown config keys to warnings.
+- **`create_machine(config, logic=..., strict_config=...)`** — the
+  logic-object overload now accepts `strict_config` like the other
+  overloads (it was accepted at runtime but rejected by type-checkers).
+- **`cli.ui` toolkit** (internal, stdlib only): `Capabilities` detection,
+  a role-based theme with colour tiers, ANSI-aware `visible_width` /
+  `pad` / `truncate` / `wrap`, boxes, tables (auto-shrinking columns,
+  zebra rows), trees, `Spinner` / `ProgressBar` / `StepList` with
+  non-animated fallbacks, `select` / `multiselect` / `confirm` / `text`
+  prompts driven by an injectable key source (`keys.scripted("enter esc
+  q")`) so every interactive path is tested without a pty, a block-letter
+  banner and a `Console` facade.
+
+### Changed
+
+- **`xsm validate`** now builds each file through
+  `create_machine(strict_config=True)` with stub logic instead of a
+  hand-rolled structural check, so it refuses exactly what the library
+  would refuse at runtime — including misspelled keys with the library's
+  "did you mean" hints — and additionally reports states no transition,
+  `initial` or history target can reach, plus every warning the library
+  logged while building. The plain-text report keeps its previous shape
+  (`ok <file>`, `Machine:`, `States:`, …, `All N file(s) are valid.`).
+- **`xsm list-templates`** groups the catalogue (JSON-at-runtime,
+  pure-Python, companions) and adds the companion rows to the feature
+  table.
+- **`xsm info`** renders the banner, an environment panel and feature
+  cards; the previous `Version:` / `Python:` / links lines are still
+  present.
+- **Library log noise.** The CLI now shows the library's log at WARNING by
+  default while it builds machines; pass `--verbose` for INFO.
+- **Generated-code banner** reports `Generator: xstate-statemachine 0.10.0`.
+
+### Documentation
+
+- The [CLI Tool](https://basiltt.github.io/xstate-statemachine/guide/cli/)
+  guide is rewritten around the six commands, the launcher, the
+  presentation flags and the `--json` outputs; the
+  [Templates Deep Dive](https://basiltt.github.io/xstate-statemachine/guide/cli-templates/)
+  gains a companion-templates section with the generated `pytest`, `typed`
+  and `plugin` output for the checkout example; README CLI section and
+  the getting-started "What's New" updated.
+
+### Tests
+
+- 96 new tests under `tests/tests_cli/` cover the UI toolkit (rendering in
+  truecolor / 256 / plain, width arithmetic on styled text, prompts driven
+  by scripted keys), the platform readers and probes with fakes
+  (`msvcrt`, `ctypes`, `termios`), the companion generators (including
+  running the generated pytest suites in a subprocess), inspect / diagram /
+  docs, the simulator engine, scripted and interactive modes, and the
+  launcher menu and wizard end to end. CLI-package coverage is 91%.
+
 ## [0.9.1] - 2026-09-24
 
 ### Fixed
