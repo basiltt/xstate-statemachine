@@ -9,7 +9,7 @@
 [![PyPI](https://img.shields.io/pypi/v/xstate-statemachine?style=flat-square&logo=pypi&logoColor=white&color=3775A9)](https://pypi.org/project/xstate-statemachine/)
 [![Python](https://img.shields.io/pypi/pyversions/xstate-statemachine?style=flat-square&logo=python&logoColor=white&color=3776AB)](https://pypi.org/project/xstate-statemachine/)
 [![CI](https://img.shields.io/github/actions/workflow/status/basiltt/xstate-statemachine/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/basiltt/xstate-statemachine/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-3702_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/tests-3735_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-93%25-3fb950?style=flat-square&logo=codecov&logoColor=white)](.github/workflows/ci.yml)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-ff8c00?style=flat-square)](pyproject.toml)
 [![License](https://img.shields.io/pypi/l/xstate-statemachine?style=flat-square&color=yellow)](LICENSE)
@@ -2061,7 +2061,7 @@ Invoked **services** are different — their failures *are* routed back into the
 
 <br>
 
-3,702 tests, 93% coverage, CI runs the full matrix — Python 3.9–3.14 × Linux, macOS and Windows. The engine
+3,735 tests, 93% coverage, CI runs the full matrix — Python 3.9–3.14 × Linux, macOS and Windows. The engine
 implements the SCXML transition-selection algorithm and there's a dedicated test suite pinning
 that behaviour, plus one pinning XState v5 parity.
 

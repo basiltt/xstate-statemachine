@@ -157,13 +157,15 @@ unaffected.
 
 ### Tests
 
-- 96 new tests under `tests/tests_cli/` cover the UI toolkit (rendering in
+- 145 new tests under `tests/tests_cli/` cover the UI toolkit (rendering in
   truecolor / 256 / plain, width arithmetic on styled text, prompts driven
   by scripted keys), the platform readers and probes with fakes
   (`msvcrt`, `ctypes`, `termios`), the companion generators (including
   running the generated pytest suites in a subprocess), inspect / diagram /
-  docs, the simulator engine, scripted and interactive modes, and the
-  launcher menu and wizard end to end. CLI-package coverage is 91%.
+  docs, the simulator engine, scripted and interactive modes, the
+  launcher menu and wizard end to end, the `setup` shim lifecycle in a
+  temp directory on every OS, and `update` with every I/O seam patched.
+  Suite total 3,735 tests at 93% coverage.
 
 ## [0.9.1] - 2026-09-24
 
