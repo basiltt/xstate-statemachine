@@ -6,7 +6,7 @@
 
 <br>
 
-[![PyPI](https://img.shields.io/pypi/v/xstate-statemachine?style=flat-square&logo=pypi&logoColor=white&color=3775A9)](https://pypi.org/project/xstate-statemachine/)
+[![PyPI](https://img.shields.io/pypi/v/xstate-statemachine?style=flat-square&cacheSeconds=3600&logo=pypi&logoColor=white&color=3775A9)](https://pypi.org/project/xstate-statemachine/)
 [![Python](https://img.shields.io/pypi/pyversions/xstate-statemachine?style=flat-square&logo=python&logoColor=white&color=3776AB)](https://pypi.org/project/xstate-statemachine/)
 [![CI](https://img.shields.io/github/actions/workflow/status/basiltt/xstate-statemachine/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/basiltt/xstate-statemachine/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-3735_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](tests/)
