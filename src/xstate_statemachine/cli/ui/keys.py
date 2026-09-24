@@ -72,7 +72,10 @@ def _read_posix() -> str:  # pragma: no cover -- exercised on POSIX only
 
 
 def _read_windows() -> str:
-    import msvcrt
+    # 🧷 Dynamic import typed `Any`: typeshed only knows `msvcrt.getwch` on
+    #    Windows, and mypy in CI runs on Linux. Tests inject a fake module
+    #    into `sys.modules`, which `import_module` honours.
+    msvcrt: Any = importlib.import_module("msvcrt")
 
     ch = msvcrt.getwch()
     if ch in ("\x00", "\xe0"):
