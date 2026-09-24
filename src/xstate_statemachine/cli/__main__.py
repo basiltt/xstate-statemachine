@@ -879,19 +879,26 @@ def run_generation_workflow(
     #    a primary template via --with-*. Handled by `commands.generate`.
     from .commands.generate import emit_companions, is_companion
 
-    companion_kwargs = dict(
-        out_dir=(
-            Path(args.output) if args.output else Path(json_paths[0]).parent
-        ),
-        base_name=machine_name,
-        json_paths=json_paths,
-        primary=template,
-        check_mode=bool(
-            getattr(args, "check", False) or getattr(args, "diff", False)
-        ),
+    companion_out_dir = (
+        Path(args.output) if args.output else Path(json_paths[0]).parent
     )
+    companion_check = bool(
+        getattr(args, "check", False) or getattr(args, "diff", False)
+    )
+
+    def _companions() -> None:
+        emit_companions(
+            args,
+            ctx,
+            out_dir=companion_out_dir,
+            base_name=machine_name,
+            json_paths=json_paths,
+            primary=template,
+            check_mode=companion_check,
+        )
+
     if is_companion(template):
-        emit_companions(args, ctx, **companion_kwargs)
+        _companions()
         logger.info("✅ Code generation complete.")
         return
 
@@ -931,11 +938,11 @@ def run_generation_workflow(
             runner_code,
             show_diff=getattr(args, "diff", False),
         )
-        emit_companions(args, ctx, **companion_kwargs)
+        _companions()
         return
 
     _write_output_files(args.file_count, paths, logic_code, runner_code)
-    emit_companions(args, ctx, **companion_kwargs)
+    _companions()
 
 
 def _polish_output(

@@ -73,7 +73,7 @@ class TypedStrategy(BaseStrategy):
         from ...factory import create_machine
         from ...machine_logic import MachineLogic
 
-        stub = MachineLogic(
+        stub: MachineLogic[Any] = MachineLogic(
             actions={a: (lambda i, c, e, ad: None) for a in actions},
             guards={g: (lambda c, e: True) for g in guards},
             services={s: (lambda i, c, e: None) for s in services},
