@@ -361,6 +361,35 @@ def on_event_dropped(self, interpreter, event, reason):
     print(f"Dropped '{event.type}': {reason}")
 ```
 
+#### `on_resolve_error(interpreter, error, event)`
+
+Fires when a transition's target cannot be resolved at **runtime** — only reachable with `create_machine(..., strict_targets=False)`, since the default refuses an unresolvable target at build time. `error` is the `StateNotFoundError`; the step is marked failed (`last_transition_ok=False`, `last_error`) and the machine keeps running (0.9.0, #134). The third per-transition failure category alongside `on_action_error` and `on_guard_error`.
+
+#### `on_plugin_error(interpreter, plugin, hook, error)`
+
+Fires on every **other** plugin when one plugin's hook raised, or was an `async def` that could not be awaited. Plugin failures never stop the machine; they are logged at ERROR, recorded on `interpreter.last_plugin_error` as `(plugin_class_name, hook_name, error)`, and reported here so a metrics exporter can count observability failures. The failing plugin never hears about itself, and a raising `on_plugin_error` does not recurse (0.9.0, #127).
+
+#### `on_invalid_event(interpreter, error, raw_event)`
+
+Fires immediately before `send()` (or `send_threadsafe()`) refuses an event: a malformed value (`InvalidEventError` — `send(123)`, a dict without `"type"`), an undeclared type under `strict` (`UnknownEventError`), or a payload a registered schema rejected (`InvalidEventPayloadError`). It also fires for an event a **snapshot restore** refused under the same rules (#214, #227) — pass `from_snapshot(..., plugins=[...])` so the plugin is attached before admission runs (#230).
+
+#### `on_snapshot_error(interpreter, error)`
+
+Fires immediately before a snapshot is refused: `SnapshotMidStepError` (taken mid-macrostep, e.g. from inside an action) or `SnapshotSerializationError` (a pending event carries non-JSON-native data). The exception still propagates to the caller (0.9.0, #159).
+
+#### `on_invocation_stranded(interpreter, state_id, invoke_id, error)`
+
+Fires when a `maxIterations` cut discarded the `done.invoke` / `error.platform` of an invocation whose state is still active: nothing is running for it and no completion will ever arrive, so the machine rests in a state that declares `invoke` — a state it was never meant to rest in. `error` is the `RunawayChainError`, whose `.stranded` tuple names the same ids. `has_dormant_invocations` / `pending_invocations()` answer the question on demand; this is the push notification (0.9.0, #207).
+
+#### `on_receipt_dropped(interpreter, event_type)`
+
+Fires when a `send(wait=True)` receipt issued from inside an action was finalised without ever being awaited or handed out — a plain `def` action wrote `r = i.send("B", wait=True)` and received an awaitable it could never read. The engine also emits a `RuntimeWarning`, but that comes from a finaliser and `-W error` cannot reach it; this hook and `interpreter.dropped_receipts` are the deterministic signal (0.9.1, #232, #244). Async engine only — the sync engine refuses the call with `ReentrantWaitError`.
+
+```python
+def on_receipt_dropped(self, interpreter, event_type):
+    raise AssertionError(f"dropped receipt for {event_type!r} on {interpreter.id}")
+```
+
 #### `on_error(interpreter, error)`
 
 Fires when the interpreter enters the terminal `"error"` status. `interpreter.error` holds the same exception.

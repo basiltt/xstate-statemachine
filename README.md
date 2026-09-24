@@ -1038,7 +1038,7 @@ by ~2.1×. The moment states nest or run in parallel it has to emulate the SCXML
 this library is 3.2–7.5× faster than everything else. It is also the fastest of the four to
 construct (1.19× `transitions`) and to fan out to 1,000 instances (1.10×), while still running
 the full build-time validator on every `create_machine()`. Full table, method and caveats:
-[`benchmarks/competitors/`](benchmarks/competitors/README.md).
+[`benchmarks/competitors/`](benchmarks/competitors/README.md). The production numbers (throughput budget, `after` lateness under load) come from [`benchmarks/production_characteristics.py`](benchmarks/production_characteristics.py); run it with `--json` on your own hardware to gate CI on your figures.
 
 ### When *not* to use this
 
@@ -1679,6 +1679,24 @@ they're registered automatically by arity: `(ctx, event)` is a guard,
 </details>
 
 <details>
+<summary><b>Config keys — every key the parser reads</b></summary>
+
+<br>
+
+The complete per-level key sets. Anything else is reported as unknown (WARNING by default, `InvalidConfigError` under `strict_config=True`); `meta` / `description` / `tags` and any `x-…` key are accepted at every level.
+
+| Level | Keys |
+|:--|:--|
+| **Root** (everything a state accepts, plus) | `context` · `version` · `strict` · `strictTargets` · `strictConfig` · `maxIterations` · `spawnBlockingTimeout` · `actionErrorPolicy` (`continue` \| `rollback` \| `fail`) · `guardErrorPolicy` (`false` \| `true` \| `raise`) · `onUnhandled` (`ignore` \| `defer` \| `error`) |
+| **State** | `id` · `type` (`atomic` \| `compound` \| `parallel` \| `final` \| `history`) · `initial` · `states` · `entry` · `exit` · `on` · `always` · `after` · `invoke` · `onDone` · `history` (`shallow` \| `deep`) · `target` (a history state's default) · `output` (final state's done-data) · `meta` · `description` · `tags` |
+| **Transition** | `target` · `actions` · `guard` (alias `cond`) · `reenter` (alias `internal`, inverted) · `meta` · `description` · `tags` |
+| **Invoke** | `src` (a service *name*) · `id` · `input` · `systemId` · `onDone` · `onError` · `meta` · `description` · `tags` |
+
+Constants: `DEFAULT_CHILDREN_TIMEOUT` (2.0 s, `Interpreter.start(children_timeout=)`), `DEFAULT_SERVICE_POOL_SIZE` (4, `Interpreter(service_pool_size=)`), `ENGINE_EVENT_SHAPES` / `SYSTEM_EVENT_PREFIXES` (the name shapes the engine mints — for documentation and build-time checks only; provenance is decided by `is_system_event`, not by name). `BaseInterpreter` is the shared base of both engines, for type annotations that accept either. Full semantics of every key: **[JSON Configuration](https://basiltt.github.io/xstate-statemachine/guide/json-config/)**.
+
+</details>
+
+<details>
 <summary><b>Action creators</b></summary>
 
 <br>
@@ -2051,7 +2069,7 @@ print(machine.to_plantuml())
 
 **[basiltt.github.io/xstate-statemachine](https://basiltt.github.io/xstate-statemachine/)**
 
-Guides · API reference · [What's new in 0.9.0 and the upgrade notes](https://basiltt.github.io/xstate-statemachine/guide/getting-started/#whats-new-in-090) · [Changelog](https://basiltt.github.io/xstate-statemachine/guide/changelog/) · More examples
+Guides · API reference · [What's new and the upgrade notes](https://basiltt.github.io/xstate-statemachine/guide/getting-started/#-upgrading-from-older-versions) · [Changelog](https://basiltt.github.io/xstate-statemachine/guide/changelog/) · More examples
 
 <br>
 

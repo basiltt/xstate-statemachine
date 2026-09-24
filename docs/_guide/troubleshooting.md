@@ -59,6 +59,8 @@ flowchart TB
 | `SnapshotCorruptError` | Snapshot is structurally unusable: missing key, non-object `context`, unknown `status`, `running` with an empty configuration (0.9.0) |
 | `SnapshotSerializationError` | A pending event carries non-JSON-native data (`Decimal`, `datetime`) at `get_snapshot()` time (0.9.0) |
 | `RestoredError` | Wraps an error message recovered from a persisted snapshot |
+| `RestoredChainError` | The restored `last_chain_error` (0.9.1): a `RestoredError` **and** a `RunawayChainError`, so a live-machine `isinstance` guard survives a restart |
+| `XStateMachineError` | The common base of every exception above — `except XStateMachineError` catches anything the library raises |
 
 ### Importing Exceptions
 
@@ -564,6 +566,51 @@ See [Snapshots — Snapshot Envelope](snapshots/#snapshot-envelope) for the full
 
 ---
 
+### `TransitionFailedError`
+
+**What it looks like:**
+
+```
+interp.status == "stopped"
+interp.error   -> TransitionFailedError: Action 'charge' raised during a transition from 'm.a'; the transition was rolled back and the machine stopped (actionErrorPolicy='fail').
+```
+
+**Why it happens:** an action raised while `actionErrorPolicy` is `"fail"`. The transition is rolled back (configuration *and* context restored to the checkpoint), then the machine **stops** — `status == "stopped"`, configuration cleared — and the wrapping exception is on `interp.error`. Not a raised exception on `send()`; `"error"` remains the status for an invoked service that died.
+
+**How to fix it:** read `interp.error` (and `on_transition_failed` / `on_action_error`, which fire first). Use `"rollback"` if you want the undo without the stop.
+
+---
+
+### `UnhandledEventError`
+
+**What it looks like:**
+
+```
+interp.status == "error"
+interp.error   -> UnhandledEventError: Event 'BANANA' is not handled in any active state ['m.idle'] and the machine's onUnhandled policy is 'error'.
+```
+
+**Why it happens:** the machine has `"onUnhandled": "error"` and an event selected no transition in any active state. `send()` does **not** raise; the machine moves to the terminal `"error"` status with the exception on `interp.error`, and `on_error` fires. Under the default `"ignore"` the same event is a silent no-op (XState semantics); under `"defer"` it is parked and replayed after the next configuration change. Engine-minted events are exempt by provenance.
+
+**How to fix it:** either handle the event in the state, or accept that it is legitimately unhandled here and use `"ignore"` / `"defer"`. `on_unhandled_event` fires under every policy with the `disposition`; a `send(wait=True)` receipt carries the error.
+
+---
+
+### `RootTargetError`
+
+**What it looks like:**
+
+```
+xstate_statemachine.exceptions.RootTargetError: Machine 'm' has transition(s) targeting the machine root:
+  m.a: on 'RESET' -> target '#m' is the machine root; entering it empties the configuration. ...
+```
+
+**Why it happens:** a transition's `target` names the machine itself (`"#m"` or the root id). Entering the root enters nothing, so the machine would have no active leaf. A subclass of `InvalidConfigError`, raised at `create_machine()` (0.9.0, #108).
+
+**How to fix it:** target the root's `initial` state (or any concrete state) instead.
+
+---
+
 ### `RestoredError`
 
 **What it looks like:**
@@ -597,6 +644,23 @@ xstate_statemachine.exceptions.SnapshotMidStepError: Interpreter 'order' is mid-
 **Why it happens:** Between a transition's exit set and its entry set the machine has no leaf state. A snapshot taken there — typically from inside an *action* — used to persist `state_ids: []` and restore as a permanently inert machine that still reported `running`. Since 0.9.0 the call is refused instead.
 
 **How to fix it:** Move the snapshot out of the action. Snapshot from an `on_transition` plugin hook, after `await interp.send(..., wait=True)` returns, or after `stop(drain=True)`. Child actors caught mid-step by a *parent's* snapshot are waited for, so this only fires for the interpreter you call it on.
+
+---
+
+### `RestoredChainError`
+
+**What it looks like:**
+
+```python
+restored = SyncInterpreter.from_snapshot(blob, machine)
+type(restored.last_chain_error)                                  # RestoredChainError
+isinstance(restored.last_chain_error, RunawayChainError)         # True
+restored.last_chain_error.limit                                  # None -- JSON kept the message only
+```
+
+**Why it happens:** the chain-trip latch (`last_chain_error`, #222) is a snapshot field (#226). JSON cannot carry a Python type, so it comes back wrapped — but as a `RestoredChainError`, which subclasses *both* `RestoredError` and `RunawayChainError` (0.9.1, #243), so a supervisor's `isinstance` guard keeps firing across a restart. The type-independent signal is `chain_trips > 0`.
+
+**How to fix it:** nothing to fix; call `clear_chain_error()` to acknowledge the trip once you have acted on it.
 
 ---
 
