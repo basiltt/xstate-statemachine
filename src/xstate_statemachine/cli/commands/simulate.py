@@ -445,8 +445,11 @@ def interactive(
                 for i, g in enumerate(session.guard_names):
                     session.set_guard(g, i in chosen)
         elif key == "u":
-            rec = session.undo()
-            render_step(rec) if rec else c.warn("nothing to undo")
+            undone = session.undo()
+            if undone is None:
+                c.warn("nothing to undo")
+            else:
+                render_step(undone)
         elif key == "r":
             render_step(session.reset())
         elif key == "h":
