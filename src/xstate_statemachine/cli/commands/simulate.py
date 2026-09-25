@@ -409,6 +409,20 @@ def interactive(
                 c.blank()
                 continue
         # command mode
+        # 🧭 Say so. A machine whose only transitions are `always` / `after`
+        #    (or a final state) has nothing to pick, and a silent wait
+        #    reads as "the keys are broken" -- especially after the
+        #    "↑↓ pick event" hint above.
+        prompt_marker = c.style("❯" if c.caps.unicode else ">", "accent")
+        why = "no event can be sent from here" if not events else "command"
+        c.print(
+            f"  {prompt_marker} {c.style(why, 'muted')}  "
+            + c.style(
+                "t timer · c clock · g guards · u undo · r reset · "
+                "h history · s snapshot · q quit",
+                "dim",
+            )
+        )
         key = src()
         if key in ("q", K.ESC):
             c.print(c.style("bye", "muted"))
@@ -456,6 +470,13 @@ def interactive(
             render_history_table(session)
         elif key == "s":
             c.print(c.style(session.interp.get_snapshot(), "code"))
+        elif key in (K.UP, K.DOWN, K.ENTER) and not events:
+            c.info(
+                "nothing to pick: this state has no sendable events "
+                "(only `always` / `after` transitions). Try t (fire a "
+                "timer), c (advance the clock), u (undo) or r (reset)."
+            )
+            continue
         else:
             continue
         c.blank()

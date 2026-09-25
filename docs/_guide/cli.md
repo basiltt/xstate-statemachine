@@ -531,7 +531,7 @@ On a terminal you get the status panel and state tree, then a picker of the even
   enter send · esc for commands
 ```
 
-`enter` sends the highlighted event; a step line shows what happened (`→ SUBMIT  authenticating3DS  actions: validate`), the new active states pulse briefly, and the panel redraws. `esc` drops into command mode:
+When the active state has no sendable event — a chart whose transitions are all `always` / `after`, or a final state — the picker is skipped and a `❯ no event can be sent from here` line shows the command keys instead; `↑`/`↓`/`enter` there print a hint rather than doing nothing. `enter` sends the highlighted event; a step line shows what happened (`→ SUBMIT  authenticating3DS  actions: validate`), the new active states pulse briefly, and the panel redraws. `esc` drops into command mode:
 
 | Key | Does |
 |:--|:--|
@@ -699,7 +699,7 @@ xsm info --json
 The page opens with the banner and an environment panel:
 
 ```
-  Version:      0.10.2
+  Version:      0.10.3
   Python:       3.12.0
   Platform:     Windows-11
   Install path: C:\...\xstate_statemachine
@@ -855,7 +855,7 @@ Every generated file starts with a provenance header:
 
 Source:    order.json
 Template:  pythonic-builder
-Generator: xstate-statemachine 0.10.2
+Generator: xstate-statemachine 0.10.3
 
 Regenerate with::
 

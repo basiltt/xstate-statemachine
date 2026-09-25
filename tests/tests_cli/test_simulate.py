@@ -265,7 +265,32 @@ class TestInteractive(_Quiet):
         }
         s = Session(final_cfg)
         interactive(s, source=K.scripted("q"))
-        self.assertIn("bye", buf.getvalue())
+        out = buf.getvalue()
+        self.assertIn("no event can be sent from here", out)  # says why
+        self.assertIn("bye", out)
+        s.stop()
+
+    def test_arrows_with_nothing_to_pick_explain_instead_of_silence(
+        self,
+    ) -> None:
+        """An `always`-only chart (the quality-check example) settles with
+        no sendable events; pressing ↑/↓/enter there must not look like
+        broken keys."""
+        buf = self._console()
+        cfg = {
+            "id": "qc",
+            "initial": "inspecting",
+            "states": {
+                "inspecting": {"always": [{"target": "passed"}]},
+                "passed": {},
+            },
+        }
+        s = Session(cfg)
+        self.assertEqual(s.enabled_events, [])
+        interactive(s, source=K.scripted("up down enter r q"))
+        out = buf.getvalue()
+        self.assertIn("nothing to pick", out)
+        self.assertIn("reset", out)  # r still works from command mode
         s.stop()
 
 

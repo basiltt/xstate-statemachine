@@ -11,6 +11,19 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ---
 
+## [0.10.3] - 2026-09-24
+
+### Fixed
+
+- **`xsm simulate` looked frozen on a chart with no sendable events.** A
+  machine whose transitions are all `always` / `after` (e.g. the
+  `quality_check_sync` example settles in `passed` immediately) has
+  nothing for the event picker to offer, so the loop dropped straight
+  into command mode — silently, under a `↑↓ pick event` hint. Arrow keys
+  did nothing and it read as broken input. Command mode now prints a
+  `❯ no event can be sent from here` line with the command keys, and
+  `↑`/`↓`/`enter` there explain why and point at `t` / `c` / `u` / `r`.
+
 ## [0.10.2] - 2026-09-24
 
 ### Fixed
