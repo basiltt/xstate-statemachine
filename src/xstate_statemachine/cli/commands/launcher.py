@@ -376,7 +376,7 @@ def run_launcher(
                 if files:
                     from .simulate import run_simulate
 
-                    run_simulate(files[0])
+                    run_simulate(files[0], source=source)
             elif key == "validate":
                 files = _pick_files(multiple=True, source=source)
                 if files:
