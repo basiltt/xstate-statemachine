@@ -216,6 +216,26 @@ class TestMainDispatch(_Quiet):
         code, _ = _run(["frobnicate"])
         self.assertEqual(2, code)
 
+    def test_ctrl_c_exits_130_without_a_traceback(self) -> None:
+        """The raw-mode key reader raises KeyboardInterrupt on Ctrl+C; the
+        entry point must turn that into a quiet exit, not a traceback."""
+        from unittest import mock
+
+        import src.xstate_statemachine.cli.__main__ as entry
+
+        err = io.StringIO()
+        with (
+            mock.patch.object(
+                entry, "_dispatch", side_effect=KeyboardInterrupt
+            ),
+            mock.patch.object(sys, "stderr", err),
+        ):
+            with self.assertRaises(SystemExit) as cm:
+                entry.main()
+        self.assertEqual(cm.exception.code, entry.EXIT_INTERRUPTED)
+        self.assertIn("interrupted", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
