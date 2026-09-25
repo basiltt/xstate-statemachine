@@ -1043,7 +1043,32 @@ def _verify_or_refuse(
         )
 
 
+#: Conventional exit status for "terminated by SIGINT" (128 + 2).
+EXIT_INTERRUPTED = 130
+
+
 def main() -> None:
+    """CLI entry point: dispatch, and turn Ctrl+C into a quiet exit.
+
+    ⌨️ The raw-mode key reader raises `KeyboardInterrupt` on Ctrl+C (so
+    the interactive prompts honour it), and Python would otherwise print
+    a full traceback for it -- alarming, and not what any CLI does. Say
+    a word, restore the cursor (a prompt or spinner may have hidden it),
+    and exit 130 like every other terminal program.
+    """
+    try:
+        _dispatch()
+    except KeyboardInterrupt:
+        try:
+            sys.stdout.write(chr(27) + "[?25h")  # cursor back if hidden
+            sys.stdout.flush()
+        except (OSError, ValueError):  # pragma: no cover -- closed stdout
+            pass
+        print(chr(10) + "interrupted", file=sys.stderr)
+        raise SystemExit(EXIT_INTERRUPTED)
+
+
+def _dispatch() -> None:
     """Parses CLI arguments and dispatches to the subcommand modules."""
     # 🪵 Configure console logging only when run as a CLI.
     parser = get_parser()

@@ -448,7 +448,7 @@ On a terminal, a bare `xsm` draws the banner and a menu:
   ↑↓ move · enter select · esc cancel
 ```
 
-Arrow keys or the digits `1`–`9` move, `enter` selects, `esc` backs out. File pickers list recently used machines first (remembered in `~/.xsm/recent.json`, or `$XSM_HOME/recent.json`); the last entry lets you type a path or a glob such as `machines/*.json`. Pasted input is normalised: the surrounding quotes from Explorer's *Copy as path* (or a dragged file) are stripped, `~` is expanded, a `file:///` URI is accepted, and a directory means its `*.json` files.
+Arrow keys or the digits `1`–`9` move, `enter` selects, `esc` backs out; `Ctrl+C` anywhere exits quietly with status 130. File pickers list recently used machines first (remembered in `~/.xsm/recent.json`, or `$XSM_HOME/recent.json`); the last entry lets you type a path or a glob such as `machines/*.json`. Pasted input is normalised: the surrounding quotes from Explorer's *Copy as path* (or a dragged file) are stripped, `~` is expanded, a `file:///` URI is accepted, and a directory means its `*.json` files.
 
 The **generate wizard** asks for files, a template, companions and options, then shows the head of the logic module it is about to write in a preview panel before asking for confirmation. It builds exactly the same argument set the `gt` command uses, so nothing the wizard produces differs from the flag-driven output.
 
@@ -699,7 +699,7 @@ xsm info --json
 The page opens with the banner and an environment panel:
 
 ```
-  Version:      0.10.3
+  Version:      0.10.4
   Python:       3.12.0
   Platform:     Windows-11
   Install path: C:\...\xstate_statemachine
@@ -855,7 +855,7 @@ Every generated file starts with a provenance header:
 
 Source:    order.json
 Template:  pythonic-builder
-Generator: xstate-statemachine 0.10.3
+Generator: xstate-statemachine 0.10.4
 
 Regenerate with::
 

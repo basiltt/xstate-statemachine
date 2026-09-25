@@ -11,6 +11,18 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ---
 
+## [0.10.4] - 2026-09-24
+
+### Fixed
+
+- **Ctrl+C in the launcher or simulator printed a Python traceback.** The
+  raw-mode key reader deliberately raises `KeyboardInterrupt` on `Ctrl+C`
+  so the interactive prompts honour it, but nothing at the entry point
+  caught it. `main()` now restores the cursor (a prompt or spinner may
+  have hidden it), prints `interrupted` to stderr and exits with status
+  130, the conventional SIGINT exit — no traceback, like every other
+  terminal program.
+
 ## [0.10.3] - 2026-09-24
 
 ### Fixed
