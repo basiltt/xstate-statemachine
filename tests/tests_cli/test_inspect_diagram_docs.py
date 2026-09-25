@@ -254,6 +254,26 @@ class TestDocs(_Quiet):
             )
             self.assertIn("2 page(s) written", out)
 
+    def test_cli_docs_keeps_going_past_a_broken_file(self) -> None:
+        """`xsm docs machines/*.json` with one bad file must still write
+        the others, then exit 1."""
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = pathlib.Path(tmp) / "bad.json"
+            bad.write_text(
+                '{"id":"x","initial":"nope","states":{"a":{}}}',
+                encoding="utf-8",
+            )
+            code, out = _run(
+                ["docs", str(bad), str(PAYMENT), "-o", tmp, "--plain"]
+            )
+            self.assertEqual(code, 1)
+            self.assertIn("bad.json", out)
+            self.assertIn("1 page(s) written", out)
+            self.assertIn("1 file(s) could not be documented", out)
+            self.assertTrue(
+                (pathlib.Path(tmp) / "Advance payment flow.md").exists()
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -283,7 +283,8 @@ class TestPrompts(unittest.TestCase):
         )
 
     def test_multiselect_toggle_all_none(self) -> None:
-        src = keys.scripted("space down space enter")
+        # space toggles AND advances, so "space space" picks the first two
+        src = keys.scripted("space space enter")
         self.assertEqual(
             prompt.multiselect(
                 RICH,
@@ -293,6 +294,18 @@ class TestPrompts(unittest.TestCase):
                 stream=io.StringIO(),
             ),
             [0, 1],
+        )
+        # ...and on the last row it stays put (toggling it off again)
+        src = keys.scripted("end space space enter")
+        self.assertEqual(
+            prompt.multiselect(
+                RICH,
+                "M",
+                [("a", ""), ("b", ""), ("c", "")],
+                source=src,
+                stream=io.StringIO(),
+            ),
+            [],
         )
         self.assertEqual(
             prompt.multiselect(

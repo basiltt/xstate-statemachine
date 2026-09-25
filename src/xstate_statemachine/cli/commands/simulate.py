@@ -495,7 +495,11 @@ def run_simulate(
     script: Optional[str] = None,
     as_json: bool = False,
     guards_false: Optional[str] = None,
+    source: Optional[K.KeySource] = None,
 ) -> None:
+    """Entry for `xsm simulate`. *source* injects a key reader for the live
+    loop (the launcher passes its own so the whole flow is one keyboard
+    -- and testable); when given, a terminal is not required."""
     c = get_console()
     logging.disable(logging.CRITICAL)
     try:
@@ -513,7 +517,7 @@ def run_simulate(
     commands = parse_events_arg(events, clock)
     if script:
         commands += json.loads(Path(script).read_text(encoding="utf-8"))
-    scripted = bool(commands) or as_json or not c.interactive
+    scripted = bool(commands) or as_json or not (c.interactive or source)
 
     try:
         if scripted:
@@ -532,7 +536,7 @@ def run_simulate(
                         "no events given; use --events A,B,+500 or run in a terminal for interactive mode"
                     )
             return
-        interactive(session)
+        interactive(session, source=source)
     finally:
         session.stop()
         logging.disable(logging.NOTSET)

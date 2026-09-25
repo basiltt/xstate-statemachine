@@ -104,12 +104,17 @@ def render_markdown(facts: Facts) -> str:
 def run_docs(paths: List[str], *, output: Optional[str] = None) -> None:
     c = get_console()
     written = 0
+    failed = 0
     for p in paths:
         facts = analyse(Path(p), strict_config=False)
         if facts.machine is None:
+            # 📚 One broken file in `machines/*.json` must not stop the
+            #    others from being documented; report it, carry on, and
+            #    exit 1 at the end.
             for f in facts.findings:
                 c.error(f"{p}: {f.message}")
-            raise SystemExit(1)
+            failed += 1
+            continue
         md = render_markdown(facts)
         if output is None:
             c.print(md)
@@ -122,3 +127,6 @@ def run_docs(paths: List[str], *, output: Optional[str] = None) -> None:
         written += 1
     if output is not None:
         c.print(c.style(f"{written} page(s) written to {output}", "muted"))
+    if failed:
+        c.error(f"{failed} file(s) could not be documented")
+        raise SystemExit(1)

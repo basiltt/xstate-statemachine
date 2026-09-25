@@ -11,6 +11,28 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ---
 
+## [0.10.5] - 2026-09-25
+
+### Fixed
+
+Findings from a manual pass over every `xsm` command against the example
+corpus.
+
+- **Launcher → Simulate read from its own keyboard**, not the launcher's.
+  `run_simulate` decided live-vs-scripted from `console.interactive` and
+  opened the real key reader itself, so the flow could not be driven by
+  the launcher's injected key source (and was untestable end to end).
+  `run_simulate(..., source=)` now threads the launcher's source through;
+  a launcher test drives Simulate → send → undo → quit.
+- **Multiselect `space` toggled without advancing**, so the natural
+  "space, space, enter" in the generate wizard's *Companion files* step
+  toggled the first row on and off again and emitted no companions.
+  `space` now toggles and moves to the next row (Inquirer / fzf
+  convention); `Home` / `End` work in multiselect as they already did in
+  select.
+- **`xsm docs machines/*.json` stopped at the first broken file.** It now
+  reports that file, documents the rest, and exits 1 at the end.
+
 ## [0.10.4] - 2026-09-24
 
 ### Fixed

@@ -591,7 +591,7 @@ xsm docs checkout.json                 # Markdown to stdout
 xsm docs machines/*.json -o docs/      # one <machine-id>.md per file
 ```
 
-Each page has the summary line, an embedded Mermaid diagram, the state tree, the transitions table, the logic to implement, the policies and a "Getting started" snippet that loads the JSON and binds a `MachineLogic` — a reference page you can drop into a docs site or a PR.
+A file that does not build is reported and skipped; the remaining pages are still written and the command exits 1 at the end. Each page has the summary line, an embedded Mermaid diagram, the state tree, the transitions table, the logic to implement, the policies and a "Getting started" snippet that loads the JSON and binds a `MachineLogic` — a reference page you can drop into a docs site or a PR.
 
 ## 📃 List Templates
 
@@ -699,7 +699,7 @@ xsm info --json
 The page opens with the banner and an environment panel:
 
 ```
-  Version:      0.10.4
+  Version:      0.10.5
   Python:       3.12.0
   Platform:     Windows-11
   Install path: C:\...\xstate_statemachine
@@ -855,7 +855,7 @@ Every generated file starts with a provenance header:
 
 Source:    order.json
 Template:  pythonic-builder
-Generator: xstate-statemachine 0.10.4
+Generator: xstate-statemachine 0.10.5
 
 Regenerate with::
 

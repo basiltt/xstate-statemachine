@@ -128,6 +128,21 @@ class TestMenu(_Launcher):
         launcher.run_launcher(self.parser, source=K.scripted(keys))
         self.assertIn("All 2 file(s) are valid", self.out())
 
+    def test_simulate_shares_the_launcher_keyboard(self) -> None:
+        """The live simulator must read keys from the launcher's source
+        (one keyboard), not open its own -- off a tty that made the menu's
+        Simulate entry silently fall back to a scripted no-op."""
+        launcher.remember([str(PAYMENT)])
+        # Simulate (3) -> recent file -> enter sends SUBMIT -> esc, u undo
+        # -> esc, q quits the simulator -> q quits the launcher
+        launcher.run_launcher(
+            self.parser, source=K.scripted("3 enter enter enter esc u esc q q")
+        )
+        out = self.out()
+        self.assertIn("SUBMIT", out)
+        self.assertIn("undo", out)
+        self.assertNotIn("no events given", out)
+
     def test_inspect_from_recent(self) -> None:
         launcher.remember([str(PAYMENT)])
         # Inspect (2) → first recent entry
@@ -157,8 +172,9 @@ class TestGenerateWizard(_Launcher):
         # recent entry (remember() resolves paths; on the Windows runner
         # `RUNNER~1` becomes `runneradmin`), so clear exactly that.
         default = str(pathlib.Path(launcher.load_recent()[0]).parent)
+        # companions: space (tests, cursor moves on), space (types), enter
         keys = (
-            "1 enter enter 3 enter space enter enter "
+            "1 enter enter 3 enter space space enter enter "
             + " ".join(_spell(str(out_dir), clear=len(default)))
             + " enter y q"
         )
@@ -169,6 +185,7 @@ class TestGenerateWizard(_Launcher):
         names = sorted(p.name for p in out_dir.glob("*.py"))
         self.assertTrue(any(n.endswith("_logic.py") for n in names), names)
         self.assertTrue(any(n.startswith("test_") for n in names), names)
+        self.assertTrue(any(n.endswith("_types.py") for n in names), names)
 
     def test_cancel_at_confirm_writes_nothing(self) -> None:
         launcher.remember([str(PAYMENT)])

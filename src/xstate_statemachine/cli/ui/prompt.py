@@ -165,8 +165,17 @@ def multiselect(
                 cur = (cur - 1) % len(options)
             elif key in (K.DOWN, "j", K.TAB):
                 cur = (cur + 1) % len(options)
+            elif key == K.HOME:
+                cur = 0
+            elif key == K.END:
+                cur = len(options) - 1
             elif key == K.SPACE:
+                # ☑️ Toggle AND step down (Inquirer / fzf convention), so
+                #    "space space enter" picks the first two rows rather
+                #    than toggling the first one on and off again.
                 chosen ^= {cur}
+                if cur < len(options) - 1:
+                    cur += 1
             elif key == "a":
                 chosen = set(range(len(options)))
             elif key == "n":
