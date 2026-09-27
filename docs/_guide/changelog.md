@@ -15,6 +15,38 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Added
 
+- **Plugin hooks `on_before_send` and `on_event_processed`** (#304;
+  both engines, parity-tested). `on_before_send(interpreter, event)`
+  fires from `send()`, `send_events()` and `send_threadsafe()` after the
+  `strict` / `event_schemas` admission checks and *before* the event is
+  queued; returning a `Receipt` **short-circuits** the send — the event is
+  never queued, `on_event_received` / `on_event_processed` do not fire for
+  it, and the caller receives that receipt (a `send(wait=True)` resolves to
+  it immediately). First plugin to return wins. It is **fail-open**: a
+  raising interceptor is reported via `on_plugin_error` and the event is
+  admitted, so a blocker must return a receipt, not raise. This is the seam
+  the idempotency inbox (#261), rate limiting and maintenance-mode plugins
+  use. `on_event_processed(interpreter, event, receipt)` fires exactly once
+  per event that entered the machine — user and engine-minted alike —
+  after it settled or was denied / unhandled / deferred / dropped, with the
+  same `Receipt` a `wait=True` caller gets; the outcome hook that audit,
+  coverage, tracing and the inbox's "mark" attach to. Both engines build
+  the receipt from a per-event before-image, so a sync `send()` that also
+  drains a due timer reports each event separately; the bookkeeping runs
+  only when an attached plugin overrides the hook. `LoggingInspector`
+  implements it at DEBUG.
+- **`Receipt.duplicate`** (#304) — sixth field, default `False`; set by an
+  `on_before_send` interceptor answering a redelivered event with the
+  original outcome. Appended last so positional unpacking of the five
+  older fields still works; prefer attribute access.
+- **`stub_logic()` / `logic_names()`** (#304) — `xstate_statemachine.
+  testing_utils`, exported from the package root: a `MachineLogic` that
+  satisfies every name a chart declares (actions record into `ran`,
+  guards answer a fixed value or a *live* mapping, services complete
+  synchronously with `service_results`), so tools and tests can drive any
+  chart without its business logic. Promoted from the CLI's internal trace
+  recorder; the `pytest` codegen template and `xsm simulate` now share it.
+  Builds every machine in the example corpus and the Stately fixtures.
 - **Integration programme scaffolding** (#258; epic #257). The library
   is growing optional framework integrations while the core stays
   **zero-dependency** — a promise now enforced rather than asserted:
@@ -53,6 +85,7 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Changed
 
+- **`SyncInterpreter.send_events()` now applies the same admission checks as `send()`** — `strict` / `event_schemas` (`UnknownEventError` / `InvalidEventPayloadError` at the call site) and the reserved-payload-key warning — and both engines' `send_events()` run the new `on_before_send` interception (#304). Previously a batched send on the sync engine bypassed `strict` entirely.
 - AGENTS.md now states the real Python floor, **3.9** (it said 3.8+;
   `requires-python` and CI have been 3.9 since 0.9).
 

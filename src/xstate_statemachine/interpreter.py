@@ -210,7 +210,7 @@ def _is_plain_sync_callable(fn: Any) -> bool:
     )
 
 
-def _completed() -> "asyncio.Future[None]":
+def _completed(result: Any = None) -> "asyncio.Future[Any]":
     """An already-resolved awaitable -- what `send()` hands back.
 
     🏛️ `send()` performs its work eagerly (see its docstring), so the object
@@ -220,9 +220,12 @@ def _completed() -> "asyncio.Future[None]":
     coroutine because an un-awaited coroutine triggers a `RuntimeWarning`
     at GC time -- the very noise #37 set out to remove -- while a resolved
     `Future` that nobody awaits is silent and correct.
+
+    `result` (#304): an `on_before_send` interceptor's `Receipt`, so a
+    short-circuited ``send(wait=True)`` resolves to it immediately.
     """
-    fut: "asyncio.Future[None]" = asyncio.get_running_loop().create_future()
-    fut.set_result(None)
+    fut: "asyncio.Future[Any]" = asyncio.get_running_loop().create_future()
+    fut.set_result(result)
     return fut
 
 
@@ -977,6 +980,11 @@ class Interpreter(BaseInterpreter[TContext]):
         event_obj = self._prepare_event_reporting(event_or_type, **payload)
         self._warn_reserved_payload_keys(event_obj)
         self._check_strict(event_obj)  # #51: at the call site, pre-queue
+        # ⛔ #304: an interceptor may answer without queuing. Resolve the
+        #    awaitable immediately so `await interp.send(...)` still works.
+        intercepted = self._intercept_before_send(event_obj)
+        if intercepted is not None:
+            return _completed(intercepted if wait else None)
         if wait and event_obj is event_or_type:
             # 🧾 #75: the caller handed us its own object; give the queued
             #    envelope a distinct identity so a reused instance cannot
@@ -1509,6 +1517,12 @@ class Interpreter(BaseInterpreter[TContext]):
             self._threadsafe_self_sends_in_flight += 1
 
         async def _deliver() -> None:
+            # ⛔ #304: interception runs ON THE LOOP, like every other plugin
+            #    hook, so a plugin never sees two threads. A short-circuited
+            #    threadsafe send is simply not queued (fire-and-forget API;
+            #    the returned future resolves to None either way).
+            if self._intercept_before_send(event_obj) is not None:
+                return
             if self_issued:
                 if not self._refuse_if_not_running(event_obj):
                     self._raise_depth += 1
@@ -1842,7 +1856,14 @@ class Interpreter(BaseInterpreter[TContext]):
             return
 
         for event in events:
-            self._enqueue(self._prepare_event(event))
+            event_obj = self._prepare_event_reporting(event)
+            # 🧷 #304 (parity with `send`): admission checks and the
+            #    interception hook apply to batched sends too.
+            self._warn_reserved_payload_keys(event_obj)
+            self._check_strict(event_obj)
+            if self._intercept_before_send(event_obj) is not None:
+                continue
+            self._enqueue(event_obj)
 
     # -------------------------------------------------------------------------
     # ⚙️ Internal Event Loop & Execution Logic
@@ -2022,12 +2043,15 @@ class Interpreter(BaseInterpreter[TContext]):
                 #    the configuration + context before and after, and by
                 #    the action-failure signal the policy machinery records.
                 config_before = frozenset(self._active_state_nodes)
+                # 🧾 #304: `on_event_processed` needs the same before-image
+                #    a receipt does, for EVERY event, not only receipted ones.
+                observe = self._wants_event_processed
                 # ⚡ A machine with no actions anywhere cannot mutate
                 #    context, so `changed` reduces to the configuration
                 #    compare and the per-receipt deepcopy is skipped.
                 context_before = (
                     copy.deepcopy(self.context)
-                    if id(event) in self._receipts
+                    if (observe or id(event) in self._receipts)
                     and not self.machine.context_is_immutable
                     else None
                 )
@@ -2112,7 +2136,7 @@ class Interpreter(BaseInterpreter[TContext]):
                     )
                 finally:
                     self._processing = False
-                if id(event) in self._receipts:
+                if observe or id(event) in self._receipts:
                     if step_error is None and not self.last_transition_ok:
                         step_error = self._last_action_error
                     # 🛡️ #208: a receipt is resolved only here, AFTER the
@@ -2140,13 +2164,22 @@ class Interpreter(BaseInterpreter[TContext]):
                     deferred = any(
                         ev is event for ev in self._deferred_this_step
                     )
+                    denied = not changed and self._guard_denied_this_step
                     self._resolve_receipt(
-                        event,
-                        changed,
-                        step_error,
-                        deferred,
-                        denied=(not changed and self._guard_denied_this_step),
+                        event, changed, step_error, deferred, denied=denied
                     )
+                    if observe:
+                        # 🧾 #304: identical fields to the caller's receipt.
+                        self._notify_event_processed(
+                            event,
+                            Receipt(
+                                frozenset(self.current_state_ids),
+                                changed,
+                                step_error,
+                                deferred,
+                                denied,
+                            ),
+                        )
                 # 📨 #125: replay deferred events as their OWN macrosteps,
                 #    after this event's receipt has been resolved, so the
                 #    receipt describes THIS event's transition and not the

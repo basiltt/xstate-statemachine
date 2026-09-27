@@ -177,6 +177,8 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     # ⚡ See BaseInterpreter.__slots__.
     __slots__ = (
         "_held_replays",
+        "_caller_event",  # #304
+        "_caller_receipt",  # #304
         "_is_processing",
         "_restored_priority_count",
         "_start_notified",
@@ -280,6 +282,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #: public entry point once the receipt is final. Mirrors the async
         #: engine's `_replay_pending`.
         self._held_replays: List[AnyEvent] = []
+        # 🧾 #304: the caller's event for the current `send(wait=True)` and
+        #    the receipt `_emit_event_processed` built for it, so the flags
+        #    a later event in the same drain resets cannot corrupt it.
+        self._caller_event: Optional[AnyEvent] = None
+        self._caller_receipt: Optional[Receipt] = None
         # 🏛️ #50: `_after_threads` / `_after_events` / `_pending_send_cancels`
         #    are gone. Timers no longer own threads; see `_after_timer`.
 
@@ -638,6 +645,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         event_obj = self._prepare_event_reporting(event_or_type, **payload)
         self._warn_reserved_payload_keys(event_obj)
         self._check_strict(event_obj)  # #51
+        # ⛔ #304: an interceptor (idempotency inbox, rate limit) may answer
+        #    the caller without the machine ever seeing the event.
+        intercepted = self._intercept_before_send(event_obj)
+        if intercepted is not None:
+            return intercepted if wait else None
         if wait and self._is_processing:
             # 🔒 #219 (parity): a `send(wait=True)` from inside an action is
             #    re-entrant -- the event is queued behind the running step
@@ -674,6 +686,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    on this thread, in due order -- the pump.
         self._pump_timers()
         self._event_queue.append(event_obj)
+        self._caller_event, self._caller_receipt = event_obj, None
         try:
             self._process_event_queue()
         except Exception as exc:
@@ -683,11 +696,22 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             self.last_transition_ok = False
             self._last_action_error = exc
             if not wait:
+                self._caller_event = None
                 raise
             step_error = exc
+        finally:
+            self._caller_event = None
         if not wait:
             self._run_held_replays()
             return None
+        if self._caller_receipt is not None:
+            # 🧾 #304: the observer path already built this event's receipt
+            #    from a per-event before-image; reuse it so the caller and
+            #    `on_event_processed` see the identical object.
+            receipt = self._caller_receipt
+            self._caller_receipt = None
+            self._run_held_replays()
+            return receipt
         if step_error is None and not self.last_transition_ok:
             step_error = self._last_action_error
         changed = frozenset(self._active_state_nodes) != config_before or (
@@ -717,6 +741,35 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             held, self._held_replays = self._held_replays, []
             self._event_queue.extend(held)
             self._process_event_queue()
+
+    # -------------------------------------------------------------------------
+    # 🧾 on_event_processed (#304)
+    # -------------------------------------------------------------------------
+    def _emit_event_processed(
+        self,
+        event: Any,
+        config_before: FrozenSet[StateNode],
+        context_before: Optional[Any],
+        error: Optional[BaseException],
+    ) -> None:
+        """Build this event's `Receipt` from the before-image and fire the
+        hook -- the same fields a ``send(wait=True)`` caller gets."""
+        changed = frozenset(self._active_state_nodes) != config_before or (
+            context_before is not None and self.context != context_before
+        )
+        receipt = Receipt(
+            frozenset(self.current_state_ids),
+            changed,
+            error,
+            any(ev is event for ev in self._deferred_this_step),
+            denied=not changed and self._guard_denied_this_step,
+        )
+        # 🧾 If this is the event the caller is waiting on, its receipt is
+        #    THIS one -- later events in the same drain (a due timer) must
+        #    not overwrite the per-step flags it reads.
+        if event is self._caller_event:
+            self._caller_receipt = receipt
+        self._notify_event_processed(event, receipt)
 
     # -------------------------------------------------------------------------
     # 🏁 Reaping (#57)
@@ -808,6 +861,13 @@ class SyncInterpreter(BaseInterpreter[TContext]):
 
         for event_or_type in events:
             event_obj = self._prepare_event_reporting(event_or_type)
+            # 🧷 #304 (parity with `send`): admission checks and the
+            #    interception hook apply to batched sends too. A
+            #    short-circuited event is simply not queued.
+            self._warn_reserved_payload_keys(event_obj)
+            self._check_strict(event_obj)
+            if self._intercept_before_send(event_obj) is not None:
+                continue
             self._event_queue.append(event_obj)
 
         self._process_event_queue()
@@ -1013,11 +1073,50 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                     if self._deferred_events
                     else None
                 )
+                # 🧾 #304: `on_event_processed` needs THIS event's outcome,
+                #    so take a per-event before-image and reset the per-step
+                #    flags per event (a `send()` may drain several events --
+                #    the user's plus due timers and completions).
+                observe = self._wants_event_processed
+                if observe:
+                    ep_config_before = frozenset(self._active_state_nodes)
+                    ep_context_before = (
+                        None
+                        if self.machine.context_is_immutable
+                        else copy.deepcopy(self.context)
+                    )
+                    self._deferred_this_step.clear()
+                    self._guard_denied_this_step = False
+                    self.last_transition_ok = True
                 queued_before = len(self._internal_queue) + len(
                     self._event_queue
                 )
-                self._drive(self._process_event(current_event))
-                self._process_transient_transitions()
+                try:
+                    self._drive(self._process_event(current_event))
+                    self._process_transient_transitions()
+                except Exception as exc:
+                    if observe:
+                        self._emit_event_processed(
+                            current_event,
+                            ep_config_before,
+                            ep_context_before,
+                            exc,
+                        )
+                    raise
+                if observe:
+                    # `last_transition_ok` was reset for THIS event above, so
+                    # a False here is this event's failure.
+                    ep_err: Optional[BaseException] = (
+                        None
+                        if self.last_transition_ok
+                        else self._last_action_error
+                    )
+                    self._emit_event_processed(
+                        current_event,
+                        ep_config_before,
+                        ep_context_before,
+                        ep_err,
+                    )
                 # 🔗 Chain accounting -- parity with the async engine, which
                 #    resets `_raise_depth` when a macrostep raised nothing
                 #    (`interpreter.py`). A step that added NOTHING to either

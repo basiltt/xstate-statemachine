@@ -195,6 +195,11 @@ from .helpers import (
 )
 from .helpers import transition as pure_transition
 
+# -------------------------------------------------------------------------
+# 🧪 Testing utilities (#304) -- drive any chart without its real logic
+# -------------------------------------------------------------------------
+from .testing_utils import logic_names, stub_logic
+
 # -----------------------------------------------------------------------------
 # 📦 Version Information
 # -----------------------------------------------------------------------------
@@ -302,5 +307,8 @@ __all__ = [
     "to_promise",
     "wait_for",
     "wait_for_sync",
+    # 🧪 Testing utilities (#304)
+    "stub_logic",
+    "logic_names",
     "__version__",
 ]

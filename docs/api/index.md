@@ -1241,7 +1241,7 @@ The record format a snapshot uses for one pending / deferred / scheduled event. 
 
 ---
 
-### `Receipt(state_ids, changed, error=None, deferred=False, denied=False)` **[wave 3, 0.9.0]**
+### `Receipt(state_ids, changed, error=None, deferred=False, denied=False, duplicate=False)` **[wave 3, 0.9.0]**
 
 ```python
 class Receipt(NamedTuple):
@@ -1250,6 +1250,7 @@ class Receipt(NamedTuple):
     error: Optional[BaseException] = None
     deferred: bool = False
     denied: bool = False
+    duplicate: bool = False
 ```
 
 What `send(..., wait=True)` resolves to once the event's macrostep has run to
@@ -1262,8 +1263,9 @@ completion (#39).
 | `error` | `Optional[BaseException]` | The exception raised while processing this event -- an action that raised, an unresolvable target, a `sendTo` with no live target -- or `None`. The machine may still be `"running"` (per `actionErrorPolicy`); the receipt tells the caller its request did not run cleanly. |
 | `deferred` | `bool` | **[0.9.0]** `True` when this event selected no transition and was parked under `onUnhandled: "defer"` (#84). It will be replayed, as its own macrostep, after the next event that changes the configuration; the replay does not fold into that event's receipt (#125, both engines). |
 | `denied` | `bool` | **[0.9.0]** `True` when the active state *declared* a handler for this event but every candidate's guard returned `False` (#153). Distinguishes "a business rule refused it" from "this event does not apply here" (`denied=False`, `changed=False`), which are otherwise identical receipts. A guard that *crashed* under `guardErrorPolicy: "raise"` is a third case: `denied=False` and `error` carries the exception (#170). `(denied, error is None)` therefore discriminates all three. Note that under `onUnhandled: "defer"` a denied event enters the defer buffer (`deferred=True` too) and is re-evaluated after the next state change. |
+| `duplicate` | `bool` | **[0.11.0]** `True` when a plugin short-circuited the send from `on_before_send` because it had already seen this event (the idempotency inbox, #261/#304). The other fields then describe the *original* delivery's outcome, so a redelivered webhook gets the same answer the first delivery did. Appended last, so positional unpacking of the five older fields still works. |
 
-> ⚠️ **0.9.0 arity change.** `Receipt` grew from three fields to five (`deferred`, then `denied`). A positional destructure written for 0.8.0 — `state_ids, changed, error = receipt` — now raises `ValueError`; read fields by attribute (#119, #153).
+> ⚠️ **Arity changes.** `Receipt` grew from three fields to five in 0.9.0 (`deferred`, then `denied`) and to six in 0.11.0 (`duplicate`). A positional destructure written for an older width raises `ValueError`; read fields by attribute (#119, #153, #304).
 
 ```python
 receipt = await interpreter.send("SUBMIT", wait=True)
@@ -1960,6 +1962,8 @@ All hooks have empty default implementations -- override only those you need.
 | `on_interpreter_start` | `(self, interpreter: TInterpreter) -> None` | `start()` begins. |
 | `on_interpreter_stop` | `(self, interpreter: TInterpreter) -> None` | `stop()` begins. |
 | `on_event_received` | `(self, interpreter: TInterpreter, event: Event) -> None` | An event is passed to the interpreter, before processing. |
+| `on_before_send` | `(self, interpreter: TInterpreter, event: AnyEvent) -> Optional[Receipt]` | **[0.11.0]** Interception before queueing (after `strict`/`event_schemas`). Return a `Receipt` to short-circuit -- not queued, caller gets it, no `on_event_received`/`on_event_processed`. First plugin wins. Fail-open: a raising interceptor is reported via `on_plugin_error` and the event is admitted. Not fired for engine-minted events (#304). |
+| `on_event_processed` | `(self, interpreter: TInterpreter, event: AnyEvent, receipt: Receipt) -> None` | **[0.11.0]** Once per event that entered the machine (user and engine-minted), after it settled or was denied/unhandled/deferred/dropped, with the same `Receipt` a `wait=True` caller gets. Not fired for short-circuited events (#304). |
 | `on_transition` | `(self, interpreter: TInterpreter, from_states: Set[StateNode], to_states: Set[StateNode], transition: TransitionDefinition) -> None` | After a state transition completes (both external and internal). |
 | `on_action_execute` | `(self, interpreter: TInterpreter, action: ActionDefinition) -> None` | Right before an action's implementation is executed. |
 | `on_guard_evaluated` | `(self, interpreter: TInterpreter, guard_name: str, event: Event, result: bool) -> None` | After a guard condition is evaluated. |
@@ -2310,6 +2314,30 @@ output = await to_promise(interp)
 ```
 
 Both waiters raise on timeout rather than returning silently.
+
+---
+
+## Testing Utilities **[0.11.0]**
+
+Drive any chart without owning its business logic. A machine that declares actions, guards or services refuses to build without them (`ImplementationMissingError` — "silent acceptance is a bug"); these stand-ins let tools, tests and scripts exercise the *structure* anyway. Promoted from the CLI's internal trace recorder (#304); used by `xsm simulate`, the `pytest` codegen template and the testing plugin.
+
+| Function | Description |
+|:--|:--|
+| `stub_logic(config_or_machine, *, ran=None, guards=True, service_results=None)` | A `MachineLogic` satisfying every declared name. Actions append their name to `ran`; `guards` is a bool for all or a **live** mapping of name → bool (mutate it between sends to flip a guard); services complete synchronously returning `service_results[name]` (→ `event.data` on `onDone`). |
+| `logic_names(config_or_machine)` | `(actions, guards, services)` sets the chart references — from the raw JSON (via the CLI extractor) or from a built `MachineNode` (walking entry/exit/transition actions, leaf guards inside composites, invoke `src`). Built-in actions are excluded. |
+
+```python
+from xstate_statemachine import SyncInterpreter, create_machine, stub_logic
+
+cfg = {"id": "m", "initial": "a", "states": {
+    "a": {"on": {"GO": {"target": "b", "guard": "ok", "actions": "log"}}}, "b": {}}}
+ran: list = []
+guards = {"ok": False}
+interp = SyncInterpreter(create_machine(cfg, logic=stub_logic(cfg, ran=ran, guards=guards))).start()
+assert interp.send("GO", wait=True).denied
+guards["ok"] = True                      # live: no rebuild needed
+assert interp.send("GO", wait=True).changed and ran == ["log"]
+```
 
 ---
 
