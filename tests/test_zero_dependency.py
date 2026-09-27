@@ -27,7 +27,11 @@ SRC = ROOT / "src"
 #: ImportError`` (code formatting of generated output). The guard must let
 #: those attempts FAIL normally (they are optional) rather than count them
 #: as violations -- so they are blocked (raise ImportError) but not recorded.
-OPTIONAL_THIRD_PARTY = {"black", "isort"}
+#:
+#: ``org`` is not ours at all: CPython's own ``copy.py`` (<= 3.11) probes
+#: ``from org.python.core import PyStringMap`` for Jython inside a
+#: ``try/except ImportError``. It is stdlib behaviour, not a dependency.
+OPTIONAL_THIRD_PARTY = {"black", "isort", "org"}
 
 # The child script. Kept as a string so the whole check is one process with
 # no imports from this repository happening before the finder is in place.
