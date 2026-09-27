@@ -102,6 +102,7 @@ include = [
 #    it here keeps the tarball's contents readable from this file alone.
 exclude = [
     "/docs/superpowers",
+    "/docs/research",
 ]
 
 # 📦 PEP 561: ship the marker so type checkers actually consume the inline
