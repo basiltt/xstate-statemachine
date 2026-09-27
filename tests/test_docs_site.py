@@ -187,5 +187,52 @@ class TestPublicSurfaceMatchesDocs(unittest.TestCase):
         self.assertEqual(sorted(public - set(pkg.__all__)), [])
 
 
+class TestIntegrationsSection(unittest.TestCase):
+    """The Integrations guide (#258) and the page template every extra copies.
+
+    🏛️ Later integration pages are asserted here as they land: each must
+    carry the Guarantees and Threat-model boxes (X0.17, #303) -- add the
+    page name to `INTEGRATION_PAGES` when its issue ships.
+    """
+
+    INTEGRATION_PAGES: tuple = ()  # e.g. ("integration-fastapi",)
+
+    def test_overview_page_exists_and_is_in_nav(self) -> None:
+        page = GUIDE / "integrations.md"
+        self.assertTrue(page.is_file(), page)
+        text = _read(page)
+        self.assertIn("zero runtime dependencies", text)
+        self.assertIn("missingextraerror", text)  # _read lower-cases
+        layout = _read(ROOT / "docs" / "_layouts" / "default.html")
+        self.assertIn("/guide/integrations/", layout)
+        self.assertIn("cli-hierarchy,integrations,", layout)  # pages_order
+
+    def test_overview_lists_every_registry_extra(self) -> None:
+        from src.xstate_statemachine.contrib._registry import EXTRAS
+
+        text = _read(GUIDE / "integrations.md")
+        missing = [f"`{name}`" for name in EXTRAS if f"`{name}`" not in text]
+        self.assertEqual(missing, [], f"extras not documented: {missing}")
+
+    def test_template_has_the_mandatory_boxes(self) -> None:
+        tpl = _read(ROOT / "docs" / "_templates" / "integration-page.md")
+        for section in (  # _read lower-cases
+            "## install",
+            "## quick start",
+            "## reference",
+            "## guarantees",
+            "## threat model",
+            "## compatibility",
+            "## troubleshooting",
+        ):
+            self.assertIn(section, tpl)
+
+    def test_every_shipped_integration_page_has_both_boxes(self) -> None:
+        for name in self.INTEGRATION_PAGES:
+            text = _read(GUIDE / f"{name}.md")
+            self.assertIn("## guarantees", text, name)
+            self.assertIn("## threat model", text, name)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

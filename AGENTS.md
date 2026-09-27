@@ -5,7 +5,7 @@
 A Python library for parsing and running XState-compatible JSON state machines. This is a **published PyPI library** (`xstate-statemachine`) with daily downloads. Changes must be documented in CHANGELOG.md following the Keep a Changelog format.
 
 **Key Facts:**
-- Python 3.8+ support
+- Python 3.9+ support (3.9 through 3.14 in CI)
 - Async-first (`Interpreter`) with sync fallback (`SyncInterpreter`)
 - 100% XState JSON compatible
 - Actor model support with spawn actions
@@ -919,7 +919,7 @@ State targets in JSON can use different formats:
 - **Public library**: Changes affect daily downloads - be careful with breaking changes
 - **Sync vs Async**: Both interpreters supported - don't use `async def` in sync context
 - **CLI tool**: Entry point is `xsm`, not `xstate-statemachine` (legacy name deprecated)
-- **Python 3.8+**: Minimum supported version
+- **Python 3.9+**: Minimum supported version (matches `requires-python` and the CI matrix)
 - **Error handling**: Guards that raise are treated as `False`, actions that raise skip remaining actions
 - **Timers**: All timers auto-cancel when state exits (no manual cleanup needed)
 - **Services**: Must raise to trigger `onError`, return value becomes `event.data` in `onDone`

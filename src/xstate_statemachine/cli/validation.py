@@ -219,7 +219,13 @@ def _build_generated(
     module = types.ModuleType(f"_xsm_verify_{template.replace('-', '_')}")
     saved_modules = dict(sys.modules)
     try:
-        exec(compile(code, f"<{template}>", "exec"), module.__dict__)
+        # 🛡️ Deliberate `exec` (CI ban X0.4 exempts this line by marker):
+        #    this executes the code the generator ITSELF just emitted, in a
+        #    throwaway module, to prove it rebuilds the source machine. It
+        #    never runs user- or network-supplied text.
+        exec(  # xsm:allow-exec
+            compile(code, f"<{template}>", "exec"), module.__dict__
+        )
     except Exception as exc:  # noqa: BLE001 — reported, not swallowed
         problems.append(
             f"generated code raised {type(exc).__name__} on import: {exc}"

@@ -68,8 +68,16 @@ C16 = Capabilities(
 
 
 def _zero_dep_guard() -> None:
-    """Every `cli.ui` module must import with third-party imports blocked."""
+    """Every `cli.ui` module must import with third-party imports blocked.
+
+    📝 The programme-wide guard (`tests/test_zero_dependency.py`) covers the
+    whole core in a subprocess; this in-process check stays as a fast,
+    targeted signal for the UI toolkit, which is the most tempting place
+    to reach for `rich`/`click`. The reload is scoped to `cli.ui` modules,
+    which define no exception classes, so it is safe in-process.
+    """
     import importlib
+    import importlib.abc
 
     blocked = {
         "rich",
@@ -78,9 +86,12 @@ def _zero_dep_guard() -> None:
         "typer",
         "prompt_toolkit",
         "blessed",
+        "textual",
+        "questionary",
+        "inquirer",
     }
 
-    class _Block(importlib.abc.MetaPathFinder):  # type: ignore[name-defined]
+    class _Block(importlib.abc.MetaPathFinder):
         def find_spec(self, name, path, target=None):
             if name.split(".")[0] in blocked:
                 raise ImportError(f"third-party import attempted: {name}")
