@@ -39,8 +39,11 @@ CHILD = r"""
 import importlib, importlib.abc, importlib.machinery, json, os, pkgutil, sys, sysconfig
 
 STDLIB = set(getattr(sys, "stdlib_module_names", ()))
-STDLIB_DIR = os.path.realpath(sysconfig.get_paths()["stdlib"])
-SITE = os.path.join(STDLIB_DIR, "site-packages")
+# Everything that ships WITH the interpreter lives under base_prefix
+# (Lib/, DLLs/ on Windows, lib-dynload/ on POSIX); third-party code lives
+# in site-packages/dist-packages, so those two subtrees are the exclusion.
+BASE = os.path.realpath(sys.base_prefix)
+THIRD_PARTY_MARKERS = (os.sep + "site-packages" + os.sep, os.sep + "dist-packages" + os.sep)
 
 def is_stdlib(root):
     # 3.10+: the frozen name set. 3.9: resolve with the DEFAULT path finder
@@ -57,7 +60,7 @@ def is_stdlib(root):
     if origin in (None, "built-in", "frozen"):
         return True
     origin = os.path.realpath(origin)
-    return origin.startswith(STDLIB_DIR) and not origin.startswith(SITE)
+    return origin.startswith(BASE) and not any(m in origin for m in THIRD_PARTY_MARKERS)
 
 ALLOWED_ROOTS = {"xstate_statemachine", "_distutils_hack", "__editable__"}
 # Platform-specific stdlib modules do not exist on the other OS, so the
