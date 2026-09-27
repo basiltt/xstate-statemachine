@@ -36,10 +36,10 @@ jobs:
     name: Build & verify distribution
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.13"
           cache: pip
@@ -108,7 +108,7 @@ jobs:
           /tmp/smoke/bin/xsm --version
 
       - name: 📤 Upload distribution artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dist
           path: dist/
@@ -127,14 +127,14 @@ jobs:
       id-token: write
     steps:
       - name: 📥 Download distribution artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: dist
           path: dist/
 
       - name: 🧪 Publish to TestPyPI
         if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
           attestations: true  # #247: same provenance on the rehearsal target
@@ -142,7 +142,7 @@ jobs:
 
       - name: 🚀 Publish to PyPI
         if: github.event_name == 'release' || inputs.target == 'pypi'
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           # 🔏 #247: PEP 740 build provenance. The action turns this on by
           #    default under Trusted Publishing (0.9.0 already carries a

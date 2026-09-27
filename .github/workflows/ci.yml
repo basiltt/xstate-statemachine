@@ -7,10 +7,15 @@
 # 🏛️ Architecture decision: the job graph is deliberately split so a failure
 # tells you *what kind* of thing broke without reading logs:
 #
-#   lint     → style/format only (fast, fails in ~30s)
+#   lint     → style/format only (fast, fails in ~30s) + banned-deserialiser grep
 #   test     → the suite across the full supported interpreter matrix
 #   coverage → one authoritative coverage measurement + threshold gate
 #   build    → the distribution actually packages and imports
+#   core-zero-dep → the library imports with every third-party import blocked
+#   contrib  → one cell per optional extra, installing ONLY that extra
+#
+# 📌 Third-party actions are pinned to commit SHAs (tag in a trailing
+#    comment) so a moved tag cannot change what runs here (X0.14, #303).
 #
 # `lint` is NOT a gate for `test`. They run in parallel because a formatting
 # nit should never hide a real test failure — you want both results from one
@@ -54,10 +59,10 @@ jobs:
     name: Lint (black + flake8 + mypy)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.13"
           cache: pip
@@ -87,6 +92,126 @@ jobs:
         #    positives.
         run: python -m mypy
 
+      - name: 🚫 Ban unsafe deserialisers in the library
+        # 🛡️ X0.4 (#303): snapshots and broker envelopes are untrusted input
+        #    and are JSON only. `pickle`, `yaml.load`, `eval`/`exec` and
+        #    `jsonpickle` must never appear under src/. The CLI's stdlib
+        #    allow-list legitimately *names* "pickle" as a module name string;
+        #    that file is excluded by path, not by pattern. The generator's
+        #    self-verification `exec` of its OWN output is the one sanctioned
+        #    use and carries an `# xsm:allow-exec` marker.
+        run: |
+          if grep -rnE '^\s*(import|from)\s+(pickle|jsonpickle|shelve|marshal)\b|yaml\.(load|unsafe_load)\(|\beval\(|\bexec\(' \
+               --include='*.py' src/ --exclude-dir=__pycache__ \
+               | grep -v 'src/xstate_statemachine/cli/utils.py' \
+               | grep -v 'xsm:allow-exec'; then
+            echo '::error::unsafe deserialiser or eval/exec found under src/ (X0.4)'; exit 1
+          fi
+          echo "no banned deserialisers"
+
+  # ---------------------------------------------------------------------------
+  # 🪶 Zero-dependency guard
+  # ---------------------------------------------------------------------------
+  core-zero-dep:
+    name: Core is zero-dependency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: 📦 Bare install -- the package and pytest, nothing else
+        # 🏛️ Programme invariant #1 (#257/#258): `import xstate_statemachine`
+        #    must work with no third-party package present. This job installs
+        #    ONLY the library and pytest (no dev group, no extras, no cache
+        #    that could smuggle a wheel in) and runs the guard, which blocks
+        #    every non-stdlib import in a child interpreter.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . "pytest>=8.3.0"
+          python -m pip list
+
+      - name: 🪶 Run the guard
+        run: pytest tests/test_zero_dependency.py tests/contrib/test_extras_matrix.py -q --no-header
+
+  # ---------------------------------------------------------------------------
+  # 🔌 Integration extras matrix
+  # ---------------------------------------------------------------------------
+  contrib:
+    name: Extra [${{ matrix.extra }}] (py${{ matrix.python-version }} / ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 📝 One cell per extra in `contrib/_registry.py`. Each installs ONLY
+        #    its own extra and runs ONLY its own test folder, so a leak
+        #    between integrations (fastapi tests passing because django
+        #    happened to be installed) is impossible by construction.
+        #    Folders that do not exist yet make pytest exit 5 ("no tests
+        #    collected"), which is treated as a pass until the owning issue
+        #    lands. Windows cells need `shell: bash` for that idiom.
+        extra:
+          - pydantic
+          - observability
+          - testing
+          - redis
+          - sqlalchemy
+          - starlette
+          - fastapi
+          - litestar
+          - flask
+          - django
+          - drf
+          - channels
+          - celery
+          - kafka
+          - rabbitmq
+          - nats
+          - sqs
+          - cloudevents
+          - agents
+        os: [ubuntu-latest]
+        python-version: ["3.13"]
+        include:
+          # Windows spot checks for the extras most likely to be used there.
+          - { extra: pydantic, os: windows-latest, python-version: "3.13" }
+          - { extra: fastapi, os: windows-latest, python-version: "3.13" }
+          - { extra: django, os: windows-latest, python-version: "3.13" }
+          - { extra: sqlalchemy, os: windows-latest, python-version: "3.13" }
+          # Oldest interpreter for the two heaviest surfaces.
+          - { extra: django, os: ubuntu-latest, python-version: "3.9" }
+          - { extra: fastapi, os: ubuntu-latest, python-version: "3.9" }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: 🐍 Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: 📦 Install the library with ONLY this extra
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[${{ matrix.extra }}]" "pytest>=8.3.0" "pytest-socket>=0.7"
+          python -m pip list
+
+      - name: 🧪 Run this extra's tests
+        shell: bash
+        # 🌐 X0.16 (#303): no test may reach the network by accident.
+        run: |
+          set +e
+          pytest "tests/contrib/${{ matrix.extra }}" tests/contrib/test_extras_matrix.py \
+            -q --no-header --disable-socket --allow-hosts=127.0.0.1,::1
+          code=$?
+          set -e
+          if [ "$code" -eq 5 ]; then echo "no tests for [${{ matrix.extra }}] yet -- placeholder cell"; exit 0; fi
+          exit "$code"
+
   # ---------------------------------------------------------------------------
   # 🧪 Test Matrix
   # ---------------------------------------------------------------------------
@@ -114,10 +239,10 @@ jobs:
             python-version: "3.14"
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -132,10 +257,13 @@ jobs:
           python -m pip install -e .
           # 🧷 mypy is a TEST dependency: tests/test_type_safety.py runs it
           #    over representative user programs.
-          python -m pip install "pytest>=8.3.0" "mypy>=1.14"
+          python -m pip install "pytest>=8.3.0" "mypy>=1.14" "pytest-socket>=0.7"
 
       - name: 🧪 Run test suite
-        run: pytest -qq --no-header
+        # 🌐 X0.16 (#303): the default suite must never touch the network.
+        #    Loopback is allowed for the CLI's local servers and subprocess
+        #    tests; anything else fails the test that attempted it.
+        run: pytest -qq --no-header --disable-socket --allow-hosts=127.0.0.1,::1
 
       - name: 📖 Run doctests
         # 🐛 Regression guard: exceptions.py shipped doctests asserting error
@@ -167,10 +295,10 @@ jobs:
     name: Coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.13"
           cache: pip
@@ -195,7 +323,7 @@ jobs:
 
       - name: 📤 Upload coverage artifact
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: coverage-report
           path: coverage.xml
@@ -209,10 +337,10 @@ jobs:
     name: Build & verify distribution
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: 🐍 Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.13"
           cache: pip
@@ -258,7 +386,7 @@ jobs:
           /tmp/smoke/bin/xsm --version
 
       - name: 📤 Upload distribution artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dist
           path: dist/
