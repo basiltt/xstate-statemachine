@@ -173,6 +173,10 @@ exclude = '''
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+# 📌 Tests import the package as `src.xstate_statemachine`. Make the repo
+#    root importable explicitly so `pytest tests/contrib/x` from any cwd (the
+#    per-extra CI cells) resolves it the same way a bare `pytest` does.
+pythonpath = ["."]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
