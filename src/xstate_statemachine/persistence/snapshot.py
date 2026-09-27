@@ -1,7 +1,11 @@
-# /src/xstate_statemachine/persistence.py
+# /src/xstate_statemachine/persistence/snapshot.py
 # -----------------------------------------------------------------------------
 # 💾 Snapshot Envelope: versioning and machine identity
 # -----------------------------------------------------------------------------
+# 📝 Moved from `xstate_statemachine/persistence.py` when `persistence` became
+#    a package (programme #257 / #258). Every public name is re-exported from
+#    `xstate_statemachine.persistence` so existing imports keep working.
+#
 # 🏛️ Architecture decision: before 0.8.0 a persisted snapshot was a bare dict
 # with no version and no record of which machine produced it. Two failure
 # modes followed, both silent:
@@ -29,10 +33,10 @@ import hashlib
 import json
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
-from .exceptions import SnapshotDriftError, SnapshotVersionError
+from ..exceptions import SnapshotDriftError, SnapshotVersionError
 
 if TYPE_CHECKING:  # pragma: no cover
-    from .models import MachineNode, StateNode, TransitionDefinition
+    from ..models import MachineNode, StateNode, TransitionDefinition
 
 #: Current snapshot payload layout. History:
 #:   0 -- unversioned 0.7.x payload (implicit; no ``version`` key)
@@ -95,7 +99,7 @@ def _node_shape(node: "StateNode") -> Dict[str, Any]:
     """
     # 🔁 Reuse the validator's walk so "every transition a node owns" has
     #    exactly one definition in the codebase.
-    from .validation import transitions_of
+    from ..validation import transitions_of
 
     transitions = [_transition_shape(t) for _, t in transitions_of(node)]
     return {
@@ -117,7 +121,7 @@ def structure_hash(machine: "MachineNode") -> str:
     guard/action NAMES, invokes and delays -- regardless of `meta`,
     descriptions, or key order. See `_node_shape` for the exact contract.
     """
-    from .validation import walk
+    from ..validation import walk
 
     shapes = sorted(
         json.dumps(_node_shape(n), sort_keys=True) for n in walk(machine)
@@ -135,7 +139,7 @@ def check_version(snapshot: Dict[str, Any]) -> int:
     Raises:
         SnapshotVersionError: ``snapshot["version"] > SNAPSHOT_VERSION``.
     """
-    from .exceptions import SnapshotCorruptError
+    from ..exceptions import SnapshotCorruptError
 
     raw = snapshot.get("version", 0)
     # 🛡️ #146: `int("x")` / `int(None)` escaped as ValueError/TypeError
@@ -185,7 +189,7 @@ def check_shape(snapshot: Dict[str, Any], *, version: int = 0) -> None:
     ``configuration`` / ``state_ids`` lists of strings, and a ``running``
     snapshot that names at least one state.
     """
-    from .exceptions import SnapshotCorruptError
+    from ..exceptions import SnapshotCorruptError
 
     def fail(msg: str) -> None:
         raise SnapshotCorruptError(f"Snapshot is malformed: {msg}.")

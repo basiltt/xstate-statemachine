@@ -629,3 +629,32 @@ class SnapshotCorruptError(XStateMachineError):
     `SnapshotVersionError` (too new) and `SnapshotDriftError` (wrong
     machine): the blob is for the right machine but its shape is wrong.
     """
+
+
+class MissingExtraError(XStateMachineError, ImportError):
+    """An optional integration was used without its pip extra installed.
+
+    🏛️ The core library has zero runtime dependencies; every framework
+    integration under ``xstate_statemachine.contrib`` lazy-imports its
+    target and raises this instead of a bare ``ModuleNotFoundError``, so
+    the message names the exact command that fixes it. It is also an
+    ``ImportError`` so existing ``except ImportError`` fallbacks keep
+    working.
+
+    Attributes:
+        extra: The pip extra to install (``"fastapi"``).
+        module: The module whose import failed (``"fastapi"``).
+    """
+
+    def __init__(self, extra: str, module: str, *, hint: Optional[str] = None):
+        self.extra = extra
+        self.module = module
+        message = (
+            f"`{module}` is not installed. Install the extra: "
+            f'pip install "xstate-statemachine[{extra}]"'
+        )
+        if hint:
+            message = f"{message} {hint}"
+        # 📝 ImportError keeps its own `msg`/`name` slots and `str()` reads
+        #    `msg`, so pass the text positionally AND set `name`.
+        super().__init__(message, name=module)

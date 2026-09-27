@@ -43,6 +43,41 @@ format = [
     "isort>=5.13",
 ]
 
+# 🔌 Integration extras (programme #257). Each maps to a subpackage under
+#    `xstate_statemachine.contrib` that lazy-imports its target and raises
+#    `MissingExtraError` naming the exact `pip install` command otherwise.
+#
+# 📝 Entries are EMPTY until the owning issue ships the code: the extra
+#    already resolves (so `pip install "xstate-statemachine[django]"` works
+#    from day one and docs can name it), but pulling Django/Celery/Kafka
+#    into an environment for code that does not exist yet would be wrong.
+#    The version floors the plan commits to are recorded beside each entry
+#    and become the value when the issue lands. `contrib/_registry.py` is
+#    the matching single source of truth for tests and CI.
+pydantic      = []  # #266  pydantic>=2.5
+observability = []  # #273  opentelemetry-api>=1.20, prometheus-client>=0.17
+testing       = []  # #268  pytest>=8, hypothesis>=6.100
+redis         = []  # #306  redis>=5
+sqlalchemy    = []  # #284  sqlalchemy>=2.0
+starlette     = []  # #275  starlette>=0.27
+fastapi       = []  # #276  fastapi>=0.100 + [pydantic,starlette]
+litestar      = []  # #278  litestar>=2.0
+flask         = []  # #285  flask>=2.3
+django        = []  # #280  django>=4.2
+drf           = []  # #283  djangorestframework>=3.14 + [django]
+channels      = []  # #283  channels>=4 + [django]
+celery        = []  # #292  celery>=5.3
+kafka         = []  # #294  aiokafka>=0.10
+rabbitmq      = []  # #294  aio-pika>=9
+nats          = []  # #294  nats-py>=2
+sqs           = []  # #294  boto3>=1.28
+cloudevents   = []  # #293  cloudevents>=1.10
+agents        = []  # #287  = [pydantic]; provider SDKs are soft imports
+# umbrella extras -- filled when their members are
+web           = []  # [fastapi,django,drf,flask,sqlalchemy]
+eda           = []  # [celery,redis,kafka,rabbitmq,cloudevents,observability]
+all           = []  # [web,eda,testing,litestar,channels,nats,sqs,agents]
+
 [project.urls]
 Homepage = "https://github.com/basiltt/xstate-statemachine"
 "Bug Tracker" = "https://github.com/basiltt/xstate-statemachine/issues"
