@@ -60,13 +60,16 @@ def is_stdlib(root):
     return origin.startswith(STDLIB_DIR) and not origin.startswith(SITE)
 
 ALLOWED_ROOTS = {"xstate_statemachine", "_distutils_hack", "__editable__"}
+# Platform-specific stdlib modules do not exist on the other OS, so the
+# 3.9 origin probe cannot see them; they are stdlib everywhere they exist.
+PLATFORM_STDLIB = {"msvcrt", "winreg", "_winapi", "termios", "tty", "fcntl", "pwd", "grp", "resource", "readline", "_posixsubprocess", "nt", "posix"}
 OPTIONAL = %(optional)r
 violations = []
 
 class Guard(importlib.abc.MetaPathFinder):
     def find_spec(self, name, path=None, target=None):
         root = name.split(".")[0]
-        if root in ALLOWED_ROOTS or root.startswith("__editable___") or is_stdlib(root):
+        if root in ALLOWED_ROOTS or root in PLATFORM_STDLIB or root.startswith("__editable___") or is_stdlib(root):
             return None
         if root not in OPTIONAL:
             violations.append(name)
