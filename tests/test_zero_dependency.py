@@ -36,26 +36,37 @@ OPTIONAL_THIRD_PARTY = {"black", "isort", "org"}
 # The child script. Kept as a string so the whole check is one process with
 # no imports from this repository happening before the finder is in place.
 CHILD = r"""
-import importlib, importlib.abc, json, pkgutil, sys, types
+import importlib, importlib.abc, importlib.machinery, json, os, pkgutil, sys, sysconfig
 
 STDLIB = set(getattr(sys, "stdlib_module_names", ()))
-if not STDLIB:  # Python 3.9: reuse the frozen list the CLI already keeps
-    sys.path.insert(0, %(src)r)
-    from xstate_statemachine.cli.utils import _STDLIB_MODULE_NAMES as STDLIB
-    sys.path.pop(0)
-    # that import happened BEFORE the finder; drop it so the sweep below
-    # re-imports everything under the guard
-    for m in [m for m in sys.modules if m.startswith("xstate_statemachine")]:
-        del sys.modules[m]
+STDLIB_DIR = os.path.realpath(sysconfig.get_paths()["stdlib"])
+SITE = os.path.join(STDLIB_DIR, "site-packages")
 
-ALLOWED_ROOTS = STDLIB | {"xstate_statemachine", "_distutils_hack", "__editable__"}
+def is_stdlib(root):
+    # 3.10+: the frozen name set. 3.9: resolve with the DEFAULT path finder
+    # and accept built-ins, frozen modules and anything living under the
+    # stdlib directory (but not its site-packages).
+    if STDLIB:
+        return root in STDLIB
+    if root in sys.builtin_module_names:
+        return True
+    spec = importlib.machinery.PathFinder.find_spec(root, None)
+    if spec is None:
+        return False
+    origin = getattr(spec, "origin", None)
+    if origin in (None, "built-in", "frozen"):
+        return True
+    origin = os.path.realpath(origin)
+    return origin.startswith(STDLIB_DIR) and not origin.startswith(SITE)
+
+ALLOWED_ROOTS = {"xstate_statemachine", "_distutils_hack", "__editable__"}
 OPTIONAL = %(optional)r
 violations = []
 
 class Guard(importlib.abc.MetaPathFinder):
     def find_spec(self, name, path=None, target=None):
         root = name.split(".")[0]
-        if root in ALLOWED_ROOTS or root.startswith("__editable___"):
+        if root in ALLOWED_ROOTS or root.startswith("__editable___") or is_stdlib(root):
             return None
         if root not in OPTIONAL:
             violations.append(name)
