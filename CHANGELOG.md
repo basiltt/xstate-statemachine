@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Integration programme scaffolding** (#258; epic #257). The library
+  is growing optional framework integrations while the core stays
+  **zero-dependency** — a promise now enforced rather than asserted:
+  - `xstate_statemachine.contrib` — the home for optional integrations
+    (Django, FastAPI, SQLAlchemy, Celery, brokers, observability, testing,
+    LLM agents), one pip extra each. The package imports nothing; each
+    subpackage begins with `require_extra(...)`.
+  - `MissingExtraError` (also an `ImportError`) — raised when an
+    integration is imported without its extra; the message is the exact
+    `pip install "xstate-statemachine[<extra>]"` command. Exported from
+    the top-level package.
+  - `xstate_statemachine.persistence` is now a **package**. The snapshot
+    envelope module moved to `persistence/snapshot.py`; every public name
+    (`SNAPSHOT_VERSION`, `structure_hash`, `check_version`, `upcast`, …)
+    is re-exported, so existing imports are unaffected. Stores, locking,
+    idempotency and durable timers land here in the next issues.
+  - 22 integration extras declared in `pyproject.toml` as **empty
+    placeholders** (`pydantic`, `fastapi`, `django`, `sqlalchemy`,
+    `celery`, `redis`, `testing`, `observability`, `agents`, `web`, `eda`,
+    `all`, …) so they already resolve; each fills when its issue ships.
+    `contrib/_registry.py` is the single table tests and CI check against.
+  - `tests/test_zero_dependency.py` — a subprocess guard that blocks every
+    non-stdlib import, imports the package the way a user would, walks
+    every core module, and asserts `contrib` was never touched. Proven to
+    fail on a planted third-party import.
+  - CI: `core-zero-dep` job (bare install + the guard), a `contrib`
+    matrix with one cell per extra that installs **only** that extra,
+    `pytest-socket` on the default suite (no accidental network), a grep
+    banning `pickle`/`yaml.load`/`eval`/`exec` under `src/`, and all
+    actions pinned to commit SHAs.
+  - Docs: an **Integrations** guide page and sidebar section; a page
+    template every integration copies (Install / Quick start / Reference /
+    **Guarantees** / **Threat model** / Compatibility / Troubleshooting).
+  - PR template gains an integrations checklist, including "this PR does
+    not tag or publish a release".
+
+### Changed
+
+- AGENTS.md now states the real Python floor, **3.9** (it said 3.8+;
+  `requires-python` and CI have been 3.9 since 0.9).
+
 ## [0.10.5] - 2026-09-25
 
 ### Fixed
