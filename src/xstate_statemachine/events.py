@@ -483,6 +483,13 @@ class Receipt(NamedTuple):
             (#153). Distinguishes "a business rule refused it" from "this
             event does not apply in this state" (``denied=False``,
             ``changed=False``), which are otherwise identical receipts.
+        duplicate: ``True`` when a plugin short-circuited the send from
+            ``on_before_send`` because it had already seen this event
+            (the idempotency inbox, #261). The other fields then describe
+            the ORIGINAL delivery's outcome, so a retried webhook gets the
+            same answer as the first one did. **[0.11.0]** -- appended
+            last so positional unpacking of the five older fields still
+            works; prefer attribute access.
     """
 
     state_ids: FrozenSet[str]
@@ -490,6 +497,7 @@ class Receipt(NamedTuple):
     error: Optional[BaseException] = None
     deferred: bool = False
     denied: bool = False
+    duplicate: bool = False
 
 
 class AfterEvent(NamedTuple):

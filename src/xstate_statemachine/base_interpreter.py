@@ -60,6 +60,7 @@ from .events import (
     DoneEvent,
     ErrorEvent,
     Event,
+    Receipt,
     SYSTEM_EVENT_PREFIXES,
     _engine_after,
     _engine_done,
@@ -2470,6 +2471,72 @@ class BaseInterpreter(Generic[TContext]):
         raise NotImplementedError(
             "Subclasses must implement the '_invoke_service' method."
         )
+
+    def _intercept_before_send(self, event: Any) -> "Optional[Receipt]":
+        """Run the `on_before_send` interception hook (#304).
+
+        🏛️ The one seam that can stop a caller's event before it is queued
+        (idempotency inbox, rate limiting, maintenance mode). Called by
+        both engines from every send path -- `send`, `send_events`,
+        `send_threadsafe` -- AFTER admission checks (`_check_strict`), so
+        an interceptor only ever sees a well-formed, declared event, and
+        BEFORE `on_event_received`, which fires only for events that
+        actually enter the machine.
+
+        ⚠️ Fail-open by construction: `_SafePlugin` turns a raising hook
+        into `on_plugin_error` + `None`, so a crashing interceptor admits
+        the event. Documented on the hook; a blocker must RETURN a receipt.
+
+        Returns:
+            The first non-``None`` `Receipt` a plugin returned, else
+            ``None`` (proceed).
+        """
+        for plugin in self._plugins:
+            receipt = plugin.on_before_send(self, event)
+            if receipt is not None:
+                if not isinstance(receipt, Receipt):
+                    # 🛡️ A wrong return type is a plugin bug, not a reason
+                    #    to drop the caller's event: report and admit.
+                    _SafePlugin._report(
+                        getattr(plugin, "wrapped", plugin),
+                        "on_before_send",
+                        TypeError(
+                            "on_before_send must return a Receipt or None, "
+                            f"got {type(receipt).__name__}"
+                        ),
+                        (self, event),
+                    )
+                    continue
+                logger.debug(
+                    "⛔ Event '%s' on '%s' short-circuited by %s.on_before_send",
+                    getattr(event, "type", event),
+                    self.id,
+                    type(getattr(plugin, "wrapped", plugin)).__name__,
+                )
+                return receipt
+        return None
+
+    def _notify_event_processed(self, event: Any, receipt: "Receipt") -> None:
+        """Fire `on_event_processed` once for a settled event (#304)."""
+        for plugin in self._plugins:
+            plugin.on_event_processed(self, event, receipt)
+
+    @property
+    def _wants_event_processed(self) -> bool:
+        """``True`` when some attached plugin overrides `on_event_processed`.
+
+        ⚡ Building a per-event `Receipt` costs a deep-copy of context on
+        every event, receipted or not; both engines skip that unless a
+        plugin will read it. `_SafePlugin.__getattr__` hands back a stub
+        for hooks a plugin does not define, so the WRAPPED object's class
+        is what is inspected.
+        """
+        for plugin in self._plugins:
+            target = getattr(plugin, "wrapped", plugin)
+            hook = getattr(type(target), "on_event_processed", None)
+            if hook is not None and hook is not PluginBase.on_event_processed:
+                return True
+        return False
 
     def _check_strict(self, event: Any) -> None:
         """Raise for an undeclared type or an invalid payload (#51).

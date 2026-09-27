@@ -105,6 +105,11 @@ these modules first:
   overrides several base methods — when changing `_enter_states`,
   `_exit_states`, `_execute_actions` or `_check_and_fire_on_done`, check
   whether the sync engine has its own copy.
+  The same applies to `send()` / `send_events()` and the drain loop
+  (`_run_event_loop` vs `_process_event_queue`): the `on_before_send` /
+  `on_event_processed` hooks (#304) are dispatched from each engine's own
+  copy, with shared helpers `_intercept_before_send` /
+  `_notify_event_processed` on `BaseInterpreter`.
 - **Silent acceptance is a bug.** Config the library does not implement must
   either work or fail loudly. Most of the v0.6.0 work was converting silently
   ignored keys into real features.

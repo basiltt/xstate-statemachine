@@ -177,6 +177,8 @@ Every hook receives the `interpreter` instance as its first argument, giving plu
 | `on_interpreter_start` | `(interpreter)` | When `start()` is called |
 | `on_interpreter_stop` | `(interpreter)` | When `stop()` is called |
 | `on_event_received` | `(interpreter, event)` | Immediately after an event is received |
+| `on_before_send` | `(interpreter, event) -> Receipt \| None` | **[0.11.0]** Before an event is queued, after `strict` / `event_schemas` admission. Return a `Receipt` to short-circuit: the event is not queued and the caller gets that receipt (`duplicate=True` is what the idempotency inbox sets). First plugin to return wins. **Fail-open**: a raising interceptor is reported via `on_plugin_error` and the event is admitted. Not fired for engine-minted events |
+| `on_event_processed` | `(interpreter, event, receipt)` | **[0.11.0]** Once per event that entered the machine — user and engine-minted alike — after its macrostep settled or it was denied / unhandled / deferred / dropped, with the same `Receipt` a `send(wait=True)` caller gets. The outcome hook: audit, coverage, tracing and the inbox "mark" attach here. Not fired for events short-circuited by `on_before_send` |
 | `on_transition` | `(interpreter, from_states, to_states, transition)` | After a state transition completes |
 | `on_action_execute` | `(interpreter, action)` | Right before an action executes |
 | `on_action_error` | `(interpreter, action, error)` | A user action raised, before `action_error_policy` is applied |
@@ -236,6 +238,83 @@ def on_event_received(self, interpreter, event):
     if hasattr(event, "payload") and event.payload:
         print(f"  Payload: {event.payload}")
 ```
+
+#### `on_before_send(interpreter, event) -> Receipt | None` **[0.11.0]**
+
+The one hook that can stop a caller's event *before* the machine sees it. It fires from `send()`, `send_events()` and `send_threadsafe()` after the admission checks (`strict`, `event_schemas`) and before the event is queued. Return `None` to let it through; return a `Receipt` to **short-circuit** — the event is never queued, `on_event_received` and `on_event_processed` do not fire for it, and the caller receives your receipt (a `send(wait=True)` resolves to it immediately on both engines). The first plugin that returns a receipt wins.
+
+This is how the idempotency inbox answers a redelivered webhook with the *original* outcome, and how a rate limiter or maintenance-mode switch says "not now" without touching state:
+
+```python
+from xstate_statemachine import (
+    PluginBase, Receipt, SyncInterpreter, create_machine, stub_logic,
+)
+
+class MaintenanceMode(PluginBase):
+    """Refuse every user event while enabled; the machine stays untouched."""
+
+    enabled = False
+
+    def on_before_send(self, interpreter, event):
+        if not self.enabled:
+            return None  # proceed normally
+        return Receipt(
+            frozenset(interpreter.current_state_ids),
+            changed=False,
+            error=None,
+            deferred=False,
+            denied=True,  # "a rule refused it", not "does not apply"
+        )
+
+cfg = {"id": "m", "initial": "a", "states": {"a": {"on": {"GO": "b"}}, "b": {}}}
+gate = MaintenanceMode()
+interp = SyncInterpreter(create_machine(cfg, logic=stub_logic(cfg))).use(gate).start()
+
+gate.enabled = True
+receipt = interp.send("GO", wait=True)
+assert receipt.denied and interp.current_state_ids == {"m.a"}   # never queued
+
+gate.enabled = False
+assert interp.send("GO", wait=True).changed                      # normal path
+```
+
+> **Fail-open.** Plugin hooks are error-contained: if your interceptor *raises*, the failure is reported through `on_plugin_error` and the event is **admitted**. A blocker must return a receipt, not raise. Engine-minted events (`after`, `done.invoke`, `error.platform`) never pass through this hook — nobody "sends" them.
+
+#### `on_event_processed(interpreter, event, receipt)` **[0.11.0]**
+
+Fires **exactly once per event that entered the machine** — user events and engine-minted ones alike — after its macrostep has settled, or after it was denied, unhandled, deferred or dropped. `receipt` is the same `Receipt` a `send(wait=True)` caller gets, so this is the hook that knows the *outcome*: `on_transition` fires per transition and carries no event, and a guard-denied or unhandled event fires no transition at all. Audit logs, state-coverage collectors, tracing spans and the idempotency inbox's "mark" all attach here.
+
+```python
+from xstate_statemachine import PluginBase, SyncInterpreter, create_machine, stub_logic
+
+class Outcomes(PluginBase):
+    def __init__(self):
+        self.seen = []
+
+    def on_event_processed(self, interpreter, event, receipt):
+        kind = (
+            "error" if receipt.error else
+            "deferred" if receipt.deferred else
+            "denied" if receipt.denied else
+            "changed" if receipt.changed else "no-op"
+        )
+        self.seen.append((event.type, kind))
+
+cfg = {
+    "id": "o", "initial": "a",
+    "states": {"a": {"on": {"GO": "b", "LOCKED": {"target": "b", "guard": "never"}}}, "b": {}},
+}
+out = Outcomes()
+interp = SyncInterpreter(
+    create_machine(cfg, logic=stub_logic(cfg, guards=False))
+).use(out).start()
+interp.send("LOCKED")   # guard says no
+interp.send("NOPE")     # nothing handles it
+interp.send("GO")       # transitions
+assert out.seen == [("LOCKED", "denied"), ("NOPE", "no-op"), ("GO", "changed")]
+```
+
+Both engines build the receipt from a per-event before-image, so a `send()` on the sync engine that also drains a due timer reports two outcomes — the user's event and the `after` event — each with its own flags. The per-event bookkeeping only runs when some attached plugin overrides this hook.
 
 #### `on_transition(interpreter, from_states, to_states, transition)`
 

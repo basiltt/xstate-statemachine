@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ...clock import SimulatedClock
 from ...factory import create_machine
-from ...machine_logic import MachineLogic
+from ...testing_utils import stub_logic
 from ...sync_interpreter import SyncInterpreter
 from ...validation import walk
 from ..extractor import extract_logic_names
@@ -54,33 +54,15 @@ class Trace:
     unreached_events: List[str]
 
 
-def _stub_logic(
-    actions: Set[str],
-    guards: Set[str],
-    services: Set[str],
-    ran: List[str],
-    guard_value: bool,
-) -> MachineLogic:
-    def mk_action(name: str):
-        def _a(i: Any, c: Any, e: Any, ad: Any) -> None:
-            ran.append(name)
-
-        return _a
-
-    return MachineLogic(
-        actions={a: mk_action(a) for a in actions},
-        guards={g: (lambda c, e: guard_value) for g in guards},
-        services={s: (lambda i, c, e: None) for s in services},
-    )
-
-
 def record(config: Dict[str, Any], *, max_events: int = 24) -> Trace:
     """Run *config* along its reachable event sequence and record it."""
     logging.disable(logging.CRITICAL)
     try:
         actions, guards, services = extract_logic_names(config)
         ran: List[str] = []
-        logic = _stub_logic(actions, guards, services, ran, True)
+        # 🧪 #304: the stub builder is now the public
+        #    `xstate_statemachine.testing_utils.stub_logic`.
+        logic = stub_logic(config, ran=ran)
         machine = create_machine(json.loads(json.dumps(config)), logic=logic)
         clock = SimulatedClock()
         interp = SyncInterpreter(machine, clock=clock).start()

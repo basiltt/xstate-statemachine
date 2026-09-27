@@ -32,6 +32,7 @@ from typing import (
     Any,
     Generic,
     List,  # Core typing utilities
+    Optional,
     Set,
     Tuple,
     TypeVar,
@@ -53,7 +54,7 @@ from .events import ErrorEvent, Event  # noqa: E402
 
 if TYPE_CHECKING:
     from .base_interpreter import BaseInterpreter
-    from .events import AfterEvent, DoneEvent
+    from .events import AfterEvent, DoneEvent, Receipt
     from .models import (
         ActionDefinition,
         InvokeDefinition,
@@ -142,6 +143,65 @@ class PluginBase(Generic[TInterpreter]):
         Args:
             interpreter: The interpreter instance receiving the event.
             event: The `Event` object that was received.
+        """
+        pass  # pragma: no cover
+
+    def on_before_send(
+        self, interpreter: TInterpreter, event: "AnyEvent"
+    ) -> "Optional[Receipt]":
+        """**[0.11.0]** Intercept an event BEFORE it is queued (#304).
+
+        Fires from ``send()`` / ``send_events()`` / ``send_threadsafe()``
+        after the admission checks (``strict``, ``event_schemas``) and
+        before the event enters the inbox. Return a `Receipt` to
+        **short-circuit**: the event is not queued, ``on_event_received``
+        does not fire for it, and the caller receives that receipt (a
+        ``wait=True`` caller gets it resolved). Return ``None`` to let the
+        event through. The first plugin returning a receipt wins; later
+        plugins are not consulted for that event.
+
+        This is *the* interception seam -- the idempotency inbox (#261)
+        uses it to answer a redelivered event with the original outcome,
+        and rate limiting or maintenance-mode plugins can use it the same
+        way.
+
+        ⚠️ **Fail-open.** Plugin exceptions are contained: a raising
+        interceptor is reported through ``on_plugin_error`` and the event
+        is ADMITTED. An interceptor that must block cannot do so by
+        raising; it must return a receipt. Engine-minted events
+        (``after``, ``done.invoke``, ``error.platform``) do not pass
+        through this hook -- they are never "sent" by a caller.
+
+        Args:
+            interpreter: The interpreter about to queue the event.
+            event: The admitted event.
+
+        Returns:
+            A `Receipt` to short-circuit, or ``None`` to proceed.
+        """
+        return None  # pragma: no cover
+
+    def on_event_processed(
+        self, interpreter: TInterpreter, event: "AnyEvent", receipt: "Receipt"
+    ) -> None:
+        """**[0.11.0]** An event's processing has settled (#304).
+
+        Fires exactly once per event that entered the machine -- caller
+        events and engine-minted ones alike -- after its macrostep has run
+        (or after it was denied, unhandled, deferred or dropped), with the
+        same `Receipt` a ``send(wait=True)`` caller receives. This is the
+        hook that knows the *outcome*: ``on_transition`` fires per
+        transition and carries no event; guard-denied or unhandled events
+        fire no transition at all. Audit logs, state-coverage collectors,
+        tracing spans and the idempotency inbox's "mark" all attach here.
+
+        Not fired for events short-circuited by ``on_before_send`` (they
+        never entered the machine).
+
+        Args:
+            interpreter: The interpreter that processed the event.
+            event: The event that was processed.
+            receipt: Its outcome.
         """
         pass  # pragma: no cover
 
@@ -711,6 +771,34 @@ class LoggingInspector(PluginBase[Any]):
         if data_to_log is not None:
             message += f" | Data: {data_to_log}"
         logger.info(message)
+
+    def on_event_processed(
+        self,
+        interpreter: "BaseInterpreter[Any]",
+        event: "AnyEvent",
+        receipt: "Receipt",
+    ) -> None:
+        """Logs each event's outcome -- the same fields a receipt carries
+        (#304). DEBUG level: one line per event is chatty in production."""
+        outcome = (
+            "error"
+            if receipt.error is not None
+            else (
+                "deferred"
+                if receipt.deferred
+                else (
+                    "denied"
+                    if receipt.denied
+                    else "changed" if receipt.changed else "no change"
+                )
+            )
+        )
+        logger.debug(
+            "🧾 [INSPECT] Event Processed: %s -> %s | %s",
+            event.type,
+            outcome,
+            sorted(receipt.state_ids),
+        )
 
     def on_transition(
         self,
