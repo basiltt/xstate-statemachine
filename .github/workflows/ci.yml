@@ -203,14 +203,17 @@ jobs:
       - name: 🧪 Run this extra's tests
         shell: bash
         # 🌐 X0.16 (#303): no test may reach the network by accident.
+        # 📝 A folder that does not exist yet is a placeholder cell: run just
+        #    the shared contract test (which skips cleanly when there is no
+        #    subpackage) so the cell still proves the extra installs.
         run: |
-          set +e
-          pytest "tests/contrib/${{ matrix.extra }}" tests/contrib/test_extras_matrix.py \
-            -q --no-header --disable-socket --allow-hosts=127.0.0.1,::1
-          code=$?
-          set -e
-          if [ "$code" -eq 5 ]; then echo "no tests for [${{ matrix.extra }}] yet -- placeholder cell"; exit 0; fi
-          exit "$code"
+          targets="tests/contrib/test_extras_matrix.py"
+          if [ -d "tests/contrib/${{ matrix.extra }}" ]; then
+            targets="tests/contrib/${{ matrix.extra }} $targets"
+          else
+            echo "no tests for [${{ matrix.extra }}] yet -- placeholder cell"
+          fi
+          pytest $targets -q --no-header --disable-socket --allow-hosts=127.0.0.1,::1
 
   # ---------------------------------------------------------------------------
   # 🧪 Test Matrix
