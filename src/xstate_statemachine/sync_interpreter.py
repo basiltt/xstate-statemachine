@@ -50,6 +50,7 @@ from typing import (
 from .base_interpreter import AnyEvent, BaseInterpreter, _RollbackRequested
 from .exceptions import ReentrantWaitError, RunawayChainError
 from .clock import Clock, SimulatedClock
+from .actor_logic import RunningLogic
 from .events import (
     AfterEvent,
     DoneEvent,
@@ -919,6 +920,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 self.clock.clear_timeout(handle)
         self._timer_handles.clear()
         self._armed_after.clear()  # #264
+        self._cleanup_all_running_logic()  # #267
         self._scheduled_sends.clear()
         self._internal_queue.clear()  # mid-macrostep state; never persisted
 
@@ -1788,6 +1790,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         for handle in handles:
             self.clock.clear_timeout(handle)
         self._forget_deadlines(state.id)  # #264
+        self._cleanup_running_logic(state)  # #267
         if handles:
             logger.debug(
                 "🧹 Cancelled %d timer(s) for state '%s'.",
@@ -2026,6 +2029,12 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             )
             # 🚀 Execute the synchronous service.
             result = service(self, self.context, invoke_event)
+            # 🎭 #267: long-lived actor logic returns a handle instead of a
+            #    result -- register it (cleanup on exit / stop, `sendTo` by
+            #    invocation id) and publish NO completion.
+            if isinstance(result, RunningLogic):
+                self._register_running_logic(invocation, owner_id, result)
+                return
             # ✅ On success, immediately queue a 'done' event with the result.
             done_event = _engine_done(
                 f"done.invoke.{invocation.id}", data=result, src=invocation.id

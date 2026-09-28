@@ -820,6 +820,103 @@ interp = SyncInterpreter.from_snapshot(snapshot_str, machine, restart_services=T
 
 See [Snapshots](../snapshots/) for the full persistence model.
 
+## Actor logic helpers
+
+A service is "just a callable" — fine for a one-shot coroutine, awkward for **callback-style SDKs** (a websocket client, paho-mqtt, a GUI toolkit) that push many events into the machine over time, and for **streams** (an async iterator of LLM chunks, a Kafka consumer). XState v5 unified these under *actor logic*: `fromPromise`, `fromCallback`, `fromObservable`, `fromActor`. The Python twins live in `xstate_statemachine.actor_logic` and are exported at the top level.
+
+| XState v5 | Python | Engine | Completes? |
+|:--|:--|:--|:--|
+| `fromPromise(fn)` | `from_coroutine(async_fn)` | async | `onDone` with the return value |
+| — | `from_callable(fn)` | both | `onDone` with the return value |
+| `fromCallback(setup)` | `from_callback(setup)` | both | never on its own — cleanup on state exit |
+| `fromObservable(factory)` | `from_async_iterator(factory)` | async | `onDone` with the last item |
+| — | `from_iterator(factory)` | both (a daemon thread) | `onDone` with the last item |
+| `fromActor(ref)` | `from_interpreter(interp)` | both | when the child reaches a final state |
+
+They are ordinary services: `xsm inspect` lists them under *services*, `sendTo(<invoke id>)` addresses a running callback, and exiting the invoking state cleans up. Every `send_back` is **thread-safe** — from any thread or loop — because it routes through the engine's `send_threadsafe()`: on the async engine that is `call_soon_threadsafe`; on the sync engine the event lands in a mailbox the owning thread drains on its next `send()` / `tick()` (the same rule as sync timers).
+
+### `from_callback` — a callback-style client
+
+```python
+import threading
+from xstate_statemachine import MachineLogic, SyncInterpreter, create_machine, from_callback
+
+class FakeMqttClient:                         # stands in for paho.mqtt.client.Client
+    def __init__(self):
+        self.on_message = None
+        self.published = []
+    def connect(self):
+        # the broker "delivers" two messages on its own thread
+        def deliver():
+            for topic in ("sensors/temp", "sensors/humidity"):
+                self.on_message(topic)
+        t = threading.Thread(target=deliver); t.start(); t.join()
+    def publish(self, topic, body):
+        self.published.append((topic, body))
+    def disconnect(self):
+        self.published.append(("__disconnected__", None))
+
+client = FakeMqttClient()
+
+def mqtt_logic(send_back, receive, ctx, event):
+    """Runs once when the invoking state is entered."""
+    client.on_message = lambda topic: send_back("MESSAGE", topic=topic)   # broker -> machine, any thread
+    receive(lambda ev: client.publish(ev.payload["topic"], ev.payload["body"]))  # machine -> broker
+    client.connect()
+    return client.disconnect                                             # cleanup on state exit
+
+cfg = {"id": "gateway", "initial": "connected", "context": {"topics": []},
+       "states": {"connected": {"invoke": {"src": "mqtt", "id": "broker"},
+                                "on": {"MESSAGE": {"actions": "record"},
+                                       "ANNOUNCE": {"actions": {"type": "sendTo", "params": {
+                                           "to": "broker", "event": {"type": "PUBLISH", "topic": "status", "body": "up"}}}},
+                                       "SHUTDOWN": "offline"}},
+                  "offline": {"type": "final"}}}
+logic = MachineLogic(actions={"record": lambda i, ctx, e, a: ctx["topics"].append(e.payload["topic"])},
+                     services={"mqtt": from_callback(mqtt_logic)})
+
+gateway = SyncInterpreter(create_machine(cfg, logic=logic)).start()
+gateway.tick()                                              # drains the broker's messages (sync mailbox rule)
+assert gateway.context["topics"] == ["sensors/temp", "sensors/humidity"]
+gateway.send("ANNOUNCE")                                    # sendTo("broker") reaches receive()
+assert client.published == [("status", "up")]
+gateway.send("SHUTDOWN")                                    # state exit -> cleanup exactly once
+assert client.published[-1] == ("__disconnected__", None)
+```
+
+`setup(send_back, receive, ctx, event)` returns a cleanup callable (or `None`). Cleanup runs **exactly once** on state exit, on `stop()`, or when `setup` raised; an exception inside `setup` is `onError`. An `async def` cleanup is awaited by the async engine's `stop()`.
+
+### `from_async_iterator` — a token stream
+
+```python
+import asyncio
+from xstate_statemachine import Interpreter, MachineLogic, create_machine, from_async_iterator, to_promise
+
+async def llm_stream(interp, ctx, event):
+    """Stands in for an SDK's streaming completion."""
+    for token in ["The ", "answer ", "is ", "42."]:
+        await asyncio.sleep(0)
+        yield token
+
+cfg = {"id": "chat", "initial": "streaming", "context": {"text": ""},
+       "states": {"streaming": {"invoke": {"src": "llm", "onDone": {"target": "done", "actions": "finish"}},
+                                "on": {"STREAM": {"actions": "append"}}},
+                  "done": {"type": "final"}}}
+logic = MachineLogic(actions={"append": lambda i, ctx, e, a: ctx.__setitem__("text", ctx["text"] + e.payload["data"]),
+                              "finish": lambda i, ctx, e, a: ctx.__setitem__("last", e.data)},
+                     services={"llm": from_async_iterator(llm_stream)})
+
+async def main():
+    chat = await Interpreter(create_machine(cfg, logic=logic)).start()
+    await to_promise(chat)
+    assert chat.context["text"] == "The answer is 42."
+    assert chat.context["last"] == "42."          # onDone carries the last item
+
+asyncio.run(main())
+```
+
+Each yielded item is sent as `Event("STREAM", {"data": item})` (`event_type=` to rename it) and the machine applies it before the next item is pulled, so stream order and completion order agree. Exhaustion is `onDone` with the last item; an exception is `onError`; leaving the state cancels the task and `aclose()`s the generator, so a `finally:` in it runs. `from_iterator` is the sync twin — the iterator is consumed on a daemon thread and items arrive through the mailbox.
+
 ## See Also
 
 - **[Context](../context/)** — services often populate context via `onDone` actions

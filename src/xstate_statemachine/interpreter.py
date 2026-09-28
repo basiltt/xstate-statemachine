@@ -91,6 +91,7 @@ _ACTIVE_ACTION_OWNER: (
     "contextvars.ContextVar[Optional[BaseInterpreter[Any]]]"
 ) = contextvars.ContextVar("xsm_active_action_owner", default=None)
 from .clock import Clock, SimulatedClock
+from .actor_logic import RunningLogic, drain_pending_cleanups
 from .events import (
     AfterEvent,
     DoneEvent,
@@ -182,6 +183,12 @@ def _is_plain_sync_callable(fn: Any) -> bool:
     inline and drop their awaitable. Look through the common wrappers and
     require a genuine synchronous function.
     """
+    # 🎭 #267: actor-logic services (`from_callback`, `from_iterator`)
+    #    return a `RunningLogic` handle synchronously and must run on the
+    #    LOOP thread (they install callbacks the step relies on), not on
+    #    the plain-service executor -- take the task path instead.
+    if getattr(fn, "__xsm_actor_logic__", None) in ("callback", "iterator"):
+        return False
     target = fn
     # unwrap functools.partial / bound methods / mock wrappers
     for _ in range(4):
@@ -1672,6 +1679,8 @@ class Interpreter(BaseInterpreter[TContext]):
                 self.clock.clear_timeout(handle)
         self._timer_handles.clear()
         self._armed_after.clear()  # #264
+        self._cleanup_all_running_logic()  # #267
+        await drain_pending_cleanups()  # #267: async cleanups finish first
         self._priority_queue.clear()
         self._internal_queue.clear()  # mid-macrostep state; never persisted
         self._fail_all_receipts()
@@ -2785,6 +2794,7 @@ class Interpreter(BaseInterpreter[TContext]):
         for handle in self._timer_handles.pop(state.id, []):
             self.clock.clear_timeout(handle)
         self._forget_deadlines(state.id)  # #264
+        self._cleanup_running_logic(state)  # #267
 
     async def _next_event(
         self,
@@ -3030,6 +3040,10 @@ class Interpreter(BaseInterpreter[TContext]):
             result = (
                 await produced if inspect.isawaitable(produced) else produced
             )
+            # 🎭 #267: actor logic handed back a handle; keep it, no `done`.
+            if isinstance(result, RunningLogic):
+                self._register_running_logic(invocation, invocation.id, result)
+                return
 
             # ✅ Service completed: publish its 'done' event.
             #
@@ -3160,6 +3174,18 @@ class Interpreter(BaseInterpreter[TContext]):
         task = asyncio.create_task(_invoke_wrapper())
         # Register the task with its owner for lifecycle management.
         self.task_manager.add(owner_id, task)
+        if getattr(service, "__xsm_actor_logic__", None) in (
+            "callback",
+            "iterator",
+        ):
+            # 🎭 #267: a callback / iterator setup returns its handle
+            #    synchronously and installs the callbacks the step relies
+            #    on. Await it like an actor bring-up (#171) -- microseconds
+            #    -- so the logic is registered (and `sendTo(<id>)` resolves)
+            #    by the time the entering step is observable. It owes no
+            #    completion: it never publishes `done.invoke` on its own.
+            self._actor_bringups.append(task)
+            return
         self._owe_completion(task)
 
     def _report_service_failure(
@@ -3422,6 +3448,10 @@ class Interpreter(BaseInterpreter[TContext]):
         self, invocation: InvokeDefinition, owner_id: str, produced: Any
     ) -> None:
         """Deliver a plain service's result (#116 / #149 tail)."""
+        # 🎭 #267: long-lived actor logic -> register, no completion.
+        if isinstance(produced, RunningLogic):
+            self._register_running_logic(invocation, owner_id, produced)
+            return
         if inspect.isawaitable(produced):
             # A `def` that returned an awaitable after all: await it in a
             # task, with the same success / failure handling as the
