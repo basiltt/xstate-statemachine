@@ -219,7 +219,8 @@ def _build_generated(
     module = types.ModuleType(f"_xsm_verify_{template.replace('-', '_')}")
     saved_modules = dict(sys.modules)
     try:
-        # 🛡️ Deliberate `exec` (CI ban X0.4 exempts this line by marker):
+        # 🛡️ Deliberate `exec` (X0.2 ban, `tests/test_security_baseline.py`,
+        #    exempts this line by the marker):
         #    this executes the code the generator ITSELF just emitted, in a
         #    throwaway module, to prove it rebuilds the source machine. It
         #    never runs user- or network-supplied text.

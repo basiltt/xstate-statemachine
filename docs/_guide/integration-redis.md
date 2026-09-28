@@ -85,7 +85,7 @@ The SCAN-pattern escaper `list_keys` uses; exported for your own `SCAN`s.
 >
 > **What this does not do:** durability beyond what your Redis persistence (AOF / RDB) provides; multi-key transactions across prefixes; broker semantics (see the Streams integration). A lock is advisory: a writer that bypasses `persisted()` and calls `save()` without `expected_version` is not stopped.
 >
-> See the programme-wide [guarantees](https://github.com/basiltt/xstate-statemachine/issues/303).
+> See the programme-wide [Guarantees](../guarantees/) and [Security](../security/) pages ([#303](https://github.com/basiltt/xstate-statemachine/issues/303)).
 
 ## Threat model
 

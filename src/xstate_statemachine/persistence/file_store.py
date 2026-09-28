@@ -51,10 +51,14 @@ from ..exceptions import (
 from .deadline import Deadline, check_deadline_record
 from .store import BaseStore
 
-__all__ = ["FileStore", "encode_key", "decode_key"]
+__all__ = ["FORMAT_VERSION", "FileStore", "encode_key", "decode_key"]
 
 _SUFFIX = ".xsm.json"
 _LOCK_SUFFIX = ".lock"
+#: 🔐 X0.10: the record FORMAT version (distinct from the per-key record
+#: `version`, the optimistic-locking counter). Bump with an upgrade step
+#: in `_upcast_record`; a newer format is refused, never guessed at.
+FORMAT_VERSION = 1
 #: Characters that pass through unchanged. Everything else (including
 #: uppercase -- see below) is percent-escaped, so the encoding is
 #: reversible and case-insensitive filesystems cannot collide two keys.
@@ -256,6 +260,25 @@ class FileStore(BaseStore):
             raise SnapshotCorruptError(
                 f"FileStore record {path.name} is malformed."
             )
+        return FileStore._upcast_record(rec, path.name)
+
+    @staticmethod
+    def _upcast_record(rec: Dict[str, Any], name: str) -> Dict[str, Any]:
+        """X0.10: bring an older-format record up to `FORMAT_VERSION`;
+        refuse a newer one."""
+        fmt = rec.get("format", 1)  # records before the field are format 1
+        if not isinstance(fmt, int):
+            raise SnapshotCorruptError(
+                f"FileStore record {name} has a non-integer 'format'."
+            )
+        if fmt > FORMAT_VERSION:
+            raise SnapshotCorruptError(
+                f"FileStore record {name} is format {fmt}, newer than this "
+                f"library supports ({FORMAT_VERSION}). Upgrade "
+                f"xstate-statemachine."
+            )
+        # (no upgrade steps yet: format 1 is the only one)
+        rec["format"] = FORMAT_VERSION
         return rec
 
     def _write_atomic(self, path: Path, rec: Dict[str, Any]) -> None:
@@ -330,6 +353,7 @@ class FileStore(BaseStore):
             self._write_atomic(
                 path,
                 {
+                    "format": FORMAT_VERSION,
                     "key": key,
                     "snapshot": data,
                     "version": new_version,

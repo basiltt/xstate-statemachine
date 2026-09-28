@@ -76,7 +76,10 @@ agents        = []  # #287  = [pydantic]; provider SDKs are soft imports
 # umbrella extras -- filled when their members are
 web           = []  # [fastapi,django,drf,flask,sqlalchemy]
 eda           = []  # [celery,redis,kafka,rabbitmq,cloudevents,observability]
-all           = []  # [web,eda,testing,litestar,channels,nats,sqs,agents]
+all           = [  # every SHIPPED extra; grows as issues land
+    "redis>=5",
+    "pydantic>=2.5",
+]
 
 [project.urls]
 Homepage = "https://github.com/basiltt/xstate-statemachine"

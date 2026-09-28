@@ -98,7 +98,7 @@ assert order.context["currency"] == "USD"                  # ...and rolled back:
 >
 > **What this does not do:** validate context on every *read* (only after a mutating action, and on start with `TypedContextPlugin`); type-check guards or services; replace `create_machine`'s own tree validation (unknown targets, dead `always` loops). With `actionErrorPolicy: "continue"` (the pre-1.0 default) an invalid context IS kept and only reported — set `"rollback"`.
 >
-> See the programme-wide [guarantees](https://github.com/basiltt/xstate-statemachine/issues/303).
+> See the programme-wide [Guarantees](../guarantees/) and [Security](../security/) pages ([#303](https://github.com/basiltt/xstate-statemachine/issues/303)).
 
 ## Threat model
 
