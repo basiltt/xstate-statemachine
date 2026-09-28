@@ -33,26 +33,48 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 GUIDE = ROOT / "docs" / "_guide"
 DOC_FILES = [ROOT / "README.md", *sorted(GUIDE.glob("*.md"))]
 FRAGMENT_MARK = "<!-- doc-fragment -->"
+#: `<!-- doc-requires: redis, fakeredis -->` right above a fence: run the
+#: block only when every named module imports (an integration page's
+#: examples need the extra installed). The block is skipped, not failed,
+#: in a checkout without the extra -- the contrib CI cell runs it.
+REQUIRES_MARK = re.compile(r"<!--\s*doc-requires:\s*([\w.,\s]+?)\s*-->\s*$")
 FENCE = re.compile(r"```python\n(.*?)```", re.S)
 IMPORTS_PACKAGE = re.compile(r"^\s*from xstate_statemachine", re.M)
 PER_BLOCK_TIMEOUT_S = 60
 
 
-def _blocks(md: pathlib.Path) -> Iterator[Tuple[int, str, bool]]:
-    """Yield ``(line_no, source, is_fragment)`` for each python fence."""
+def _blocks(md: pathlib.Path) -> Iterator[Tuple[int, str, bool, List[str]]]:
+    """Yield ``(line_no, source, is_fragment, requires)`` per python fence."""
     text = md.read_text(encoding="utf-8")
     for m in FENCE.finditer(text):
         line = text[: m.start()].count("\n") + 1
         before = text[: m.start()].rstrip()
-        yield line, m.group(1), before.endswith(FRAGMENT_MARK)
+        req = REQUIRES_MARK.search(before)
+        requires = (
+            [r.strip() for r in req.group(1).split(",") if r.strip()]
+            if req
+            else []
+        )
+        yield line, m.group(1), before.endswith(FRAGMENT_MARK), requires
+
+
+def _importable(module: str) -> bool:
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def _runnable_blocks() -> List[Tuple[str, int, str]]:
     out = []
     for md in DOC_FILES:
-        for line, src, is_fragment in _blocks(md):
+        for line, src, is_fragment, requires in _blocks(md):
             if is_fragment or not IMPORTS_PACKAGE.search(src):
                 continue
+            if requires and not all(_importable(r) for r in requires):
+                continue  # integration example; its CI cell runs it
             out.append((md.relative_to(ROOT).as_posix(), line, src))
     return out
 

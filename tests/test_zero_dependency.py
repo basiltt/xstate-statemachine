@@ -92,9 +92,21 @@ leaked = sorted(m for m in sys.modules if m.startswith("xstate_statemachine.cont
 imported = []
 failed = {}
 pkg = xstate_statemachine
-for info in pkgutil.walk_packages(pkg.__path__, pkg.__name__ + "."):
-    if ".contrib" in info.name:
-        continue
+
+def _walk(path, prefix):
+    # 📝 `pkgutil.walk_packages` IMPORTS every subpackage to recurse into it,
+    #    which would execute `contrib/<extra>/__init__.py` (and its
+    #    `require_extra` probe) before the name filter could skip it. Walk
+    #    one level at a time and never descend into `contrib`.
+    for info in pkgutil.iter_modules(path, prefix):
+        if info.name.rsplit(".", 1)[-1] == "contrib":
+            continue
+        yield info
+        if info.ispkg:
+            sub = importlib.import_module(info.name)
+            yield from _walk(sub.__path__, info.name + ".")
+
+for info in _walk(pkg.__path__, pkg.__name__ + "."):
     try:
         importlib.import_module(info.name)
         imported.append(info.name)

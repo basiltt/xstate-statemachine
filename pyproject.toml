@@ -57,7 +57,7 @@ format = [
 pydantic      = []  # #266  pydantic>=2.5
 observability = []  # #273  opentelemetry-api>=1.20, prometheus-client>=0.17
 testing       = []  # #268  pytest>=8, hypothesis>=6.100
-redis         = []  # #306  redis>=5
+redis         = ["redis>=5"]  # #306
 sqlalchemy    = []  # #284  sqlalchemy>=2.0
 starlette     = []  # #275  starlette>=0.27
 fastapi       = []  # #276  fastapi>=0.100 + [pydantic,starlette]
@@ -103,6 +103,9 @@ test = [
     "pytest>=8.3.0",
     "pytest-cov>=6.0.0",
     "pytest-asyncio>=0.24.0",
+    # 🟥 #306: the [redis] contract tests run against fakeredis (Lua needed
+    #    for the atomic scripts); a live Redis is opt-in via XSM_REDIS_URL.
+    "fakeredis[lua]>=2.20",
 ]
 
 [tool.hatch.build.targets.wheel]

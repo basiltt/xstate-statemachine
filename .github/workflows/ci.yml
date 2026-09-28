@@ -198,6 +198,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[${{ matrix.extra }}]" "pytest>=8.3.0" "pytest-socket>=0.7"
+          # 🟥 #306: the [redis] cell runs its contract suites against an
+          #    in-process fakeredis (Lua enabled); no service container.
+          if [ "${{ matrix.extra }}" = "redis" ]; then python -m pip install "fakeredis[lua]>=2.20"; fi
           python -m pip list
 
       - name: 🧪 Run this extra's tests

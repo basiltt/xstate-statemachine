@@ -195,7 +195,7 @@ class TestIntegrationsSection(unittest.TestCase):
     page name to `INTEGRATION_PAGES` when its issue ships.
     """
 
-    INTEGRATION_PAGES: tuple = ()  # e.g. ("integration-fastapi",)
+    INTEGRATION_PAGES: tuple = ("integration-redis",)  # #306
 
     def test_overview_page_exists_and_is_in_nav(self) -> None:
         page = GUIDE / "integrations.md"
@@ -213,6 +213,25 @@ class TestIntegrationsSection(unittest.TestCase):
         text = _read(GUIDE / "integrations.md")
         missing = [f"`{name}`" for name in EXTRAS if f"`{name}`" not in text]
         self.assertEqual(missing, [], f"extras not documented: {missing}")
+
+    def test_integration_pages_have_the_mandatory_boxes(self) -> None:
+        layout = _read(ROOT / "docs" / "_layouts" / "default.html")
+        for page in self.INTEGRATION_PAGES:
+            text = _read(GUIDE / f"{page}.md")
+            for section in (
+                "## install",
+                "## quick start",
+                "## reference",
+                "## guarantees",
+                "## threat model",
+                "## compatibility",
+                "## troubleshooting",
+            ):
+                self.assertIn(section, text, f"{page}: {section}")
+            self.assertIn("**what this does not do:**", text, page)
+            self.assertIn("**you must configure:**", text, page)
+            self.assertIn(f"/guide/{page}/", layout, f"{page} not in sidebar")
+            self.assertIn(f"{page},", layout, f"{page} not in pages_order")
 
     def test_template_has_the_mandatory_boxes(self) -> None:
         tpl = _read(ROOT / "docs" / "_templates" / "integration-page.md")

@@ -112,6 +112,17 @@ class DueTimerScanner:
         """``(key, earliest due_at)`` for records with a matured deadline,
         soonest first. Reads only the store's deadline index."""
         at = (self.now() if now is None else now) + self.skew_tolerance_s
+        # ⚡ A store with a deadline INDEX (Redis zset, #306) answers this
+        #    directly; the stdlib stores are scanned record by record.
+        indexed = getattr(self.store, "due_keys", None)
+        if callable(indexed):
+            rows = [
+                (k, d)
+                for k, d in indexed(at, limit=self.limit)
+                if k.startswith(self.prefix)
+            ]
+            rows.sort(key=lambda kv: kv[1])
+            return rows
         out: List[Tuple[str, float]] = []
         for key in self.store.list_keys(prefix=self.prefix, limit=self.limit):
             rec = self.store.load(key)
