@@ -113,6 +113,16 @@ these modules first:
 - **Silent acceptance is a bug.** Config the library does not implement must
   either work or fail loudly. Most of the v0.6.0 work was converting silently
   ignored keys into real features.
+- **Snapshot layout changes bump `SNAPSHOT_VERSION` once per release, with
+  one `upcast()` step.** Layout is v4 (0.11.0, #305: `machine_version`,
+  `deadlines`). Adding a key means: write it in `get_snapshot()`, default it
+  in `upcast()`, validate it in `check_shape()` (a bad value is
+  `SnapshotCorruptError`, never a bare `TypeError`), and note in
+  `docs/_guide/snapshots.md` that the new blob does not load on the previous
+  release. Never bump for a package release that leaves the layout alone.
+- **Time that leaves the process uses `interpreter.wall_now()`**, not
+  `clock.now()` (monotonic, process-specific origin). `SimulatedClock`
+  takes `wall_start=` so tests can express "restarted an hour later".
 
 ### CLI Tool
 ```bash

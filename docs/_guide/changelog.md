@@ -15,6 +15,37 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Added
 
+- **Snapshot layout v4, `MachineNode.version`, wall clock, `Deadline`,
+  receipt codec** (#305 part 1 — core prerequisites for the persistence
+  and web integrations; both engines).
+  - `SNAPSHOT_VERSION` is **4**. Every snapshot now carries
+    `machine_version` (the chart's root `"version"` label, or `null`) and
+    `deadlines` (durable wall-clock `after` timers, #264 — always `[]`
+    until that lands, so the layout is settled once). v0–v3 blobs upcast
+    with `machine_version=None, deadlines=[]`; `check_shape` validates both
+    keys (`SnapshotCorruptError`); `check_version` refuses v5+. **Rolling
+    deploys:** a v4 blob does not load on 0.10.x (`SnapshotVersionError`)
+    — deploy readers before writers; see the snapshots guide.
+  - `MachineNode.version: Optional[str]` reads the root `"version"` key
+    that `validation.py` accepted and silently ignored. Not part of
+    `structure_hash`, so re-labelling a chart keeps old snapshots loadable.
+    `xsm inspect` shows it (`--json` adds `"version"`).
+  - `interpreter.wall_now()` on both engines — epoch seconds via
+    `clock.wall_now()` when the clock has one (`RealClock` →
+    `time.time()`; `SimulatedClock(wall_start=…)` → `wall_start` + virtual
+    elapsed, so a test can say "restarted an hour later"), else
+    `time.time()`. Anything persisted anchors to this, never to
+    `clock.now()`.
+  - `persistence.Deadline` frozen dataclass (`state_id`, `entry_seq`,
+    `due_at_wall`, `delay_ms`, `event_type`; `to_dict` / `from_dict` /
+    `remaining_ms`) and `check_deadline_record()`. `entry_seq` is the
+    state-entry generation, so a deadline armed by an earlier visit is
+    dropped on fire rather than honoured.
+  - `xstate_statemachine.receipts`: `receipt_to_status()` (error → 500,
+    deferred → 202, denied → 409, else 200; `duplicate` is neutral),
+    `receipt_to_json()` / `receipt_from_json()` with `error` as
+    `{"type", "message"}` strings only (never pickled, #303) and a
+    `ReceiptError` on the way back. Also exported from the top level.
 - **Plugin hooks `on_before_send` and `on_event_processed`** (#304;
   both engines, parity-tested). `on_before_send(interpreter, event)`
   fires from `send()`, `send_events()` and `send_threadsafe()` after the
