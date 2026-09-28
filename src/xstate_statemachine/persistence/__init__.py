@@ -92,6 +92,17 @@ _LAZY = {
     "default_key": ".idempotency",
     "fingerprint": ".idempotency",
     "DEFAULT_TTL_S": ".idempotency",
+    # 📜 #262
+    "TransitionRecord": ".log",
+    "TransitionLogStore": ".log",
+    "MemoryLog": ".log",
+    "JSONLinesLog": ".log",
+    "SQLiteLog": ".log",
+    "TransitionLogPlugin": ".log",
+    "AuditPlugin": ".log",
+    "ReplayDivergenceError": ".log",
+    "replay": ".log",
+    "correlation_id_var": ".log",
 }
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -112,6 +123,18 @@ if TYPE_CHECKING:  # pragma: no cover
         SQLiteInbox,
         default_key,
         fingerprint,
+    )
+    from .log import (  # noqa: F401
+        AuditPlugin,
+        JSONLinesLog,
+        MemoryLog,
+        ReplayDivergenceError,
+        SQLiteLog,
+        TransitionLogPlugin,
+        TransitionLogStore,
+        TransitionRecord,
+        correlation_id_var,
+        replay,
     )
     from .locking import (  # noqa: F401
         DEFAULT_BACKOFF,
@@ -181,6 +204,17 @@ __all__ = [
     "default_key",
     "fingerprint",
     "DEFAULT_TTL_S",
+    # 📜 transition log (#262)
+    "TransitionRecord",
+    "TransitionLogStore",
+    "MemoryLog",
+    "JSONLinesLog",
+    "SQLiteLog",
+    "TransitionLogPlugin",
+    "AuditPlugin",
+    "ReplayDivergenceError",
+    "replay",
+    "correlation_id_var",
     # envelope
     "check_identity",
     "check_minimum_version",
