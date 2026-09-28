@@ -716,3 +716,6 @@ docs/superpowers/
 .aud/
 .verify/
 .bench-venv/
+
+# Recreated by the opt-in integration performance job (#307).
+benchmarks/last_run.json

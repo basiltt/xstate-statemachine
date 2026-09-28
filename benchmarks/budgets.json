@@ -1,0 +1,93 @@
+{
+  "budgets": {
+    "fastapi_router": null,
+    "hooks_empty_async": {
+      "baseline_p50_us": 42.551,
+      "budget_p50_us": 53.189
+    },
+    "hooks_empty_sync": {
+      "baseline_p50_us": 24.233,
+      "budget_p50_us": 30.291
+    },
+    "import_clean": {
+      "baseline_p50_us": 187926.2,
+      "budget_p50_us": 234907.75
+    },
+    "import_with_extras": {
+      "baseline_p50_us": 208677.3,
+      "budget_p50_us": 260846.625
+    },
+    "persisted_memory_async": {
+      "baseline_p50_us": 539.038,
+      "budget_p50_us": 673.798
+    },
+    "persisted_memory_sync": {
+      "baseline_p50_us": 111.579,
+      "budget_p50_us": 139.474
+    },
+    "persisted_sqlite_async": {
+      "baseline_p50_us": 670.211,
+      "budget_p50_us": 837.764
+    },
+    "persisted_sqlite_sync": {
+      "baseline_p50_us": 223.874,
+      "budget_p50_us": 279.842
+    },
+    "plugins_async": {
+      "baseline_p50_us": 142.675,
+      "budget_p50_us": 178.344
+    },
+    "plugins_sync": {
+      "baseline_p50_us": 111.99,
+      "budget_p50_us": 139.987
+    },
+    "shortest_paths": null,
+    "snapshot_get_async": {
+      "baseline_p50_us": 10.714,
+      "budget_p50_us": 13.393
+    },
+    "snapshot_get_sync": {
+      "baseline_p50_us": 14.644,
+      "budget_p50_us": 18.305
+    },
+    "snapshot_restore_async": {
+      "baseline_p50_us": 33.545,
+      "budget_p50_us": 41.931
+    },
+    "snapshot_restore_sync": {
+      "baseline_p50_us": 30.729,
+      "budget_p50_us": 38.411
+    },
+    "validator_async": {
+      "baseline_p50_us": 62.144,
+      "budget_p50_us": 77.68
+    },
+    "validator_sync": {
+      "baseline_p50_us": 41.622,
+      "budget_p50_us": 52.028
+    }
+  },
+  "multiplier": 1.25,
+  "notes": {
+    "fastapi_router": "FastAPI router is not shipped yet",
+    "hooks_empty_async": "no-plugin send path; no historical 0.10.x runtime in this run",
+    "hooks_empty_sync": "no-plugin send path; no historical 0.10.x runtime in this run",
+    "plugins_async": "IdempotencyPlugin + AuditPlugin; PrometheusPlugin is not shipped",
+    "plugins_sync": "IdempotencyPlugin + AuditPlugin; PrometheusPlugin is not shipped",
+    "shortest_paths": "shortest_paths is not shipped yet",
+    "snapshot_get_async": "v4; historical v3 runtime not present",
+    "snapshot_get_sync": "v4; historical v3 runtime not present",
+    "snapshot_restore_async": "v4; historical v3 runtime not present",
+    "snapshot_restore_sync": "v4; historical v3 runtime not present"
+  },
+  "runner": {
+    "cpu": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "cpu_count": 28,
+    "label": "local",
+    "library_version": "0.10.5",
+    "machine": "AMD64",
+    "os": "Windows",
+    "platform": "Windows-11-10.0.26100-SP0",
+    "python_version": "3.14.3"
+  }
+}
