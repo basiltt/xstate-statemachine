@@ -312,7 +312,13 @@ jobs:
       - name: 📦 Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e .
+          # 🔌 #306/#266: install every SHIPPED extra so `contrib/` is
+          #    MEASURED, not counted as untested zeros. Without this the
+          #    total dropped below 90% the moment the first integration
+          #    landed, although its own cell was 98% covered. Keep this
+          #    list in step with the "shipped" rows of the integrations
+          #    guide; placeholder extras stay out (nothing to measure).
+          python -m pip install -e ".[redis,pydantic]" "fakeredis[lua]>=2.20"
           # 🧷 mypy is a TEST dependency: tests/test_type_safety.py runs it
           #    over representative user programs.
           python -m pip install "pytest>=8.3.0" "mypy>=1.14" "pytest-cov>=6.0.0"

@@ -54,7 +54,7 @@ format = [
 #    The version floors the plan commits to are recorded beside each entry
 #    and become the value when the issue lands. `contrib/_registry.py` is
 #    the matching single source of truth for tests and CI.
-pydantic      = []  # #266  pydantic>=2.5
+pydantic      = ["pydantic>=2.5"]  # #266
 observability = []  # #273  opentelemetry-api>=1.20, prometheus-client>=0.17
 testing       = []  # #268  pytest>=8, hypothesis>=6.100
 redis         = ["redis>=5"]  # #306

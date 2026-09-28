@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`[pydantic]` extra: typed context, typed events, static config
+  validation, JSON Schema** (#266). Built on core seams only -- core never
+  imports pydantic. `context_model(Model)` builds the
+  `create_machine(context_validator=)` callable (a failure is
+  `ContextValidationError`, an action error, so `rollback` keeps the
+  machine valid; defaults and coerced values are written back into the
+  dict); `typed_context(Model, cfg)` validates the initial context;
+  `TypedContextPlugin(Model)` re-coerces on start, fresh or restored
+  (`Decimal` comes back a `Decimal`); `PydanticCodec(Model)` is a store
+  codec that keeps `Decimal` / `datetime` exact at rest; `context_of()`
+  for a typed view. `EventModel` subclasses ARE events (`__xstate_event__`)
+  and `events_union(*models)` is the `event_schemas=` mapping (bad payload
+  → the existing `InvalidEventPayloadError` with the pydantic error as
+  `cause`). `validate_machine_json(raw, strict=)` is a Pydantic model of
+  the XState subset the parser implements, erroring **with JSON paths**
+  before `create_machine`; a lock-step test pins its fields to
+  `validation.KNOWN_*_KEYS` and it passes the whole Stately corpus.
+  `machine_json_schema(machine, events=, context_model=)` emits a JSON
+  Schema (discriminated event union, context, state-id enum, machine
+  id/version/hash). Guide page *Pydantic*.
 - **`[redis]` extra: `RedisStore` / `AsyncRedisStore`, `RedisInbox`,
   `RedisLog`** (#306) -- the first shipped integration under
   `xstate_statemachine.contrib`. Shared state for multi-worker / multi-host

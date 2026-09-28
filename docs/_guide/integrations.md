@@ -33,7 +33,7 @@ except MissingExtraError as exc:
 
 | Extra | Gives you | Status |
 |:--|:--|:--|
-| `pydantic` | Typed context validated on every `assign`, typed events as discriminated unions, machine-JSON validation, JSON Schema export | planned — [#266](https://github.com/basiltt/xstate-statemachine/issues/266) |
+| `pydantic` | Typed context validated on every `assign`, typed events as discriminated unions, machine-JSON validation, JSON Schema export | **shipped** — [guide](../integration-pydantic/) · [#266](https://github.com/basiltt/xstate-statemachine/issues/266) |
 | `observability` | OpenTelemetry spans, Prometheus metrics, structlog/loguru context binding, Sentry breadcrumbs — all from the plugin hooks | planned — [#273](https://github.com/basiltt/xstate-statemachine/issues/273) |
 | `testing` | pytest fixtures, path generation, state/transition **coverage**, Hypothesis model-based testing generated from the chart, a fake broker | planned — [#268](https://github.com/basiltt/xstate-statemachine/issues/268) |
 | `redis` | Shared snapshot store, inbox and log for multi-worker deployments | **shipped** — [guide](../integration-redis/) · [#306](https://github.com/basiltt/xstate-statemachine/issues/306) |
