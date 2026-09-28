@@ -101,9 +101,13 @@ def render_inspect(facts: Facts, *, show_events: bool = True) -> None:
     invokes = sum(len(n.invoke) for n in walk(m))
 
     c.blank()
+    version_note = (
+        f"    {c.style('Version', 'key')} {m.version}" if m.version else ""
+    )
     c.panel(
         [
-            f"{c.style('Machine', 'key')}   {c.style(m.id, 'title')}",
+            f"{c.style('Machine', 'key')}   {c.style(m.id, 'title')}"
+            + version_note,
             f"{c.style('States', 'key')}    {total}  "
             + c.style(
                 "  ".join(f"{k} {v}" for k, v in sorted(kinds.items())),
@@ -197,6 +201,7 @@ def run_inspect(
     if as_json:
         data: Dict[str, Any] = facts.to_json()
         if facts.machine is not None:
+            data["version"] = facts.machine.version
             data["policies"] = dict(_policies(facts.machine))
             data["transitions"] = [
                 {"event": e, "from": s, "to": t, "guard": g, "actions": a}

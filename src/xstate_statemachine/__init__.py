@@ -200,6 +200,11 @@ from .helpers import transition as pure_transition
 # -------------------------------------------------------------------------
 from .testing_utils import logic_names, stub_logic
 
+# -------------------------------------------------------------------------
+# 🧾 Receipt codec (#305) -- one JSON shape / HTTP status for every adapter
+# -------------------------------------------------------------------------
+from .receipts import receipt_from_json, receipt_to_json, receipt_to_status
+
 # -----------------------------------------------------------------------------
 # 📦 Version Information
 # -----------------------------------------------------------------------------
@@ -310,5 +315,9 @@ __all__ = [
     # 🧪 Testing utilities (#304)
     "stub_logic",
     "logic_names",
+    # 🧾 Receipt codec (#305)
+    "receipt_to_status",
+    "receipt_to_json",
+    "receipt_from_json",
     "__version__",
 ]

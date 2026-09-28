@@ -32,6 +32,7 @@ that follow are answered once, for every framework integration.
 
 from __future__ import annotations
 
+from .deadline import Deadline, check_deadline_record
 from .snapshot import (
     SNAPSHOT_VERSION,
     check_identity,
@@ -44,6 +45,8 @@ from .snapshot import (
 
 __all__ = [
     "SNAPSHOT_VERSION",
+    "Deadline",
+    "check_deadline_record",
     "check_identity",
     "check_minimum_version",
     "check_shape",

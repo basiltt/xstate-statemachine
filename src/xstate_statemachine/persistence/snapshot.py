@@ -47,7 +47,20 @@ if TYPE_CHECKING:  # pragma: no cover
 #:        so engine events and provenance round-trip (#86, #87). ``done``
 #:        records add ``data`` + ``src``; ``error`` records add ``error``
 #:        (repr) + ``src``.
-SNAPSHOT_VERSION: int = 3
+#:   3 -- 0.9.x: ``scheduled_sends`` (armed delayed self-sends, #213),
+#:        ``chain_trips`` / ``last_chain_error`` (#226).
+#:   4 -- 0.11.0 (#305): ``machine_version`` (the chart's root ``version``
+#:        label, or ``None``) and ``deadlines`` (a list of ``Deadline``
+#:        records for durable `after` timers, #264; always ``[]`` until an
+#:        engine writes them). Additive: a v3 blob upcasts with
+#:        ``machine_version=None, deadlines=[]``.
+#:
+#: 🏛️ Rolling deploys: `upcast` only goes FORWARD. During a rollout the
+#:    OLD build may read a snapshot the NEW build wrote; `check_version`
+#:    refuses it (``SnapshotVersionError``) rather than silently dropping
+#:    keys it does not understand. Drain or pin the store before bumping
+#:    this constant across a fleet -- see docs/_guide/snapshots.md.
+SNAPSHOT_VERSION: int = 4
 
 
 # -----------------------------------------------------------------------------
@@ -345,6 +358,32 @@ def check_shape(snapshot: Dict[str, Any], *, version: int = 0) -> None:
         isinstance(k, str) and isinstance(v, str) for k, v in system.items()
     ):
         fail("'system' must map system ids to actor-id strings")
+    # 🛡️ #305 (layout v4): `machine_version` / `deadlines`.
+    _check_v4_fields(snapshot, fail)
+
+
+def _check_v4_fields(snapshot: Dict[str, Any], fail: Any) -> None:
+    """Layout-v4 keys: `machine_version` is the chart's label or null;
+    `deadlines` is a list of `Deadline` records (see `deadline.py`).
+    Validated here, like the #241 fields, so a malformed blob is a
+    `SnapshotCorruptError` and not a bare TypeError from the reader."""
+    mv = snapshot.get("machine_version")
+    if mv is not None and not isinstance(mv, str):
+        fail(
+            f"'machine_version' is {type(mv).__name__}, expected a string "
+            f"label or null"
+        )
+    deadlines = snapshot.get("deadlines")
+    if deadlines is None:
+        return
+    from .deadline import check_deadline_record
+
+    if not isinstance(deadlines, list):
+        fail(f"'deadlines' is {type(deadlines).__name__}, expected a list")
+    for rec in deadlines:
+        problem = check_deadline_record(rec)
+        if problem:
+            fail(f"'deadlines' record is malformed: {problem}")
 
 
 def check_identity(
@@ -472,4 +511,9 @@ def upcast(snapshot: Dict[str, Any], version: int) -> Dict[str, Any]:
                     "after",
                 ):
                     rec.setdefault("engine", True)
+    if version < 4:
+        # 3 -> 4 (#305): purely additive. A v3 writer had no chart version
+        # to record and no durable timers; the defaults say exactly that.
+        snapshot.setdefault("machine_version", None)
+        snapshot.setdefault("deadlines", [])
     return snapshot

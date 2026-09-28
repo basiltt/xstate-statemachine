@@ -233,9 +233,9 @@ except ImplementationMissingError as exc:
 
 ```mermaid
 flowchart LR
-    subgraph env["snapshot envelope (v3)"]
+    subgraph env["snapshot envelope (v4)"]
         direction TB
-        H["version · machine_id · machine_hash · taken_at"]
+        H["version · machine_id · machine_hash · machine_version · taken_at"]
         B["status · state_ids · context"]
         Q["inbox · deferred · pending invocations"]
     end
@@ -253,9 +253,21 @@ As of 0.8.0, `get_snapshot()` writes a versioned **envelope** around the fields 
 - **`scheduled_sends`** *(layout v3, #213)* — every **armed, unfired** delayed send to the machine itself (`raise` / `send` with `delay`), with the delay **remaining** at snapshot time (`remaining_ms`) and its `id` if it has one. `from_snapshot` re-arms them on `start()` with that remaining delay, so a state whose only exit is a delayed self-raise resumes where the live machine would have been instead of parking for ever. A *fired* timer is in `pending_events` as before. The records survive a restore → re-persist hop **without** `start()` (#221): `from_snapshot` parks them, `get_persisted_snapshot` re-emits them verbatim until `start()` re-arms them, so a compaction or migration job that rewrites blobs without starting a machine loses no deadline. Records are checked against `strict` / event schemas when `start()` re-arms them (#227).
 - **`chain_trips`** / **`last_chain_error`** *(#226)* — the sticky chain-trip signal (#222). Restored verbatim; the error comes back as a `RestoredChainError` (a `RunawayChainError` *and* a `RestoredError`, #243). Absent in blobs written before 0.9.0, which restore to `0` / `None`. A malformed value (a non-integer count, a non-string message) is `SnapshotCorruptError` like any other field (#241). **Trust boundary (#205, #242):** like every restored field these are accepted verbatim with no integrity check beyond the definition-level `machine_hash` — a party who can write the blob can set `chain_trips` to any value and `last_chain_error` to any message. If these fields feed a supervisor-alerting path, a replayed blob can manufacture or suppress that alert; authenticate blobs outside the library if that matters.
 - **`pending_events`** — see [The Inbox: pending events](#the-inbox-pending-events) below. Since layout **v3** (#214) each record also carries its provenance (`"engine": true` for a completion the engine minted) and, on the async engine, its `lane` (`"priority"` for a fired timer / completion waiting ahead of the inbox), so both round-trip; a v2 record of kind `done` / `error` / `after` is upcast as engine-minted, because only the engine could have written one. Restored user events pass the same `strict` check a `send()` does — a refused one is reported (`on_invalid_event`, `last_error`) and dropped, never silently accepted. Since layout **v2** (0.9.0) every pending or deferred record carries a `kind` — `event`, `system`, `done`, `error` or `after` — so engine events (`DoneEvent`, `ErrorEvent`, a due `after`) and provenance round-trip instead of being silently dropped (#86, #87). An `ErrorEvent`'s exception is persisted as its `repr` and restored as a `RestoredError`. v1 snapshots restore unchanged; their engine-shaped plain events are re-derived by name at the restore boundary only.
+- **`machine_version`** *(layout v4, #305)* — the chart's own `"version"` label from the root of the config (`MachineNode.version`), or `null` when the chart declares none. `machine_hash` answers *"did the structure change?"*; this answers *"which revision wrote it?"* — the label a human reads in a stuck-workflow ticket and the key the snapshot migrator (#263) dispatches on. Re-labelling a chart does **not** change `machine_hash`, so old blobs still load.
+- **`deadlines`** *(layout v4, #305)* — durable `after` timers anchored to the **wall clock** (`persistence.Deadline`: `state_id`, `entry_seq`, `due_at_wall`, `delay_ms`, `event_type`), for timers that must survive a restart hours later, possibly on another host (#264). Distinct from `scheduled_sends`, which stores the delay *remaining* and is right for a restart seconds later. `entry_seq` is the state-entry generation, so a deadline armed by an earlier visit to the same state is recognised as stale and dropped instead of fired. Always `[]` until durable timers land; the key exists now so the layout is settled.
 - **`value`** — the hierarchical [`interpreter.value`](interpreters/#hierarchical-state-value) at the time of capture, included for convenience. Restore ignores it; it is derived fresh from `state_ids` every time.
 
 **Unversioned 0.7.x snapshots restore unchanged.** A payload with no `version` key is treated as version 0 and accepted unconditionally — there is no breaking change for snapshots taken before 0.8.0.
+
+### Rolling deploys: a v4 blob does not load on 0.10.x
+
+`upcast()` only goes **forward**. During a rolling deploy the *old* build (0.10.x, layout v3) may pick up a snapshot the *new* build (0.11.0, layout v4) wrote — and it refuses it with `SnapshotVersionError` rather than silently dropping `machine_version` / `deadlines`. Refusing loudly is deliberate (the library's rule: *silent acceptance is a bug*), but it means a mixed fleet can wedge on the shared store. Before rolling out a release that bumps `SNAPSHOT_VERSION`:
+
+1. **Deploy readers first.** Every process that calls `from_snapshot` must be on the new build before any writer is — new readers load both v3 and v4.
+2. **Or drain / pin.** Stop writers, let the old readers finish, then upgrade — or pin the store to one build for the window.
+3. **Route on `version`.** A `SnapshotVersionError` names both versions; a supervisor can park the blob for a newer worker instead of retrying on the old one.
+
+`SNAPSHOT_VERSION` is bumped only when the layout changes (0.8.0 → 1, 0.9.0 → 2 and 3, 0.11.0 → 4), never on an ordinary release, so this is a rare event — but it is one to plan for.
 
 ### Restore-time checks
 

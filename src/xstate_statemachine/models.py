@@ -1626,6 +1626,19 @@ class MachineNode(StateNode[TContext]):
         #: `strict_targets=` kwarg, which governs UNRESOLVABLE targets.
         self.strict_targets: bool = bool(config.get("strictTargets", False))
 
+        #: 🏷️ #305: the machine's declared version, from the root ``"version"``
+        #: key XState already allows. `validation.py` accepted the key but
+        #: nothing read it -- silent acceptance -- so a persisted snapshot
+        #: could not say which *revision* of a chart produced it. Snapshots
+        #: now carry it as ``machine_version`` beside the structural hash;
+        #: the hash detects drift, the label tells a human (and the
+        #: migrator, #263) *which* revision. Coerced to `str`; ``None`` when
+        #: the chart declares none.
+        raw_version = config.get("version")
+        self.version: Optional[str] = (
+            None if raw_version is None else str(raw_version)
+        )
+
         #: Custom `id` → node registry, populated by `StateNode.__init__` as
         #: the tree is built. Must exist BEFORE `super().__init__` recurses
         #: into the children that register themselves here.

@@ -1252,6 +1252,27 @@ class BaseInterpreter(Generic[TContext]):
             return False
         return True
 
+    def _persist_deadlines(self) -> List["persistence.Deadline"]:
+        """#305: durable `after` deadlines to persist. Reserved for #264.
+
+        Returns ``[]`` until an engine arms wall-clock deadlines; the
+        snapshot key exists NOW so layout v4 is final before that lands.
+        """
+        return []
+
+    def wall_now(self) -> float:
+        """Seconds since the Unix epoch, via the clock when it provides one.
+
+        🏛️ #305: `clock.now()` is monotonic with a clock-specific origin
+        (0.0 for `SimulatedClock`) -- fine for "fire in 30 s", useless for
+        a record another process reads after a restart. Everything that
+        must survive the process (durable timers #264, audit rows #262,
+        receipts' `taken_at`) anchors to THIS. A custom clock that lacks
+        `wall_now()` falls back to `time.time()`.
+        """
+        fn = getattr(self.clock, "wall_now", None)
+        return float(fn()) if callable(fn) else time.time()
+
     def _persist_scheduled_sends(self) -> List[Dict[str, Any]]:
         """#213: records for every armed, unfired delayed send to self.
 
@@ -1584,6 +1605,11 @@ class BaseInterpreter(Generic[TContext]):
             "version": persistence.SNAPSHOT_VERSION,
             "machine_id": self.machine.id,
             "machine_hash": self.machine.structure_hash,
+            # 🏷️ #305 (layout v4): the chart's declared `version` label. The
+            #    hash above answers "did the structure change?"; this answers
+            #    "which revision wrote it?" -- what a human and the #263
+            #    migrator need. `None` when the chart declares none.
+            "machine_version": self.machine.version,
             "taken_at": time.time(),
             "status": self.status,
             # 🧊 Deep-copy so the snapshot is a true point-in-time capture.
@@ -1632,6 +1658,11 @@ class BaseInterpreter(Generic[TContext]):
             #    REMAINING at snapshot time, so a restore re-arms them and a
             #    state whose only exit is a delayed self-raise is not wedged.
             "scheduled_sends": self._persist_scheduled_sends(),
+            # ⏰ #305 (layout v4): durable `after` deadlines anchored to the
+            #    wall clock (`persistence.Deadline`). Reserved for #264;
+            #    every engine writes `[]` today so the layout is fixed
+            #    before the feature lands and needs no second bump.
+            "deadlines": [d.to_dict() for d in self._persist_deadlines()],
             # 🕰️ Remembered history, so a restored machine can still honour a
             #    later transition to a history state.
             "history": {

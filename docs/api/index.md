@@ -954,6 +954,7 @@ class Clock(Protocol):
 | `.set_timeout(fn, delay_sec, *, owner=None, sync=None)` | `(Callable[[], Any], float, Any, bool \| None) -> Any` | Schedule `fn` after `delay_sec`; returns a cancellation handle. Engines pass `sync=True` (`SyncInterpreter`) or `sync=False` (`Interpreter`) so the clock picks the lane the caller can drain (0.9.0, #76); `RealClock` falls back to the ambient-loop heuristic when `sync` is `None`. A clock written against the 0.8.0 protocol (no `sync` parameter) is still accepted — the engine retries without it. |
 | `.clear_timeout(handle)` | `(Any) -> None` | Cancel a scheduled callback. Idempotent. |
 | `.pump()` | `() -> int` | Run every callback whose deadline has passed; returns how many fired. |
+| `.wall_now()` *(optional, 0.11.0)* | `() -> float` | Seconds since the Unix epoch. Not part of the protocol a custom clock **must** provide; `interpreter.wall_now()` uses it when present and falls back to `time.time()`. Durable timers (#264) and audit rows (#262) anchor to this, never to `.now()`, whose origin is process-specific (#305). |
 
 ### `RealClock()`
 
@@ -967,8 +968,9 @@ started -- due callbacks run when `SyncInterpreter.send()` / `.tick()` calls
 | Property | Type | Description |
 |----------|------|-------------|
 | `.pending` | `int` | Deadlines waiting in the heap (sync-engine timers only). |
+| `.wall_now()` | `float` | `time.time()` (#305). |
 
-### `SimulatedClock()`
+### `SimulatedClock(*, wall_start=None)`
 
 Virtual time for deterministic tests, mirroring XState's `SimulatedClock`.
 Time does not pass on its own -- `.increment()` advances virtual time and
@@ -979,6 +981,7 @@ fires every timer that became due, in due order.
 | `.increment(ms)` | `(float) -> Union[None, Awaitable[None]]` | `None` or an awaitable | Advances virtual time by `ms` milliseconds and fires what became due, one timer at a time (so an `after` chain scheduled inside the same window fires in order). Returns an **awaitable** when called inside a running event loop (`await clock.increment(ms)`) and `None` otherwise; a forgotten `await` inside a loop raises a `RuntimeWarning` at garbage-collection time instead of silently racing. |
 | `.set(ms)` | `(float) -> Union[None, Awaitable[None]]` | Same as `.increment()` | Jumps to absolute virtual time `ms`; raises `ValueError` if that would move backwards. |
 | `.pending` | `int` | -- | Property: number of live (uncancelled) timers. |
+| `.wall_now()` | `() -> float` | `float` | `wall_start + elapsed virtual seconds` (#305). `wall_start` defaults to the real epoch instant the clock was built; pass an explicit one to express *"the process restarted an hour later"*: `SimulatedClock(wall_start=1_000_000.0)` then `.increment(3_600_000)` → `.wall_now() == 1_003_600.0` while `.now()` is still `3600.0`. |
 
 ```python
 from xstate_statemachine import Interpreter, SyncInterpreter, SimulatedClock
@@ -1711,6 +1714,15 @@ assert targets == {"myMachine.running"}
 
 ---
 
+### `MachineNode.version` **[0.11.0]**
+
+`Optional[str]` — the chart's own `"version"` label from the root of the config, coerced to `str`; `None` when the chart declares none. Before 0.11.0 the key was accepted and silently ignored (#305). It is **not** part of `structure_hash` — re-labelling a chart does not invalidate stored snapshots — and is written to every snapshot as `machine_version`. `xsm inspect` shows it in the header.
+
+```python
+machine = create_machine({"id": "m", "version": 7, "initial": "a", "states": {"a": {}}})
+assert machine.version == "7"
+```
+
 ### `MachineNode.structure_hash`
 
 ```python
@@ -1801,9 +1813,11 @@ from xstate_statemachine.persistence import SNAPSHOT_VERSION, structure_hash
 | `check_version(snapshot)` | `(Dict) -> int` — returns the blob's declared layout version; `SnapshotVersionError` if newer than `SNAPSHOT_VERSION`, `SnapshotCorruptError` if not an integer. |
 | `check_minimum_version(version, minimum)` | `(int, int) -> None` — `SnapshotVersionError` if the blob is older than the caller's floor (#205); the `minimum_version=` half of `from_snapshot`. |
 | `check_identity(snapshot, machine, *, verify_hash, version=None, expected_hash=None)` | Refuses a blob from a different machine id, or (when `verify_hash`) a different `machine_hash`; `expected_hash=` pins the fingerprint the caller holds instead of trusting the blob's own (#185, #205). |
-| `check_shape(snapshot, *, version=0)` | `(Dict, int) -> None` — the structural validator: required keys, `status` in the five known values, `context` an object, `state_ids` / `configuration` lists of strings that agree, event-record lists well-formed, `chain_trips` a non-negative integer and `last_chain_error` a string or null (#241). Raises `SnapshotCorruptError`. |
-| `upcast(snapshot, version)` | `(Dict, int) -> Dict` — brings a v0 / v1 / v2 payload up to the current layout in place (pure layout migrations: v2 engine records gain `engine: true`, absent v3 keys take their defaults). |
-| `SNAPSHOT_VERSION` | `int` constant — the current snapshot payload layout version (**3**). Bumped only when the layout changes, never on an ordinary package release. |
+| `check_shape(snapshot, *, version=0)` | `(Dict, int) -> None` — the structural validator: required keys, `status` in the five known values, `context` an object, `state_ids` / `configuration` lists of strings that agree, event-record lists well-formed, `chain_trips` a non-negative integer and `last_chain_error` a string or null (#241), `machine_version` a string or null and `deadlines` a list of well-formed `Deadline` records (#305). Raises `SnapshotCorruptError`. |
+| `upcast(snapshot, version)` | `(Dict, int) -> Dict` — brings a v0 / v1 / v2 payload up to the current layout in place (pure layout migrations: v2 engine records gain `engine: true`, absent v3 keys take their defaults, a v3 blob gains `machine_version: null` and `deadlines: []`). |
+| `SNAPSHOT_VERSION` | `int` constant — the current snapshot payload layout version (**4** since 0.11.0, #305). Bumped only when the layout changes, never on an ordinary package release. A v4 blob is refused by 0.10.x with `SnapshotVersionError` — see the rolling-deploy note in the [snapshots guide](../guide/snapshots/#rolling-deploys-a-v4-blob-does-not-load-on-010x). |
+| `Deadline` | Frozen dataclass — a durable `after` timer anchored to the wall clock (#305, for #264): `state_id`, `entry_seq` (state-entry generation, so a stale deadline from an earlier visit is ignored), `due_at_wall` (epoch seconds), `delay_ms`, `event_type`. `to_dict()` / `from_dict()` round-trip JSON; `remaining_ms(now_wall)` clamps at 0. |
+| `check_deadline_record(rec)` | `(Any) -> Optional[str]` — shape validator for one `Deadline` record; returns what is wrong or `None`. `check_shape` calls it for every entry of `deadlines`. |
 | `structure_hash(machine)` | `(MachineNode) -> str` — computes the 16-hex-char structural fingerprint backing `MachineNode.structure_hash`. |
 
 ---
@@ -2338,6 +2352,38 @@ assert interp.send("GO", wait=True).denied
 guards["ok"] = True                      # live: no rebuild needed
 assert interp.send("GO", wait=True).changed and ran == ["log"]
 ```
+
+---
+
+## Receipt Codec **[0.11.0]**
+
+`xstate_statemachine.receipts` — one JSON shape and one HTTP-status mapping for a `Receipt`, in core (#305), so every web adapter (Django, Flask, Starlette, …) returns the same response and the idempotency inbox (#261) can cache a receipt in a defined form. The three functions are also exported from the top-level package.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `receipt_to_status(receipt)` | `(Receipt) -> int` | `error is not None` → **500**; else `deferred` → **202**; else `denied` → **409**; else **200** (taken *or* a clean no-op). `duplicate` never changes the status — the cached receipt already describes the original outcome, so a retry gets the same answer. |
+| `receipt_to_json(receipt)` | `(Receipt) -> Dict` | `{"state_ids": [sorted…], "changed", "error", "deferred", "denied", "duplicate"}`. `error` is `null` or `{"type": <class name>, "message": str(exc)}` — never a pickle, never a `repr` (X0 baseline #303). `state_ids` is sorted so identical outcomes serialise identically (ETag / cache key friendly). |
+| `receipt_from_json(data)` | `(Mapping) -> Receipt` | Inverse. A stored `error` comes back as a `ReceiptError(type, message)` (an `Exception`), so `receipt.error is not None` keeps meaning "did not run cleanly". Raises `ValueError` on a malformed record instead of leaking a bare `KeyError`. |
+| `ReceiptError` | `Exception` | `.type` (original class name) and `.message`. Re-encodes to the same JSON. |
+| `STATUS_OK` / `STATUS_ACCEPTED` / `STATUS_CONFLICT` / `STATUS_ERROR` | `int` | `200` / `202` / `409` / `500` — named so adapters and tests cite the rule, not the number. |
+
+```python
+import json
+from xstate_statemachine import SyncInterpreter, create_machine
+from xstate_statemachine import receipt_to_json, receipt_from_json, receipt_to_status
+
+cfg = {"id": "m", "initial": "a", "states": {"a": {"on": {"GO": "b"}}, "b": {}}}
+interp = SyncInterpreter(create_machine(cfg)).start()
+receipt = interp.send("GO", wait=True)
+
+assert receipt_to_status(receipt) == 200
+wire = json.dumps(receipt_to_json(receipt))
+assert receipt_from_json(json.loads(wire)) == receipt
+```
+
+### `interpreter.wall_now() -> float` **[0.11.0]**
+
+Both engines. Seconds since the Unix epoch, delegated to `clock.wall_now()` when the clock provides one (`RealClock` → `time.time()`, `SimulatedClock` → `wall_start + virtual elapsed`) and falling back to `time.time()` for a custom clock that lacks it. Use it for anything that must survive the process — durable deadlines, audit timestamps — instead of `clock.now()`, whose origin is process-specific (#305).
 
 ---
 

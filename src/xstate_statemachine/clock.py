@@ -204,6 +204,12 @@ class RealClock:
     def now(self) -> float:
         return time.monotonic()
 
+    def wall_now(self) -> float:
+        """Seconds since the Unix epoch (#305). Durable timers (#264) and
+        audit records are anchored to THIS, never to `now()`, whose origin
+        is process-specific and meaningless after a restart."""
+        return time.time()
+
     def set_timeout(
         self,
         fn: Callable[[], Any],
@@ -276,9 +282,16 @@ class SimulatedClock:
     :class:`_MustAwait`).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, wall_start: Optional[float] = None) -> None:
         self._now = 0.0
         self._heap = _DeadlineHeap()
+        #: 🕰️ #305: virtual WALL time = `wall_start` + elapsed virtual
+        #: seconds, so a durable-timer test can assert an absolute
+        #: `due_at_wall`. Defaults to the real epoch instant the clock was
+        #: built, which is what a test that never reads it expects.
+        self._wall_start: float = (
+            time.time() if wall_start is None else float(wall_start)
+        )
         #: Interpreters to settle after each increment: async engines
         #: register coroutines, sync engines register plain callables.
         self._settlers: List[Callable[[], Any]] = []
@@ -286,6 +299,10 @@ class SimulatedClock:
     # -- Clock protocol ----------------------------------------------------
     def now(self) -> float:
         return self._now
+
+    def wall_now(self) -> float:
+        """Virtual epoch seconds: ``wall_start`` plus elapsed virtual time."""
+        return self._wall_start + self._now
 
     def set_timeout(
         self,
