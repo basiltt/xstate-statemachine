@@ -464,21 +464,24 @@ def pytest_configure(config: Any) -> None:
 # -----------------------------------------------------------------------------
 def _spec_or_skip(request: Any) -> MachineSpec:
     spec = parse_marker(request.node)
-    if spec is None:
-        # 📝 Name the fixture the TEST asked for (`xsm_interp`), not the
-        #    internal one that noticed (`_xsm_built`).
-        wanted = [
-            name
-            for name in getattr(request.node, "fixturenames", ())
-            if name.startswith("xsm_")
-        ]
-        asked = wanted[0] if wanted else request.fixturename
-        pytest.fail(
-            f"{request.node.nodeid}: the {asked} fixture needs an "
-            f"@pytest.mark.{MARKER}(...) marker on the test",
-            pytrace=False,
-        )
-    return spec
+    if spec is not None:
+        return spec
+    # 📝 Name the fixture the TEST asked for (`xsm_interp`), not the
+    #    internal one that noticed (`_xsm_built`).
+    wanted = [
+        name
+        for name in getattr(request.node, "fixturenames", ())
+        if name.startswith("xsm_")
+    ]
+    asked = wanted[0] if wanted else request.fixturename
+    # 🧷 `pytest.fail` never returns; the explicit raise keeps the return
+    #    type provable under every mypy / pytest-stub combination.
+    pytest.fail(
+        f"{request.node.nodeid}: the {asked} fixture needs an "
+        f"@pytest.mark.{MARKER}(...) marker on the test",
+        pytrace=False,
+    )
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 @pytest.fixture
