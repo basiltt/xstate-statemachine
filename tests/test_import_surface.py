@@ -13,6 +13,12 @@ from typing import Set
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 MARKER = "XSM_IMPORT_START"
+#: 📝 ``-X importtime`` logs an import ATTEMPT even when it fails. CPython's
+#: own ``copy.py`` (<= 3.11) probes ``from org.python.core import
+#: PyStringMap`` for Jython inside ``try/except ImportError``; that is stdlib
+#: behaviour, not a dependency -- the same exemption test_zero_dependency.py
+#: makes.
+STDLIB_PROBES = {"org"}
 PLATFORM_STDLIB = {
     "msvcrt",
     "winreg",
@@ -109,6 +115,7 @@ class TestImportSurface(unittest.TestCase):
             name
             for name in imported
             if not name.startswith("xstate_statemachine")
+            and name.split(".", 1)[0] not in STDLIB_PROBES
             and not _is_stdlib(name.split(".", 1)[0])
         )
         self.assertEqual(leaked, [], f"contrib imported eagerly: {leaked}")
