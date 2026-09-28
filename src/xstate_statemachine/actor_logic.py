@@ -1,0 +1,400 @@
+# src/xstate_statemachine/actor_logic.py
+# -----------------------------------------------------------------------------
+# 🎭 Actor logic helpers -- XState v5 `fromPromise` / `fromCallback` /
+#    `fromObservable` parity for Python (#267)
+# -----------------------------------------------------------------------------
+# 🏛️ A Python service today is "just a callable": fine for a one-shot
+#    coroutine, awkward for CALLBACK-STYLE SDKs (a websocket client,
+#    paho-mqtt, a GUI toolkit) that push many events into the machine over
+#    time, and for STREAMS (an async iterator of LLM chunks, a Kafka
+#    consumer). These helpers are the bridge every integration in phases
+#    C-F uses to feed external events in, so they live in the zero-dep
+#    core.
+#
+#    Mechanism: a helper returns an ordinary service callable. When the
+#    engine runs it, the callable returns a `RunningLogic` handle instead
+#    of a result. The engine recognises the handle and:
+#      * does NOT publish `done.invoke` (the logic completes -- or not --
+#        on its own terms and says so through the handle);
+#      * calls `handle.cleanup()` exactly once when the invoking state
+#        exits, the interpreter stops, or the logic errors;
+#      * routes `sendTo(<invocation id>, ...)` to `handle.receive(event)`.
+#
+# 🧵 Threading rules, pinned: `send_back` is safe from ANY thread or loop.
+#    On the async engine it goes through `Interpreter.send_threadsafe`
+#    (`call_soon_threadsafe`); on the sync engine through
+#    `SyncInterpreter.send_threadsafe` (#305), whose mailbox the owning
+#    thread drains on its next `send()` / `tick()` -- the same rule as
+#    sync timers. Never the plain queue (review amendment).
+# -----------------------------------------------------------------------------
+"""`from_coroutine`, `from_callable`, `from_callback`, `from_async_iterator`,
+`from_iterator`, `from_interpreter`."""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+import threading
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+    List,
+    Optional,
+    TypeVar,
+)
+
+from .events import Event
+from .logger import logger
+
+__all__ = [
+    "RunningLogic",
+    "drain_pending_cleanups",
+    "SendBack",
+    "from_async_iterator",
+    "from_callable",
+    "from_callback",
+    "from_coroutine",
+    "from_interpreter",
+    "from_iterator",
+]
+
+T = TypeVar("T")
+SendBack = Callable[..., None]
+Receive = Callable[[Callable[[Any], None]], None]
+Cleanup = Callable[[], Any]
+
+
+# -----------------------------------------------------------------------------
+# 🧩 The handle the engine recognises
+# -----------------------------------------------------------------------------
+class RunningLogic:
+    """What a long-lived actor-logic service returns to the engine.
+
+    Attributes:
+        cleanup: Called exactly once when the invoking state exits, the
+            interpreter stops, or the logic fails. Idempotent by
+            construction (`_done` latch).
+        completes: ``False`` for callback logic (never `onDone` on its
+            own); ``True`` for streams, whose completion the logic itself
+            publishes via `complete()` / `fail()`.
+    """
+
+    __slots__ = (
+        "_cleanup",
+        "_receivers",
+        "_done",
+        "_lock",
+        "completes",
+        "_interp",
+        "_invocation",
+    )
+
+    def __init__(
+        self,
+        interp: Any,
+        invocation: Any,
+        cleanup: Optional[Cleanup],
+        *,
+        completes: bool,
+    ) -> None:
+        self._interp = interp
+        self._invocation = invocation
+        self._cleanup = cleanup
+        self._receivers: List[Callable[[Any], None]] = []
+        self._done = False
+        self._lock = threading.Lock()
+        self.completes = completes
+
+    # -- parent -> logic ----------------------------------------------------------
+    def subscribe(self, handler: Callable[[Any], None]) -> None:
+        with self._lock:
+            self._receivers.append(handler)
+
+    def receive(self, event: Any) -> bool:
+        """Deliver an event the parent `sendTo`'d this invocation. Returns
+        whether any handler was registered."""
+        with self._lock:
+            handlers = list(self._receivers)
+        for h in handlers:
+            try:
+                h(event)
+            except Exception:  # noqa: BLE001 -- user handler
+                logger.exception(
+                    "🎭 receive() handler for '%s' raised; ignoring.",
+                    getattr(self._invocation, "id", "?"),
+                )
+        return bool(handlers)
+
+    # -- lifecycle ------------------------------------------------------------------
+    @property
+    def finished(self) -> bool:
+        return self._done
+
+    def cleanup(self) -> None:
+        """Run the cleanup once; later calls are no-ops."""
+        with self._lock:
+            if self._done:
+                return
+            self._done = True
+            fn, self._cleanup = self._cleanup, None
+        if fn is None:
+            return
+        try:
+            result = fn()
+            if inspect.isawaitable(result):
+                _schedule_awaitable(result)
+        except Exception:  # noqa: BLE001 -- user cleanup
+            logger.exception(
+                "🎭 cleanup for '%s' raised; ignoring.",
+                getattr(self._invocation, "id", "?"),
+            )
+
+
+#: Tasks for `async def` cleanups still running; `Interpreter._teardown`
+#: awaits them so `stop()` returns only after every cleanup finished.
+_PENDING_CLEANUPS: "set[asyncio.Task[Any]]" = set()
+
+
+def _schedule_awaitable(aw: Awaitable[Any]) -> None:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop on this thread: run it to completion in a private one.
+        asyncio.run(_await(aw))
+        return
+    task = loop.create_task(_await(aw))
+    _PENDING_CLEANUPS.add(task)
+    task.add_done_callback(_PENDING_CLEANUPS.discard)
+
+
+async def drain_pending_cleanups() -> None:
+    """Await every scheduled `async def` cleanup (engine teardown hook)."""
+    pending = [t for t in _PENDING_CLEANUPS if not t.done()]
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+async def _await(aw: Awaitable[Any]) -> None:
+    await aw
+
+
+def _send_back_for(interp: Any) -> SendBack:
+    """A thread-safe `send_back(event_or_type, **payload)` for *interp*."""
+
+    def send_back(event_or_type: Any, **payload: Any) -> None:
+        if interp.status != "running":
+            return
+        interp.send_threadsafe(event_or_type, **payload)
+
+    return send_back
+
+
+# -----------------------------------------------------------------------------
+# 🎬 one-shot helpers (parity names)
+# -----------------------------------------------------------------------------
+def from_coroutine(
+    fn: Callable[..., Awaitable[T]],
+) -> Callable[..., Awaitable[T]]:
+    """An ``async def (interp, ctx, event)`` service -- today's async
+    service, under XState's ``fromPromise`` name. Async engine only."""
+    if not inspect.iscoroutinefunction(fn):
+        raise TypeError("from_coroutine() needs an `async def`")
+    return fn
+
+
+def from_callable(fn: Callable[..., T]) -> Callable[..., T]:
+    """A plain ``def (interp, ctx, event)`` service; its return value is
+    ``event.data`` on `onDone`. Works on both engines (inline)."""
+    if inspect.iscoroutinefunction(fn):
+        raise TypeError(
+            "from_callable() needs a plain `def`; use from_coroutine"
+        )
+    return fn
+
+
+# -----------------------------------------------------------------------------
+# 📞 from_callback
+# -----------------------------------------------------------------------------
+def from_callback(
+    setup: Callable[..., Optional[Cleanup]],
+) -> Callable[..., RunningLogic]:
+    """Callback-style actor logic (XState ``fromCallback``).
+
+    ``setup(send_back, receive, ctx, event)`` runs once when the invoking
+    state is entered. ``send_back(type, **payload)`` (or an `Event`)
+    delivers events to the parent machine -- thread-safe, from any thread
+    or loop. ``receive(handler)`` subscribes to events the parent
+    ``sendTo``s this invocation's id. Return a cleanup callable (or
+    ``None``); it is called exactly once when the state exits, the
+    interpreter stops, or *setup* raised. The logic never completes on its
+    own, so there is no ``onDone``; an exception inside *setup* is
+    ``onError``.
+
+    ::
+
+        def mqtt(send_back, receive, ctx, event):
+            client.on_message = lambda msg: send_back("MESSAGE", topic=msg.topic)
+            receive(lambda ev: client.publish(ev.payload["topic"], ev.payload["body"]))
+            client.connect()
+            return client.disconnect
+    """
+
+    def _service(interp: Any, ctx: Any, event: Any) -> RunningLogic:
+        handle = RunningLogic(
+            interp, _invocation_of(interp, event), None, completes=False
+        )
+        cleanup = setup(_send_back_for(interp), handle.subscribe, ctx, event)
+        if cleanup is not None and not callable(cleanup):
+            raise TypeError(
+                "from_callback setup must return a cleanup callable or None"
+            )
+        handle._cleanup = cleanup
+        return handle
+
+    _service.__name__ = f"callback_{getattr(setup, '__name__', 'logic')}"
+    _service.__xsm_actor_logic__ = "callback"  # type: ignore[attr-defined]
+    return _service
+
+
+# -----------------------------------------------------------------------------
+# 🌊 from_async_iterator / from_iterator
+# -----------------------------------------------------------------------------
+def from_async_iterator(
+    factory: Callable[..., AsyncIterator[Any]], *, event_type: str = "STREAM"
+) -> Callable[..., Awaitable[Any]]:
+    """Stream actor logic (XState ``fromObservable``), async engine.
+
+    ``factory(interp, ctx, event)`` returns an async iterator (an
+    ``async def`` generator). Each yielded item is sent to the parent as
+    ``Event(event_type, {"data": item})`` -- read it as ``event.data``.
+    Exhaustion is ``onDone`` with ``data`` = the last item; an exception is
+    ``onError``; exiting the state cancels the task and ``aclose()``s the
+    generator (a ``finally`` in it runs).
+    """
+
+    async def _service(interp: Any, ctx: Any, event: Any) -> Any:
+        agen = factory(interp, ctx, event)
+        if inspect.isawaitable(agen):  # a coroutine returning an iterator
+            agen = await agen
+        last: Any = None
+        aclose = getattr(agen, "aclose", None)
+        try:
+            async for item in agen:
+                last = item
+                # 📝 `wait=True`: the completion this service publishes on
+                #    return rides the PRIORITY lane and would overtake items
+                #    still in the inbox -- `onDone` before the last STREAM
+                #    was applied. Waiting for each item's receipt keeps
+                #    stream order and completion order the same.
+                if interp.status != "running":
+                    break
+                await interp.send(Event(event_type, {"data": item}), wait=True)
+            return last
+        finally:
+            if callable(aclose):
+                try:
+                    await aclose()
+                except Exception:  # noqa: BLE001 -- generator finalizer
+                    logger.debug("🌊 aclose() raised; ignoring", exc_info=True)
+
+    _service.__name__ = f"stream_{getattr(factory, '__name__', 'logic')}"
+    _service.__xsm_actor_logic__ = "async_iterator"  # type: ignore[attr-defined]
+    return _service
+
+
+def from_iterator(
+    factory: Callable[..., Iterator[Any]], *, event_type: str = "STREAM"
+) -> Callable[..., RunningLogic]:
+    """Stream actor logic for the SYNC engine: ``factory(interp, ctx,
+    event)`` returns an iterator that is consumed on a daemon thread. Each
+    item is `send_threadsafe`'d to the parent as ``Event(event_type,
+    {"data": item})`` and lands on the owner's next ``send()`` / ``tick()``;
+    exhaustion delivers ``onDone`` (``data`` = last item), an exception
+    ``onError``. Exiting the state stops the thread at the next item and
+    ``close()``s the generator.
+
+    On the async engine prefer `from_async_iterator`; this helper works
+    there too (the thread pushes through `send_threadsafe`).
+    """
+
+    def _service(interp: Any, ctx: Any, event: Any) -> RunningLogic:
+        invocation = _invocation_of(interp, event)
+        stop = threading.Event()
+        gen = factory(interp, ctx, event)
+        close = getattr(gen, "close", None)
+        send_back = _send_back_for(interp)
+        handle = RunningLogic(interp, invocation, None, completes=True)
+
+        def run() -> None:
+            last: Any = None
+            try:
+                for item in gen:
+                    if stop.is_set():
+                        return
+                    last = item
+                    send_back(Event(event_type, {"data": item}))
+                if not stop.is_set():
+                    interp._complete_logic(invocation, last)
+            except Exception as exc:  # noqa: BLE001 -- user iterator
+                if not stop.is_set():
+                    interp._fail_logic(invocation, exc)
+            finally:
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:  # noqa: BLE001
+                        pass
+
+        thread = threading.Thread(
+            target=run, name=f"xsm-stream-{invocation.id}", daemon=True
+        )
+
+        def cleanup() -> None:
+            stop.set()
+
+        handle._cleanup = cleanup
+        thread.start()
+        return handle
+
+    _service.__name__ = f"stream_{getattr(factory, '__name__', 'logic')}"
+    _service.__xsm_actor_logic__ = "iterator"  # type: ignore[attr-defined]
+    return _service
+
+
+# -----------------------------------------------------------------------------
+# 🎭 from_interpreter
+# -----------------------------------------------------------------------------
+def from_interpreter(child: Any) -> Any:
+    """Use an EXISTING interpreter's machine as a child actor (XState
+    ``fromActor`` parity). A `MachineNode` is already a valid ``invoke``
+    ``src``; this helper reads it off an interpreter so an application
+    that built the child up front can hand it over: the engine starts a
+    fresh actor of that machine under the invocation id (child actors are
+    per-invocation; the passed instance itself is not adopted -- an
+    interpreter is bound to its own loop / thread)."""
+    machine = getattr(child, "machine", None)
+    if machine is None:
+        raise TypeError("from_interpreter() needs an interpreter instance")
+    return machine
+
+
+def _invocation_of(interp: Any, event: Any) -> Any:
+    """The `InvokeDefinition` the engine is running (`invoke.<id>` event)."""
+    inv_id = str(getattr(event, "type", ""))[len("invoke.") :]
+    for state in list(interp._active_state_nodes):
+        for inv in getattr(state, "invoke", ()):
+            if inv.id == inv_id:
+                return inv
+    for state in getattr(interp, "_states_to_invoke", ()):
+        for inv in getattr(state, "invoke", ()):
+            if inv.id == inv_id:
+                return inv
+
+    class _Anon:  # pragma: no cover - defensive
+        id = inv_id
+        src = None
+
+    return _Anon()

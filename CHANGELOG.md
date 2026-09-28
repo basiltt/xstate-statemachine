@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Actor logic helpers `from_callback`, `from_async_iterator`,
+  `from_iterator`, `from_coroutine`, `from_callable`, `from_interpreter`**
+  (#267; both engines) -- XState v5 `fromPromise` / `fromCallback` /
+  `fromObservable` / `fromActor` parity as ordinary services. A callback
+  service's `send_back` is thread-safe from any thread or loop (async:
+  `call_soon_threadsafe`; sync: the #305 mailbox drained on the owner's
+  next `send()` / `tick()` -- never the plain queue); `receive(handler)`
+  gets events the parent `sendTo`s the invocation id (`sendTo` now
+  resolves running actor logic by invocation id); cleanup runs exactly
+  once on state exit, `stop()` or setup error, `async def` cleanups are
+  awaited by the async `stop()`. Streams deliver each item as
+  `Event("STREAM", {"data": item})` in order, `onDone` with the last item,
+  `onError` on exception, `aclose()` / `close()` on state exit. Docs:
+  services guide "Actor logic helpers" (parity table, paho-mqtt-shaped
+  callback and LLM-stream examples, executable).
 - **`[pydantic]` extra: typed context, typed events, static config
   validation, JSON Schema** (#266). Built on core seams only -- core never
   imports pydantic. `context_model(Model)` builds the

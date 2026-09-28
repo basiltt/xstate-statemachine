@@ -2474,6 +2474,20 @@ Returns a **new** `MachineLogic` combining the receiver with `others` (later win
 
 ---
 
+## Actor Logic Helpers **[0.11.0]**
+
+`xstate_statemachine.actor_logic` (also top-level) — XState v5 `fromPromise` / `fromCallback` / `fromObservable` / `fromActor` parity (#267). Each returns an ordinary service for `MachineLogic(services=…)`. Guide: [Actor logic helpers](../guide/services/#actor-logic-helpers).
+
+| Function | Engine | Description |
+|----------|--------|-------------|
+| `from_coroutine(async_fn)` | async | Today's `async def (interp, ctx, event)` service under its parity name; `onDone` with the return value. `TypeError` for a plain `def`. |
+| `from_callable(fn)` | both | A plain `def` service, run inline; `onDone` with the return value. |
+| `from_callback(setup)` | both | `setup(send_back, receive, ctx, event) -> cleanup \| None` runs once on entry. `send_back(type, **payload)` / `send_back(Event)` is **thread-safe** (routes through `send_threadsafe`); `receive(handler)` subscribes to events the parent `sendTo`s this invocation's id. Never `onDone` on its own; an exception in `setup` (or a non-callable return) is `onError`. Cleanup runs exactly once on state exit / `stop()` / error; an `async def` cleanup is awaited by the async `stop()`. |
+| `from_async_iterator(factory, *, event_type="STREAM")` | async | `factory(interp, ctx, event)` returns an async iterator (or a coroutine returning one). Each item → `Event(event_type, {"data": item})`, applied before the next is pulled; exhaustion → `onDone` with the last item; exception → `onError`; state exit → task cancelled + `aclose()`. |
+| `from_iterator(factory, *, event_type="STREAM")` | both | Sync twin: the iterator is consumed on a daemon thread; items arrive via `send_threadsafe` (the sync mailbox, drained on the owner's next `send()` / `tick()`); exit stops it at the next item and `close()`s the generator. |
+| `from_interpreter(interp)` | both | The interpreter's `machine`, to use as an `invoke` `src` (`fromActor` parity). The engine starts a fresh actor of that machine under the invocation id. |
+| `RunningLogic` | — | The handle a callback / iterator service returns to the engine: `cleanup()` (idempotent), `subscribe(handler)`, `receive(event)`, `finished`. `sendTo(<invocation id>)` resolves to it while it runs. |
+
 ## Receipt Codec **[0.11.0]**
 
 `xstate_statemachine.receipts` — one JSON shape and one HTTP-status mapping for a `Receipt`, in core (#305), so every web adapter (Django, Flask, Starlette, …) returns the same response and the idempotency inbox (#261) can cache a receipt in a defined form. The three functions are also exported from the top-level package.

@@ -192,6 +192,32 @@ class ActorSystem:
 # -----------------------------------------------------------------------------
 # 🛡️ Plugin Error Containment
 # -----------------------------------------------------------------------------
+class _LogicTarget:
+    """`sendTo` target shim for running actor logic (#267): quacks like an
+    interpreter for the one call `_deliver` makes."""
+
+    __slots__ = ("_handle",)
+
+    def __init__(self, handle: Any) -> None:
+        self._handle = handle
+
+    @property
+    def id(self) -> str:
+        return str(getattr(self._handle._invocation, "id", "logic"))
+
+    @property
+    def status(self) -> str:
+        return "stopped" if self._handle.finished else "running"
+
+    def send(self, event: Any, **payload: Any) -> None:
+        if isinstance(event, str):
+            event = Event(type=event, payload=payload)
+        self._handle.receive(event)
+
+    def send_threadsafe(self, event: Any, **payload: Any) -> None:
+        self.send(event, **payload)
+
+
 class _SafePlugin:
     """Wraps a plugin so a failing hook cannot break the interpreter.
 
@@ -503,6 +529,7 @@ class BaseInterpreter(Generic[TContext]):
         "_entry_seq",  # #264
         "_restored_deadlines",  # #264
         "_restart_timers_mode",  # #264
+        "_running_logic",  # #267
         "_scheduled_sends",
         "_armed_self_sends",
         "_restored_self_sends",
@@ -667,6 +694,10 @@ class BaseInterpreter(Generic[TContext]):
         #: (from zero, the #128 behaviour), ``"resume"`` (remaining wall
         #: time) or ``"fire_due"`` (resume + fire the matured ones now).
         self._restart_timers_mode: str = "restart"
+        #: 🎭 #267: long-lived actor logic (`from_callback`, `from_iterator`)
+        #: by invocation id -> `RunningLogic`, so exiting the owning state
+        #: runs its cleanup and `sendTo(<invocation id>)` reaches it.
+        self._running_logic: Dict[str, Any] = {}
         #: 🔌 #127: `(plugin class name, hook name, exception)` of the most
         #: recent contained plugin-hook failure, or ``None``.
         self.last_plugin_error: Optional[Tuple[str, str, BaseException]] = None
@@ -2444,6 +2475,56 @@ class BaseInterpreter(Generic[TContext]):
         """
         return is_system_event(event)
 
+    # -------------------------------------------------------------------------
+    # 🎭 Actor logic (#267)
+    # -------------------------------------------------------------------------
+    def _register_running_logic(
+        self, invocation: Any, owner_id: str, handle: Any
+    ) -> None:
+        """Keep a `RunningLogic` handle so exit / stop can clean it up and
+        `sendTo(<invocation id>)` can reach it."""
+        # (`on_service_start` already fired from the engine's invoke path.)
+        self._running_logic[invocation.id] = handle
+
+    def _cleanup_running_logic(self, state: Any) -> None:
+        """Run cleanup for every logic the exited *state* invoked."""
+        for inv in getattr(state, "invoke", ()):
+            handle = self._running_logic.pop(inv.id, None)
+            if handle is not None:
+                handle.cleanup()
+
+    def _cleanup_all_running_logic(self) -> None:
+        handles, self._running_logic = self._running_logic, {}
+        for handle in handles.values():
+            handle.cleanup()
+
+    def _complete_logic(self, invocation: Any, result: Any) -> None:
+        """A stream finished: publish `done.invoke` (thread-safe) and drop
+        the handle. Used by `from_iterator`'s worker thread."""
+        handle = self._running_logic.pop(invocation.id, None)
+        if handle is not None:
+            handle.cleanup()
+        done = _engine_done(
+            type=f"done.invoke.{invocation.id}", data=result, src=invocation.id
+        )
+        self._send_threadsafe_any(done)  # engine-minted: drives onDone
+
+    def _fail_logic(self, invocation: Any, exc: BaseException) -> None:
+        handle = self._running_logic.pop(invocation.id, None)
+        if handle is not None:
+            handle.cleanup()
+        err = _engine_error(
+            type=f"error.platform.{invocation.id}",
+            error=exc,
+            src=invocation.id,
+        )
+        self._send_threadsafe_any(err)
+
+    def _send_threadsafe_any(self, event: Any) -> None:
+        """Both engines define `send_threadsafe`; the base does not know
+        which (async returns a future, sync None) -- call it dynamically."""
+        getattr(self, "send_threadsafe")(event)
+
     @property
     def has_dormant_timers(self) -> bool:
         """``True`` when an active state declares an ``after`` timer that is
@@ -3237,6 +3318,12 @@ class BaseInterpreter(Generic[TContext]):
                 return self._actors[actor_id]
         if spec in ("parent", "#parent") and self.parent is not None:
             return self.parent
+        # 🎭 #267: an invocation id of running actor LOGIC (from_callback /
+        #    from_iterator). Not an interpreter -- wrapped so `_deliver`
+        #    can `.send()` it uniformly.
+        handle = self._running_logic.get(spec)
+        if handle is not None:
+            return _LogicTarget(handle)  # type: ignore[return-value]
         return None
 
     def _system_registry(self) -> Dict[str, "BaseInterpreter[Any]"]:

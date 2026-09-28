@@ -216,6 +216,18 @@ from .helpers import transition as pure_transition
 from .testing_utils import logic_names, stub_logic
 
 # -------------------------------------------------------------------------
+# 🎭 Actor logic helpers (#267) -- fromCallback / fromObservable parity
+# -------------------------------------------------------------------------
+from .actor_logic import (
+    from_async_iterator,
+    from_callable,
+    from_callback,
+    from_coroutine,
+    from_interpreter,
+    from_iterator,
+)
+
+# -------------------------------------------------------------------------
 # 🧾 Receipt codec (#305) -- one JSON shape / HTTP status for every adapter
 # -------------------------------------------------------------------------
 from .receipts import receipt_from_json, receipt_to_json, receipt_to_status
@@ -340,6 +352,13 @@ __all__ = [
     # 🧪 Testing utilities (#304)
     "stub_logic",
     "logic_names",
+    # 🎭 Actor logic (#267)
+    "from_callback",
+    "from_async_iterator",
+    "from_iterator",
+    "from_coroutine",
+    "from_callable",
+    "from_interpreter",
     # 🧾 Receipt codec (#305)
     "receipt_to_status",
     "receipt_to_json",
