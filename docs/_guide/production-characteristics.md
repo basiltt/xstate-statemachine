@@ -140,39 +140,49 @@ rows average 100 load → send → save → stop round-trips after a warm-up; sn
 rows average 1,000 operations on a 50-state machine. Import rows time the
 package import *inside* a fresh subprocess, excluding Python startup.
 
-> **Reference runner:** `local`, Windows 11 (`Windows-11-10.0.26100-SP0`),
-> CPython 3.14.3, `Intel64 Family 6 Model 183 Stepping 1, GenuineIntel`,
-> 28 logical CPUs. This first local baseline will be replaced by measurements
-> from the nightly `ubuntu-24.04` runner before it is used as a CI gate.
+> **Reference runner:** GitHub-hosted `ubuntu-24.04` (`Linux-6.17.0-1022-azure-x86_64-with-glibc2.39`),
+> CPython 3.13.15, `AMD EPYC 9V74 80-Core Processor`, 4 logical CPUs — the nightly
+> `perf` job's runner, recorded from its own `last_run.json` (run
+> [36429782133](https://github.com/basiltt/xstate-statemachine/actions/runs/36429782133)).
+> Hosted runners are not pinned to one CPU model: a run on the same label a few
+> minutes earlier landed on different silicon and measured the bare sync send at
+> 26.9 µs instead of 15.9 µs, so a red nightly must be read together with the CPU
+> the failure message names.
 
 | Measurement | Baseline p50 | Budget (×1.25) | What it includes |
 |:--|--:|--:|:--|
-| Import core (no site-packages) | 187.926 ms | 234.908 ms | Subprocess import only |
-| Import core with `[redis,pydantic]` installed, unused | 208.677 ms | 260.847 ms | No eager contrib imports |
-| `persisted()` + `MemoryStore` (sync) | 111.579 µs | 139.474 µs | 87.346 µs over bare send |
-| `apersisted()` + `MemoryStore` (async) | 539.038 µs | 673.798 µs | Thread-backed store adapter |
-| `persisted()` + SQLite WAL (sync) | 223.874 µs | 279.842 µs | Local temporary database |
-| `apersisted()` + SQLite WAL (async) | 670.211 µs | 837.764 µs | Thread-backed store adapter |
-| Idempotency + audit (sync) | 111.990 µs/event | 139.987 µs/event | 378.9% over bare keyed send |
-| Idempotency + audit (async) | 142.675 µs/event | 178.344 µs/event | 174.3% over bare keyed send |
-| Empty-plugin hook path (sync) | 24.233 µs/event | 30.291 µs/event | `on_before_send` and `on_event_processed` seams |
-| Empty-plugin hook path (async) | 42.551 µs/event | 53.189 µs/event | Same seams; no plugin callbacks |
-| Pydantic 20-field validator (sync) | 41.622 µs/event | 52.028 µs/event | 15.310 µs above unvalidated send |
-| Pydantic 20-field validator (async) | 62.144 µs/event | 77.680 µs/event | 17.394 µs above unvalidated send |
-| Snapshot v4 `get_snapshot()` (sync) | 14.644 µs | 18.305 µs | 50-state machine |
-| Snapshot v4 `from_snapshot()` (sync) | 30.729 µs | 38.411 µs | 50-state machine |
-| Snapshot v4 `get_snapshot()` (async) | 10.714 µs | 13.393 µs | 50-state machine |
-| Snapshot v4 `from_snapshot()` (async) | 33.545 µs | 41.931 µs | 50-state machine |
+| Import core (no site-packages) | 64.881 ms | 81.101 ms | Subprocess import only |
+| Import core with `[redis,pydantic]` installed, unused | 66.211 ms | 82.764 ms | No eager contrib imports (+1.3 ms, within noise) |
+| `persisted()` + `MemoryStore` (sync) | 87.119 µs | 108.899 µs | 71.246 µs over bare send |
+| `apersisted()` + `MemoryStore` (async) | 309.499 µs | 386.874 µs | Thread-backed store adapter |
+| `persisted()` + SQLite WAL (sync) | 139.782 µs | 174.728 µs | Local temporary database |
+| `apersisted()` + SQLite WAL (async) | 360.305 µs | 450.381 µs | Thread-backed store adapter |
+| Idempotency + audit (sync) | 104.809 µs/event | 131.011 µs/event | 542.1% over bare keyed send (16.322 µs) |
+| Idempotency + audit (async) | 111.743 µs/event | 139.679 µs/event | 313.9% over bare keyed send (26.995 µs) |
+| Empty-plugin hook path (sync) | 15.873 µs/event | 19.841 µs/event | `on_before_send` and `on_event_processed` seams |
+| Empty-plugin hook path (async) | 26.418 µs/event | 33.023 µs/event | Same seams; no plugin callbacks |
+| Pydantic 20-field validator (sync) | 46.031 µs/event | 57.539 µs/event | 22.364 µs above unvalidated send |
+| Pydantic 20-field validator (async) | 56.582 µs/event | 70.728 µs/event | 23.078 µs above unvalidated send |
+| Snapshot v4 `get_snapshot()` (sync) | 12.105 µs | 15.131 µs | 50-state machine |
+| Snapshot v4 `from_snapshot()` (sync) | 23.285 µs | 29.106 µs | 50-state machine |
+| Snapshot v4 `get_snapshot()` (async) | 12.450 µs | 15.562 µs | 50-state machine |
+| Snapshot v4 `from_snapshot()` (async) | 24.365 µs | 30.456 µs | 50-state machine |
 | `shortest_paths` (largest corpus chart) | — | `null` | Helper not shipped yet |
 | FastAPI `POST /send` | — | `null` | Router not shipped yet |
 
-The plugin measurements exercise **unique idempotency keys** and write an audit
-record for every event; they do not measure an inert plugin. The aspirational
-15% plugin-overhead target in #307 is **not met** on this runner, and
-`PrometheusPlugin` has not shipped, so it is not silently counted. There is
-also no historical 0.10.x runtime or v3 snapshot implementation in the
-measurement: the no-plugin and v4 rows are forward-looking regression
-baselines, not claims that the earlier 2% / 1.2× comparisons passed.
+Against the aspirational figures in #307: `persisted()` on `MemoryStore` costs
+~71 µs over a bare send (target ≤ 150 µs), the SQLite round-trip is ~0.14 ms
+(target ≤ 3 ms), the 20-field validator adds ~22 µs per mutating action
+(target ≤ 40 µs) and installing the extras does **not** grow the import. The
+import itself is ~65 ms against a ≤ 60 ms target on this runner. The plugin
+measurements exercise **unique idempotency keys** and write an audit record for
+every event; they do not measure an inert plugin, and the 15 % target is **not
+met** — nor could it be, since a per-event inbox claim, mark and audit append is
+several times the cost of the trivial macrostep it wraps. `PrometheusPlugin` has
+not shipped, so it is not silently counted. There is also no historical 0.10.x
+runtime or v3 snapshot implementation in the measurement: the no-plugin and v4
+rows are forward-looking regression baselines, not claims that the earlier
+2 % / 1.2× comparisons passed.
 
 The nightly-only `perf` job runs `XSM_PERF=1` on the reference runner and
 compares each p50 against [`benchmarks/budgets.json`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/budgets.json).

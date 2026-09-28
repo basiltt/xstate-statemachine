@@ -87,7 +87,10 @@ def test_reference_runner_budget(
         pytest.fail(f"{row}: required extra unavailable on reference runner")
     p50 = actual["p50_us"]
     budget = limit["budget_p50_us"]
+    # 📝 Hosted runners are not pinned to one CPU model; name both so a red
+    #    nightly can be told apart from a regression.
     assert p50 <= budget, (
         f"{row}: measured p50 {p50:.3f} us exceeds "
-        f"budget {budget:.3f} us on {runner['label']}"
+        f"budget {budget:.3f} us on {runner['label']} "
+        f"({runner['cpu']}; baseline recorded on {reference['cpu']})"
     )
