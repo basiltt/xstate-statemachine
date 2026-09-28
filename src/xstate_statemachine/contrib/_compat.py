@@ -1,4 +1,4 @@
-# src/xstate_statemachine/contrib/_compat.py
+﻿# src/xstate_statemachine/contrib/_compat.py
 # -----------------------------------------------------------------------------
 # 🧷 require_extra -- the one way a contrib package declares its dependency
 # -----------------------------------------------------------------------------
@@ -61,5 +61,22 @@ def require_extra(
     """
     names = modules or (extra,)
     for name in names:
-        if importlib.util.find_spec(name) is None:
+        # 📝 #306: three failure modes, one typed error. `find_spec` returns
+        #    None (not installed), raises ImportError (a finder / import
+        #    policy refuses it), or succeeds while the actual import fails
+        #    (installed but broken). All three read as OUR bug if they
+        #    surface raw from the subpackage's own `import redis`.
+        try:
+            spec = importlib.util.find_spec(name)
+        except (ImportError, ValueError) as exc:
+            raise MissingExtraError(
+                extra, name, hint=hint or f"(import refused: {exc})"
+            ) from exc
+        if spec is None:
             raise MissingExtraError(extra, name, hint=hint)
+        try:
+            importlib.import_module(name)
+        except ImportError as exc:
+            raise MissingExtraError(
+                extra, name, hint=hint or f"(import failed: {exc})"
+            ) from exc

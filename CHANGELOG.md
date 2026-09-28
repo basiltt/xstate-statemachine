@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`[redis]` extra: `RedisStore` / `AsyncRedisStore`, `RedisInbox`,
+  `RedisLog`** (#306) -- the first shipped integration under
+  `xstate_statemachine.contrib`. Shared state for multi-worker / multi-host
+  deployments implementing the same `StateStore` / `AsyncStateStore`,
+  `InboxStore` and `TransitionLogStore` protocols, so `persisted()`,
+  `apersisted()`, `IdempotencyPlugin`, `AuditPlugin` and `DueTimerScanner`
+  work unchanged -- and pass the SAME contract suites as the stdlib
+  backends (run on `fakeredis` in CI, live server via `XSM_REDIS_URL`).
+  Optimistic save is one atomic Lua script; the pessimistic lock is a
+  token-owned `SET NX PX` and **fenced** (an expired lock yields
+  `ConflictError`, never a lost update); `forget()` is atomic;
+  `list_keys()` escapes glob metacharacters; `prefix` is mandatory
+  (X0.15) with a `{prefix}:schema` key; deadlines are indexed in a sorted
+  set the scanner reads directly. Guide page *Redis* with guarantees and
+  threat-model boxes.
+- `require_extra()` now turns every failure mode -- not installed, import
+  refused by a finder, installed-but-broken -- into `MissingExtraError`
+  (it used to let a raw `ImportError` escape from the subpackage's own
+  import). Docs: `<!-- doc-requires: mod, ... -->` marks an example that
+  runs only when the named modules import (an extra's CI cell runs it).
 - **Durable `after` timers: persisted deadlines, `restart_timers="resume" |
   "fire_due"`, `pending_deadlines()`, `DueTimerScanner`** (#264; both
   engines). Every armed `after` timer is now recorded in the snapshot's
