@@ -513,6 +513,44 @@ interp.start()
 > interp = SyncInterpreter(machine).use(LoggingInspector()).use(MetricsPlugin())
 > ```
 
+## 🌐 Global Plugins: Every Interpreter in the Process
+
+`.use()` attaches a plugin to *one* interpreter. Some plugins want *all of them* — a tracing exporter, a coverage collector, a test fixture that asserts no machine ever errored — including interpreters you never construct yourself: children the engine spawns, machines a web adapter restores from a snapshot inside a request handler. For those, register once, process-wide:
+
+```python
+from xstate_statemachine import (
+    SyncInterpreter, create_machine, PluginBase,
+    register_global, unregister_global, global_plugins,
+)
+
+class CountStarts(PluginBase):
+    def __init__(self):
+        self.count = 0
+    def on_interpreter_start(self, interpreter):
+        self.count += 1
+
+counter = CountStarts()
+register_global(counter)                 # from now on...
+
+cfg = {"id": "m", "initial": "a", "states": {"a": {}}}
+SyncInterpreter(create_machine(cfg)).start().stop()
+SyncInterpreter(create_machine(cfg)).start().stop()
+assert counter.count == 2
+assert global_plugins() == [counter]
+
+unregister_global(counter)               # ...until here
+SyncInterpreter(create_machine(cfg)).start().stop()
+assert counter.count == 2                # not attached to the later one
+```
+
+Rules of the registry:
+
+- **Opt-in only.** The library never registers anything on import; the default process has an empty registry and a constructor pays one list read.
+- **Constructed after, not before.** A global plugin is attached to interpreters built *after* `register_global` — both engines, `from_snapshot`, and spawned children. Interpreters that already exist are not touched (their lifecycle hooks have already started firing).
+- **Same containment as `.use()`.** A raising global plugin is reported through `on_plugin_error` and never breaks the machine.
+- **Thread-safe.** Registration and removal take a lock; `global_plugins()` returns a copy. Registering the same object twice is a no-op.
+- **Leave it as you found it.** A pytest fixture should `unregister_global` (or `xstate_statemachine.plugins.clear_global_plugins()`) in teardown.
+
 ## 📜 Complete Example: Custom Audit Logger
 
 ```python

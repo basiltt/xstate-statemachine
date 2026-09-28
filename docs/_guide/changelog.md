@@ -15,6 +15,33 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Added
 
+- **Global plugin registry, `context_validator` seam, `__xstate_event__`
+  adapter, `SyncInterpreter.send_threadsafe()`** (#305 part 2; both
+  engines).
+  - `register_global(plugin)` / `unregister_global(plugin)` /
+    `global_plugins()` (top-level exports; `plugins.clear_global_plugins()`
+    for teardown). A registered plugin is attached -- with the same
+    containment as `.use()` -- to every interpreter constructed **after**
+    registration: both engines, `from_snapshot`, and engine-spawned
+    children. Opt-in only; the library never registers anything itself.
+    Thread-safe (100-thread registration test).
+  - `create_machine(..., context_validator=fn)`: `fn(context)` raises when
+    the context is invalid. Both engines call it after any action that
+    *changed* `context` (never when unchanged) and treat a raise as that
+    action's failure, so `actionErrorPolicy` applies (`"rollback"` restores
+    the pre-transition context) and `on_action_error` fires. Stored on
+    `MachineNode.context_validator`. The seam for the pydantic extra (#266).
+  - Any object implementing `__xstate_event__() -> str | dict | Event` is
+    accepted wherever an event is: `send`, `send_events`, `send_threadsafe`,
+    `can`, `sendTo` specs -- one normaliser, one level, same rules as a
+    direct argument. Keyword payload merges over an adapter's dict.
+  - `SyncInterpreter.send_threadsafe(event, **payload)`: the only legal
+    cross-thread entry to a sync machine. A locked mailbox the owning
+    thread drains at the top of `send()` / `tick()`, ahead of its own
+    event, each as its own macrostep with the normal admission checks.
+    FIFO per producer thread; nothing lost (8 threads x 1,000 events test);
+    an admission refusal at drain time surfaces on the owner via
+    `on_event_dropped(..., "invalid")` + `last_error`.
 - **Snapshot layout v4, `MachineNode.version`, wall clock, `Deadline`,
   receipt codec** (#305 part 1 — core prerequisites for the persistence
   and web integrations; both engines).

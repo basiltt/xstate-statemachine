@@ -26,6 +26,7 @@ from __future__ import (
     annotations,
 )  # Enables postponed evaluation of type annotations
 
+import threading
 from typing import (
     TYPE_CHECKING,
     Dict,
@@ -684,6 +685,67 @@ def redact(value: Any, keys: Tuple[str, ...] = DEFAULT_REDACT_KEYS) -> Any:
     if isinstance(value, (list, tuple)):
         return type(value)(redact(v, keys) for v in value)
     return value
+
+
+# -----------------------------------------------------------------------------
+# 🌐 Global plugin registry (#305)
+# -----------------------------------------------------------------------------
+# 🏛️ Why: an OpenTelemetry exporter (#273), a coverage collector (#270) or a
+#    pytest fixture (#296) wants to observe EVERY interpreter a process
+#    builds -- including the ones it never sees: children the engine spawns,
+#    machines a framework adapter restores from a snapshot in a request
+#    handler. Threading a `plugins=` argument through every one of those
+#    call sites is impossible for a third party. The registry is consulted
+#    by both constructors, so an interpreter created AFTER `register_global`
+#    carries the plugin; one created before does not (no retro-attachment:
+#    hooks would fire mid-lifecycle with no `on_interpreter_start`).
+#
+# ⚠️ Opt-in only. Nothing in the library ever registers here on import --
+#    the default process has an empty registry and pays one list read per
+#    constructor. `unregister_global` exists so a test fixture can leave the
+#    process exactly as it found it. Thread-safe: a `threading.Lock` guards
+#    mutation, `global_plugins()` returns a copy.
+_GLOBAL_PLUGINS: List[Any] = []
+_GLOBAL_LOCK = threading.Lock()
+
+
+def register_global(plugin: Any) -> None:
+    """Attach *plugin* to every interpreter constructed from now on.
+
+    Applies to `Interpreter(...)`, `SyncInterpreter(...)`, `from_snapshot`
+    and engine-spawned children. Registering the same object twice is a
+    no-op (identity check), so a fixture that re-registers is harmless.
+    Interpreters that already exist are NOT touched.
+    """
+    with _GLOBAL_LOCK:
+        if not any(p is plugin for p in _GLOBAL_PLUGINS):
+            _GLOBAL_PLUGINS.append(plugin)
+
+
+def unregister_global(plugin: Any) -> bool:
+    """Stop attaching *plugin* to new interpreters. Returns whether it was
+    registered. Existing interpreters keep it (they own their copy)."""
+    with _GLOBAL_LOCK:
+        for idx, p in enumerate(_GLOBAL_PLUGINS):
+            if p is plugin:
+                del _GLOBAL_PLUGINS[idx]
+                return True
+    return False
+
+
+def global_plugins() -> List[Any]:
+    """A snapshot (copy) of the registry, in registration order."""
+    # ⚡ The empty case is the common one and must not take the lock.
+    if not _GLOBAL_PLUGINS:
+        return []
+    with _GLOBAL_LOCK:
+        return list(_GLOBAL_PLUGINS)
+
+
+def clear_global_plugins() -> None:
+    """Empty the registry. For test teardown."""
+    with _GLOBAL_LOCK:
+        _GLOBAL_PLUGINS.clear()
 
 
 class LoggingInspector(PluginBase[Any]):

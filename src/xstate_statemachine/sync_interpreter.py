@@ -186,6 +186,8 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         "_invoked_children",
         "_settle_iterations",
         "_settle_tripped",
+        "_mailbox",  # #305
+        "_mailbox_lock",  # #305
     )
 
     def __init__(
@@ -287,6 +289,13 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    a later event in the same drain resets cannot corrupt it.
         self._caller_event: Optional[AnyEvent] = None
         self._caller_receipt: Optional[Receipt] = None
+        #: 🧵 #305: the cross-thread mailbox. `send_threadsafe()` appends
+        #: under the lock from ANY thread; the owning thread drains it at
+        #: the top of `send()` / `tick()`, before its own event, in FIFO
+        #: order. The only legal way for another thread to reach a sync
+        #: machine -- `send()` itself is not thread-safe and never was.
+        self._mailbox: Deque[AnyEvent] = deque()
+        self._mailbox_lock = threading.Lock()
         # 🏛️ #50: `_after_threads` / `_after_events` / `_pending_send_cancels`
         #    are gone. Timers no longer own threads; see `_after_timer`.
 
@@ -674,6 +683,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    receipt reading a `deferred` flag contaminated by earlier steps.
         #    Two O(1) writes; the deep-copy below is the only thing worth
         #    gating on `wait`.
+        # 🧵 #305: cross-thread events run FIRST, as their own steps, so
+        #    the per-step flags and before-image below describe only the
+        #    caller's event.
+        self._drain_mailbox()
         self._deferred_this_step.clear()  # #106: per-step scope
         self._guard_denied_this_step = False  # #153: per-step scope
         if wait:
@@ -728,6 +741,85 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         # 📨 #125: the caller's receipt is FINAL before any replay runs.
         self._run_held_replays()
         return receipt
+
+    def send_threadsafe(
+        self,
+        event_or_type: Union[str, Dict[str, Any], Event, Any],
+        /,
+        **payload: Any,
+    ) -> None:
+        """Queue an event from ANY thread; it runs on the owner's next step.
+
+        🏛️ #305: `send()` processes on the caller's thread and is not
+        thread-safe (it never was -- the queue is a plain deque and the
+        step mutates `context` unlocked). Framework code that must reach a
+        sync machine from a worker thread -- a Celery callback, a
+        `threading.Timer`, a websocket reader -- puts the event in the
+        mailbox here, under a lock, and the thread that OWNS the machine
+        delivers it the next time it calls `send()` or `tick()`, ahead of
+        its own event. Nothing runs on the calling thread; there is no
+        receipt (there is nothing to wait for without a loop -- use the
+        async engine's `send_threadsafe` for that).
+
+        Guarantees: FIFO per sending thread (a thread's own events run in
+        the order it sent them); nothing lost (the deque grows without
+        bound -- bound the producers, not the mailbox); admission checks
+        (`strict`, `event_schemas`, `on_before_send`) run on the OWNER's
+        thread at drain time, so their exceptions surface there.
+
+        Args:
+            event_or_type: Same shapes `send()` accepts, incl. an object
+                with `__xstate_event__`.
+            **payload: Keyword payload for the string form.
+        """
+        # Normalise on the sender's thread so a malformed event fails at
+        # the call site, where the traceback is useful.
+        event_obj = self._prepare_event(event_or_type, **payload)
+        with self._mailbox_lock:
+            self._mailbox.append(event_obj)
+
+    def _drain_mailbox(self) -> int:
+        """Run every mailbox event as its own step. Returns how many.
+
+        Each event is a separate macrostep with its own admission checks
+        and interception, exactly as if the owner had called `send()` for
+        it -- so a `strict` refusal or an idempotency short-circuit behaves
+        identically whichever thread produced the event. Runs on the
+        owner's thread only.
+        """
+        if not self._mailbox:  # ⚡ no lock for the empty case
+            return 0
+        if self._is_processing:
+            # 🔒 A re-entrant `send()` from inside an action must not run
+            #    other threads' events in the middle of the running step;
+            #    they stay queued for the owner's next top-level call.
+            return 0
+        with self._mailbox_lock:
+            batch = list(self._mailbox)
+            self._mailbox.clear()
+        for event_obj in batch:
+            try:
+                self._warn_reserved_payload_keys(event_obj)
+                self._check_strict(event_obj)
+                if self._intercept_before_send(event_obj) is not None:
+                    continue
+            except Exception as exc:  # noqa: BLE001 -- admission refusal
+                # The producer thread is gone; the owner is the only one
+                # who can hear about it: `last_error` + `on_event_dropped`.
+                self.last_transition_ok = False
+                self._last_action_error = exc
+                for plugin in self._plugins:
+                    plugin.on_event_dropped(self, event_obj, "invalid")
+                logger.warning(
+                    "🚫 send_threadsafe() event '%s' refused at drain: %s",
+                    getattr(event_obj, "type", event_obj),
+                    exc,
+                )
+                continue
+            self._event_queue.append(event_obj)
+            self._process_event_queue()
+            self._run_held_replays()
+        return len(batch)
 
     def _run_held_replays(self) -> None:
         """Run deferred events earned by the last drain, as their own
@@ -1809,6 +1901,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         limit = getattr(self.machine, "max_iterations", 1000)
         for _ in range(limit):
             fired = self._pump_timers()
+            fired += self._drain_mailbox()  # #305
             if self._event_queue:
                 self._process_event_queue()
                 self._run_held_replays()  # #125

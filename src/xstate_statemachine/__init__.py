@@ -104,7 +104,13 @@ from .models import ActionDefinition, MachineNode, OverflowPolicy
 # -----------------------------------------------------------------------------
 # 🔌 Extensibility & Plugins
 # -----------------------------------------------------------------------------
-from .plugins import LoggingInspector, PluginBase
+from .plugins import (
+    LoggingInspector,
+    PluginBase,
+    global_plugins,
+    register_global,
+    unregister_global,
+)
 
 # -----------------------------------------------------------------------------
 # 🚨 Custom Exception Hierarchy
@@ -244,6 +250,9 @@ __all__ = [
     # 🔌 Extensibility & Plugins
     "PluginBase",
     "LoggingInspector",
+    "register_global",
+    "unregister_global",
+    "global_plugins",
     # 🚨 Custom Exception Hierarchy
     "XStateMachineError",
     "InvalidConfigError",
