@@ -42,6 +42,12 @@ from ..exceptions import (
     StoreError,
 )
 from .async_store import AsyncStateStore, AsyncStoreAdapter, as_async
+from .migration import (
+    MachineVersionMismatchError,
+    MigrationStep,
+    NoMigrationPathError,
+    SnapshotMigrator,
+)
 from .deadline import Deadline, check_deadline_record
 from .file_store import FileStore
 from .sqlite_store import SQLiteStore
@@ -215,6 +221,11 @@ __all__ = [
     "ReplayDivergenceError",
     "replay",
     "correlation_id_var",
+    # 🧬 versioning (#263)
+    "SnapshotMigrator",
+    "MigrationStep",
+    "MachineVersionMismatchError",
+    "NoMigrationPathError",
     # envelope
     "check_identity",
     "check_minimum_version",

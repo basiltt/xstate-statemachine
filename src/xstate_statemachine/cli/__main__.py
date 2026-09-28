@@ -1152,6 +1152,19 @@ def _dispatch() -> None:
         )
         return
 
+    if args.subcommand == "snapshots":
+        from .commands.snapshots import run_snapshots
+
+        run_snapshots(
+            args.store,
+            json_file=args.json_file,
+            stale=bool(args.stale),
+            prefix=args.prefix,
+            limit=args.limit,
+            as_json=bool(getattr(args, "json", False)),
+        )
+        return
+
     if args.subcommand == "setup":
         from pathlib import Path
 

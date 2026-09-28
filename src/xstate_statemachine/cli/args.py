@@ -388,6 +388,45 @@ examples:
         "--json", action="store_true", help="Emit the result as JSON."
     )
 
+    # 📸 snapshots subcommand -- ops view of a persistence store (#263)
+    snapshots_parser = subparsers.add_parser(
+        "snapshots",
+        parents=[presentation],
+        help="List persisted snapshots in a store; --stale finds instances written by another machine version.",
+        description=(
+            "Reads a persistence store (sqlite:///path.db, file:///dir or "
+            "memory://) and lists the keys it holds with their record "
+            "version, the machine version that wrote them, and age. With "
+            "a machine JSON and --stale, lists only the keys whose "
+            "machine_version differs from the chart's version -- the "
+            "in-flight instances a deploy must migrate or drain."
+        ),
+    )
+    snapshots_parser.add_argument(
+        "--store",
+        required=True,
+        help="Store URL: sqlite:///path/to.db, file:///path/to/dir.",
+    )
+    snapshots_parser.add_argument(
+        "json_file",
+        nargs="?",
+        help="Machine JSON whose version stale keys are compared against.",
+    )
+    snapshots_parser.add_argument(
+        "--stale",
+        action="store_true",
+        help="Only keys whose machine_version != the chart's version (needs json_file).",
+    )
+    snapshots_parser.add_argument(
+        "--prefix", default="", help="Only keys starting with this prefix."
+    )
+    snapshots_parser.add_argument(
+        "--limit", type=int, default=1000, help="Maximum keys to list."
+    )
+    snapshots_parser.add_argument(
+        "--json", action="store_true", help="Emit as JSON."
+    )
+
     # 🪟 setup subcommand -- make `xsm` work where pip's launcher is blocked
     setup_parser = subparsers.add_parser(
         "setup",

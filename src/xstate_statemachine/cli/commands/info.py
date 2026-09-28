@@ -45,8 +45,8 @@ FEATURES = (
     ),
     (
         "Persistence",
-        "snapshot layout v3, drift check",
-        "strict applies on restore",
+        "snapshot layout v4, drift + version check",
+        "stores, locks, inbox, audit log, migrator",
     ),
     (
         "Reliability",

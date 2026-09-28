@@ -392,6 +392,55 @@ All three: `read(machine_id, after_seq=, limit=)`, `purge_older_than(cutoff_ts)`
 
 This is **event sourcing lite**: the log is a faithful record and a replayable one, but the *snapshot* stays the source of truth for the current state. There is no projection framework, no upcasting of old events, and no guarantee about actions' external effects — those belong to services and an outbox.
 
+## Versioning in-flight instances
+
+You ship v2 of a machine while 10,000 orders are mid-flight on v1. Temporal needs explicit `patched()` / worker versioning; XState has an open bug restoring child-actor snapshots; no Python FSM library handles it at all. **We do not automatically migrate.** We promise the two things that are honest and valuable:
+
+1. **Every snapshot knows which machine produced it** — `machine_hash` (the structural fingerprint, since 0.8.0) *and* `machine_version` (the chart's `"version"` label, the thing a human reads).
+2. **A mismatch fails loudly** — `MachineVersionMismatchError` (a `SnapshotDriftError`) — unless you registered an upcaster for exactly that hop.
+
+```python
+from xstate_statemachine import SyncInterpreter, create_machine
+from xstate_statemachine.persistence import MachineVersionMismatchError, SnapshotMigrator
+
+v1 = {"id": "order", "version": "1.0", "initial": "paying",
+      "states": {"paying": {"on": {"OK": "done"}}, "done": {"type": "final"}}}
+v2 = {"id": "order", "version": "2.0", "initial": "payment",
+      "states": {"payment": {"initial": "card", "states": {"card": {"on": {"OK": "#order.done"}}}},
+                 "done": {"type": "final"}}}
+
+blob = SyncInterpreter(create_machine(v1)).start().get_snapshot()      # written by v1
+
+try:
+    SyncInterpreter.from_snapshot(blob, create_machine(v2))            # default: refuse loudly
+except MachineVersionMismatchError as exc:
+    print(exc.found, "->", exc.expected)                                # 1.0 -> 2.0
+
+migrator = SnapshotMigrator()
+
+@migrator.register("1.0", "2.0")
+def rename_paying(blob: dict) -> dict:
+    blob["state_ids"] = ["order.payment.card" if s == "order.paying" else s for s in blob["state_ids"]]
+    blob["configuration"] = ["order", "order.payment", "order.payment.card"]
+    return blob
+
+order = SyncInterpreter.from_snapshot(blob, create_machine(v2), migrator=migrator)
+assert order.current_state_ids == {"order.payment.card"}
+```
+
+What happens on restore, in order: the **label** is compared (`on_version_mismatch`: `"error"` default · `"warn"` restores as-is · `"migrate"`, the default when a `migrator=` is given); a migration applies the shortest chain of registered steps (`1.0 → 2.0 → 3.0`) to a *copy* of the blob, rewrites `machine_version` and drops `machine_hash` — the structure changed by definition; then the **structural hash** is checked (unless migrated), the layout is upcast, and the blob is validated against *this* machine exactly like any other: every state id must exist (`StateNotFoundError`, never a silent skip), the configuration must be legal, `strict` and event schemas still apply to restored events. A missing hop is `NoMigrationPathError`. Child actors are restored with the same migrator and policy — steps can be scoped with `machine_id="kid"`.
+
+Blobs written before labels existed (0.10.x) restore with a warning — they cannot be checked; a chart that declares no `"version"` never mismatches.
+
+### Rolling out a new version
+
+- **Additive changes first.** A new state, a new event, a new context key with a default: the hash changes but no snapshot needs rewriting — pass `verify_machine_hash=False` for that deploy and bump the label with `on_version_mismatch="warn"`, or register a no-op step so the label is rewritten on the next save.
+- **Renames and moves need a step.** Write the upcaster against the *blob* (state ids, `configuration`, `context`), register it for the exact hop, and let `persisted(..., migrator=migrator)` re-save each instance at the new label the first time it is touched.
+- **Dual-read window.** Deploy readers that carry the migrator before writers that emit the new label; old readers refuse new blobs loudly rather than half-restoring them (see the [snapshots guide](../snapshots/#rolling-deploys-a-v4-blob-does-not-load-on-010x) for the layout-level version of the same rule).
+- **Find what is still stale.** `xsm snapshots --store sqlite:///app.db machine.json --stale` lists the keys whose `machine_version` differs from the chart's (`--json` for scripts) — the drain list for a deploy.
+
+> **Guarantees.** A snapshot is refused, never silently mis-restored, when its label or structure does not match — unless *you* said how to bridge the gap. Migration steps are your code; the library validates their output but cannot know your domain. Child-actor migration is best effort (each child is checked with its own machine; a child with no path fails the whole restore).
+
 ## Writing your own backend
 
 Subclass `BaseStore` and implement the `_load_raw` / `_save_raw` / `_delete_raw` / `_list_keys_raw` / `_lock_raw` primitives on raw strings; the base class applies key validation, the size cap and the codec around them so no backend can forget a rail. Then add your factory to `STORE_FACTORIES` in the contract test suite and run it — that *is* the definition of a conforming store.
