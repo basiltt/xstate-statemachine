@@ -56,7 +56,7 @@ format = [
 #    the matching single source of truth for tests and CI.
 pydantic      = ["pydantic>=2.5"]  # #266
 observability = []  # #273  opentelemetry-api>=1.20, prometheus-client>=0.17
-testing       = []  # #268  pytest>=8, hypothesis>=6.100
+testing       = ["pytest>=8", "hypothesis>=6.100"]  # #268
 redis         = ["redis>=5"]  # #306
 sqlalchemy    = []  # #284  sqlalchemy>=2.0
 starlette     = []  # #275  starlette>=0.27
@@ -79,6 +79,11 @@ eda           = []  # [celery,redis,kafka,rabbitmq,cloudevents,observability]
 all           = [  # every SHIPPED extra; grows as issues land
     "redis>=5",
     "pydantic>=2.5",
+<<<<<<< Updated upstream
+=======
+    "pytest>=8",
+    "hypothesis>=6.100",
+>>>>>>> Stashed changes
 ]
 
 [project.urls]
@@ -87,6 +92,11 @@ Homepage = "https://github.com/basiltt/xstate-statemachine"
 
 [project.scripts]
 xsm = "xstate_statemachine.cli.__main__:main"
+
+[project.entry-points.pytest11]
+# 🧪 #268: registered unconditionally (hatch has no conditional entry
+#    points); the plugin is a no-op without the xstate_machine marker.
+xstate_statemachine = "xstate_statemachine.contrib.testing.pytest_plugin"
 
 [dependency-groups]
 dev = [
