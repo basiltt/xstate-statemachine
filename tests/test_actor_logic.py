@@ -1,4 +1,4 @@
-# tests/test_actor_logic.py
+﻿# tests/test_actor_logic.py
 """#267: actor logic helpers on both engines -- from_callback (send_back
 from a thread, receive via sendTo, cleanup exactly once on exit / stop /
 error), from_async_iterator / from_iterator (stream, onDone with last,
@@ -115,12 +115,12 @@ class TestAsyncIterator(unittest.TestCase):
 
     def test_state_exit_acloses_the_generator(self) -> None:
         closed: List[bool] = []
-        started = asyncio.Event()
+        started: List[Any] = []  # holds the loop-bound Event (3.9-safe)
 
         async def chunks(i: Any, c: Any, e: Any):
             try:
                 yield "a"
-                started.set()
+                started[0].set()
                 while True:
                     await asyncio.sleep(0.01)
                     yield "b"
@@ -128,12 +128,13 @@ class TestAsyncIterator(unittest.TestCase):
                 closed.append(True)
 
         async def go() -> Any:
+            started.append(asyncio.Event())
             i = await Interpreter(
                 create_machine(
                     STREAM_CFG, logic=stream_logic(from_async_iterator(chunks))
                 )
             ).start()
-            await asyncio.wait_for(started.wait(), 5)
+            await asyncio.wait_for(started[0].wait(), 5)
             await i.send("STOP", wait=True)
             await asyncio.sleep(0.05)
             ids = set(i.current_state_ids)
