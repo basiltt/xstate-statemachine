@@ -1864,6 +1864,14 @@ The create → act → persist → discard contract (#259). Guide: [Persistence 
 | `aload_interpreter(...) -> (Interpreter, int)` | Async twin; the returned `Interpreter` is started. |
 | `save_interpreter(store, key, interpreter, *, expected_version=None) -> int` | `store.save` of `get_snapshot()` with `machine.version` and the engine's persisted deadlines. |
 | `validate_key(key)` / `MAX_KEY_LENGTH` (200) / `DEFAULT_MAX_SNAPSHOT_BYTES` (1 MiB) | The shared key and size rules. |
+| `persisted(store, key, machine, *, lock=OptimisticLock(), clock=None, plugins=(), create_if_missing=True)` **(#260)** | Context manager: yields a **started** `SyncInterpreter`; persists on clean exit with the strategy's fence; **an exception inside writes nothing**; stops the interpreter either way. Under `OptimisticLock` a concurrent write makes the exit raise `ConflictError` (the block cannot be re-run — the caller retries, or uses `persisted_retry`). |
+| `apersisted(...)` | Async twin; yields a started `Interpreter`. *store* may be sync (executor) or an `as_async()` adapter. |
+| `persisted_retry(store, key, machine, fn, *, lock=OptimisticLock(), **kw) -> T` | `lock.run(...)`: the retrying form. *fn(interp)* may run up to `retries + 1` times under `OptimisticLock`. |
+| `LockStrategy` (Protocol) | `run(store, key, machine, fn, *, clock, plugins, create_if_missing) -> T`; `acquire(store, key)` (CM held for a `persisted` block); `fence(version) -> Optional[int]` (the `expected_version` to save with). |
+| `OptimisticLock(*, retries=5, backoff=DEFAULT_BACKOFF, rng=None)` | load → act → `save(expected_version)` → on conflict reload + re-apply with jittered backoff (`RetryPolicy`); gives up with `ConflictError` carrying `.attempts`. Stateless; the shared default instance. |
+| `PessimisticLock(*, timeout=10.0)` | `with store.lock(key, timeout)` around load → act → save; `LockTimeoutError`; released on exception; saves **with** `expected_version` as a fence (an expired lock → `ConflictError`, never a lost update). |
+| `NoLock()` | Unconditional save; last writer wins. Single-writer-per-key only. |
+| `DEFAULT_BACKOFF` | `RetryPolicy(max_attempts=6, base_ms=2, factor=2, max_ms=100, jitter="full")`. |
 | `StoreError` → `ConflictError(key, expected, actual)`, `LockTimeoutError(key, timeout)`, `SnapshotTooLargeError(key, size, limit)`, `InvalidKeyError`, `KeyNotFoundError` | The store exception family; `except StoreError` covers the layer. |
 
 ---

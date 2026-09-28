@@ -111,6 +111,101 @@ with store.lock("order-1", timeout=1):
     t = threading.Thread(target=contender); t.start(); t.join()
 ```
 
+## `persisted()` — the safe pattern as a `with` block
+
+The retry loop above is what every handler ends up writing. `persisted()` writes it for you, with a **lock strategy** deciding how concurrent writers are coordinated:
+
+```python
+from xstate_statemachine import MachineLogic, create_machine
+from xstate_statemachine.persistence import MemoryStore, persisted
+
+cfg = {"id": "order", "initial": "cart", "context": {"items": 0},
+       "states": {"cart": {"on": {"ADD": {"actions": "add"}, "PAY": "paid"}},
+                  "paid": {"type": "final"}}}
+def add(i, ctx, e, a):
+    ctx["items"] += 1
+machine = create_machine(cfg, logic=MachineLogic(actions={"add": add}))
+store = MemoryStore()
+
+with persisted(store, "order:42", machine) as order:       # load (started)
+    order.send("ADD")                                        # act
+    order.send("ADD")
+# persist on clean exit; the interpreter is stopped (discarded)
+
+with persisted(store, "order:42", machine) as order:
+    assert order.context["items"] == 2
+    receipt = order.send("PAY", wait=True)
+    assert receipt.changed
+assert store.load("order:42").version == 2
+```
+
+Two rules make the block predictable:
+
+1. **An exception inside the block writes nothing.** The store is exactly as it was; the interpreter is stopped. Your `try`/`except` around the block *is* the transaction boundary.
+2. **A block cannot be re-run.** Under the default `OptimisticLock`, if another writer saved between your load and your exit, the exit raises `ConflictError` and *you* retry the whole block. When you want the library to retry for you, hand it a callable instead: `persisted_retry(store, key, machine, lambda i: i.send("ADD"))`.
+
+```python
+from xstate_statemachine import MachineLogic, create_machine
+from xstate_statemachine.persistence import ConflictError, MemoryStore, persisted, persisted_retry
+
+cfg = {"id": "c", "initial": "s", "context": {"n": 0},
+       "states": {"s": {"on": {"T": {"actions": "inc"}}}}}
+def inc(i, ctx, e, a):
+    ctx["n"] += 1
+machine = create_machine(cfg, logic=MachineLogic(actions={"inc": inc}))
+store = MemoryStore()
+
+with persisted(store, "k", machine):
+    pass                                   # create the record (version 1)
+
+try:
+    with persisted(store, "k", machine) as i:
+        persisted_retry(store, "k", machine, lambda x: x.send("T"))   # a concurrent writer
+        i.send("T")
+except ConflictError as exc:
+    print(f"conflict: expected v{exc.expected}, found v{exc.actual}")  # block's work discarded
+
+persisted_retry(store, "k", machine, lambda i: i.send("T"))            # retries until it wins
+with persisted(store, "k", machine) as i:
+    assert i.context["n"] == 2
+```
+
+For the async engine use `async with apersisted(store, key, machine) as interp:` — *store* may be a sync store (calls go through the executor) or an `as_async()` adapter.
+
+## Concurrency: choosing a lock
+
+| Strategy | What it does | Choose it when | Cost of a race |
+|:--|:--|:--|:--|
+| `OptimisticLock(retries=5, backoff=RetryPolicy(...))` **(default)** | load → act → `save(expected_version)`; on `ConflictError` reload and re-apply the callable, with jittered backoff. | Almost always. Short steps; contention is the exception. | One reload + re-run per conflict. **Actions may run up to `retries + 1` times** per logical send — keep side effects in services or an outbox (idempotency arrives with the inbox pattern). |
+| `PessimisticLock(timeout=10)` | `with store.lock(key)`: load → act → save. Other writers wait, then `LockTimeoutError`. Saves **with** `expected_version` as a fence, so on a store whose lock can expire (Redis) an expired lock yields `ConflictError`, never a lost update. | A step with a non-idempotent external side effect that must not be re-run; long steps where a retry would be wasteful. | Writers serialise; a slow holder delays everyone on that key (whole database on SQLite). |
+| `NoLock()` | load → act → save unconditionally. Last writer wins. | Exactly one writer per key by construction (one consumer per partition, a CLI). | A lost update, silently. Exists so the choice is explicit. |
+| Idempotency inbox (coming) | Dedupe by event id *before* the machine sees it. | Retried webhooks / at-least-once brokers. | Complements a lock; does not replace one. |
+
+Each `persisted()` block (and each call of the callable under `persisted_retry`) gets its **own** interpreter; the engine is never shared across threads.
+
+```python
+import threading
+from xstate_statemachine import MachineLogic, create_machine
+from xstate_statemachine.persistence import MemoryStore, OptimisticLock, PessimisticLock, persisted, persisted_retry
+
+cfg = {"id": "c", "initial": "s", "context": {"n": 0},
+       "states": {"s": {"on": {"T": {"actions": "inc"}}}}}
+def inc(i, ctx, e, a):
+    ctx["n"] += 1
+machine = create_machine(cfg, logic=MachineLogic(actions={"inc": inc}))
+
+for lock in (OptimisticLock(retries=100), PessimisticLock(timeout=30)):
+    store = MemoryStore()
+    def worker():
+        for _ in range(25):
+            persisted_retry(store, "k", machine, lambda i: i.send("T"), lock=lock)
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    with persisted(store, "k", machine, lock=lock) as i:
+        assert i.context["n"] == 200, type(lock).__name__     # no lost updates
+```
+
 ## Safety rails every store enforces
 
 - **Size cap.** `max_snapshot_bytes` (default 1 MiB) is checked on save *and* load — `SnapshotTooLargeError`. A record another writer poisoned cannot make a reader allocate unboundedly.

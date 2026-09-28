@@ -72,6 +72,15 @@ _LAZY = {
     "aload_interpreter": ".helpers",
     "save_interpreter": ".helpers",
     "KeyNotFoundError": ".helpers",
+    # 🔐 #260
+    "LockStrategy": ".locking",
+    "OptimisticLock": ".locking",
+    "PessimisticLock": ".locking",
+    "NoLock": ".locking",
+    "persisted": ".locking",
+    "apersisted": ".locking",
+    "persisted_retry": ".locking",
+    "DEFAULT_BACKOFF": ".locking",
 }
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -80,6 +89,16 @@ if TYPE_CHECKING:  # pragma: no cover
         aload_interpreter,
         load_interpreter,
         save_interpreter,
+    )
+    from .locking import (  # noqa: F401
+        DEFAULT_BACKOFF,
+        LockStrategy,
+        NoLock,
+        OptimisticLock,
+        PessimisticLock,
+        apersisted,
+        persisted,
+        persisted_retry,
     )
 
 
@@ -119,6 +138,15 @@ __all__ = [
     "load_interpreter",
     "aload_interpreter",
     "save_interpreter",
+    # 🔐 locking (#260)
+    "LockStrategy",
+    "OptimisticLock",
+    "PessimisticLock",
+    "NoLock",
+    "persisted",
+    "apersisted",
+    "persisted_retry",
+    "DEFAULT_BACKOFF",
     # envelope
     "check_identity",
     "check_minimum_version",

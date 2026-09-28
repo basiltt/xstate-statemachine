@@ -211,6 +211,12 @@ class SQLiteStore(BaseStore):
     def _tx(
         self, conn: sqlite3.Connection, *, immediate: bool = False
     ) -> Iterator[None]:
+        # 🔁 Inside a `lock()` block this thread's connection is ALREADY in
+        #    an IMMEDIATE transaction; nest into it (SQLite has no nested
+        #    BEGIN) and let the lock's exit commit.
+        if conn.in_transaction:
+            yield
+            return
         try:
             conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
         except sqlite3.OperationalError as exc:
@@ -358,16 +364,18 @@ class SQLiteStore(BaseStore):
 
     @contextlib.contextmanager
     def _db_lock(self, key: str, timeout: float) -> Iterator[None]:
-        """Pessimistic lock = a dedicated connection holding BEGIN IMMEDIATE.
+        """Pessimistic lock = this thread's connection holding BEGIN IMMEDIATE.
 
         Database-wide (SQLite has no row locks), which is the honest
         granularity; callers that need per-key concurrency use the
-        optimistic path. Uses its OWN connection so the caller's ordinary
-        reads/writes on the thread connection still work inside the lock.
+        optimistic path. Every `save` / `delete` this thread performs
+        inside the block joins the same transaction and is committed when
+        the block exits cleanly -- or rolled back if it raises, so a
+        failed step never half-writes.
         """
         if self._memory:
-            # A single shared connection cannot hold a lock against itself;
-            # fall back to a process lock.
+            # A single shared connection cannot be reasoned about per
+            # thread; a process lock gives the same exclusion.
             lk = self._init_lock
             if not lk.acquire(timeout=timeout):
                 raise LockTimeoutError(key, timeout)
@@ -376,7 +384,11 @@ class SQLiteStore(BaseStore):
             finally:
                 lk.release()
             return
-        conn = self._connect()
+        conn = self._conn()
+        if conn.in_transaction:
+            # Re-entrant use on the same thread: join the outer lock.
+            yield
+            return
         conn.execute(f"PRAGMA busy_timeout = {int(timeout * 1000)}")
         try:
             try:
@@ -387,11 +399,16 @@ class SQLiteStore(BaseStore):
                 raise
             try:
                 yield
-            finally:
+            except BaseException:
                 with contextlib.suppress(sqlite3.Error):
-                    conn.execute("COMMIT")
+                    conn.execute("ROLLBACK")
+                raise
+            else:
+                conn.execute("COMMIT")
         finally:
-            conn.close()
+            conn.execute(
+                f"PRAGMA busy_timeout = {int(self.busy_timeout * 1000)}"
+            )
 
     def health(self) -> Dict[str, Any]:
         try:

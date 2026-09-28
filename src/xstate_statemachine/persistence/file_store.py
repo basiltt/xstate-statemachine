@@ -28,6 +28,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import (
@@ -205,6 +206,10 @@ class FileStore(BaseStore):
         if os.name == "posix":
             with contextlib.suppress(OSError):
                 os.chmod(self.directory, 0o700)
+        #: 🔁 Keys this THREAD currently holds via `lock()`, so `save()`
+        #: inside a `with store.lock(key):` block does not deadlock on its
+        #: own lock (the OS primitive is not reentrant).
+        self._held = threading.local()
         #: Test seam: called with the temp path right before `os.replace`.
         #: A test raises from it to simulate a crash mid-write and asserts
         #: the previous record is intact (the review's "fault hook, not a
@@ -311,8 +316,10 @@ class FileStore(BaseStore):
     ) -> int:
         path = self._path(key)
         # 🔒 The read-compare-write must be one critical section across
-        #    processes, or two writers both pass the version check.
-        with self._lock_raw(key, timeout=10.0):
+        #    processes, or two writers both pass the version check. If this
+        #    thread already holds the key (a `PessimisticLock` block), reuse
+        #    it -- the OS lock is not reentrant.
+        with self._maybe_lock(key, timeout=10.0):
             rec = self._read(path)
             current = int(rec["version"]) if rec else 0
             if expected_version is not None and expected_version != current:
@@ -366,6 +373,17 @@ class FileStore(BaseStore):
     def _lock_raw(self, key: str, timeout: float) -> ContextManager[None]:
         return self._file_lock(self._lock_path(key), key, timeout)
 
+    def _holds(self, key: str) -> bool:
+        return key in getattr(self._held, "keys", ())
+
+    @contextlib.contextmanager
+    def _maybe_lock(self, key: str, timeout: float) -> Iterator[None]:
+        if self._holds(key):
+            yield
+            return
+        with self._lock_raw(key, timeout):
+            yield
+
     @contextlib.contextmanager
     def _file_lock(
         self, lock_path: Path, key: str, timeout: float
@@ -383,6 +401,10 @@ class FileStore(BaseStore):
                         key, timeout, holder=self._holder_info(lock_path)
                     )
                 time.sleep(0.01)
+            held = getattr(self._held, "keys", None)
+            if held is None:
+                held = self._held.keys = set()
+            held.add(key)
             # Record ownership for stale-lock diagnosis. The OS lock covers
             # byte 0 only; the info lives from byte 1 so a WAITER can still
             # read it (msvcrt.locking blocks reads of the locked byte).
@@ -395,6 +417,7 @@ class FileStore(BaseStore):
             try:
                 yield
             finally:
+                held.discard(key)
                 _unlock(fd)
         finally:
             os.close(fd)
