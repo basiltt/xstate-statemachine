@@ -176,10 +176,10 @@ For the async engine use `async with apersisted(store, key, machine) as interp:`
 
 | Strategy | What it does | Choose it when | Cost of a race |
 |:--|:--|:--|:--|
-| `OptimisticLock(retries=5, backoff=RetryPolicy(...))` **(default)** | load → act → `save(expected_version)`; on `ConflictError` reload and re-apply the callable, with jittered backoff. | Almost always. Short steps; contention is the exception. | One reload + re-run per conflict. **Actions may run up to `retries + 1` times** per logical send — keep side effects in services or an outbox (idempotency arrives with the inbox pattern). |
+| `OptimisticLock(retries=5, backoff=RetryPolicy(...))` **(default)** | load → act → `save(expected_version)`; on `ConflictError` reload and re-apply the callable, with jittered backoff. | Almost always. Short steps; contention is the exception. | One reload + re-run per conflict. **Actions may run up to `retries + 1` times** per logical send — keep side effects in services or an outbox (or dedupe them with the [inbox](#idempotency-the-inbox)). |
 | `PessimisticLock(timeout=10)` | `with store.lock(key)`: load → act → save. Other writers wait, then `LockTimeoutError`. Saves **with** `expected_version` as a fence, so on a store whose lock can expire (Redis) an expired lock yields `ConflictError`, never a lost update. | A step with a non-idempotent external side effect that must not be re-run; long steps where a retry would be wasteful. | Writers serialise; a slow holder delays everyone on that key (whole database on SQLite). |
 | `NoLock()` | load → act → save unconditionally. Last writer wins. | Exactly one writer per key by construction (one consumer per partition, a CLI). | A lost update, silently. Exists so the choice is explicit. |
-| Idempotency inbox (coming) | Dedupe by event id *before* the machine sees it. | Retried webhooks / at-least-once brokers. | Complements a lock; does not replace one. |
+| [`IdempotencyPlugin`](#idempotency-the-inbox) | Dedupe by event id *before* the machine sees it; a redelivery gets the original receipt. | Retried webhooks / at-least-once brokers. | Complements a lock; does not replace one. |
 
 Each `persisted()` block (and each call of the callable under `persisted_retry`) gets its **own** interpreter; the engine is never shared across threads.
 
@@ -242,6 +242,96 @@ async def main():
         assert (await astore.list_keys(prefix="m-")) == ["m-1"]
 
 asyncio.run(main())
+```
+
+## Idempotency: the inbox
+
+Every broker, webhook provider (Stripe, GitHub, Twilio) and retrying HTTP client delivers **at least once**. Duplicate deliveries double-credit wallets and double-ship orders. The fix is deduplication at the consumer keyed by a stable event id — the *inbox* pattern — and `IdempotencyPlugin` makes it an attachable plugin: duplicates are answered from the inbox **before the machine sees them**, with the *same* receipt the first delivery got.
+
+```python
+from xstate_statemachine import MachineLogic, SyncInterpreter, create_machine, receipt_to_status
+from xstate_statemachine.persistence import IdempotencyPlugin, MemoryInbox
+
+# A Stripe-shaped webhook consumer: `event.id` ("evt_…") is the natural key.
+cfg = {"id": "wallet", "initial": "open", "context": {"balance": 0},
+       "states": {"open": {"on": {"payment_intent.succeeded": {"actions": "credit"}}}}}
+def credit(i, ctx, e, a):
+    ctx["balance"] += e.payload["amount"]
+machine = create_machine(cfg, logic=MachineLogic(actions={"credit": credit}))
+
+inbox = MemoryInbox()                                  # or SQLiteInbox(store)
+plugin = IdempotencyPlugin(
+    inbox,
+    principal=lambda e: e.payload["account"],          # X0.2: scope by tenant, always
+    key=lambda e: e.payload.get("id"),                 # Stripe's event id
+)
+wallet = SyncInterpreter(machine).use(plugin).start()
+
+def webhook(body: dict) -> int:
+    receipt = wallet.send(body["type"], wait=True, **body)
+    return receipt_to_status(receipt)
+
+first = {"type": "payment_intent.succeeded", "id": "evt_1", "account": "acct_A", "amount": 500}
+assert webhook(first) == 200 and wallet.context["balance"] == 500
+assert webhook(first) == 200 and wallet.context["balance"] == 500     # redelivery: same answer, credited once
+assert webhook({**first, "amount": 999}) == 422                        # same id, different payload: refused
+assert webhook({**first, "account": "acct_B"}) == 200                  # another tenant's evt_1 is a new event
+assert wallet.context["balance"] == 1000
+```
+
+What the plugin does, on both engines:
+
+| Situation | Outcome |
+|:--|:--|
+| Key unseen | The key is **claimed** (atomically — first delivery wins across workers), the event enters the machine, and after its macrostep the real `Receipt` is **marked** in the inbox. |
+| Key seen, same fingerprint, receipt stored | The send is short-circuited with the **original** receipt, `duplicate=True`. `receipt_to_status` → the original status. |
+| Key seen, **different** fingerprint | Refused: `receipt.error` is `IdempotencyMismatchError`, status **422**. Keys must not be reused with a different payload. |
+| Key seen, first delivery still in flight | Refused: `IdempotencyInFlightError`, status **409** — the client retries shortly. |
+| Delivery failed before it took effect | The claim is released so a retry is admitted. |
+| No key on the event | Not deduplicated. |
+
+A refusal is a **receipt, not an exception**: plugin hooks are contained (a raising hook would admit the event), so the plugin answers with a receipt whose `error` says why. Use `send(wait=True)` at an ingress and read `receipt.error` / `receipt_to_status`.
+
+**Scope** is `principal / machine id / instance key` — never just the actor id. `principal` is required: two tenants reusing `evt_1` must not collide, and a tenant must not be able to replay another's outcome. The instance key defaults to the store key `persisted()` loaded the machine under.
+
+**Fingerprint** is `sha256(event type + canonical JSON payload minus the key field)`, so a reused key with a different body is detectable. Keys are ≤ 255 printable ASCII characters.
+
+**TTL** defaults to 7 days (Stripe's window); `inbox.purge_expired()` reclaims space; `inbox.forget(scope)` erases a tenant.
+
+### Guarantees — at-least-once + inbox, never exactly-once
+
+> **What you get:** a duplicate delivery is answered without the machine processing it again, and the answer is the one the first delivery produced. **What you do not get:** exactly-once side effects. The inbox covers the *state transition*; an action that calls an external API is still an action that ran once per admitted event. Put side effects in services, or behind an outbox.
+
+Crash consistency (X0.3) — the mark must be visible *iff* the snapshot containing the effect is:
+
+1. **Shared backend.** When the inbox and the state store share a database (`SQLiteInbox(store)` on the same `SQLiteStore`), `persisted()` buffers the mark and writes it right after the snapshot save — inside the same `BEGIN IMMEDIATE` transaction under `PessimisticLock`, so they commit or roll back together.
+2. **Separate backends.** Save, then mark. The window between them is covered by a bounded ring of the last 64 processed keys that travels **inside the snapshot** (`context["__xsm_processed_ids__"]`): a redelivery that finds the key *in flight* in the inbox but *processed* in the snapshot is the crash window, and is answered as a duplicate and the inbox repaired.
+
+Three fault-injection tests pin this: crash before save (no mark, retry is a first delivery), crash between save and mark (caught by the ring), crash after mark (plain duplicate).
+
+```python
+from xstate_statemachine import MachineLogic, create_machine
+from xstate_statemachine.persistence import IdempotencyPlugin, SQLiteInbox, SQLiteStore, persisted
+import tempfile, pathlib
+
+cfg = {"id": "wallet", "initial": "open", "context": {"balance": 0},
+       "states": {"open": {"on": {"CREDIT": {"actions": "credit"}}}}}
+def credit(i, ctx, e, a):
+    ctx["balance"] += e.payload["amount"]
+machine = create_machine(cfg, logic=MachineLogic(actions={"credit": credit}))
+
+db = pathlib.Path(tempfile.mkdtemp()) / "app.db"
+store = SQLiteStore(db)
+inbox = SQLiteInbox(store)                       # shares the file AND the transaction
+dedupe = IdempotencyPlugin(inbox, principal=lambda e: "acct_A")
+
+for _ in range(3):                               # the same webhook, delivered three times
+    with persisted(store, "wallet:acct_A", machine, plugins=[dedupe]) as w:
+        w.send("CREDIT", idempotency_key="evt_1", amount=500)
+
+with persisted(store, "wallet:acct_A", machine, plugins=[dedupe]) as w:
+    assert w.context["balance"] == 500           # credited exactly once
+store.close()
 ```
 
 ## Writing your own backend

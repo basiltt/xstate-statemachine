@@ -15,6 +15,24 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Added
 
+- **`persistence.IdempotencyPlugin` + `InboxStore` (`MemoryInbox`,
+  `SQLiteInbox`)** (#261; both engines). At-least-once deduplication as a
+  plugin: an unseen idempotency key is claimed atomically, a redelivery is
+  answered from the inbox with the **original** receipt (`duplicate=True`)
+  before the machine sees it, a reused key with a different payload is
+  refused (`IdempotencyMismatchError` → 422) and an in-flight key answers
+  409 -- refusals are receipts, not exceptions. Scope is
+  `principal / machine / instance` (X0.2; `principal` is required);
+  fingerprint = sha256 of type + canonical payload minus the key; TTL 7
+  days; keys ≤ 255 printable ASCII. Crash-consistent with `persisted()`
+  (X0.3): marks are buffered and written after the snapshot save (inside
+  the same SQLite transaction when `SQLiteInbox(store)` shares the store),
+  and a 64-key `processed_ids` ring inside the snapshot covers the
+  save→mark window -- three fault-injection tests. `interpreter.store_key`
+  (new attribute) records the key `persisted()` / `load_interpreter()`
+  loaded a machine under. `receipt_to_status` gains 422 and
+  `STATUS_UNPROCESSABLE`. Docs: "Idempotency: the inbox" with a
+  Stripe-shaped example and the at-least-once + inbox guarantees box.
 - **`persistence.persisted()` / `apersisted()` / `persisted_retry()` and
   lock strategies `OptimisticLock` / `PessimisticLock` / `NoLock`** (#260).
   `with persisted(store, key, machine) as order: order.send("PAY")` is

@@ -81,6 +81,17 @@ _LAZY = {
     "apersisted": ".locking",
     "persisted_retry": ".locking",
     "DEFAULT_BACKOFF": ".locking",
+    # 📥 #261
+    "IdempotencyPlugin": ".idempotency",
+    "InboxStore": ".idempotency",
+    "InboxEntry": ".idempotency",
+    "MemoryInbox": ".idempotency",
+    "SQLiteInbox": ".idempotency",
+    "IdempotencyMismatchError": ".idempotency",
+    "IdempotencyInFlightError": ".idempotency",
+    "default_key": ".idempotency",
+    "fingerprint": ".idempotency",
+    "DEFAULT_TTL_S": ".idempotency",
 }
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -89,6 +100,18 @@ if TYPE_CHECKING:  # pragma: no cover
         aload_interpreter,
         load_interpreter,
         save_interpreter,
+    )
+    from .idempotency import (  # noqa: F401
+        DEFAULT_TTL_S,
+        IdempotencyInFlightError,
+        IdempotencyMismatchError,
+        IdempotencyPlugin,
+        InboxEntry,
+        InboxStore,
+        MemoryInbox,
+        SQLiteInbox,
+        default_key,
+        fingerprint,
     )
     from .locking import (  # noqa: F401
         DEFAULT_BACKOFF,
@@ -147,6 +170,17 @@ __all__ = [
     "apersisted",
     "persisted_retry",
     "DEFAULT_BACKOFF",
+    # 📥 idempotency (#261)
+    "IdempotencyPlugin",
+    "InboxStore",
+    "InboxEntry",
+    "MemoryInbox",
+    "SQLiteInbox",
+    "IdempotencyMismatchError",
+    "IdempotencyInFlightError",
+    "default_key",
+    "fingerprint",
+    "DEFAULT_TTL_S",
     # envelope
     "check_identity",
     "check_minimum_version",
