@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import contextlib
 import functools
 from typing import (
@@ -77,21 +78,33 @@ class AsyncStateStore(Protocol):
 
 
 class AsyncStoreAdapter:
-    """Wraps a synchronous `StateStore`; each call runs in the executor.
+    """Wraps a synchronous `StateStore`; every call runs on ONE worker thread.
 
-    `lock()` acquires in a worker thread and RELEASES in the same worker
-    thread (file / SQLite locks are thread-affine), by driving the sync
-    context manager's ``__enter__`` / ``__exit__`` from one dedicated
-    executor job each -- so the awaiting task may hop threads freely.
+    🧵 One dedicated single-thread executor per adapter, not the default
+    pool: file and SQLite locks (and SQLite connections) are thread-affine,
+    so a `lock()` acquired on worker A and a `save()` that lands on worker
+    B would deadlock or bypass the lock. Funnelling every call through the
+    same thread makes `async with adapter.lock(key): await adapter.save()`
+    correct by construction. Calls are serialised per adapter -- the right
+    trade for local stores; a native async backend (Redis #306) does not
+    go through this class.
     """
 
     def __init__(self, store: StateStore) -> None:
         self.sync_store = store
+        self._pool: Optional[concurrent.futures.ThreadPoolExecutor] = None
+
+    def _executor(self) -> concurrent.futures.ThreadPoolExecutor:
+        if self._pool is None:
+            self._pool = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="xsm-store"
+            )
+        return self._pool
 
     async def _run(self, fn: Any, *a: Any, **kw: Any) -> Any:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None, functools.partial(fn, *a, **kw)
+            self._executor(), functools.partial(fn, *a, **kw)
         )
 
     async def load(self, key: str) -> Optional[StoredSnapshot]:
@@ -135,25 +148,24 @@ class AsyncStoreAdapter:
 
     @contextlib.asynccontextmanager
     async def _alock(self, key: str, timeout: float) -> AsyncIterator[None]:
-        import concurrent.futures
-
-        # 🧵 A single-thread executor so enter and exit happen on the SAME
-        #    OS thread -- required by fcntl/msvcrt locks and by SQLite
-        #    connections, neither of which may be released from elsewhere.
-        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        loop = asyncio.get_running_loop()
         cm = self.sync_store.lock(key, timeout=timeout)
+        await self._run(cm.__enter__)
         try:
-            await loop.run_in_executor(pool, cm.__enter__)
-            try:
-                yield
-            finally:
-                await loop.run_in_executor(pool, cm.__exit__, None, None, None)
-        finally:
-            pool.shutdown(wait=True)
+            yield
+        except BaseException as exc:
+            await self._run(cm.__exit__, type(exc), exc, exc.__traceback__)
+            raise
+        else:
+            await self._run(cm.__exit__, None, None, None)
 
     async def health(self) -> Dict[str, Any]:
         return await self._run(self.sync_store.health)
+
+    def close(self) -> None:
+        """Shut the worker thread down (idempotent)."""
+        if self._pool is not None:
+            self._pool.shutdown(wait=True)
+            self._pool = None
 
 
 def as_async(store: StateStore) -> AsyncStateStore:

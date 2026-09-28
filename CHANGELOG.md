@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`persistence.persisted()` / `apersisted()` / `persisted_retry()` and
+  lock strategies `OptimisticLock` / `PessimisticLock` / `NoLock`** (#260).
+  `with persisted(store, key, machine) as order: order.send("PAY")` is
+  create → act → persist → discard with a started interpreter, persisting
+  on clean exit and **writing nothing if the block raises**. A block
+  cannot be re-run, so under the default `OptimisticLock` a concurrent
+  write raises `ConflictError` at exit and the caller retries;
+  `persisted_retry(fn)` / `lock.run(fn)` is the retrying form (guarantee:
+  *fn* and its actions may run up to `retries + 1` times per logical send
+  -- keep side effects in services or an outbox). `PessimisticLock` holds
+  `store.lock()` for the block and still saves with `expected_version` as
+  a fence. `SQLiteStore.lock()` is now the thread's own `BEGIN IMMEDIATE`
+  transaction (saves inside the block join it and commit together);
+  `FileStore.save()` inside its own `lock()` no longer self-deadlocks;
+  `as_async()` funnels every call through one worker thread so
+  `async with adapter.lock(): await adapter.save()` is correct by
+  construction. Docs: "persisted()" and "Concurrency: choosing a lock"
+  sections with the decision table.
 - **`persistence` stores: `StateStore` protocol + `MemoryStore` /
   `FileStore` / `SQLiteStore`, `load_interpreter` / `aload_interpreter` /
   `save_interpreter`, `as_async()`** (#259; zero-dependency). The
