@@ -16,6 +16,7 @@ from src.xstate_statemachine import (
     SimulatedClock,
     SyncInterpreter,
     create_machine,
+    wait_for,
 )
 from src.xstate_statemachine.patterns import (
     DeadLetterPlugin,
@@ -244,9 +245,20 @@ class TestRetryLoopAsync(unittest.TestCase):
             store = DeadLetterStore()
             i = Interpreter(m, clock=clk).use(DeadLetterPlugin(store))
             await i.start()
-            for _ in range(5):
+            # 📝 Each round: let the invoked service task fail and its
+            #    `error.platform` land (`retrying` entered, timer armed),
+            #    THEN advance virtual time so the timer fires. A bare
+            #    `sleep(0)` was not enough on slower CI runners.
+            for _ in range(6):
+                await wait_for(
+                    i,
+                    lambda x: x.matches("job.retrying")
+                    or x.status != "running",
+                    timeout=5,
+                )
+                if i.status != "running":
+                    break
                 await clk.increment(100_000)
-                await asyncio.sleep(0)
             ids = set(i.current_state_ids)
             await i.stop()
             return ids, calls, store
