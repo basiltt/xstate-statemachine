@@ -549,6 +549,11 @@ sketch
 [Ll]ib64
 [Ll]ocal
 [Ss]cripts
+# 📝 The venv rule above would swallow the repo's own verification scripts
+#    (scripts/verify/<issue>.py, committed per the integrations programme).
+!/scripts/
+!/scripts/verify/
+!/scripts/verify/*.py
 pyvenv.cfg
 pip-selfcheck.json
 

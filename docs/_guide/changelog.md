@@ -15,6 +15,31 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Added
 
+- **`xstate_statemachine.patterns`: `RetryPolicy`, `DeadLetterPlugin`,
+  `CircuitBreaker`** (#265; zero-dependency; both engines). Guide page
+  *Resilience Patterns*.
+  - `RetryPolicy(max_attempts, base_ms, factor, max_ms, jitter, rng)`:
+    AWS-style `none` / `full` / `equal` / `decorrelated` jitter, capped,
+    deterministic with an injected `rng`. `policy.logic()` yields
+    `retryDelay` (named delay), `retryCanRetry`, `retryBump`, `retryReset`
+    so the documented four-state retry chart works verbatim.
+  - `DeadLetterPlugin(sink)`: on entry to a state tagged `dead-letter`
+    (or in `state_ids`) emits one `DeadLetter` -- event, attempts, the
+    **error chain** from `on_service_error` / `on_action_error`, and a
+    snapshot -- **redacted** before it reaches the sink (#303).
+    `DeadLetterStore` in-memory sink with `purge_older_than()`.
+  - `CircuitBreaker` / `@circuit_breaker`: Nygard's breaker *as a
+    statechart* (`CIRCUIT_BREAKER_CONFIG`, renderable by `xsm inspect`) on
+    a lock-guarded `SyncInterpreter`; `call` / `acall`; fast
+    `CircuitOpenError` when open; half-open admits exactly
+    `half_open_max_calls` probes under a 32-thread hammer; cooldown on the
+    injected clock.
+  - `MachineLogic.merge(*others)` returns a new combined logic (later wins;
+    nothing mutated).
+  - Both engines now fire `on_event_processed` with the step **settled**,
+    so a plugin may call `get_persisted_snapshot()` from it (the sync engine
+    previously still reported mid-step there). `on_transition` remains
+    mid-step and still refuses a snapshot.
 - **Global plugin registry, `context_validator` seam, `__xstate_event__`
   adapter, `SyncInterpreter.send_threadsafe()`** (#305 part 2; both
   engines).

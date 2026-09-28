@@ -2392,6 +2392,32 @@ assert interp.send("GO", wait=True).changed and ran == ["log"]
 
 ---
 
+## `xstate_statemachine.patterns` **[0.11.0]**
+
+Resilience building blocks, each a small statechart (#265). Zero-dependency, both engines. Guide: [Resilience Patterns](../guide/patterns/).
+
+```python
+from xstate_statemachine.patterns import RetryPolicy, DeadLetterPlugin, CircuitBreaker
+```
+
+| Member | Description |
+|--------|-------------|
+| `RetryPolicy(max_attempts=5, base_ms=200, factor=2.0, max_ms=30_000, jitter="full", rng=random.random)` | Frozen dataclass. `delay_ms(attempt, *, previous_ms=None)` — delay after the 1-based failed *attempt*, per the AWS `none` / `full` / `equal` / `decorrelated` jitter formulas, capped at `max_ms`. `exponential_ms(attempt)` is the un-jittered value. `as_delay(attempt_key)` / `guard_can_retry()` / `action_bump()` / `action_reset()` are the individual logic pieces; `logic(prefix="retry", attempt_key="attempt")` bundles them as a `MachineLogic` with `{prefix}Delay` (named delay), `{prefix}CanRetry` (guard), `{prefix}Bump` / `{prefix}Reset` (actions). Invalid arguments raise `ValueError`. |
+| `DeadLetterPlugin(sink, *, state_ids=(), attempt_key="attempt", redact_keys=DEFAULT_REDACT_KEYS, include_snapshot=True)` | `PluginBase` that emits a `DeadLetter` to `sink(record)` when the machine enters a state tagged `"dead-letter"` (or one of `state_ids`). Collects the error chain from `on_service_error` / `on_action_error` (cleared by a `done.invoke`), writes the record from `on_event_processed` once the step has settled, and passes it through `redact()` first. |
+| `DeadLetter` | Frozen dataclass: `machine_id`, `state_id`, `event` (`{type, payload}`, redacted), `attempts`, `errors` (list of `{source, name, type, message}` strings), `snapshot` (redacted persisted snapshot or `{}`), `taken_at` (epoch seconds). `to_dict()` / `to_json()`. |
+| `DeadLetterStore()` | Thread-safe in-memory sink: callable, `all()`, `len()`, `purge_older_than(cutoff_wall)`, `clear()`. |
+| `DEAD_LETTER_TAG` | `"dead-letter"`. |
+| `CircuitBreaker(*, failure_threshold=5, cooldown_ms=30_000, half_open_max_calls=1, clock=None, plugins=(), name=None, exceptions=(Exception,))` | Nygard's breaker run as `CIRCUIT_BREAKER_CONFIG` on a `SyncInterpreter` behind an `RLock`. `call(fn, *a, **kw)` / `await acall(fn, *a, **kw)` admit-or-raise `CircuitOpenError` (target **not** invoked), then record the outcome; `state` (ticks the clock first) / `failures` / `opened_count` / `interpreter`; `reset()`; `close()`. Half-open admits exactly `half_open_max_calls` probes across any number of threads. |
+| `circuit_breaker(**kw)` | Decorator; one breaker per function (sync or `async def`), exposed as `fn.breaker`. |
+| `CircuitOpenError(name, state)` | `XStateMachineError`; `.breaker`, `.state`. |
+| `CIRCUIT_BREAKER_CONFIG` / `circuit_breaker_logic(cooldown_ms)` | The chart (`closed` → `open` → `half_open`; one `cooldown` named delay; `version: "1"`) and the `MachineLogic` it needs. |
+
+### `MachineLogic.merge(*others) -> MachineLogic` **[0.11.0]**
+
+Returns a **new** `MachineLogic` combining the receiver with `others` (later wins on a name clash; nothing is mutated). The way a pattern's logic joins yours: `policy.logic().merge(MachineLogic(services={"work": work}))`.
+
+---
+
 ## Receipt Codec **[0.11.0]**
 
 `xstate_statemachine.receipts` — one JSON shape and one HTTP-status mapping for a `Receipt`, in core (#305), so every web adapter (Django, Flask, Starlette, …) returns the same response and the idempotency inbox (#261) can cache a receipt in a defined form. The three functions are also exported from the top-level package.

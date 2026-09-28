@@ -316,6 +316,29 @@ class MachineLogic(Generic[TContext]):
             )
 
     # -------------------------------------------------------------------------
+    # 🧩 Composition
+    # -------------------------------------------------------------------------
+    def merge(self, *others: "MachineLogic[Any]") -> "MachineLogic[Any]":
+        """Return a NEW `MachineLogic` combining this one with *others*.
+
+        Later arguments win on a name clash (``dict.update`` order), so
+        ``policy.logic().merge(my_logic)`` lets the caller override a
+        pattern's default names. Neither operand is mutated (#265).
+        """
+        actions: Dict[str, Any] = dict(self.actions)
+        guards: Dict[str, Any] = dict(self.guards)
+        services: Dict[str, Any] = dict(self.services)
+        delays: Dict[str, Any] = dict(self.delays)
+        for other in others:
+            actions.update(getattr(other, "actions", {}) or {})
+            guards.update(getattr(other, "guards", {}) or {})
+            services.update(getattr(other, "services", {}) or {})
+            delays.update(getattr(other, "delays", {}) or {})
+        return MachineLogic(
+            actions=actions, guards=guards, services=services, delays=delays
+        )
+
+    # -------------------------------------------------------------------------
     # 🧬 Subclass Method Discovery
     # -------------------------------------------------------------------------
     def _register_subclass_methods(self) -> None:
@@ -356,6 +379,12 @@ class MachineLogic(Generic[TContext]):
         ):
             # 🚫 Skip dunders, private helpers, and our own machinery.
             if name.startswith("_"):
+                continue
+            # 🚫 #265: skip the base class's own public API (`merge`, and
+            #    whatever joins it later) -- only methods the SUBCLASS added
+            #    are user logic. Compared by identity against the base
+            #    attribute, so an override in the subclass IS considered.
+            if getattr(MachineLogic, name, None) is member:
                 continue
             bound = getattr(self, name)
 

@@ -152,6 +152,7 @@
         <div class="sidebar-section">
           <h3 class="sidebar-heading">Integrations</h3>
           <a href="{{ '/guide/integrations/' | relative_url }}" class="sidebar-link">Overview &amp; extras</a>
+          <a href="{{ '/guide/patterns/' | relative_url }}" class="sidebar-link">Resilience Patterns</a>
         </div>
         <div class="sidebar-section">
           <h3 class="sidebar-heading">Reference</h3>
@@ -211,7 +212,7 @@
         </div>
 
         <!-- Previous / Next Navigation -->
-        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,reliability,diagrams,examples,cli,cli-templates,cli-hierarchy,integrations,production-characteristics,troubleshooting,faq,changelog" | split: "," %}
+        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,reliability,diagrams,examples,cli,cli-templates,cli-hierarchy,integrations,patterns,production-characteristics,troubleshooting,faq,changelog" | split: "," %}
         {% assign current_name = page.url | remove: "/guide/" | remove: "/" %}
         {% assign prev_page = nil %}
         {% assign next_page = nil %}
