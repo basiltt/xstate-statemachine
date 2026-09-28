@@ -38,7 +38,7 @@ except MissingExtraError as exc:
 | `testing` | pytest fixtures, path generation, state/transition **coverage**, Hypothesis model-based testing generated from the chart, a fake broker | planned — [#268](https://github.com/basiltt/xstate-statemachine/issues/268) |
 | `redis` | Shared snapshot store, inbox and log for multi-worker deployments | **shipped** — [guide](../integration-redis/) · [#306](https://github.com/basiltt/xstate-statemachine/issues/306) |
 | `sqlalchemy` | `StatechartType`, mixin with optimistic locking, transactional outbox, stores for sync and `AsyncSession` | planned — [#284](https://github.com/basiltt/xstate-statemachine/issues/284) |
-| `starlette` | Store-backed registry, `Receipt → HTTP` mapping, SSE / WebSocket transition streaming | planned — [#275](https://github.com/basiltt/xstate-statemachine/issues/275) |
+| `starlette` | Store-backed registry, `Receipt → HTTP` mapping, SSE / WebSocket transition streaming | **shipped** — [guide](../integration-starlette/) · [#275](https://github.com/basiltt/xstate-statemachine/issues/275) |
 | `fastapi` | `Depends(get_interpreter)`, `StatechartRouter` with OpenAPI generated from the chart | planned — [#276](https://github.com/basiltt/xstate-statemachine/issues/276) |
 | `litestar` | `XStatePlugin`, `Provide()` dependency, statechart controller | planned — [#278](https://github.com/basiltt/xstate-statemachine/issues/278) |
 | `flask` | `XState` extension (`init_app`), blueprint per machine, session-keyed wizards | planned — [#285](https://github.com/basiltt/xstate-statemachine/issues/285) |

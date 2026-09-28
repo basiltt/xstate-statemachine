@@ -59,7 +59,7 @@ observability = []  # #273  opentelemetry-api>=1.20, prometheus-client>=0.17
 testing       = []  # #268  pytest>=8, hypothesis>=6.100
 redis         = ["redis>=5"]  # #306
 sqlalchemy    = []  # #284  sqlalchemy>=2.0
-starlette     = []  # #275  starlette>=0.27
+starlette     = ["starlette>=0.27"]  # #275
 fastapi       = []  # #276  fastapi>=0.100 + [pydantic,starlette]
 litestar      = []  # #278  litestar>=2.0
 flask         = []  # #285  flask>=2.3
@@ -79,6 +79,7 @@ eda           = []  # [celery,redis,kafka,rabbitmq,cloudevents,observability]
 all           = [  # every SHIPPED extra; grows as issues land
     "redis>=5",
     "pydantic>=2.5",
+    "starlette>=0.27",
 ]
 
 [project.urls]

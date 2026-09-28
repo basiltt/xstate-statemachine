@@ -120,6 +120,12 @@
     "description": "Trust model — installed packages and the machine definition are trusted, events and snapshots are not; the X0 baseline (#303) mapped to the test or CI job that enforces each item; principal, redact, codec, pip-audit."
   },
   {
+    "title": "Starlette",
+    "section": "Integrations",
+    "url": "/guide/integration-starlette/",
+    "description": "[starlette] extra — StatechartRegistry (create → act → persist → discard), Receipt → HTTP status, RFC 9457 problems, Idempotency-Key, SSE and WebSocket transition streams, residents, lifespan timer scanner, health/ready probes."
+  },
+  {
     "description": "Generate diagrams from machines — Mermaid, PlantUML, ASCII format, statechart visualization.",
     "section": "Advanced",
     "title": "Diagram Export",

@@ -198,6 +198,7 @@ class TestIntegrationsSection(unittest.TestCase):
     INTEGRATION_PAGES: tuple = (
         "integration-redis",  # #306
         "integration-pydantic",  # #266
+        "integration-starlette",  # #275
     )
 
     def test_overview_page_exists_and_is_in_nav(self) -> None:

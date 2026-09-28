@@ -209,6 +209,8 @@ jobs:
           # 🟥 #306: the [redis] cell runs its contract suites against an
           #    in-process fakeredis (Lua enabled); no service container.
           if [ "${{ matrix.extra }}" = "redis" ]; then python -m pip install "fakeredis[lua]>=2.20"; fi
+          # 🌐 #275: starlette.testclient and the ASGI streaming tests need httpx.
+          if [ "${{ matrix.extra }}" = "starlette" ]; then python -m pip install "httpx>=0.24"; fi
           python -m pip list
 
       - name: 🧪 Run this extra's tests

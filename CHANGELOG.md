@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Web framework integrations (Phase C).**
+  - **`[starlette]` extra (#275).** `StatechartRegistry` runs named
+    machines over any `StateStore` / `AsyncStateStore` with the honest
+    multi-worker model -- **create → act → persist → discard**:
+    `async with registry.act(name, key)` builds one async `Interpreter`
+    via `apersisted`, saves with `expected_version`, and publishes each
+    changed receipt to this process's SSE/WebSocket subscribers only after
+    the save commits. `register(authorize=)` is **required** (closed by
+    default; `allow_all` logs a one-time WARNING); responses carry state
+    only unless a `context_serializer=` is given. `receipt_to_status` /
+    `ReceiptResponse` map `Receipt` to HTTP (denied 409, deferred 202,
+    duplicate 200, error 500), `problem()` emits RFC 9457
+    `application/problem+json` without exception text, and
+    `status_for_exception` maps strict-mode 422, drift/version 409 (with a
+    `machine_version` hint), conflict/lock 409 and missing key 404.
+    `send_event()` honours `Idempotency-Key` through the principal-scoped
+    `IdempotencyPlugin` (reused body → 422, in flight → 409), accepts only
+    size-capped `application/json` (415 / 413). `transition_stream()`
+    (SSE) and `websocket_endpoint()` stream a snapshot on connect and one
+    `transition` per committed change with a monotonically increasing
+    sequence, 15 s heartbeats, `Origin`/`Host` checks and
+    `max_connections_per_key`. Opt-in `resident()` actors are LRU/TTL
+    bounded; `lifespan` runs `DueTimerScanner` when `run_timers=True` and
+    drains residents within `drain_timeout_s`; `health_route()` /
+    `ready_route()` probes; `mount_inspector()` refuses unless
+    `debug=True` (the sink ships with #274). Guide:
+    *Integrations → Starlette*.
+
 - **Security and operability baseline X0 (#303) closed out for Phase A.**
   `SECURITY.md` at the repository root states the trust model (installed
   packages and the machine definition are trusted; events and snapshots
