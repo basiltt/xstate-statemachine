@@ -202,14 +202,18 @@ def receipt_to_status(
     return changed if receipt.changed else unchanged
 
 
+def declared_events(machine: Any) -> List[str]:
+    """Declared, client-sendable event names (sorted, deterministic)."""
+    return sorted(
+        e
+        for e in machine.known_events
+        if not e.startswith(_INTERNAL_PREFIXES) and "*" not in e
+    )
+
+
 def available_events(interp: Any) -> List[str]:
     """User-facing events that would cause a transition right now."""
-    return [
-        e
-        for e in sorted(interp.machine.known_events)
-        if not e.startswith(_INTERNAL_PREFIXES) and "*" not in e
-        if interp.can(e)
-    ]
+    return [e for e in declared_events(interp.machine) if interp.can(e)]
 
 
 def state_body(

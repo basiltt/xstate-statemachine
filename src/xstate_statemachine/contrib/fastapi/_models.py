@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Type, Union
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ..pydantic.events import EventModel
+from ..starlette._http import declared_events
 
 __all__ = [
     "EventsModel",
@@ -27,8 +28,6 @@ __all__ = [
     "send_body_type",
     "user_events",
 ]
-
-_INTERNAL_PREFIXES = ("done.", "error.", "after.", "xstate.")
 
 
 class Problem(BaseModel):
@@ -81,11 +80,7 @@ class EventsModel(BaseModel):
 
 def user_events(machine: Any) -> List[str]:
     """Declared, client-sendable event names (sorted, deterministic)."""
-    return sorted(
-        e
-        for e in machine.known_events
-        if not e.startswith(_INTERNAL_PREFIXES) and "*" not in e
-    )
+    return declared_events(machine)
 
 
 def send_body_type(
