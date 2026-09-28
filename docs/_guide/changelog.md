@@ -15,6 +15,12 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Added
 
+- **Integration performance budgets** (#307): a reproducible seven-run
+  import, persistence, plugin, validator and snapshot benchmark for both
+  engines, with reviewed p50 baselines and a 25% regression margin. A
+  deterministic default-job guard detects eager contrib/third-party
+  imports; timing gates run only on the nightly reference runner
+  (`XSM_PERF=1`). Unshipped integrations remain explicitly unmeasured.
 - **Actor logic helpers `from_callback`, `from_async_iterator`,
   `from_iterator`, `from_coroutine`, `from_callable`, `from_interpreter`**
   (#267; both engines) -- XState v5 `fromPromise` / `fromCallback` /

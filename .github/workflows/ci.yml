@@ -35,11 +35,16 @@ on:
     branches: [main]
   # 🖱️ Allow maintainers to trigger a run by hand from the Actions tab.
   workflow_dispatch:
+  # 📏 #307: only the perf job runs on the nightly schedule.
+  schedule:
+    - cron: "17 3 * * *"
 
 # 🚦 Cancel superseded runs on the same ref. A force-push should not leave
 #    three stale jobs burning minutes to report on code nobody will merge.
+# 📏 #307: the nightly perf run gets its own group so it can neither cancel
+#    nor be cancelled by a push to `main` that lands at the same moment.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && 'nightly-perf' || github.ref }}
   cancel-in-progress: true
 
 # 🔒 Least privilege: CI only ever needs to read the repository.
@@ -57,6 +62,7 @@ jobs:
   # ---------------------------------------------------------------------------
   lint:
     name: Lint (black + flake8 + mypy)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -75,12 +81,12 @@ jobs:
           python -m pip install "black==26.1.0" "flake8==7.3.0" "flake8-isort==7.0.0" "mypy>=1.14"
 
       - name: 🎨 Check formatting (black)
-        run: black --check --diff src/ tests/ --line-length=79
+        run: black --check --diff src/ tests/ benchmarks/ scripts/ --line-length=79
 
       - name: 🔍 Lint (flake8)
         # ⚙️ Flags mirror .pre-commit-config.yaml exactly.
         run: |
-          flake8 src/ tests/ \
+          flake8 src/ tests/ benchmarks/ scripts/ \
             --max-complexity=35 \
             --select=B,C,E,F,W,T4,B9 \
             --ignore=E203,E266,E501,W503,F403,F401,E402
@@ -114,6 +120,7 @@ jobs:
   # ---------------------------------------------------------------------------
   core-zero-dep:
     name: Core is zero-dependency
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -135,13 +142,14 @@ jobs:
           python -m pip list
 
       - name: 🪶 Run the guard
-        run: pytest tests/test_zero_dependency.py tests/contrib/test_extras_matrix.py -q --no-header
+        run: pytest tests/test_zero_dependency.py tests/test_import_surface.py tests/contrib/test_extras_matrix.py -q --no-header
 
   # ---------------------------------------------------------------------------
   # 🔌 Integration extras matrix
   # ---------------------------------------------------------------------------
   contrib:
     name: Extra [${{ matrix.extra }}] (py${{ matrix.python-version }} / ${{ matrix.os }})
+    if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -223,6 +231,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test:
     name: Test (py${{ matrix.python-version }} / ${{ matrix.os }})
+    if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     strategy:
       # 🔬 Never stop the whole matrix on one red cell. A failure that is
@@ -299,6 +308,7 @@ jobs:
   # ---------------------------------------------------------------------------
   coverage:
     name: Coverage
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -347,6 +357,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build:
     name: Build & verify distribution
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -403,3 +414,39 @@ jobs:
           name: dist
           path: dist/
           retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # 📏 Integration performance budgets (opt-in; never blocks a pull request)
+  # ---------------------------------------------------------------------------
+  perf:
+    name: Integration performance budgets
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    env:
+      XSM_PERF: "1"
+      XSM_PERF_RUNNER: "ubuntu-24.04"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: 📦 Install the shipped extras and pytest
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[redis,pydantic]" "pytest>=8.3.0"
+
+      - name: 📏 Compare measured p50s to recorded budgets
+        run: python -m pytest tests/test_perf_budgets.py -q
+
+      - name: 📤 Upload raw performance measurements
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: integration-perf
+          path: benchmarks/last_run.json
+          if-no-files-found: warn
+          retention-days: 30
