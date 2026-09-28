@@ -2448,6 +2448,20 @@ assert interp.send("GO", wait=True).changed and ran == ["log"]
 
 ---
 
+## Graph Algorithms **[0.12.0]**
+
+`from xstate_statemachine import shortest_paths, simple_paths, reachable_states, transition_coverage_targets, Path, Step` (#269). The Python counterpart of `@xstate/graph`. Every candidate step is **executed by the real engine** (`SyncInterpreter` + `SimulatedClock` + `stub_logic`), so what comes back is what the engine does. `guards` is `"true"` (default), `"false"` or `"both"`; anything else is `ValueError`.
+
+| Name | Description |
+|:--|:--|
+| `Step` | Frozen dataclass: `event` (`None` for a clock advance), `delay_ms`, `from_states`, `to_states` (frozensets of leaf ids), `assumptions` -- tuple of `guard:<name>=False` / `service:<name>=error` / `delay:<name>=unknown` the step relies on. |
+| `Path` | Frozen dataclass: `steps`, `final_states`. `replay(interp, clock)` drives a `SyncInterpreter` (starting it if needed) and lands on `final_states`; `event_string()` is the `xsm simulate --events` grammar (`SUBMIT,+2000`); `total_delay_ms`. |
+| `shortest_paths(machine, *, guards="true", max_depth=50, weight="steps")` | `{configuration: Path}` -- one shortest path per reachable configuration; the initial configuration maps to an empty path. `weight="time"` is Dijkstra over `after` delays (events weigh 0). |
+| `simple_paths(machine, *, guards="true", max_paths=1000, max_depth=50)` | Every acyclic path (DFS, no configuration revisited on a path), capped. |
+| `reachable_states(machine, *, guards="true", max_depth=50)` | Leaf ids reached plus their ancestors. |
+| `transition_coverage_targets(machine)` | Static `{(from_id, label, to_id)}` for every transition (targetless -> `to_id == from_id`); the denominator for a coverage report. |
+
+Named `after` delays fire only when `logic.delays` defines them; otherwise the step is skipped (`delay:<name>=unknown`). Machines that cannot start raise as they would at runtime. CLI: `xsm paths`.
 ## `xstate_statemachine.patterns` **[0.11.0]**
 
 Resilience building blocks, each a small statechart (#265). Zero-dependency, both engines. Guide: [Resilience Patterns](../guide/patterns/).

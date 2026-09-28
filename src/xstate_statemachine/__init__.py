@@ -216,6 +216,18 @@ from .helpers import transition as pure_transition
 from .testing_utils import logic_names, stub_logic
 
 # -------------------------------------------------------------------------
+# 🗺️ Graph algorithms (#269) -- paths and reachability from the real engine
+# -------------------------------------------------------------------------
+from .graph import (
+    Path,
+    Step,
+    reachable_states,
+    shortest_paths,
+    simple_paths,
+    transition_coverage_targets,
+)
+
+# -------------------------------------------------------------------------
 # 🎭 Actor logic helpers (#267) -- fromCallback / fromObservable parity
 # -------------------------------------------------------------------------
 from .actor_logic import (
@@ -352,6 +364,13 @@ __all__ = [
     # 🧪 Testing utilities (#304)
     "stub_logic",
     "logic_names",
+    # graph (#269)
+    "Path",
+    "Step",
+    "reachable_states",
+    "shortest_paths",
+    "simple_paths",
+    "transition_coverage_targets",
     # 🎭 Actor logic (#267)
     "from_callback",
     "from_async_iterator",

@@ -1111,6 +1111,19 @@ def _dispatch() -> None:
         )
         return
 
+    if args.subcommand == "paths":
+        from .commands.paths import run_paths
+
+        run_paths(
+            args.json_file,
+            simple=bool(getattr(args, "simple", False)),
+            guards=getattr(args, "guards", "true"),
+            max_depth=int(getattr(args, "max_depth", 50)),
+            max_paths=int(getattr(args, "max_paths", 1000)),
+            as_json=bool(getattr(args, "json", False)),
+        )
+        return
+
     if args.subcommand in {"diagram", "dia"}:
         from .commands.diagram import run_diagram
 

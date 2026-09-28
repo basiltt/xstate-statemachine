@@ -20,8 +20,9 @@ These files are touched by every group. Edit them **only at the very end** of a 
 
 | Group | Issues | Owner | Branch | Why together |
 |:--|:--|:--|:--|:--|
-| **G1 Testing** | #268 B1, #269 B2, #270 B3, #271 B4 | agent A (this session) | `feat/g1-testing` | One extra `[testing]`, one package `contrib/testing/`, one docs page; B2's graph algorithms live in core `xstate_statemachine/graph.py` and unblock the `shortest_paths` perf row |
-| **G2 EDA core** | #272 B5, #293 F2, #295 F4 | agent B | `feat/g2-eda-core` | `Envelope`/`BrokerAdapter` defined once (#272) and extended (#293, #295); all zero-dep core under `xstate_statemachine/eda/` + `patterns/saga.py` + `contrib/testing/broker.py` (**only** that file inside `contrib/testing/`); SQLite outbox instead of waiting on D5 |
+| **G1 Testing** | #268 B1, #270 B3, #271 B4 (+ the `[testing]` `path` fixture of #269) | **agent B** (already on #268; continue into B3/B4 in the same `contrib/testing/` package) | `feat/b1-testing-plugin`, then `feat/g1b-coverage-hypothesis` | One extra `[testing]`, one package, one docs page. A parked reference implementation of B1 is on branch `wip/b1-pytest-plugin-reference` (not for merge; borrow freely — notably `pytest_cmdline_main` for `--xsm-version`, the `xsm_ainterp` skip-without-pytest-asyncio shape, and the 16-case pytester suite) |
+| **G1-core Graph** | #269 B2, core only: `xstate_statemachine/graph.py`, `xsm paths`, `xsm inspect` reachability | agent A | `feat/g1-graph` | Zero-dep core with no file overlap with `contrib/testing/`; unblocks the `shortest_paths` perf row. Agent B adds the `pytest_generate_tests` `path` fixture on top once merged |
+| **G2 EDA core** | #272 B5, #293 F2, #295 F4 | agent B (after G1) | `feat/g2-eda-core` | `Envelope`/`BrokerAdapter` defined once (#272) and extended (#293, #295); all zero-dep core under `xstate_statemachine/eda/` + `patterns/saga.py` + `contrib/testing/broker.py` (**only** that file inside `contrib/testing/`); SQLite outbox instead of waiting on D5 |
 | **G3 Observability & inspector** | #273 B6, #274 B7 | agent B (after G2) | `feat/g3-observability` | Both are plugin translations of the same hooks; `[observability]` extra + core `inspect/` package; CLI `xsm inspect --live`, `sim --record`, `replay` |
 | **G4 Web** | #275 C1, #276 C2, #278 C4, #279 C5, #277 C3 | agent A (after G1) | `feat/g4-web` | Starlette core → FastAPI → Litestar share `StatechartRegistry`; C5 codegen and C3 example app depend on C2's router. `[starlette] [fastapi] [litestar]` extras. Re-record the FastAPI perf row |
 | **G5 Django** | #280 D1, #281 D2, #282 D3, #283 D4, #310 D9 | agent B (after G3) | `feat/g5-django` | One test settings module, one `[django]`/`[drf]`/`[channels]` matrix cell set, one example app |
@@ -37,6 +38,8 @@ Release-candidate issues (#297 A11, #298 B8, #301 E6, #299 C6, #300 D8, #302 F5)
 - **RC 0.12.0** after G4–G8 (+ G9/G10 if ready). Same gate.
 
 The per-phase RC issues are closed by the two RC PRs with a comment pointing here.
+
+> ⚠️ **No release without the maintainer's explicit confirmation.** Neither agent bumps `__version__`, tags, creates a GitHub release or runs `publish.yml`. An RC PR is opened, reviewed and left for the maintainer; the maintainer says go.
 
 ## Working agreement per group
 
