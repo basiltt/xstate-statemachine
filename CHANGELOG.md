@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`persistence` stores: `StateStore` protocol + `MemoryStore` /
+  `FileStore` / `SQLiteStore`, `load_interpreter` / `aload_interpreter` /
+  `save_interpreter`, `as_async()`** (#259; zero-dependency). The
+  create → act → persist → discard model with optimistic locking
+  (`save(expected_version=)` → `ConflictError`) and pessimistic
+  `lock(key)` (`LockTimeoutError`). Every backend passes one contract test
+  suite. Safety rails on all of them: `max_snapshot_bytes` (1 MiB) on
+  save AND load (`SnapshotTooLargeError`), key validation
+  (`InvalidKeyError`), `forget(key)`, a `codec=` seam, `health()`.
+  `FileStore`: atomic writes, percent-encoded keys (never the raw key in a
+  path; case-collision-free), advisory locks with stale reclaim, 0700/0600
+  modes, documented as unsafe on network shares. `SQLiteStore`: WAL,
+  connection per thread, `xsm_schema` versioning, `database is locked` →
+  `LockTimeoutError`, 0600 files, UNC warning. Guide page *Persistence
+  Stores*; new `StoreError` family in `exceptions`.
 - **`xstate_statemachine.patterns`: `RetryPolicy`, `DeadLetterPlugin`,
   `CircuitBreaker`** (#265; zero-dependency; both engines). Guide page
   *Resilience Patterns*.

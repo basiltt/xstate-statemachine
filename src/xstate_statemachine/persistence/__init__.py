@@ -32,7 +32,29 @@ that follow are answered once, for every framework integration.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
+from ..exceptions import (
+    ConflictError,
+    InvalidKeyError,
+    LockTimeoutError,
+    SnapshotTooLargeError,
+    StoreError,
+)
+from .async_store import AsyncStateStore, AsyncStoreAdapter, as_async
 from .deadline import Deadline, check_deadline_record
+from .file_store import FileStore
+from .sqlite_store import SQLiteStore
+from .store import (
+    DEFAULT_MAX_SNAPSHOT_BYTES,
+    MAX_KEY_LENGTH,
+    BaseStore,
+    MemoryStore,
+    SnapshotCodec,
+    StateStore,
+    StoredSnapshot,
+    validate_key,
+)
 from .snapshot import (
     SNAPSHOT_VERSION,
     check_identity,
@@ -43,10 +65,61 @@ from .snapshot import (
     upcast,
 )
 
+# 🔁 #259: the helpers import the engines, and the engines import this
+#    package -- resolve the cycle by loading them on first attribute access.
+_LAZY = {
+    "load_interpreter": ".helpers",
+    "aload_interpreter": ".helpers",
+    "save_interpreter": ".helpers",
+    "KeyNotFoundError": ".helpers",
+}
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .helpers import (  # noqa: F401
+        KeyNotFoundError,
+        aload_interpreter,
+        load_interpreter,
+        save_interpreter,
+    )
+
+
+def __getattr__(name: str) -> Any:
+    module = _LAZY.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    return getattr(importlib.import_module(module, __name__), name)
+
+
 __all__ = [
     "SNAPSHOT_VERSION",
     "Deadline",
     "check_deadline_record",
+    # 💾 stores (#259)
+    "StateStore",
+    "AsyncStateStore",
+    "AsyncStoreAdapter",
+    "as_async",
+    "StoredSnapshot",
+    "SnapshotCodec",
+    "BaseStore",
+    "MemoryStore",
+    "FileStore",
+    "SQLiteStore",
+    "validate_key",
+    "DEFAULT_MAX_SNAPSHOT_BYTES",
+    "MAX_KEY_LENGTH",
+    "StoreError",
+    "ConflictError",
+    "LockTimeoutError",
+    "SnapshotTooLargeError",
+    "InvalidKeyError",
+    "KeyNotFoundError",
+    "load_interpreter",
+    "aload_interpreter",
+    "save_interpreter",
+    # envelope
     "check_identity",
     "check_minimum_version",
     "check_shape",
