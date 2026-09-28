@@ -335,6 +335,41 @@ xsm sim checkout.json --events SUBMIT,+2001 --guards-false cartNotEmpty --json
 
 The generated test file uses exactly the pattern from this page (`SyncInterpreter` + `SimulatedClock` + stub `MachineLogic`), so it is a good starting point to extend by hand. See [CLI Tool](../cli/) and the [companion templates](../cli-templates/#companion-templates).
 
+## 🗺️ Path generation
+
+The chart already *is* a graph, so the library can tell you how to reach every state — the Python counterpart of `@xstate/graph`'s `getShortestPaths` / `getSimplePaths`. Nothing here is a hand-written approximation of the semantics: each candidate step is **executed by the real engine** on a `SimulatedClock` with stub logic, so parallel regions, history, `after` timers and `onDone`/`onError` all behave exactly as at runtime.
+
+```python
+import json
+from xstate_statemachine import (
+    create_machine, stub_logic, shortest_paths, simple_paths,
+    reachable_states, SyncInterpreter, SimulatedClock,
+)
+
+cfg = json.load(open("tests/tests_cli/stately_machines/AdvancePayment.json"))
+machine = create_machine(cfg, logic=stub_logic(cfg))
+
+# one shortest path per reachable configuration (a frozenset of leaf ids)
+for config, path in shortest_paths(machine, guards="both").items():
+    print(sorted(config), "<-", path.event_string() or "(initial)")
+
+# replay a path on a fresh interpreter and land exactly where it says
+clock = SimulatedClock()
+i = SyncInterpreter(machine, clock=clock)
+target = next(iter(shortest_paths(machine).values()))
+target.replay(i, clock)
+assert i.current_state_ids == set(target.final_states)
+
+assert "Advance payment flow.challenge" in reachable_states(machine)
+```
+
+- **`guards`** — `"true"` (default), `"false"`, or `"both"`. With `"both"` every guarded step is tried each way and each `Step` records the **assumption** the path relies on (`guard:isValid=False`, `service:fetch=error`, `delay:slow=unknown`), so a path to an `onError` branch says so.
+- **`weight="time"`** turns BFS into Dijkstra over `after` delays: the path with the least simulated time wins, not the fewest steps.
+- **`simple_paths(machine, max_paths=…, max_depth=…)`** enumerates acyclic paths; **`transition_coverage_targets(machine)`** returns every `(from, event, to)` triple statically — the denominator a coverage report needs.
+- `Path.event_string()` is the `xsm simulate --events` grammar (`SUBMIT,+2000,PAY`), so any generated path is also an interactive reproduction.
+
+The same walk powers **`xsm paths machine.json [--simple] [--guards both] [--json]`**, and `xsm inspect` uses it to add one finding the static reachability pass cannot: *"state is never entered by the engine (reachable statically only)"* — typically a target whose compound parent declares no `initial`. Named delays with no `delays=` implementation and machines that cannot start are reported, not guessed at.
+
 ## See Also
 
 - [CLI Tool](../cli/) — `xsm simulate`, `--with-tests`

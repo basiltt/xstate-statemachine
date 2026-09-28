@@ -1,0 +1,551 @@
+# src/xstate_statemachine/graph.py
+# -----------------------------------------------------------------------------
+# 🗺️ graph -- reachability, shortest / simple paths over a statechart (#269)
+# -----------------------------------------------------------------------------
+# 🏛️ Architecture decision: traversal EXECUTES THE REAL ENGINE. Every edge is
+#    discovered by building a fresh `SyncInterpreter` on a `SimulatedClock`,
+#    replaying the path that reached a configuration, and then trying one
+#    candidate step (an event `send`, or a clock advance for an `after`).
+#    Nothing here re-implements transition selection, entry/exit ordering,
+#    `always` microsteps, history, `onDone` or parallel semantics -- whatever
+#    the engine does IS the graph. The price is speed (paths are replayed
+#    rather than cached); the pay-off is that a `Path` can never describe a
+#    run the engine would not actually perform, which is exactly the
+#    property `Path.replay()` is tested against for the whole corpus.
+# -----------------------------------------------------------------------------
+"""Graph traversal of a machine by driving the real sync engine.
+
+A *configuration* is the frozenset of active leaf state ids. Guards and
+services are replaced with `stub_logic` stand-ins while exploring; any
+deviation from the "every guard True, every service succeeds" default is
+written into ``Step.assumptions`` and re-applied by `Path.replay`.
+"""
+
+from __future__ import annotations
+
+# -------------------------------------------------------------------------
+# 📦 Standard Library Imports
+# -------------------------------------------------------------------------
+import contextlib
+import heapq
+import itertools
+import logging
+from collections import deque
+from dataclasses import dataclass
+from typing import (
+    Any,
+    Deque,
+    Dict,
+    FrozenSet,
+    Iterator,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
+
+# -------------------------------------------------------------------------
+# 📥 Project-Specific Imports
+# -------------------------------------------------------------------------
+from .clock import SimulatedClock
+from .models import MachineNode, StateNode
+from .sync_interpreter import SyncInterpreter
+from .testing_utils import logic_names, stub_logic
+from .validation import transitions_of, walk
+
+__all__ = [
+    "Step",
+    "Path",
+    "reachable_states",
+    "shortest_paths",
+    "simple_paths",
+    "transition_coverage_targets",
+]
+
+logger = logging.getLogger(__name__)
+
+#: ⏰ Clock advance used to fire a NAMED `after` delay whose duration is not
+#: known statically. Large enough to exceed any realistic delay.
+UNKNOWN_DELAY_MS = 10**9
+
+_GUARD_MODES = ("true", "false", "both")
+_WEIGHTS = ("steps", "time")
+
+Config = FrozenSet[str]
+
+
+# -----------------------------------------------------------------------------
+# 🧱 Data model
+# -----------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Step:
+    """One edge: an event sent, or a clock advance firing an `after`.
+
+    Attributes:
+        event: Event type sent, or ``None`` for a clock advance.
+        delay_ms: Clock advance in ms for `after` steps; ``None`` for
+            events and for named delays of unknown duration (the latter
+            carry a ``"delay:<name>=unknown"`` assumption).
+        from_states: Configuration before the step.
+        to_states: Configuration after the step.
+        assumptions: Forced guard / service outcomes, e.g.
+            ``("guard:isValid=False",)`` or ``("service:fetch=error",)``.
+    """
+
+    event: Optional[str]
+    delay_ms: Optional[float]
+    from_states: FrozenSet[str]
+    to_states: FrozenSet[str]
+    assumptions: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Path:
+    """A replayable sequence of steps ending in ``final_states``."""
+
+    steps: Tuple[Step, ...]
+    final_states: FrozenSet[str]
+
+    def replay(self, interp: SyncInterpreter, clock: SimulatedClock) -> None:
+        """Drive *interp* (on *clock*) through every step.
+
+        Starts the interpreter if it has not been started. Each step's
+        ``assumptions`` are forced on ``interp.machine.logic`` for the
+        duration of that step only.
+        """
+        if interp.status == "uninitialized":
+            interp.start()
+        for step in self.steps:
+            _apply_step(interp, clock, step)
+
+    def event_string(self) -> str:
+        """The ``xsm simulate --events`` grammar: ``"SUBMIT,+2000,PAY"``."""
+        parts: List[str] = []
+        for step in self.steps:
+            if step.event is not None:
+                parts.append(step.event)
+            else:
+                parts.append(f"+{_fmt_ms(_advance_of(step))}")
+        return ",".join(parts)
+
+    @property
+    def total_delay_ms(self) -> float:
+        """Sum of every clock advance on the path."""
+        return sum(_advance_of(s) for s in self.steps if s.event is None)
+
+
+def _fmt_ms(ms: float) -> str:
+    return str(int(ms)) if float(ms).is_integer() else str(ms)
+
+
+def _advance_of(step: Step) -> float:
+    return UNKNOWN_DELAY_MS if step.delay_ms is None else step.delay_ms
+
+
+# -----------------------------------------------------------------------------
+# 🔧 Step execution (shared by exploration and `Path.replay`)
+# -----------------------------------------------------------------------------
+def _forced_guard(value: bool) -> Any:
+    def _guard(c: Any, e: Any) -> bool:
+        return value
+
+    return _guard
+
+
+def _failing_service(name: str) -> Any:
+    def _service(i: Any, c: Any, e: Any) -> Any:
+        raise RuntimeError(f"graph: service '{name}' forced to error")
+
+    return _service
+
+
+@contextlib.contextmanager
+def _forced(logic: Any, assumptions: Tuple[str, ...]) -> Iterator[None]:
+    """Temporarily force guard / service outcomes named in *assumptions*."""
+    saved: List[Tuple[Dict[str, Any], str, Any]] = []
+
+    def patch(table: Dict[str, Any], key: str, value: Any) -> None:
+        saved.append((table, key, table.get(key, _MISSING)))
+        table[key] = value
+
+    try:
+        for a in assumptions:
+            kind, _, rest = a.partition(":")
+            name, _, val = rest.rpartition("=")
+            if kind == "guard":
+                keys = list(logic.guards) if name == "*" else [name]
+                for k in keys:
+                    patch(logic.guards, k, _forced_guard(val == "True"))
+            elif kind == "service" and val == "error":
+                patch(logic.services, name, _failing_service(name))
+        yield
+    finally:
+        for table, key, old in reversed(saved):
+            if old is _MISSING:
+                table.pop(key, None)
+            else:
+                table[key] = old
+
+
+_MISSING = object()
+
+
+def _apply_step(
+    interp: SyncInterpreter, clock: SimulatedClock, step: Step
+) -> None:
+    with _forced(interp.machine.logic, step.assumptions):
+        if step.event is not None:
+            interp.send(step.event)
+        else:
+            clock.increment(_advance_of(step))
+
+
+# -----------------------------------------------------------------------------
+# 🧭 Explorer
+# -----------------------------------------------------------------------------
+class _Explorer:
+    """Discovers successors of a path by replaying it on the real engine."""
+
+    def __init__(self, machine: MachineNode, guards: str) -> None:
+        if guards not in _GUARD_MODES:
+            raise ValueError(
+                f"guards must be one of {_GUARD_MODES}, got {guards!r}"
+            )
+        self.machine = machine
+        self.mode = guards
+        _, guard_names, service_names = logic_names(machine)
+        self.guard_names = sorted(guard_names)
+        self.service_names = sorted(service_names)
+        self.named_delays = set(machine.logic.delays)
+        self.nodes: Dict[str, StateNode] = {n.id: n for n in walk(machine)}
+        self.eventless_guards: Set[str] = set()
+        for node in self.nodes.values():
+            for label, t in transitions_of(node):
+                if not label.startswith(("on ", "after ")):
+                    _collect_guards(t.guard_def, self.eventless_guards)
+        # 📝 Mode-wide default carried on every step so `replay` on an
+        #    interpreter with all-True stubs reproduces a "false" run.
+        self.base: Tuple[str, ...] = (
+            ("guard:*=False",) if guards == "false" else ()
+        )
+
+    @contextlib.contextmanager
+    def stubbed(self) -> Iterator[None]:
+        """Swap in `stub_logic` for the duration of the traversal."""
+        original = self.machine.logic
+        stub = stub_logic(self.machine)
+        stub.delays.update(original.delays)
+        self.machine.logic = stub
+        # 🔇 Forced service failures are the POINT of a `guards="both"`
+        #    probe, not incidents: the engine would otherwise log each one
+        #    at ERROR with a traceback. Silence the library logger for the
+        #    traversal only; the caller's logging config is untouched.
+        lib_logger = logging.getLogger("xstate_statemachine")
+        prev_level = lib_logger.level
+        lib_logger.setLevel(logging.CRITICAL)
+        try:
+            yield
+        finally:
+            lib_logger.setLevel(prev_level)
+            self.machine.logic = original
+
+    def run(
+        self, steps: Tuple[Step, ...]
+    ) -> Tuple[SyncInterpreter, SimulatedClock]:
+        clock = SimulatedClock()
+        interp = SyncInterpreter(self.machine, clock=clock).start()
+        for step in steps:
+            _apply_step(interp, clock, step)
+        return interp, clock
+
+    def initial(self) -> Tuple[Config, bool]:
+        interp, _ = self.run(())
+        try:
+            return frozenset(interp.current_state_ids), self._done(interp)
+        finally:
+            interp.stop()
+
+    @staticmethod
+    def _done(interp: SyncInterpreter) -> bool:
+        return interp.status != "running"
+
+    def _active_nodes(self, config: Config) -> List[StateNode]:
+        seen: Dict[str, StateNode] = {}
+        for sid in config:
+            node: Optional[StateNode] = self.nodes.get(sid)
+            while node is not None and node.id not in seen:
+                seen[node.id] = node
+                node = node.parent
+        return list(seen.values())
+
+    def _candidates(
+        self, config: Config
+    ) -> List[Tuple[Optional[str], Optional[float], Tuple[str, ...]]]:
+        """``(event, delay_ms, extra_assumptions)`` to try from *config*."""
+        events: Set[str] = set()
+        delays: Dict[str, Tuple[Optional[float], Tuple[str, ...]]] = {}
+        for node in self._active_nodes(config):
+            events.update(k for k in node.on if k and "*" not in k)
+            for key in node.after:
+                ms = _numeric_delay(key)
+                if ms is not None:
+                    delays[repr(ms)] = (ms, ())
+                elif str(key) in self.named_delays:
+                    delays[f"n:{key}"] = (None, (f"delay:{key}=unknown",))
+                else:
+                    logger.debug("graph: skipping unresolvable delay %r", key)
+        out: List[Tuple[Optional[str], Optional[float], Tuple[str, ...]]]
+        out = [(e, None, ()) for e in sorted(events)]
+        for _, (ms, extra) in sorted(delays.items()):
+            out.append((None, ms, extra))
+        return out
+
+    def _variants(self, config: Config) -> List[Tuple[str, ...]]:
+        """Default outcome, plus (``"both"``) one flip per relevant name.
+
+        📝 Flipped: guards on transitions of the active states / ancestors,
+        guards on EVENTLESS transitions anywhere (``always`` / ``onDone`` /
+        invoke results run inside the step's macrostep, in states not yet
+        active), and every service (a service entered during the step
+        resolves within it). Other event guards cannot affect this step.
+        """
+        variants: List[Tuple[str, ...]] = [()]
+        if self.mode != "both":
+            return variants
+        guards: Set[str] = set(self.eventless_guards)
+        for node in self._active_nodes(config):
+            for _, t in transitions_of(node):
+                _collect_guards(t.guard_def, guards)
+        known_g = set(self.guard_names)
+        variants += [(f"guard:{g}=False",) for g in sorted(guards & known_g)]
+        variants += [(f"service:{s}=error",) for s in self.service_names]
+        return variants
+
+    def successors(
+        self, steps: Tuple[Step, ...], config: Config
+    ) -> List[Tuple[Step, bool]]:
+        """Every distinct step out of *config* (reached via *steps*)."""
+        out: List[Tuple[Step, bool]] = []
+        variants = self._variants(config)
+        for event, ms, extra in self._candidates(config):
+            seen: Set[Config] = set()
+            for variant in variants:
+                step = Step(
+                    event=event,
+                    delay_ms=ms,
+                    from_states=config,
+                    to_states=frozenset(),
+                    assumptions=self.base + extra + variant,
+                )
+                result = self._try(steps, step)
+                if result is None:
+                    continue
+                to, done = result
+                # 📝 A variant that lands where the default did adds
+                #    nothing; a step that changes nothing is a self-loop.
+                if to in seen or (to == config and not done):
+                    continue
+                seen.add(to)
+                out.append((_with_target(step, to), done))
+        return out
+
+    def _try(
+        self, steps: Tuple[Step, ...], step: Step
+    ) -> Optional[Tuple[Config, bool]]:
+        try:
+            interp, clock = self.run(steps)
+        except Exception:  # pragma: no cover - prefix was replayable once
+            logger.debug("graph: prefix replay failed", exc_info=True)
+            return None
+        try:
+            _apply_step(interp, clock, step)
+            return frozenset(interp.current_state_ids), self._done(interp)
+        except Exception:
+            logger.debug("graph: step %r failed", step, exc_info=True)
+            return None
+        finally:
+            with contextlib.suppress(Exception):
+                interp.stop()
+
+
+def _with_target(step: Step, to: Config) -> Step:
+    return Step(
+        event=step.event,
+        delay_ms=step.delay_ms,
+        from_states=step.from_states,
+        to_states=to,
+        assumptions=step.assumptions,
+    )
+
+
+def _collect_guards(guard: Any, out: Set[str]) -> None:
+    """Leaf guard names of a (possibly composite) guard definition."""
+    if guard is None:
+        return
+    if getattr(guard, "is_composite", False):
+        for child in getattr(guard, "children", None) or []:
+            _collect_guards(child, out)
+        return
+    name = getattr(guard, "type", None)
+    if isinstance(name, str) and name:
+        out.add(name)
+
+
+def _numeric_delay(key: Union[int, float, str]) -> Optional[float]:
+    if isinstance(key, (int, float)):
+        return float(key)
+    try:
+        return float(key)
+    except (TypeError, ValueError):
+        return None
+
+
+# -----------------------------------------------------------------------------
+# 🚀 Public API
+# -----------------------------------------------------------------------------
+def shortest_paths(
+    machine: MachineNode,
+    *,
+    guards: str = "true",
+    max_depth: int = 50,
+    weight: str = "steps",
+) -> Dict[FrozenSet[str], Path]:
+    """Shortest path to every reachable configuration.
+
+    Args:
+        machine: The machine to explore. Its ``logic`` is temporarily
+            replaced by `stub_logic` stand-ins (restored afterwards).
+        guards: ``"true"``, ``"false"`` or ``"both"`` (also explores each
+            guard forced False and each service forced to error).
+        max_depth: Maximum number of steps in any path.
+        weight: ``"steps"`` (BFS) or ``"time"`` (Dijkstra over total
+            clock advance; events weigh 0).
+
+    Returns:
+        Mapping of configuration to the shortest `Path` reaching it. The
+        initial configuration maps to the empty path.
+
+    Raises:
+        ValueError: On an unknown ``guards`` or ``weight``.
+    """
+    if weight not in _WEIGHTS:
+        raise ValueError(f"weight must be one of {_WEIGHTS}, got {weight!r}")
+    explorer = _Explorer(machine, guards)
+    with explorer.stubbed():
+        if weight == "steps":
+            return _bfs(explorer, max_depth)
+        return _dijkstra(explorer, max_depth)
+
+
+def _bfs(explorer: _Explorer, max_depth: int) -> Dict[Config, Path]:
+    start, done = explorer.initial()
+    best: Dict[Config, Path] = {start: Path((), start)}
+    queue: Deque[Tuple[Path, bool]] = deque([(best[start], done)])
+    while queue:
+        path, is_done = queue.popleft()
+        if is_done or len(path.steps) >= max_depth:
+            continue
+        for step, nxt_done in explorer.successors(
+            path.steps, path.final_states
+        ):
+            if step.to_states in best:
+                continue
+            nxt = Path(path.steps + (step,), step.to_states)
+            best[step.to_states] = nxt
+            queue.append((nxt, nxt_done))
+    return best
+
+
+def _dijkstra(explorer: _Explorer, max_depth: int) -> Dict[Config, Path]:
+    start, done = explorer.initial()
+    best: Dict[Config, Path] = {}
+    tie = itertools.count()
+    heap: List[Tuple[float, int, int, Path, bool]] = [
+        (0.0, 0, next(tie), Path((), start), done)
+    ]
+    while heap:
+        cost, depth, _, path, is_done = heapq.heappop(heap)
+        if path.final_states in best:
+            continue
+        best[path.final_states] = path
+        if is_done or depth >= max_depth:
+            continue
+        for step, nxt_done in explorer.successors(
+            path.steps, path.final_states
+        ):
+            if step.to_states in best:
+                continue
+            w = _advance_of(step) if step.event is None else 0.0
+            nxt = Path(path.steps + (step,), step.to_states)
+            heapq.heappush(
+                heap, (cost + w, depth + 1, next(tie), nxt, nxt_done)
+            )
+    return best
+
+
+def reachable_states(
+    machine: MachineNode, *, guards: str = "true", max_depth: int = 50
+) -> Set[str]:
+    """Every state id (leaves AND their ancestors) the engine can reach."""
+    explorer = _Explorer(machine, guards)
+    out: Set[str] = set()
+    for config in shortest_paths(machine, guards=guards, max_depth=max_depth):
+        out.update(n.id for n in explorer._active_nodes(config))
+    return out
+
+
+def simple_paths(
+    machine: MachineNode,
+    *,
+    guards: str = "true",
+    max_paths: int = 1000,
+    max_depth: int = 50,
+) -> List[Path]:
+    """Every non-empty path that never revisits a configuration.
+
+    Depth-first; stops after *max_paths* paths or at *max_depth* steps.
+    """
+    explorer = _Explorer(machine, guards)
+    found: List[Path] = []
+    with explorer.stubbed():
+        start, done = explorer.initial()
+        if done:
+            return found
+        # 📝 Explicit stack instead of recursion: max_depth may exceed
+        #    what is comfortable for Python's recursion limit.
+        stack: List[Tuple[Path, FrozenSet[Config]]] = [
+            (Path((), start), frozenset([start]))
+        ]
+        while stack and len(found) < max_paths:
+            path, on_path = stack.pop()
+            if len(path.steps) >= max_depth:
+                continue
+            succ = explorer.successors(path.steps, path.final_states)
+            for step, nxt_done in reversed(succ):
+                if step.to_states in on_path:
+                    continue
+                nxt = Path(path.steps + (step,), step.to_states)
+                found.append(nxt)
+                if len(found) >= max_paths:
+                    break
+                if not nxt_done:
+                    stack.append((nxt, on_path | {step.to_states}))
+    return found
+
+
+def transition_coverage_targets(
+    machine: MachineNode,
+) -> Set[Tuple[str, str, str]]:
+    """``(from_state_id, label, to_state_id)`` for every chart transition.
+
+    Static: read from the parsed chart, no execution. Labels are those of
+    `validation.transitions_of` (``"on 'GO'"``, ``"after 2000"``, …);
+    targetless transitions point back at their source.
+    """
+    out: Set[Tuple[str, str, str]] = set()
+    for node in walk(machine):
+        for label, t in transitions_of(node):
+            target = t.resolved_target
+            out.add((node.id, label, (target or node).id))
+    return out

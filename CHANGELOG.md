@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Graph algorithms `shortest_paths`, `simple_paths`, `reachable_states`,
+  `transition_coverage_targets`, `Path`, `Step`** (#269; core, zero-dep;
+  the Python counterpart of `@xstate/graph`). Every candidate step is
+  EXECUTED by the real engine on a `SimulatedClock` with stub logic, so
+  parallel regions, history, `after` timers and `onDone`/`onError` behave
+  exactly as at runtime -- no hand-written semantics. `guards="both"`
+  explores each guarded step both ways and records the assumption a path
+  relies on (`guard:x=False`, `service:s=error`, `delay:d=unknown`);
+  `weight="time"` is Dijkstra over `after` delays. `Path.replay(interp,
+  clock)` lands exactly on `final_states`; `Path.event_string()` is the
+  `xsm simulate --events` grammar. New CLI `xsm paths machine.json
+  [--simple] [--guards both] [--json]`; `xsm inspect` gains one finding
+  the static reachability pass cannot produce -- "state is never entered
+  by the engine (reachable statically only)" -- and never removes a
+  static one (corpus output unchanged). Guide: Testing &sect; "Path
+  generation"; CLI &sect; "Paths".
 - **Security and operability baseline X0 (#303) closed out for Phase A.**
   `SECURITY.md` at the repository root states the trust model (installed
   packages and the machine definition are trusted; events and snapshots

@@ -406,7 +406,7 @@ The runner will start the interpreter, send the `SUBMIT` event, invoke the payme
 ```
 xsm [-h] [-v] [--plain] [--no-color] [--no-anim] [--verbose]
     {generate-template,gt,list-templates,lt,validate,val,info,update,setup,
-     inspect,ins,diagram,dia,simulate,sim,docs} ...
+     inspect,ins,paths,diagram,dia,simulate,sim,docs} ...
 ```
 
 | Command | Alias | Description |
@@ -417,13 +417,14 @@ xsm [-h] [-v] [--plain] [--no-color] [--no-anim] [--verbose]
 | `validate` | `val` | Build each file with the real library and list findings |
 | `inspect` | `ins` | State tree, transitions table, logic to implement, policies |
 | `simulate` | `sim` | Run a machine live, or replay a scripted event sequence |
+| `paths` | — | A path to every reachable configuration, found by running the real engine (`--simple`, `--guards both`) |
 | `diagram` | `dia` | Mermaid / PlantUML / ASCII diagram to stdout or a file |
 | `docs` | — | A Markdown reference page per machine |
 | `info` | — | Version, environment, feature cards, links |
 | `update` | — | Check PyPI and upgrade to the latest release with the installer that installed you (`--check`, `--yes`) |
 | `setup` | — | Windows: swap pip's blocked `xsm.exe` launcher for a batch shim (`--check`, `--undo`) |
 
-Every command that reports facts also has a `--json` switch (`validate`, `inspect`, `simulate`, `list-templates`, `info`) so the same information can be consumed by scripts.
+Every command that reports facts also has a `--json` switch (`validate`, `inspect`, `paths`, `simulate`, `list-templates`, `info`) so the same information can be consumed by scripts.
 
 ## 🧭 Interactive Launcher
 
@@ -509,6 +510,30 @@ event schemas     │ none
 ```
 
 The tree marks state kinds (`○` atomic, `◆` compound, `⫴` parallel, `◉` final, `↺` history) and annotates timers and invokes; the `Guard` column shows composite guards as the library resolved them. Unreachable states — no transition, `initial` or history target leads to them — are reported as a warning, as is anything the library itself logged while building.
+
+## 🗺️ Paths
+
+```bash
+xsm paths checkout.json                      # one shortest path per reachable configuration
+xsm paths checkout.json --guards both        # also explore guard=False / service-error branches
+xsm paths checkout.json --simple --max-paths 50
+xsm paths checkout.json --json
+```
+
+```
+  checkout  5 paths (shortest, guards=both)
++---------------------+------------------+-----------------------------+
+| Configuration       | Events           | Assumes                     |
++---------------------+------------------+-----------------------------+
+| checkout.cart       | (initial)        |                             |
+| checkout.paying     | CHECKOUT         |                             |
+| checkout.paid       | CHECKOUT,PAY     |                             |
+| checkout.declined   | CHECKOUT,PAY     | service:charge=error        |
+| checkout.timedOut   | CHECKOUT,+30000  |                             |
++---------------------+------------------+-----------------------------+
+```
+
+The **Events** column is the `xsm simulate --events` grammar — paste it back into `xsm sim` to reproduce the path interactively. **Assumes** lists what the path relies on when `--guards both` explores alternatives: a guard forced `False`, a service forced to fail, or a named delay with no implementation. Every step was executed by the real engine (stub logic, simulated clock), never inferred from the JSON — see [Path generation](../testing-and-pure-api/#-path-generation) for the Python API.
 
 ## 🎮 Simulate
 
