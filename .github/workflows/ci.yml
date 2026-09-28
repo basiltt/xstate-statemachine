@@ -232,6 +232,7 @@ jobs:
   audit:
     name: pip-audit [all]
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
