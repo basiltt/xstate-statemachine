@@ -104,8 +104,8 @@ all           = [  # every SHIPPED extra; grows as issues land
     "litestar>=2.0",
     "sqlalchemy[asyncio]>=2.0",
     "flask>=2.3",
-    "pytest>=8",  # #268 [testing]
-    "hypothesis>=6.100",  # #268 [testing]
+    "pytest>=8",  # #268 testing
+    "hypothesis>=6.100",  # #268 testing
 ]
 
 [project.urls]
