@@ -618,6 +618,7 @@ class Interpreter(BaseInterpreter[TContext]):
                 # ⏱️ #128: opt-in re-arm of `after` timers, from zero.
                 if self._restart_timers_on_start:
                     self._restart_timers_on_start = False
+                    fire_due = self._restart_timers_mode == "fire_due"
                     armed = self._rearm_dormant_timers()
                     if armed:
                         logger.info(
@@ -626,6 +627,17 @@ class Interpreter(BaseInterpreter[TContext]):
                             armed,
                             self.id,
                         )
+                    if fire_due:
+                        # ⏰ #264: matured deadlines were armed with 0 ms.
+                        #    On a `RealClock` that is `call_later(0)` and the
+                        #    loop runs it on its next iteration; a
+                        #    `SimulatedClock` never advances on its own, so
+                        #    pump it explicitly -- both then settle the
+                        #    events they queued before start() returns.
+                        for _ in range(3):
+                            await asyncio.sleep(0)
+                            self.clock.pump()
+                            await self._settle_for_clock()
             # 👶 Resume restored child actors too, so a whole hierarchy comes
             #    back alive rather than just its root.
             for actor in list(self._actors.values()):
@@ -1659,6 +1671,7 @@ class Interpreter(BaseInterpreter[TContext]):
             for handle in handles:
                 self.clock.clear_timeout(handle)
         self._timer_handles.clear()
+        self._armed_after.clear()  # #264
         self._priority_queue.clear()
         self._internal_queue.clear()  # mid-macrostep state; never persisted
         self._fail_all_receipts()
@@ -2771,6 +2784,7 @@ class Interpreter(BaseInterpreter[TContext]):
         # ⏱️ And the clock-scheduled timers this state owns (#49).
         for handle in self._timer_handles.pop(state.id, []):
             self.clock.clear_timeout(handle)
+        self._forget_deadlines(state.id)  # #264
 
     async def _next_event(
         self,
@@ -2956,6 +2970,7 @@ class Interpreter(BaseInterpreter[TContext]):
             fired = _engine_after(
                 event.type, event.scheduled_for, self.clock.now()
             )
+            self._forget_deadlines(owner_id, event.type)  # #264: fired
             logger.info(
                 "🕒 'after' timer fired for event '%s' in '%s' (+%.1f ms).",
                 fired.type,

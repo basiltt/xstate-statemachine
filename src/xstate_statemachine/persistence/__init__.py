@@ -109,6 +109,10 @@ _LAZY = {
     "ReplayDivergenceError": ".log",
     "replay": ".log",
     "correlation_id_var": ".log",
+    # ⏰ #264
+    "DueTimerScanner": ".timers",
+    "ScanResult": ".timers",
+    "DEFAULT_RESTART_TIMERS": ".locking",
 }
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -142,7 +146,9 @@ if TYPE_CHECKING:  # pragma: no cover
         correlation_id_var,
         replay,
     )
+    from .timers import DueTimerScanner, ScanResult  # noqa: F401
     from .locking import (  # noqa: F401
+        DEFAULT_RESTART_TIMERS,
         DEFAULT_BACKOFF,
         LockStrategy,
         NoLock,
@@ -221,6 +227,10 @@ __all__ = [
     "ReplayDivergenceError",
     "replay",
     "correlation_id_var",
+    # ⏰ durable timers (#264)
+    "DueTimerScanner",
+    "ScanResult",
+    "DEFAULT_RESTART_TIMERS",
     # 🧬 versioning (#263)
     "SnapshotMigrator",
     "MigrationStep",

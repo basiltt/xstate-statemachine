@@ -57,6 +57,9 @@ def _build(
         for p in plugins:
             interp.use(p)
         return interp, 0
+    # ⏰ #264: durable timers resume with their remaining wall time unless
+    #    the caller chose otherwise.
+    from_snapshot_kwargs.setdefault("restart_timers", "resume")
     interp = interpreter_cls.from_snapshot(
         record.snapshot,
         machine,
