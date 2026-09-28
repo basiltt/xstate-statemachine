@@ -340,13 +340,23 @@ The generated test file uses exactly the pattern from this page (`SyncInterprete
 The chart already *is* a graph, so the library can tell you how to reach every state — the Python counterpart of `@xstate/graph`'s `getShortestPaths` / `getSimplePaths`. Nothing here is a hand-written approximation of the semantics: each candidate step is **executed by the real engine** on a `SimulatedClock` with stub logic, so parallel regions, history, `after` timers and `onDone`/`onError` all behave exactly as at runtime.
 
 ```python
-import json
 from xstate_statemachine import (
     create_machine, stub_logic, shortest_paths, simple_paths,
     reachable_states, SyncInterpreter, SimulatedClock,
 )
 
-cfg = json.load(open("tests/tests_cli/stately_machines/AdvancePayment.json"))
+cfg = {
+    "id": "pay", "initial": "editing",
+    "states": {
+        "editing": {"on": {"SUBMIT": "authenticating"}},
+        "authenticating": {
+            "invoke": {"src": "verify", "onDone": "success", "onError": "failure"},
+            "after": {"2000": "challenge"},
+        },
+        "challenge": {"on": {"ANSWER": "authenticating"}},
+        "success": {"type": "final"}, "failure": {"type": "final"},
+    },
+}
 machine = create_machine(cfg, logic=stub_logic(cfg))
 
 # one shortest path per reachable configuration (a frozenset of leaf ids)
@@ -360,7 +370,7 @@ target = next(iter(shortest_paths(machine).values()))
 target.replay(i, clock)
 assert i.current_state_ids == set(target.final_states)
 
-assert "Advance payment flow.challenge" in reachable_states(machine)
+assert "pay.success" in reachable_states(machine)
 ```
 
 - **`guards`** — `"true"` (default), `"false"`, or `"both"`. With `"both"` every guarded step is tried each way and each `Step` records the **assumption** the path relies on (`guard:isValid=False`, `service:fetch=error`, `delay:slow=unknown`), so a path to an `onError` branch says so.

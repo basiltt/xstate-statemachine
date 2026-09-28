@@ -533,7 +533,7 @@ xsm paths checkout.json --json
 +---------------------+------------------+-----------------------------+
 ```
 
-The **Events** column is the `xsm simulate --events` grammar — paste it back into `xsm sim` to reproduce the path interactively. **Assumes** lists what the path relies on when `--guards both` explores alternatives: a guard forced `False`, a service forced to fail, or a named delay with no implementation. Every step was executed by the real engine (stub logic, simulated clock), never inferred from the JSON — see [Path generation](../testing-and-pure-api/#-path-generation) for the Python API.
+The **Events** column is the `xsm simulate --events` grammar — paste it back into `xsm sim` to reproduce the path interactively. **Assumes** lists what the path relies on when `--guards both` explores alternatives: a guard forced `False`, a service forced to fail, or a named delay with no implementation. Every step was executed by the real engine (stub logic, simulated clock), never inferred from the JSON — see [Path generation](../testing-and-pure-api/#path-generation) for the Python API.
 
 ## 🎮 Simulate
 
