@@ -334,6 +334,64 @@ with persisted(store, "wallet:acct_A", machine, plugins=[dedupe]) as w:
 store.close()
 ```
 
+## Audit log & replay
+
+"Who approved this and why?" is answered by grepping Slack in most codebases. `AuditPlugin` writes an append-only record for **every processed event** — including the ones that were refused — from the same plugin hook that observed the outcome, so the audit can never disagree with the state. The log doubles as *event sourcing lite*: `replay()` re-runs the recorded events from context₀ and asserts every step lands where it was recorded.
+
+```python
+from xstate_statemachine import MachineLogic, SyncInterpreter, create_machine
+from xstate_statemachine.persistence import AuditPlugin, MemoryLog, replay
+
+# An approval workflow: every decision carries who made it and why.
+cfg = {"id": "expense", "initial": "submitted", "context": {"amount": 1200},
+       "states": {
+           "submitted": {"on": {"APPROVE": {"target": "approved", "guard": "underLimit"},
+                                "ESCALATE": "escalated", "REJECT": "rejected"}},
+           "escalated": {"on": {"APPROVE": "approved", "REJECT": "rejected"}},
+           "approved": {"type": "final"}, "rejected": {"type": "final"}}}
+logic = MachineLogic(guards={"underLimit": lambda ctx, e: ctx["amount"] <= 1000})
+machine = create_machine(cfg, logic=logic)
+
+log = MemoryLog()                       # or JSONLinesLog(path) / SQLiteLog(store)
+expense = SyncInterpreter(machine).use(AuditPlugin(log)).start()
+
+expense.send("APPROVE", actor="alice", reason="looks fine")          # guard says no: recorded as denied
+expense.send("ESCALATE", actor="alice", reason="over my limit")
+expense.send("APPROVE", actor="bob", reason="Q3 travel budget", correlation_id="req-7f3a")
+
+for r in log.read("expense"):
+    print(r.seq, r.event_type, r.disposition, r.actor, r.reason, "->", r.to_states[-1].split(".")[-1])
+# 1 APPROVE denied alice looks fine -> submitted
+# 2 ESCALATE transition alice over my limit -> escalated
+# 3 APPROVE transition bob Q3 travel budget -> approved
+
+rebuilt = replay(machine, log.read("expense"))   # re-run from context₀ on a SimulatedClock
+assert rebuilt.current_state_ids == expense.current_state_ids
+```
+
+Each `TransitionRecord` carries: `machine_id` (the store key under `persisted()`, else the interpreter id), a **gap-free `seq`**, `ts` (`interpreter.wall_now()`), `event_type` and a **redacted** `event_payload`, `from_states` / `to_states` (leaves), the `actions` that ran, a `disposition` (`transition` · `denied` · `unhandled` · `deferred` · `error` · `duplicate`), `actor` / `reason` / `correlation_id`, `machine_version`, and `engine=True` for timer and service-completion events. Records are plain JSON and round-trip through `JSONLinesLog`.
+
+`actor` and `reason` come from the event payload (`actor_key=` / `reason_key=` configurable); `correlation_id` from the payload or, failing that, from the `correlation_id_var` contextvar — set it in your request middleware and every record in that request carries it.
+
+| Store | Good for |
+|:--|:--|
+| `MemoryLog()` | Tests; in-process inspection. |
+| `JSONLinesLog(path)` | An append-only audit file; one JSON object per line; `grep`-able. |
+| `SQLiteLog(store)` | Shares the `SQLiteStore` file and per-thread connection, so a record appended inside `persisted(..., lock=PessimisticLock())` lands in the same transaction as the snapshot. |
+
+All three: `read(machine_id, after_seq=, limit=)`, `purge_older_than(cutoff_ts)`, `forget(machine_id)`. `append(rec, connection=None)` is the seam a Django or SQLAlchemy log store uses to join the store's transaction.
+
+### What `replay()` is — and is not
+
+`replay(machine, records, *, upto=None, logic=None, verify=True)` returns a started `SyncInterpreter` positioned after the last record:
+
+- **User events are re-sent** with their recorded (redacted) payload.
+- **Engine events are not re-sent** through `send()` — the engine's provenance gates would rightly refuse them. An `after` step advances a `SimulatedClock` until the timer fires; a `done.invoke` / `error.platform` step is produced by a **stub service** that returns the recorded data or raises the recorded error.
+- **Unless you pass `logic=`, actions and services are stubs while your real guards are kept** (guards are pure predicates; a stub guard saying *yes* where yours said *no* would make an honest log diverge). Replay reproduces *state*, never side effects. Pass your real logic only if its actions are idempotent and you also want `context` rebuilt (the test suite does).
+- After each record (or each user event + its engine follow-ups, which the sync engine drains in one step) the reached leaves must equal `to_states`, or `ReplayDivergenceError(seq, expected, actual)` names the first mismatch — a tampered log, an out-of-order log, or a machine that changed since.
+
+This is **event sourcing lite**: the log is a faithful record and a replayable one, but the *snapshot* stays the source of truth for the current state. There is no projection framework, no upcasting of old events, and no guarantee about actions' external effects — those belong to services and an outbox.
+
 ## Writing your own backend
 
 Subclass `BaseStore` and implement the `_load_raw` / `_save_raw` / `_delete_raw` / `_list_keys_raw` / `_lock_raw` primitives on raw strings; the base class applies key validation, the size cap and the codec around them so no backend can forget a rail. Then add your factory to `STORE_FACTORIES` in the contract test suite and run it — that *is* the definition of a conforming store.

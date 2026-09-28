@@ -15,6 +15,23 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Added
 
+- **`persistence.TransitionLogPlugin` / `AuditPlugin`, log stores
+  (`MemoryLog`, `JSONLinesLog`, `SQLiteLog`) and `replay()`** (#262; both
+  engines). One append-only `TransitionRecord` per processed event --
+  transitions AND denied / unhandled / deferred / errored attempts, each
+  with a `disposition` -- written from the hook that observed the outcome,
+  with a gap-free per-key `seq`, redacted payload, the actions that ran,
+  and `actor` / `reason` / `correlation_id` (payload keys or the
+  `correlation_id_var` contextvar). `SQLiteLog(store)` shares the store's
+  connection so the row joins the snapshot's transaction under
+  `PessimisticLock`; `append(..., connection=None)` is the seam for
+  Django / SQLAlchemy. `replay()` rebuilds a machine from the log on a
+  `SimulatedClock`: user events re-sent, `after` steps by advancing the
+  clock, service completions by stub services replaying the recorded
+  `done` / `error` -- never re-sending engine-minted events -- with stub
+  logic unless `logic=` is given, and `ReplayDivergenceError(seq)` on the
+  first mismatch. Docs: "Audit log & replay" with an approval-workflow
+  example and the "event sourcing lite" scope note.
 - **`persistence.IdempotencyPlugin` + `InboxStore` (`MemoryInbox`,
   `SQLiteInbox`)** (#261; both engines). At-least-once deduplication as a
   plugin: an unseen idempotency key is claimed atomically, a redelivery is
