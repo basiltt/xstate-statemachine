@@ -1846,6 +1846,26 @@ from xstate_statemachine.persistence import SNAPSHOT_VERSION, structure_hash
 | `check_deadline_record(rec)` | `(Any) -> Optional[str]` — shape validator for one `Deadline` record; returns what is wrong or `None`. `check_shape` calls it for every entry of `deadlines`. |
 | `structure_hash(machine)` | `(MachineNode) -> str` — computes the 16-hex-char structural fingerprint backing `MachineNode.structure_hash`. |
 
+### Stores **[0.11.0]**
+
+The create → act → persist → discard contract (#259). Guide: [Persistence Stores](../guide/persistence/). Every backend passes `tests/persistence/test_store_contract.py`.
+
+| Member | Description |
+|--------|-------------|
+| `StateStore` (Protocol) | `load(key) -> Optional[StoredSnapshot]`; `save(key, snapshot, *, expected_version=None, machine_version="", deadlines=()) -> int` (new version; `ConflictError` if `expected_version` mismatches — `0` means "must not exist yet"); `delete(key) -> bool`; `forget(key) -> dict[str, int]` (record + auxiliaries, X0.5); `list_keys(*, prefix="", limit=1000)`; `lock(key, *, timeout=10.0)` (context manager; `LockTimeoutError`); `health() -> dict`. Thread-safe. |
+| `StoredSnapshot` | Frozen dataclass: `key`, `snapshot` (JSON str), `version`, `machine_version`, `updated_at`, `deadlines: tuple[Deadline, ...]`. |
+| `MemoryStore(*, codec=None, max_snapshot_bytes=1 MiB)` | Dict + lock; per-key lock. Tests and single-process apps. |
+| `FileStore(directory, *, stale_lock_after=60.0, fsync=True, codec=None, max_snapshot_bytes=…)` | One `<encoded-key>.xsm.json` per key; atomic temp-file + `os.replace` writes; advisory lock file per key (`fcntl.flock` / `msvcrt.locking`, pid+timestamp, stale reclaim); keys percent-encoded (`encode_key` / `decode_key`, reversible, case-preserving, Windows device names prefixed); dir `0700` / files `0600`. **Not for network shares.** |
+| `SQLiteStore(path, *, busy_timeout=5.0, journal_mode="WAL", codec=None, max_snapshot_bytes=…)` | Tables `statecharts`, `deadlines`, `xsm_schema(version)` with upgrade steps; optimistic `UPDATE … WHERE version = ?`; `lock()` = `BEGIN IMMEDIATE` on a dedicated connection (database-wide); `database is locked` → `LockTimeoutError`; connection per thread; DB / `-wal` / `-shm` created `0600`; UNC path → warning + `DELETE` journal; `":memory:"` supported; `close()`. |
+| `BaseStore` | Optional base for custom backends: implements key validation, the size cap and the codec once around `_load_raw` / `_save_raw` / `_delete_raw` / `_forget_raw` / `_list_keys_raw` / `_lock_raw`. |
+| `SnapshotCodec` (Protocol) | `encode(str) -> str` / `decode(str) -> str`; applied on save / undone on load. Compression or encryption at rest. |
+| `AsyncStateStore` (Protocol) / `as_async(store)` / `AsyncStoreAdapter` | The same surface with `await`; `lock()` is `async with`, acquired and released on one dedicated worker thread. |
+| `load_interpreter(store, key, machine, *, clock=None, plugins=(), create_if_missing=True, verify_machine_hash=True, **from_snapshot_kwargs) -> (SyncInterpreter, int)` | A **started** sync interpreter and the record version (`0` if freshly created). `KeyNotFoundError` when missing and `create_if_missing=False`. |
+| `aload_interpreter(...) -> (Interpreter, int)` | Async twin; the returned `Interpreter` is started. |
+| `save_interpreter(store, key, interpreter, *, expected_version=None) -> int` | `store.save` of `get_snapshot()` with `machine.version` and the engine's persisted deadlines. |
+| `validate_key(key)` / `MAX_KEY_LENGTH` (200) / `DEFAULT_MAX_SNAPSHOT_BYTES` (1 MiB) | The shared key and size rules. |
+| `StoreError` → `ConflictError(key, expected, actual)`, `LockTimeoutError(key, timeout)`, `SnapshotTooLargeError(key, size, limit)`, `InvalidKeyError`, `KeyNotFoundError` | The store exception family; `except StoreError` covers the layer. |
+
 ---
 
 ## Exceptions
@@ -1878,6 +1898,12 @@ specific exception types.
 | `SnapshotMidStepError` **[0.9.0]** | `get_persisted_snapshot()` was called while a macrostep is in flight (#102, #169) — including the initial descent inside `start()` (#182) and any `on_action_execute` hook (#187). `.child` is `True` when the root was settled but an invoked **child** was mid-step (#183): its half-applied context would have been harvested into the parent's blob. A child stepping on *another thread* (a non-blocking sync actor) is waited for briefly first; one on the caller's own thread cannot settle while the caller holds it and is refused at once (#184). | Snapshotting from inside an action or an action hook, or while a child is mid-step. Snapshot after `send(wait=True)`, from `on_transition`, or after `stop(drain=True)`. |
 | `SnapshotCorruptError` **[0.9.0]** | A snapshot is structurally unusable (#110). | Missing key, non-object `context`, unknown `status`, or `status="running"` with an empty configuration. |
 | `MissingExtraError` **[0.11.0]** | An optional integration under `xstate_statemachine.contrib` was imported without its pip extra. Also an `ImportError`; `.extra` / `.module` attributes. | `from xstate_statemachine.contrib.fastapi import …` without `pip install "xstate-statemachine[fastapi]"` — the message is that command. |
+| `StoreError` **[0.11.0]** | Base for every `StateStore` failure (#259); `except StoreError` covers the persistence layer. | -- |
+| `ConflictError` **[0.11.0]** | Optimistic-locking conflict: `save(expected_version=n)` found a different version; nothing was written. `.key` / `.expected` / `.actual`. | Two workers loaded the same record; the slower one's save. Reload and retry. |
+| `LockTimeoutError` **[0.11.0]** | `store.lock(key, timeout=…)` could not acquire in time (another holder, or SQLite's `database is locked`). Retryable. | A long-running step holds the key; a busy SQLite writer. |
+| `SnapshotTooLargeError` **[0.11.0]** | A snapshot exceeds the store's `max_snapshot_bytes` (default 1 MiB), on save or load. `.size` / `.limit`. | A context that has grown into a document; a poisoned record. |
+| `InvalidKeyError` **[0.11.0]** | A store key is unusable: empty, > 200 chars, NUL, or (FileStore) path-like. Also a `ValueError`. | `store.save("../etc", …)`. |
+| `KeyNotFoundError` **[0.11.0]** | `load_interpreter(create_if_missing=False)` found no record. Also a `KeyError`. Lives in `persistence`. | Reading a workflow id that was never created. |
 | `SnapshotSerializationError` **[0.9.0]** | A pending event's data is not JSON-native (#131). | `Decimal` / `datetime` in a queued `DoneEvent.data` when `get_snapshot()` runs. |
 | `InvalidEventError` **[0.9.0]** | `send()` was given something that is not an event: a non-`str` type, a dict without `"type"`, … (#113). Also a `TypeError`, so pre-0.9.0 handlers still catch it. | `send(123)`, `send({"kind": "X"})`. |
 | `RootTargetError` **[0.9.0]** | A transition targets the machine root, which would empty the configuration (#108). Subclass of `InvalidConfigError`. Raised regardless of `strict_targets` — the escape hatch downgrades *unresolvable* targets only, never this (#147). | `"always": "#machine"` or `"on": {"X": "#machine"}` at `create_machine()`. |

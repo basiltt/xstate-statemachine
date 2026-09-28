@@ -141,6 +141,11 @@ from .exceptions import (
     UnknownEventError,
     WrongThreadError,
     XStateMachineError,
+    StoreError,
+    ConflictError,
+    LockTimeoutError,
+    SnapshotTooLargeError,
+    InvalidKeyError,
 )
 
 # -------------------------------------------------------------------------
@@ -270,6 +275,11 @@ __all__ = [
     "UnhandledEventError",
     "TransitionFailedError",
     "WrongThreadError",
+    "StoreError",
+    "ConflictError",
+    "LockTimeoutError",
+    "SnapshotTooLargeError",
+    "InvalidKeyError",
     "SnapshotDriftError",
     "SnapshotVersionError",
     "RestoredChainError",

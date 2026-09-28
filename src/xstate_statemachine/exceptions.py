@@ -658,3 +658,69 @@ class MissingExtraError(XStateMachineError, ImportError):
         # 📝 ImportError keeps its own `msg`/`name` slots and `str()` reads
         #    `msg`, so pass the text positionally AND set `name`.
         super().__init__(message, name=module)
+
+
+# -----------------------------------------------------------------------------
+# 💾 Persistence stores (#259)
+# -----------------------------------------------------------------------------
+class StoreError(XStateMachineError):
+    """Base for every `StateStore` failure, so ``except StoreError`` covers
+    the whole persistence layer without catching engine errors."""
+
+
+class ConflictError(StoreError):
+    """Optimistic-locking conflict: ``save(expected_version=n)`` found a
+    different version in the store (someone else saved first). Reload,
+    re-apply, retry -- the store did NOT write.
+
+    Attributes:
+        key: The record key.
+        expected: The version the caller believed was current.
+        actual: The version actually in the store (``None`` if the key was
+            deleted meanwhile).
+    """
+
+    def __init__(
+        self, key: str, expected: Optional[int], actual: Optional[int]
+    ) -> None:
+        self.key = key
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            f"Store conflict on '{key}': expected version {expected}, "
+            f"found {actual}. Reload the snapshot and retry."
+        )
+
+
+class LockTimeoutError(StoreError):
+    """`store.lock(key, timeout=...)` could not acquire the lock in time
+    (another holder, or SQLite's ``database is locked``). Retryable."""
+
+    def __init__(self, key: str, timeout: float, *, holder: str = "") -> None:
+        self.key = key
+        self.timeout = timeout
+        suffix = f" (held by {holder})" if holder else ""
+        super().__init__(
+            f"Could not lock '{key}' within {timeout:g}s{suffix}."
+        )
+
+
+class SnapshotTooLargeError(StoreError):
+    """A snapshot exceeds the store's ``max_snapshot_bytes`` (X0.4). Refused
+    on save AND on load, so a store poisoned by another writer cannot make
+    a reader allocate unboundedly."""
+
+    def __init__(self, key: str, size: int, limit: int) -> None:
+        self.key = key
+        self.size = size
+        self.limit = limit
+        super().__init__(
+            f"Snapshot for '{key}' is {size} bytes; the store limit is "
+            f"{limit} bytes (max_snapshot_bytes)."
+        )
+
+
+class InvalidKeyError(StoreError, ValueError):
+    """A store key is unusable: empty, too long, or -- for `FileStore` --
+    one that could escape the directory or collide on a case-folding
+    filesystem."""
