@@ -60,8 +60,12 @@ testing       = []  # #268  pytest>=8, hypothesis>=6.100
 redis         = ["redis>=5"]  # #306
 sqlalchemy    = []  # #284  sqlalchemy>=2.0
 starlette     = ["starlette>=0.27"]  # #275
-fastapi       = []  # #276  fastapi>=0.100 + [pydantic,starlette]
-litestar      = []  # #278  litestar>=2.0
+fastapi       = [  # #276; self-reference avoided so the audit test sees pins
+    "fastapi>=0.100",
+    "pydantic>=2.5",
+    "starlette>=0.27",
+]
+litestar      = ["litestar>=2.0", "starlette>=0.27"]  # #278
 flask         = []  # #285  flask>=2.3
 django        = []  # #280  django>=4.2
 drf           = []  # #283  djangorestframework>=3.14 + [django]
@@ -80,6 +84,8 @@ all           = [  # every SHIPPED extra; grows as issues land
     "redis>=5",
     "pydantic>=2.5",
     "starlette>=0.27",
+    "fastapi>=0.100",
+    "litestar>=2.0",
 ]
 
 [project.urls]

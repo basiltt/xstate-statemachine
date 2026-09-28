@@ -39,8 +39,8 @@ except MissingExtraError as exc:
 | `redis` | Shared snapshot store, inbox and log for multi-worker deployments | **shipped** — [guide](../integration-redis/) · [#306](https://github.com/basiltt/xstate-statemachine/issues/306) |
 | `sqlalchemy` | `StatechartType`, mixin with optimistic locking, transactional outbox, stores for sync and `AsyncSession` | planned — [#284](https://github.com/basiltt/xstate-statemachine/issues/284) |
 | `starlette` | Store-backed registry, `Receipt → HTTP` mapping, SSE / WebSocket transition streaming | **shipped** — [guide](../integration-starlette/) · [#275](https://github.com/basiltt/xstate-statemachine/issues/275) |
-| `fastapi` | `Depends(get_interpreter)`, `StatechartRouter` with OpenAPI generated from the chart | planned — [#276](https://github.com/basiltt/xstate-statemachine/issues/276) |
-| `litestar` | `XStatePlugin`, `Provide()` dependency, statechart controller | planned — [#278](https://github.com/basiltt/xstate-statemachine/issues/278) |
+| `fastapi` | `Depends(get_interpreter)`, `StatechartRouter` with OpenAPI generated from the chart | **shipped** — [guide](../integration-fastapi/) · [#276](https://github.com/basiltt/xstate-statemachine/issues/276) |
+| `litestar` | `XStatePlugin`, `Provide()` dependency, statechart controller | **shipped** — [guide](../integration-litestar/) · [#278](https://github.com/basiltt/xstate-statemachine/issues/278) |
 | `flask` | `XState` extension (`init_app`), blueprint per machine, session-keyed wizards | planned — [#285](https://github.com/basiltt/xstate-statemachine/issues/285) |
 | `django` | `StatechartField`, model mixin with `select_for_update`, signals, permission guards, admin transition buttons, management commands | planned — [#280](https://github.com/basiltt/xstate-statemachine/issues/280) |
 | `drf` | ViewSet mixin with an `@action` per event, serializer field | planned — [#283](https://github.com/basiltt/xstate-statemachine/issues/283) |

@@ -42,6 +42,40 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
     `ready_route()` probes; `mount_inspector()` refuses unless
     `debug=True` (the sink ships with #274). Guide:
     *Integrations → Starlette*.
+  - **`[fastapi]` extra (#276).** `StatechartRouter(registry, name)` turns
+    a registered chart into an `APIRouter`: `GET /{id}` (state only),
+    `POST /{id}/send` whose body is a **discriminated union** of the
+    machine's `EventModel`s on `type` (or a deterministic
+    `{type: Literal[<declared>], payload}` fallback), one
+    `POST /{id}/events/<EVENT>` per declared event, `GET /{id}/events`
+    (what `can()` accepts now + declared schemas), `GET /{id}/diagram.mmd`,
+    SSE `/{id}/stream` and `WS /{id}/ws`. Every handler delegates to the
+    `[starlette]` registry (`send_event`, `peek`, `transition_stream`,
+    `websocket_endpoint`), so status mapping, `Idempotency-Key` and
+    `authorize` are shared; the principal comes from an `actor` dependency,
+    never the body. `app.openapi()` validates, documents every 4xx/5xx as
+    `application/problem+json`, and request-validation failures are 422
+    problems listing only field locations and error types.
+    `dependencies=` / `per_event_dependencies=` add FastAPI-native auth (a
+    gated event is refused on `/send`). `get_interpreter()` is a
+    `Depends` yielding inside `act()` -- saved when the handler returns,
+    not when it raises, a conflict → 409. `instrument_app()` mounts
+    probes, composes `registry.lifespan` with the app's own
+    (`compose_lifespan()`) and maps library exceptions to problems.
+    Extra: `fastapi>=0.100`, `pydantic>=2.5`, `starlette>=0.27`. Guide:
+    *Integrations → FastAPI*.
+  - **`[litestar]` extra (#278).** `create_statechart_controller()`
+    generates a `Controller` with the same route table; `XStatePlugin`
+    appends `registry.lifespan`, mounts probes, maps library exceptions to
+    problem+json, documents the `/send` body as `oneOf` + `discriminator`
+    in OpenAPI and can register per-machine `Provide()` dependencies;
+    `get_interpreter()` is the `Provide` form. Litestar requests and
+    responses are adapted at the edge -- one registry, one set of
+    semantics. Extra: `litestar>=2.0`, `starlette>=0.27`. Guide:
+    *Integrations → Litestar*.
+  - `EventModel` validators ignore the transport-level `idempotency_key`
+    payload field, so `Idempotency-Key` works with `extra="forbid"`
+    models.
 
 - **Graph algorithms `shortest_paths`, `simple_paths`, `reachable_states`,
   `transition_coverage_targets`, `Path`, `Step`** (#269; core, zero-dep;

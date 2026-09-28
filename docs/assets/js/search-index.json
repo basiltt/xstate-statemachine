@@ -126,6 +126,18 @@
     "description": "[starlette] extra — StatechartRegistry (create → act → persist → discard), Receipt → HTTP status, RFC 9457 problems, Idempotency-Key, SSE and WebSocket transition streams, residents, lifespan timer scanner, health/ready probes."
   },
   {
+    "title": "FastAPI",
+    "section": "Integrations",
+    "url": "/guide/integration-fastapi/",
+    "description": "[fastapi] extra — StatechartRouter generates a REST API and OpenAPI from a chart: discriminated-union event bodies, RFC 9457 problems, Depends(get_interpreter), Idempotency-Key, SSE/WebSocket, instrument_app."
+  },
+  {
+    "title": "Litestar",
+    "section": "Integrations",
+    "url": "/guide/integration-litestar/",
+    "description": "[litestar] extra — XStatePlugin, Provide() get_interpreter, generated statechart Controller with OpenAPI discriminated union, problem+json, SSE/WebSocket."
+  },
+  {
     "description": "Generate diagrams from machines — Mermaid, PlantUML, ASCII format, statechart visualization.",
     "section": "Advanced",
     "title": "Diagram Export",

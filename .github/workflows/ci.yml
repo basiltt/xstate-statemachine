@@ -209,8 +209,14 @@ jobs:
           # 🟥 #306: the [redis] cell runs its contract suites against an
           #    in-process fakeredis (Lua enabled); no service container.
           if [ "${{ matrix.extra }}" = "redis" ]; then python -m pip install "fakeredis[lua]>=2.20"; fi
-          # 🌐 #275: starlette.testclient and the ASGI streaming tests need httpx.
-          if [ "${{ matrix.extra }}" = "starlette" ]; then python -m pip install "httpx>=0.24"; fi
+          # 🌐 #275/#276/#278: the web test clients and ASGI streaming tests
+          #    need httpx; the [fastapi]/[litestar] OpenAPI tests validate
+          #    the generated document. [litestar]'s typed bodies need pydantic.
+          case "${{ matrix.extra }}" in
+            starlette) python -m pip install "httpx>=0.24" ;;
+            fastapi) python -m pip install "httpx>=0.24" "openapi-spec-validator>=0.7" ;;
+            litestar) python -m pip install "httpx>=0.24" "openapi-spec-validator>=0.7" "pydantic>=2.5" ;;
+          esac
           python -m pip list
 
       - name: 🧪 Run this extra's tests
