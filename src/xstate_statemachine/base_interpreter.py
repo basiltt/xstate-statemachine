@@ -499,6 +499,10 @@ class BaseInterpreter(Generic[TContext]):
         "_restored_from_snapshot",
         "_states_to_invoke",
         "_restart_timers_on_start",
+        "_armed_after",  # #264
+        "_entry_seq",  # #264
+        "_restored_deadlines",  # #264
+        "_restart_timers_mode",  # #264
         "_scheduled_sends",
         "_armed_self_sends",
         "_restored_self_sends",
@@ -648,6 +652,21 @@ class BaseInterpreter(Generic[TContext]):
         #: shared restore / dormancy logic (#128) can read it; each engine
         #: re-binds the same attribute in its own `__init__`.
         self._timer_handles: Dict[str, List[Any]] = {}
+        #: ⏰ #264: every armed `after` timer as a wall-clock `Deadline`,
+        #: keyed by ``(state_id, event_type)``. What `_persist_deadlines`
+        #: writes into the snapshot so a timer survives the process.
+        self._armed_after: Dict[Tuple[str, str], "persistence.Deadline"] = {}
+        #: ⏰ #264: monotonic count of state entries that armed timers; a
+        #: persisted deadline carries the value at arm time so a stale one
+        #: (armed by an earlier visit to the same state) is recognisable.
+        self._entry_seq: int = 0
+        #: ⏰ #264: deadlines parked by `from_snapshot` until `start()`
+        #: decides how to re-arm them (`restart_timers` mode).
+        self._restored_deadlines: List["persistence.Deadline"] = []
+        #: ⏰ #264: how `start()` treats parked deadlines: ``"restart"``
+        #: (from zero, the #128 behaviour), ``"resume"`` (remaining wall
+        #: time) or ``"fire_due"`` (resume + fire the matured ones now).
+        self._restart_timers_mode: str = "restart"
         #: 🔌 #127: `(plugin class name, hook name, exception)` of the most
         #: recent contained plugin-hook failure, or ``None``.
         self.last_plugin_error: Optional[Tuple[str, str, BaseException]] = None
@@ -1273,12 +1292,39 @@ class BaseInterpreter(Generic[TContext]):
         return True
 
     def _persist_deadlines(self) -> List["persistence.Deadline"]:
-        """#305: durable `after` deadlines to persist. Reserved for #264.
+        """#264: every armed `after` timer as a wall-clock `Deadline`.
 
-        Returns ``[]`` until an engine arms wall-clock deadlines; the
-        snapshot key exists NOW so layout v4 is final before that lands.
+        🏛️ This deliberately REVERSES the 0.8.0 decision that "timers are
+        not persisted" (#128): under create → act → persist → discard the
+        interpreter is thrown away after every request, so an in-memory
+        deadline never fires -- a 24-hour reminder simply vanished. The
+        deadline is anchored to `wall_now()` (not the monotonic clock) so
+        another process, hours later, can compare it with its own clock.
+
+        Like `scheduled_sends` (#221), deadlines a restore parked but
+        `start()` has not yet re-armed are re-emitted verbatim, so a
+        compaction job that rewrites blobs without starting machines loses
+        nothing.
         """
-        return []
+        out = list(self._restored_deadlines)
+        out.extend(self._armed_after.values())
+        return sorted(out, key=lambda d: (d.due_at_wall, d.state_id))
+
+    def _forget_deadlines(
+        self, state_id: str, event_type: Optional[str] = None
+    ) -> None:
+        """#264: drop the durable record(s) for *state_id* -- all of them on
+        state exit, or the one for *event_type* when its timer fired."""
+        if event_type is not None:
+            self._armed_after.pop((state_id, event_type), None)
+            return
+        for key in [k for k in self._armed_after if k[0] == state_id]:
+            del self._armed_after[key]
+
+    def pending_deadlines(self) -> List["persistence.Deadline"]:
+        """Public view of `_persist_deadlines()` (#264): the `after`
+        timers that would survive a snapshot, soonest first."""
+        return self._persist_deadlines()
 
     def wall_now(self) -> float:
         """Seconds since the Unix epoch, via the clock when it provides one.
@@ -1836,7 +1882,7 @@ class BaseInterpreter(Generic[TContext]):
         *,
         verify_machine_hash: bool = True,
         restart_services: bool = False,
-        restart_timers: Optional[bool] = None,
+        restart_timers: Union[bool, str, None] = None,
         clock: Optional[Clock] = None,
         minimum_version: int = 0,
         expected_machine_hash: Optional[str] = None,
@@ -1899,11 +1945,17 @@ class BaseInterpreter(Generic[TContext]):
                 after a static restore) check `has_dormant_invocations` and
                 `has_dormant_timers`, which are `True` exactly while work
                 the configuration relies on is parked.
-            restart_timers (Optional[bool]): When `True`, `start()` re-arms
-                every `after` timer of the restored configuration **from
-                zero** (#128) -- a snapshot records that a timer was pending,
-                not how far along it was. Defaults to the value of
-                `restart_services`, so "bring it all back" is one flag.
+            restart_timers (bool | str | None): How `start()` treats the
+                restored configuration's `after` timers. ``True`` /
+                ``"restart"`` re-arms them **from zero** (#128). Since
+                0.11.0 the snapshot ALSO records each timer's wall-clock
+                deadline (#264 -- reversing the 0.8.0 "timers are not
+                persisted" decision), so ``"resume"`` re-arms the
+                **remaining** time and ``"fire_due"`` resumes and fires the
+                matured ones during `start()`, in deadline order.
+                ``False`` keeps the static restore. Defaults to the value
+                of `restart_services`; `persistence.persisted()` defaults
+                to ``"resume"``.
             clock (Optional[Clock]): Clock for the restored interpreter
                 (#117). The other half of construct-then-restore: without
                 it every restored machine ran on `RealClock`, which broke
@@ -2057,8 +2109,28 @@ class BaseInterpreter(Generic[TContext]):
         #    to a clock that no longer exists). Opt in to re-arming them from
         #    zero on `start()`; defaults to the `restart_services` choice so
         #    the common "bring it all back" call is one flag.
-        interpreter._restart_timers_on_start = (
-            restart_services if restart_timers is None else restart_timers
+        # ⏰ #264: `restart_timers` widened -- `True` == "restart" (from
+        #    zero, #128), "resume" re-arms the REMAINING wall time from the
+        #    persisted deadlines, "fire_due" resumes and fires the matured
+        #    ones at start. `False` / None-with-restart_services=False keeps
+        #    the static restore. Parked deadlines are re-emitted by a
+        #    snapshot taken before `start()` (see `_persist_deadlines`).
+        mode = restart_services if restart_timers is None else restart_timers
+        if mode is True:
+            mode = "restart"
+        if mode not in (False, "restart", "resume", "fire_due"):
+            raise ValueError(
+                "restart_timers must be True/False or one of 'restart', "
+                f"'resume', 'fire_due'; got {mode!r}"
+            )
+        interpreter._restart_timers_on_start = bool(mode)
+        interpreter._restart_timers_mode = mode if mode else "restart"
+        interpreter._restored_deadlines = [
+            persistence.Deadline.from_dict(d)
+            for d in snapshot.get("deadlines") or []
+        ]
+        interpreter._entry_seq = max(
+            [d.entry_seq for d in interpreter._restored_deadlines] + [0]
         )
 
         # 🌳 Reconstruct the set of active state nodes from their IDs.
@@ -2377,11 +2449,12 @@ class BaseInterpreter(Generic[TContext]):
         """``True`` when an active state declares an ``after`` timer that is
         not currently armed (#128) -- the case after a static restore.
 
-        `from_snapshot()` cannot know how much of a delay had elapsed, so
-        it does not re-arm timers on its own. `start(restart_services=True)`
-        (or `restart_timers=True`) re-arms them from zero; otherwise this
-        flag tells a health check that a deadline the configuration relies
-        on will never fire.
+        `from_snapshot()` parks timers until `start()` decides how to
+        re-arm them (`restart_timers`: ``"restart"`` from zero,
+        ``"resume"`` with the persisted remaining time, ``"fire_due"``
+        firing the matured ones -- #264). Until then this flag tells a
+        health check that a deadline the configuration relies on is not
+        armed; `pending_deadlines()` lists what would be.
         """
         if not any(state.after for state in self._active_state_nodes):
             return False
@@ -2421,11 +2494,38 @@ class BaseInterpreter(Generic[TContext]):
         is strictly better than a timer that never fires.
         """
         armed = 0
-        for state in list(self._active_state_nodes):
+        mode = self._restart_timers_mode
+        parked, self._restored_deadlines = self._restored_deadlines, []
+        by_state: Dict[str, Dict[str, float]] = {}
+        if mode in ("resume", "fire_due"):
+            now = self.wall_now()
+            for d in parked:
+                by_state.setdefault(d.state_id, {})[d.event_type] = (
+                    d.due_at_wall - now
+                ) * 1000.0
+        # ⏰ #264: arm in DEADLINE order. Every matured deadline is re-armed
+        #    at 0 ms, and the clock heap breaks ties by arm order -- so the
+        #    most overdue timer must be armed first for `fire_due` to fire
+        #    them in the order they would have fired had the process lived.
+        earliest = {sid: min(v.values()) for sid, v in by_state.items() if v}
+        states = sorted(
+            self._active_state_nodes,
+            key=lambda st: (earliest.get(st.id, float("inf")), st.id),
+        )
+        for state in states:
             if not state.after or self._timer_handles.get(state.id):
                 continue
-            self._schedule_state_timers(state)
+            self._schedule_state_timers_with(state, by_state.get(state.id))
             armed += 1
+        # 🛡️ #264 / #263: a parked deadline whose state is not in the active
+        #    configuration any more (a migration renamed it) cannot be
+        #    re-armed. Fail LOUDLY -- a silently dropped SLA is the exact
+        #    failure durable timers exist to prevent.
+        if mode in ("resume", "fire_due"):
+            active = {s.id for s in self._active_state_nodes}
+            orphans = sorted({d.state_id for d in parked} - active)
+            if orphans:
+                raise StateNotFoundError(target=orphans[0])
         return armed
 
     def _restart_dormant_invocations(self) -> None:
@@ -5548,6 +5648,17 @@ class BaseInterpreter(Generic[TContext]):
         Separate from invoke scheduling so a restore can re-arm timers
         without re-invoking services (or vice versa).
         """
+        self._schedule_state_timers_with(state, None)
+
+    def _schedule_state_timers_with(
+        self,
+        state: StateNode,
+        remaining: Optional[Dict[str, float]],
+    ) -> None:
+        """Arm *state*'s timers; *remaining* (event type → ms left) overrides
+        the declared delay for a `"resume"` / `"fire_due"` restore (#264)."""
+        self._entry_seq += 1
+        seq = self._entry_seq
         # 🕒 Schedule `after` timers.
         for delay_ms, transitions in state.after.items():
             # 🏷️ Symbolic delays resolve through MachineLogic.delays.
@@ -5561,12 +5672,27 @@ class BaseInterpreter(Generic[TContext]):
                 )
                 continue
             for t_def in transitions:
-                delay_sec = float(resolved_ms) / 1000.0
+                effective_ms = float(resolved_ms)
+                if remaining is not None and t_def.event in remaining:
+                    effective_ms = max(0.0, remaining[t_def.event])
+                delay_sec = effective_ms / 1000.0
                 # 📏 #48: record the deadline so the fired event can report
                 #    its own lateness.
                 after_event = _engine_after(
                     type=t_def.event,
                     scheduled_for=self.clock.now() + delay_sec,
+                )
+                # ⏰ #264: the durable record. `delay_ms` keeps the RESOLVED
+                #    declared delay (a named / dynamic delay is a number by
+                #    now) so a reader needs no logic to interpret it.
+                self._armed_after[(state.id, t_def.event)] = (
+                    persistence.Deadline(
+                        state_id=state.id,
+                        entry_seq=seq,
+                        due_at_wall=self.wall_now() + delay_sec,
+                        delay_ms=int(round(float(resolved_ms))),
+                        event_type=t_def.event,
+                    )
                 )
                 self._after_timer(delay_sec, after_event, owner_id=state.id)
                 logger.debug(

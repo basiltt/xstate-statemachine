@@ -381,7 +381,15 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 self._restart_dormant_invocations()
             if self._restart_timers_on_start:
                 self._restart_timers_on_start = False
+                fire_due = self._restart_timers_mode == "fire_due"
                 self._rearm_dormant_timers()
+                if fire_due:
+                    # ⏰ #264: a resumed deadline that already passed was
+                    #    armed with 0 ms; pump so it lands on the queue and
+                    #    the drain below runs its transition before start()
+                    #    returns -- in deadline order, since the clock heap
+                    #    is due-ordered.
+                    self._pump_timers()
             self._process_event_queue()
             self._process_transient_transitions()
             return self
@@ -910,6 +918,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             for handle in handles:
                 self.clock.clear_timeout(handle)
         self._timer_handles.clear()
+        self._armed_after.clear()  # #264
         self._scheduled_sends.clear()
         self._internal_queue.clear()  # mid-macrostep state; never persisted
 
@@ -1778,6 +1787,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         handles = self._timer_handles.pop(state.id, [])
         for handle in handles:
             self.clock.clear_timeout(handle)
+        self._forget_deadlines(state.id)  # #264
         if handles:
             logger.debug(
                 "🧹 Cancelled %d timer(s) for state '%s'.",
@@ -1832,6 +1842,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 return
             # 🏷️ #235: re-mint rather than `_replace` so the fired event
             #    keeps engine provenance.
+            self._forget_deadlines(owner_id, event.type)  # #264: fired
             self._event_queue.append(
                 _engine_after(
                     event.type, event.scheduled_for, self.clock.now()

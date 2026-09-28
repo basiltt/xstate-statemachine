@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Durable `after` timers: persisted deadlines, `restart_timers="resume" |
+  "fire_due"`, `pending_deadlines()`, `DueTimerScanner`** (#264; both
+  engines). Every armed `after` timer is now recorded in the snapshot's
+  `deadlines` (layout v4) as a wall-clock `Deadline` (`state_id`,
+  `entry_seq`, `due_at_wall`, resolved `delay_ms`, `event_type`) --
+  **reversing the 0.8.0 "timers are not persisted" decision**, because
+  under create → act → persist → discard an in-memory deadline never
+  fired. `from_snapshot(restart_timers=)` widens from a bool to
+  `False | True/"restart" | "resume" | "fire_due"`: resume re-arms the
+  REMAINING wall time, fire_due also fires matured deadlines during
+  `start()` in deadline order; `persisted()` / `load_interpreter()` default
+  to `"resume"`. A parked deadline whose state vanished after a migration
+  fails loudly (`StateNotFoundError`). `DueTimerScanner(store,
+  machine_for_key)` -- `run_once(now)` / `scan()` / `run_forever()` -- is
+  the zero-dependency driver that wakes due machines under a lock
+  strategy, re-reading under the lock so a machine another worker advanced
+  is skipped; `ScanResult` carries the lag metric. Docs: "Durable timers"
+  with the guarantees box (no earlier than the deadline, no later than the
+  next tick; at-least-once on crash -- pair with the inbox).
 - **Chart versioning on restore: `MachineVersionMismatchError`,
   `SnapshotMigrator`, `from_snapshot(on_version_mismatch=, migrator=)`,
   `xsm snapshots --stale`** (#263; both engines). A snapshot's

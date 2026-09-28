@@ -71,9 +71,14 @@ __all__ = [
     "apersisted",
     "persisted_retry",
     "DEFAULT_BACKOFF",
+    "DEFAULT_RESTART_TIMERS",
 ]
 
 T = TypeVar("T")
+
+#: ⏰ #264: `persisted()` re-arms persisted `after` deadlines with their
+#: REMAINING wall time by default -- the whole point of durable timers.
+DEFAULT_RESTART_TIMERS: Any = "resume"
 
 #: Retry backoff for `OptimisticLock`: short, jittered -- a conflict means
 #: another writer JUST finished, so a few ms of decorrelated wait is enough
@@ -99,6 +104,7 @@ class LockStrategy(Protocol):
         create_if_missing: bool = True,
         migrator: Optional[Any] = None,
         on_version_mismatch: Optional[str] = None,
+        restart_timers: Any = DEFAULT_RESTART_TIMERS,
     ) -> T:
         """load → ``fn(interp)`` → save → discard, under this strategy.
         May call *fn* more than once (optimistic retry)."""
@@ -118,10 +124,12 @@ class LockStrategy(Protocol):
 
 
 def _restore_kwargs(
-    migrator: Optional[Any], on_version_mismatch: Optional[str]
+    migrator: Optional[Any],
+    on_version_mismatch: Optional[str],
+    restart_timers: Any = DEFAULT_RESTART_TIMERS,
 ) -> Dict[str, Any]:
-    """#263: the version-policy kwargs forwarded to `from_snapshot`."""
-    kw: Dict[str, Any] = {}
+    """The `from_snapshot` kwargs `persisted()` forwards (#263, #264)."""
+    kw: Dict[str, Any] = {"restart_timers": restart_timers}
     if migrator is not None:
         kw["migrator"] = migrator
     if on_version_mismatch is not None:
@@ -230,6 +238,7 @@ class OptimisticLock:
         create_if_missing: bool = True,
         migrator: Optional[Any] = None,
         on_version_mismatch: Optional[str] = None,
+        restart_timers: Any = DEFAULT_RESTART_TIMERS,
     ) -> T:
         attempt = 0
         while True:
@@ -244,7 +253,9 @@ class OptimisticLock:
                     clock,
                     plugins,
                     create_if_missing,
-                    _restore_kwargs(migrator, on_version_mismatch),
+                    _restore_kwargs(
+                        migrator, on_version_mismatch, restart_timers
+                    ),
                 )
             except ConflictError as exc:
                 if attempt > self.retries:
@@ -287,6 +298,7 @@ class PessimisticLock:
         create_if_missing: bool = True,
         migrator: Optional[Any] = None,
         on_version_mismatch: Optional[str] = None,
+        restart_timers: Any = DEFAULT_RESTART_TIMERS,
     ) -> T:
         with self.acquire(store, key):
             return _cycle(
@@ -298,7 +310,7 @@ class PessimisticLock:
                 clock,
                 plugins,
                 create_if_missing,
-                _restore_kwargs(migrator, on_version_mismatch),
+                _restore_kwargs(migrator, on_version_mismatch, restart_timers),
             )
 
 
@@ -329,6 +341,7 @@ class NoLock:
         create_if_missing: bool = True,
         migrator: Optional[Any] = None,
         on_version_mismatch: Optional[str] = None,
+        restart_timers: Any = DEFAULT_RESTART_TIMERS,
     ) -> T:
         return _cycle(
             store,
@@ -339,7 +352,7 @@ class NoLock:
             clock,
             plugins,
             create_if_missing,
-            _restore_kwargs(migrator, on_version_mismatch),
+            _restore_kwargs(migrator, on_version_mismatch, restart_timers),
         )
 
 
@@ -388,6 +401,7 @@ def persisted(
     create_if_missing: bool = True,
     migrator: Optional[Any] = None,
     on_version_mismatch: Optional[str] = None,
+    restart_timers: Any = DEFAULT_RESTART_TIMERS,
 ) -> Iterator[Any]:
     """create → act → persist → discard as a ``with`` block (sync engine).
 
@@ -417,7 +431,7 @@ def persisted(
             plugins,
             create_if_missing,
             True,
-            _restore_kwargs(migrator, on_version_mismatch),
+            _restore_kwargs(migrator, on_version_mismatch, restart_timers),
         )
         markers = _mark_plugins(plugins)
         for m in markers:
@@ -451,6 +465,7 @@ async def apersisted(
     create_if_missing: bool = True,
     migrator: Optional[Any] = None,
     on_version_mismatch: Optional[str] = None,
+    restart_timers: Any = DEFAULT_RESTART_TIMERS,
 ) -> AsyncIterator[Any]:
     """Async twin of `persisted()`: yields a started `Interpreter`.
 
@@ -488,7 +503,9 @@ async def apersisted(
                 machine,
                 clock=clock,
                 plugins=list(plugins),
-                **_restore_kwargs(migrator, on_version_mismatch),
+                **_restore_kwargs(
+                    migrator, on_version_mismatch, restart_timers
+                ),
             )
             version = record.version
         markers = _mark_plugins(plugins)

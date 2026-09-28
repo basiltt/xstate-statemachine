@@ -441,6 +441,58 @@ Blobs written before labels existed (0.10.x) restore with a warning — they can
 
 > **Guarantees.** A snapshot is refused, never silently mis-restored, when its label or structure does not match — unless *you* said how to bridge the gap. Migration steps are your code; the library validates their output but cannot know your domain. Child-actor migration is best effort (each child is checked with its own machine; a child with no path fails the whole restore).
 
+## Durable timers
+
+`after` timers are the library's superpower for retries, SLAs, escalations and reminders — and until 0.11.0 they were in-memory tasks that **died with the process**. Under create → act → persist → discard the interpreter is discarded after every request, so a 24-hour `after` never fired. Now the deadline lives **in the snapshot** (`deadlines`, layout v4), indexed by the store, and a scanner wakes the machine when it matures. This deliberately reverses the 0.8.0 "timers are not persisted" decision.
+
+```python
+import time
+from xstate_statemachine import create_machine
+from xstate_statemachine.persistence import DueTimerScanner, MemoryStore, persisted
+
+cfg = {"id": "trial", "initial": "active",
+       "states": {"active": {"after": {"3600000": "reminded"}},      # 1 hour
+                  "reminded": {"type": "final"}}}
+machine = create_machine(cfg)
+store = MemoryStore()
+
+with persisted(store, "user:42", machine):          # arms the timer; the deadline is persisted
+    pass
+now = time.time()
+(deadline,) = store.load("user:42").deadlines
+assert abs(deadline.due_at_wall - (now + 3600)) < 5
+
+scanner = DueTimerScanner(store, lambda key: machine)   # "another process"
+assert scanner.run_once(now=now + 1800) == 0             # not early
+assert scanner.run_once(now=now + 3601) == 1             # fires once due
+assert scanner.run_once(now=now + 3601) == 0             # idempotent
+with persisted(store, "user:42", machine) as trial:
+    assert trial.matches("trial.reminded")
+```
+
+Each persisted `Deadline` carries `state_id`, `entry_seq` (the state-entry generation, so a deadline armed by an earlier visit to the same state is recognisably stale), `due_at_wall` (epoch seconds from `interpreter.wall_now()`), the **resolved** `delay_ms` (a named or dynamic delay is a number by then) and `event_type`. `interpreter.pending_deadlines()` lists them, soonest first, on both engines.
+
+### Restoring: `restart_timers`
+
+| Value | On `start()` |
+|:--|:--|
+| `False` | Static restore; timers stay parked (`has_dormant_timers`). |
+| `True` / `"restart"` | Re-arm **from zero** — the 0.8.0 behaviour. |
+| `"resume"` **(default for `persisted()` / `load_interpreter()`)** | Re-arm with the **remaining** wall time: a 5 s timer snapshotted at 2 s, restored at 2 s, fires 3 s later. |
+| `"fire_due"` | `"resume"`, plus every deadline that has already passed fires **during `start()`**, most overdue first, before the call returns — what the scanner uses. |
+
+On the sync engine timers fire from `send()` / `tick()`, so `"fire_due"` pumps once inside `start()`; on the async engine the loop runs the zero-delay callbacks and settles before `start()` returns. A deadline whose state no longer exists after a migration fails **loudly** (`StateNotFoundError`) rather than being dropped.
+
+### The scanner
+
+`DueTimerScanner(store, machine_for_key, *, lock=OptimisticLock(), plugins=(), now=time.time, skew_tolerance_s=0, prefix="", limit=1000)` is the zero-dependency driver: `run_once(now)` reads the store's deadline index, and for every key with a matured deadline opens `persisted(..., restart_timers="fire_due")` under the lock strategy — the transition fires, the snapshot is saved, remaining deadlines are re-indexed. `scan()` returns a `ScanResult` (`scanned`, `due`, `woken`, `skipped_stale`, `errors`, `max_lag_s` — the "how late are we" metric); `run_forever(interval_s)` / `stop()` for a dedicated process. Celery Beat, APScheduler or cron adapters just call `run_once()`.
+
+Under the lock the scanner **re-reads** the record and wakes only if a matured deadline is still there — a machine another worker already advanced is skipped (`skipped_stale`), never double-fired. `skew_tolerance_s` absorbs clock skew between the writing host and the scanning one; one key's failure is recorded in `errors` and does not stop the pass.
+
+> **Guarantees.** A timer fires **no earlier than its deadline and no later than the next scanner tick after it**. A crash between the fire and the snapshot save re-fires on the next tick (**at-least-once**): make the timer's transition idempotent, or pair it with the [idempotency inbox](#idempotency-the-inbox). A guarded `after` whose guard refuses is consumed like any denied event; the state's timer is re-armed from zero on the next hydration, so the guard is asked again one delay later.
+
+`xsm simulate` runs on a `SimulatedClock` and shows `after` timers firing as you advance it; persisted deadlines are a runtime concern and are not part of the simulator.
+
 ## Writing your own backend
 
 Subclass `BaseStore` and implement the `_load_raw` / `_save_raw` / `_delete_raw` / `_list_keys_raw` / `_lock_raw` primitives on raw strings; the base class applies key validation, the size cap and the codec around them so no backend can forget a rail. Then add your factory to `STORE_FACTORIES` in the contract test suite and run it — that *is* the definition of a conforming store.
