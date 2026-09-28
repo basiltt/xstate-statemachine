@@ -41,8 +41,10 @@ on:
 
 # 🚦 Cancel superseded runs on the same ref. A force-push should not leave
 #    three stale jobs burning minutes to report on code nobody will merge.
+# 📏 #307: the nightly perf run gets its own group so it can neither cancel
+#    nor be cancelled by a push to `main` that lands at the same moment.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && 'nightly-perf' || github.ref }}
   cancel-in-progress: true
 
 # 🔒 Least privilege: CI only ever needs to read the repository.

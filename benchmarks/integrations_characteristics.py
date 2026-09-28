@@ -86,12 +86,14 @@ def _metric(samples: List[float], **details: Any) -> Dict[str, Any]:
 
 
 def _cpu_name() -> str:
-    name = platform.processor() or os.environ.get("PROCESSOR_IDENTIFIER", "")
-    if not name and Path("/proc/cpuinfo").is_file():
+    # 📝 On Linux `platform.processor()` is just the architecture; the model
+    #    name lives in /proc/cpuinfo.
+    if Path("/proc/cpuinfo").is_file():
         with open("/proc/cpuinfo", encoding="utf-8") as cpuinfo:
             for line in cpuinfo:
                 if line.startswith("model name"):
                     return line.partition(":")[2].strip()
+    name = platform.processor() or os.environ.get("PROCESSOR_IDENTIFIER", "")
     return name or "unknown"
 
 
