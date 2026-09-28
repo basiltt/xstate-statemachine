@@ -128,18 +128,24 @@ class TestLocking:
 
     def test_connection_per_thread(self, tmp_path: Any) -> None:
         store = SQLiteStore(tmp_path / "s.db")
-        conns: List[int] = []
+        # 📝 Hold the connection OBJECTS (not `id()`s -- an id is recycled
+        #    once a finished thread's connection is collected) and key by
+        #    a thread index (a `get_ident()` can be reused by a later
+        #    thread once the earlier one has exited).
+        conns: List[Any] = []
+        gate = threading.Barrier(4)
 
-        def w() -> None:
-            store.save(f"k-{threading.get_ident()}", SNAP)
-            conns.append(id(store._conn()))
+        def w(n: int) -> None:
+            store.save(f"k-{n}", SNAP)
+            conns.append(store._conn())
+            gate.wait(5)  # keep all four threads alive together
 
-        ts = [threading.Thread(target=w) for _ in range(4)]
+        ts = [threading.Thread(target=w, args=(n,)) for n in range(4)]
         for t in ts:
             t.start()
         for t in ts:
             t.join()
-        assert len(set(conns)) == 4
+        assert len({id(c) for c in conns}) == 4
         assert len(store.list_keys(prefix="k-")) == 4
         store.close()
 
