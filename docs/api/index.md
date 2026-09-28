@@ -855,7 +855,7 @@ injected `Clock` (thread-free; #49/#50) rather than a background thread.
 
 | Method | Signature | Returns | Description |
 |--------|-----------|---------|-------------|
-| `SyncInterpreter.from_snapshot(json_str, machine, *, verify_machine_hash=True, restart_services=False, restart_timers=None, clock=None, minimum_version=0, expected_machine_hash=None, plugins=None)` | `(str, MachineNode, bool, bool, Optional[bool], Optional[Clock], int, Optional[str], Optional[Iterable[PluginBase]]) -> SyncInterpreter` | `SyncInterpreter` | Restores an interpreter from a snapshot. Raises `SnapshotVersionError`/`SnapshotDriftError` as described for `Interpreter.from_snapshot` above. `restart_services=True` **[wave 3]** (#44) re-invokes every dormant `invoke` from scratch when the restored interpreter starts. |
+| `SyncInterpreter.from_snapshot(json_str, machine, *, verify_machine_hash=True, restart_services=False, restart_timers=None, clock=None, minimum_version=0, expected_machine_hash=None, plugins=None, on_version_mismatch=None, migrator=None)` | `(str, MachineNode, bool, bool, Optional[bool], Optional[Clock], int, Optional[str], Optional[Iterable[PluginBase]], Optional[str], Optional[SnapshotMigrator]) -> SyncInterpreter` | `SyncInterpreter` | Restores an interpreter from a snapshot. Raises `SnapshotVersionError`/`SnapshotDriftError` as described for `Interpreter.from_snapshot` above. **[0.11.0]** `on_version_mismatch` (`"error"` default · `"warn"` · `"migrate"`) and `migrator` (#263) apply the chart-version label check; see `SnapshotMigrator`. `restart_services=True` **[wave 3]** (#44) re-invokes every dormant `invoke` from scratch when the restored interpreter starts. |
 
 #### Properties
 
@@ -1864,7 +1864,7 @@ The create → act → persist → discard contract (#259). Guide: [Persistence 
 | `aload_interpreter(...) -> (Interpreter, int)` | Async twin; the returned `Interpreter` is started. |
 | `save_interpreter(store, key, interpreter, *, expected_version=None) -> int` | `store.save` of `get_snapshot()` with `machine.version` and the engine's persisted deadlines. |
 | `validate_key(key)` / `MAX_KEY_LENGTH` (200) / `DEFAULT_MAX_SNAPSHOT_BYTES` (1 MiB) | The shared key and size rules. |
-| `persisted(store, key, machine, *, lock=OptimisticLock(), clock=None, plugins=(), create_if_missing=True)` **(#260)** | Context manager: yields a **started** `SyncInterpreter`; persists on clean exit with the strategy's fence; **an exception inside writes nothing**; stops the interpreter either way. Under `OptimisticLock` a concurrent write makes the exit raise `ConflictError` (the block cannot be re-run — the caller retries, or uses `persisted_retry`). |
+| `persisted(store, key, machine, *, lock=OptimisticLock(), clock=None, plugins=(), create_if_missing=True, migrator=None, on_version_mismatch=None)` **(#260)** | Context manager: yields a **started** `SyncInterpreter`; persists on clean exit with the strategy's fence; **an exception inside writes nothing**; stops the interpreter either way. Under `OptimisticLock` a concurrent write makes the exit raise `ConflictError` (the block cannot be re-run — the caller retries, or uses `persisted_retry`). |
 | `apersisted(...)` | Async twin; yields a started `Interpreter`. *store* may be sync (executor) or an `as_async()` adapter. |
 | `persisted_retry(store, key, machine, fn, *, lock=OptimisticLock(), **kw) -> T` | `lock.run(...)`: the retrying form. *fn(interp)* may run up to `retries + 1` times under `OptimisticLock`. |
 | `LockStrategy` (Protocol) | `run(store, key, machine, fn, *, clock, plugins, create_if_missing) -> T`; `acquire(store, key)` (CM held for a `persisted` block); `fence(version) -> Optional[int]` (the `expected_version` to save with). |
@@ -1885,6 +1885,9 @@ The create → act → persist → discard contract (#259). Guide: [Persistence 
 | `MemoryLog()` / `JSONLinesLog(path)` / `SQLiteLog(store_or_path)` | Backends. `SQLiteLog(SQLiteStore)` shares the store's file and per-thread connection. |
 | `replay(machine, records, *, upto=None, logic=None, verify=True) -> SyncInterpreter` | Re-runs user events on a `SimulatedClock`; `after` steps advance the clock, service completions come from stub services replaying the recorded `done` / `error`; actions and services stubbed but the machine's real guards kept, unless `logic=` is given. `ReplayDivergenceError(seq, expected, actual)` on the first mismatch. The caller's machine is not mutated. |
 | `correlation_id_var` | `ContextVar[Optional[str]]` a request middleware sets for `AuditPlugin`. |
+| `SnapshotMigrator()` **(#263)** | Registry of `(from_version, to_version) -> fn(blob) -> blob` upcast steps: `register(from, to, *, machine_id=None)` (decorator) / `add(...)`; `path(machine_id, found, target)` (shortest chain, `NoMigrationPathError`); `can_migrate(...)`; `migrate(blob, target, *, machine_id=None)` returns a COPY with `machine_version` rewritten and `machine_hash` dropped. Scoped steps (`machine_id=`) win over unscoped. |
+| `MachineVersionMismatchError(machine_id, expected, found)` | Is-a `SnapshotDriftError`. The blob's `machine_version` label differs from `machine.version` and no migration applies. Distinct from `SnapshotVersionError` (layout). |
+| `NoMigrationPathError(machine_id, found, target)` | No chain of registered steps bridges the two labels. |
 | `StoreError` → `ConflictError(key, expected, actual)`, `LockTimeoutError(key, timeout)`, `SnapshotTooLargeError(key, size, limit)`, `InvalidKeyError`, `KeyNotFoundError` | The store exception family; `except StoreError` covers the layer. |
 
 ---
@@ -1924,6 +1927,8 @@ specific exception types.
 | `LockTimeoutError` **[0.11.0]** | `store.lock(key, timeout=…)` could not acquire in time (another holder, or SQLite's `database is locked`). Retryable. | A long-running step holds the key; a busy SQLite writer. |
 | `SnapshotTooLargeError` **[0.11.0]** | A snapshot exceeds the store's `max_snapshot_bytes` (default 1 MiB), on save or load. `.size` / `.limit`. | A context that has grown into a document; a poisoned record. |
 | `InvalidKeyError` **[0.11.0]** | A store key is unusable: empty, > 200 chars, NUL, or (FileStore) path-like. Also a `ValueError`. | `store.save("../etc", …)`. |
+| `MachineVersionMismatchError` **[0.11.0]** | The snapshot's `machine_version` label differs from `machine.version` and no `SnapshotMigrator` path applies (#263). A `SnapshotDriftError`. `.machine_id` / `.expected` / `.found`. | Restoring a v1 order into the v2 chart without a registered upcaster. |
+| `NoMigrationPathError` **[0.11.0]** | A `SnapshotMigrator` has no chain of steps from the blob's label to the target. | A missing hop (`1.0 → 3.0` registered only as `2.0 → 3.0`). |
 | `KeyNotFoundError` **[0.11.0]** | `load_interpreter(create_if_missing=False)` found no record. Also a `KeyError`. Lives in `persistence`. | Reading a workflow id that was never created. |
 | `SnapshotSerializationError` **[0.9.0]** | A pending event's data is not JSON-native (#131). | `Decimal` / `datetime` in a queued `DoneEvent.data` when `get_snapshot()` runs. |
 | `InvalidEventError` **[0.9.0]** | `send()` was given something that is not an event: a non-`str` type, a dict without `"type"`, … (#113). Also a `TypeError`, so pre-0.9.0 handlers still catch it. | `send(123)`, `send({"kind": "X"})`. |

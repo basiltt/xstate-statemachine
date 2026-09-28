@@ -1769,6 +1769,65 @@ class BaseInterpreter(Generic[TContext]):
                 return produced
         return None
 
+    @staticmethod
+    def _apply_version_policy(
+        snapshot: Dict[str, Any],
+        machine: MachineNode[Any],
+        policy: Optional[str],
+        migrator: Optional[Any],
+    ) -> "Tuple[Dict[str, Any], bool]":
+        """#263: compare the blob's ``machine_version`` label with the
+        machine's and act per *policy*. Returns ``(blob, migrated)``."""
+        from .persistence.migration import (
+            MachineVersionMismatchError,
+            resolve_policy,
+        )
+
+        effective = resolve_policy(policy, migrator)
+        found = snapshot.get("machine_version")
+        found = None if found is None else str(found)
+        expected = machine.version
+        # 📝 Nothing to compare: the writer predates labels, or the chart
+        #    declares none. An unlabelled blob for a labelled chart is
+        #    worth a warning -- it cannot be checked -- but not a refusal
+        #    (every 0.10.x blob is unlabelled).
+        if "machine_version" not in snapshot or expected is None:
+            if expected is not None:
+                logger.warning(
+                    "⚠️ Snapshot of '%s' carries no machine_version; the "
+                    "running machine is version %r. Cannot verify the "
+                    "chart revision (#263).",
+                    machine.id,
+                    expected,
+                )
+            return snapshot, False
+        if found == expected:
+            return snapshot, False
+        if effective == "warn":
+            logger.warning(
+                "⚠️ Snapshot of '%s' is from machine version %r; running "
+                "version is %r. Restoring as-is (on_version_mismatch='warn').",
+                machine.id,
+                found,
+                expected,
+            )
+            return snapshot, False
+        if effective == "migrate" and migrator is not None:
+            if migrator.can_migrate(machine.id, found, expected):
+                logger.info(
+                    "🧬 Migrating snapshot of '%s' from version %r to %r.",
+                    machine.id,
+                    found,
+                    expected,
+                )
+                return (
+                    migrator.migrate(
+                        snapshot, expected, machine_id=machine.id
+                    ),
+                    True,
+                )
+        raise MachineVersionMismatchError(machine.id, expected, found)
+
     @classmethod
     def from_snapshot(
         cls: Type[TInterpreter],
@@ -1782,6 +1841,8 @@ class BaseInterpreter(Generic[TContext]):
         minimum_version: int = 0,
         expected_machine_hash: Optional[str] = None,
         plugins: Optional[Iterable[PluginBase[Any]]] = None,
+        on_version_mismatch: Optional[str] = None,
+        migrator: Optional[Any] = None,
     ) -> TInterpreter:
         """Creates and restores an interpreter instance from a saved snapshot.
 
@@ -1869,6 +1930,24 @@ class BaseInterpreter(Generic[TContext]):
                 strictly before the caller could `.use()` anything, and
                 was observable only by polling `last_error`. Same effect
                 as calling `.use(p)` on the result, just early enough.
+            on_version_mismatch (Optional[str]): #263 -- what to do when
+                the blob's ``machine_version`` label differs from
+                ``machine.version``: ``"error"`` raises
+                `MachineVersionMismatchError` (a `SnapshotDriftError`);
+                ``"warn"`` logs and restores as-is; ``"migrate"`` applies
+                *migrator*. Default: ``"migrate"`` when a migrator is
+                given, else ``"error"``. Labels are compared only when the
+                blob CARRIES one (v4+ writers) -- an unlabelled blob from
+                an older library restores unchecked with a warning, and a
+                chart that declares no version never mismatches.
+            migrator (Optional[SnapshotMigrator]): #263 -- the registered
+                upcast steps. A migrated blob has its ``machine_hash``
+                dropped (the structure changed by definition) and is then
+                validated against THIS machine exactly like any other
+                blob: every state id must exist (`StateNotFoundError`),
+                the configuration must be legal, ``strict`` / event
+                schemas still apply to restored events. Child actors are
+                restored with the same migrator and policy.
 
         Returns:
             BaseInterpreter[TContext]: A new interpreter instance
@@ -1918,13 +1997,23 @@ class BaseInterpreter(Generic[TContext]):
         #    refused restore leaves nothing half-built behind.
         version = persistence.check_version(snapshot)
         persistence.check_minimum_version(version, minimum_version)  # #205
+        # 🏷️ #263: the VERSION LABEL check runs before the structural hash
+        #    check, because a migration -- the only legitimate way past a
+        #    label mismatch -- rewrites the blob and drops its hash; the
+        #    hash of a migrated blob is re-derived below from the new
+        #    machine. Identity (machine id) is still checked first.
+        snapshot, migrated = cls._apply_version_policy(
+            snapshot, machine, on_version_mismatch, migrator
+        )
         persistence.check_identity(
             snapshot,
             machine,
-            verify_hash=verify_machine_hash
-            or expected_machine_hash is not None,
+            verify_hash=(
+                verify_machine_hash or expected_machine_hash is not None
+            )
+            and not migrated,
             version=version,  # #185: bypass keyed on declared version
-            expected_hash=expected_machine_hash,  # #205
+            expected_hash=None if migrated else expected_machine_hash,
         )
         snapshot = persistence.upcast(snapshot, version)
 
@@ -2088,6 +2177,8 @@ class BaseInterpreter(Generic[TContext]):
                 child_machine,
                 verify_machine_hash=verify_machine_hash,
                 restart_services=restart_services,
+                on_version_mismatch=on_version_mismatch,
+                migrator=migrator,  # #263: children follow the same policy
             )
             child.parent = interpreter
             child.id = actor_id

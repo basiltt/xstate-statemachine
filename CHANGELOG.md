@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Chart versioning on restore: `MachineVersionMismatchError`,
+  `SnapshotMigrator`, `from_snapshot(on_version_mismatch=, migrator=)`,
+  `xsm snapshots --stale`** (#263; both engines). A snapshot's
+  `machine_version` label (written since #305) is now compared with
+  `machine.version` on restore: a mismatch raises
+  `MachineVersionMismatchError` (a `SnapshotDriftError`, distinct from the
+  layout-level `SnapshotVersionError`) unless `on_version_mismatch="warn"`
+  or a `SnapshotMigrator` with a registered `from → to` step (chained along
+  the shortest path; `NoMigrationPathError` otherwise) is given. A migrated
+  blob has its hash dropped and is validated against the new machine like
+  any other (every state id must exist, X0.4; `strict` still applies);
+  child actors follow the same policy with steps scoped by `machine_id`.
+  Unlabelled (0.10.x) blobs restore with a warning. `persisted()` /
+  `apersisted()` / `lock.run()` pass `migrator` / `on_version_mismatch`
+  through. New `xsm snapshots --store sqlite:///… [machine.json] [--stale]
+  [--json]` lists a store's keys with record version, machine version and
+  age, or only the stale ones. Docs: "Versioning in-flight instances" with
+  the rollout recipes and an explicit "we do not automatically migrate".
 - **`persistence.TransitionLogPlugin` / `AuditPlugin`, log stores
   (`MemoryLog`, `JSONLinesLog`, `SQLiteLog`) and `replay()`** (#262; both
   engines). One append-only `TransitionRecord` per processed event --

@@ -147,6 +147,10 @@ from .exceptions import (
     SnapshotTooLargeError,
     InvalidKeyError,
 )
+from .persistence.migration import (
+    MachineVersionMismatchError,
+    NoMigrationPathError,
+)
 
 # -------------------------------------------------------------------------
 # 🐍 Pythonic API
@@ -280,6 +284,8 @@ __all__ = [
     "LockTimeoutError",
     "SnapshotTooLargeError",
     "InvalidKeyError",
+    "MachineVersionMismatchError",
+    "NoMigrationPathError",
     "SnapshotDriftError",
     "SnapshotVersionError",
     "RestoredChainError",

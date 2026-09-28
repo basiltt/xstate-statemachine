@@ -42,6 +42,7 @@ from typing import (
     Any,
     AsyncIterator,
     Callable,
+    Dict,
     Iterable,
     Iterator,
     List,
@@ -96,6 +97,8 @@ class LockStrategy(Protocol):
         clock: Optional[Clock] = None,
         plugins: Iterable[Any] = (),
         create_if_missing: bool = True,
+        migrator: Optional[Any] = None,
+        on_version_mismatch: Optional[str] = None,
     ) -> T:
         """load → ``fn(interp)`` → save → discard, under this strategy.
         May call *fn* more than once (optimistic retry)."""
@@ -114,6 +117,18 @@ class LockStrategy(Protocol):
         ...  # pragma: no cover
 
 
+def _restore_kwargs(
+    migrator: Optional[Any], on_version_mismatch: Optional[str]
+) -> Dict[str, Any]:
+    """#263: the version-policy kwargs forwarded to `from_snapshot`."""
+    kw: Dict[str, Any] = {}
+    if migrator is not None:
+        kw["migrator"] = migrator
+    if on_version_mismatch is not None:
+        kw["on_version_mismatch"] = on_version_mismatch
+    return kw
+
+
 def _cycle(
     store: StateStore,
     key: str,
@@ -123,6 +138,7 @@ def _cycle(
     clock: Optional[Clock],
     plugins: Iterable[Any],
     create_if_missing: bool,
+    restore_kwargs: Optional[Dict[str, Any]] = None,
 ) -> T:
     """One create → act → persist → discard pass."""
     from ..sync_interpreter import SyncInterpreter
@@ -136,7 +152,7 @@ def _cycle(
         plugins,
         create_if_missing,
         True,
-        {},
+        restore_kwargs or {},
     )
     markers = _mark_plugins(plugins)
     for m in markers:
@@ -212,6 +228,8 @@ class OptimisticLock:
         clock: Optional[Clock] = None,
         plugins: Iterable[Any] = (),
         create_if_missing: bool = True,
+        migrator: Optional[Any] = None,
+        on_version_mismatch: Optional[str] = None,
     ) -> T:
         attempt = 0
         while True:
@@ -226,6 +244,7 @@ class OptimisticLock:
                     clock,
                     plugins,
                     create_if_missing,
+                    _restore_kwargs(migrator, on_version_mismatch),
                 )
             except ConflictError as exc:
                 if attempt > self.retries:
@@ -266,6 +285,8 @@ class PessimisticLock:
         clock: Optional[Clock] = None,
         plugins: Iterable[Any] = (),
         create_if_missing: bool = True,
+        migrator: Optional[Any] = None,
+        on_version_mismatch: Optional[str] = None,
     ) -> T:
         with self.acquire(store, key):
             return _cycle(
@@ -277,6 +298,7 @@ class PessimisticLock:
                 clock,
                 plugins,
                 create_if_missing,
+                _restore_kwargs(migrator, on_version_mismatch),
             )
 
 
@@ -305,6 +327,8 @@ class NoLock:
         clock: Optional[Clock] = None,
         plugins: Iterable[Any] = (),
         create_if_missing: bool = True,
+        migrator: Optional[Any] = None,
+        on_version_mismatch: Optional[str] = None,
     ) -> T:
         return _cycle(
             store,
@@ -315,6 +339,7 @@ class NoLock:
             clock,
             plugins,
             create_if_missing,
+            _restore_kwargs(migrator, on_version_mismatch),
         )
 
 
@@ -361,6 +386,8 @@ def persisted(
     clock: Optional[Clock] = None,
     plugins: Iterable[Any] = (),
     create_if_missing: bool = True,
+    migrator: Optional[Any] = None,
+    on_version_mismatch: Optional[str] = None,
 ) -> Iterator[Any]:
     """create → act → persist → discard as a ``with`` block (sync engine).
 
@@ -390,7 +417,7 @@ def persisted(
             plugins,
             create_if_missing,
             True,
-            {},
+            _restore_kwargs(migrator, on_version_mismatch),
         )
         markers = _mark_plugins(plugins)
         for m in markers:
@@ -422,6 +449,8 @@ async def apersisted(
     clock: Optional[Clock] = None,
     plugins: Iterable[Any] = (),
     create_if_missing: bool = True,
+    migrator: Optional[Any] = None,
+    on_version_mismatch: Optional[str] = None,
 ) -> AsyncIterator[Any]:
     """Async twin of `persisted()`: yields a started `Interpreter`.
 
@@ -459,6 +488,7 @@ async def apersisted(
                 machine,
                 clock=clock,
                 plugins=list(plugins),
+                **_restore_kwargs(migrator, on_version_mismatch),
             )
             version = record.version
         markers = _mark_plugins(plugins)
