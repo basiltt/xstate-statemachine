@@ -26,6 +26,8 @@ from ...models import MachineNode, StateNode
 from ...validation import transitions_of, walk
 from ..extractor import extract_logic_names
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class Finding:
@@ -50,6 +52,7 @@ class Facts:
     delays: Set[str] = field(default_factory=set)
     events: Set[str] = field(default_factory=set)
     unreachable: List[str] = field(default_factory=list)
+    engine_unreachable: List[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -152,7 +155,12 @@ def _unreachable(machine: MachineNode) -> List[str]:
     )
 
 
-def analyse(path: Path, *, strict_config: bool = True) -> Facts:
+def analyse(
+    path: Path,
+    *,
+    strict_config: bool = True,
+    engine_reachability: bool = False,
+) -> Facts:
     """Load, build and inspect one machine file. Never raises for a bad
     file -- problems become `findings`."""
     facts = Facts(path=path)
@@ -235,7 +243,57 @@ def analyse(path: Path, *, strict_config: bool = True) -> Facts:
     facts.unreachable = _unreachable(m)
     for sid in facts.unreachable:
         facts.findings.append(Finding("warning", "state is unreachable", sid))
+    # 🗺️ #269: the static pass above is the cheap, complete-over-approximation
+    #    every `validate` run pays for. The engine-backed walk is exact but
+    #    depth-bounded and can be slow on wide parallel charts, so it runs
+    #    only when asked (`xsm inspect`, not `validate` over 200 files) and
+    #    only ADDS findings: a state the static pass calls reachable that
+    #    the real engine cannot enter within the bound -- typically a
+    #    target whose compound parent has no `initial`, or a leaf behind a
+    #    service that must fail. It never removes a static warning, so the
+    #    corpus regression stays byte-identical.
+    if engine_reachability:
+        facts.engine_unreachable = _engine_unreachable(m, facts.unreachable)
+        for sid in facts.engine_unreachable:
+            facts.findings.append(
+                Finding(
+                    "warning",
+                    "state is never entered by the engine "
+                    "(reachable statically only)",
+                    sid,
+                )
+            )
     return facts
+
+
+def _engine_unreachable(
+    machine: MachineNode, static_unreachable: List[str], *, max_depth: int = 8
+) -> List[str]:
+    """Settled states the engine never reaches that the static pass missed.
+
+    Only ATOMIC / final states are compared: compound, parallel and history
+    nodes are entered transiently and `reachable_states` reports them via
+    their leaves; a state that merely hosts an `invoke` + `always` is
+    passed through, never settled in, and is excluded too.
+    """
+    from ...graph import reachable_states
+
+    try:
+        reached = reachable_states(machine, guards="both", max_depth=max_depth)
+    except Exception:  # noqa: BLE001 -- analysis must never crash the CLI
+        logger.debug("engine reachability skipped", exc_info=True)
+        return []
+    skip = set(static_unreachable)
+    out: List[str] = []
+    for node in walk(machine):
+        if node is machine or node.id in skip or node.id in reached:
+            continue
+        if node.type not in ("atomic", "final"):
+            continue
+        if node.invoke or "" in node.on:  # pass-through states
+            continue
+        out.append(node.id)
+    return sorted(out)
 
 
 def kind_of(node: StateNode) -> str:

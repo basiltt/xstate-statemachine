@@ -349,6 +349,45 @@ examples:
         help="Report unknown config keys as warnings instead of errors.",
     )
 
+    # 🗺️ paths subcommand (#269)
+    paths_parser = subparsers.add_parser(
+        "paths",
+        parents=[presentation],
+        help="List a path to every reachable configuration of a chart.",
+        description=(
+            "Explores the chart with the real engine (stub logic, simulated "
+            "clock) and prints one shortest path per reachable "
+            "configuration, or every simple path with --simple. `+N` in "
+            "the events column is a clock advance in ms -- the same "
+            "grammar `xsm simulate --events` accepts."
+        ),
+    )
+    paths_parser.add_argument("json_file", help="The machine JSON file.")
+    paths_parser.add_argument(
+        "--simple",
+        action="store_true",
+        help="Every acyclic path instead of one shortest path per target.",
+    )
+    paths_parser.add_argument(
+        "--guards",
+        choices=["true", "false", "both"],
+        default="true",
+        help="What stub guards return while exploring (default: true). "
+        "'both' also records which assumption each path relies on.",
+    )
+    paths_parser.add_argument(
+        "--max-depth", type=int, default=50, help="Depth bound (50)."
+    )
+    paths_parser.add_argument(
+        "--max-paths",
+        type=int,
+        default=1000,
+        help="Cap for --simple (1000).",
+    )
+    paths_parser.add_argument(
+        "--json", action="store_true", help="Emit the paths as JSON."
+    )
+
     # ℹ️ info subcommand
     info_parser = subparsers.add_parser(
         "info",

@@ -197,7 +197,7 @@ def render_inspect(facts: Facts, *, show_events: bool = True) -> None:
 def run_inspect(
     path: str, *, as_json: bool = False, no_events: bool = False
 ) -> None:
-    facts = analyse(Path(path), strict_config=False)
+    facts = analyse(Path(path), strict_config=False, engine_reachability=True)
     if as_json:
         data: Dict[str, Any] = facts.to_json()
         if facts.machine is not None:
