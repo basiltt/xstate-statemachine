@@ -354,6 +354,10 @@ class StatechartRegistry:
         if bodies:
             self.subscribers.publish(name, str(key), bodies)
 
+    async def exists(self, name: str, key: str) -> bool:
+        """Whether instance *key* of *name* has a stored snapshot."""
+        return await self._astore.load(self.store_key(name, key)) is not None
+
     async def peek(self, name: str, key: str) -> Dict[str, Any]:
         """The current state body WITHOUT saving (SSE/WS connect).
 
@@ -384,10 +388,17 @@ class StatechartRegistry:
         key: str,
         event_type: str,
         payload: Optional[Dict[str, Any]] = None,
+        *,
+        principal: Optional[str] = None,
     ) -> Response:
         """Authorize, read the JSON body (unless *payload*), honour
         ``Idempotency-Key``, `act()`, and answer with `ReceiptResponse` --
         or an RFC 9457 problem. Never raises for request-level failures.
+
+        Args:
+            principal: The authenticated caller, when a framework resolved
+                it already (FastAPI's ``actor_from_request`` dependency).
+                Defaults to the registry's ``principal(conn)`` callable.
         """
         try:
             await self.authorize(request, name, key, event_type)
@@ -399,7 +410,8 @@ class StatechartRegistry:
             idem = idempotency_key_from(request)
             if idem is not None:
                 payload["idempotency_key"] = idem
-            principal = self._principal_of(request)
+            if principal is None:
+                principal = self._principal_of(request)
             reg = self._reg(name)
             async with self.act(name, key, principal=principal) as interp:
                 receipt = await interp.send(event_type, wait=True, **payload)

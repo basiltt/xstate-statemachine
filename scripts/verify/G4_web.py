@@ -1,4 +1,6 @@
-"""Verification for #275 (C1 [starlette]). `python scripts/verify/G4_web.py`.
+"""Verification for G4 web: #275 [starlette], #276 [fastapi], #278 [litestar].
+
+`python scripts/verify/G4_web.py`.
 
 Windows-safe (no heredocs, no /tmp). Runs the [starlette] test folder,
 then the issue's smoke scenario through `starlette.testclient`: SUBMIT is
@@ -25,13 +27,17 @@ def step(name: str) -> None:
 
 
 def run_tests() -> None:
-    step("pytest tests/contrib/starlette")
+    step("pytest tests/contrib/{starlette,fastapi,litestar}")
     proc = subprocess.run(
         [
             sys.executable,
             "-m",
             "pytest",
-            "tests/contrib/starlette",
+            *[
+                f"tests/contrib/{d}"
+                for d in ("starlette", "fastapi", "litestar")
+                if (ROOT / "tests" / "contrib" / d).is_dir()
+            ],
             "tests/contrib/test_extras_matrix.py",
             "-q",
             "-p",
@@ -39,7 +45,7 @@ def run_tests() -> None:
         ],
         cwd=str(ROOT),
     )
-    assert proc.returncode == 0, "starlette tests failed"
+    assert proc.returncode == 0, "web tests failed"
 
 
 def build(strict: bool):
@@ -120,9 +126,93 @@ def smoke() -> None:
         assert r.headers["content-type"] == "application/problem+json"
 
 
+def payment_registry():
+    from xstate_statemachine import create_machine, stub_logic
+    from xstate_statemachine.contrib.starlette import (
+        StatechartRegistry,
+        allow_all,
+    )
+    from xstate_statemachine.persistence import MemoryInbox, MemoryStore
+
+    cfg = json.loads((CORPUS / "AdvancePayment.json").read_text("utf-8"))
+    m = create_machine(cfg, logic=stub_logic(cfg))
+    # 📝 One principal for the whole idempotency demo (review amendment).
+    reg = StatechartRegistry(
+        MemoryStore(), inbox=MemoryInbox(), principal=lambda conn: "demo"
+    )
+    reg.register("payment", m, authorize=allow_all)
+    return reg
+
+
+def smoke_fastapi() -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from xstate_statemachine.contrib.fastapi import (
+        StatechartRouter,
+        instrument_app,
+    )
+
+    step("fastapi: StatechartRouter over AdvancePayment")
+    reg = payment_registry()
+    app = FastAPI()
+    app.include_router(StatechartRouter(reg, "payment", prefix="/payments"))
+    instrument_app(app, reg)
+    with TestClient(app) as c:
+        paths = sorted(app.openapi()["paths"])
+        print(paths)
+        assert "/payments/{id}/send" in paths
+        r = c.post("/payments/1/send", json={"type": "SUBMIT"})
+        print(r.status_code, r.json()["state"])
+        assert r.status_code == 200 and r.json()["changed"] is True
+        h = {"Idempotency-Key": "k1"}
+        c.post("/payments/1/send", json={"type": "RESET"}, headers=h)
+        r2 = c.post("/payments/1/send", json={"type": "RESET"}, headers=h)
+        print("dup:", r2.json()["duplicate"])
+        assert r2.json()["duplicate"] is True
+        bad = c.post("/payments/1/send", json={"type": "NOPE"})
+        print("unknown type", bad.status_code)
+        assert bad.status_code == 422
+        print(c.get("/payments/1").json()["available_events"])
+
+
+def smoke_litestar() -> None:
+    try:
+        import litestar  # noqa: F401
+        from xstate_statemachine.contrib import litestar as _xl  # noqa: F401
+    except ImportError:
+        step("litestar: not installed / not shipped -- skipped")
+        return
+    from litestar import Litestar
+    from litestar.testing import TestClient
+
+    from xstate_statemachine.contrib.litestar import (
+        XStatePlugin,
+        create_statechart_controller,
+    )
+
+    step("litestar: controller + plugin over AdvancePayment")
+    reg = payment_registry()
+    app = Litestar(
+        route_handlers=[
+            create_statechart_controller(reg, "payment", path="/payments")
+        ],
+        plugins=[XStatePlugin(reg)],
+    )
+    with TestClient(app) as c:
+        r = c.post("/payments/1/send", json={"type": "SUBMIT"})
+        print(r.status_code, r.json()["state"])
+        assert r.status_code == 200 and r.json()["changed"] is True
+        paths = sorted(app.openapi_schema.paths)
+        print(paths)
+        assert "/payments/{id}/send" in paths
+
+
 def main() -> int:
     run_tests()
     smoke()
+    smoke_fastapi()
+    smoke_litestar()
     print("\nALL OK")
     return 0
 
