@@ -227,6 +227,35 @@ jobs:
           pytest $targets -q --no-header --disable-socket --allow-hosts=127.0.0.1,::1
 
   # ---------------------------------------------------------------------------
+  # 🔒 Supply chain (X0.14, #303)
+  # ---------------------------------------------------------------------------
+  audit:
+    name: pip-audit [all]
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: 📦 Install with every extra
+        run: |
+          python -m pip install --upgrade pip
+          # `[all]` is the union of every SHIPPED extra (pyproject.toml).
+          python -m pip install -e ".[all]" pip-audit
+
+      - name: 🔍 Audit the resolved environment
+        # 📝 X0.14: known-vulnerable transitive dependencies of an extra
+        #    are OUR problem to surface. `--strict` fails on any finding;
+        #    `--ignore-vuln` with a justification comment is the only
+        #    accepted way past a finding that does not apply.
+        run: python -m pip_audit --strict --progress-spinner off
+
+  # ---------------------------------------------------------------------------
   # 🧪 Test Matrix
   # ---------------------------------------------------------------------------
   test:

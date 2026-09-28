@@ -149,6 +149,31 @@ class TestAtomicWrite:
         with pytest.raises(SnapshotCorruptError):
             store.load("k")
 
+    def test_record_carries_format_version_and_refuses_newer(
+        self, tmp_path: Any
+    ) -> None:
+        """X0.10: a per-file FORMAT version, distinct from the record's
+        optimistic-locking `version`."""
+        from src.xstate_statemachine.exceptions import SnapshotCorruptError
+        from src.xstate_statemachine.persistence.file_store import (
+            FORMAT_VERSION,
+        )
+
+        store = FileStore(tmp_path / "s")
+        store.save("k", SNAP)
+        f = next((tmp_path / "s").glob("*.xsm.json"))
+        rec = json.loads(f.read_text(encoding="utf-8"))
+        assert rec["format"] == FORMAT_VERSION and rec["version"] == 1
+        # a pre-`format` record (0.11.0 dev) reads as format 1
+        del rec["format"]
+        f.write_text(json.dumps(rec), encoding="utf-8")
+        assert store.load("k").version == 1
+        # a newer format is refused, not guessed at
+        rec["format"] = FORMAT_VERSION + 1
+        f.write_text(json.dumps(rec), encoding="utf-8")
+        with pytest.raises(SnapshotCorruptError, match="newer"):
+            store.load("k")
+
     def test_list_ignores_foreign_and_temp_files(self, tmp_path: Any) -> None:
         store = FileStore(tmp_path / "s")
         store.save("k", SNAP)

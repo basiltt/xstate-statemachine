@@ -38,7 +38,7 @@ Every public name, one subsection each: signature, what it does, what it raises.
 >
 > **What this does not do:** …
 >
-> See the programme-wide [guarantees](https://github.com/basiltt/xstate-statemachine/issues/303).
+> See the programme-wide [Guarantees](../guarantees/) and [Security](../security/) pages ([#303](https://github.com/basiltt/xstate-statemachine/issues/303)).
 
 ## Threat model
 

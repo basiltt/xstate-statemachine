@@ -256,5 +256,53 @@ class TestIntegrationsSection(unittest.TestCase):
             self.assertIn("## threat model", text, name)
 
 
+class TestSecurityBaseline(unittest.TestCase):
+    """X0.1 + X0.3 (#303): the trust model and the crash-consistency spec
+    are published, cross-linked, in the nav, and every X0 item is mapped
+    to evidence."""
+
+    def test_root_security_md_states_the_trust_model(self) -> None:
+        text = _read(ROOT / "SECURITY.md")
+        for needle in (
+            "## reporting a vulnerability",
+            "## trust model",
+            "installed packages are fully trusted",
+            "events and snapshots are not",
+            "never pickle",
+            "principal=",
+            "#303",
+        ):
+            self.assertIn(needle, text, needle)
+
+    def test_security_page_maps_every_x0_item(self) -> None:
+        text = _read(GUIDE / "security.md")
+        for n in range(1, 18):
+            self.assertIn(f"| x0.{n} |", text, f"X0.{n} row missing")
+        self.assertIn("job **`audit`**", text)
+        self.assertIn("../guarantees/", text)
+
+    def test_guarantees_page_specifies_order_and_crash_windows(self) -> None:
+        text = _read(GUIDE / "guarantees.md")
+        self.assertIn("## the order of operations", text)
+        self.assertIn("## crash windows, one by one", text)
+        self.assertIn("## the `processed_ids` ring", text)
+        self.assertIn("at least once", text)
+        self.assertIn("exactly once", text)
+        # 📝 every crash-window row names a test; the tests must exist.
+        named = re.findall(r"`(test_[a-z_]+\.py)::", text)
+        self.assertTrue(named)
+        all_tests = {p.name for p in (ROOT / "tests").rglob("test_*.py")}
+        self.assertEqual(sorted(set(named) - all_tests), [])
+
+    def test_both_pages_are_in_nav_and_linked(self) -> None:
+        layout = _read(ROOT / "docs" / "_layouts" / "default.html")
+        for page in ("security", "guarantees"):
+            self.assertIn(f"/guide/{page}/", layout, f"{page} not in sidebar")
+            self.assertIn(f"{page},", layout, f"{page} not in pages_order")
+        # the integration template points readers at the spec, not the issue
+        tpl = _read(ROOT / "docs" / "_templates" / "integration-page.md")
+        self.assertIn("(../guarantees/)", tpl)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

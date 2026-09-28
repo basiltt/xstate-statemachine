@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Security and operability baseline X0 (#303) closed out for Phase A.**
+  `SECURITY.md` at the repository root states the trust model (installed
+  packages and the machine definition are trusted; events and snapshots
+  are not), the reporting process and the supported versions. Two new
+  guide pages: **Guarantees** -- the crash-consistency specification
+  (order of actions / save / inbox mark / timer fire, what is exactly-once
+  and what is at-least-once, every crash window with the test that proves
+  it) -- and **Security** -- every X0 item mapped to the test or CI job
+  that enforces it. New in code: `FileStore` records carry a `format`
+  version (X0.10; a newer format is refused with an upgrade message, never
+  guessed at); a `pip-audit --strict` CI job over the `[all]` extra, which
+  now lists every shipped extra (X0.14); `tests/test_security_baseline.py`
+  greps `src/` for `pickle` / `yaml.load` / `eval` / `exec` (one justified,
+  marked exemption in the CLI verifier) and refuses any GitHub Action that
+  is not pinned to a commit SHA.
 - **Integration performance budgets** (#307): a reproducible seven-run
   import, persistence, plugin, validator and snapshot benchmark for both
   engines, with reviewed p50 baselines and a 25% regression margin. A

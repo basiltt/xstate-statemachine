@@ -74,6 +74,12 @@ class TestSchema:
         store = SQLiteStore(tmp_path / "s.db")
         store.save("k", SNAP)
         assert (tmp_path / "s.db").stat().st_mode & 0o777 == 0o600
+        # X0.5 / X0.10: the WAL sidecars too (they exist while a
+        # connection is open in WAL mode; a fresh save creates them).
+        for suffix in ("-wal", "-shm"):
+            side = tmp_path / f"s.db{suffix}"
+            if side.exists():
+                assert side.stat().st_mode & 0o777 == 0o600, suffix
         store.close()
 
     def test_network_path_warns_and_uses_delete_journal(self) -> None:
