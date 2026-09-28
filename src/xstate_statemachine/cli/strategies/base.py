@@ -30,6 +30,10 @@ class GenerationContext:
     #: Companion templates emitted in the same run (lets `fastapi-router`
     #: import the `pydantic-models` output when both are requested).
     companions: Tuple[str, ...] = ()
+    #: 🧪 #268: `--fixtures` -- the `pytest` scaffold uses the `[testing]`
+    #: plugin's `xstate_machine` marker and `xsm_*` fixtures instead of
+    #: building the interpreter by hand. Off by default (output unchanged).
+    fixtures: bool = False
 
 
 class BaseStrategy(ABC):

@@ -72,7 +72,7 @@ format = [
 #    the matching single source of truth for tests and CI.
 pydantic      = ["pydantic>=2.5"]  # #266
 observability = []  # #273  opentelemetry-api>=1.20, prometheus-client>=0.17
-testing       = []  # #268  pytest>=8, hypothesis>=6.100
+testing       = ["pytest>=8", "hypothesis>=6.100"]  # #268
 redis         = ["redis>=5"]  # #306
 sqlalchemy    = ["sqlalchemy[asyncio]>=2.0"]  # #284; [asyncio] pulls greenlet for AsyncSQLAlchemyStore
 starlette     = ["starlette>=0.27"]  # #275
@@ -104,6 +104,8 @@ all           = [  # every SHIPPED extra; grows as issues land
     "litestar>=2.0",
     "sqlalchemy[asyncio]>=2.0",
     "flask>=2.3",
+    "pytest>=8",  # #268 [testing]
+    "hypothesis>=6.100",  # #268 [testing]
 ]
 
 [project.urls]
@@ -112,6 +114,13 @@ Homepage = "https://github.com/basiltt/xstate-statemachine"
 
 [project.scripts]
 xsm = "xstate_statemachine.cli.__main__:main"
+
+# 🔌 #268: pytest discovers the `[testing]` plugin through this entry point.
+#    Hatch has no conditional entry points, so it is registered for every
+#    install; the module imports only pytest + core and is a no-op without
+#    the `xstate_machine` marker. Opt out with `-p no:xstate_statemachine`.
+[project.entry-points.pytest11]
+xstate_statemachine = "xstate_statemachine.contrib.testing.pytest_plugin"
 
 [dependency-groups]
 dev = [
@@ -214,7 +223,11 @@ pythonpath = ["."]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
-addopts = "-v --tb=short"
+# 🧪 #268: `pytester` (pytest's own plugin-testing fixture) may only be
+#    enabled from the rootdir; `tests/contrib/testing` uses it to run inline
+#    sessions against the `[testing]` plugin. Built-in, stdlib-only, inert
+#    unless a test requests the fixture.
+addopts = "-v --tb=short -p pytester"
 
 [tool.coverage.run]
 source = ["src/xstate_statemachine"]

@@ -304,6 +304,28 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
   by the engine (reachable statically only)" -- and never removes a
   static one (corpus output unchanged). Guide: Testing &sect; "Path
   generation"; CLI &sect; "Paths".
+- **`[testing]` extra: a pytest plugin** (#268; both engines). Registered
+  through a `pytest11` entry point, so `pip install
+  "xstate-statemachine[testing]"` is the whole setup; the plugin imports
+  only pytest + core, is a no-op without the marker, and `-p
+  no:xstate_statemachine` disables it. `@pytest.mark.xstate_machine(
+  source, logic=, strict_config=, strict=)` builds the machine from a JSON
+  path (relative to the test file, then rootdir), a dict or a `MachineNode`
+  -- on `stub_logic` unless `logic="pkg.module:callable"` -- and serves the
+  `xsm_`-prefixed fixtures: `xsm_machine`, `xsm_clock` (`SimulatedClock`),
+  `xsm_interp` (started `SyncInterpreter`, stopped at teardown),
+  `xsm_ainterp` (async twin; skips naming `pytest-asyncio` when it is
+  absent), `xsm_ran` (stub actions that ran), `xsm_guards` (the live
+  stub-guard table), `xsm_store` (`MemoryStore`), `xsm_send_all` /
+  `xsm_asend_all` (the `xsm simulate --events` grammar, `+N` advances the
+  clock) and `xsm_snapshot` (file-backed assertion on `state_ids` /
+  `value` / `context` / `status`; `--xsm-update-snapshots` records,
+  a mismatch is a unified diff, files are byte-identical across runs).
+  `@pytest.mark.xstate_guards_false("g")` forces stub guards; with real
+  logic it is a `pytest.UsageError`, as is every malformed marker.
+  `pytest --xsm-version` prints the library version. `xsm gt -t pytest
+  --fixtures` emits the recorded-trajectory scaffold on the plugin's
+  marker and fixtures (default output unchanged). Guide page *pytest*.
 - **Security and operability baseline X0 (#303) closed out for Phase A.**
   `SECURITY.md` at the repository root states the trust model (installed
   packages and the machine definition are trusted; events and snapshots

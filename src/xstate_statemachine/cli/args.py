@@ -149,6 +149,16 @@ def _add_generation_option_args(parser: argparse.ArgumentParser) -> None:
         help="Also emit <machine>_models.py: a pydantic context model and one EventModel per event ([pydantic] extra).",
     )
     parser.add_argument(
+        "--fixtures",
+        action="store_true",
+        help=(
+            "pytest template only: use the [testing] plugin's "
+            "@pytest.mark.xstate_machine marker and xsm_interp / xsm_clock / "
+            "xsm_ran fixtures instead of building the interpreter by hand "
+            '(pip install "xstate-statemachine[testing]").'
+        ),
+    )
+    parser.add_argument(
         "-fc",
         "--file-count",
         type=int,

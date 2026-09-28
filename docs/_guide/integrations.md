@@ -58,7 +58,8 @@ flowchart LR
 | Timers | core | [Persistence](../persistence/) (`DueTimerScanner`) → [Delayed transitions](../delayed-transitions/) |
 | Broker | — | planned, [#294](https://github.com/basiltt/xstate-statemachine/issues/294) — see [Integration extras](../integrations-extras/) |
 | LLM agents | `[agents]` | [LLM agents](../integration-agents/) → [Security](../security/) (X0.13) |
-| Observability, testing | — | planned, [#273](https://github.com/basiltt/xstate-statemachine/issues/273), [#268](https://github.com/basiltt/xstate-statemachine/issues/268) — see [Integration extras](../integrations-extras/) |
+| Testing | `[testing]` | [pytest](../integration-testing/) — `xstate_machine` marker and `xsm_*` fixtures |
+| Observability | — | planned, [#273](https://github.com/basiltt/xstate-statemachine/issues/273) — see [Integration extras](../integrations-extras/) |
 
 ## 15-minute tutorial
 
@@ -255,7 +256,11 @@ assert record.version == 1                      # three deliveries, one change
 
 Because no worker holds an order in memory, the same app runs under `uvicorn app:app --workers 4` unchanged, on SQLite (one host) or Redis (many). Racing writers get one winner and a `409`, never a lost update. Start exactly one `python app.py --role scheduler` to wake persisted `after` timers. The example's `loadtest.py --workers 4 --requests 200` fires 200 concurrent payments at one order and checks that exactly one charge happened; the numbers are in the [FastAPI guide](../integration-fastapi/#multi-worker-deployments).
 
-### 7. Coverage gate and live inspector — not shipped yet
+### 7. Test it, then the coverage gate and live inspector
+
+- **Tests** — `pip install "xstate-statemachine[testing]"` and mark a test `@pytest.mark.xstate_machine("order.json")`: the plugin hands you a started `xsm_interp`, a `xsm_clock` for the `after` timers, `xsm_ran` for the actions that fired and `xsm_snapshot` for file-backed snapshot assertions ([pytest guide](../integration-testing/)). `xsm gt order.json -t pytest --fixtures` scaffolds such a module.
+
+Not shipped yet:
 
 - **State/transition coverage gate** (`pytest --xsm-coverage --xsm-fail-under-state-coverage=90`) arrives with [#270](https://github.com/basiltt/xstate-statemachine/issues/270).
 - **Live inspector** (`xsm inspect --live`, the Stately Inspector protocol) arrives with [#274](https://github.com/basiltt/xstate-statemachine/issues/274). Today, `mount_inspector(app, registry, debug=True)` serves a development-only JSON view of live keys ([Starlette](../integration-starlette/)).
