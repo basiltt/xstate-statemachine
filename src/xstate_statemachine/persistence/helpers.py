@@ -102,6 +102,7 @@ def load_interpreter(
         verify_machine_hash,
         from_snapshot_kwargs,
     )
+    interp.store_key = key  # #261
     interp.start()
     return interp, version
 
@@ -134,6 +135,7 @@ async def aload_interpreter(
         verify_machine_hash,
         from_snapshot_kwargs,
     )
+    interp.store_key = key  # #261
     await interp.start()
     return interp, version
 

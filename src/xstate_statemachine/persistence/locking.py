@@ -44,6 +44,7 @@ from typing import (
     Callable,
     Iterable,
     Iterator,
+    List,
     Optional,
     TypeVar,
 )
@@ -137,13 +138,19 @@ def _cycle(
         True,
         {},
     )
+    markers = _mark_plugins(plugins)
+    for m in markers:
+        m.buffer_marks = True
+    interp.store_key = key  # #261: the instance identity for scoped plugins
     interp.start()
     try:
         result = fn(interp)
-        save_interpreter(
-            store, key, interp, expected_version=expected(version)
-        )
+        _save_with_marks(store, key, interp, expected(version), markers)
         return result
+    except BaseException:
+        for m in markers:
+            m.discard_marks()
+        raise
     finally:
         interp.stop()
 
@@ -314,6 +321,36 @@ class NoLock:
 _DEFAULT_LOCK = OptimisticLock()
 
 
+def _mark_plugins(plugins: Iterable[Any]) -> List[Any]:
+    """Plugins that buffer inbox marks (`IdempotencyPlugin`, #261)."""
+    return [p for p in plugins if callable(getattr(p, "flush_marks", None))]
+
+
+def _save_with_marks(
+    store: StateStore,
+    key: str,
+    interp: Any,
+    expected: Optional[int],
+    markers: List[Any],
+) -> int:
+    """Save the snapshot, then commit buffered inbox marks -- inside the
+    same store transaction when the caller holds one (`PessimisticLock`
+    on SQLite: the lock IS the transaction), else immediately after
+    (save-then-mark; the in-snapshot `processed_ids` ring covers the gap).
+    A failed save discards the marks and releases their claims."""
+    try:
+        version = save_interpreter(
+            store, key, interp, expected_version=expected
+        )
+    except BaseException:
+        for m in markers:
+            m.discard_marks()
+        raise
+    for m in markers:
+        m.flush_marks()
+    return version
+
+
 @contextlib.contextmanager
 def persisted(
     store: StateStore,
@@ -355,18 +392,21 @@ def persisted(
             True,
             {},
         )
+        markers = _mark_plugins(plugins)
+        for m in markers:
+            m.buffer_marks = True
+        interp.store_key = key  # #261
         interp.start()
         try:
             yield interp
         except BaseException:
+            for m in markers:
+                m.discard_marks()
             interp.stop()
             raise
         try:
-            save_interpreter(
-                store,
-                key,
-                interp,
-                expected_version=strategy.fence(version),
+            _save_with_marks(
+                store, key, interp, strategy.fence(version), markers
             )
         finally:
             interp.stop()
@@ -421,22 +461,35 @@ async def apersisted(
                 plugins=list(plugins),
             )
             version = record.version
+        markers = _mark_plugins(plugins)
+        for m in markers:
+            m.buffer_marks = True
+        interp.store_key = key  # #261
         await interp.start()
         try:
             yield interp
         except BaseException:
+            for m in markers:
+                m.discard_marks()
             await interp.stop()
             raise
         try:
             snapshot = interp.get_snapshot()
             deadlines = tuple(interp._persist_deadlines())
-            await astore.save(
-                key,
-                snapshot,
-                expected_version=strategy.fence(version),
-                machine_version=machine.version or "",
-                deadlines=deadlines,
-            )
+            try:
+                await astore.save(
+                    key,
+                    snapshot,
+                    expected_version=strategy.fence(version),
+                    machine_version=machine.version or "",
+                    deadlines=deadlines,
+                )
+            except BaseException:
+                for m in markers:
+                    m.discard_marks()
+                raise
+            for m in markers:
+                m.flush_marks()
         finally:
             await interp.stop()
 

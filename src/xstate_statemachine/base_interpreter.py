@@ -494,6 +494,7 @@ class BaseInterpreter(Generic[TContext]):
         "_pending_actor_snapshots",
         "_pending_guard_error",
         "_plugins",
+        "store_key",  # #261
         "_restart_services_on_start",
         "_restored_from_snapshot",
         "_states_to_invoke",
@@ -591,6 +592,12 @@ class BaseInterpreter(Generic[TContext]):
         #: 🛡️ #51: effective strictness -- the ctor flag wins over config.
         self.strict: bool = machine.strict if strict is None else bool(strict)
         self.parent: Optional["BaseInterpreter[Any]"] = None
+        #: 💾 #261: the key this interpreter was loaded under by
+        #: `persisted()` / `load_interpreter()`; ``None`` for a machine that
+        #: lives in memory only. Scoped plugins (the idempotency inbox) use
+        #: it as the INSTANCE identity -- `id` is the machine id for a root
+        #: interpreter and says nothing about which order this is.
+        self.store_key: Optional[str] = None
         #: 🎯 #156: the `invoke.id` this actor was invoked under, as the
         #: PARENT declared (or defaulted) it. `escalate` reports this as
         #: `ErrorEvent.src` so the parent's `onError` collector matches it

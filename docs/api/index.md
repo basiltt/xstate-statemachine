@@ -1872,6 +1872,12 @@ The create → act → persist → discard contract (#259). Guide: [Persistence 
 | `PessimisticLock(*, timeout=10.0)` | `with store.lock(key, timeout)` around load → act → save; `LockTimeoutError`; released on exception; saves **with** `expected_version` as a fence (an expired lock → `ConflictError`, never a lost update). |
 | `NoLock()` | Unconditional save; last writer wins. Single-writer-per-key only. |
 | `DEFAULT_BACKOFF` | `RetryPolicy(max_attempts=6, base_ms=2, factor=2, max_ms=100, jitter="full")`. |
+| `IdempotencyPlugin(inbox, *, principal, key=default_key, instance_key=None, ttl_s=7 days, key_fields=("idempotency_key", "id"))` **(#261)** | `PluginBase`: on `on_before_send` claims an unseen key, short-circuits a seen one with the **original** receipt (`duplicate=True`), refuses a fingerprint mismatch (`error=IdempotencyMismatchError` → 422) or an in-flight key (`IdempotencyInFlightError` → 409) **as a receipt**; marks the real receipt from `on_event_processed`; releases the claim if the delivery did not take effect. Scope = `principal(event) / machine.id / instance_key(interp)` (default instance key: `interp.store_key` or `interp.id`). Buffers marks for `persisted()` to commit after the save (`flush_marks()` / `discard_marks()`); keeps a 64-entry `processed_ids` ring inside `context` for the save→mark crash window. |
+| `InboxStore` (Protocol) | `get(scope, key) -> Optional[InboxEntry]`; `claim(scope, key, fp, *, ttl_s) -> bool` (atomic first-wins); `mark(scope, key, receipt_json, *, ttl_s)`; `release(scope, key)`; `purge_expired(*, now=None) -> int`; `forget(scope) -> int`. |
+| `InboxEntry(fingerprint, receipt_json, expires_at)` | Frozen dataclass; `receipt_json is None` while in flight. |
+| `MemoryInbox()` / `SQLiteInbox(store_or_path)` | Backends. `SQLiteInbox(SQLiteStore)` shares the store's file **and per-thread connection**, so a mark written inside `store.lock()` joins the snapshot's transaction. |
+| `default_key(event)` / `fingerprint(event, *, key_fields)` / `validate_idempotency_key(key)` / `DEFAULT_TTL_S` | Helpers: `payload["idempotency_key"]` or `payload["id"]`; sha256 of type + canonical payload minus the key; ≤ 255 printable ASCII; `7 * 86400`. |
+| `IdempotencyMismatchError(key)` / `IdempotencyInFlightError(key)` | `StoreError`s carried in the refusal receipt's `error`; `receipt_to_status` maps them (by class name, so the JSON codec preserves the mapping) to **422** / **409**. |
 | `StoreError` → `ConflictError(key, expected, actual)`, `LockTimeoutError(key, timeout)`, `SnapshotTooLargeError(key, size, limit)`, `InvalidKeyError`, `KeyNotFoundError` | The store exception family; `except StoreError` covers the layer. |
 
 ---
@@ -2458,11 +2464,11 @@ Returns a **new** `MachineLogic` combining the receiver with `others` (later win
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `receipt_to_status(receipt)` | `(Receipt) -> int` | `error is not None` → **500**; else `deferred` → **202**; else `denied` → **409**; else **200** (taken *or* a clean no-op). `duplicate` never changes the status — the cached receipt already describes the original outcome, so a retry gets the same answer. |
+| `receipt_to_status(receipt)` | `(Receipt) -> int` | `error` is an `IdempotencyMismatchError` → **422**, an `IdempotencyInFlightError` → **409** (matched by class name); any other `error` → **500**; else `deferred` → **202**; else `denied` → **409**; else **200** (taken *or* a clean no-op). `duplicate` never changes the status — the cached receipt already describes the original outcome, so a retry gets the same answer. |
 | `receipt_to_json(receipt)` | `(Receipt) -> Dict` | `{"state_ids": [sorted…], "changed", "error", "deferred", "denied", "duplicate"}`. `error` is `null` or `{"type": <class name>, "message": str(exc)}` — never a pickle, never a `repr` (X0 baseline #303). `state_ids` is sorted so identical outcomes serialise identically (ETag / cache key friendly). |
 | `receipt_from_json(data)` | `(Mapping) -> Receipt` | Inverse. A stored `error` comes back as a `ReceiptError(type, message)` (an `Exception`), so `receipt.error is not None` keeps meaning "did not run cleanly". Raises `ValueError` on a malformed record instead of leaking a bare `KeyError`. |
 | `ReceiptError` | `Exception` | `.type` (original class name) and `.message`. Re-encodes to the same JSON. |
-| `STATUS_OK` / `STATUS_ACCEPTED` / `STATUS_CONFLICT` / `STATUS_ERROR` | `int` | `200` / `202` / `409` / `500` — named so adapters and tests cite the rule, not the number. |
+| `STATUS_OK` / `STATUS_ACCEPTED` / `STATUS_CONFLICT` / `STATUS_UNPROCESSABLE` / `STATUS_ERROR` | `int` | `200` / `202` / `409` / `422` / `500` — named so adapters and tests cite the rule, not the number. |
 
 ```python
 import json

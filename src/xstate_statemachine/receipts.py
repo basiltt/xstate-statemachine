@@ -35,6 +35,7 @@ __all__ = [
     "STATUS_NOT_MODIFIED_OK",
     "STATUS_CONFLICT",
     "STATUS_ERROR",
+    "STATUS_UNPROCESSABLE",
 ]
 
 #: HTTP statuses `receipt_to_status` returns. Named so adapters and tests
@@ -44,6 +45,14 @@ STATUS_NOT_MODIFIED_OK = 200  # no handler in this state: a clean no-op
 STATUS_ACCEPTED = 202  # deferred by `onUnhandled: "defer"` -- held, not run
 STATUS_CONFLICT = 409  # a guard refused it: the request conflicts with state
 STATUS_ERROR = 500  # an action / target / chain error while processing
+STATUS_UNPROCESSABLE = 422  # idempotency key reused with a different payload
+#: `error` class names that are the CLIENT's fault, not processing
+#: failures (#261). Matched by name so this module stays free of a
+#: `persistence` import; the receipt codec preserves the name.
+_CLIENT_ERROR_STATUS = {
+    "IdempotencyMismatchError": STATUS_UNPROCESSABLE,
+    "IdempotencyInFlightError": STATUS_CONFLICT,
+}
 
 
 class ReceiptError(Exception):
@@ -71,7 +80,9 @@ def receipt_to_status(receipt: Receipt) -> int:
 
     | Receipt                       | Status | Meaning                    |
     |:------------------------------|:------:|:---------------------------|
-    | ``error is not None``         |  500   | processing failed          |
+    | ``error`` is a key mismatch   |  422   | idempotency key reused     |
+    | ``error`` is key in flight    |  409   | first delivery still running |
+    | ``error is not None`` (other) |  500   | processing failed          |
     | ``deferred``                  |  202   | held for a later state     |
     | ``denied``                    |  409   | a guard refused it         |
     | ``changed``                   |  200   | transition taken           |
@@ -81,7 +92,9 @@ def receipt_to_status(receipt: Receipt) -> int:
     describes the ORIGINAL outcome, and a retry must get the same answer.
     """
     if receipt.error is not None:
-        return STATUS_ERROR
+        err = receipt.error
+        name = getattr(err, "type", None) or type(err).__name__
+        return _CLIENT_ERROR_STATUS.get(str(name), STATUS_ERROR)
     if receipt.deferred:
         return STATUS_ACCEPTED
     if receipt.denied:
