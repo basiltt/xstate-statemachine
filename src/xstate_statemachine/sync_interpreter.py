@@ -861,7 +861,20 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    not overwrite the per-step flags it reads.
         if event is self._caller_event:
             self._caller_receipt = receipt
-        self._notify_event_processed(event, receipt)
+        # 📸 #265: at this point THIS event's macrostep has settled (exit →
+        #    actions → enter all done, transient transitions drained), so
+        #    the configuration is legal and a plugin may snapshot it -- the
+        #    dead-letter record, the audit row (#262), the idempotency mark
+        #    (#261) all want to. `_is_processing` stays raised for the whole
+        #    drain (it also guards re-entrancy), so lift it for the duration
+        #    of the notification only. Parity: the async engine's run loop
+        #    fires the hook with `_processing` already cleared.
+        was_processing = self._is_processing
+        self._is_processing = False
+        try:
+            self._notify_event_processed(event, receipt)
+        finally:
+            self._is_processing = was_processing
 
     # -------------------------------------------------------------------------
     # 🏁 Reaping (#57)
