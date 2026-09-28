@@ -195,7 +195,10 @@ class TestIntegrationsSection(unittest.TestCase):
     page name to `INTEGRATION_PAGES` when its issue ships.
     """
 
-    INTEGRATION_PAGES: tuple = ("integration-redis",)  # #306
+    INTEGRATION_PAGES: tuple = (
+        "integration-redis",  # #306
+        "integration-pydantic",  # #266
+    )
 
     def test_overview_page_exists_and_is_in_nav(self) -> None:
         page = GUIDE / "integrations.md"
