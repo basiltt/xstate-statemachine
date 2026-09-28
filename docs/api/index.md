@@ -17,7 +17,7 @@ from xstate_statemachine import create_machine, Interpreter, State  # etc.
 
 ## Factory Functions
 
-### `create_machine(config, *, context_type=None, logic=None, logic_modules=None, logic_providers=None, strict_targets=True, event_schemas=None, strict_config=None)`
+### `create_machine(config, *, context_type=None, logic=None, logic_modules=None, logic_providers=None, strict_targets=True, event_schemas=None, strict_config=None, context_validator=None)`
 
 Creates, validates, and assembles a state machine instance from an
 XState-compatible JSON configuration dictionary. This is the **primary
@@ -42,6 +42,7 @@ target must resolve, and no `always` self-target may be a permanent dead end.
 | `strict_config` | `Optional[bool]` | No | `None` | **[0.9.0]** (#216, #220) `True` refuses an unrecognised config key — at the root **and in every state, transition and invoke** — with `InvalidConfigError` naming the path (a misspelled `actionErrorPolicyy` / `onUnhandledEvent` / `Strict` otherwise passes a clean build and the policy silently reverts to its permissive default). `None` reads the config's own `strictConfig` key, else `False`: unknown keys are logged at WARNING with a "did you mean" hint. `x-`-prefixed keys and `meta` / `description` / `tags` / `version` are always accepted. |
 | `strict_targets` | `bool` | No | `True` | When `True`, an unresolvable transition target raises `InvalidConfigError` at build time. When `False`, it downgrades to a `DeprecationWarning` (0.7.x behavior; removed in 1.0). |
 | `event_schemas` | `Optional[Dict[str, Any]]` | No | `None` | Opt-in payload validation. Maps an event type to a validator -- a callable, a dataclass, or anything with a `model_validate`/`parse_obj`-style constructor -- that the event's `payload`/data is passed through before a transition runs. A validation failure raises `InvalidEventPayloadError` (#51). |
+| `context_validator` | `Optional[Callable[[Any], None]]` | No | `None` | **[0.11.0]** (#305) A callable that **raises** when the context is invalid. Both engines call it after any action that *changed* `context` (never when nothing changed) and treat a raise as that action's failure, so `actionErrorPolicy` applies: `"rollback"` restores the pre-transition context, `"continue"` keeps the change but reports it (`Receipt.error`, `last_error`, `on_action_error`), `"fail"` stops the machine. The seam the pydantic extra (#266) plugs a model into; core takes no dependency. Non-callable → `InvalidConfigError`. Stored on `MachineNode.context_validator`. |
 
 **Returns:** `MachineNode` -- a fully constructed, validated machine ready for
 an interpreter.
@@ -836,6 +837,7 @@ injected `Clock` (thread-free; #49/#50) rather than a background thread.
 | `.stop(drain=False, timeout=None)` | `(bool, Optional[float]) -> None` | `None` | Stops the interpreter, cancels timers, stops child actors. `drain=True` processes the inbox to empty first. Idempotent; a no-op on an already-`"done"`/`"stopped"` interpreter. |
 | `.send(event, *, wait=False, priority=False, **payload)` | `(Union[str, Dict, Event, DoneEvent, AfterEvent, ErrorEvent], bool, bool, **Any) -> Optional[Receipt]` | `Optional[Receipt]` | Sends an event for **immediate** synchronous processing. Blocks until the event and all resulting transitions are fully processed. `wait=True` **[wave 3]** (#39) returns a `Receipt` for API symmetry with the async engine's `send(wait=True)` (the sync engine already processes inline by the time `send()` returns). `priority` is accepted for signature symmetry but has no effect -- there is no backlog to jump. |
 | `.send_events(events)` | `(List[Union[str, Dict, Event]]) -> None` | `None` | Sends a list of events for immediate processing. |
+| `.send_threadsafe(event, **payload)` | `(Union[str, Dict, Event, Any], **Any) -> None` | `None` | **[0.11.0]** (#305) Queue an event from **any thread**. `send()` is not thread-safe (it processes on the caller's thread with no lock); this is the only legal cross-thread entry to a sync machine. The event is normalised on the sender's thread (a malformed one raises `InvalidEventError` there) and put in a locked mailbox; the thread that **owns** the machine delivers it — as its own macrostep, with the same `strict` / `event_schemas` / `on_before_send` checks — the next time it calls `send()` or `tick()`, *ahead* of its own event. FIFO per sending thread; nothing lost; no receipt (nothing runs on the caller). An admission refusal at drain time surfaces on the owner as `on_event_dropped(…, "invalid")` + `last_error`, never as an exception on a thread that has moved on. |
 | `.matches(state)` | `(Union[str, Dict[str, Any]]) -> bool` | `bool` | Reports whether *state* is part of the active configuration. Accepts a string id or a partial `.value` dict. |
 | `.can(event)` | `(Union[str, Event, Dict[str, Any]]) -> bool` | `bool` | Reports whether sending *event* right now would cause a transition, per `Interpreter.can()` above. |
 | `.has_tag(tag)` | `(str) -> bool` | `bool` | Reports whether any currently active state declares the given tag. |
@@ -1100,6 +1102,30 @@ ad = ActionDefinition({"type": "myAction", "params": {"delay": 100}})
 **Raises:** `InvalidConfigError` if `config` is not a string or dictionary.
 
 ---
+
+### The `__xstate_event__` adapter protocol **[0.11.0]**
+
+Any object can say how it becomes an event by implementing `__xstate_event__(self) -> str | dict | Event` — the way `__fspath__` lets any object be a path (#305). Every send path on both engines (`send`, `send_events`, `send_threadsafe`, `sendTo` specs, `can()`) normalises through one function, so the adapter works everywhere a `str` / `dict` / `Event` does. The result is normalised by the **same rules** as a direct argument (one level: an adapter returning another adapter is `InvalidEventError`, not a recursion). Keyword payload merges *over* an adapter's dict, so a call site can annotate: `interp.send(order, source="retry")`. Native `Event` / `DoneEvent` / `AfterEvent` / `ErrorEvent` instances are never adapted, even if a subclass defines the method.
+
+```python
+from xstate_statemachine import SyncInterpreter, create_machine, MachineLogic
+
+class OrderPlaced:
+    def __init__(self, order_id: int) -> None:
+        self.order_id = order_id
+    def __xstate_event__(self) -> dict:
+        return {"type": "PLACE", "order_id": self.order_id}
+
+cfg = {"id": "shop", "initial": "idle", "context": {},
+       "states": {"idle": {"on": {"PLACE": {"target": "placed", "actions": "remember"}}},
+                  "placed": {}}}
+def remember(i, ctx, e, a):
+    ctx["order_id"] = e.payload["order_id"]
+
+interp = SyncInterpreter(create_machine(cfg, logic=MachineLogic(actions={"remember": remember}))).start()
+interp.send(OrderPlaced(42))            # no translation at the call site
+assert interp.context["order_id"] == 42 and interp.matches("shop.placed")
+```
 
 ### `DoneEvent(type, data, src)`
 
@@ -1942,6 +1968,17 @@ except XStateMachineError as e:
 ---
 
 ## Plugins
+
+### Global registry **[0.11.0]**
+
+Process-wide plugins (#305). Attached — with the same `_SafePlugin` containment as `.use()` — to every interpreter constructed **after** registration: both engines, `from_snapshot`, and engine-spawned children. Interpreters that already exist are not touched. Opt-in only: the library never populates the registry itself. See [Global Plugins](../guide/plugins/#global-plugins-every-interpreter-in-the-process).
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `register_global(plugin)` | `(Any) -> None` | Add to the registry. Identity-deduplicated; thread-safe. |
+| `unregister_global(plugin)` | `(Any) -> bool` | Remove; returns whether it was registered. Existing interpreters keep their copy. |
+| `global_plugins()` | `() -> List[Any]` | A copy of the registry in registration order. |
+| `plugins.clear_global_plugins()` | `() -> None` | Empty the registry (test teardown). Not exported at top level. |
 
 ### `PluginBase`
 

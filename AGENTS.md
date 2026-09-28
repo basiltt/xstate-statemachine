@@ -110,6 +110,17 @@ these modules first:
   `on_event_processed` hooks (#304) are dispatched from each engine's own
   copy, with shared helpers `_intercept_before_send` /
   `_notify_event_processed` on `BaseInterpreter`.
+  Sync-only surfaces (#305): `send_threadsafe()` is a locked mailbox drained
+  by `_drain_mailbox()` at the top of `send()` / `tick()` — the async engine
+  has a different, loop-based `send_threadsafe`. Shared and NOT overridden:
+  `_prepare_event` (the `__xstate_event__` adapter lives there, once) and
+  `_execute_actions` (the `context_validator` call lives there, once).
+- **Cross-thread access to a `SyncInterpreter` is `send_threadsafe()` only.**
+  `send()` is not thread-safe and never was; do not add locks to it.
+- **Global plugins are read in `BaseInterpreter.__init__`**, so every
+  constructor path (both engines, `from_snapshot`, spawned children) honours
+  `plugins.register_global` without call-site discipline. Never register
+  anything there on import.
 - **Silent acceptance is a bug.** Config the library does not implement must
   either work or fail loudly. Most of the v0.6.0 work was converting silently
   ignored keys into real features.

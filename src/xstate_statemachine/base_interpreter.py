@@ -116,7 +116,7 @@ from .models import (
     TContext,
     TransitionDefinition,
 )
-from .plugins import PluginBase
+from .plugins import PluginBase, global_plugins
 from .resolver import resolve_target_state
 from . import persistence
 from .clock import Clock, RealClock
@@ -726,6 +726,15 @@ class BaseInterpreter(Generic[TContext]):
 
         # 🔗 Extensibility & Introspection
         self._plugins: List[PluginBase["BaseInterpreter[Any]"]] = []
+        # 🌐 #305: process-wide plugins (`plugins.register_global`). Read
+        #    HERE, in the one constructor every engine, `from_snapshot` and
+        #    every spawned child pass through, so "every interpreter in the
+        #    process" is true by construction rather than by call-site
+        #    discipline. Wrapped exactly as `use()` wraps (containment).
+        for gp in global_plugins():
+            self._plugins.append(
+                cast(PluginBase["BaseInterpreter[Any]"], _SafePlugin(gp))
+            )
         self._interpreter_class: Type["BaseInterpreter[Any]"] = (
             interpreter_class or self.__class__
         )
@@ -1023,6 +1032,10 @@ class BaseInterpreter(Generic[TContext]):
                 )
             payload = {k: v for k, v in event.items() if k != "type"}
             return Event(type=event_type, payload=payload)
+        # 🔌 #305: an object implementing `__xstate_event__` is accepted
+        #    here too, so `sendTo` specs and helpers share the adapter.
+        if callable(getattr(event, "__xstate_event__", None)):
+            return BaseInterpreter._prepare_event(event)
         raise TypeError(f"❌ Unsupported event type: {type(event).__name__}")
 
     def subscribe(
@@ -2686,6 +2699,37 @@ class BaseInterpreter(Generic[TContext]):
         if isinstance(event_or_type, str):
             return Event(type=event_or_type, payload=payload)
 
+        # 🔌 #305: the `__xstate_event__` adapter protocol. A domain object
+        #    (a Django signal payload, a Celery message, a Stripe webhook
+        #    model, a pydantic event) can say how it becomes an event by
+        #    implementing `__xstate_event__() -> str | dict | Event`, the
+        #    way `__fspath__` lets any object be a path. Every send path on
+        #    both engines goes through this one normaliser, so the adapter
+        #    works for `send`, `send_events`, `send_threadsafe` and
+        #    `sendTo` alike. The result is normalised by the SAME rules as
+        #    a direct argument (one level -- an adapter returning another
+        #    adapter is an error, not a recursion).
+        adapter = getattr(event_or_type, "__xstate_event__", None)
+        if callable(adapter) and not isinstance(
+            event_or_type, (Event, DoneEvent, AfterEvent, ErrorEvent)
+        ):
+            produced = adapter()
+            if not isinstance(produced, (str, dict)) and not (
+                hasattr(produced, "type") and hasattr(produced, "payload")
+            ):
+                raise InvalidEventError(
+                    f"{type(event_or_type).__name__}.__xstate_event__() "
+                    f"must return a str, a dict with a 'type' key, or an "
+                    f"Event; got {type(produced).__name__}."
+                )
+            if isinstance(produced, str):
+                return Event(type=produced, payload=payload)
+            if payload and isinstance(produced, dict):
+                # Keyword payload merges OVER the adapter's dict, so a call
+                # site can annotate (`send(order, source="retry")`).
+                produced = {**produced, **payload}
+            return BaseInterpreter._prepare_event(produced)
+
         # 2️⃣ Input is a dictionary: convert to an Event.
         if isinstance(event_or_type, dict):
             data = event_or_type.copy()
@@ -3670,6 +3714,14 @@ class BaseInterpreter(Generic[TContext]):
         failed: List[Tuple[ActionDefinition, BaseException]] = []
         if not actions:
             return failed
+        # 🧪 #305: `create_machine(context_validator=)`. A before-image is
+        #    taken ONLY when a validator is configured (the default machine
+        #    pays one attribute read), and the validator runs only after an
+        #    action that actually changed `context` -- a raise is an ACTION
+        #    error, so `actionErrorPolicy` (rollback / ignore / fail)
+        #    applies exactly as for an action that raised itself.
+        validator = self.machine.context_validator
+        before = copy.deepcopy(self.context) if validator else None
         for action_def in actions:
             for plugin in self._plugins:
                 plugin.on_action_execute(self, action_def)
@@ -3712,6 +3764,14 @@ class BaseInterpreter(Generic[TContext]):
                         self._report_action_failure(action_def, event, exc)
                         failed.append((action_def, exc))
                         return failed
+                    if validator is not None:
+                        vexc = self._validate_context(
+                            validator, before, action_def, event
+                        )
+                        if vexc is not None:
+                            failed.append((action_def, vexc))
+                            return failed
+                        before = copy.deepcopy(self.context)
                     continue
                 raise ImplementationMissingError(
                     f"Action '{action_def.type}' is not implemented."
@@ -3734,7 +3794,39 @@ class BaseInterpreter(Generic[TContext]):
                 self._report_action_failure(action_def, event, exc)
                 failed.append((action_def, exc))
                 return failed
+            if validator is not None:
+                vexc = self._validate_context(
+                    validator, before, action_def, event
+                )
+                if vexc is not None:
+                    failed.append((action_def, vexc))
+                    return failed
+                before = copy.deepcopy(self.context)
         return failed
+
+    def _validate_context(
+        self,
+        validator: Callable[[Any], None],
+        before: Any,
+        action_def: ActionDefinition,
+        event: Any,
+    ) -> Optional[BaseException]:
+        """#305: run the machine's `context_validator` if *action_def*
+        changed `context`; return the exception it raised (reported as an
+        action failure) or ``None``.
+
+        Unchanged context → the validator is NOT called (a counter test
+        pins this), so a validator that is expensive -- a pydantic model
+        rebuild (#266) -- costs nothing on the actions that only send.
+        """
+        if self.context == before:
+            return None
+        try:
+            validator(self.context)
+        except Exception as exc:  # noqa: BLE001 -- user validator
+            self._report_action_failure(action_def, event, exc)
+            return exc
+        return None
 
     def _report_action_failure(
         self, action_def: ActionDefinition, event: Any, exc: BaseException

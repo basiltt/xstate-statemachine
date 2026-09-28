@@ -147,6 +147,134 @@ def main() -> int:
     finally:
         tmp.unlink(missing_ok=True)
 
+    # ---------------------------------------------------------------- part 2
+    import threading
+
+    from xstate_statemachine import (
+        MachineLogic,
+        PluginBase,
+        register_global,
+        unregister_global,
+    )
+
+    step("global plugin registry: after, not before; incl. spawned child")
+
+    class Starts(PluginBase):
+        def __init__(self) -> None:
+            self.ids: list = []
+
+        def on_interpreter_start(self, interp) -> None:  # noqa: ANN001
+            self.ids.append(interp.id)
+
+    kid = create_machine({"id": "kid", "initial": "x", "states": {"x": {}}})
+    pcfg = {
+        "id": "p",
+        "initial": "a",
+        "context": {"n": 0},
+        "states": {
+            "a": {
+                "on": {
+                    "SPAWN": {"actions": "spawn_kid"},
+                    "BUMP": {"actions": "bump"},
+                }
+            }
+        },
+    }
+
+    def bump(i, c, e, a) -> None:  # noqa: ANN001
+        c["n"] += e.payload.get("by", 1)
+
+    def plogic() -> MachineLogic:
+        return MachineLogic(actions={"bump": bump}, services={"kid": kid})
+
+    before = SyncInterpreter(create_machine(pcfg, logic=plogic()))
+    starts = Starts()
+    register_global(starts)
+    after = SyncInterpreter(create_machine(pcfg, logic=plogic())).start()
+    before.start()
+    after.send("SPAWN")
+    unregister_global(starts)
+    print("started ids:", starts.ids)
+    assert starts.ids[0] == "p" and any(
+        x.startswith("p:kid") for x in starts.ids[1:]
+    ), starts.ids
+    assert starts.ids.count("p") == 1  # `before` was never attached
+    before.stop()
+    after.stop()
+
+    step(
+        "context_validator: rollback restores context; not called when unchanged"
+    )
+    calls: list = []
+
+    def validate(ctx) -> None:  # noqa: ANN001
+        calls.append(ctx["n"])
+        if ctx["n"] > 2:
+            raise ValueError("n > 2")
+
+    vm = create_machine(
+        dict(pcfg, actionErrorPolicy="rollback"),
+        logic=plogic(),
+        context_validator=validate,
+    )
+    vi = SyncInterpreter(vm).start()
+    vi.send("SPAWN")  # no context change -> validator silent
+    assert calls == []
+    vi.send("BUMP", by=2)
+    rcp = vi.send("BUMP", by=5, wait=True)
+    print("context after rollback:", vi.context["n"], "error:", rcp.error)
+    assert vi.context["n"] == 2 and isinstance(rcp.error, ValueError)
+    vi.stop()
+
+    step("__xstate_event__ adapter")
+
+    class Bump:
+        def __init__(self, by: int) -> None:
+            self.by = by
+
+        def __xstate_event__(self) -> dict:
+            return {"type": "BUMP", "by": self.by}
+
+    xi = SyncInterpreter(create_machine(pcfg, logic=plogic())).start()
+    xi.send(Bump(3))
+    xi.send_events([Bump(1), Bump(1)])
+    print("n after adapters:", xi.context["n"])
+    assert xi.context["n"] == 5
+    xi.stop()
+
+    step("SyncInterpreter.send_threadsafe: 8 threads x 1000, FIFO per thread")
+    seen: list = []
+
+    def record(i, c, e, a) -> None:  # noqa: ANN001
+        seen.append((e.payload["t"], e.payload["k"]))
+
+    qm = create_machine(
+        {
+            "id": "q",
+            "initial": "s",
+            "states": {"s": {"on": {"E": {"actions": "record"}}}},
+        },
+        logic=MachineLogic(actions={"record": record}),
+    )
+    qi = SyncInterpreter(qm).start()
+
+    def w(t: int) -> None:
+        for k in range(1000):
+            qi.send_threadsafe("E", t=t, k=k)
+
+    ths = [threading.Thread(target=w, args=(t,)) for t in range(8)]
+    for th in ths:
+        th.start()
+    for th in ths:
+        th.join()
+    assert seen == []  # nothing ran on producer threads
+    qi.tick()
+    print("delivered:", len(seen))
+    assert len(seen) == 8000
+    for t in range(8):
+        assert [k for tt, k in seen if tt == t] == list(range(1000)), t
+    qi.stop()
+
     print("\nALL OK")
     return 0
 

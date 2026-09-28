@@ -27,7 +27,16 @@ import copy
 import logging
 import warnings
 from types import ModuleType
-from typing import Any, Dict, List, Optional, Type, Union, overload
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Type,
+    Union,
+    overload,
+)
 
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
@@ -64,6 +73,7 @@ def create_machine(
     strict_targets: bool = True,
     event_schemas: Optional[Dict[str, Any]] = None,
     strict_config: Optional[bool] = None,
+    context_validator: Optional[Callable[[Any], None]] = None,
 ) -> MachineNode[Dict[str, Any]]:  # noqa: E704
     ...
 
@@ -79,6 +89,7 @@ def create_machine(
     strict_targets: bool = True,
     event_schemas: Optional[Dict[str, Any]] = None,
     strict_config: Optional[bool] = None,
+    context_validator: Optional[Callable[[Any], None]] = None,
 ) -> MachineNode[TContext]:  # noqa: E704
     ...
 
@@ -93,6 +104,7 @@ def create_machine(
     strict_targets: bool = True,
     event_schemas: Optional[Dict[str, Any]] = None,
     strict_config: Optional[bool] = None,
+    context_validator: Optional[Callable[[Any], None]] = None,
 ) -> MachineNode[Any]:
     """Creates, validates, and assembles a state machine instance.
 
@@ -104,6 +116,14 @@ def create_machine(
     key, else ``False``: unknown keys are logged at WARNING with a
     "did you mean" hint. Keys prefixed ``x-`` (and ``meta`` /
     ``description`` / ``tags`` / ``version``) are always accepted.
+
+    🧪 ``context_validator`` (#305): a callable ``(context) -> None`` that
+    RAISES when the context is invalid. Both engines call it after any
+    action that changed ``context`` (never when nothing changed) and treat
+    a raise as that action's failure, so ``actionErrorPolicy`` applies --
+    ``"rollback"`` restores the pre-transition context. This is the seam
+    the pydantic extra (#266) plugs a model into; core takes no
+    dependency. Stored on ``MachineNode.context_validator``.
 
     🧷 Type safety: pass ``context_type=MyCtx`` (a ``TypedDict`` or any
     ``Mapping`` subtype) and the returned ``MachineNode[MyCtx]`` carries
@@ -283,6 +303,13 @@ def create_machine(
     #    hand-written functions -- so the library takes no dependency.
     if event_schemas:
         machine.event_schemas = dict(event_schemas)
+    if context_validator is not None:
+        if not callable(context_validator):
+            raise InvalidConfigError(
+                "context_validator must be callable: (context) -> None, "
+                f"got {type(context_validator).__name__}."
+            )
+        machine.context_validator = context_validator
 
     # -------------------------------------------------------------------------
     # 🛡️ Step 4: Validate the built tree (0.8.0)

@@ -38,6 +38,7 @@ from typing import (
     Mapping,
     FrozenSet,
     Any,
+    Callable,
     Dict,
     Generic,
     List,
@@ -1638,6 +1639,14 @@ class MachineNode(StateNode[TContext]):
         self.version: Optional[str] = (
             None if raw_version is None else str(raw_version)
         )
+
+        #: 🧪 #305: `create_machine(context_validator=)`. A callable
+        #: ``(context) -> None`` that raises on an invalid context; both
+        #: engines run it after any action that changed `context` and treat
+        #: a raise as that action's failure (so `actionErrorPolicy`
+        #: applies). ``None`` (default) costs one attribute read per action
+        #: list. The seam the pydantic extra (#266) plugs into.
+        self.context_validator: Optional[Callable[[Any], None]] = None
 
         #: Custom `id` → node registry, populated by `StateNode.__init__` as
         #: the tree is built. Must exist BEFORE `super().__init__` recurses
