@@ -193,6 +193,66 @@ def _machine_types() -> Tuple[type, ...]:
     return tuple(types_seen)
 
 
+def exec_generated(
+    code: str,
+    template: str,
+    problems: List[str],
+    *,
+    siblings: Optional[Dict[str, str]] = None,
+) -> Optional[Any]:
+    """Execute generator output in a throwaway module; ``None`` on failure.
+
+    The ONE place generated code is executed in-process (see
+    `_build_generated` for the threat model). ``sys.modules`` is snapshotted
+    and restored, so nothing the code imports or injects persists.
+
+    Args:
+        siblings: ``{module_name: source}`` of OTHER generator output the
+            code imports by name (e.g. ``checkout_models`` next to
+            ``checkout_api``); each is executed first through this same
+            function and visible only for the duration of the call.
+    """
+    import types
+
+    # 📝 A sibling keeps its real name (the code imports it by that name,
+    #    and pydantic resolves a model's types through
+    #    `sys.modules[cls.__module__]`), registered only for the duration.
+    mod_name = (
+        template
+        if template.isidentifier()
+        else f"_xsm_verify_{template.replace('-', '_')}"
+    )
+    module = types.ModuleType(mod_name)
+    saved_modules = dict(sys.modules)
+    try:
+        for sib_name, sib_code in (siblings or {}).items():
+            sib = exec_generated(sib_code, sib_name, problems)
+            if sib is None:
+                return None
+            sys.modules[sib_name] = sib
+        sys.modules[mod_name] = module
+        # 🛡️ Deliberate `exec` (X0.2 ban, `tests/test_security_baseline.py`,
+        #    exempts this line by the marker):
+        #    this executes the code the generator ITSELF just emitted, in a
+        #    throwaway module, to prove it builds what it claims. It never
+        #    runs user- or network-supplied text: chart strings reach
+        #    generated code only through repr() / docstring_safe().
+        exec(  # xsm:allow-exec
+            compile(code, f"<{template}>", "exec"), module.__dict__
+        )
+    except Exception as exc:  # noqa: BLE001 — reported, not swallowed
+        problems.append(
+            f"generated code raised {type(exc).__name__} on import: {exc}"
+        )
+        return None
+    finally:
+        # 🧹 Drop anything the executed code added or replaced.
+        for name in set(sys.modules) - set(saved_modules):
+            sys.modules.pop(name, None)
+        sys.modules.update(saved_modules)
+    return module
+
+
 def _build_generated(
     code: str,
     template: str,
@@ -212,31 +272,11 @@ def _build_generated(
     untrusted JSON cannot become code in the first place — see
     ``naming.docstring_safe`` and the injection tests.
     """
-    import types
-
     machine_types = _machine_types()
 
-    module = types.ModuleType(f"_xsm_verify_{template.replace('-', '_')}")
-    saved_modules = dict(sys.modules)
-    try:
-        # 🛡️ Deliberate `exec` (X0.2 ban, `tests/test_security_baseline.py`,
-        #    exempts this line by the marker):
-        #    this executes the code the generator ITSELF just emitted, in a
-        #    throwaway module, to prove it rebuilds the source machine. It
-        #    never runs user- or network-supplied text.
-        exec(  # xsm:allow-exec
-            compile(code, f"<{template}>", "exec"), module.__dict__
-        )
-    except Exception as exc:  # noqa: BLE001 — reported, not swallowed
-        problems.append(
-            f"generated code raised {type(exc).__name__} on import: {exc}"
-        )
+    module = exec_generated(code, template, problems)
+    if module is None:
         return None
-    finally:
-        # 🧹 Drop anything the executed code added or replaced.
-        for name in set(sys.modules) - set(saved_modules):
-            sys.modules.pop(name, None)
-        sys.modules.update(saved_modules)
 
     candidates = [
         v for v in vars(module).values() if isinstance(v, machine_types)

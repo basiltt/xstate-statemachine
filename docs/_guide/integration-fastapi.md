@@ -231,6 +231,16 @@ assert len(winners) == 1                         # the rest: 409 or unchanged
 
 Drive timers with `DueTimerScanner(store, ...).scan(now=time.time() + 901)`, which passes an explicit `now`, instead of sleeping. Ready-made pytest fixtures arrive with the `[testing]` extra ([#268](https://github.com/basiltt/xstate-statemachine/issues/268)).
 
+### Generate a router you own
+
+`StatechartRouter` builds the API at runtime. When you would rather check in an editable router (custom auth, extra routes), generate one:
+
+```bash
+xsm gt order.json -t pydantic-models --with-api -o app/
+```
+
+This writes `order_models.py` (one `EventModel` per event) and `order_api.py`: an `APIRouter` with `GET /{id}` and one typed `POST /{id}/events/<EVENT>` per event, through `get_interpreter` and `ReceiptResponse`. Its `authorize` stub raises `NotImplementedError` until you implement it, so nothing is served before you decide who may do what (X0.1). `xsm gt ... --check` in CI reports drift when the chart changes. See [CLI templates](../cli-templates/#companion-templates).
+
 ## Reference
 
 ### `StatechartRouter(registry, name, *, prefix=None, tags=None, key_param="id", event_models=None, include_diagram=True, create_if_missing=True, operation_id_prefix=None, dependencies=(), per_event_dependencies=None, actor=None) -> APIRouter`

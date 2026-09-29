@@ -112,12 +112,15 @@ def _add_generation_option_args(parser: argparse.ArgumentParser) -> None:
             "pytest",
             "typed",
             "plugin",
+            "fastapi-router",
+            "pydantic-models",
         ],
         default=None,
         help=(
             "Code generation template. Default: class-json. "
-            "Replaces --style (deprecated). 'pytest', 'typed' and 'plugin' "
-            "are single-file companions (see also --with-*)."
+            "Replaces --style (deprecated). 'pytest', 'typed', 'plugin', "
+            "'fastapi-router' and 'pydantic-models' are single-file "
+            "companions (see also --with-*)."
         ),
     )
     parser.add_argument(
@@ -134,6 +137,16 @@ def _add_generation_option_args(parser: argparse.ArgumentParser) -> None:
         "--with-plugin",
         action="store_true",
         help="Also emit <machine>_observer.py: a PluginBase wired for the hooks this chart fires.",
+    )
+    parser.add_argument(
+        "--with-api",
+        action="store_true",
+        help="Also emit <machine>_api.py: an editable FastAPI router, one typed route per event ([fastapi] extra).",
+    )
+    parser.add_argument(
+        "--with-models",
+        action="store_true",
+        help="Also emit <machine>_models.py: a pydantic context model and one EventModel per event ([pydantic] extra).",
     )
     parser.add_argument(
         "-fc",

@@ -1,0 +1,35 @@
+{
+  "id": "checkout",
+  "initial": "cart",
+  "context": {
+    "items": [],
+    "total": 0
+  },
+  "states": {
+    "cart": {
+      "on": {
+        "SUBMIT": {
+          "target": "payment",
+          "guard": "cartNotEmpty",
+          "actions": "calculateTotal"
+        }
+      }
+    },
+    "payment": {
+      "invoke": {
+        "src": "processPayment",
+        "onDone": {
+          "target": "confirmed",
+          "actions": "clearCart"
+        },
+        "onError": {
+          "target": "cart",
+          "actions": "showError"
+        }
+      }
+    },
+    "confirmed": {
+      "type": "final"
+    }
+  }
+}

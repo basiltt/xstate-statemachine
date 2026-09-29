@@ -1,0 +1,167 @@
+# src/xstate_statemachine/cli/strategies/pydantic_models.py
+# -----------------------------------------------------------------------------
+# 🧾 `pydantic-models` template -- `<machine>_models.py`
+# -----------------------------------------------------------------------------
+# Generates, per machine:
+#   * `<Machine>Context` -- a pydantic `BaseModel` inferred from the chart's
+#     initial `context` exactly as the `typed` template infers its
+#     `TypedDict` (defaults are the chart's own initial values);
+#   * one `EventModel` subclass per client-sendable event. Fields come from
+#     a declared payload (a transition's `meta.payload`, or the root
+#     `meta.events.<E>.payload` / `meta.eventSchemas.<E>`); an event with no
+#     declared payload is `extra="allow"` -- it accepts anything, so the
+#     model never rejects what the chart does not describe;
+#   * `EVENT_MODELS` and `event_schemas()` -- `create_machine(...,
+#     event_schemas=event_schemas())` validates every send.
+#
+# 📝 No `from __future__ import annotations`: pydantic resolves string
+#    annotations through `sys.modules[cls.__module__]`, which a module
+#    loaded by path (or verified in a scratch namespace) may not be in.
+# -----------------------------------------------------------------------------
+"""The `pydantic-models` code-generation strategy."""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Set
+
+from ..naming import docstring_safe
+from ..utils import camel_to_snake
+from ._shared import (
+    generate_module_header,
+    generate_section_header,
+    pascal_case_name,
+    safe_identifier,
+)
+from ._web import EventSpec, collect_events, field_attr, machine_prose
+from .base import BaseStrategy, GenerationContext
+from .typed import _annotation
+
+
+def context_class_name(ctx: GenerationContext) -> str:
+    return (
+        pascal_case_name(camel_to_snake(safe_identifier(ctx.machine_name)))
+        + "Context"
+    )
+
+
+def _context_lines(cls: str, context: Dict[str, Any], prose: str) -> List[str]:
+    doc = "Shape of `context`, inferred from the chart's initial value."
+    p = [f"class {cls}(BaseModel):", f'    """{doc}', ""]
+    if prose:
+        p.append(f"    {prose}")
+        p.append("")
+    p += [
+        "    Unknown keys are kept (`extra='allow'`): actions may add keys the",
+        "    initial value does not show.",
+        '    """',
+        "",
+        '    model_config = ConfigDict(extra="allow", populate_by_name=True)',
+        "",
+    ]
+    taken: Set[str] = set()
+    for key, value in context.items():
+        attr = field_attr(str(key), taken)
+        ann = _annotation(value)
+        if ann == "Optional[Any]":
+            ann = "Any"
+        alias = f", alias={str(key)!r}" if attr != key else ""
+        if isinstance(value, (list, dict)):
+            default = f"Field(default_factory=lambda: {value!r}{alias})"
+        elif alias:
+            default = f"Field({value!r}{alias})"
+        else:
+            default = repr(value)
+        p.append(f"    {attr}: {ann} = {default}")
+    if not context:
+        p.append("    pass  # the chart declares no object context")
+    return p
+
+
+def _event_lines(spec: EventSpec) -> List[str]:
+    doc = spec.doc or docstring_safe(f"The {spec.type} event.", limit=200)
+    p = [f"class {spec.class_name}(EventModel):", f'    """{doc}"""', ""]
+    if spec.payload is None:
+        p.append(
+            '    model_config = ConfigDict(extra="allow", '
+            "populate_by_name=True)"
+        )
+    else:
+        p.append(
+            '    model_config = ConfigDict(extra="forbid", '
+            "populate_by_name=True)"
+        )
+    p += ["", f"    type: Literal[{spec.type!r}] = {spec.type!r}"]
+    for f in spec.payload or []:
+        alias = f", alias={f.name!r}" if f.attr != f.name else ""
+        if f.required:
+            rhs = f" = Field(...{alias})" if alias else ""
+            p.append(f"    {f.attr}: {f.annotation}{rhs}")
+        else:
+            rhs = f"Field(None{alias})" if alias else "None"
+            p.append(f"    {f.attr}: Optional[{f.annotation}] = {rhs}")
+    return p
+
+
+class PydanticModelsStrategy(BaseStrategy):
+    """Generates a pydantic module: context model + one EventModel/event."""
+
+    @property
+    def name(self) -> str:
+        return "pydantic-models"
+
+    def generate_runner(self, ctx: GenerationContext) -> str:
+        return ""
+
+    def generate_logic(self, ctx: GenerationContext) -> str:
+        config = ctx.configs[0]
+        events = collect_events(config)
+        raw_ctx = config.get("context")
+        context: Dict[str, Any] = raw_ctx if isinstance(raw_ctx, dict) else {}
+        cls = context_class_name(ctx)
+        # 📝 An event class may not shadow the context class.
+        for spec in events:
+            if spec.class_name == cls:
+                spec.class_name += "_"
+
+        p: List[str] = [
+            generate_module_header(
+                f"Pydantic models for the {ctx.machine_name}"
+            ),
+            "# Generated by `xsm generate-template --template pydantic-models`.",
+            "# Imports only the [pydantic] extra:",
+            '#     pip install "xstate-statemachine[pydantic]"',
+            "# Bind the event models to the machine so every send is validated:",
+            "#     create_machine(config, event_schemas=event_schemas())",
+            "# Regenerate after changing the JSON; `xsm gt ... --check` in CI",
+            "# reports drift.",
+            "",
+            "from typing import Any, Dict, List, Literal, Optional, Tuple, Type",
+            "",
+            "from pydantic import BaseModel, ConfigDict, Field",
+            "",
+            "from xstate_statemachine.contrib.pydantic import (",
+            "    EventModel,",
+            "    events_union,",
+            ")",
+            "",
+            generate_section_header("Context"),
+            *_context_lines(cls, context, machine_prose(config)),
+            "",
+            "",
+            generate_section_header("Events"),
+        ]
+        for spec in events:
+            p += _event_lines(spec)
+            p += ["", ""]
+        names = "".join(f"    {s.class_name},\n" for s in events)
+        p += [
+            generate_section_header("Binding"),
+            f"EVENT_MODELS: Tuple[Type[EventModel], ...] = (\n{names})",
+            "",
+            "",
+            "def event_schemas() -> Dict[str, Any]:",
+            '    """`create_machine(event_schemas=...)` for every model above."""',
+            "    return events_union(*EVENT_MODELS)",
+            "",
+        ]
+        return "\n".join(p)

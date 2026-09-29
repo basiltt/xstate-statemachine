@@ -90,6 +90,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     receipt. Saving a replay bumped the version so the ORIGINAL request's
     save lost with 409; under a burst of retries with one
     `Idempotency-Key`, nobody won.
+  - **`xsm gt --with-api` / `--with-models` (#279).** Two companion
+    templates: `fastapi-router` writes `<machine>_api.py`, an editable
+    `APIRouter` (`GET /{id}`, one typed `POST /{id}/events/<EVENT>` per
+    event via `Depends(get_interpreter)`, `ReceiptResponse`, an undeclared
+    event → 404 problem) whose `authorize` stub raises
+    `NotImplementedError` until implemented (X0.1, closed by default);
+    `pydantic-models` writes `<machine>_models.py`, a context `BaseModel`
+    plus one `EventModel` per event (declared payloads typed, else
+    `extra="allow"`). With the extra installed the generator mounts the
+    router on a throwaway `FastAPI()` and checks `openapi()` lists one
+    route per event; `--check` / `--diff` report drift. Listed by
+    `xsm list-templates` and the launcher. Guide: *CLI templates →
+    Companion templates*.
 
 - **Graph algorithms `shortest_paths`, `simple_paths`, `reachable_states`,
   `transition_coverage_targets`, `Path`, `Step`** (#269; core, zero-dep;

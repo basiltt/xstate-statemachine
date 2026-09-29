@@ -130,7 +130,10 @@ class TestRegistry(_Quiet):
         self.assertEqual(
             requested_companions(A(), "typed"), ["typed", "pytest", "plugin"]
         )
-        self.assertEqual(sorted(COMPANIONS), ["plugin", "pytest", "typed"])
+        self.assertEqual(
+            sorted(COMPANIONS),
+            ["fastapi-router", "plugin", "pydantic-models", "pytest", "typed"],
+        )
 
 
 class TestTraceRecorder(_Quiet):
@@ -325,6 +328,85 @@ class TestCliFlags(_Quiet):
             files = sorted(p.name for p in pathlib.Path(tmp).glob("*.py"))
             self.assertEqual(len(files), 1)
             self.assertTrue(files[0].endswith("_types.py"))
+
+
+class TestWebCompanions(_Quiet):
+    """`fastapi-router` / `pydantic-models` (#279): registered, flagged,
+    parse for the WHOLE corpus (they read the raw config, so even exports
+    the engine refuses generate), Python 3.9-safe."""
+
+    def test_api_and_models_are_registered_companions(self) -> None:
+        for t, flag, suffix in (
+            ("fastapi-router", "with_api", "{name}_api.py"),
+            ("pydantic-models", "with_models", "{name}_models.py"),
+        ):
+            self.assertIn(t, STRATEGY_REGISTRY)
+            self.assertEqual(get_strategy(t).name, t)
+            self.assertTrue(is_companion(t))
+            self.assertEqual(COMPANIONS[t], (flag, suffix))
+
+    def test_api_and_models_parse_for_the_whole_corpus(self) -> None:
+        for fp in ALL_FIXTURES:
+            cfg = json.load(open(fp, encoding="utf-8"))
+            cfg.setdefault("id", pathlib.Path(fp).stem)
+            for template in ("pydantic-models", "fastapi-router"):
+                with self.subTest(
+                    fixture=pathlib.Path(fp).name, template=template
+                ):
+                    code = get_strategy(template).generate_logic(
+                        _ctx(cfg, pathlib.Path(fp).name)
+                    )
+                    tree = ast.parse(code)
+                    # 🐍 3.9-safe: no PEP 604 `X | Y` in annotations.
+                    for node in ast.walk(tree):
+                        self.assertNotIsInstance(
+                            getattr(node, "annotation", None), ast.BinOp
+                        )
+
+    def test_models_flag_types_the_router_bodies(self) -> None:
+        cfg = json.load(open(FIXTURES[0], encoding="utf-8"))
+        ctx = _ctx(cfg, "m.json")
+        plain = get_strategy("fastapi-router").generate_logic(ctx)
+        self.assertNotIn("_models import", plain)
+        ctx.companions = ("pydantic-models", "fastapi-router")
+        typed = get_strategy("fastapi-router").generate_logic(ctx)
+        self.assertIn(f"from {ctx.machine_name}_models import", typed)
+
+    def test_router_emits_a_closed_authorize_stub(self) -> None:
+        cfg = json.load(open(FIXTURES[0], encoding="utf-8"))
+        code = get_strategy("fastapi-router").generate_logic(
+            _ctx(cfg, "m.json")
+        )
+        self.assertIn("def authorize(", code)
+        self.assertIn("raise NotImplementedError(", code)
+        self.assertIn("X0.1", code)
+        self.assertIn("🔐", code)
+
+    def test_with_api_and_models_flags_write_both(self) -> None:
+        cfg = json.load(open(FIXTURES[0], encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as tmp:
+            src = pathlib.Path(tmp) / "m.json"
+            src.write_text(json.dumps(cfg), encoding="utf-8")
+            code, out = _run(
+                [
+                    "gt",
+                    str(src),
+                    "-t",
+                    "pythonic-class",
+                    "--with-api",
+                    "--with-models",
+                    "-o",
+                    tmp,
+                    "-f",
+                    "--plain",
+                ]
+            )
+            self.assertEqual(code, 0, out)
+            files = sorted(p.name for p in pathlib.Path(tmp).glob("*.py"))
+            self.assertTrue(any(f.endswith("_api.py") for f in files), files)
+            self.assertTrue(
+                any(f.endswith("_models.py") for f in files), files
+            )
 
 
 if __name__ == "__main__":
