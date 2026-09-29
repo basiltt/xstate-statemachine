@@ -213,5 +213,74 @@ class TestLaunchKit(unittest.TestCase):
             self.assertIn(DRAFT, head, path.name)
 
 
+class TestWorkflowComparison(unittest.TestCase):
+    """#308: `vs AWS Step Functions` -- a second row set (`workflow_rows`)
+    rendered by the same Liquid-loop mechanism, because the agent rows
+    above do not describe a workflow service."""
+
+    PAGE = PAGES / "vs-step-functions.md"
+    EXPECTED = [
+        "Definition language",
+        "Where it runs",
+        "Event-driven transitions",
+        "Hierarchy and parallel",
+        "Timers",
+        "Retries and error handling",
+        "Long-running durability",
+        "Local testing",
+        "Visual editor",
+        "Observability",
+        "Cost model",
+        "Lock-in",
+    ]
+
+    def setUp(self) -> None:
+        self.data = json.loads(DATA.read_text("utf-8"))
+        self.text = self.PAGE.read_text("utf-8")
+
+    def test_rows_are_present_and_complete(self) -> None:
+        rows = self.data["workflow_rows"]
+        self.assertEqual([r["feature"] for r in rows], self.EXPECTED)
+        keys = {"feature", "ours", *self.data["workflow_competitors"]}
+        for row in rows:
+            self.assertEqual(set(row), keys, row["feature"])
+            self.assertTrue(all(str(v).strip() for v in row.values()))
+
+    def test_page_renders_the_rows_from_the_data(self) -> None:
+        comp = self.data["workflow_competitors"]["step_functions"]
+        self.assertIn("site.data.comparisons.workflow_rows", self.text)
+        self.assertIn("row.step_functions", self.text)
+        self.assertIn(comp["name"], self.text)
+        for feature in self.EXPECTED:
+            self.assertIn(feature, self.text, f"row manifest: {feature}")
+        self.assertIn("permalink: /guide/vs-step-functions/", self.text)
+
+    def test_page_has_the_required_sections(self) -> None:
+        low = self.text.lower()
+        for section in (
+            "## feature table",
+            "## the same workflow, side by side",
+            "## local testing",
+            "## when step functions is still the right call",
+            "## when to choose xstate-statemachine",
+        ):
+            self.assertIn(section, low)
+        # 📝 their side is data, never executed as Python
+        self.assertIn('"StartAt": "Charge"', self.text)
+        self.assertIn(".waitForTaskToken", self.text)
+        self.assertIn("SimulatedClock", self.text)
+
+    def test_in_nav_order_and_search(self) -> None:
+        layout = (ROOT / "docs" / "_layouts" / "default.html").read_text(
+            "utf-8"
+        )
+        index = (
+            ROOT / "docs" / "assets" / "js" / "search-index.json"
+        ).read_text("utf-8")
+        self.assertIn("/guide/vs-step-functions/", layout)
+        self.assertIn("vs-step-functions,", layout)
+        self.assertIn("/guide/vs-step-functions/", index)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

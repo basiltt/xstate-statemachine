@@ -1,0 +1,31 @@
+{
+  "id": "booking",
+  "description": "Chatbot slot filling: collect date, party size and name in any order. Self-transitions record each slot; `allSlotsFilled` moves on; silence triggers a nudge, twice, then the conversation is abandoned.",
+  "initial": "collecting",
+  "context": { "slots": { "date": null, "party_size": null, "name": null }, "nudges": 0 },
+  "states": {
+    "collecting": {
+      "always": { "target": "confirming", "guard": "allSlotsFilled" },
+      "on": {
+        "USER_SAID": { "target": "collecting", "reenter": true, "actions": "fillSlots" }
+      },
+      "after": { "30000": { "target": "silent" } }
+    },
+    "silent": {
+      "description": "Transient: the user went quiet. Nudge and keep collecting, or give up.",
+      "always": [
+        { "target": "collecting", "guard": "canNudge", "actions": "nudge" },
+        { "target": "abandoned" }
+      ]
+    },
+    "confirming": {
+      "entry": "askToConfirm",
+      "on": {
+        "YES": "booked",
+        "NO": { "target": "collecting", "actions": "clearSlots" }
+      }
+    },
+    "booked": { "type": "final" },
+    "abandoned": { "type": "final" }
+  }
+}

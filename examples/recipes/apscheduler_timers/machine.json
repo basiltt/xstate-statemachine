@@ -1,0 +1,21 @@
+{
+  "id": "trial",
+  "description": "A free trial with durable follow-ups: a reminder after 7 days, expiry after 14. Timers are persisted deadlines, woken by a scheduler job.",
+  "initial": "trialing",
+  "context": { "reminders": 0 },
+  "states": {
+    "trialing": {
+      "initial": "fresh",
+      "on": { "SUBSCRIBE": "#trial.subscribed" },
+      "after": { "1209600000": { "target": "#trial.expired" } },
+      "states": {
+        "fresh": {
+          "after": { "604800000": { "target": "reminded", "actions": "sendReminder" } }
+        },
+        "reminded": {}
+      }
+    },
+    "subscribed": { "type": "final" },
+    "expired": { "type": "final", "entry": "sendExpiryEmail" }
+  }
+}

@@ -389,7 +389,13 @@ class TestStubLogic(unittest.TestCase):
                     "*.json"
                 )
             )
-            + list((ROOT / "examples").rglob("*.json"))
+            + [
+                # 📝 `fixtures/` folders hold recorded payloads (#308's
+                #    Stripe webhooks), not charts.
+                p
+                for p in (ROOT / "examples").rglob("*.json")
+                if "fixtures" not in p.parts
+            ]
         )
         built, refused = 0, []
         for f in files:

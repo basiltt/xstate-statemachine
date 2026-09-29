@@ -373,5 +373,70 @@
         "source": "python-statemachine 3.2.1: `statemachine.io` (json, yaml, scxml); ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       }
     ]
-  }
+  },
+  "workflow_competitors": {
+    "step_functions": {"name": "AWS Step Functions", "url": "https://docs.aws.amazon.com/step-functions/latest/dg/welcome.html"}
+  },
+  "workflow_rows": [
+    {
+      "feature": "Definition language",
+      "ours": "XState JSON (statecharts): states, events, guards, actions, `after`, `invoke`",
+      "step_functions": "Amazon States Language (ASL) JSON: Task / Choice / Wait / Parallel / Map states"
+    },
+    {
+      "feature": "Where it runs",
+      "ours": "In your Python process, on any host; state in your store (SQLite, Redis, Postgres)",
+      "step_functions": "Managed AWS service; state held by AWS"
+    },
+    {
+      "feature": "Event-driven transitions",
+      "ours": "Any state reacts to any named event (`send`) at any time",
+      "step_functions": "Flow is task-to-task; outside input via callback task tokens (`.waitForTaskToken`)"
+    },
+    {
+      "feature": "Hierarchy and parallel",
+      "ours": "Nested compound states and parallel regions with statechart semantics",
+      "step_functions": "`Parallel` and `Map` states; nested workflows via child executions"
+    },
+    {
+      "feature": "Timers",
+      "ours": "`after` per state, cancelled on exit; durable via persisted deadlines + `DueTimerScanner`",
+      "step_functions": "`Wait` state and task `TimeoutSeconds` / `HeartbeatSeconds`; durable by the service"
+    },
+    {
+      "feature": "Retries and error handling",
+      "ours": "`onError` transitions; `RetryPolicy` backoff with jitter; `CircuitBreaker`; dead-letter tag",
+      "step_functions": "Declarative `Retry` / `Catch` per state with backoff and jitter"
+    },
+    {
+      "feature": "Long-running durability",
+      "ours": "As durable as your store; you run the process and one scheduler role",
+      "step_functions": "Standard workflows up to one year, fully managed"
+    },
+    {
+      "feature": "Local testing",
+      "ours": "Plain pytest: `SimulatedClock`, both engines, `xsm simulate`, no emulator",
+      "step_functions": "Step Functions Local / `TestState` API; AWS services mocked or called"
+    },
+    {
+      "feature": "Visual editor",
+      "ours": "Stately editor round-trip; `xsm diagram` (Mermaid / PlantUML)",
+      "step_functions": "Workflow Studio in the AWS console"
+    },
+    {
+      "feature": "Observability",
+      "ours": "Plugins: transition log, audit, OTel / Prometheus; you ship them",
+      "step_functions": "Execution history, CloudWatch, X-Ray, built in"
+    },
+    {
+      "feature": "Cost model",
+      "ours": "Library: your compute and storage only",
+      "step_functions": "Per state transition (Standard) or per request and duration (Express)"
+    },
+    {
+      "feature": "Lock-in",
+      "ours": "Portable JSON; the same chart runs in XState (TypeScript) and in Python",
+      "step_functions": "ASL runs only on AWS"
+    }
+  ]
 }

@@ -34,6 +34,13 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
   `flask xsm inspect wizard`. `tests/test_examples_integrations.py` now
   runs each example's suite under its own extra, and the `[sqlalchemy]`
   and `[flask]` CI cells run it.
+- **`examples/recipes/` (#308).** Eight runnable recipe folders
+  (`stripe_webhooks`, `apscheduler_timers`, `task_queue_workers`,
+  `form_wizard`, `slot_filling`, `feature_flag_rollout`,
+  `websocket_reconnect`, `circuit_breaker_retry`), each with a
+  `machine.json` that passes `xsm validate`. Third-party libraries
+  (FastAPI, Flask, APScheduler, Streamlit, Gradio, Dramatiq, the Stripe
+  SDK) are imported softly, and no dependency is added to the package.
 
 - **SQLAlchemy & Flask (Phase D) -- `[sqlalchemy]` extra (#284 parts 1–2).**
   A statechart on your mapped row, or a `StateStore` on any RDBMS.
@@ -673,6 +680,42 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
   `xsm_migrate_fsm` (#310). Linked from the README, the landing page and
   the Integrations journey.
 
+- **Recipes pack (#308).** A new *Recipes* section (index page, linked
+  from the README Cookbook and the Integrations journey) with eight worked
+  recipes. Each has a Stately-importable chart, 30–60 lines of Python, an
+  `xsm simulate --events …` line that a test replays, and a test under
+  `tests/recipes/`:
+  - **Stripe webhooks**: subscription lifecycle (`incomplete → active ↔
+    past_due → canceled`), with FastAPI and Flask endpoints. They verify
+    `Stripe-Signature` with a stdlib constant-time HMAC and a 300 s
+    timestamp window (`stripe.Webhook.construct_event` when the SDK is
+    importable), map `event.type` to machine events, deduplicate on
+    `event.id` via `IdempotencyPlugin`, and persist via `persisted()`.
+    Tested with recorded fixtures: a forged signature, a tampered body and
+    a stale timestamp are rejected, and a replayed `event.id` is applied
+    once. The Guarantees box cites X0.2 and X0.7.
+  - **APScheduler durable timers**: `DueTimerScanner.run_once` as a cron
+    or interval job (`max_instances=1`, `coalesce=True`), with 7-day and
+    14-day `after` follow-ups and `--role scheduler` parity with the
+    FastAPI example.
+  - **RQ / arq / Dramatiq workers**: load → send → persist with an
+    optimistic retry on `ConflictError`, written by hand for each queue
+    and tested through a `FakeQueue` (8 threads on one key lose no update).
+  - **Streamlit / Gradio wizard**: back/forward as events and guarded
+    validation, with only the JSON snapshot kept in `st.session_state` /
+    `gr.State` and the diagram embedded. Smoke-tested against stub `st` /
+    `gr` modules.
+  - **Chatbot slot filling**, **feature-flag rollout** and **WebSocket
+    reconnect** (`RetryPolicy` jitter + `from_callback`) are pure engine,
+    tested on both interpreters with a `SimulatedClock`.
+  - **Circuit breaker & retry**: an HTTP client over stdlib `urllib` that
+    retries 5xx/429/timeouts but never other 4xx, behind a shared
+    `CircuitBreaker` that fails fast. Tested with a fake transport.
+- **vs AWS Step Functions** comparison page: an ASL workflow and the same
+  workflow in XState JSON side by side, the local-testing story (pytest +
+  `SimulatedClock`, no emulator), and when Step Functions is still the
+  right call. Its table is generated from a new `workflow_rows` set in
+  `docs/_data/comparisons.json`, covered by `tests/test_comparisons.py`.
 - **Integrations journey (#309).** *Integrations* is now the entry point:
   a Mermaid "pick your path" tree (framework × store × worker model ×
   events-in) with every leaf linked to an existing page, planned leaves

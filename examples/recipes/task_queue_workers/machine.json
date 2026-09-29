@@ -1,0 +1,17 @@
+{
+  "id": "shipment",
+  "description": "A shipment advanced by background jobs. Each job loads the instance, sends one event and saves it under an optimistic version check.",
+  "initial": "pending",
+  "context": { "scans": 0 },
+  "states": {
+    "pending": { "on": { "LABEL_PRINTED": "labelled" } },
+    "labelled": { "on": { "PICKED_UP": "in_transit" } },
+    "in_transit": {
+      "on": {
+        "SCANNED": { "actions": "countScan" },
+        "DELIVERED": "delivered"
+      }
+    },
+    "delivered": { "type": "final" }
+  }
+}

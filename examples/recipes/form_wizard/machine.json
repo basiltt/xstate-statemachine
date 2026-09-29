@@ -1,0 +1,24 @@
+{
+  "id": "signup",
+  "description": "A three-step signup wizard. BACK and NEXT are events; NEXT is guarded by per-step validation.",
+  "initial": "account",
+  "context": { "email": "", "plan": "", "accepted": false },
+  "states": {
+    "account": {
+      "on": { "NEXT": { "target": "plan", "guard": "accountValid", "actions": "saveFields" } }
+    },
+    "plan": {
+      "on": {
+        "BACK": "account",
+        "NEXT": { "target": "confirm", "guard": "planChosen", "actions": "saveFields" }
+      }
+    },
+    "confirm": {
+      "on": {
+        "BACK": "plan",
+        "SUBMIT": { "target": "done", "guard": "termsAccepted", "actions": "saveFields" }
+      }
+    },
+    "done": { "type": "final" }
+  }
+}

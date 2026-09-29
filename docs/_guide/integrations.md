@@ -274,9 +274,9 @@ The full crash-consistency specification is [Guarantees](../guarantees/); the tr
 
 ## Where next
 
-- **Recipes** — worked patterns (sagas, approvals, retries) arrive with [#308](https://github.com/basiltt/xstate-statemachine/issues/308); until then see [Patterns](../patterns/).
-- **Every extra, with status** — [Integration extras](../integrations-extras/).
-- **Design in the editor** — [Stately editor → Python](../stately-export/).
-- **LLM agents** — [LLM agents](../integration-agents/): the model proposes, the machine decides.
-- **Comparisons** — [vs django-fsm](../vs-django-fsm/), [vs transitions](../vs-transitions/), [vs python-statemachine](../vs-python-statemachine/); for agent frameworks, [vs LangGraph](../vs-langgraph/).
-- **Runnable apps** — [`sqlalchemy_orders`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/sqlalchemy_orders) (sync + async, Alembic, timers) and [`flask_wizard`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/flask_wizard) (session-keyed wizard), next to [`fastapi_orders`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders).
+- **Recipes**: worked, tested solutions in [Recipes](../recipes/). They cover Stripe webhooks, durable timers on APScheduler, queue workers, wizards, slot filling, feature-flag rollouts and WebSocket reconnects. The building blocks are in [Patterns](../patterns/).
+- **Every extra, with status**: [Integration extras](../integrations-extras/).
+- **Design in the editor**: [Stately editor → Python](../stately-export/).
+- **LLM agents**: [LLM agents](../integration-agents/). The model proposes, and the machine decides.
+- **Comparisons**: [vs LangGraph](../vs-langgraph/), [vs Burr](../vs-burr/), [vs @statelyai/agent](../vs-statelyai-agent/), [vs AWS Step Functions](../vs-step-functions/); and for the Python state-machine libraries, [vs django-fsm](../vs-django-fsm/), [vs transitions](../vs-transitions/), [vs python-statemachine](../vs-python-statemachine/).
+- **Runnable apps**: [`sqlalchemy_orders`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/sqlalchemy_orders) (sync + async, Alembic, timers) and [`flask_wizard`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/flask_wizard) (session-keyed wizard), next to [`fastapi_orders`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders).

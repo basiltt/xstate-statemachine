@@ -1,0 +1,31 @@
+{
+  "id": "fetchQuote",
+  "description": "One HTTP call wrapped in retry-with-backoff, behind a shared circuit breaker. A 5xx, 429 or network error is retried; other 4xx are final; an open breaker fails fast without calling upstream.",
+  "initial": "idle",
+  "context": { "url": null, "attempt": 0, "result": null, "error": null },
+  "states": {
+    "idle": {
+      "on": { "GET": { "target": "attempting", "actions": "storeUrl" } }
+    },
+    "attempting": {
+      "invoke": {
+        "src": "httpGet",
+        "onDone": { "target": "succeeded", "actions": ["retryReset", "storeResult"] },
+        "onError": [
+          { "target": "failed", "guard": "notRetryable", "actions": "storeError" },
+          { "target": "retrying", "actions": ["retryBump", "storeError"] }
+        ]
+      }
+    },
+    "retrying": {
+      "after": {
+        "retryDelay": [
+          { "target": "attempting", "guard": "retryCanRetry" },
+          { "target": "failed" }
+        ]
+      }
+    },
+    "succeeded": { "type": "final" },
+    "failed": { "type": "final", "tags": ["dead-letter"] }
+  }
+}

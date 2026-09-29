@@ -1174,6 +1174,8 @@ cancellation, or more than ~5 states** — and they pay enormously at 20.
 
 Real problems, small solutions.
 
+> 🍳 **Full recipes** — Stripe webhooks, APScheduler durable timers, RQ/arq/Dramatiq workers, a Streamlit/Gradio wizard, slot filling, feature-flag rollout, WebSocket reconnect, circuit breaker & retry, and *vs AWS Step Functions*. Each is tested in CI: **[Recipes →](https://basiltt.github.io/xstate-statemachine/guide/recipes/)**
+
 Every recipe below is a fragment for readability. Here is one **complete, runnable**
 program first — a checkout that guards an empty cart, retries a declining card, and
 records the failure reason, in 40 lines:

@@ -1,0 +1,57 @@
+{
+  "id": "rollout",
+  "description": "A feature-flag rollout. Each stage bakes for a fixed time; promotion needs healthy metrics; unhealthy metrics at any exposed stage roll back.",
+  "initial": "disabled",
+  "context": { "flag": "new_checkout", "percent": 0, "history": [] },
+  "states": {
+    "disabled": {
+      "entry": { "type": "setPercent", "params": { "percent": 0 } },
+      "on": { "START": "exposed" }
+    },
+    "exposed": {
+      "description": "Any stage where real traffic sees the flag.",
+      "initial": "internal",
+      "on": {
+        "ROLLBACK": "#rollout.rolled_back",
+        "METRICS_BAD": "#rollout.rolled_back"
+      },
+      "states": {
+        "internal": {
+          "entry": { "type": "setPercent", "params": { "percent": 0.1 } },
+          "after": {
+            "3600000": [
+              { "target": "canary_1", "guard": "metricsHealthy" },
+              { "target": "#rollout.rolled_back" }
+            ]
+          }
+        },
+        "canary_1": {
+          "entry": { "type": "setPercent", "params": { "percent": 1 } },
+          "after": {
+            "3600000": [
+              { "target": "canary_25", "guard": "metricsHealthy" },
+              { "target": "#rollout.rolled_back" }
+            ]
+          }
+        },
+        "canary_25": {
+          "entry": { "type": "setPercent", "params": { "percent": 25 } },
+          "after": {
+            "86400000": [
+              { "target": "#rollout.ga", "guard": "metricsHealthy" },
+              { "target": "#rollout.rolled_back" }
+            ]
+          }
+        }
+      }
+    },
+    "ga": {
+      "entry": { "type": "setPercent", "params": { "percent": 100 } },
+      "on": { "ROLLBACK": "rolled_back" }
+    },
+    "rolled_back": {
+      "entry": { "type": "setPercent", "params": { "percent": 0 } },
+      "on": { "RETRY": "disabled" }
+    }
+  }
+}

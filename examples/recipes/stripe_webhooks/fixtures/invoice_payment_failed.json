@@ -1,0 +1,1 @@
+{"id": "evt_2FailB", "object": "event", "type": "invoice.payment_failed", "created": 1735693200, "livemode": false, "data": {"object": {"id": "in_2B", "object": "invoice", "subscription": "sub_123", "customer": "cus_9", "amount_due": 2000, "attempt_count": 1}}}
