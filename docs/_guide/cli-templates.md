@@ -78,6 +78,7 @@ This machine has:
 The examples on this page focus on `--template`/`-t` and `--async-mode`/`-am`, but `generate-template` (alias `gt`) accepts several other flags worth knowing about:
 
 - `--with-tests`, `--with-types`, `--with-plugin` — Also emit the `pytest`, `typed` and `plugin` companion modules described in [Companion templates](#companion-templates) below. Any combination; they never replace the primary output.
+- `--with-models`, `--with-api` — Also emit the `pydantic-models` (`<machine>_models.py`) and `fastapi-router` (`<machine>_api.py`) companions for the `[pydantic]` / `[fastapi]` extras.
 - `-fc`, `--file-count {1,2}` — Number of output files: `1` (combined) or `2` (logic/runner). Default: `2`. This page's "Generated Logic File" / "Generated Runner File" pairs all assume the default of `2`; pass `--file-count 1` to get a single combined file instead.
 - `--no-verify` — Skip the structural check that generated code rebuilds the source machine. Syntax is still validated. Use only to inspect output the generator would otherwise refuse to write.
 - `--check` — Do not write anything. Exit with status 1 if the files on disk differ from what would be generated. Intended for CI, so generated code can be committed and kept honest.
@@ -1032,7 +1033,7 @@ if __name__ == '__main__':
 
 ## 🧪 Companion templates
 
-The three companion templates each produce **one extra module** next to the primary output. Request them together with any primary template:
+The companion templates each produce **one extra module** next to the primary output. Request them together with any primary template:
 
 ```bash
 xsm gt checkout.json -t pythonic-class --with-tests --with-types --with-plugin
@@ -1202,6 +1203,117 @@ class CheckoutObserver(PluginBase):
 ```
 
 Only hooks the chart can actually fire are generated: `on_service_*` and `on_invocation_stranded` because it invokes something, `on_guard_error` because it has guards, `on_done` because it has a final state, `on_transition_failed` only under a rollback/fail `actionErrorPolicy`, `on_unhandled_event` only when `onUnhandled` is not the default. The always-relevant lifecycle and sticky-signal hooks (`on_transition`, `on_action_error`, `on_chain_budget_exceeded`, `on_invalid_event`, `on_event_dropped`, `on_error`) are always present. Every hook writes one JSON line through `logging` so the skeleton is useful before you touch it; the trailing comment lists what was left out and why.
+
+### `pydantic-models` — a context model and one `EventModel` per event
+
+```bash
+xsm gt checkout.json -t pydantic-models --with-api
+```
+
+`checkout_models.py` imports only the `[pydantic]` extra:
+
+<!-- doc-fragment -->
+```python
+class CheckoutContext(BaseModel):
+    """Shape of `context`, inferred from the chart's initial value.
+
+    Unknown keys are kept (`extra='allow'`): actions may add keys the
+    initial value does not show.
+    """
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    items: List[Any] = Field(default_factory=lambda: [])
+    total: int = 0
+
+
+class SubmitEvent(EventModel):
+    """Accepted in: cart."""
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    type: Literal["SUBMIT"] = "SUBMIT"
+
+
+EVENT_MODELS: Tuple[Type[EventModel], ...] = (SubmitEvent,)
+
+
+def event_schemas() -> Dict[str, Any]:
+    """`create_machine(event_schemas=...)` for every model above."""
+    return events_union(*EVENT_MODELS)
+```
+
+The context model is inferred like the `typed` template's `TypedDict`, with the chart's initial values as defaults. An event whose JSON declares a payload — a transition's `meta.payload`, or the root `meta.events.<EVENT>.payload` / `meta.eventSchemas.<EVENT>` — gets typed fields (`"number"` → `float`, `{"type": "string", "required": true}` → required `str`, JSON-Schema `properties`/`required` also work) and `extra="forbid"`. `SUBMIT` declares none, so it accepts any payload (`extra="allow"`). Pass `event_schemas()` to `create_machine` and every send is validated.
+
+### `fastapi-router` — a router you own
+
+`checkout_api.py` imports only the `[fastapi]` extra. With `--with-models` too, each route's body is that event's model:
+
+<!-- doc-fragment -->
+```python
+def authorize(
+    conn: HTTPConnection, *, name: str, key: str, event: Optional[str]
+) -> bool:
+    """Decide whether *conn* may read (``event=None``) or send *event*
+    to instance *key*. Return True to admit, False for a 403."""
+    # 🔐 X0.1 -- closed by default. A generated API must not serve
+    #    anyone until you decide who may read and drive which
+    #    instance, so this stub RAISES instead of admitting: an
+    #    unfinished router fails loudly (500) rather than shipping
+    #    wide open. Replace the body with your check, e.g.
+    #        return conn.user.is_authenticated and owns(conn.user, key)
+    #    For a local demo ONLY, pass `authorize=allow_all` to
+    #    `register()` -- it logs a warning the first time it is used.
+    raise NotImplementedError(
+        "authorize() is a generated stub: implement it (X0.1)"
+    )
+
+
+registry = StatechartRegistry(MemoryStore())
+
+
+def register(
+    machine: Any, *, authorize: Any = authorize, **kwargs: Any
+) -> None:
+    """Register *machine* (built from the checkout chart) with `registry`."""
+    registry.register(MACHINE_NAME, machine, authorize=authorize, **kwargs)
+
+
+@router.get("/{id}", operation_id=f"{MACHINE_NAME}_get", response_model=None)
+async def get_state(
+    request: Request, instance_id: str = INSTANCE_ID
+) -> Response:
+    """Current state of a checkout instance"""
+    ...
+
+
+@router.post(
+    "/{id}/events/SUBMIT",
+    operation_id=f"{MACHINE_NAME}_submit",
+    summary="Send SUBMIT",
+    response_model=None,
+    responses=SEND_RESPONSES,
+)
+async def send_submit(
+    request: Request,
+    instance_id: str = INSTANCE_ID,
+    body: Optional[SubmitEvent] = Body(None),
+    interp: Any = get_interpreter(registry, MACHINE_NAME, key="id"),
+) -> Response:
+    """Accepted in: cart."""
+    return await _send(request, interp, "SUBMIT", _payload(body))
+
+
+# 📝 Declared LAST: the literal routes above win; anything else is
+#    an event this chart does not declare.
+@router.post("/{id}/events/{event}", include_in_schema=False)
+async def unknown_event(event: str) -> Response:
+    return problem(404, "Unknown event")
+```
+
+Wire it with `register(create_machine(config, logic=...))`, `app.include_router(router)` and `instrument_app(app, registry)`. Every send goes through `get_interpreter` (the instance is loaded, and saved when the handler returns) and is answered with `ReceiptResponse`: 200 with the new state, 409 when a guard denies, 422 when the body does not fit the model (problem+json listing only field locations and error types). An event the chart does not declare is a 404 problem. Docstrings come from the transition's `description` (or `meta.description`) and the states that accept the event; event names that are not URL-safe (`"BTN: Abort"`) are slugged in the path (`/events/btn_abort`) but sent under their real name.
+
+When `fastapi` is installed, the generator imports the module, mounts it on a throwaway `FastAPI()` and checks that `openapi()` lists one route per event before writing. Without it, the CLI prints a note and checks syntax only. `--check` / `--diff` report drift in both files: add an event to the JSON and CI shows the missing model and route.
 
 ---
 

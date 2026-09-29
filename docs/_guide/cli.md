@@ -106,6 +106,8 @@ xsm generate-template [JSON_FILES...] [OPTIONS]
 | — | `--with-tests` | flag | `false` | Also emit `test_<machine>.py` — a pytest module recorded from the real engine |
 | — | `--with-types` | flag | `false` | Also emit `<machine>_types.py` — `TypedDict` context, `Literal` events, typed stubs |
 | — | `--with-plugin` | flag | `false` | Also emit `<machine>_observer.py` — a `PluginBase` wired for this chart's hooks |
+| — | `--with-api` | flag | `false` | Also emit `<machine>_api.py` — an editable FastAPI router, one typed route per event (`[fastapi]` extra) |
+| — | `--with-models` | flag | `false` | Also emit `<machine>_models.py` — a pydantic context model and one `EventModel` per event (`[pydantic]` extra) |
 | `-s` | `--style` | `CHOICE` | — | **DEPRECATED** — use `--template` instead |
 | `-o` | `--output` | `DIR` | *(same as JSON)* | Output directory for generated files |
 | `-fc` | `--file-count` | `{1, 2}` | `2` | Number of output files: 1 = merged, 2 = separate |
@@ -134,15 +136,17 @@ Five primary templates produce a logic module and a runner:
 | `class-json` | Class with camelCase methods, JSON loaded at runtime *(default)* |
 | `function-json` | Module-level functions, JSON loaded at runtime |
 
-Three **companion** templates produce a single extra module and can be requested either on their own (`--template pytest`) or alongside any primary template with `--with-tests` / `--with-types` / `--with-plugin`:
+Five **companion** templates produce a single extra module and can be requested either on their own (`--template pytest`) or alongside any primary template with `--with-tests` / `--with-types` / `--with-plugin` / `--with-models` / `--with-api`:
 
 | Template | File | What it contains |
 |----------|------|------------------|
 | `pytest` | `test_<machine>.py` | A test module **recorded from the real engine**: the initial state, one test per reachable event step (state before, event, state after, actions run) on a `SimulatedClock`, and a guard-denial test where a guard exists. Uses stub logic so it runs green immediately and stays green until the JSON changes |
 | `typed` | `<machine>_types.py` | `Context` as a `TypedDict` (from the JSON `context`), `Event = Literal[...]` over every declared event, `StateId = Literal[...]`, and a typed `MachineLogic[Context]` stub with one correctly-annotated function per action, guard and service |
 | `plugin` | `<machine>_observer.py` | A `PluginBase` subclass that overrides exactly the hooks this chart can fire — `on_action_error` only if it has actions, `on_service_error` only if it invokes something, `on_chain_budget_exceeded` only if it can raise/self-send, and so on — each with a docstring naming the states involved |
+| `pydantic-models` | `<machine>_models.py` | A context `BaseModel` inferred from the JSON `context`, one `EventModel` per declared event (fields from a declared payload, else `extra="allow"`), `EVENT_MODELS` and `event_schemas()`. Imports only the `[pydantic]` extra |
+| `fastapi-router` | `<machine>_api.py` | An editable FastAPI `APIRouter`: `GET /{id}`, one `POST /{id}/events/<EVENT>` per declared event (typed by the `EventModel`s when `--with-models` is also on), `Depends(get_interpreter)`, `ReceiptResponse`, and an `authorize` stub that raises until you implement it. Imports only the `[fastapi]` extra |
 
-Companions are compiled and import-checked before writing, participate in `--check` / `--diff`, and are listed by `xsm list-templates` under "Companion outputs".
+Companions are compiled and import-checked before writing, participate in `--check` / `--diff`, and are listed by `xsm list-templates` under "Companion outputs". When the extra is installed, the `fastapi-router` output is also mounted on a throwaway `FastAPI()` and its `openapi()` must list one route per event; without the extra the CLI prints a note and checks syntax only.
 
 > **Note:** The `--style` flag (`class` / `function`) is deprecated and maps to `class-json` / `function-json`. It is still present in 0.10.0 and will be removed in a future release. Use `--template` instead.
 

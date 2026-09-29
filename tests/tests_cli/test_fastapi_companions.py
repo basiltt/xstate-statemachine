@@ -250,6 +250,25 @@ class TestGolden(_Quiet):
                     golden.read_text(encoding="utf-8").replace("\r\n", "\n"),
                 )
 
+    def test_documented_fragments_match_the_goldens(self) -> None:
+        """Every non-`...` line of the cli-templates.md checkout blocks
+        appears in the golden output -- the docs cannot drift."""
+        doc = (ROOT / "docs" / "_guide" / "cli-templates.md").read_text(
+            encoding="utf-8"
+        )
+        section = doc.split("### `pydantic-models`", 1)[1].split(
+            "## Template Comparison Table", 1
+        )[0]
+        blocks = section.split("```python")[1:]
+        self.assertEqual(len(blocks), 2)
+        for block, name in zip(
+            blocks, ("checkout_models.py", "checkout_api.py")
+        ):
+            golden = (GOLDEN / (name + ".golden")).read_text(encoding="utf-8")
+            for line in block.split("```", 1)[0].splitlines():
+                if line.strip() and line.strip() != "...":
+                    self.assertIn(line, golden, name)
+
 
 def _normalise(code: str) -> str:
     """Drop the generator-version line so a release bump is not a diff."""
