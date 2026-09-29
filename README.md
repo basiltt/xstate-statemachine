@@ -142,6 +142,32 @@ memory under a slow consumer instead of growing the queue forever.
 
 ---
 
+### 🤖 For LLM agents
+
+An agent loop is a statechart the model does not get to rewrite. With
+`pip install "xstate-statemachine[agents]"` the model becomes one invoked
+service that *proposes* text or tool calls, and the chart *decides*. Per-state
+tool allow-lists are re-checked inside `run_tool`. Budgets are guards, and
+timeouts are `after` deadlines. Human approval is a durable, persisted state.
+All of it runs offline with `FakeModel`. It interoperates with
+[LangGraph and pydantic-ai](https://basiltt.github.io/xstate-statemachine/guide/integration-agents/),
+and there are honest [comparisons](https://basiltt.github.io/xstate-statemachine/guide/vs-langgraph/).
+
+```python
+import asyncio
+from xstate_statemachine.contrib.agents import FakeModel, run_agent, tool_registry
+
+def get_weather(city: str) -> str:
+    """Current weather for a city."""
+    return f"sunny in {city}"
+
+model = FakeModel([{"tool": "get_weather", "args": {"city": "Kochi"}}, {"text": "Sunny."}])
+res = asyncio.run(run_agent(model, tools=tool_registry(get_weather), prompt="Weather?", max_turns=5))
+assert res.final_state == "toolLoop.done" and res.usage["turns"] == 2
+```
+
+---
+
 ## 🚀 Install
 
 ```bash
