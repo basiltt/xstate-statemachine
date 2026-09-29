@@ -702,8 +702,6 @@ def resolve_template(
     if template is not None:
         return template
     if style is not None:
-        import warnings
-
         mapping = {
             "class": "class-json",
             "function": "function-json",
@@ -713,20 +711,16 @@ def resolve_template(
             raise ValueError(
                 f"Unknown --style value: {style}. " f"Use --template instead."
             )
-        warnings.warn(
-            f"--style is deprecated, use --template " f"{resolved} instead. "
-            # 📝 The notice must always name a FUTURE release. Naming the
-            #    current one makes the promise broken at the moment the
-            #    user reads it. v0.6.0 shipped saying "removed in v0.7.0";
-            #    v0.7.0 still honours the flag, so the target moves again.
-            #
-            # 🏛️ Deliberately NOT removed in v0.7.0: this release already
-            #    asks every user of the pythonic templates to regenerate
-            #    their code. Breaking their CLI invocations in the same
-            #    release would compound one disruption with another.
-            f"Will be removed in v0.8.0",
-            DeprecationWarning,
-            stacklevel=2,
+        from ..deprecations import deprecated
+
+        # 📝 The notice must always name a FUTURE release (v0.6.0 promised
+        #    "removed in v0.7.0" and then kept it). Removal follows the
+        #    deprecation policy: no earlier than the next major (1.0).
+        deprecated(
+            "--style",
+            since="0.4.1",
+            removal="1.0",
+            alternative=f"--template {resolved}",
         )
         return resolved
     return "class-json"
