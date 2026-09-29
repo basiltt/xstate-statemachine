@@ -204,6 +204,7 @@ class TestIntegrationsSection(unittest.TestCase):
         "integration-sqlalchemy",  # #284
         "integration-flask",  # #285
         "integration-agents",  # #287, #290
+        "integration-testing",  # #268
     )
 
     def test_overview_page_exists_and_is_in_nav(self) -> None:

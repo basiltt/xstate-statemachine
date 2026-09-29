@@ -64,13 +64,18 @@ def render_companion(
     """Generate + polish one companion file."""
     code = get_strategy(template).generate_logic(ctx)
     sources = [Path(p).name for p in json_paths]
+    command = (
+        "xsm generate-template "
+        + " ".join(sources)
+        + f" --template {template}"
+    )
+    if template == "pytest" and getattr(ctx, "fixtures", False):
+        command += " --fixtures"  # #268
     header = build_provenance_header(
         source_files=sources,
         template=template,
         version=version,
-        command="xsm generate-template "
-        + " ".join(sources)
-        + f" --template {template}",
+        command=command,
     )
     return polish(code, header=header)
 

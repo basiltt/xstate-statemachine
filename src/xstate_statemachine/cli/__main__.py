@@ -873,6 +873,7 @@ def run_generation_workflow(
         sleep_time=args.sleep_time,
         loader=settings["loader"],
         style=getattr(args, "style", None),
+        fixtures=bool(getattr(args, "fixtures", False)),
     )
     # 🧩 Companion templates (pytest / typed / plugin) are single files
     #    with their own naming and verification; they may also be ADDED to

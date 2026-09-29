@@ -462,5 +462,124 @@ class TestWebCompanions(_Quiet):
             )
 
 
+class TestPytestFixturesFlag(_Quiet):
+    """`xsm gt -t pytest --fixtures` (#268): the scaffold on the `[testing]`
+    plugin's marker + `xsm_*` fixtures. Without the flag the output is the
+    hand-built module, byte for byte."""
+
+    SAMPLE = [
+        f
+        for f in FIXTURES
+        if pathlib.Path(f).name in ("AdvancePayment.json", "kettle.json")
+    ] or FIXTURES[:2]
+
+    def test_default_output_is_unchanged_by_the_new_field(self) -> None:
+        cfg = json.load(open(FIXTURES[0], encoding="utf-8"))
+        name = pathlib.Path(FIXTURES[0]).name
+        plain = get_strategy("pytest").generate_logic(_ctx(cfg, name))
+        ctx = _ctx(cfg, name)
+        ctx.fixtures = False
+        self.assertEqual(plain, get_strategy("pytest").generate_logic(ctx))
+        self.assertIn("def stub_logic(", plain)
+        self.assertNotIn("xstate_machine", plain)
+
+    def test_fixtures_output_uses_the_plugin_surface(self) -> None:
+        cfg = json.load(open(FIXTURES[0], encoding="utf-8"))
+        name = pathlib.Path(FIXTURES[0]).name
+        ctx = _ctx(cfg, name)
+        ctx.fixtures = True
+        code = get_strategy("pytest").generate_logic(ctx)
+        ast.parse(code)
+        self.assertIn(
+            "pytestmark = pytest.mark.xstate_machine(str(CONFIG_PATH))", code
+        )
+        for needle in ("xsm_interp", "xsm_clock", "xsm_ran", "xsm_machine"):
+            self.assertIn(needle, code)
+        self.assertNotIn("def stub_logic(", code)
+        self.assertNotIn("MachineLogic", code)
+        self.assertNotIn("create_machine", code)
+        if extract_logic_names(cfg)[1]:
+            self.assertIn("@pytest.mark.xstate_guards_false(*GUARDS)", code)
+
+    def test_cli_flag_is_threaded_through(self) -> None:
+        cfg = json.load(open(FIXTURES[0], encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as tmp:
+            src = pathlib.Path(tmp) / "m.json"
+            src.write_text(json.dumps(cfg), encoding="utf-8")
+            code, out = _run(
+                [
+                    "gt",
+                    str(src),
+                    "-t",
+                    "pytest",
+                    "--fixtures",
+                    "-o",
+                    tmp,
+                    "-f",
+                    "--plain",
+                ]
+            )
+            self.assertEqual(code, 0, out)
+            [test_file] = pathlib.Path(tmp).glob("test_*.py")
+            text = test_file.read_text(encoding="utf-8")
+            self.assertIn("pytest.mark.xstate_machine", text)
+            self.assertIn("--fixtures", text)  # provenance in the header
+
+    def test_generated_fixture_tests_are_green(self) -> None:
+        """The plugin is loaded by its entry point in the child pytest
+        (the package is installed in CI cells); skip cleanly otherwise."""
+        from importlib.metadata import entry_points
+
+        eps = entry_points()
+        group = (
+            eps.select(group="pytest11")
+            if hasattr(eps, "select")
+            else eps.get("pytest11", [])
+        )
+        if not any(
+            "xstate_statemachine.contrib.testing" in e.value for e in group
+        ):
+            self.skipTest("plugin entry point not installed in this env")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = pathlib.Path(tmp)
+            for fp in self.SAMPLE:
+                cfg = json.load(open(fp, encoding="utf-8"))
+                name = pathlib.Path(fp).name
+                (out / name).write_text(json.dumps(cfg), encoding="utf-8")
+                ctx = _ctx(cfg, name)
+                ctx.fixtures = True
+                code = get_strategy("pytest").generate_logic(ctx)
+                (
+                    out
+                    / f"test_{camel_to_snake(cfg['id'].replace(' ', '_'))}.py"
+                ).write_text(code, encoding="utf-8")
+            env = {
+                **os.environ,
+                "PYTHONPATH": SRC,
+                "PYTHONIOENCODING": "utf-8",
+            }
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    "-q",
+                    "-p",
+                    "no:cacheprovider",
+                    f"--rootdir={out}",
+                    str(out),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+                cwd=str(out),
+                timeout=600,
+            )
+            self.assertEqual(
+                proc.returncode, 0, proc.stdout[-3000:] + proc.stderr[-1000:]
+            )
+            self.assertIn("passed", proc.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
