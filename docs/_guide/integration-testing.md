@@ -132,6 +132,36 @@ All fixtures are prefixed `xsm_` so they cannot shadow your own `machine`, `cloc
 
 `xsm gt -t pytest --fixtures machine.json` emits the recorded-trajectory test module on the plugin's marker and fixtures instead of building the interpreter by hand: the same `STEPS`, the same assertions, no stub builder or fixture boilerplate in the file. Without `--fixtures` the output is unchanged.
 
+## Path generation
+
+Request the `xsm_path` fixture under an `xstate_machine` marker and pytest parametrises the test over [`graph.shortest_paths(machine)`](../testing-and-pure-api/) — **one case per reachable configuration**, found by running the real engine on stub logic and a simulated clock (parallel regions, history and `after` timers included):
+
+```python
+import pytest
+
+@pytest.mark.xstate_machine("machines/AdvancePayment.json")
+def test_every_state_is_reachable(xsm_path, xsm_interp, xsm_clock):
+    xsm_path.replay(xsm_interp, xsm_clock)          # events + clock advances
+    assert xsm_interp.current_state_ids == set(xsm_path.final_states)
+```
+
+```text
+test_reach[path[editing]] PASSED
+test_reach[path[editing->challenge]] PASSED
+test_reach[path[editing->challenge->success]] PASSED
+```
+
+Ids name the leaf configurations the path walks through (parallel leaves joined with `+`). `xsm_path` is a `graph.Path`: `steps`, `final_states`, `event_string()` (the `xsm simulate --events` grammar) and `replay(interp, clock)`, which forces each step's recorded guard/service assumptions for that step only.
+
+| Option | Effect |
+|:--|:--|
+| `--xsm-full-paths` | Parametrise over `simple_paths` (every acyclic path) instead of one shortest path per configuration. |
+| `--xsm-max-paths=N` | Cap for `--xsm-full-paths` (default 1000). |
+| `--xsm-max-depth=N` | Longest path explored (default 50). |
+| `--xsm-path-guards=true\|false\|both` | What stub guards return during generation; `both` also reaches the configurations only a `False` guard (or a failing service) leads to. |
+
+📝 Named `after` delays (declared in `MachineLogic.delays`) have no static duration: their steps advance the clock by a large sentinel and carry a `delay:<name>=unknown` assumption. With real `logic=` the *generation* still uses stubs; `replay` then runs your real guards, so a path whose guard assumption your logic does not satisfy will (correctly) not reach its configuration.
+
 ## Guarantees
 
 > **What this does:** builds the machine once per test from the marker, starts the interpreter on a simulated clock so no test waits on wall time, stops it at teardown, and fails loudly — with the test id — on any marker or logic mistake. Snapshot files are deterministic (sorted keys, fixed indent, behavioural fields only) and are written **only** under `--xsm-update-snapshots`. Without the marker the plugin does nothing: it registers fixtures and two options and requires no configuration. Both engines share the same semantics.

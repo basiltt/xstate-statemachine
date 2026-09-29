@@ -54,6 +54,7 @@ from ...models import MachineNode
 from ...persistence.store import MemoryStore
 from ...sync_interpreter import SyncInterpreter
 from ...testing_utils import stub_logic
+from ._paths import add_path_options, generate_path_tests, xsm_path
 
 __all__ = [
     "PLUGIN_NAME",
@@ -67,6 +68,8 @@ __all__ = [
     "pytest_addoption",
     "pytest_configure",
     "pytest_cmdline_main",
+    "pytest_generate_tests",
+    "xsm_path",
 ]
 
 #: The name pytest knows the plugin by: ``-p no:xstate_statemachine``.
@@ -456,6 +459,7 @@ def pytest_addoption(parser: Any) -> None:
         default=False,
         help="rewrite snapshot files asserted with the xsm_snapshot fixture",
     )
+    add_path_options(group)
 
 
 def pytest_cmdline_main(config: Any) -> Optional[int]:
@@ -495,6 +499,11 @@ def pytest_configure(config: Any) -> None:
         from . import _async_fixtures
 
         config.pluginmanager.register(_async_fixtures, _ASYNC_FIXTURES_PLUGIN)
+
+
+def pytest_generate_tests(metafunc: Any) -> None:
+    """Parametrise ``xsm_path`` over the machine's paths (#269)."""
+    generate_path_tests(metafunc)
 
 
 # -----------------------------------------------------------------------------
