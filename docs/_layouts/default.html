@@ -163,6 +163,8 @@
           <a href="{{ '/guide/integration-starlette/' | relative_url }}" class="sidebar-link">Starlette</a>
           <a href="{{ '/guide/integration-fastapi/' | relative_url }}" class="sidebar-link">FastAPI</a>
           <a href="{{ '/guide/integration-litestar/' | relative_url }}" class="sidebar-link">Litestar</a>
+          <a href="{{ '/guide/integration-sqlalchemy/' | relative_url }}" class="sidebar-link">SQLAlchemy</a>
+          <a href="{{ '/guide/integration-flask/' | relative_url }}" class="sidebar-link">Flask</a>
           <a href="{{ '/guide/integration-agents/' | relative_url }}" class="sidebar-link">LLM agents</a>
           <a href="{{ '/guide/vs-langgraph/' | relative_url }}" class="sidebar-link">vs LangGraph</a>
           <a href="{{ '/guide/vs-burr/' | relative_url }}" class="sidebar-link">vs Burr</a>
@@ -226,7 +228,7 @@
         </div>
 
         <!-- Previous / Next Navigation -->
-        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,reliability,diagrams,examples,cli,cli-templates,cli-hierarchy,stately-export,integrations,integrations-extras,patterns,persistence,guarantees,security,integration-redis,integration-pydantic,integration-starlette,integration-fastapi,integration-litestar,integration-agents,vs-langgraph,vs-burr,vs-statelyai-agent,production-characteristics,troubleshooting,faq,changelog" | split: "," %}
+        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,reliability,diagrams,examples,cli,cli-templates,cli-hierarchy,stately-export,integrations,integrations-extras,patterns,persistence,guarantees,security,integration-redis,integration-pydantic,integration-starlette,integration-fastapi,integration-litestar,integration-sqlalchemy,integration-flask,integration-agents,vs-langgraph,vs-burr,vs-statelyai-agent,production-characteristics,troubleshooting,faq,changelog" | split: "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,reliability,diagrams,examples,cli,cli-templates,cli-hierarchy,stately-export,integrations,integrations-extras,patterns,persistence,guarantees,security,integration-redis,integration-pydantic,integration-starlette,integration-fastapi,integration-litestar,integration-sqlalchemy,integration-flask,integration-agents,vs-langgraph,vs-burr,vs-statelyai-agent,production-characteristics,troubleshooting,faq,changelog" %}
         {% assign current_name = page.url | remove: "/guide/" | remove: "/" %}
         {% assign prev_page = nil %}
         {% assign next_page = nil %}

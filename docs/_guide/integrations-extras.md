@@ -37,11 +37,11 @@ except MissingExtraError as exc:
 | `observability` | OpenTelemetry spans, Prometheus metrics, structlog/loguru context binding, Sentry breadcrumbs — all from the plugin hooks | planned — [#273](https://github.com/basiltt/xstate-statemachine/issues/273) |
 | `testing` | pytest fixtures, path generation, state/transition **coverage**, Hypothesis model-based testing generated from the chart, a fake broker | planned — [#268](https://github.com/basiltt/xstate-statemachine/issues/268) |
 | `redis` | Shared snapshot store, inbox and log for multi-worker deployments | **shipped** — [guide](../integration-redis/) · [#306](https://github.com/basiltt/xstate-statemachine/issues/306) |
-| `sqlalchemy` | `StatechartType`, mixin with optimistic locking, transactional outbox, stores for sync and `AsyncSession` | planned — [#284](https://github.com/basiltt/xstate-statemachine/issues/284) |
+| `sqlalchemy` | `StatechartType`, mixin with optimistic locking, stores for sync and `AsyncSession`, inbox + log; transactional outbox arrives with #293 | **shipped** — [guide](../integration-sqlalchemy/) · [#284](https://github.com/basiltt/xstate-statemachine/issues/284) |
 | `starlette` | Store-backed registry, `Receipt → HTTP` mapping, SSE / WebSocket transition streaming | **shipped** — [guide](../integration-starlette/) · [#275](https://github.com/basiltt/xstate-statemachine/issues/275) |
 | `fastapi` | `Depends(get_interpreter)`, `StatechartRouter` with OpenAPI generated from the chart | **shipped** — [guide](../integration-fastapi/) · [#276](https://github.com/basiltt/xstate-statemachine/issues/276) |
 | `litestar` | `XStatePlugin`, `Provide()` dependency, statechart controller | **shipped** — [guide](../integration-litestar/) · [#278](https://github.com/basiltt/xstate-statemachine/issues/278) |
-| `flask` | `XState` extension (`init_app`), blueprint per machine, session-keyed wizards | planned — [#285](https://github.com/basiltt/xstate-statemachine/issues/285) |
+| `flask` | `XState` extension (`init_app`), blueprint per machine, session-keyed wizards, `flask xsm` CLI, Quart shim | **shipped** — [guide](../integration-flask/) · [#285](https://github.com/basiltt/xstate-statemachine/issues/285) |
 | `django` | `StatechartField`, model mixin with `select_for_update`, signals, permission guards, admin transition buttons, management commands | planned — [#280](https://github.com/basiltt/xstate-statemachine/issues/280) |
 | `drf` | ViewSet mixin with an `@action` per event, serializer field | planned — [#283](https://github.com/basiltt/xstate-statemachine/issues/283) |
 | `channels` | WebSocket consumer broadcasting transitions | planned — [#283](https://github.com/basiltt/xstate-statemachine/issues/283) |

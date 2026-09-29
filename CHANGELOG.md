@@ -9,6 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SQLAlchemy & Flask (Phase D) -- `[sqlalchemy]` extra (#284 parts 1–2).**
+  A statechart on your mapped row, or a `StateStore` on any RDBMS.
+  - `StatechartType` (JSON; `JSONB` on Postgres; size-capped both ways)
+    and `StatechartMixin`: queryable `statechart_state` /
+    `statechart_state_ids` (every parallel leaf), `statechart_version`
+    as `version_id_col` via `StatechartMixin.optimistic()` (a stale write
+    is `ConflictError`; `send_with_retry` rolls back and retries -- 16
+    threads × 100 sends on one row → exactly 1600), `in_state(*ids)`
+    matching leaves and ancestors, `row.send(event, session=,
+    lock="optimistic"|"pessimistic")`. One flush writes the snapshot,
+    the columns, the `xsm_deadlines` index and (with `__xsm_audit__`)
+    the audit rows -- raising inside `send()` leaves none of them. A
+    mapper listener keeps the columns true when the snapshot is edited
+    directly. `Model.statechart_store()` lets `DueTimerScanner` fire
+    persisted `after` timers. `xsm_sqlalchemy_ddl(metadata)`; Alembic
+    autogenerate proposes no diff (tested).
+  - `SQLAlchemyStore` / `AsyncSQLAlchemyStore` pass the store contract
+    suite (SQLite, aiosqlite; Postgres opt-in via `DATABASE_URL`):
+    conditional-UPDATE optimistic writes, a portable lease `lock()` that
+    wraps the block in one transaction, `due_keys()` for the scanner,
+    `forget()` erasing record + deadlines + lease + log (X0.5), a
+    versioned schema with newer versions refused (X0.10).
+    `SQLAlchemyInbox` / `SQLAlchemyLog` share the store's transaction so
+    inbox marks and audit rows commit with the save (X0.3).
+  - The transactional **outbox** (#284 part 3) arrives with the EDA core
+    (#293), whose `BrokerAdapter` / `OutboxStore` protocols it needs.
+    Guide: *SQLAlchemy*.
+- **SQLAlchemy & Flask (Phase D) -- `[flask]` extra (#285).** The `init_app`
+  extension Flask never had.
+  - `XState()` / `init_app(app, store, lock=, plugins=, inbox=,
+    principal=, log=)` keeps per-app state in `app.extensions["xstate"]`
+    (two apps from one extension share nothing); `register(...,
+    authorize=)` is **required** (`allow_all` warns once, X0.1); `act()`
+    is `persisted()` with the app's policies and refuses to run inside a
+    GET; `g.xsm`; `receipt_response()` maps status through the core
+    `receipts` table.
+  - `create_statechart_blueprint(xsm, name, url_prefix,
+    per_event_routes=)`: state, send, per-event, events, history (log),
+    SSE stream, Mermaid diagram. JSON only (415), capped (413), RFC 9457
+    problems carrying class names only (X0.7), principal-scoped
+    `Idempotency-Key` whose replays are not re-saved (X0.2), GET on a
+    write path → 405 problem. 50 concurrent requests on one
+    `SQLiteStore` key → no lost updates.
+  - `SessionStore`: wizard state in the signed session cookie with a hard
+    3 KiB cap and `SessionStoreTooLargeError`.
+  - `flask xsm inspect|diagram|docs|simulate <name>` -- output identical
+    to `xsm`. Flask-WTF `CSRFProtect` compatibility documented and tested
+    (exempt blueprint or `X-CSRFToken`).
+  - Quart shim (`contrib.quart`, `async with xsm.act()`), a soft import --
+    no separate extra; the same route tests run under Quart in CI.
+    Guide: *Flask*.
+- **LLM agents (Phase E) -- `[agents]` extra (#287, #290).** The model
 - **LLM agents (Phase E) -- `[agents]` extra (#287-#291).** The model
   proposes, the machine decides: an agent is the `TOOL_LOOP` reference
   chart (`contrib/agents/charts/tool_loop.json`, Stately-editable, strict

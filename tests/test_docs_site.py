@@ -201,6 +201,8 @@ class TestIntegrationsSection(unittest.TestCase):
         "integration-starlette",  # #275
         "integration-fastapi",  # #276
         "integration-litestar",  # #278
+        "integration-sqlalchemy",  # #284
+        "integration-flask",  # #285
         "integration-agents",  # #287, #290
     )
 
