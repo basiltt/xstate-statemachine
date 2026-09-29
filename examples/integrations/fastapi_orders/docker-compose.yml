@@ -1,0 +1,35 @@
+# examples/integrations/fastapi_orders/docker-compose.yml
+#   docker compose up --build
+# One web container running 4 uvicorn workers, ONE scheduler (timers run in
+# exactly one process), and Redis as the shared store + idempotency inbox.
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  web:
+    build:
+      context: ../../..
+      dockerfile: examples/integrations/fastapi_orders/Dockerfile
+    environment:
+      XSM_REDIS_URL: redis://redis:6379/0
+    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    build:
+      context: ../../..
+      dockerfile: examples/integrations/fastapi_orders/Dockerfile
+    environment:
+      XSM_REDIS_URL: redis://redis:6379/0
+    command: ["python", "app.py", "--role", "scheduler"]
+    depends_on:
+      redis:
+        condition: service_healthy

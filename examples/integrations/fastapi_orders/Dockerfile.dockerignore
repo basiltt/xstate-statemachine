@@ -1,0 +1,11 @@
+# Used by BuildKit for this Dockerfile (context = repository root).
+**
+!pyproject.toml
+!README.md
+!LICENSE
+!src/**
+!examples/integrations/fastapi_orders/**
+**/__pycache__
+**/*.pyc
+**/*.db*
+examples/integrations/fastapi_orders/tests

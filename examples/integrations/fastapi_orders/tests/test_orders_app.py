@@ -149,9 +149,10 @@ def test_unpaid_order_expires(app, registry):
         assert scanner.scan(time.time() + 60).woken == 0  # not yet
         assert scanner.scan(time.time() + 901).woken == 1
         assert state(c, "o1")["state"] == "expired"
-        assert post(c, "o1", "PAY", {"card_token": "tok_ok"}).json()[
-            "changed"
-        ] is False
+        assert (
+            post(c, "o1", "PAY", {"card_token": "tok_ok"}).json()["changed"]
+            is False
+        )
 
 
 # -----------------------------------------------------------------------------

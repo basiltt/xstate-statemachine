@@ -81,6 +81,156 @@ async def pay_in_full(order=get_interpreter(registry, "order", key="order_id")):
     return ReceiptResponse(order, await order.send("PAY", wait=True, amount=100))
 ```
 
+For a complete, runnable service — Docker Compose with four workers, a scheduler and Redis, a load test, SSE and a test suite — see the [`fastapi_orders` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders).
+
+## Multi-worker deployments
+
+**Why an interpreter cannot live in a worker.** `uvicorn --workers 4` starts four processes that share no memory, and a load balancer may send each request for order 7 to a different one. If worker A kept order 7's interpreter in memory, worker B would hold a second copy, and the two copies would diverge. Keeping the object in memory does not work here, so the registry never does it: each request runs **create → act → persist → discard**. It loads the snapshot, runs one `Interpreter`, saves with the version it loaded, and drops the interpreter. The store is the only place where the order's state lives. ([`resident()`](../integration-starlette/) is the opt-in exception for one process in development.)
+
+**Choosing the store.**
+
+| Deployment | Store | Idempotency inbox |
+|:--|:--|:--|
+| One host, any number of workers | `SQLiteStore(path)` — WAL, one file | `SQLiteInbox(store)` — shares the connection, so a mark commits with the snapshot |
+| Several hosts | `RedisStore(url, prefix=...)` ([#306](../persistence/)) | `RedisInbox(url, prefix=...)` |
+
+With SQLite, create the schema **once** before starting the workers, for example with an `init` step or your migration job. Switching an empty file to WAL mode is a write, and N processes racing to do it see `database is locked`.
+
+**Optimistic vs pessimistic under load.** The default `OptimisticLock` takes no lock. The second writer's save fails its version check, and the API answers `409`. Nothing retries a `409` for you, because the client decides whether to retry. This is the right choice when conflicts on one key are rare, which is the usual case with one order per customer. When one key is hot and every request should be *applied* in turn rather than refused, use `StatechartRegistry(store, lock=PessimisticLock())`: requests to that key queue on the store's lock instead of failing. Measured in the example, 200 concurrent `PAY`s to one order under four workers produce **exactly one** changed receipt and 54 `409`s without a key. With a shared `Idempotency-Key` the result is still one changed receipt, and the replays come back as duplicates.
+
+**Timers run in exactly one process.** `after` deadlines are saved with the snapshot. A `DueTimerScanner` wakes the orders whose deadlines have passed. Do **not** pass `run_timers=True` to a registry that runs in every web worker, because each worker would scan the same keys. Run the scanner in its own process instead:
+
+<!-- doc-fragment -->
+```python
+# app.py -- `python app.py --role scheduler`, started exactly once
+def run_scheduler(interval_s: float = 1.0) -> None:
+    registry = build_registry()          # same store, same machines
+    scanner = DueTimerScanner(
+        registry.store, registry.machine_for_store_key,
+        lock=registry.lock, prefix="order.",
+    )
+    scanner.run_forever(interval_s)      # stop() from a signal handler
+```
+
+The scanner re-checks each deadline under the lock strategy and saves with the version check, so a second scanner would not fire a timer twice. It would only waste work and produce conflicts.
+
+## Side effects
+
+**Actions must be fast and idempotent.** An action runs *inside* `act()`, before the save. If the save then loses a race (`409`), the action has already run, but its result is discarded. So an action should only change `context`. Never send an email or charge a card from an action.
+
+**Prefer `invoke` + `onError` for anything that can fail.** A payment gateway is a *service*. Its failure becomes an `error.platform` event that the chart models, for example `onError → retrying → after(retryDelay) → paying` with [`RetryPolicy`](../patterns/), and the scanner wakes the retry. The failure is then part of the state you can see in the API, not an exception in a log.
+
+**Use `BackgroundTasks` for work that should run *after* the response.** Schedule it only when the receipt shows a committed, first-time change:
+
+<!-- doc-requires: fastapi, httpx -->
+```python
+from typing import Literal
+
+from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi.testclient import TestClient
+
+from xstate_statemachine import create_machine
+from xstate_statemachine.contrib.fastapi import (
+    StatechartRegistry, StatechartRouter, allow_all, instrument_app,
+)
+from xstate_statemachine.contrib.pydantic import EventModel, events_union
+from xstate_statemachine.persistence import MemoryInbox, MemoryStore
+
+class Pay(EventModel):
+    type: Literal["PAY"] = "PAY"
+
+order = create_machine(
+    {"id": "order", "initial": "open",
+     "states": {"open": {"on": {"PAY": "paid"}}, "paid": {}}},
+    event_schemas=events_union(Pay),
+)
+registry = StatechartRegistry(MemoryStore(), inbox=MemoryInbox(),
+                              principal=lambda conn: "ann")
+registry.register("order", order, authorize=allow_all)
+sent = []
+
+app = FastAPI()
+
+@app.post("/orders/{id}/events/PAY")          # registered first: shadows the router's
+async def pay(id: str, request: Request, background: BackgroundTasks):
+    response = await registry.send_event(request, "order", id, "PAY", {})
+    if response.status_code == 200:
+        import json
+        body = json.loads(response.body)
+        if body["changed"] and not body["duplicate"] and body["error"] is None:
+            background.add_task(sent.append, id)   # after the response, once
+    return response
+
+# PAY is refused on /send (403), so the email hook cannot be bypassed
+app.include_router(StatechartRouter(registry, "order", prefix="/orders",
+                                    per_event_dependencies={"PAY": []}))
+instrument_app(app, registry)
+
+with TestClient(app) as client:
+    key = {"Idempotency-Key": "p1"}
+    assert client.post("/orders/1/events/PAY", headers=key).json()["changed"]
+    again = client.post("/orders/1/events/PAY", headers=key).json()
+    assert again["duplicate"] is True
+    assert client.post("/orders/1/send", json={"type": "PAY"}).status_code == 403
+assert sent == ["1"]
+```
+
+`send_event` returns only after the save has committed. A `409`, a guard denial or an `Idempotency-Key` replay therefore never schedules the task. `BackgroundTasks` still runs *in the web worker*, and a crash after the response loses the task. When the side effect must happen, write it to an **outbox** in the same transaction and deliver it from a separate process. See the event-driven architecture guide (arriving with the Phase F integrations).
+
+## Sessions & wizards
+
+A multi-step form (shipping → payment → review) is a chart with one instance per *visitor*. Take the instance key from a session cookie rather than a path parameter, and let `authorize` compare the two:
+
+<!-- doc-fragment -->
+```python
+def wizard_key(request: Request) -> str:
+    return request.cookies["session"]            # set by your session middleware
+
+@app.post("/checkout/next")
+async def next_step(wizard=get_interpreter(registry, "checkout", key=wizard_key)):
+    return ReceiptResponse(wizard, await wizard.send("NEXT", wait=True))
+```
+
+The key never appears in the URL, so one visitor cannot drive another visitor's wizard by editing a path. Use a session id that you signed or that is stored server-side, not a raw user id. Expired wizards stay in the store until you delete them. Give the store a `ttl_s=` (Redis), or delete finished keys in a scheduled job.
+
+## Testing
+
+Use `fastapi.testclient.TestClient` for request-by-request tests. Use `httpx.ASGITransport` with `asyncio.gather` for concurrency tests. Both run in-process with no server:
+
+<!-- doc-requires: fastapi, httpx -->
+```python
+import asyncio
+
+import httpx
+from fastapi import FastAPI
+
+from xstate_statemachine import create_machine
+from xstate_statemachine.contrib.fastapi import (
+    StatechartRegistry, StatechartRouter, allow_all, instrument_app,
+)
+from xstate_statemachine.persistence import MemoryStore
+
+registry = StatechartRegistry(MemoryStore())
+registry.register("t", create_machine(
+    {"id": "t", "initial": "a", "states": {"a": {"on": {"GO": "b"}}, "b": {}}}),
+    authorize=allow_all)
+app = instrument_app(FastAPI(), registry)
+app.include_router(StatechartRouter(registry, "t"))
+
+async def race():
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        return await asyncio.gather(
+            *(c.post("/t/k/send", json={"type": "GO", "payload": {}})
+              for _ in range(20)))
+
+results = asyncio.run(race())
+winners = [r for r in results if r.status_code == 200 and r.json()["changed"]]
+assert len(winners) == 1                         # the rest: 409 or unchanged
+```
+
+Drive timers with `DueTimerScanner(store, ...).scan(now=time.time() + 901)`, which passes an explicit `now`, instead of sleeping. Ready-made pytest fixtures arrive with the `[testing]` extra ([#268](https://github.com/basiltt/xstate-statemachine/issues/268)).
+
 ## Reference
 
 ### `StatechartRouter(registry, name, *, prefix=None, tags=None, key_param="id", event_models=None, include_diagram=True, create_if_missing=True, operation_id_prefix=None, dependencies=(), per_event_dependencies=None, actor=None) -> APIRouter`
@@ -157,3 +307,39 @@ The Pydantic models that describe the wire shapes in OpenAPI. Every 4xx/5xx is d
 | `403 Use this event's dedicated route` | event has `per_event_dependencies` | post to `/{id}/events/<EVENT>` |
 | Every POST is `409` under load | optimistic conflicts on a hot key | retry on 409, or `lock=PessimisticLock()` |
 | A `get_interpreter` save conflict is logged, response already 200 | FastAPI older than 0.121 (no dependency `scope`) | upgrade FastAPI, or use `registry.act()` inside the handler |
+
+### 409 storms
+
+A burst of `409 Conflict` responses on one key means many requests loaded the same version and only one could save. This is the lock working as designed, not a fault. Things to check:
+
+* **Clients retrying immediately.** Each retry lands in the same race again. Retry with jittered backoff, and send an `Idempotency-Key` so a retry of a request that actually succeeded returns the original receipt (`duplicate`) instead of running again.
+* **`409` with `error: IdempotencyInFlightError`.** The same key is still being processed by another worker. Retry after a short delay. It is a different condition from a version conflict (`ConflictError`).
+* **A key that is always hot**, such as a shared counter or a flash-sale inventory item. Use `lock=PessimisticLock()` so requests queue instead of failing, or split the key.
+
+### `409`/`500` with `MachineVersionMismatchError` after a deploy
+
+The new code ships a chart with a new `"version"`, and the snapshots saved by the old version no longer match it. The problem body carries `machine_version`, the version the running code expects. Register a migration and pass it to the registry:
+
+<!-- doc-fragment -->
+```python
+migrator = SnapshotMigrator()
+@migrator.register("1", "2")
+def split_address(snapshot):
+    ...
+registry = StatechartRegistry(store, migrator=migrator)   # also used by the scanner
+```
+
+During a rolling deploy, old and new workers serve the same keys. Make the new chart able to read old snapshots *before* you deploy it. See [Versioning in-flight instances](../persistence/#versioning-in-flight-instances).
+
+### SSE stops or arrives in bursts behind a proxy
+
+Buffering proxies hold the stream back. `transition_stream` already sends `X-Accel-Buffering: no` (for nginx) and `Cache-Control: no-store`, but check the following:
+
+* **nginx:** `proxy_buffering off;` if your config overrides the header, and `proxy_read_timeout` above `registry.heartbeat_s` (default 15 s).
+* **Load balancers** with an idle timeout shorter than the heartbeat close the stream. Lower `heartbeat_s`.
+* **Compression** (for example `GZipMiddleware`) buffers the stream. Exclude `text/event-stream`.
+* **Multiple workers:** SSE fan-out is per process. A client connected to worker A does not see a change committed on worker B. Use sticky sessions, or reconnect and read the `snapshot` event. `EventSource` reconnects automatically.
+
+### Cookie authentication and CSRF
+
+`EventSource` cannot send an `Authorization` header, so SSE pages usually authenticate with a cookie. Set that cookie `SameSite=Lax` or `SameSite=Strict`, and `HttpOnly`. The POST routes accept only `application/json`, which a cross-site HTML form cannot send without a CORS preflight. Still keep CORS origins explicit (never `*` with credentials) and add a CSRF token for cookie-authenticated writes. The SSE and WebSocket endpoints check that `Origin` is same-origin; use `allowed_origins=` for the exceptions.

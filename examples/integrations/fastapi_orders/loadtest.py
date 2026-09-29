@@ -157,9 +157,7 @@ async def run_round(
         results = await asyncio.gather(
             *(fire(client, order, idem) for _ in range(n))
         )
-        final = (
-            await client.get(f"/orders/{order}", headers=CUSTOMER)
-        ).json()
+        final = (await client.get(f"/orders/{order}", headers=CUSTOMER)).json()
     kinds = Counter(classify(s, b) for s, b, _ in results)
     lat = sorted(t * 1000 for _, _, t in results)
     p95 = lat[max(0, int(round(0.95 * len(lat))) - 1)]
