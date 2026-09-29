@@ -201,6 +201,7 @@ class TestIntegrationsSection(unittest.TestCase):
         "integration-starlette",  # #275
         "integration-fastapi",  # #276
         "integration-litestar",  # #278
+        "integration-agents",  # #287, #290
     )
 
     def test_overview_page_exists_and_is_in_nav(self) -> None:

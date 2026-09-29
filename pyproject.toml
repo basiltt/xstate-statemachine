@@ -90,7 +90,7 @@ rabbitmq      = []  # #294  aio-pika>=9
 nats          = []  # #294  nats-py>=2
 sqs           = []  # #294  boto3>=1.28
 cloudevents   = []  # #293  cloudevents>=1.10
-agents        = []  # #287  = [pydantic]; provider SDKs are soft imports
+agents        = ["pydantic>=2.5"]  # #287/#290; provider SDKs (openai, anthropic) are soft imports, never pinned
 # umbrella extras -- filled when their members are
 web           = []  # [fastapi,django,drf,flask,sqlalchemy]
 eda           = []  # [celery,redis,kafka,rabbitmq,cloudevents,observability]

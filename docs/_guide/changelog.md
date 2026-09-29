@@ -15,6 +15,44 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Added
 
+- **LLM agents (Phase E) -- `[agents]` extra (#287, #290).** The model
+  proposes, the machine decides: an agent is the `TOOL_LOOP` reference
+  chart (`contrib/agents/charts/tool_loop.json`, Stately-editable, strict
+  and `xsm inspect` clean) plus `agent_logic()`.
+  - **Tool registry** -- `tool_registry(*fns, timeout_s=, side_effect=)`
+    derives JSON-schema tools from signatures via pydantic. `run_tool`
+    enforces **inside itself** (X0.13), before executing anything:
+    registration, the active state's `meta.tools` allow-list, strict
+    argument validation, per-call human approval for `side_effect=True`
+    tools, a mandatory `timeout_s`, and output truncation. A denied call
+    raises `ToolDeniedError` and is never executed -- including one an
+    injected tool result talked the model into.
+  - **Budgets and timeouts** -- `budget_guards(max_tokens, max_usd,
+    max_turns)` on the single entry to every model turn; `after`
+    timeouts on model and tool calls with `RetryPolicy` backoff.
+  - **Human-in-the-loop as a durable state** -- `awaiting_human`
+    persists in any store with its escalation deadline, resumes on
+    `HUMAN_APPROVED` after a restart, escalates via `DueTimerScanner`.
+  - **Structured output** -- `output_model=` / `meta.output_model`;
+    invalid replies are re-prompted (`RETRY_OUTPUT`) and count against
+    the budget.
+  - `run_agent` / `run_agent_sync` (with `apersisted` / `persisted`),
+    `FakeModel` for offline tests, bounded `messages` (`max_messages` /
+    `summarise`), default redaction of `api_key` / `authorization` /
+    `*token*` keys, `AgentTracePlugin` (JSONL, `gen_ai.*` fields,
+    `record_content=False` default, `on_span` seam for OTel).
+  - **Providers** -- `providers.openai.openai_model` and
+    `providers.anthropic.anthropic_model`; the SDKs are soft imports
+    (`MissingExtraError` names `pip install openai` / `anthropic`),
+    contract-tested against recorded fixtures.
+  - **Multi-agent recipes** -- example `supervisor`, `pipeline` and
+    `debate` charts; `spawn_agent(child_chart, model, tools, budget=)`
+    spawns a `TOOL_LOOP` actor per sub-task with its own budget and a
+    tool allow-list that must be a subset of the parent's (refused
+    loudly otherwise); `BudgetPlugin` rolls child usage into the parent
+    and raises `BUDGET_EXCEEDED`; `handoff_guard` makes an unauthorised
+    handoff `Receipt.denied`. Guide: *LLM agents*.
+
 - **Adoption kit (#309).**
   - **`xsm new --template fastapi DIR`** scaffolds a minimal project from
     the `fastapi_orders` example -- `machine.json`, `models.py`,

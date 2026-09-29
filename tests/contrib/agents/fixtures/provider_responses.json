@@ -1,0 +1,87 @@
+{
+  "openai_tool_call": {
+    "id": "chatcmpl-AbC123",
+    "object": "chat.completion",
+    "created": 1727600000,
+    "model": "gpt-4o-mini-2024-07-18",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_7Qx",
+              "type": "function",
+              "function": {
+                "name": "get_weather",
+                "arguments": "{\"city\": \"Kochi\"}"
+              }
+            }
+          ],
+          "refusal": null
+        },
+        "logprobs": null,
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 82,
+      "completion_tokens": 17,
+      "total_tokens": 99
+    },
+    "system_fingerprint": "fp_0ba0d124f1"
+  },
+  "openai_text": {
+    "id": "chatcmpl-AbC124",
+    "object": "chat.completion",
+    "created": 1727600001,
+    "model": "gpt-4o-mini-2024-07-18",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "It is sunny in Kochi.",
+          "refusal": null
+        },
+        "logprobs": null,
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 120,
+      "completion_tokens": 9,
+      "total_tokens": 129
+    }
+  },
+  "anthropic_tool_use": {
+    "id": "msg_01XFDUDYJgAACzvnptvVoYEL",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-sonnet-4-5-20250929",
+    "content": [
+      { "type": "text", "text": "Let me check." },
+      {
+        "type": "tool_use",
+        "id": "toolu_01A09q90qw90lq917835lq9",
+        "name": "get_weather",
+        "input": { "city": "Kochi" }
+      }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "usage": { "input_tokens": 396, "output_tokens": 57 }
+  },
+  "anthropic_text": {
+    "id": "msg_01XFDUDYJgAACzvnptvVoYEM",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-sonnet-4-5-20250929",
+    "content": [{ "type": "text", "text": "It is sunny in Kochi." }],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "usage": { "input_tokens": 480, "output_tokens": 11 }
+  }
+}

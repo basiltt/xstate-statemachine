@@ -117,7 +117,7 @@
     "title": "Integration extras",
     "section": "Integrations",
     "url": "/guide/integrations-extras/",
-    "description": "Every optional pip extra with its status and issue: pydantic, redis, starlette, fastapi, litestar shipped; django, flask, sqlalchemy, celery, kafka, observability, testing, agents planned. MissingExtraError, design rules."
+    "description": "Every optional pip extra with its status and issue: pydantic, redis, starlette, fastapi, litestar, agents shipped; django, flask, sqlalchemy, celery, kafka, observability, testing planned. MissingExtraError, design rules."
   },
   {
     "title": "Guarantees",
@@ -148,6 +148,12 @@
     "section": "Integrations",
     "url": "/guide/integration-litestar/",
     "description": "[litestar] extra — XStatePlugin, Provide() get_interpreter, generated statechart Controller with OpenAPI discriminated union, problem+json, SSE/WebSocket."
+  },
+  {
+    "title": "LLM agents",
+    "section": "Integrations",
+    "url": "/guide/integration-agents/",
+    "description": "LLM agents as statecharts: TOOL_LOOP chart, per-state tool allow-lists, budgets, timeouts, durable human-in-the-loop, structured output, OpenAI/Anthropic adapters, spawn_agent, BudgetPlugin, prompt-injection threat model."
   },
   {
     "description": "Generate diagrams from machines — Mermaid, PlantUML, ASCII format, statechart visualization.",
