@@ -72,7 +72,11 @@ def problem_response(exc: BaseException) -> Any:
     fixed title and class name, never the exception text (X0.7)."""
     status, body = problem_for_exception(exc)
     if status >= 500:
-        logger.error("🔥 %s while handling a statechart request", type(exc))
+        # 📝 Full traceback in the SERVER log (operators need it); the
+        #    client body still carries only the class name (X0.7).
+        logger.exception(
+            "🔥 %s while handling a statechart request", type(exc).__name__
+        )
     return _json(body, status, PROBLEM_MEDIA_TYPE)
 
 
