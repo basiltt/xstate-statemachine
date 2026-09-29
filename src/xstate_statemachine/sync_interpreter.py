@@ -184,6 +184,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         "_restored_priority_count",
         "_start_notified",
         "_pump_thread_ident",
+        "_step_gate",
         "_invoked_children",
         "_settle_iterations",
         "_settle_tripped",
@@ -277,6 +278,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #: caller's thread. Read by a parent's snapshot to decide whether a
         #: bounded wait can let a mid-step child settle.
         self._pump_thread_ident: Optional[int] = None
+        #: 🚧 Step gate: held by the pump thread for each step it runs and
+        #: by a parent for "check settled + copy" (see `_step_gate_lock`).
+        #: Only ever contended across threads; a non-actor never takes it.
+        self._step_gate = threading.Lock()
         #: 📨 #125: deferred events whose replay was EARNED by the drain in
         #: progress (a configuration change) but must not run inside it --
         #: the caller's `Receipt` is built from the drain's result, and a
@@ -1659,7 +1664,12 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                         for s in child._active_state_nodes
                     ):
                         break
-                    child.tick()
+                    # 🚧 Each pump step runs under the child's step gate so
+                    #    a parent snapshot can never copy it mid-step (the
+                    #    settle check alone was a TOCTOU; see
+                    #    `BaseInterpreter.get_persisted_snapshot`).
+                    with child._step_gate:
+                        child.tick()
                     time.sleep(0.01)  # 🤏 Yield to prevent busy-waiting.
             finally:
                 # 🧹 Ensure cleanup happens whether the child finishes or is stopped.
@@ -1883,6 +1893,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     def _step_thread_ident(self) -> Optional[int]:
         """A non-blocking actor steps on its pump thread (#183/#184)."""
         return self._pump_thread_ident
+
+    def _step_gate_lock(self) -> Optional[Any]:
+        """The pump's step gate, when this actor has a pump thread."""
+        return self._step_gate if self._pump_thread_ident is not None else None
 
     def _attach_clock(self) -> None:
         """Register `tick` as this interpreter's settler on a `SimulatedClock`.
