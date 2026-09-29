@@ -34,13 +34,19 @@ from .._compat import require_extra
 require_extra("sqlalchemy", "sqlalchemy")
 
 from ._schema import SCHEMA_VERSION, xsm_sqlalchemy_ddl  # noqa: E402
+from .inbox_log import SQLAlchemyInbox, SQLAlchemyLog  # noqa: E402
 from .mixin import StatechartMixin, send_with_retry  # noqa: E402
 from .model_store import ModelStore  # noqa: E402
+from .store import AsyncSQLAlchemyStore, SQLAlchemyStore  # noqa: E402
 from .types import StatechartType  # noqa: E402
 
 __all__ = [
+    "AsyncSQLAlchemyStore",
     "ModelStore",
     "SCHEMA_VERSION",
+    "SQLAlchemyInbox",
+    "SQLAlchemyLog",
+    "SQLAlchemyStore",
     "StatechartMixin",
     "StatechartType",
     "send_with_retry",
