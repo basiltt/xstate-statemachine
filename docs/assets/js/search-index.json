@@ -132,6 +132,18 @@
     "description": "Trust model — installed packages and the machine definition are trusted, events and snapshots are not; the X0 baseline (#303) mapped to the test or CI job that enforces each item; principal, redact, codec, pip-audit."
   },
   {
+    "title": "Compatibility",
+    "section": "Integrations",
+    "url": "/guide/compatibility/",
+    "description": "Supported framework versions per extra -- oldest and newest pins, each proven by a CI cell; generated from tests/contrib/compat_matrix.json."
+  },
+  {
+    "title": "Deprecation Policy",
+    "section": "Integrations",
+    "url": "/guide/deprecation-policy/",
+    "description": "SemVer for core and persistence, contrib provisional; one minor release of DeprecationWarning, removal no earlier than the next major; the current deprecations table."
+  },
+  {
     "title": "Starlette",
     "section": "Integrations",
     "url": "/guide/integration-starlette/",

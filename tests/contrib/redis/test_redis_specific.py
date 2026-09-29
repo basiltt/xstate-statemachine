@@ -226,19 +226,22 @@ class TestTTL:
 
 
 class TestAsyncTwin:
-    def test_async_store_under_apersisted(
-        self, r: Any, ar: Any, prefix: str
-    ) -> None:
+    def test_async_store_under_apersisted(self, r: Any, prefix: str) -> None:
         from src.xstate_statemachine.contrib.redis import (
             AsyncRedisStore,
             RedisStore,
         )
 
+        from .conftest import _aclient
+
         sync_store = RedisStore(r, prefix=prefix)
         m = machine()
 
         async def go() -> Any:
-            astore = AsyncRedisStore(ar, prefix=prefix)
+            # 🐍 Build the asyncio client INSIDE the running loop: on 3.9,
+            #    redis.asyncio's pool calls asyncio.Lock() at construction,
+            #    which needs a current event loop (#296 compat cell).
+            astore = AsyncRedisStore(_aclient(r), prefix=prefix)
             assert (await astore.health())["ok"]
             async with apersisted(astore, "k", m) as i:
                 await i.send("T", wait=True)

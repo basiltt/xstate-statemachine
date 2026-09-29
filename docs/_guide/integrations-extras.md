@@ -51,6 +51,8 @@ except MissingExtraError as exc:
 | `agents` | `TOOL_LOOP` chart, tool registry with per-state allow-lists enforced in `run_tool`, budgets, timeouts, durable human-in-the-loop, structured output, OpenAI/Anthropic adapters (soft imports), `spawn_agent` + `BudgetPlugin` multi-agent recipes | **shipped** — [guide](../integration-agents/) · [#287](https://github.com/basiltt/xstate-statemachine/issues/287) · [#290](https://github.com/basiltt/xstate-statemachine/issues/290) |
 | `web` · `eda` · `all` | Umbrella extras | — |
 
+The framework versions each shipped extra is tested against (oldest and newest, one CI cell each) are on the [Compatibility](../compatibility/) page. All `contrib` APIs are **provisional** under the [Deprecation Policy](../deprecation-policy/).
+
 ## What every integration promises — and does not
 
 Each integration page carries two boxes. They are not boilerplate; they are the contract.

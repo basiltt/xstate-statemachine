@@ -56,8 +56,3 @@ def prefix(r: Any) -> Iterator[str]:
     yield p
     for k in r.scan_iter(match=f"{p}:*"):
         r.delete(k)
-
-
-@pytest.fixture
-def ar(r: Any) -> Any:
-    return _aclient(r)
