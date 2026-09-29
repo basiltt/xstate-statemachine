@@ -109,6 +109,7 @@ Liveness is always 200. Readiness is 200 once `lifespan` has started, the store'
 | `error` is `IdempotencyMismatchError` (same key, different body) | 422 |
 | `error` is `IdempotencyInFlightError` (first delivery still running) | 409 |
 | `duplicate=True` | `duplicate` (200) |
+| `error` is `InterpreterStoppedError` (the instance already finished or was stopped) | `denied` (409) — refused, like a guard |
 | `error` set | `error` (500) |
 | `deferred=True` | `deferred` (202) |
 | `denied=True` (a guard refused) | `denied` (409) |

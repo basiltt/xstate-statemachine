@@ -169,6 +169,34 @@ class TestSendReceipt(_Quiet):
         r = _run(main())
         self.assertIsNotNone(r.error)
 
+    def test_sync_dropped_event_resolves_receipt_with_error_too(self) -> None:
+        """Parity: `SyncInterpreter.send(..., wait=True)` on a done / stopped
+        machine returns the same `InterpreterStoppedError` receipt the async
+        engine does -- not `None`, which the overload never promised and
+        which made the Flask blueprint answer a POST to a finished order with
+        a 500 (found by the [flask] battle test)."""
+        cfg = {
+            "id": "m",
+            "initial": "a",
+            "states": {"a": {"on": {"GO": "b"}}, "b": {"type": "final"}},
+        }
+        i = SyncInterpreter(create_machine(cfg)).start()
+        first = i.send("GO", wait=True)
+        self.assertTrue(first.changed)
+        self.assertEqual(i.status, "done")
+        r = i.send("GO", wait=True)
+        self.assertIsInstance(r, Receipt)
+        self.assertFalse(r.changed)
+        self.assertIsInstance(r.error, InterpreterStoppedError)
+        self.assertEqual(r.state_ids, frozenset({"m.b"}))
+        # fire-and-forget keeps its None; the drop hook still fires
+        self.assertIsNone(i.send("GO"))
+        j = SyncInterpreter(create_machine(cfg)).start()
+        j.stop()
+        self.assertIsInstance(
+            j.send("GO", wait=True).error, InterpreterStoppedError
+        )
+
     def test_reserved_payload_key_warns(self) -> None:
         cfg = {
             "id": "m",

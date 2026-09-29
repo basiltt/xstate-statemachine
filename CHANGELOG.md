@@ -553,6 +553,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`SyncInterpreter.send(..., wait=True)` on a finished or stopped machine
+  now returns a `Receipt`** carrying `InterpreterStoppedError`, exactly as
+  the async engine does -- not `None`, which the `wait=True -> Receipt`
+  overload never promised and which made the `[flask]` blueprint answer a
+  POST to a completed order with a 500. The core `receipts.receipt_to_status`
+  table (and the Starlette/FastAPI/Litestar layer, which now defers to it
+  for error classes) maps that receipt to **409** -- the instance refused
+  the event, like a guard -- instead of 500. Fire-and-forget `send()` still
+  returns `None` and fires `on_event_dropped`.
 - **A parent snapshot can no longer harvest a non-blocking sync child's
   half-applied context.** "Wait until the child is settled" and "copy its
   context" were two separate reads; the child's pump thread could begin a
@@ -591,6 +600,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`SyncInterpreter.send(..., wait=True)` on a finished or stopped machine
+  now returns a `Receipt`** carrying `InterpreterStoppedError`, exactly as
+  the async engine does -- not `None`, which the `wait=True -> Receipt`
+  overload never promised and which made the `[flask]` blueprint answer a
+  POST to a completed order with a 500. The core `receipts.receipt_to_status`
+  table (and the Starlette/FastAPI/Litestar layer, which now defers to it
+  for error classes) maps that receipt to **409** -- the instance refused
+  the event, like a guard -- instead of 500. Fire-and-forget `send()` still
+  returns `None` and fires `on_event_dropped`.
 - **Idempotency refusals over HTTP are RFC 9457 problems.** A reused
   `Idempotency-Key` with a different body (422) or a still-in-flight request
   (409) returned a *receipt* body with a 4xx status and `application/json`;

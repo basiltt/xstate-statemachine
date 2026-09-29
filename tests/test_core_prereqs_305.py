@@ -25,6 +25,7 @@ from src.xstate_statemachine import (
 from src.xstate_statemachine.clock import RealClock, SimulatedClock
 from src.xstate_statemachine.events import Receipt
 from src.xstate_statemachine.exceptions import (
+    InterpreterStoppedError,
     SnapshotCorruptError,
     SnapshotVersionError,
 )
@@ -298,6 +299,11 @@ class TestReceiptCodec(unittest.TestCase):
             (Receipt(ids, False, denied=True), STATUS_CONFLICT),
             (Receipt(ids, False, deferred=True), STATUS_ACCEPTED),
             (Receipt(ids, False, error=RuntimeError("x")), STATUS_ERROR),
+            # 🏁 finished / stopped instance: refused like a guard, not 500
+            (
+                Receipt(ids, False, error=InterpreterStoppedError("done")),
+                STATUS_CONFLICT,
+            ),
             # precedence: error beats deferred/denied; duplicate is neutral
             (
                 Receipt(ids, False, error=RuntimeError("x"), deferred=True),

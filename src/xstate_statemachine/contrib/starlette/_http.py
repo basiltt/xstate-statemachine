@@ -22,6 +22,7 @@ from starlette.responses import JSONResponse
 from ...events import Receipt
 from ...exceptions import (
     ConflictError,
+    InterpreterStoppedError,
     InvalidEventError,
     InvalidEventPayloadError,
     InvalidKeyError,
@@ -36,6 +37,7 @@ from ...persistence.idempotency import (
     IdempotencyMismatchError,
 )
 from ...persistence.store import DEFAULT_MAX_SNAPSHOT_BYTES
+from ...receipts import receipt_to_status as core_receipt_to_status
 
 __all__ = [
     "BadRequestError",
@@ -134,6 +136,11 @@ _STATUS_TABLE = (
     (SnapshotDriftError, 409, "Machine version mismatch"),
     (IdempotencyInFlightError, 409, "Request in flight"),
     (ConflictError, 409, "Conflict"),
+    # 🏁 An event for an instance that has already finished (or been
+    #    stopped) is not a server fault: the transition the client asked
+    #    for can no longer happen -- the same class of answer as a guard
+    #    refusal. Both engines report it on the receipt (sync parity fix).
+    (InterpreterStoppedError, 409, "Instance is no longer running"),
     (LockTimeoutError, 409, "Lock timeout"),
     (KeyNotFoundError, 404, "Not Found"),
     (InvalidKeyError, 400, "Invalid key"),
@@ -185,6 +192,11 @@ def receipt_to_status(
     Precedence: an idempotency refusal (fingerprint mismatch → 422,
     in flight → 409) beats ``duplicate``, which beats ``error``, then
     ``deferred``, ``denied``, ``changed``/``unchanged``.
+
+    📝 Which error classes are CLIENT errors (and their codes) is decided
+    once, in the core `receipts` module, so the Flask extra and this one
+    can never disagree; the keyword overrides here only rename the
+    non-error outcomes.
     """
     err = receipt.error
     if isinstance(err, IdempotencyMismatchError):
@@ -194,7 +206,8 @@ def receipt_to_status(
     if receipt.duplicate:
         return duplicate
     if err is not None:
-        return error
+        core = core_receipt_to_status(receipt)
+        return core if core < 500 else error
     if receipt.deferred:
         return deferred
     if receipt.denied:
