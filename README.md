@@ -893,7 +893,7 @@ from xstate_statemachine.contrib.fastapi import StatechartRouter, instrument_app
 from xstate_statemachine.contrib.starlette import StatechartRegistry
 from xstate_statemachine.persistence import SQLiteStore
 
-registry = StatechartRegistry(SQLiteStore("orders.db"), run_timers=True)
+registry = StatechartRegistry(SQLiteStore(DB_PATH), run_timers=True)   # or RedisStore for many hosts
 registry.register("orders", order_machine, authorize=my_authorizer)   # closed by default; # … built elsewhere
 
 app = FastAPI()
