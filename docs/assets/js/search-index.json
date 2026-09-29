@@ -153,7 +153,25 @@
     "title": "LLM agents",
     "section": "Integrations",
     "url": "/guide/integration-agents/",
-    "description": "LLM agents as statecharts: TOOL_LOOP chart, per-state tool allow-lists, budgets, timeouts, durable human-in-the-loop, structured output, OpenAI/Anthropic adapters, spawn_agent, BudgetPlugin, prompt-injection threat model."
+    "description": "LLM agents as statecharts: TOOL_LOOP chart, per-state tool allow-lists, budgets, timeouts, durable human-in-the-loop, structured output, OpenAI/Anthropic adapters, spawn_agent, BudgetPlugin, prompt-injection threat model, LangGraph interop (statechart_node, langgraph_service), pydantic-ai service/tool, structured output per state."
+  },
+  {
+    "title": "xstate-statemachine vs LangGraph",
+    "section": "Integrations",
+    "url": "/guide/vs-langgraph/",
+    "description": "Comparison: hierarchy, guards as policy, durable timeouts, human-in-the-loop, persistence, incremental adoption via statechart_node. When to choose LangGraph."
+  },
+  {
+    "title": "xstate-statemachine vs Burr",
+    "section": "Integrations",
+    "url": "/guide/vs-burr/",
+    "description": "Comparison with Burr: nested and parallel states, durable after deadlines, XState JSON portability, tool allow-lists. When to choose Burr."
+  },
+  {
+    "title": "xstate-statemachine vs @statelyai/agent",
+    "section": "Integrations",
+    "url": "/guide/vs-statelyai-agent/",
+    "description": "Comparison with @statelyai/agent: same XState chart model, Python runtime, stores, budgets and tool policy. When to choose @statelyai/agent."
   },
   {
     "description": "Generate diagrams from machines — Mermaid, PlantUML, ASCII format, statechart visualization.",

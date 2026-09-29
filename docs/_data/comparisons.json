@@ -1,0 +1,86 @@
+{
+  "competitors": {
+    "langgraph": {"name": "LangGraph", "url": "https://github.com/langchain-ai/langgraph"},
+    "burr": {"name": "Burr", "url": "https://github.com/apache/burr"},
+    "statelyai_agent": {"name": "@statelyai/agent", "url": "https://github.com/statelyai/agent"}
+  },
+  "rows": [
+    {
+      "feature": "Hierarchy (nested states)",
+      "ours": "Yes: compound states at any depth, XState v5 semantics",
+      "langgraph": "Subgraphs as nodes; no statechart hierarchy",
+      "burr": "Flat actions + transitions; sub-applications by composition",
+      "statelyai_agent": "Yes (XState v5, TypeScript)"
+    },
+    {
+      "feature": "Parallel regions",
+      "ours": "Yes: `type: parallel`, `done.state` join",
+      "langgraph": "Fan-out / fan-in via edges and `Send`",
+      "burr": "Parallelism via `MapStates` / sub-applications",
+      "statelyai_agent": "Yes (XState v5)"
+    },
+    {
+      "feature": "Guards as policy",
+      "ours": "Named guards in the chart; `run_tool` re-checks per-state tool allow-lists (X0.13)",
+      "langgraph": "Conditional edges are code; tool policy lives in node code",
+      "burr": "Conditions on transitions (`when`, `expr`)",
+      "statelyai_agent": "XState guards; tool policy is app code"
+    },
+    {
+      "feature": "`after` timeouts",
+      "ours": "Yes: durable deadlines for model, tool and human waits, persisted and woken by `DueTimerScanner`",
+      "langgraph": "Per-step timeouts / retry policies; no durable timers",
+      "burr": "Not built in",
+      "statelyai_agent": "XState `after` (in-process)"
+    },
+    {
+      "feature": "Human-in-the-loop as durable state",
+      "ours": "`awaiting_human` is a persisted state with an escalation deadline; approval names exact call ids",
+      "langgraph": "`interrupt()` + checkpointer (strong)",
+      "burr": "Halt before/after an action, resume from persisted state",
+      "statelyai_agent": "Model it as a state; persistence is yours"
+    },
+    {
+      "feature": "Persistence / replay",
+      "ours": "Snapshots in SQLite / Redis / Postgres stores, versioned layout, event log replay",
+      "langgraph": "Checkpointers with time travel (strong)",
+      "burr": "Persisters + tracking UI replay (strong)",
+      "statelyai_agent": "XState snapshots; storage is yours"
+    },
+    {
+      "feature": "Visual editor",
+      "ours": "Stately editor round-trip (the chart is XState JSON)",
+      "langgraph": "LangGraph Studio (graph view, debugging)",
+      "burr": "Burr UI (tracking, graph view)",
+      "statelyai_agent": "Stately editor"
+    },
+    {
+      "feature": "Typed context / events",
+      "ours": "Pydantic context + event schemas (`[pydantic]`), strict tool-argument schemas",
+      "langgraph": "TypedDict / Pydantic graph state",
+      "burr": "State object; typed via Pydantic integration",
+      "statelyai_agent": "TypeScript types + Zod"
+    },
+    {
+      "feature": "Observability",
+      "ours": "JSONL trace with `gen_ai.*` fields, OTel plugin, no content by default, secret redaction",
+      "langgraph": "LangSmith (strong)",
+      "burr": "Burr UI + OTel",
+      "statelyai_agent": "XState inspection"
+    },
+    {
+      "feature": "Multi-agent",
+      "ours": "Reference supervisor / pipeline / debate charts; `spawn_agent` with per-child and global budgets",
+      "langgraph": "Supervisor / swarm libraries, subgraphs (strong ecosystem)",
+      "burr": "Composition of applications",
+      "statelyai_agent": "Multiple agents as actors"
+    },
+    {
+      "feature": "Incremental adoption",
+      "ours": "One LangGraph node (`statechart_node`), a graph as a service (`langgraph_service`), a pydantic-ai Tool",
+      "langgraph": "Functional API; wraps any Python",
+      "burr": "Wraps any Python function",
+      "statelyai_agent": "Drop into any XState app"
+    }
+  ]
+}

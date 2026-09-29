@@ -31,7 +31,7 @@ from typing import Iterator, List, Tuple
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GUIDE = ROOT / "docs" / "_guide"
-DOC_FILES = [ROOT / "README.md", *sorted(GUIDE.glob("*.md"))]
+DOC_FILES = [ROOT / "README.md", *sorted(GUIDE.rglob("*.md"))]
 FRAGMENT_MARK = "<!-- doc-fragment -->"
 #: `<!-- doc-requires: redis, fakeredis -->` right above a fence: run the
 #: block only when every named module imports (an integration page's
@@ -139,7 +139,7 @@ def _slug(heading: str, github: bool = False) -> str:
 
 class TestDocLinksResolve(unittest.TestCase):
     def setUp(self) -> None:
-        self.pages = {p.stem for p in GUIDE.glob("*.md")}
+        self.pages = {p.stem for p in GUIDE.rglob("*.md")}
         self.headings = {
             p.stem: {
                 _slug(m.group(1))
@@ -147,13 +147,13 @@ class TestDocLinksResolve(unittest.TestCase):
                     r"^#{1,6}\s+(.*)$", p.read_text(encoding="utf-8"), re.M
                 )
             }
-            for p in GUIDE.glob("*.md")
+            for p in GUIDE.rglob("*.md")
         }
 
     def test_guide_cross_links_and_anchors(self) -> None:
         link = re.compile(r"\]\((\.\./([a-z0-9-]+)/(#[^)]*)?|#([^)]+))\)")
         bad = []
-        for p in GUIDE.glob("*.md"):
+        for p in GUIDE.rglob("*.md"):
             for m in link.finditer(p.read_text(encoding="utf-8")):
                 page, anchor, local = m.group(2), m.group(3), m.group(4)
                 if page and page not in self.pages:
@@ -170,7 +170,7 @@ class TestDocLinksResolve(unittest.TestCase):
         raw = re.compile(r"\]\([a-z0-9-]+\.md(#[^)]*)?\)")
         offenders = [
             p.name
-            for p in GUIDE.glob("*.md")
+            for p in GUIDE.rglob("*.md")
             if raw.search(p.read_text(encoding="utf-8"))
         ]
         self.assertEqual(offenders, [])

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **LLM agents (Phase E) -- `[agents]` extra (#287, #290).** The model
+- **LLM agents (Phase E) -- `[agents]` extra (#287-#291).** The model
   proposes, the machine decides: an agent is the `TOOL_LOOP` reference
   chart (`contrib/agents/charts/tool_loop.json`, Stately-editable, strict
   and `xsm inspect` clean) plus `agent_logic()`.
@@ -46,6 +46,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     loudly otherwise); `BudgetPlugin` rolls child usage into the parent
     and raises `BUDGET_EXCEEDED`; `handoff_guard` makes an unauthorised
     handoff `Receipt.denied`. Guide: *LLM agents*.
+  - **LangGraph interop (#288)** -- `contrib.agents.langgraph`
+    (soft import `langgraph`, tested `>=0.2,<2.0`; outside that range the
+    import raises `ImportError` naming it). `statechart_node` runs a
+    statechart as one LangGraph node with its snapshot as plain JSON in
+    the graph state (so any checkpointer persists it);
+    `route_by_statechart` routes conditional edges by active state (an
+    unmapped state is loud, never a silent `END`); `langgraph_service`
+    runs a compiled graph as an `invoke` service (`ainvoke`, or `astream`
+    chunks as `STREAM` events), with errors to `onError` and cancellation
+    on state exit; `LangChainCallbackPlugin` mirrors transitions into a
+    LangChain callback handler. Tools in a `TOOL_LOOP` node still run only
+    through `run_tool` (X0.13). It ships inside `contrib.agents`, and a
+    separate distribution is the plan if LangGraph churn bites.
+  - **pydantic-ai and structured output (#289)** --
+    `contrib.agents.pydantic_ai.pydantic_ai_service(agent, prompt_from=,
+    deps_from=, stream=)` runs a pydantic-ai `Agent` as an `invoke`
+    service. Output and usage go to `onDone`, and `usage_logic()` merges
+    usage into the context `budget_guards` read. With `stream=True`, text
+    deltas are `STREAM` events. `agent_tool_from_machine(runner)` exposes
+    a statechart run as a pydantic-ai `Tool`. `structured_output(Model,
+    retries=2)` is the public switch for the existing `RETRY_OUTPUT`
+    mechanism (per-state `meta.output_model`), using instructor's JSON
+    extractor when installed; `agent_logic` gains `output_parser=`.
+  - **Comparisons, example, launch drafts (#291)** -- guide pages *vs
+    LangGraph*, *vs Burr* and *vs @statelyai/agent*, with feature tables
+    generated from `docs/_data/comparisons.json`;
+    `examples/integrations/agents_support_bot` (order lookup via the
+    FastAPI example, a refund gated by `awaiting_human`, budgets, a JSONL
+    trace, `SQLiteStore`; `run.py --fake` runs offline); a README "For
+    LLM agents" section; PyPI keywords `llm-agents` and
+    `agent-orchestration`. Launch-post drafts sit under
+    `docs/research/launch/` and are not published.
 
 - **Adoption kit (#309).**
   - **`xsm new --template fastapi DIR`** scaffolds a minimal project from

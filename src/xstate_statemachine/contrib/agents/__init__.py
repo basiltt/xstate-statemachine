@@ -64,6 +64,7 @@ from .tools import (  # noqa: E402
     tool,
     tool_registry,
 )
+from .structured import structured_output, validate_structured  # noqa: E402
 from .trace import AgentTracePlugin  # noqa: E402
 
 __all__ = [
@@ -99,7 +100,9 @@ __all__ = [
     "scrub",
     "spawn_agent",
     "state_tools",
+    "structured_output",
     "tool",
     "tool_registry",
     "validate_agent_chart",
+    "validate_structured",
 ]
