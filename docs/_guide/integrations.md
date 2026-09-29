@@ -73,7 +73,7 @@ Want the finished result instead? `xsm new --template fastapi my_service` scaffo
 
 Draw the chart in the [Stately editor](https://stately.ai/editor) and export it as JSON ([how, and what the export must contain](../stately-export/)). The tutorial writes the exported chart out directly at the top of step 2.
 
-### 2. Inspect, validate and generate
+### 2. Validate, inspect and generate
 
 ```python
 import json, os, sys, tempfile
@@ -103,14 +103,15 @@ def run(*argv):                    # the same as typing `xsm ...` in a shell
 
 run("validate", "order.machine.json")           # builds it with the real library
 run("inspect", "order.machine.json")            # state tree, events, timers
-run("gt", "order.machine.json", "-t", "pythonic-class", "--with-tests",
-    "-o", "generated", "-f")
-assert Path("generated/test_order.py").is_file()
-run("gt", "--check", "order.machine.json", "-t", "pythonic-class",
-    "--with-tests", "-o", "generated")          # CI: fails when stale
+flags = ["-t", "pythonic-class", "--with-api", "--with-models",
+         "--with-tests", "-o", "generated"]
+run("gt", "order.machine.json", *flags, "-f")
+for name in ("order_api.py", "order_models.py", "test_order.py"):
+    assert Path("generated", name).is_file()    # router, event models, tests
+run("gt", "--check", "order.machine.json", *flags)   # CI: fails when stale
 ```
 
-> `--with-api` (a `StatechartRouter` module) and `--with-models` (Pydantic event models) for `xsm gt` arrive with [#279](https://github.com/basiltt/xstate-statemachine/issues/279). Until then, write the models by hand as in step 3 — they are a few lines per event.
+`--with-api` writes `order_api.py`, an editable FastAPI router with one typed route per event, and `--with-models` writes `order_models.py`, one `EventModel` per event plus a context model ([CLI](../cli/)). Step 3 shows the same pieces inline, so you can see what the generated modules wire together.
 
 ### 3. Run it as a FastAPI app on SQLite
 

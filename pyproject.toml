@@ -12,8 +12,22 @@ description = "A robust Python library for parsing and running XState JSON state
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
+keywords = [
+    "statechart",
+    "xstate",
+    "fsm",
+    "state-machine",
+    "workflow-engine",
+    "saga",
+    "event-driven",
+    "fastapi",
+    "persistence",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
+    "Framework :: AsyncIO",
+    "Framework :: FastAPI",
+    "Framework :: Pytest",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
@@ -135,6 +149,9 @@ include = [
     "/tests",
     "/docs",
     "/examples",
+    "/schemas",
+    "/action.yml",
+    "/.pre-commit-hooks.yaml",
     "/README.md",
     "/CHANGELOG.md",
     "/LICENSE",

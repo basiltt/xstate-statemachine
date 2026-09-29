@@ -148,10 +148,12 @@
           <a href="{{ '/guide/cli/' | relative_url }}" class="sidebar-link">CLI Tool</a>
           <a href="{{ '/guide/cli-templates/' | relative_url }}" class="sidebar-link">Templates Deep Dive</a>
           <a href="{{ '/guide/cli-hierarchy/' | relative_url }}" class="sidebar-link">Hierarchical Generation</a>
+          <a href="{{ '/guide/stately-export/' | relative_url }}" class="sidebar-link">Stately Editor &rarr; Python</a>
         </div>
         <div class="sidebar-section">
           <h3 class="sidebar-heading">Integrations</h3>
-          <a href="{{ '/guide/integrations/' | relative_url }}" class="sidebar-link">Overview &amp; extras</a>
+          <a href="{{ '/guide/integrations/' | relative_url }}" class="sidebar-link">Start here</a>
+          <a href="{{ '/guide/integrations-extras/' | relative_url }}" class="sidebar-link">All extras</a>
           <a href="{{ '/guide/patterns/' | relative_url }}" class="sidebar-link">Resilience Patterns</a>
           <a href="{{ '/guide/persistence/' | relative_url }}" class="sidebar-link">Persistence Stores</a>
           <a href="{{ '/guide/guarantees/' | relative_url }}" class="sidebar-link">Guarantees</a>
@@ -220,7 +222,7 @@
         </div>
 
         <!-- Previous / Next Navigation -->
-        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,reliability,diagrams,examples,cli,cli-templates,cli-hierarchy,integrations,patterns,persistence,guarantees,security,integration-redis,integration-pydantic,integration-starlette,integration-fastapi,integration-litestar,production-characteristics,troubleshooting,faq,changelog" | split: "," %}
+        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,reliability,diagrams,examples,cli,cli-templates,cli-hierarchy,stately-export,integrations,integrations-extras,patterns,persistence,guarantees,security,integration-redis,integration-pydantic,integration-starlette,integration-fastapi,integration-litestar,production-characteristics,troubleshooting,faq,changelog" | split: "," %}
         {% assign current_name = page.url | remove: "/guide/" | remove: "/" %}
         {% assign prev_page = nil %}
         {% assign next_page = nil %}

@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Adoption kit (#309).**
+  - **`xsm new --template fastapi DIR`** scaffolds a minimal project from
+    the `fastapi_orders` example -- `machine.json`, `models.py`,
+    `logic.py`, `app.py`, `static/`, `tests/`, `README.md` and a
+    `requirements.txt` pinning `xstate-statemachine[fastapi]` -- with the
+    standard library's `string.Template` (no cookiecutter). `--name`
+    (lower_snake_case, default `orders`) sets the URL and store prefix and
+    the camelCased machine id; a non-empty directory is refused without
+    `--force`; `--list` shows `fastapi` and the planned `django` (#280) /
+    `flask` (#285) templates, which are refused with their issue. Exit 2 on
+    any refusal. Also in the interactive launcher.
+  - **`xsm-check` GitHub Action** (`action.yml`, composite): installs the
+    library, runs `xsm validate --plain` on a `files` glob and, when
+    `generated-dir` is given, `xsm gt --check`. `setup-python` is pinned to
+    the same SHA as CI. Self-tested on the example app in
+    `.github/workflows/xsm-check-selftest.yml`.
+  - **pre-commit hooks** (`.pre-commit-hooks.yaml`): `xsm-validate`
+    (`*machine.json`) and `xsm-gt-check` (`pass_filenames: false`; pass
+    your generation flags as `args`).
+  - **Editor JSON Schema** `schemas/xstate-machine.schema.json`, generated
+    from `contrib.pydantic.MachineConfig` by
+    `scripts/gen_machine_schema.py`; a test regenerates it and fails on
+    drift, and every machine in the test corpus validates against it.
+  - **PyPI metadata:** classifiers `Framework :: FastAPI`,
+    `Framework :: AsyncIO`, `Framework :: Pytest`; keywords `statechart`,
+    `xstate`, `fsm`, `state-machine`, `workflow-engine`, `saga`,
+    `event-driven`, `fastapi`, `persistence`. The sdist now includes
+    `schemas/`, `action.yml` and `.pre-commit-hooks.yaml`.
+
 - **Web framework integrations (Phase C).**
   - **`[starlette]` extra (#275).** `StatechartRegistry` runs named
     machines over any `StateStore` / `AsyncStateStore` with the honest
@@ -451,6 +480,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     **Guarantees** / **Threat model** / Compatibility / Troubleshooting).
   - PR template gains an integrations checklist, including "this PR does
     not tag or publish a release".
+
+### Documentation
+
+- **Integrations journey (#309).** *Integrations* is now the entry point:
+  a Mermaid "pick your path" tree (framework × store × worker model ×
+  events-in) with every leaf linked to an existing page, planned leaves
+  naming their issue; a 15-minute tutorial whose steps run in CI (`xsm
+  validate` / `inspect` / `gt --with-api --with-models --with-tests` → FastAPI on `SQLiteStore` →
+  inbox deduplication → `RedisStore` via `fakeredis`), with the coverage
+  gate (#270) and live inspector (#274) steps labelled as not yet shipped;
+  "what you get / what you don't"; where next. The extras table moved,
+  unchanged, to the new *Integration extras* page.
+- **Stately editor → Python** page: export steps, the `version` key,
+  what `meta` / `description` / `tags` / `x-` keys do today
+  (`meta.publish` and `meta.tools` marked planned), `xsm validate` after
+  export, the VS Code `json.schemas` snippet for `*.machine.json`, and the
+  round trip.
+- *CLI*: "In CI and pre-commit" and "New project" sections; README badge
+  line under Install.
 
 ### Changed
 
