@@ -13,6 +13,8 @@
 #   build    → the distribution actually packages and imports
 #   core-zero-dep → the library imports with every third-party import blocked
 #   contrib  → one cell per optional extra, installing ONLY that extra
+#   all-smoke → the wheel with [all] on Linux/macOS/Windows (#296)
+#   (framework oldest/newest cells live in compat.yml: weekly + on demand)
 #
 # 📌 Third-party actions are pinned to commit SHAs (tag in a trailing
 #    comment) so a moved tag cannot change what runs here (X0.14, #303).
@@ -474,6 +476,49 @@ jobs:
           name: dist
           path: dist/
           retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # 🚬 `[all]` smoke on every OS (#296)
+  # ---------------------------------------------------------------------------
+  all-smoke:
+    name: "[all] wheel smoke (${{ matrix.os }})"
+    if: github.event_name != 'schedule'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: 🏗️ Build the wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: 📦 Install the WHEEL with [all] into a clean venv
+        # 🏛️ The packaged artifact, not the source tree: `smoke` never sees
+        #    ./src, and all_smoke.py runs its checks from an empty temp dir.
+        shell: bash
+        run: |
+          python -m venv smoke
+          if [ -x smoke/Scripts/python.exe ]; then PY=smoke/Scripts/python.exe; else PY=smoke/bin/python; fi
+          echo "SMOKE_PY=$PY" >> "$GITHUB_ENV"
+          WHEEL=$(ls dist/*.whl)
+          "$PY" -m pip install --upgrade pip --quiet
+          # fakeredis / httpx: the [redis] and web Quick starts use them.
+          "$PY" -m pip install "${WHEEL}[all]" "fakeredis[lua]>=2.20" "httpx>=0.24" --quiet
+          "$PY" -m pip list
+
+      - name: 🚬 Core stays clean, every contrib imports, every Quick start runs
+        shell: bash
+        run: '"$SMOKE_PY" scripts/verify/all_smoke.py'
 
   # ---------------------------------------------------------------------------
   # 📏 Integration performance budgets (opt-in; never blocks a pull request)
