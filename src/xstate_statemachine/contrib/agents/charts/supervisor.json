@@ -1,0 +1,68 @@
+{
+  "id": "supervisor",
+  "description": "SUPERVISOR recipe (#290): a planner region and a worker region run in parallel. The planner hands each sub-task to the worker region (sendTo self via raise); the worker region spawns one TOOL_LOOP sub-agent per task with its own budget. done.state aggregates when both regions finish. Example chart only -- not a runtime.",
+  "initial": "running",
+  "actionErrorPolicy": "fail",
+  "context": {
+    "tasks": [],
+    "results": [],
+    "failures": [],
+    "outstanding": 0,
+    "total_usage": {},
+    "usage_by_agent": {},
+    "budget_exceeded": false
+  },
+  "states": {
+    "running": {
+      "type": "parallel",
+      "onDone": { "target": "reporting" },
+      "states": {
+        "planner": {
+          "initial": "planning",
+          "states": {
+            "planning": {
+              "description": "PLAN carries `tasks`; each becomes a HANDOFF.",
+              "on": {
+                "PLAN": {
+                  "target": "delegated",
+                  "actions": ["storePlan", "handOffTasks"]
+                }
+              }
+            },
+            "delegated": { "type": "final" }
+          }
+        },
+        "workers": {
+          "initial": "idle",
+          "meta": { "tools": ["search", "fetch"] },
+          "states": {
+            "idle": {
+              "on": {
+                "HANDOFF": {
+                  "target": "working",
+                  "guard": "handoffAllowed",
+                  "actions": "spawnWorker"
+                }
+              }
+            },
+            "working": {
+              "meta": { "tools": ["search", "fetch"] },
+              "on": {
+                "HANDOFF": {
+                  "guard": "handoffAllowed",
+                  "actions": "spawnWorker"
+                },
+                "AGENT_DONE": { "actions": "collectResult" },
+                "AGENT_FAILED": { "actions": "collectFailure" },
+                "BUDGET_EXCEEDED": { "target": "finished" }
+              },
+              "always": { "guard": "allWorkersReported", "target": "finished" }
+            },
+            "finished": { "type": "final" }
+          }
+        }
+      }
+    },
+    "reporting": { "type": "final" }
+  }
+}

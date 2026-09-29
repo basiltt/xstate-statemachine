@@ -1,0 +1,64 @@
+{
+  "id": "debate",
+  "description": "DEBATE recipe (#290): two debaters in parallel regions, each spawning a TOOL_LOOP sub-agent with its own budget; done.state aggregates both positions, then a judge agent decides. Only the debaters may hand their positions to the judge (handoffAllowed). Example chart only -- not a runtime.",
+  "initial": "arguing",
+  "actionErrorPolicy": "fail",
+  "context": {
+    "task": null,
+    "positions": {},
+    "verdict": null,
+    "total_usage": {},
+    "usage_by_agent": {},
+    "budget_exceeded": false
+  },
+  "states": {
+    "arguing": {
+      "type": "parallel",
+      "onDone": { "target": "judging" },
+      "states": {
+        "pro": {
+          "initial": "thinking",
+          "states": {
+            "thinking": {
+              "entry": "spawnPro",
+              "on": {
+                "AGENT_DONE": {
+                  "guard": "fromPro",
+                  "target": "stated",
+                  "actions": "storePosition"
+                }
+              }
+            },
+            "stated": { "type": "final" }
+          }
+        },
+        "con": {
+          "initial": "thinking",
+          "states": {
+            "thinking": {
+              "entry": "spawnCon",
+              "on": {
+                "AGENT_DONE": {
+                  "guard": "fromCon",
+                  "target": "stated",
+                  "actions": "storePosition"
+                }
+              }
+            },
+            "stated": { "type": "final" }
+          }
+        }
+      }
+    },
+    "judging": {
+      "entry": "spawnJudge",
+      "on": {
+        "HANDOFF": { "guard": "handoffAllowed", "actions": "forwardToJudge" },
+        "AGENT_DONE": { "target": "decided", "actions": "storeVerdict" },
+        "AGENT_FAILED": "undecided"
+      }
+    },
+    "decided": { "type": "final" },
+    "undecided": { "type": "final" }
+  }
+}

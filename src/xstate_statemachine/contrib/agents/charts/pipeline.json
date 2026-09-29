@@ -1,0 +1,56 @@
+{
+  "id": "pipeline",
+  "description": "PIPELINE recipe (#290): researcher -> writer -> reviewer, each stage one TOOL_LOOP sub-agent with its own budget. The review loop back to the writer is bounded by the underRevisionLimit guard. Example chart only -- not a runtime.",
+  "initial": "researching",
+  "actionErrorPolicy": "fail",
+  "context": {
+    "task": null,
+    "research": null,
+    "draft": null,
+    "review": null,
+    "revisions": 0,
+    "max_revisions": 2,
+    "total_usage": {},
+    "usage_by_agent": {},
+    "budget_exceeded": false
+  },
+  "states": {
+    "researching": {
+      "meta": { "tools": ["search"] },
+      "entry": "spawnResearcher",
+      "on": {
+        "AGENT_DONE": { "target": "writing", "actions": "storeResearch" },
+        "AGENT_FAILED": "failed",
+        "BUDGET_EXCEEDED": "failed"
+      }
+    },
+    "writing": {
+      "meta": { "tools": [] },
+      "entry": "spawnWriter",
+      "on": {
+        "AGENT_DONE": { "target": "reviewing", "actions": "storeDraft" },
+        "AGENT_FAILED": "failed",
+        "BUDGET_EXCEEDED": "failed"
+      }
+    },
+    "reviewing": {
+      "meta": { "tools": [] },
+      "entry": "spawnReviewer",
+      "on": {
+        "AGENT_DONE": [
+          { "guard": "approved", "target": "published", "actions": "storeReview" },
+          {
+            "guard": "underRevisionLimit",
+            "target": "writing",
+            "actions": ["storeReview", "countRevision"]
+          },
+          { "target": "failed", "actions": "storeReview" }
+        ],
+        "AGENT_FAILED": "failed",
+        "BUDGET_EXCEEDED": "failed"
+      }
+    },
+    "published": { "type": "final" },
+    "failed": { "type": "final" }
+  }
+}

@@ -46,6 +46,7 @@ from .messages import (  # noqa: E402
     ToolTimeoutError,
     Usage,
 )
+from .multi import BudgetPlugin, handoff_guard, spawn_agent  # noqa: E402
 from .runner import (  # noqa: E402
     WAITING_STATES,
     AgentResult,
@@ -71,6 +72,7 @@ __all__ = [
     "AgentResult",
     "AgentTracePlugin",
     "Budget",
+    "BudgetPlugin",
     "CHARTS_DIR",
     "DEFAULT_MAX_OUTPUT_CHARS",
     "DEFAULT_TOOL_TIMEOUT_S",
@@ -87,9 +89,11 @@ __all__ = [
     "WAITING_STATES",
     "agent_logic",
     "budget_guards",
+    "handoff_guard",
     "load_chart",
     "run_agent",
     "run_agent_sync",
+    "spawn_agent",
     "state_tools",
     "tool",
     "tool_registry",
