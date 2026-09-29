@@ -2303,6 +2303,9 @@ Everything above is importable from the package root (`from xstate_statemachine 
 | `exceptions` | Every exception class | — |
 | `logger` | The package logger, `logging.getLogger("xstate_statemachine")` | — |
 | `cli` | The `xsm` command | — |
+| `persistence` (package) | Stores, locks, inbox, log, migrator, timers — see its own section | `from xstate_statemachine.persistence import …` |
+| `patterns` / `graph` / `actor_logic` / `testing_utils` | Resilience patterns, graph algorithms, actor logic helpers, stub logic — see their sections | — |
+| `contrib.*` | The optional extras (table below) | `from xstate_statemachine.contrib.<extra> import …` |
 
 ---
 
@@ -2534,6 +2537,21 @@ Both engines. Seconds since the Unix epoch, delegated to `clock.wall_now()` when
 
 ---
 
+## `xstate_statemachine.contrib` — the extras **[0.11.0]**
+
+Every integration is an optional extra you install explicitly (`pip install "xstate-statemachine[fastapi]"`). Importing a subpackage without its dependency raises `MissingExtraError` naming the exact `pip install` command. The core never imports any of these. Each has a guide page with **Guarantees** and **Threat model** boxes; the table lists every public name so you can grep for it.
+
+| Extra | Import | Public names | Guide |
+|:--|:--|:--|:--|
+| `[pydantic]` | `xstate_statemachine.contrib.pydantic` | `context_model`, `typed_context`, `TypedContextPlugin`, `ContextValidationError`, `EventModel`, `events_union`, `models_of`, `context_of`, `validate_machine_json`, `machine_json_schema`, `MachineConfig` / `StateConfig` / `TransitionConfig` / `InvokeConfig`, `PydanticCodec` | [Pydantic](../guide/integration-pydantic/) |
+| `[redis]` | `xstate_statemachine.contrib.redis` | `RedisStore`, `AsyncRedisStore`, `RedisInbox`, `RedisLog`, `escape_glob` | [Redis](../guide/integration-redis/) |
+| `[starlette]` | `xstate_statemachine.contrib.starlette` | `StatechartRegistry` (`register`, `act`, `send_event`, `resident`, `lifespan`, `health_route`, `ready_route`), `allow_all`, `receipt_to_status`, `receipt_body`, `ReceiptResponse`, `problem`, `problem_for_exception`, `status_for_exception`, `HTTPProblemError` (+ `BadRequestError`, `ForbiddenError`, `PayloadTooLargeError`, `UnsupportedMediaTypeError`), `idempotency_key_from`, `json_body`, `transition_stream`, `websocket_endpoint`, `mount_inspector` | [Starlette](../guide/integration-starlette/) |
+| `[fastapi]` | `xstate_statemachine.contrib.fastapi` | `StatechartRouter`, `get_interpreter`, `instrument_app`, `compose_lifespan`, `StateModel`, `ReceiptModel`, `Problem`; re-exports `StatechartRegistry`, `allow_all`, `ReceiptResponse`, `receipt_to_status`, `problem`, `problem_for_exception` | [FastAPI](../guide/integration-fastapi/) |
+| `[litestar]` | `xstate_statemachine.contrib.litestar` | `XStatePlugin`, `create_statechart_controller`, `get_interpreter`; re-exports as above | [Litestar](../guide/integration-litestar/) |
+
+The `xsm` CLI grows with them: `xsm gt --with-api --with-models` emits a FastAPI router and Pydantic event models you own ([templates](../guide/cli-templates/)); `xsm new --template fastapi` scaffolds a project from the example app; `xsm paths` lists a path to every reachable configuration ([CLI](../guide/cli/)).
+
+---
 ## Version
 
 ```python
