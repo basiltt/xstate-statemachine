@@ -82,5 +82,296 @@
       "burr": "Wraps any Python function",
       "statelyai_agent": "Drop into any XState app"
     }
-  ]
+  ],
+  "django_fsm": {
+    "name": "django-fsm-2",
+    "url": "https://github.com/django-commons/django-fsm-2",
+    "checked": "django-fsm-2 4.2.4, 2026-09-29",
+    "rows": [
+      {
+        "feature": "Hierarchy (nested states)",
+        "ours": "Yes: compound states at any depth, XState v5 semantics",
+        "theirs": "No: one flat state field per model",
+        "source": "django-fsm-2 4.2.4: `FSMField` holds a single string or integer state; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Parallel regions",
+        "ours": "Yes: `type: parallel` regions with a `done.state` join",
+        "theirs": "No (use several FSM fields on one model)",
+        "source": "django-fsm-2 4.2.4: one `@transition` graph per field; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Timers (`after`)",
+        "ours": "`after` in the chart; persisted as deadlines and fired by `DueTimerScanner` after a restart",
+        "theirs": "No: schedule them yourself (Celery, cron)",
+        "source": "django-fsm-2 4.2.4: no timer API in `django_fsm`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Invoked services",
+        "ours": "`invoke` services with `onDone` / `onError`, retried by `RetryPolicy`",
+        "theirs": "No: call services inside the transition method",
+        "source": "django-fsm-2 4.2.4: `@transition` wraps a model method; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Actors / child machines",
+        "ours": "Spawned child machines (`spawn`, `sendTo`, `sendParent`)",
+        "theirs": "No",
+        "source": "django-fsm-2 4.2.4: no child-machine concept; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Async",
+        "ours": "Two engines: asyncio `Interpreter` and threaded `SyncInterpreter`",
+        "theirs": "Sync only",
+        "source": "django-fsm-2 4.2.4: transitions are plain model methods; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Locking / concurrent writers",
+        "ours": "`OptimisticLock` / `PessimisticLock` on every store; SQLAlchemy `version_id_col` via `StatechartMixin.optimistic()`",
+        "theirs": "`ConcurrentTransitionMixin` raises `ConcurrentTransition` on a stale write",
+        "source": "django-fsm-2 4.2.4: `ConcurrentTransitionMixin` in `django_fsm/__init__.py`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Versioning / migration",
+        "ours": "`machine_version` in every snapshot; `SnapshotMigrator` upgrades old snapshots on load",
+        "theirs": "Plain Django migrations of the state column",
+        "source": "django-fsm-2 4.2.4: state is an ordinary `CharField` / `IntegerField`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Admin / UI",
+        "ours": "No Django admin yet (#282); `xsm inspect` / `flask xsm` CLI and a web inspector for FastAPI",
+        "theirs": "Yes: `fsm_admin` transition buttons in the Django admin",
+        "source": "django-fsm-2 4.2.4: `fsm_admin` package ships with django-fsm-2; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "REST / DRF",
+        "ours": "Statechart routers for FastAPI, Flask, Litestar and Starlette; DRF viewset planned (#283)",
+        "theirs": "DIY: call the transition from a DRF view",
+        "source": "django-fsm-2 4.2.4: no REST helpers in the package; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Audit trail",
+        "ours": "`AuditPlugin` / transition log (SQLite, JSON lines, SQLAlchemy `xsm_transitions`), written with the state change",
+        "theirs": "`pre_transition` / `post_transition` signals; logging via django-fsm-log",
+        "source": "django-fsm-2 4.2.4: `django_fsm.signals`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Visual editor",
+        "ours": "Stately editor: the chart is plain XState JSON",
+        "theirs": "`graph_transitions` management command (Graphviz)",
+        "source": "django-fsm-2 4.2.4: `django_fsm/management/commands/graph_transitions.py`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Typed context",
+        "ours": "`[pydantic]` `context_model` and one model per event, validated on send",
+        "theirs": "The model's own fields are the context",
+        "source": "django-fsm-2 4.2.4: a transition changes one field; data lives on the model; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Persistence",
+        "ours": "Snapshots in SQLite, Redis, SQLAlchemy, files or your own ORM row",
+        "theirs": "The Django model row (native)",
+        "source": "django-fsm-2 4.2.4: the state is a model field; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "XState JSON portability",
+        "ours": "Runs XState / Stately JSON unmodified; shares the chart with a TypeScript frontend",
+        "theirs": "No: transitions are Python decorators",
+        "source": "django-fsm-2 4.2.4: no import / export format; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      }
+    ]
+  },
+  "transitions": {
+    "name": "transitions",
+    "url": "https://github.com/pytransitions/transitions",
+    "checked": "transitions 0.9.3, 2026-09-29",
+    "rows": [
+      {
+        "feature": "Hierarchy (nested states)",
+        "ours": "Yes: compound states at any depth, XState v5 semantics",
+        "theirs": "Yes, via the `HierarchicalMachine` extension",
+        "source": "transitions 0.9.3: `transitions.extensions.HierarchicalMachine`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Parallel regions",
+        "ours": "Yes: `type: parallel` regions with a `done.state` join",
+        "theirs": "Yes, parallel states in `HierarchicalMachine`",
+        "source": "transitions 0.9.3: `transitions.extensions.nesting`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Timers (`after`)",
+        "ours": "`after` in the chart; persisted as deadlines and fired by `DueTimerScanner` after a restart",
+        "theirs": "`Timeout` state extension (a thread per timed state; in memory only)",
+        "source": "transitions 0.9.3: `transitions.extensions.states.Timeout`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Invoked services",
+        "ours": "`invoke` services with `onDone` / `onError`, retried by `RetryPolicy`",
+        "theirs": "DIY in callbacks",
+        "source": "transitions 0.9.3: no invoke / `onDone` concept; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Actors / child machines",
+        "ours": "Spawned child machines (`spawn`, `sendTo`, `sendParent`)",
+        "theirs": "No",
+        "source": "transitions 0.9.3: no child-machine concept; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Async",
+        "ours": "Two engines: asyncio `Interpreter` and threaded `SyncInterpreter`",
+        "theirs": "Yes: `AsyncMachine`",
+        "source": "transitions 0.9.3: `transitions.extensions.AsyncMachine`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Locking / concurrent writers",
+        "ours": "`OptimisticLock` / `PessimisticLock` on every store; SQLAlchemy `version_id_col` via `StatechartMixin.optimistic()`",
+        "theirs": "`LockedMachine`: an in-process `RLock`; nothing across processes",
+        "source": "transitions 0.9.3: `transitions.extensions.LockedMachine`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Versioning / migration",
+        "ours": "`machine_version` in every snapshot; `SnapshotMigrator` upgrades old snapshots on load",
+        "theirs": "DIY",
+        "source": "transitions 0.9.3: no snapshot format to version; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Admin / UI",
+        "ours": "No Django admin yet (#282); `xsm inspect` / `flask xsm` CLI and a web inspector for FastAPI",
+        "theirs": "No",
+        "source": "transitions 0.9.3: no web or admin integration; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "REST / DRF",
+        "ours": "Statechart routers for FastAPI, Flask, Litestar and Starlette; DRF viewset planned (#283)",
+        "theirs": "No",
+        "source": "transitions 0.9.3: no web integration; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Audit trail",
+        "ours": "`AuditPlugin` / transition log (SQLite, JSON lines, SQLAlchemy `xsm_transitions`), written with the state change",
+        "theirs": "DIY with `after_state_change` callbacks",
+        "source": "transitions 0.9.3: callback hooks on `Machine`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Visual editor",
+        "ours": "Stately editor: the chart is plain XState JSON",
+        "theirs": "`GraphMachine` diagrams (Graphviz or Mermaid); no editor",
+        "source": "transitions 0.9.3: `transitions.extensions.diagrams`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Typed context",
+        "ours": "`[pydantic]` `context_model` and one model per event, validated on send",
+        "theirs": "The model object's attributes (no validation)",
+        "source": "transitions 0.9.3: state is attached to any Python object; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Persistence",
+        "ours": "Snapshots in SQLite, Redis, SQLAlchemy, files or your own ORM row",
+        "theirs": "DIY: pickle the model or store `state`",
+        "source": "transitions 0.9.3: `MarkupMachine` can dump the definition, not a runtime snapshot; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "XState JSON portability",
+        "ours": "Runs XState / Stately JSON unmodified; shares the chart with a TypeScript frontend",
+        "theirs": "No (`MarkupMachine` has its own dict format)",
+        "source": "transitions 0.9.3: `transitions.extensions.markup.MarkupMachine`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      }
+    ]
+  },
+  "python_statemachine": {
+    "name": "python-statemachine",
+    "url": "https://github.com/fgmacedo/python-statemachine",
+    "checked": "python-statemachine 3.2.1, 2026-09-29",
+    "rows": [
+      {
+        "feature": "Hierarchy (nested states)",
+        "ours": "Yes: compound states at any depth, XState v5 semantics",
+        "theirs": "Yes: `State.Compound` in `StateChart`",
+        "source": "python-statemachine 3.2.1: `statemachine.State.Compound`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Parallel regions",
+        "ours": "Yes: `type: parallel` regions with a `done.state` join",
+        "theirs": "Yes: `State.Parallel`",
+        "source": "python-statemachine 3.2.1: `statemachine.State.Parallel`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Timers (`after`)",
+        "ours": "`after` in the chart; persisted as deadlines and fired by `DueTimerScanner` after a restart",
+        "theirs": "`send(..., delay=)` and `contrib.timeout` (in memory only)",
+        "source": "python-statemachine 3.2.1: `StateMachine.send(delay=)`, `statemachine.contrib.timeout`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Invoked services",
+        "ours": "`invoke` services with `onDone` / `onError`, retried by `RetryPolicy`",
+        "theirs": "Yes: `invoke=` on a state, cancelled on exit",
+        "source": "python-statemachine 3.2.1: `statemachine.invoke`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Actors / child machines",
+        "ours": "Spawned child machines (`spawn`, `sendTo`, `sendParent`)",
+        "theirs": "Child machines can be invoked; no spawn / actor system",
+        "source": "python-statemachine 3.2.1: `statemachine.invoke` accepts a `StateChart` class; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Async",
+        "ours": "Two engines: asyncio `Interpreter` and threaded `SyncInterpreter`",
+        "theirs": "Yes: async callbacks run on an async engine",
+        "source": "python-statemachine 3.2.1: `statemachine.engines`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Locking / concurrent writers",
+        "ours": "`OptimisticLock` / `PessimisticLock` on every store; SQLAlchemy `version_id_col` via `StatechartMixin.optimistic()`",
+        "theirs": "DIY",
+        "source": "python-statemachine 3.2.1: no store, so no cross-process locking; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Versioning / migration",
+        "ours": "`machine_version` in every snapshot; `SnapshotMigrator` upgrades old snapshots on load",
+        "theirs": "DIY",
+        "source": "python-statemachine 3.2.1: no snapshot format to version; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Admin / UI",
+        "ours": "No Django admin yet (#282); `xsm inspect` / `flask xsm` CLI and a web inspector for FastAPI",
+        "theirs": "No",
+        "source": "python-statemachine 3.2.1: a Django `MachineMixin`, but no admin integration; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "REST / DRF",
+        "ours": "Statechart routers for FastAPI, Flask, Litestar and Starlette; DRF viewset planned (#283)",
+        "theirs": "No",
+        "source": "python-statemachine 3.2.1: no web integration; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Audit trail",
+        "ours": "`AuditPlugin` / transition log (SQLite, JSON lines, SQLAlchemy `xsm_transitions`), written with the state change",
+        "theirs": "DIY with listeners",
+        "source": "python-statemachine 3.2.1: observer / listener callbacks; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Visual editor",
+        "ours": "Stately editor: the chart is plain XState JSON",
+        "theirs": "Diagrams (Graphviz) and a Sphinx extension; no editor",
+        "source": "python-statemachine 3.2.1: `statemachine.contrib.diagram`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Typed context",
+        "ours": "`[pydantic]` `context_model` and one model per event, validated on send",
+        "theirs": "The machine or model's attributes; strong IDE typing of states and events",
+        "source": "python-statemachine 3.2.1: declarative class API; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "Persistence",
+        "ours": "Snapshots in SQLite, Redis, SQLAlchemy, files or your own ORM row",
+        "theirs": "`MachineMixin` stores the state on a model field",
+        "source": "python-statemachine 3.2.1: `statemachine.mixins.MachineMixin`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      },
+      {
+        "feature": "XState JSON portability",
+        "ours": "Runs XState / Stately JSON unmodified; shares the chart with a TypeScript frontend",
+        "theirs": "Reads its own JSON / YAML / SCXML documents, not XState JSON",
+        "source": "python-statemachine 3.2.1: `statemachine.io` (json, yaml, scxml); ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+      }
+    ]
+  }
 }

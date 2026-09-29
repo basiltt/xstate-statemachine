@@ -1,0 +1,37 @@
+{
+  "id": "order",
+  "version": "1",
+  "initial": "cart",
+  "context": {
+    "items": 0,
+    "total_cents": 0,
+    "charge_id": null
+  },
+  "states": {
+    "cart": {
+      "description": "Collecting items.",
+      "on": {
+        "ADD_ITEM": { "actions": "addItem" },
+        "CHECKOUT": { "target": "awaitingPayment", "guard": "hasItems" },
+        "CANCEL": "cancelled"
+      }
+    },
+    "awaitingPayment": {
+      "description": "Checked out; the customer has 15 minutes to pay.",
+      "after": {
+        "900000": { "target": "expired" }
+      },
+      "on": {
+        "PAY": { "target": "paid", "actions": "recordCharge" },
+        "CANCEL": "cancelled"
+      }
+    },
+    "paid": {
+      "description": "Charged; waiting for the warehouse.",
+      "on": { "SHIP": "shipped" }
+    },
+    "shipped": { "type": "final" },
+    "expired": { "type": "final" },
+    "cancelled": { "type": "final" }
+  }
+}

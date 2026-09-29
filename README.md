@@ -47,7 +47,7 @@ and your Python backend. Async **and** sync interpreters. Zero dependencies.
 | 🔍 | [**Introspection**](#-introspection--plugins) · [**Pure API**](#-the-pure-api--no-interpreter) | Observe and test |
 | 🐍 | [**Pythonic API**](#-prefer-pure-python-three-more-ways-to-define-a-machine) | No JSON required |
 | 🛠️ | [**CLI Tool**](#️-cli-tool) | Generate, inspect, simulate, diagram — zero deps |
-| 📚 | [**Cookbook**](#-cookbook) · [**FAQ**](#-faq) | Copy-paste recipes |
+| 📚 | [**Cookbook**](#-cookbook) · [**FAQ**](#-faq) · [**Comparisons**](#️-how-it-compares) | Copy-paste recipes; [vs transitions](https://basiltt.github.io/xstate-statemachine/guide/vs-transitions/), [python-statemachine](https://basiltt.github.io/xstate-statemachine/guide/vs-python-statemachine/), [django-fsm](https://basiltt.github.io/xstate-statemachine/guide/vs-django-fsm/) |
 | 🏭 | [**Production**](#-running-it-in-production) · [**API Reference**](#-api-reference) · [**Troubleshooting**](#-troubleshooting) | Failure semantics, every kwarg, every error |
 
 ---
