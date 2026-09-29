@@ -21,11 +21,13 @@ from src.xstate_statemachine.contrib.testing.pytest_plugin import (
     normalize_snapshot,
     render_snapshot,
 )
-from tests.contrib.conftest import requires_extra
 
 from .conftest import CORPUS, PLUGIN, PLUGIN_ARGS, run
 
-pytestmark = requires_extra("testing")
+# 📝 No `requires_extra("testing")` gate: the plugin needs only pytest (always
+#    present here) and ships through an unconditional entry point, so every
+#    matrix cell must run this suite -- hypothesis is not a precondition.
+# 🧷 The async-run test has its own `pytest-asyncio` skip below.
 
 HAS_ASYNCIO_PLUGIN = importlib.util.find_spec("pytest_asyncio") is not None
 
@@ -128,6 +130,27 @@ class TestSources:
                 """))
         run(xsm_pytester).assert_outcomes(passed=1)
 
+    def test_strict_on_a_machine_node_is_refused_not_mutated(
+        self, xsm_pytester
+    ) -> None:
+        xsm_pytester.makepyfile(_module("""
+                from xstate_statemachine import create_machine
+                from xstate_statemachine.testing_utils import stub_logic
+
+                MACHINE = create_machine(CFG, logic=stub_logic(CFG))
+                BEFORE = MACHINE.strict
+
+                @pytest.mark.xstate_machine(MACHINE, strict=not BEFORE)
+                def test_refused(xsm_machine):
+                    pass
+
+                def test_node_untouched():
+                    assert MACHINE.strict == BEFORE
+                """))
+        result = run(xsm_pytester)
+        result.assert_outcomes(passed=1, errors=1)
+        result.stdout.fnmatch_lines(["*UsageError*MachineNode*strict=*"])
+
     def test_missing_json_file_is_a_usage_error(self, xsm_pytester) -> None:
         xsm_pytester.makepyfile(_module("""
                 @pytest.mark.xstate_machine("nope/missing.json")
@@ -193,6 +216,7 @@ class TestLogic:
             ("mylogic:missing", "has no 'missing'"),
             ("mylogic:NOT_CALLABLE", "is not callable"),
             ("mylogic:wrong_type", "must return a MachineLogic"),
+            ("mylogic:boom", "logic='mylogic:boom': the factory raised*Kaput"),
             ("mylogic", "dotted 'package.module:callable'"),
         ],
     )
@@ -204,6 +228,8 @@ class TestLogic:
             NOT_CALLABLE = 1
             def wrong_type():
                 return {"actions": {}}
+            def boom():
+                raise RuntimeError("Kaput")
             """,
             test_bad=_module(f"""
                 @pytest.mark.xstate_machine(CFG, logic={dotted!r})
@@ -294,6 +320,11 @@ class TestLogic:
             ("xstate_machine(CFG, bogus=1)", "unknown keyword"),
             ("xstate_machine(42)", "must be a JSON path"),
             ("xstate_machine(CFG, logic=':x')", "dotted"),
+            ("xstate_machine(CFG, strict='false')", "strict= must be True"),
+            (
+                "xstate_machine(CFG, strict_config=1)",
+                "strict_config= must be True",
+            ),
         ],
     )
     def test_malformed_machine_marker(
@@ -333,8 +364,15 @@ class TestClockAndHelpers:
                 def test_bad_step_type(xsm_interp, xsm_send_all):
                     with pytest.raises(TypeError, match="event names or"):
                         xsm_send_all(xsm_interp, None)
+
+                @pytest.mark.xstate_machine(CFG)
+                def test_big_whole_numbers_are_not_exponent_formatted(
+                    xsm_interp, xsm_clock, xsm_send_all
+                ):
+                    xsm_send_all(xsm_interp, 1_000_000, 2.5, 1e6)
+                    assert xsm_clock.now() * 1000 == pytest.approx(2_000_002.5)
                 """))
-        run(xsm_pytester).assert_outcomes(passed=3)
+        run(xsm_pytester).assert_outcomes(passed=4)
 
     def test_store_is_a_fresh_memory_store(self, xsm_pytester) -> None:
         xsm_pytester.makepyfile(_module("""
@@ -398,16 +436,11 @@ class TestAsyncEngine:
         run(xsm_pytester).assert_outcomes(passed=2)
 
     def test_ainterp_skips_with_a_message_without_pytest_asyncio(
-        self, xsm_pytester, monkeypatch
+        self, xsm_pytester
     ) -> None:
-        # 📝 The plugin probes for the runner when the fixture is REQUESTED,
-        #    so patching the probe on the loaded module is visible to the
-        #    in-process inner session. (Blocking `sys.modules` would also
-        #    break pytest's own assertion-rewrite hook for the plugin.)
-        import importlib
-
-        plugin = importlib.import_module(PLUGIN)
-        monkeypatch.setattr(plugin, "_pytest_asyncio_available", lambda: False)
+        # 📝 Decided from the plugin manager at request time: with the
+        #    runner disabled (`-p no:asyncio`) the fixture SKIPS even though
+        #    the package is installed -- it must not fail.
         xsm_pytester.makepyfile(_module("""
                 @pytest.mark.xstate_machine(CFG)
                 def test_it(xsm_ainterp):
@@ -420,6 +453,21 @@ class TestAsyncEngine:
         result.stdout.fnmatch_lines(
             ["*SKIP*xsm_ainterp needs pytest-asyncio*pip install*"]
         )
+
+    @pytest.mark.skipif(
+        not HAS_ASYNCIO_PLUGIN, reason="pytest-asyncio not installed"
+    )
+    def test_async_fixture_module_is_not_imported_under_no_asyncio(
+        self, xsm_pytester
+    ) -> None:
+        xsm_pytester.makepyfile(_module("""
+                def test_it(request):
+                    pm = request.config.pluginmanager
+                    assert not pm.hasplugin("xstate_statemachine_async_fixtures")
+                """))
+        xsm_pytester.runpytest_subprocess(
+            *PLUGIN_ARGS, "-p", "no:asyncio", "-q"
+        ).assert_outcomes(passed=1)
 
 
 # =============================================================================
@@ -608,8 +656,6 @@ class TestPlumbing:
             elif isinstance(node, ast.ImportFrom) and node.level == 0:
                 roots.add((node.module or "").split(".")[0])
         stdlib = {"difflib", "importlib", "json", "pathlib", "typing", "sys"}
-        assert roots - stdlib - {"__future__"} == {"pytest", "pytest_asyncio"}
-        # pytest_asyncio is imported only inside `if _pytest_asyncio_available()`
-        assert (
-            "if _pytest_asyncio_available():\n    import pytest_asyncio" in src
-        )
+        # 📝 pytest-asyncio lives in `_async_fixtures`, registered from
+        #    `pytest_configure` only when the asyncio plugin is active.
+        assert roots - stdlib - {"__future__"} == {"pytest"}

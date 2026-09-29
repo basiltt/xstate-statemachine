@@ -74,6 +74,9 @@ PLUGIN_NAME = "xstate_statemachine"
 MARKER = "xstate_machine"
 GUARDS_MARKER = "xstate_guards_false"
 UPDATE_OPTION = "--xsm-update-snapshots"
+#: pytest-asyncio's registered plugin name (``-p no:asyncio`` removes it).
+_ASYNCIO_PLUGIN = "asyncio"
+_ASYNC_FIXTURES_PLUGIN = "xstate_statemachine_async_fixtures"
 
 #: 📸 What a snapshot file records. Everything else in `get_snapshot()` --
 #: `taken_at`, `machine_hash`, `version`, `deadlines` wall times, pending
@@ -216,6 +219,16 @@ def parse_marker(item: Any) -> Optional[MachineSpec]:
                 f"return False instead, or drop logic= to use stubs.",
             )
         guards_false = tuple(guards_marker.args)
+    for flag in ("strict_config", "strict"):
+        # 🛑 `strict="false"` is truthy; only a real bool (or None) is
+        #    unambiguous.
+        value = marker.kwargs.get(flag)
+        if value is not None and not isinstance(value, bool):
+            raise _usage_error(
+                item,
+                f"@pytest.mark.{MARKER}: {flag}= must be True, False or "
+                f"None, got {value!r}",
+            )
     return MachineSpec(
         source,
         logic=logic,
@@ -279,7 +292,7 @@ def _load_logic(item: Any, dotted: str) -> MachineLogic:
             )
     if not callable(factory):
         raise _usage_error(item, f"logic={dotted!r}: {attr!r} is not callable")
-    logic = factory()
+    logic = _call_logic_factory(item, dotted, factory)
     if not isinstance(logic, MachineLogic):
         raise _usage_error(
             item,
@@ -287,6 +300,18 @@ def _load_logic(item: Any, dotted: str) -> MachineLogic:
             f"{type(logic).__name__}",
         )
     return logic
+
+
+def _call_logic_factory(item: Any, dotted: str, factory: Any) -> Any:
+    """Call the ``logic=`` factory; a raising factory is a usage error."""
+    try:
+        return factory()
+    except Exception as exc:  # noqa: BLE001 -- surface as a usage error
+        raise _usage_error(
+            item,
+            f"logic={dotted!r}: the factory raised "
+            f"{type(exc).__name__}: {exc}",
+        ) from exc
 
 
 class _Built:
@@ -311,11 +336,17 @@ def _build(item: Any, spec: MachineSpec) -> _Built:
     ran: List[str] = []
     guards: Dict[str, bool] = {name: False for name in spec.guards_false}
     if isinstance(spec.source, MachineNode):
-        if spec.logic is not None or spec.strict_config is not None:
+        if (
+            spec.logic is not None
+            or spec.strict_config is not None
+            or spec.strict is not None
+        ):
+            # 🛑 Never mutate the caller's node: a module-level MachineNode
+            #    would leak `strict` into every later test.
             raise _usage_error(
                 item,
-                "a MachineNode source is already built; logic= and "
-                "strict_config= cannot be applied to it",
+                "a MachineNode source is already built; logic=, "
+                "strict_config= and strict= cannot be applied to it",
             )
         if spec.guards_false:
             raise _usage_error(
@@ -324,8 +355,6 @@ def _build(item: Any, spec: MachineSpec) -> _Built:
                 f"already-built MachineNode; pass the config dict or JSON "
                 f"path instead",
             )
-        if spec.strict is not None:
-            spec.source.strict = bool(spec.strict)
         return _Built(spec.source, ran, guards, stubbed=False)
 
     if isinstance(spec.source, Mapping):
@@ -457,12 +486,21 @@ def pytest_configure(config: Any) -> None:
         f"{GUARDS_MARKER}(*names): with stub logic, make the named guards "
         "return False (others stay True); flip them live via xsm_guards.",
     )
+    # 🔌 The async fixture needs `pytest_asyncio.fixture`, so its module is
+    #    imported only when the pytest-asyncio plugin is ACTIVE in this
+    #    session -- never at plugin load, never under `-p no:asyncio`.
+    if _pytest_asyncio_active(config) and not config.pluginmanager.hasplugin(
+        _ASYNC_FIXTURES_PLUGIN
+    ):
+        from . import _async_fixtures
+
+        config.pluginmanager.register(_async_fixtures, _ASYNC_FIXTURES_PLUGIN)
 
 
 # -----------------------------------------------------------------------------
 # 🧪 Fixtures
 # -----------------------------------------------------------------------------
-def _spec_or_skip(request: Any) -> MachineSpec:
+def _spec_or_fail(request: Any) -> MachineSpec:
     spec = parse_marker(request.node)
     if spec is not None:
         return spec
@@ -487,7 +525,7 @@ def _spec_or_skip(request: Any) -> MachineSpec:
 @pytest.fixture
 def _xsm_built(request: Any) -> _Built:
     """Internal: the machine built from the marker, once per test."""
-    return _build(request.node, _spec_or_skip(request))
+    return _build(request.node, _spec_or_fail(request))
 
 
 @pytest.fixture
@@ -500,8 +538,8 @@ def xsm_machine(_xsm_built: _Built) -> MachineNode:
 def xsm_ran(_xsm_built: _Built) -> List[str]:
     """Names of the stub actions that ran, in order.
 
-    Empty (and never appended to) when the marker passes ``logic=`` --
-    real actions do not report here.
+    Empty (and never appended to) when the marker passes ``logic=`` or a
+    built `MachineNode` source -- real actions do not report here.
     """
     return _xsm_built.ran
 
@@ -509,8 +547,8 @@ def xsm_ran(_xsm_built: _Built) -> List[str]:
 @pytest.fixture
 def xsm_guards(_xsm_built: _Built) -> Dict[str, bool]:
     """The live stub-guard table (``name -> bool``); unlisted guards are
-    ``True``. Mutate it between sends to flip a guard. Empty with real
-    logic."""
+    ``True``. Mutate it between sends to flip a guard. Empty (and inert)
+    with ``logic=`` or a built `MachineNode` source."""
     return _xsm_built.guards
 
 
@@ -532,15 +570,10 @@ def xsm_interp(xsm_machine: MachineNode, xsm_clock: SimulatedClock) -> Any:
         interp.stop()
 
 
-def _pytest_asyncio_available() -> bool:
-    # 📝 Decided per request (not at import), so an environment without
-    #    the runner gets the skip -- and a test can simulate one.
-    try:
-        import importlib.util
-
-        return importlib.util.find_spec("pytest_asyncio") is not None
-    except (ImportError, ValueError):
-        return False
+def _pytest_asyncio_active(config: Any) -> bool:
+    # 📝 Ask the plugin manager, per session: the runner must be *active*,
+    #    not merely installed, so `-p no:asyncio` gives a clean skip.
+    return bool(config.pluginmanager.hasplugin(_ASYNCIO_PLUGIN))
 
 
 async def _start_async(machine: MachineNode, clock: SimulatedClock) -> Any:
@@ -564,28 +597,13 @@ def xsm_ainterp(request: Any) -> Any:
     """
     # 📝 Touch the marker first so a mis-marked test still gets the
     #    marker error rather than an unrelated skip.
-    _spec_or_skip(request)
-    if not _pytest_asyncio_available():
+    _spec_or_fail(request)
+    if not _pytest_asyncio_active(request.config):
         pytest.skip(
             "xsm_ainterp needs pytest-asyncio: pip install pytest-asyncio "
             "and mark the test @pytest.mark.asyncio"
         )
     return request.getfixturevalue("_xsm_ainterp_async")
-
-
-if _pytest_asyncio_available():
-    import pytest_asyncio
-
-    @pytest_asyncio.fixture
-    async def _xsm_ainterp_async(
-        xsm_machine: MachineNode, xsm_clock: SimulatedClock
-    ) -> Any:
-        """Internal: the async engine behind ``xsm_ainterp``."""
-        interp = await _start_async(xsm_machine, xsm_clock)
-        try:
-            yield interp
-        finally:
-            await _stop_async(interp)
 
 
 @pytest.fixture
@@ -603,7 +621,11 @@ def _steps(args: Tuple[Any, ...]) -> List[Dict[str, Any]]:
     tokens = []
     for arg in args:
         if isinstance(arg, (int, float)) and not isinstance(arg, bool):
-            tokens.append(f"+{arg:g}")
+            # 📝 `f"{1_000_000:g}"` is "1e+06", which the grammar rejects.
+            if float(arg).is_integer():
+                tokens.append(f"+{int(arg)}")
+            else:
+                tokens.append(f"+{arg}")
         elif isinstance(arg, str):
             tokens.append(arg)
         else:
