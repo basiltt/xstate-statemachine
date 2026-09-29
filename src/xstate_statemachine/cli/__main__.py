@@ -1156,6 +1156,12 @@ def _dispatch() -> None:
         run_info(as_json=bool(getattr(args, "json", False)))
         return
 
+    if args.subcommand == "plugins":
+        from .commands.plugins import run_plugins
+
+        run_plugins(as_json=bool(getattr(args, "json", False)))
+        return
+
     if args.subcommand == "update":
         from .commands.update import run_update
 

@@ -278,7 +278,7 @@ examples:
   xsm validate machine.json
   xsm list-templates
   xsm info
-  xsm update                            upgrade to the latest release
+  xsm plugins                           list installed third-party plugins  xsm update                            upgrade to the latest release
   python -m xstate_statemachine setup   Windows: fix a blocked xsm.exe launcher
             """,
     )
@@ -419,6 +419,23 @@ examples:
         description="Displays information about the xstate-statemachine installation.",
     )
     info_parser.add_argument(
+        "--json", action="store_true", help="Emit as JSON."
+    )
+
+    # 🔎 plugins subcommand (#296) -- explicit entry-point discovery
+    plugins_parser = subparsers.add_parser(
+        "plugins",
+        parents=[presentation],
+        help="List installed third-party plugins, stores and brokers.",
+        description=(
+            "Loads the entry points declared under the "
+            "xstate_statemachine.plugins / .stores / .brokers groups and "
+            "lists name, distribution, version, group and the PluginBase "
+            "hooks each implements. Listing imports them; set "
+            "XSM_DISABLE_PLUGIN_DISCOVERY=1 to disable."
+        ),
+    )
+    plugins_parser.add_argument(
         "--json", action="store_true", help="Emit as JSON."
     )
 

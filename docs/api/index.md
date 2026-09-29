@@ -2036,6 +2036,30 @@ Process-wide plugins (#305). Attached — with the same `_SafePlugin` containmen
 | `global_plugins()` | `() -> List[Any]` | A copy of the registry in registration order. |
 | `plugins.clear_global_plugins()` | `() -> None` | Empty the registry (test teardown). Not exported at top level. |
 
+### Entry-point discovery **[1.0]**
+
+Third-party plugins declared under the `xstate_statemachine.plugins` / `.stores` / `.brokers` entry-point groups (#296). **Never implicit**: nothing loads until you call one of these. See [Third-party plugins: discovery](../guide/plugins/#third-party-plugins-discovery).
+
+| Name (`xstate_statemachine.plugins`) | Signature | Description |
+|----------|-----------|-------------|
+| `discover(*, group=PLUGINS_GROUP, allow=None, strict=False)` | `-> List[DiscoveredPlugin]` | Load the entry points in *group*. `allow` names entry points or distributions (others are not imported); a raising loader is logged and skipped unless `strict`. `[]` under `XSM_DISABLE_PLUGIN_DISCOVERY=1`. |
+| `attach_discovered(interpreter, *, allow=None, strict=False)` | `-> List[Any]` | Discover `PLUGINS_GROUP`, construct each plugin (no arguments), and `.use()` it. Returns the instances. `instrument_all(discovered=True)` in `[observability]` calls this. |
+| `DiscoveredPlugin` | `NamedTuple(name, distribution, version, obj, hooks, group)` | One loaded entry point. `hooks` lists the `PluginBase` hooks the class overrides. |
+| `PLUGINS_GROUP` / `STORES_GROUP` / `BROKERS_GROUP` | `str` | `"xstate_statemachine.plugins"` / `".stores"` / `".brokers"`. Stores and brokers are discovered, never instantiated. |
+
+CLI: `xsm plugins [--json] [--plain]` lists name, distribution, version, group and hooks.
+
+### Deprecations **[1.0]**
+
+`xstate_statemachine.deprecations`: see the [deprecation policy](../guide/deprecation-policy/).
+
+| Name | Signature | Description |
+|------|-----------|-------------|
+| `deprecated(what, *, since, removal, alternative, detail=None, stacklevel=2)` | `-> bool` | Emit a `DeprecationWarning` **once per call site** (keyed by `what` + caller file + line). Returns whether it warned. |
+| `deprecations()` | `-> List[Deprecation]` | Every registered deprecation (`what`, `since`, `removal`, `alternative`). |
+| `register(what, *, since, removal, alternative)` | `-> Deprecation` | Record without warning. |
+| `reset_deprecation_warnings()` | `-> None` | Forget which call sites warned (tests). |
+| `Deprecation` | `NamedTuple` | A registry row. |
 ### `PluginBase`
 
 ```python
@@ -2295,7 +2319,9 @@ Everything above is importable from the package root (`from xstate_statemachine 
 | `validation` | Build-time checks | `KNOWN_ROOT_KEYS`, `KNOWN_STATE_KEYS`, `KNOWN_TRANSITION_KEYS`, `KNOWN_INVOKE_KEYS` — the per-level known-key sets (#220) |
 | `actions` | The builtin action creators, `BUILTIN_ACTION_ALIASES`, `BUILTIN_ACTION_PARAM_SPEC` | — |
 | `clock` | `Clock`, `RealClock`, `SimulatedClock` | — |
-| `plugins` | `PluginBase`, `LoggingInspector`, `DEFAULT_REDACT_KEYS`, `redact()` | — |
+| `plugins` | `PluginBase`, `LoggingInspector`, `DEFAULT_REDACT_KEYS`, `redact()`, entry-point `discover()` / `attach_discovered()` | `discover`, `attach_discovered`, `DiscoveredPlugin` |
+| `plugin_discovery` | The implementation behind `plugins.discover` (3.9 shim, `XSM_DISABLE_PLUGIN_DISCOVERY`) | — |
+| `deprecations` | `deprecated()`, the `deprecations()` registry | Policy tooling |
 | `helpers` | The pure API (`PureSnapshot`, `initial_transition`, `pure_transition`, `get_*_snapshot`) and the waiting helpers | — |
 | `pythonic` | `State`, `StateMachine`, `MachineBuilder`, `Transition`, `build_machine` | — |
 | `resolver` | Transition-target resolution (`#id`, `.child`, sibling fallback + its `DeprecationWarning`) | — |

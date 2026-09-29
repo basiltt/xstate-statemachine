@@ -22,6 +22,9 @@ Read this before deploying anything that persists state or accepts events from o
 
 `xstate_statemachine` executes the **actions, guards and services you register** — they are your code, with your process's privileges. Extras under `contrib/` import third-party libraries you chose to install. There is no sandbox: a malicious package in your environment can do anything your process can. Nothing in this library discovers or loads plugins implicitly; `contrib` subpackages are imported only when you import them, and the core import path is verified in CI to touch no third-party module.
 
+### Third-party plugins (entry-point discovery)
+
+A package can declare a plugin, store or broker under the `xstate_statemachine.plugins` / `.stores` / `.brokers` entry-point groups. **A discovered plugin runs in-process with full privileges.** It sees every event, the context and the interpreter, and it can do anything your process can. The library therefore never discovers implicitly. Nothing is loaded on import or when an interpreter is constructed. Loading happens only when your code calls `xstate_statemachine.plugins.discover()` / `attach_discovered()` or when you run `xsm plugins`, and listing imports the entry points too. Restrict what loads with `allow=[...]` (entry-point or distribution names; anything not allowed is never imported). Disable discovery for the whole process with `XSM_DISABLE_PLUGIN_DISCOVERY=1`. A loader that raises is logged and skipped rather than crashing the service, unless `strict=True`. Vet a plugin distribution the way you would vet any dependency you `import`.
 ### The machine definition is trusted; events and snapshots are not
 
 - **Machine JSON** is configuration you author. It is validated for shape (`create_machine`, `xsm validate`, and the `[pydantic]` extra's `validate_machine_json`), never executed. Unknown keys are refused under `strictConfig`.

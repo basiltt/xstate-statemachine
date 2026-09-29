@@ -1,0 +1,26 @@
+# Test fixture (#296): a minimal third-party xstate-statemachine plugin.
+# `pip install -e tests/fixtures/xsm_thirdparty_plugin` makes
+# `xstate_statemachine.plugins.discover()` and `xsm plugins` see it. The test
+# suite does not pip-install it (slow, network-free CI) -- it writes an
+# equivalent `.dist-info` built from THIS file, so the declaration below is
+# the single source of truth.
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xsm-thirdparty-plugin"
+version = "1.2.3"
+description = "Test fixture: a third-party xstate-statemachine plugin."
+requires-python = ">=3.9"
+dependencies = []
+
+[project.entry-points."xstate_statemachine.plugins"]
+thirdparty_audit = "xsm_thirdparty_plugin:AuditPlugin"
+thirdparty_broken = "xsm_thirdparty_plugin.broken:BrokenPlugin"
+
+[project.entry-points."xstate_statemachine.stores"]
+thirdparty_memory = "xsm_thirdparty_plugin:MemoryStore"
+
+[tool.setuptools]
+packages = ["xsm_thirdparty_plugin"]
