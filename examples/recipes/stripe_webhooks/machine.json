@@ -1,0 +1,34 @@
+{
+  "id": "subscription",
+  "description": "Stripe subscription lifecycle, driven by verified webhook events.",
+  "initial": "incomplete",
+  "context": { "failures": 0, "last_invoice": null },
+  "states": {
+    "incomplete": {
+      "description": "Created; the first invoice is not paid yet.",
+      "on": {
+        "PAYMENT_SUCCEEDED": { "target": "active", "actions": "recordPayment" },
+        "CANCELED": { "target": "canceled" }
+      }
+    },
+    "active": {
+      "tags": ["billable"],
+      "on": {
+        "PAYMENT_FAILED": { "target": "past_due", "actions": "recordFailure" },
+        "CANCELED": { "target": "canceled" }
+      }
+    },
+    "past_due": {
+      "tags": ["billable", "dunning"],
+      "on": {
+        "PAYMENT_SUCCEEDED": { "target": "active", "actions": "recordPayment" },
+        "PAYMENT_FAILED": { "actions": "recordFailure" },
+        "CANCELED": { "target": "canceled" }
+      }
+    },
+    "canceled": {
+      "description": "Terminal for billing. Not `type: final` on purpose: late webhooks for a canceled subscription are answered 200 and ignored, not refused.",
+      "tags": ["terminal"]
+    }
+  }
+}

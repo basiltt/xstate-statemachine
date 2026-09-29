@@ -1,0 +1,1 @@
+{"id": "evt_1PaidA", "object": "event", "type": "invoice.paid", "created": 1735689600, "livemode": false, "data": {"object": {"id": "in_1A", "object": "invoice", "subscription": "sub_123", "customer": "cus_9", "amount_paid": 2000, "currency": "usd"}}}
