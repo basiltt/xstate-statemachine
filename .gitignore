@@ -719,3 +719,5 @@ docs/superpowers/
 
 # Recreated by the opt-in integration performance job (#307).
 benchmarks/last_run.json
+
+.venv39/

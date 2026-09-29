@@ -365,7 +365,8 @@ jobs:
           #    landed, although its own cell was 98% covered. Keep this
           #    list in step with the "shipped" rows of the integrations
           #    guide; placeholder extras stay out (nothing to measure).
-          python -m pip install -e ".[redis,pydantic]" "fakeredis[lua]>=2.20"
+          python -m pip install -e ".[redis,pydantic,starlette,fastapi,litestar]" \
+            "fakeredis[lua]>=2.20" "httpx>=0.24" "openapi-spec-validator>=0.7"
           # 🧷 mypy is a TEST dependency: tests/test_type_safety.py runs it
           #    over representative user programs.
           python -m pip install "pytest>=8.3.0" "mypy>=1.14" "pytest-cov>=6.0.0"

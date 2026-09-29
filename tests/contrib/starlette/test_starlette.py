@@ -85,6 +85,23 @@ def make(store=None, *, name="payment", machine=None, **kw):
     return reg
 
 
+def test_registry_builds_without_a_running_loop_and_uses_one_lock():
+    """A registry is module-level state, built at import time. On Python
+    3.9 an eager `asyncio.Lock()` binds to the current loop (and raises
+    'no current event loop' from a non-loop thread), which took down the
+    whole [fastapi] 3.9 CI cell. The lock is lazy and created once."""
+    reg = make()  # no loop running here
+    seen = []
+
+    async def grab():
+        async with reg._lock():
+            seen.append(reg._lock())
+
+    asyncio.run(grab())
+    asyncio.run(grab())
+    assert len(seen) == 2 and seen[0] is seen[1]
+
+
 # -----------------------------------------------------------------------------
 # ðŸ§¾ receipt_to_status / exceptions / problem
 # -----------------------------------------------------------------------------

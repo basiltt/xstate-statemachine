@@ -216,7 +216,10 @@ class StatechartRegistry:
         self._residents: "OrderedDict[Tuple[str, str], _Resident]" = (
             OrderedDict()
         )
-        self._resident_lock = asyncio.Lock()
+        # 📝 Created lazily: on Python 3.9 syncio.Lock() binds to the
+        #    current loop at construction and raises with no running loop --
+        #    and a registry is built at import time, before the server starts.
+        self.__resident_lock: Optional[asyncio.Lock] = None
         self.subscribers = _Subscribers()
         self._connections: Dict[Tuple[str, str], int] = {}
         self.scanner: Optional[Any] = None
@@ -225,6 +228,11 @@ class StatechartRegistry:
         self.draining = False
         #: Monotonic source for resident idle accounting (tests patch it).
         self.monotonic: Callable[[], float] = time.monotonic
+
+    def _lock(self) -> asyncio.Lock:
+        if self.__resident_lock is None:
+            self.__resident_lock = asyncio.Lock()
+        return self.__resident_lock
 
     # -- registration -------------------------------------------------------
     def register(
@@ -455,7 +463,7 @@ class StatechartRegistry:
         """
         reg = self._reg(name)
         topic = (name, str(key))
-        async with self._resident_lock:
+        async with self._lock():
             await self._evict_idle_locked()
             now = self.monotonic()
             res = self._residents.get(topic)
@@ -493,14 +501,14 @@ class StatechartRegistry:
 
     async def release_resident(self, name: str, key: str) -> None:
         """Save and stop the resident for *key* (no-op if none)."""
-        async with self._resident_lock:
+        async with self._lock():
             res = self._residents.pop((name, str(key)), None)
             if res is not None:
                 await self._retire((name, str(key)), res)
 
     async def evict_idle(self) -> int:
         """Retire residents idle longer than `resident_idle_ttl_s`."""
-        async with self._resident_lock:
+        async with self._lock():
             return await self._evict_idle_locked()
 
     async def _evict_idle_locked(self) -> int:
@@ -530,7 +538,7 @@ class StatechartRegistry:
                 await interp.stop()
 
     async def _retire_all(self) -> None:
-        async with self._resident_lock:
+        async with self._lock():
             while self._residents:
                 topic, res = self._residents.popitem(last=False)
                 await self._retire(topic, res)
