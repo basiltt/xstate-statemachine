@@ -1,6 +1,6 @@
 ---
 title: "Integration extras"
-description: "Every optional pip extra — pydantic, redis, starlette, fastapi, litestar, and the planned django, flask, sqlalchemy, celery, brokers, observability, testing and agents — with its status and issue."
+description: "Every optional pip extra — pydantic, redis, starlette, fastapi, litestar, agents, and the planned django, flask, sqlalchemy, celery, brokers, observability and testing — with its status and issue."
 ---
 
 # Integration extras
@@ -48,7 +48,7 @@ except MissingExtraError as exc:
 | `celery` | A Celery task as an `invoke` service; Celery Beat as the durable `after` scheduler | planned — [#292](https://github.com/basiltt/xstate-statemachine/issues/292) |
 | `cloudevents` | CloudEvents envelope, outbox and dead-letter plugins, AsyncAPI generation | planned — [#293](https://github.com/basiltt/xstate-statemachine/issues/293) |
 | `kafka` · `rabbitmq` · `nats` · `sqs` | Broker adapters: consume envelopes into machines, publish tagged transitions | planned — [#294](https://github.com/basiltt/xstate-statemachine/issues/294) |
-| `agents` | Tool-use loop as a statechart, budget/safety guards, human-in-the-loop as a durable state, LangGraph / pydantic-ai interop | planned — [#287](https://github.com/basiltt/xstate-statemachine/issues/287) |
+| `agents` | `TOOL_LOOP` chart, tool registry with per-state allow-lists enforced in `run_tool`, budgets, timeouts, durable human-in-the-loop, structured output, OpenAI/Anthropic adapters (soft imports), `spawn_agent` + `BudgetPlugin` multi-agent recipes | **shipped** — [guide](../integration-agents/) · [#287](https://github.com/basiltt/xstate-statemachine/issues/287) · [#290](https://github.com/basiltt/xstate-statemachine/issues/290) |
 | `web` · `eda` · `all` | Umbrella extras | — |
 
 ## What every integration promises — and does not

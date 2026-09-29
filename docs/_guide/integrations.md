@@ -57,7 +57,8 @@ flowchart LR
 | HTTP | — | [Security](../security/) (principal, `Idempotency-Key`) |
 | Timers | core | [Persistence](../persistence/) (`DueTimerScanner`) → [Delayed transitions](../delayed-transitions/) |
 | Broker | — | planned, [#294](https://github.com/basiltt/xstate-statemachine/issues/294) — see [Integration extras](../integrations-extras/) |
-| Observability, testing, LLM agents | — | planned, [#273](https://github.com/basiltt/xstate-statemachine/issues/273), [#268](https://github.com/basiltt/xstate-statemachine/issues/268), [#287](https://github.com/basiltt/xstate-statemachine/issues/287) — see [Integration extras](../integrations-extras/) |
+| LLM agents | `[agents]` | [LLM agents](../integration-agents/) → [Security](../security/) (X0.13) |
+| Observability, testing | — | planned, [#273](https://github.com/basiltt/xstate-statemachine/issues/273), [#268](https://github.com/basiltt/xstate-statemachine/issues/268) — see [Integration extras](../integrations-extras/) |
 
 ## 15-minute tutorial
 
@@ -276,4 +277,5 @@ The full crash-consistency specification is [Guarantees](../guarantees/); the tr
 - **Recipes** — worked patterns (sagas, approvals, retries) arrive with [#308](https://github.com/basiltt/xstate-statemachine/issues/308); until then see [Patterns](../patterns/).
 - **Every extra, with status** — [Integration extras](../integrations-extras/).
 - **Design in the editor** — [Stately editor → Python](../stately-export/).
-- **Comparisons and LLM agents** — planned with [#291](https://github.com/basiltt/xstate-statemachine/issues/291) and [#287](https://github.com/basiltt/xstate-statemachine/issues/287).
+- **LLM agents** — [LLM agents](../integration-agents/): the model proposes, the machine decides.
+- **Comparisons** — planned with [#291](https://github.com/basiltt/xstate-statemachine/issues/291).

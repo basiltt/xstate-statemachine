@@ -887,6 +887,7 @@ page with a **Guarantees** box and a **Threat model** box — CI refuses a page 
 | `[starlette]` | `StatechartRegistry` — the store-backed create → act → persist loop as ASGI middleware; receipt → HTTP status; principal-scoped `Idempotency-Key`; RFC 9457 problems; SSE and WebSocket transition streams | [Starlette](https://basiltt.github.io/xstate-statemachine/guide/integration-starlette/) |
 | `[fastapi]` | `StatechartRouter` generates `GET /{id}`, `POST /{id}/send` (discriminated-union body), one route per event, `/events`, `/diagram.mmd`, `/stream`, `/ws` — with OpenAPI that reflects your chart; `Depends(get_interpreter(...))` | [FastAPI](https://basiltt.github.io/xstate-statemachine/guide/integration-fastapi/) |
 | `[litestar]` | `XStatePlugin` + a generated `Controller` on the same registry | [Litestar](https://basiltt.github.io/xstate-statemachine/guide/integration-litestar/) |
+| `[agents]` | LLM agents as statecharts: `TOOL_LOOP`, per-state tool allow-lists, budgets, durable human approval, `spawn_agent` | [LLM agents](https://basiltt.github.io/xstate-statemachine/guide/integration-agents/) |
 
 <!-- doc-fragment -->
 ```python
