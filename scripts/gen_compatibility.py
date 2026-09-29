@@ -157,8 +157,11 @@ def main(argv: List[str]) -> int:
         return 0
     text = render(extras)
     if ns.check:
-        current = PAGE.read_bytes() if PAGE.exists() else b""
-        if current != text.encode("utf-8"):
+        # 📝 Compare CONTENT, not bytes: a Windows checkout with autocrlf
+        #    reads the committed page back with CRLF and would call an
+        #    up-to-date page stale. CI (LF) is unaffected either way.
+        current = PAGE.read_text(encoding="utf-8") if PAGE.exists() else ""
+        if current.replace("\r\n", "\n") != text:
             print(f"{PAGE} is stale; run scripts/gen_compatibility.py")
             return 1
         print("compatibility.md is up to date")

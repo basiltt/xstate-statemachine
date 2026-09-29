@@ -100,9 +100,11 @@ class TestCompatMatrix(unittest.TestCase):
 
 
 class TestGeneratedPage(unittest.TestCase):
-    def test_page_is_byte_identical_to_a_fresh_render(self) -> None:
+    def test_page_is_identical_to_a_fresh_render(self) -> None:
+        # 📝 line endings normalised: autocrlf checkouts read back CRLF
         self.assertEqual(
-            PAGE.read_bytes(), gen.render(gen.load()).encode("utf-8")
+            PAGE.read_text(encoding="utf-8").replace("\r\n", "\n"),
+            gen.render(gen.load()),
         )
 
     def test_check_mode_passes(self) -> None:
