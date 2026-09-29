@@ -1,0 +1,124 @@
+# tests/tests_cli/test_new_project.py
+"""`xsm new` (#309): scaffold a project from an example app."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from src.xstate_statemachine.cli.commands import new as N
+
+ROOT = Path(__file__).resolve().parents[2]
+EXAMPLE = ROOT / "examples" / "integrations" / "fastapi_orders"
+
+
+def test_scaffold_writes_the_project(tmp_path: Path) -> None:
+    files = N.scaffold("fastapi", tmp_path / "p", name="shop_orders")
+    names = sorted(f.relative_to(tmp_path / "p").as_posix() for f in files)
+    assert names == [
+        "README.md",
+        "app.py",
+        "logic.py",
+        "machine.json",
+        "models.py",
+        "requirements.txt",
+        "static/index.html",
+        "tests/conftest.py",
+        "tests/test_app.py",
+    ]
+    app = (tmp_path / "p" / "app.py").read_text("utf-8")
+    assert 'MACHINE_NAME = "shopOrders"' in app
+    assert 'prefix="/shop_orders"' in app
+    req = (tmp_path / "p" / "requirements.txt").read_text("utf-8")
+    assert "xstate-statemachine[fastapi]>=" in req
+    assert '"id": "shopOrders"' in (tmp_path / "p" / "machine.json").read_text(
+        "utf-8"
+    )
+
+
+@pytest.mark.parametrize("fname", ["logic.py", "models.py", "machine.json"])
+def test_template_has_not_drifted_from_the_example(
+    tmp_path: Path, fname: str
+) -> None:
+    """The template is the example app; re-copy it when the example
+    changes. Only the header path and the machine id may differ."""
+    N.scaffold("fastapi", tmp_path, name="order")
+    got = (tmp_path / fname).read_text("utf-8").splitlines()[1:]
+    want = (EXAMPLE / fname).read_text("utf-8").splitlines()[1:]
+    assert got == want
+
+
+def test_refuses_non_empty_dir_without_force(tmp_path: Path) -> None:
+    (tmp_path / "keep.txt").write_text("x")
+    with pytest.raises(N.NewProjectError, match="--force"):
+        N.scaffold("fastapi", tmp_path)
+    N.scaffold("fastapi", tmp_path, force=True)
+    assert (tmp_path / "keep.txt").exists()
+    assert (tmp_path / "app.py").exists()
+
+
+@pytest.mark.parametrize(
+    "template,match", [("django", "#280"), ("flask", "#285"), ("x", "--list")]
+)
+def test_planned_and_unknown_templates_are_refused(
+    tmp_path: Path, template: str, match: str
+) -> None:
+    with pytest.raises(N.NewProjectError, match=match):
+        N.scaffold(template, tmp_path / "p")
+    assert not (tmp_path / "p").exists()
+
+
+@pytest.mark.parametrize("bad", ["Orders", "1x", "class", "a-b", ""])
+def test_bad_names_are_refused(tmp_path: Path, bad: str) -> None:
+    with pytest.raises(N.NewProjectError, match="invalid --name"):
+        N.scaffold("fastapi", tmp_path / "p", name=bad)
+
+
+def test_run_new_list_and_errors(tmp_path: Path, capsys) -> None:
+    N.run_new(None, list_only=True)
+    out = capsys.readouterr().out
+    assert "fastapi" in out and "planned, #280" in out
+    with pytest.raises(SystemExit) as exc:
+        N.run_new(str(tmp_path / "p"), template="flask")
+    assert exc.value.code == 2
+    with pytest.raises(SystemExit) as exc:
+        N.run_new(None)
+    assert exc.value.code == 2
+    N.run_new(str(tmp_path / "ok"))
+    assert "Created 9 files" in capsys.readouterr().out
+
+
+def test_cli_entry_point(tmp_path: Path) -> None:
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    proc = subprocess.run(
+        [sys.executable, "-m", "xstate_statemachine.cli", "--plain"]
+        + ["new", str(tmp_path / "p"), "--name", "tickets"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert (tmp_path / "p" / "tests" / "test_app.py").is_file()
+
+
+def test_scaffolded_project_tests_pass(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    target = tmp_path / "svc"
+    N.scaffold("fastapi", target, name="shop_orders")
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests", "-q", "-p"]
+        + ["no:cacheprovider", "-o", "addopts=", "--rootdir", str(target)],
+        cwd=target,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=300,
+    )
+    assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-2000:]
+    assert " passed" in proc.stdout

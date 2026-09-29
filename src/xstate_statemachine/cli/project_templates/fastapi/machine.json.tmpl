@@ -1,0 +1,88 @@
+{
+  "id": "${machine_id}",
+  "version": "1",
+  "initial": "cart",
+  "context": {
+    "items": [],
+    "total_cents": 0,
+    "card_token": null,
+    "attempt": 0,
+    "charge_id": null,
+    "cancel_reason": null
+  },
+  "states": {
+    "cart": {
+      "description": "Collecting items.",
+      "on": {
+        "ADD_ITEM": { "actions": "addItem" },
+        "CHECKOUT": { "target": "awaitingPayment", "guard": "hasItems" },
+        "CANCEL": { "target": "cancelled", "actions": "recordCancel" }
+      }
+    },
+    "awaitingPayment": {
+      "description": "Checked out; the customer has 15 minutes to pay.",
+      "after": {
+        "900000": { "target": "expired" }
+      },
+      "on": {
+        "PAY": { "target": "paying", "actions": "storeCard" },
+        "CANCEL": { "target": "cancelled", "actions": "recordCancel" }
+      }
+    },
+    "paying": {
+      "description": "Charging the card through the payment gateway.",
+      "invoke": {
+        "id": "gateway",
+        "src": "chargeCard",
+        "onDone": {
+          "target": "paid",
+          "actions": ["retryReset", "recordCharge"]
+        },
+        "onError": { "target": "retrying", "actions": "retryBump" }
+      }
+    },
+    "retrying": {
+      "description": "The gateway failed; back off, then try again.",
+      "after": {
+        "retryDelay": [
+          { "target": "paying", "guard": "retryCanRetry" },
+          { "target": "paymentFailed" }
+        ]
+      }
+    },
+    "paymentFailed": {
+      "description": "Retries exhausted; the customer may pay with another card.",
+      "on": {
+        "PAY": { "target": "paying", "actions": ["retryReset", "storeCard"] },
+        "CANCEL": { "target": "cancelled", "actions": "recordCancel" }
+      }
+    },
+    "paid": {
+      "tags": ["billable"],
+      "on": { "FULFIL": "fulfilment" }
+    },
+    "fulfilment": {
+      "type": "parallel",
+      "states": {
+        "packing": {
+          "initial": "inProgress",
+          "states": {
+            "inProgress": { "on": { "PACKED": "done" } },
+            "done": { "type": "final" }
+          }
+        },
+        "labelling": {
+          "initial": "inProgress",
+          "states": {
+            "inProgress": { "on": { "LABEL_PRINTED": "done" } },
+            "done": { "type": "final" }
+          }
+        }
+      },
+      "onDone": { "target": "shipped" }
+    },
+    "shipped": { "type": "final", "tags": ["billable"] },
+    "cancelled": { "type": "final" },
+    "expired": { "type": "final" }
+  }
+}

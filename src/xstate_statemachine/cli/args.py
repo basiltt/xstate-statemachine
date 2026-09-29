@@ -600,6 +600,44 @@ examples:
         help="Directory for <machine-id>.md files (default: stdout).",
     )
 
+    # 🌱 new subcommand
+    new_parser = subparsers.add_parser(
+        "new",
+        parents=[presentation],
+        help="Scaffold a minimal project from an example app.",
+        description=(
+            "Copies a shipped example app (stdlib templating) into DIR, "
+            "renamed from --name. `--list` shows the templates."
+        ),
+    )
+    new_parser.add_argument(
+        "directory", nargs="?", help="Target directory (created)."
+    )
+    new_parser.add_argument(
+        "-t",
+        "--template",
+        default="fastapi",
+        help="Project template. Default: fastapi. See --list.",
+    )
+    new_parser.add_argument(
+        "-n",
+        "--name",
+        default="orders",
+        help=(
+            "lower_snake_case project name: the URL prefix, store "
+            "prefix and (camelCased) machine id. Default: orders."
+        ),
+    )
+    new_parser.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        help="Write into a non-empty directory (overwrites same-name files).",
+    )
+    new_parser.add_argument(
+        "--list", action="store_true", help="List the project templates."
+    )
+
     return parser
 
 

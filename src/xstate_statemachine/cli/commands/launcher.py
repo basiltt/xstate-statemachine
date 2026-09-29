@@ -50,6 +50,7 @@ MENU: List[Tuple[str, str, str]] = [
     ("templates", "Templates", "Browse the code generation catalogue"),
     ("info", "About", "Version, environment, links"),
     ("update", "Update", "Check PyPI and upgrade to the latest release"),
+    ("new", "New project", "Scaffold a FastAPI project from the example"),
     ("quit", "Quit", ""),
 ]
 
@@ -431,6 +432,14 @@ def run_launcher(
                 from .update import run_update
 
                 run_update()
+            elif key == "new":
+                target = clean_path(
+                    c.text("Directory for the new project:", source=source)
+                )
+                if target:
+                    from .new import run_new
+
+                    run_new(target)
         except SystemExit:
             # A command signalled failure (exit 1); the launcher keeps going.
             pass

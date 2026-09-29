@@ -1,0 +1,302 @@
+# ${name}/app.py
+# -----------------------------------------------------------------------------
+# 🛒 Order-lifecycle service: FastAPI + a statechart, N workers, one store
+# -----------------------------------------------------------------------------
+# 🏛️ What you are looking at: every request loads the order's snapshot from
+#    the store, runs ONE interpreter over it, saves it with an expected
+#    version and throws the interpreter away (create → act → persist →
+#    discard). No worker holds an order in memory, so `--workers 4` is
+#    safe. Racing writers produce one winner and a 409 -- never a lost
+#    update. Timers (`after`, the payment-retry backoff) are persisted
+#    deadlines woken by ONE `--role scheduler` process.
+#
+#    Run:  uvicorn app:app --workers 4          (from this directory)
+#          python app.py --role scheduler       (exactly one of these)
+# -----------------------------------------------------------------------------
+"""FastAPI order service over `StatechartRegistry` + `StatechartRouter`."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import signal
+import threading
+from pathlib import Path
+from typing import Any, Callable, List, Optional, Tuple
+
+from fastapi import BackgroundTasks, Body, FastAPI, Request
+from fastapi.responses import FileResponse, Response
+
+from xstate_statemachine import create_machine
+from xstate_statemachine.contrib.fastapi import (
+    StatechartRegistry,
+    StatechartRouter,
+    instrument_app,
+)
+from xstate_statemachine.contrib.pydantic import context_model
+from xstate_statemachine.contrib.starlette import mount_inspector
+from xstate_statemachine.persistence import DueTimerScanner, SQLiteInbox
+
+from logic import build_logic
+from models import EVENT_MODELS, EVENT_SCHEMAS, OrderContext, Pay
+from models import public_context
+
+logger = logging.getLogger("${name}")
+
+HERE = Path(__file__).resolve().parent
+MACHINE_NAME = "${machine_id}"
+CUSTOMER_HEADER = "x-customer"
+CUSTOMER_COOKIE = "customer"
+
+#: ``(order_id, charge_id, customer) -> None`` -- the confirmation mailer.
+EmailSender = Callable[[str, Optional[str], str], None]
+
+
+# -----------------------------------------------------------------------------
+# 🏗️ Machine, store, identity
+# -----------------------------------------------------------------------------
+def build_machine() -> Any:
+    config = json.loads((HERE / "machine.json").read_text("utf-8"))
+    return create_machine(
+        config,
+        logic=build_logic(),
+        event_schemas=EVENT_SCHEMAS,
+        # 📝 write_back=False: the context stays plain JSON (the snapshot
+        #    is stored as JSON); the model only VALIDATES it.
+        context_validator=context_model(OrderContext, write_back=False),
+    )
+
+
+def build_store() -> Tuple[Any, Any]:
+    """``(store, inbox)`` from the environment.
+
+    ``XSM_REDIS_URL`` → `RedisStore` + `RedisInbox` (multi-host; imported
+    lazily so redis is not needed by default). Otherwise `SQLiteStore` at
+    ``XSM_ORDERS_DB`` (default ``${name}.db``) with an inbox sharing its
+    connection, so an inbox mark commits with the snapshot.
+    """
+    url = os.environ.get("XSM_REDIS_URL")
+    if url:
+        from xstate_statemachine.contrib.redis import RedisInbox, RedisStore
+
+        return (
+            RedisStore(url, prefix="${name}"),
+            RedisInbox(url, prefix="${name}"),
+        )
+    from xstate_statemachine.persistence import SQLiteStore
+
+    store = SQLiteStore(os.environ.get("XSM_ORDERS_DB", "${name}.db"))
+    return store, SQLiteInbox(store)
+
+
+def customer_of(conn: Any) -> str:
+    """The caller's identity: ``X-Customer`` header, else the ``customer``
+    cookie (an `EventSource` cannot set headers). Replace with your real
+    authentication -- this is the idempotency scope (X0.2)."""
+    return str(
+        conn.headers.get(CUSTOMER_HEADER)
+        or conn.cookies.get(CUSTOMER_COOKIE)
+        or ""
+    )
+
+
+def authorize(conn: Any, *, name: str, key: str, event: Optional[str]) -> bool:
+    """Demo policy: any identified customer. A real service would also
+    check that the order belongs to them."""
+    return bool(customer_of(conn))
+
+
+def log_email(order_id: str, charge_id: Optional[str], customer: str) -> None:
+    logger.info(
+        "📧 confirmation for order %s (charge %s) to %s",
+        order_id,
+        charge_id,
+        customer,
+    )
+
+
+def build_registry(
+    store: Any = None, inbox: Any = None, **kw: Any
+) -> StatechartRegistry:
+    if store is None:
+        store, inbox = build_store()
+    registry = StatechartRegistry(
+        store, inbox=inbox, principal=customer_of, **kw
+    )
+    registry.register(
+        MACHINE_NAME,
+        build_machine(),
+        authorize=authorize,
+        context_serializer=public_context,
+    )
+    return registry
+
+
+def build_scanner(registry: StatechartRegistry, **kw: Any) -> DueTimerScanner:
+    """The ONE process that wakes persisted `after` deadlines."""
+    return DueTimerScanner(
+        registry.store,
+        registry.machine_for_store_key,
+        lock=registry.lock,
+        plugins=registry.plugins,
+        prefix=f"{MACHINE_NAME}.",
+        **kw,
+    )
+
+
+# -----------------------------------------------------------------------------
+# 🌐 The app
+# -----------------------------------------------------------------------------
+def _should_confirm(response: Response) -> Tuple[bool, Optional[str]]:
+    """Email only for a COMMITTED, first-time, successful payment."""
+    if response.status_code != 200:
+        return False, None
+    body = json.loads(bytes(response.body))
+    ok = (
+        body.get("changed")
+        and body.get("error") is None
+        and not body.get("duplicate")
+        and body.get("state") == "paid"
+    )
+    charge = (body.get("context") or {}).get("charge_id")
+    return bool(ok), charge
+
+
+def add_pay_route(
+    app: FastAPI, registry: StatechartRegistry, email: EmailSender
+) -> None:
+    """``POST /${name}/{id}/events/PAY`` with a `BackgroundTasks` bridge.
+
+    Registered BEFORE the router so it shadows the generated PAY route;
+    the router refuses PAY on ``/send`` (``per_event_dependencies``), so
+    this is the only way in -- no payment can skip the email hook.
+    """
+
+    @app.post(
+        "/${name}/{id}/events/PAY",
+        tags=["${name}"],
+        operation_id="order_pay_with_confirmation",
+        summary="Pay; emails a confirmation after the response",
+    )
+    async def pay(
+        request: Request,
+        id: str,  # noqa: A002 -- the router's key_param
+        background: BackgroundTasks,
+        body: Pay = Body(...),
+    ) -> Response:
+        payload = body.model_dump(mode="python", exclude={"type"})
+        response = await registry.send_event(
+            request, MACHINE_NAME, id, "PAY", payload
+        )
+        confirm, charge = _should_confirm(response)
+        if confirm:
+            # ✅ Runs after the response is sent, only once the save
+            #    committed (send_event returned a 200 receipt).
+            background.add_task(email, id, charge, customer_of(request))
+        return response
+
+
+def create_app(
+    registry: Optional[StatechartRegistry] = None,
+    *,
+    email: EmailSender = log_email,
+    debug: Optional[bool] = None,
+) -> FastAPI:
+    registry = registry or build_registry()
+    app = FastAPI(title="Orders (xstate-statemachine)")
+    add_pay_route(app, registry, email)
+    app.include_router(
+        StatechartRouter(
+            registry,
+            MACHINE_NAME,
+            prefix="/${name}",
+            tags=["${name}"],
+            event_models=EVENT_MODELS,
+            per_event_dependencies={"PAY": []},
+        )
+    )
+
+    @app.get("/", include_in_schema=False)
+    async def index() -> FileResponse:
+        return FileResponse(HERE / "static" / "index.html")
+
+    if debug is None:
+        debug = os.environ.get("XSM_DEBUG") == "1"
+    if debug:
+        mount_inspector(app, registry, debug=True)
+    app.state.registry = registry
+    return instrument_app(app, registry)
+
+
+_APP: Optional[FastAPI] = None
+
+
+def __getattr__(name: str) -> Any:
+    """``uvicorn app:app`` -- built on first access, so importing this
+    module (tests, the scheduler role) never opens the default database."""
+    global _APP
+    if name == "app":
+        if _APP is None:
+            _APP = create_app()
+        return _APP
+    raise AttributeError(name)
+
+
+# -----------------------------------------------------------------------------
+# â° `--role scheduler`
+# -----------------------------------------------------------------------------
+def init_store() -> None:
+    """Create the store's schema ONCE, before starting N workers: SQLite
+    switching an empty file to WAL is a write, and N processes racing to
+    do it see `database is locked`."""
+    store, _inbox = build_store()
+    close = getattr(store, "close", None)
+    if callable(close):
+        close()
+    logger.info("✅ store initialised")
+
+
+def run_scheduler(interval_s: float = 1.0) -> None:
+    """Run the `DueTimerScanner` until SIGINT/SIGTERM. Start EXACTLY one."""
+    scanner = build_scanner(build_registry())
+    stop = threading.Event()
+
+    def _stop(*_: Any) -> None:
+        stop.set()
+        scanner.stop()
+
+    signal.signal(signal.SIGINT, _stop)
+    signal.signal(signal.SIGTERM, _stop)
+    logger.info("â° scheduler: scanning every %.1fs", interval_s)
+    scanner.run_forever(interval_s)
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--role", choices=["web", "scheduler", "init"], default="web"
+    )
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument("--interval", type=float, default=1.0)
+    args = parser.parse_args(argv)
+    logging.basicConfig(level=logging.INFO)
+    if args.role == "init":
+        init_store()
+        return 0
+    if args.role == "scheduler":
+        run_scheduler(args.interval)
+        return 0
+    import uvicorn
+
+    uvicorn.run(
+        "app:app", host=args.host, port=args.port, workers=args.workers
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

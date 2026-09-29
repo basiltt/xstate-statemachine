@@ -1178,6 +1178,18 @@ def _dispatch() -> None:
         )
         return
 
+    if args.subcommand == "new":
+        from .commands.new import run_new
+
+        run_new(
+            args.directory,
+            template=args.template,
+            name=args.name,
+            force=bool(args.force),
+            list_only=bool(args.list),
+        )
+        return
+
     if args.subcommand == "setup":
         from pathlib import Path
 
