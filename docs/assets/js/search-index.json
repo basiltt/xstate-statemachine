@@ -201,7 +201,65 @@
     "title": "xstate-statemachine vs python-statemachine",
     "section": "Integrations",
     "url": "/guide/vs-python-statemachine/",
-    "description": "Comparison with python-statemachine: declarative class API and diagrams vs portable XState JSON, stores, locking and durable timers. When to choose python-statemachine."
+    "description": "Comparison with python-statemachine: declarative class API and diagrams vs portable XState JSON, stores, locking and durable timers. When to choose python-statemachine.",
+    "title": "xstate-statemachine vs AWS Step Functions",
+    "section": "Integrations",
+    "url": "/guide/vs-step-functions/",
+    "description": "ASL vs XState JSON side by side, event-driven transitions, timers, retries, local testing with pytest, and when Step Functions is still the right call."
+  },
+  {
+    "title": "Recipes",
+    "section": "Recipes",
+    "url": "/guide/recipes/",
+    "description": "Worked, tested recipes: Stripe webhooks, APScheduler timers, RQ/arq/Dramatiq workers, Streamlit/Gradio wizard, slot filling, feature flags, WebSocket reconnect, circuit breaker."
+  },
+  {
+    "title": "Recipe: Stripe webhooks",
+    "section": "Recipes",
+    "url": "/guide/stripe-webhooks/",
+    "description": "Subscription lifecycle chart; FastAPI and Flask webhook endpoints verifying Stripe-Signature (HMAC, tolerance window); event.id idempotency; persisted()."
+  },
+  {
+    "title": "Recipe: APScheduler durable timers",
+    "section": "Recipes",
+    "url": "/guide/apscheduler-timers/",
+    "description": "7- and 14-day after follow-ups that survive restarts: DueTimerScanner.run_once as an APScheduler cron or interval job, scheduler role."
+  },
+  {
+    "title": "Recipe: RQ, arq and Dramatiq workers",
+    "section": "Recipes",
+    "url": "/guide/task-queue-workers/",
+    "description": "Background jobs: load, send, persist with optimistic retry on ConflictError, written by hand for RQ, arq and Dramatiq."
+  },
+  {
+    "title": "Recipe: Streamlit / Gradio wizard",
+    "section": "Recipes",
+    "url": "/guide/form-wizard/",
+    "description": "Multi-step form from a chart in st.session_state or gr.State; back/forward as events, guarded validation, embedded diagram."
+  },
+  {
+    "title": "Recipe: Chatbot slot filling",
+    "section": "Recipes",
+    "url": "/guide/slot-filling/",
+    "description": "Collect slots in any order with re-entering self-transitions, an allSlotsFilled guard, and an after timeout that nudges then abandons."
+  },
+  {
+    "title": "Recipe: Feature-flag rollout",
+    "section": "Recipes",
+    "url": "/guide/feature-flag-rollout/",
+    "description": "disabled, internal, canary 1%, canary 25%, GA, rolled back: after bake times, a metrics guard reading a callable, SimulatedClock tests."
+  },
+  {
+    "title": "Recipe: WebSocket reconnect",
+    "section": "Recipes",
+    "url": "/guide/websocket-reconnect/",
+    "description": "Reconnect with RetryPolicy jittered backoff and a from_callback socket actor whose cleanup closes it; both engines."
+  },
+  {
+    "title": "Recipe: Circuit breaker & retry",
+    "section": "Recipes",
+    "url": "/guide/circuit-breaker-retry/",
+    "description": "An HTTP client: retry 5xx/429/timeouts with backoff, never 4xx, behind a shared CircuitBreaker that fails fast."
   },
   {
     "description": "Generate diagrams from machines — Mermaid, PlantUML, ASCII format, statechart visualization.",

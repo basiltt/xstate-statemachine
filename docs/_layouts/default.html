@@ -172,6 +172,19 @@
           <a href="{{ '/guide/vs-django-fsm/' | relative_url }}" class="sidebar-link">vs django-fsm</a>
           <a href="{{ '/guide/vs-transitions/' | relative_url }}" class="sidebar-link">vs transitions</a>
           <a href="{{ '/guide/vs-python-statemachine/' | relative_url }}" class="sidebar-link">vs python-statemachine</a>
+          <a href="{{ '/guide/vs-step-functions/' | relative_url }}" class="sidebar-link">vs AWS Step Functions</a>
+        </div>
+        <div class="sidebar-section">
+          <h3 class="sidebar-heading">Recipes</h3>
+          <a href="{{ '/guide/recipes/' | relative_url }}" class="sidebar-link">All recipes</a>
+          <a href="{{ '/guide/stripe-webhooks/' | relative_url }}" class="sidebar-link">Stripe webhooks</a>
+          <a href="{{ '/guide/apscheduler-timers/' | relative_url }}" class="sidebar-link">APScheduler timers</a>
+          <a href="{{ '/guide/task-queue-workers/' | relative_url }}" class="sidebar-link">RQ / arq / Dramatiq</a>
+          <a href="{{ '/guide/form-wizard/' | relative_url }}" class="sidebar-link">Streamlit / Gradio wizard</a>
+          <a href="{{ '/guide/slot-filling/' | relative_url }}" class="sidebar-link">Chatbot slot filling</a>
+          <a href="{{ '/guide/feature-flag-rollout/' | relative_url }}" class="sidebar-link">Feature-flag rollout</a>
+          <a href="{{ '/guide/websocket-reconnect/' | relative_url }}" class="sidebar-link">WebSocket reconnect</a>
+          <a href="{{ '/guide/circuit-breaker-retry/' | relative_url }}" class="sidebar-link">Circuit breaker &amp; retry</a>
         </div>
         <div class="sidebar-section">
           <h3 class="sidebar-heading">Reference</h3>
@@ -231,7 +244,7 @@
         </div>
 
         <!-- Previous / Next Navigation -->
-        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,reliability,diagrams,examples,cli,cli-templates,cli-hierarchy,stately-export,integrations,integrations-extras,patterns,persistence,guarantees,security,integration-redis,integration-pydantic,integration-starlette,integration-fastapi,integration-litestar,integration-sqlalchemy,integration-flask,integration-agents,vs-langgraph,vs-burr,vs-statelyai-agent,vs-django-fsm,vs-transitions,vs-python-statemachine,production-characteristics,troubleshooting,faq,changelog" | split: "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,reliability,diagrams,examples,cli,cli-templates,cli-hierarchy,stately-export,integrations,integrations-extras,patterns,persistence,guarantees,security,integration-redis,integration-pydantic,integration-starlette,integration-fastapi,integration-litestar,integration-sqlalchemy,integration-flask,integration-agents,vs-langgraph,vs-burr,vs-statelyai-agent,vs-django-fsm,vs-transitions,vs-python-statemachine,production-characteristics,troubleshooting,faq,changelog" %}
+        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,reliability,diagrams,examples,cli,cli-templates,cli-hierarchy,stately-export,integrations,integrations-extras,patterns,persistence,guarantees,security,integration-redis,integration-pydantic,integration-starlette,integration-fastapi,integration-litestar,integration-sqlalchemy,integration-flask,integration-agents,vs-langgraph,vs-burr,vs-statelyai-agent,vs-django-fsm,vs-transitions,vs-python-statemachine,vs-step-functions,recipes,stripe-webhooks,apscheduler-timers,task-queue-workers,form-wizard,slot-filling,feature-flag-rollout,websocket-reconnect,circuit-breaker-retry,production-characteristics,troubleshooting,faq,changelog" | split: "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,reliability,diagrams,examples,cli,cli-templates,cli-hierarchy,stately-export,integrations,integrations-extras,patterns,persistence,guarantees,security,integration-redis,integration-pydantic,integration-starlette,integration-fastapi,integration-litestar,integration-sqlalchemy,integration-flask,integration-agents,vs-langgraph,vs-burr,vs-statelyai-agent,vs-django-fsm,vs-transitions,vs-python-statemachine,vs-step-functions,recipes,stripe-webhooks,apscheduler-timers,task-queue-workers,form-wizard,slot-filling,feature-flag-rollout,websocket-reconnect,circuit-breaker-retry,production-characteristics,troubleshooting,faq,changelog" %}
         {% assign current_name = page.url | remove: "/guide/" | remove: "/" %}
         {% assign prev_page = nil %}
         {% assign next_page = nil %}

@@ -303,6 +303,48 @@ class TestAdoptionKitPages(unittest.TestCase):
         )  # _read lower-cases
 
 
+class TestRecipesSection(unittest.TestCase):
+    """#308: the recipes index and every recipe page exist, are in the
+    sidebar, `pages_order` and the search index, and are linked from the
+    README Cookbook and the Integrations journey page."""
+
+    RECIPES = GUIDE / "recipes"
+    PAGES = (
+        "recipes",
+        "stripe-webhooks",
+        "apscheduler-timers",
+        "task-queue-workers",
+        "form-wizard",
+        "slot-filling",
+        "feature-flag-rollout",
+        "websocket-reconnect",
+        "circuit-breaker-retry",
+    )
+
+    def test_every_page_exists_and_is_in_nav_and_search(self) -> None:
+        layout = _read(ROOT / "docs" / "_layouts" / "default.html")
+        index = _read(ROOT / "docs" / "assets" / "js" / "search-index.json")
+        self.assertIn('<h3 class="sidebar-heading">recipes</h3>', layout)
+        for page in self.PAGES:
+            path = self.RECIPES / f"{page}.md"
+            self.assertTrue(path.is_file(), path)
+            self.assertIn(f"permalink: /guide/{page}/", _read(path))
+            self.assertIn(f"/guide/{page}/", layout, f"{page} not in sidebar")
+            self.assertIn(f"{page},", layout, f"{page} not in pages_order")
+            self.assertIn(f"/guide/{page}/", index, f"{page} not searchable")
+
+    def test_index_is_linked_from_readme_cookbook_and_integrations(
+        self,
+    ) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        cookbook = readme.split("## 📚 Cookbook", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("xstate-statemachine/guide/recipes/", cookbook)
+        journey = _read(GUIDE / "integrations.md")
+        where_next = journey.split("## where next", 1)[1]
+        self.assertIn("](../recipes/)", where_next)
+        self.assertIn("](../vs-step-functions/)", where_next)
+
+
 class TestSecurityBaseline(unittest.TestCase):
     """X0.1 + X0.3 (#303): the trust model and the crash-consistency spec
     are published, cross-linked, in the nav, and every X0 item is mapped
