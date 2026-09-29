@@ -287,12 +287,20 @@ def _parse_json_text(text: str) -> Any:
     return json.loads(t)
 
 
-def _validate_output(model: Optional[type], text: str) -> Tuple[bool, Any]:
-    """``(ok, value_or_error_text)``."""
+def _validate_output(
+    model: Optional[type],
+    text: str,
+    parser: Optional[Callable[[str], Any]] = None,
+) -> Tuple[bool, Any]:
+    """``(ok, value_or_error_text)``. *parser* turns the reply text into
+    the JSON value to validate (default: strict JSON, code fence allowed).
+    """
     if model is None:
         return True, text
     try:
-        obj = model.model_validate(_parse_json_text(text))  # type: ignore[attr-defined]
+        obj = model.model_validate(  # type: ignore[attr-defined]
+            (parser or _parse_json_text)(text)
+        )
     except (ValueError, ValidationError) as exc:
         if isinstance(exc, ValidationError):
             detail = "; ".join(
@@ -341,6 +349,7 @@ class _AgentLogic:
         system_prompt: Optional[str],
         tracer: Any = None,
         max_tool_calls: int = 8,
+        output_parser: Optional[Callable[[str], Any]] = None,
     ) -> None:
         self.model = model
         self.tools = tools
@@ -352,6 +361,7 @@ class _AgentLogic:
         self.system_prompt = system_prompt
         self.tracer = tracer
         self.max_tool_calls = max_tool_calls
+        self.output_parser = output_parser
 
     # -- helpers ----------------------------------------------------------
     def _trace(self, i: Any, kind: str, **fields: Any) -> None:
@@ -548,7 +558,9 @@ class _AgentLogic:
 
     def g_output_valid(self, ctx: Dict[str, Any], e: Any) -> bool:
         model = self._output_model_for(e)
-        ok, _ = _validate_output(model, str(self._data(e).get("text", "")))
+        ok, _ = _validate_output(
+            model, str(self._data(e).get("text", "")), self.output_parser
+        )
         return ok
 
     @staticmethod
@@ -640,7 +652,9 @@ class _AgentLogic:
         self, i: Any, ctx: Dict[str, Any], e: Any, a: Any
     ) -> None:
         model = self._output_model_for(e)
-        _, value = _validate_output(model, str(self._data(e).get("text", "")))
+        _, value = _validate_output(
+            model, str(self._data(e).get("text", "")), self.output_parser
+        )
         ctx["result"] = value
 
     def a_retry_output(
@@ -650,7 +664,9 @@ class _AgentLogic:
         #    names and messages only). The retry costs a model turn, so it
         #    counts against every budget like any other turn.
         model = self._output_model_for(e)
-        _, detail = _validate_output(model, str(self._data(e).get("text", "")))
+        _, detail = _validate_output(
+            model, str(self._data(e).get("text", "")), self.output_parser
+        )
         ctx["output_retries"] = int(ctx.get("output_retries", 0)) + 1
         schema = (
             json.dumps(model.model_json_schema())  # type: ignore[attr-defined]
@@ -746,6 +762,7 @@ def agent_logic(
     sync: Optional[bool] = None,
     tracer: Any = None,
     max_tool_calls: int = 8,
+    output_parser: Optional[Callable[[str], Any]] = None,
 ) -> MachineLogic:
     """The `MachineLogic` for `TOOL_LOOP` (and charts that reuse its names).
 
@@ -778,6 +795,9 @@ def agent_logic(
             spawned sub-agents land in the same trace.
         max_tool_calls: More tool calls than this in ONE model turn is
             denied (``error``) -- bounds work and context per turn.
+        output_parser: ``(text) -> JSON value`` applied before validating
+            structured output (default: strict JSON, code fence allowed);
+            `structured_output()` installs instructor's when available.
 
     Raises:
         AgentConfigError: invalid budgets, output model or bounds.
@@ -797,6 +817,7 @@ def agent_logic(
         system_prompt,
         tracer,
         max_tool_calls,
+        output_parser,
     )
     use_sync = (not _is_async_model(model)) if sync is None else sync
     policy = retry or RetryPolicy(max_attempts=3, base_ms=1000, jitter="none")
