@@ -110,7 +110,12 @@ def _pyproject_extras() -> dict:
         "\n[", 1
     )[0]
     out: dict = {}
-    for m in re.finditer(r"^([a-z]+)\s*=\s*\[(.*?)\]", block, re.M | re.S):
+    # 📝 Match to the closing `]` that ENDS the list -- `]` followed by a
+    #    comment or a newline -- not the first `]` inside a requirement such
+    #    as "sqlalchemy[asyncio]>=2.0" (PEP 508 extras are legitimate).
+    for m in re.finditer(
+        r"^([a-z]+)\s*=\s*\[(.*?)\][ \t]*(?:#[^\n]*)?$", block, re.M | re.S
+    ):
         body = re.sub(r"#[^\n]*", "", m.group(2))
         out[m.group(1)] = re.findall(r'"([^"]+)"', body)
     return out

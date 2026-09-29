@@ -912,6 +912,8 @@ page with a **Guarantees** box and a **Threat model** box — CI refuses a page 
 |:--|:--|:--|
 | `[pydantic]` | Typed context validated on every `assign`, `EventModel` discriminated unions → `event_schemas=`, `validate_machine_json()`, JSON Schema | [Pydantic](https://basiltt.github.io/xstate-statemachine/guide/integration-pydantic/) |
 | `[redis]` | `RedisStore` / `RedisInbox` / `RedisLog` with fenced locks for multi-host deployments | [Redis](https://basiltt.github.io/xstate-statemachine/guide/integration-redis/) |
+| `[sqlalchemy]` | `StatechartMixin` (state on your row, `version_id_col` locking, `in_state()`), `SQLAlchemyStore` / `AsyncSQLAlchemyStore` | [SQLAlchemy](https://basiltt.github.io/xstate-statemachine/guide/integration-sqlalchemy/) |
+| `[flask]` | `XState` extension, statechart blueprint, `SessionStore` wizards, `flask xsm` CLI, Quart shim | [Flask](https://basiltt.github.io/xstate-statemachine/guide/integration-flask/) |
 | `[starlette]` | `StatechartRegistry` — the store-backed create → act → persist loop as ASGI middleware; receipt → HTTP status; principal-scoped `Idempotency-Key`; RFC 9457 problems; SSE and WebSocket transition streams | [Starlette](https://basiltt.github.io/xstate-statemachine/guide/integration-starlette/) |
 | `[fastapi]` | `StatechartRouter` generates `GET /{id}`, `POST /{id}/send` (discriminated-union body), one route per event, `/events`, `/diagram.mmd`, `/stream`, `/ws` — with OpenAPI that reflects your chart; `Depends(get_interpreter(...))` | [FastAPI](https://basiltt.github.io/xstate-statemachine/guide/integration-fastapi/) |
 | `[litestar]` | `XStatePlugin` + a generated `Controller` on the same registry | [Litestar](https://basiltt.github.io/xstate-statemachine/guide/integration-litestar/) |

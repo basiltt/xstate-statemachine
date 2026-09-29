@@ -219,6 +219,11 @@ jobs:
             # 🤖 #288/#289: soft-import interop (never pinned in pyproject)
             #    so the LangGraph / pydantic-ai / instructor tests run here.
             agents) python -m pip install langgraph langchain-core pydantic-ai-slim instructor "httpx>=0.24" ;;
+            # 🗄️ #284: the async store runs on aiosqlite; alembic proves
+            #    autogenerate sees no diff (X0.10).
+            sqlalchemy) python -m pip install "aiosqlite>=0.19" "alembic>=1.12" ;;
+            # 🧪 #285: the Quart shim cell (cheap) and Flask-WTF CSRF test.
+            flask) python -m pip install "quart>=0.19" "flask-wtf>=1.2" ;;
           esac
           python -m pip list
 
@@ -372,8 +377,9 @@ jobs:
           #    landed, although its own cell was 98% covered. Keep this
           #    list in step with the "shipped" rows of the integrations
           #    guide; placeholder extras stay out (nothing to measure).
-          python -m pip install -e ".[redis,pydantic,starlette,fastapi,litestar]" \
-            "fakeredis[lua]>=2.20" "httpx>=0.24" "openapi-spec-validator>=0.7"
+          python -m pip install -e ".[redis,pydantic,starlette,fastapi,litestar,sqlalchemy,flask]" \
+            "fakeredis[lua]>=2.20" "httpx>=0.24" "openapi-spec-validator>=0.7" \
+            "aiosqlite>=0.19" "alembic>=1.12" "quart>=0.19" "flask-wtf>=1.2"
           # 🧷 mypy is a TEST dependency: tests/test_type_safety.py runs it
           #    over representative user programs.
           python -m pip install "pytest>=8.3.0" "mypy>=1.14" "pytest-cov>=6.0.0"

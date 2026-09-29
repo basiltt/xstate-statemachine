@@ -150,6 +150,18 @@
     "description": "[litestar] extra — XStatePlugin, Provide() get_interpreter, generated statechart Controller with OpenAPI discriminated union, problem+json, SSE/WebSocket."
   },
   {
+    "title": "SQLAlchemy integration",
+    "section": "Integrations",
+    "url": "/guide/integration-sqlalchemy/",
+    "description": "[sqlalchemy] extra — StatechartType, StatechartMixin with version_id_col optimistic locking, in_state() queries, audit rows in the same flush, SQLAlchemyStore / AsyncSQLAlchemyStore, inbox and log, Alembic."
+  },
+  {
+    "title": "Flask integration",
+    "section": "Integrations",
+    "url": "/guide/integration-flask/",
+    "description": "[flask] extra — XState init_app extension, act(), statechart blueprint, Idempotency-Key, SSE, SessionStore wizards, flask xsm CLI, Flask-WTF CSRF, Quart shim."
+  },
+  {
     "title": "LLM agents",
     "section": "Integrations",
     "url": "/guide/integration-agents/",

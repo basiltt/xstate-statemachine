@@ -8,6 +8,7 @@ SQLAlchemy, Redis) reuses `STORE_FACTORIES` by appending its own factory.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import threading
 import time
 from typing import Any, Callable, Dict, Iterator, List
@@ -45,6 +46,25 @@ STORE_FACTORIES: Dict[str, Callable[[Any], StateStore]] = {
     "file": lambda tmp: FileStore(tmp / "store"),
     "sqlite": lambda tmp: SQLiteStore(tmp / "store.db"),
 }
+
+
+def _sqlalchemy_store(tmp: Any, **kw: Any) -> StateStore:
+    """#284: `SQLAlchemyStore` on a SQLite file -- a contrib backend held
+    to the SAME contract. Registered only when the extra is installed."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from src.xstate_statemachine.contrib.sqlalchemy import SQLAlchemyStore
+
+    tmp.mkdir(parents=True, exist_ok=True)
+    eng = create_engine(
+        f"sqlite:///{tmp / 'sqla.db'}", connect_args={"timeout": 30}
+    )
+    return SQLAlchemyStore(sessionmaker(eng), **kw)
+
+
+if importlib.util.find_spec("sqlalchemy") is not None:
+    STORE_FACTORIES["sqlalchemy"] = _sqlalchemy_store
 
 
 @pytest.fixture(params=sorted(STORE_FACTORIES))
@@ -256,6 +276,9 @@ class TestContract:
         elif store.backend == "file":
             enc = FileStore(tmp_path / "enc", codec=Rot())
             raw = FileStore(tmp_path / "enc")
+        elif store.backend == "sqlalchemy":
+            enc = _sqlalchemy_store(tmp_path / "enc", codec=Rot())
+            raw = _sqlalchemy_store(tmp_path / "enc")
         else:
             enc = SQLiteStore(tmp_path / "enc.db", codec=Rot())
             raw = SQLiteStore(tmp_path / "enc.db")
