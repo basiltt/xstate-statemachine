@@ -460,6 +460,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Idempotency refusals over HTTP are RFC 9457 problems.** A reused
+  `Idempotency-Key` with a different body (422) or a still-in-flight request
+  (409) returned a *receipt* body with a 4xx status and `application/json`;
+  every other 4xx was already `application/problem+json`. They are problems
+  now (`title`, `status`, `error` class name -- never exception text). A
+  plain replay still returns the original receipt with `duplicate=True`.
+  Found by driving the installed wheel over a real uvicorn server.
 - **`--with-tests` output could not find its JSON when generated into a
   subdirectory** (`xsm gt machine.json --with-tests -o generated/`, the
   layout the docs recommend): the scaffold looked only beside the test

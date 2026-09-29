@@ -305,6 +305,13 @@ class TestHTTP:
             r3 = c.post("/m/1/events/INC", headers=h, content=b'{"n":2}')
             assert r3.status_code == 422
             assert r3.json()["error"] == "IdempotencyMismatchError"
+            # 🧾 A refusal is an RFC 9457 problem like every other 4xx, not
+            #    a receipt body carrying a 4xx status (clean-venv finding).
+            assert r3.headers["content-type"].startswith(
+                "application/problem+json"
+            )
+            assert r3.json()["title"] == "Idempotency key reused"
+            assert "state_ids" not in r3.json()
             # ðŸ” X0.2: another principal with the SAME key is not a dup.
             hb = {**h, "x-user": "bob"}
             r4 = c.post("/m/1/events/INC", headers=hb, content=b'{"n":1}')

@@ -53,7 +53,11 @@ from ...events import Receipt
 from ...interpreter import Interpreter
 from ...models import MachineNode
 from ...persistence.async_store import as_async
-from ...persistence.idempotency import IdempotencyPlugin
+from ...persistence.idempotency import (
+    IdempotencyInFlightError,
+    IdempotencyMismatchError,
+    IdempotencyPlugin,
+)
 from ...persistence.locking import _restore_kwargs, apersisted
 from ...persistence.store import validate_key
 from ...plugins import PluginBase
@@ -449,6 +453,17 @@ class StatechartRegistry:
                         raise _SkipSave(receipt, body)
             except _SkipSave as skip:
                 receipt, body = skip.receipt, skip.body
+            # 🧾 An idempotency REFUSAL (same key, different body → 422;
+            #    still in flight → 409) is an error to the caller, so it is
+            #    an RFC 9457 problem like every other 4xx -- not a receipt
+            #    body with a 4xx status, which is what the wheel shipped
+            #    (found by the clean-venv battle test). A plain replay
+            #    (duplicate=True, no error) keeps the original receipt.
+            if receipt.error is not None and isinstance(
+                receipt.error,
+                (IdempotencyMismatchError, IdempotencyInFlightError),
+            ):
+                return problem_for_exception(receipt.error)
             return JSONResponse(body, status_code=receipt_to_status(receipt))
         except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
             if receipt_to_status_is_server_error(exc):
