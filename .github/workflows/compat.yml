@@ -88,7 +88,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           mapfile -t args < <(python scripts/gen_compatibility.py --pip-args "${{ matrix.extra }}" "${{ matrix.kind }}")
-          python -m pip install -e "${args[@]}" "pytest>=8.3.0" "pytest-asyncio>=0.24.0" "pytest-socket>=0.7"
+          # 📝 --pip-args already includes the runner (pytest, pytest-asyncio,
+          #    pytest-socket), minus pytest when the cell pins it itself.
+          python -m pip install -e "${args[@]}"
           python -m pip list
 
       - name: 🧪 Run the extra's tests

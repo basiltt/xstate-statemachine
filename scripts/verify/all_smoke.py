@@ -44,13 +44,14 @@ QUICKSTARTS: Dict[str, str] = {
     "fastapi": "integration-fastapi.md",
     "litestar": "integration-litestar.md",
     "agents": "integration-agents.md",
+    "testing": "integration-testing.md",
 }
 
 #: Top-level modules that are NOT stdlib but must never be pulled in by a
 #: bare `import xstate_statemachine` (every shipped extra's dependency).
 THIRD_PARTY = (
     "pydantic fastapi starlette litestar sqlalchemy redis flask quart "
-    "django celery werkzeug httpx anyio greenlet"
+    "django celery werkzeug httpx anyio greenlet pytest hypothesis"
 ).split()
 
 CORE_CHECK = (

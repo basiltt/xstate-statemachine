@@ -80,6 +80,16 @@
       "extra_pins": ["httpx==0.27.2"],
       "test_deps": ["httpx>=0.24"],
       "note": "0.27-0.45.0 on Python 3.9: the TestClient hangs in the WebSocket close-1008 test (teardown), so the cell cannot prove them. The HTTP surface passes."
+    },
+    "testing": {
+      "package": "pytest",
+      "declared": "8",
+      "oldest": "pytest==8.0.0",
+      "newest": "pytest>=8",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": ["hypothesis==6.100.0", "pytest-asyncio==0.23.8"],
+      "test_deps": [],
+      "note": ""
     }
   }
 }

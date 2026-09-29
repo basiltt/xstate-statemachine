@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 import sys
 from typing import Any, Dict, List
 
@@ -114,6 +115,16 @@ def matrix(extras: Dict[str, Dict[str, Any]]) -> List[Dict[str, str]]:
     ]
 
 
+#: What every cell needs to RUN the suite. A runner package the cell pins
+#: itself is left out (the [testing] extra IS pytest; a second, newer floor
+#: would make its oldest cell unsatisfiable).
+RUNNER = ("pytest>=8.3.0", "pytest-asyncio>=0.24.0", "pytest-socket>=0.7")
+
+
+def _dist(spec: str) -> str:
+    return re.split(r"[\[<>=!~ ]", spec, maxsplit=1)[0].lower()
+
+
 def pip_args(
     extras: Dict[str, Dict[str, Any]], name: str, kind: str
 ) -> List[str]:
@@ -122,6 +133,8 @@ def pip_args(
     if kind == "oldest":
         args += list(e.get("extra_pins", []))
     args += list(e.get("test_deps", []))
+    pinned = {_dist(a) for a in args if "==" in a}
+    args += [r for r in RUNNER if _dist(r) not in pinned]
     return args
 
 

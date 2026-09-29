@@ -34,6 +34,7 @@ tested version as the practical minimum.
 | `[redis]` | redis | `>=5` | **5.0.0** (see notes) (Python 3.9) | latest `redis>=5` (Python 3.13) | `pytest-asyncio==0.23.8` |
 | `[sqlalchemy]` | sqlalchemy | `>=2.0` | **2.0.2** (see notes) (Python 3.9) | latest `sqlalchemy[asyncio]>=2.0` (Python 3.13) | `greenlet==3.0.3` |
 | `[starlette]` | starlette | `>=0.27` | **0.45.3** (see notes) (Python 3.9) | latest `starlette>=0.27` (Python 3.13) | `httpx==0.27.2` |
+| `[testing]` | pytest | `>=8` | **8.0.0** (Python 3.9) | latest `pytest>=8` (Python 3.13) | `hypothesis==6.100.0`, `pytest-asyncio==0.23.8` |
 
 ### Notes
 
