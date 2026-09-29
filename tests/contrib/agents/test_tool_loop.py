@@ -907,6 +907,56 @@ class TestStructuredOutput:
 # value types / FakeModel
 # -----------------------------------------------------------------------------
 class TestValueTypes:
+    def test_registry_edges(self) -> None:
+        from src.xstate_statemachine.contrib.agents import Tool
+
+        def f(x: int) -> int:
+            return x
+
+        with pytest.raises(AgentConfigError, match="timeout_s"):
+            tool_registry(f, timeout_s=0)
+        with pytest.raises(AgentConfigError, match="timeout_s"):
+            tool_registry(tool(f, timeout_s=True))
+        with pytest.raises(AgentConfigError, match="max_output_chars"):
+            tool_registry(f, max_output_chars=0)
+        with pytest.raises(AgentConfigError, match="duplicate"):
+            tool_registry(f, tool(f, name="f"))
+        with pytest.raises(AgentConfigError, match="reserved"):
+            tool_registry(tool(f, name="*"))
+        with pytest.raises(AgentConfigError, match="not a tool"):
+            tool_registry(42)  # type: ignore[arg-type]
+
+        def star(*a: int) -> None:
+            return None
+
+        with pytest.raises(AgentConfigError, match="args"):
+            tool_registry(star)
+
+        reg = tool_registry(f, tool(f, name="g", description="custom"))
+        assert len(reg) == 2 and "f" in reg and reg.names == ["f", "g"]
+        assert isinstance(tool_registry(reg.get("f")).get("f"), Tool)
+        assert reg.get("g").schema()["description"] == "custom"
+        assert reg.expand(None) == set()
+        assert reg.truncate({"k": 1}) == '{"k": 1}'
+        with pytest.raises(ToolDeniedError, match="object"):
+            reg.get("f").validate([1])  # type: ignore[arg-type]
+
+    def test_tool_execution_paths(self) -> None:
+        async def aping(n: int) -> int:
+            return n + 1
+
+        def boom(n: int) -> int:
+            raise ValueError("tool failed")
+
+        reg = tool_registry(aping, boom, timeout_s=2)
+        assert reg.call_sync(ToolCall("1", "aping", {"n": 1}), {"n": 1}) == 2
+        with pytest.raises(ValueError):
+            reg.call_sync(ToolCall("2", "boom", {"n": 1}), {"n": 1})
+        with pytest.raises(ValueError):
+            asyncio.run(
+                reg.call_async(ToolCall("3", "boom", {"n": 1}), {"n": 1})
+            )
+
     def test_model_response_round_trip(self) -> None:
         r = ModelResponse(
             text="t", tool_calls=[ToolCall("1", "f", {"a": 1})], model="m"

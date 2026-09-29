@@ -36,6 +36,15 @@ from src.xstate_statemachine.persistence import (  # noqa: E402
 )
 
 T0 = 1_800_000_000.0
+
+
+@pytest.fixture
+def store(tmp_path: Any) -> Any:
+    s = SQLiteStore(tmp_path / "agents.db")
+    yield s
+    s.close()
+
+
 EMAIL = {"tool": "send_email", "args": {"to": "ops@x", "body": "hi"}}
 
 
@@ -46,9 +55,8 @@ def _machine(model: Any, reg: Any, **kw: Any) -> Any:
 
 
 class TestDurableHumanSync:
-    def test_persist_restart_approve_complete(self, tmp_path) -> None:
+    def test_persist_restart_approve_complete(self, store) -> None:
         reg, ran = weather_tools()
-        store = SQLiteStore(tmp_path / "agents.db")
         model = FakeModel([EMAIL, {"text": "Mail sent."}], is_async=False)
         m = _machine(model, reg)
 
@@ -73,9 +81,8 @@ class TestDurableHumanSync:
         assert ran["send_email"] == 1
         assert not store.load("agent:1").deadlines
 
-    def test_escalation_fires_via_due_timer_scanner(self, tmp_path) -> None:
+    def test_escalation_fires_via_due_timer_scanner(self, store) -> None:
         reg, ran = weather_tools()
-        store = SQLiteStore(tmp_path / "agents.db")
         model = FakeModel([EMAIL], is_async=False)
         m = _machine(model, reg)
         run_agent_sync(
@@ -93,9 +100,8 @@ class TestDurableHumanSync:
         assert snap["context"]["error"]["kind"] == "human_timeout"
         assert ran["send_email"] == 0
 
-    def test_approval_after_escalation_is_ignored(self, tmp_path) -> None:
+    def test_approval_after_escalation_is_ignored(self, store) -> None:
         reg, ran = weather_tools()
-        store = SQLiteStore(tmp_path / "agents.db")
         m = _machine(FakeModel([EMAIL], is_async=False), reg)
         run_agent_sync(
             m,
@@ -111,9 +117,8 @@ class TestDurableHumanSync:
 
 
 class TestDurableHumanAsync:
-    def test_persist_restart_approve_complete(self, tmp_path) -> None:
+    def test_persist_restart_approve_complete(self, store) -> None:
         reg, ran = weather_tools()
-        store = SQLiteStore(tmp_path / "agents.db")
 
         async def go() -> Any:
             model = FakeModel([EMAIL, {"text": "Mail sent."}])
