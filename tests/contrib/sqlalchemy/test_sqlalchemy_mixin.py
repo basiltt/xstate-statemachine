@@ -16,6 +16,10 @@ import pytest
 from ..conftest import requires_extra
 
 pytestmark = requires_extra("sqlalchemy")
+# 📝 The marker only SKIPS; it cannot stop the module-level import below
+#    from running at collection in a job without the extra (the default
+#    Test matrix). importorskip first, like every other contrib suite.
+pytest.importorskip("sqlalchemy")
 
 from sqlalchemy import select  # noqa: E402
 from sqlalchemy.orm import (  # noqa: E402

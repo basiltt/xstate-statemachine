@@ -74,7 +74,7 @@ pydantic      = ["pydantic>=2.5"]  # #266
 observability = []  # #273  opentelemetry-api>=1.20, prometheus-client>=0.17
 testing       = []  # #268  pytest>=8, hypothesis>=6.100
 redis         = ["redis>=5"]  # #306
-sqlalchemy    = ["sqlalchemy>=2.0"]  # #284
+sqlalchemy    = ["sqlalchemy[asyncio]>=2.0"]  # #284; [asyncio] pulls greenlet for AsyncSQLAlchemyStore
 starlette     = ["starlette>=0.27"]  # #275
 fastapi       = [  # #276; self-reference avoided so the audit test sees pins
     "fastapi>=0.100",
@@ -102,7 +102,7 @@ all           = [  # every SHIPPED extra; grows as issues land
     "starlette>=0.27",
     "fastapi>=0.100",
     "litestar>=2.0",
-    "sqlalchemy>=2.0",
+    "sqlalchemy[asyncio]>=2.0",
     "flask>=2.3",
 ]
 

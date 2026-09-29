@@ -16,6 +16,10 @@ import pytest
 from ..conftest import requires_extra
 
 pytestmark = requires_extra("sqlalchemy")
+# 📝 The marker only SKIPS; it cannot stop the module-level import below
+#    from running at collection in a job without the extra (the default
+#    Test matrix). importorskip first, like every other contrib suite.
+pytest.importorskip("sqlalchemy")
 
 from sqlalchemy import update  # noqa: E402
 
@@ -207,6 +211,8 @@ class TestSharedTransaction:
 # -----------------------------------------------------------------------------
 def _astore(tmp_path: Any, **kw: Any) -> Any:
     pytest.importorskip("aiosqlite")
+    # 📝 SQLAlchemy's asyncio layer needs greenlet (`sqlalchemy[asyncio]`).
+    pytest.importorskip("greenlet")
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from src.xstate_statemachine.contrib.sqlalchemy import (
