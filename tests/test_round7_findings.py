@@ -891,8 +891,13 @@ class TestChildMidStepSnapshot(_Quiet):
             # Paced: the child steps for ~2 ms every ~3 ms on another
             # thread, so a parent snapshot catches it mid-step often and
             # the bounded wait CAN let it settle.
+            # Smoke form of the deterministic pin below. The driver uses
+            # the SUPPORTED cross-thread path: `send_threadsafe()` puts GO
+            # in the mailbox and the child's pump thread runs the step
+            # under its step gate. (A foreign-thread `send()` is
+            # unsupported and would void the guarantee.)
             while not stop.is_set():
-                kid.send("GO")
+                kid.send_threadsafe("GO")
                 time.sleep(0.001)
 
         th = threading.Thread(target=driver, daemon=True)
@@ -918,6 +923,84 @@ class TestChildMidStepSnapshot(_Quiet):
         self.assertEqual(
             torn, 0, f"{torn} torn of {accepted} ({refused} refused)"
         )
+
+    def test_child_step_starting_after_settle_check_is_not_harvested(
+        self,
+    ) -> None:
+        # Deterministic TOCTOU pin: the child is settled when the parent
+        # checks, and a step begins on the child's PUMP thread (the
+        # supported `send_threadsafe()` path) between that check and the
+        # context copy. Without a step gate the copy lands mid-`pair`.
+        child = {
+            "id": "kid",
+            "initial": "x",
+            "context": {"q": 0, "p": 0},
+            "states": {
+                "x": {"on": {"GO": {"target": "x", "actions": ["pair"]}}}
+            },
+        }
+        parent = {
+            "id": "par",
+            "initial": "s",
+            "states": {
+                "s": {
+                    "entry": [
+                        {
+                            "type": "spawnChild",
+                            "params": {"src": "kid", "id": "w"},
+                        }
+                    ]
+                }
+            },
+        }
+        started, release = threading.Event(), threading.Event()
+
+        def pair(i: Any, c: Any, e: Any, a: Any) -> None:
+            c["q"] += 1
+            started.set()
+            release.wait(2)
+            c["p"] += 1
+
+        kid_logic = MachineLogic(actions={"pair": pair})
+        p = SyncInterpreter(
+            create_machine(
+                parent,
+                logic=MachineLogic(
+                    services={
+                        "kid": lambda i, c, e: create_machine(
+                            child, logic=kid_logic
+                        )
+                    }
+                ),
+            )
+        ).start()
+        self.addCleanup(p.stop)
+        self.addCleanup(release.set)
+        kid = p._actors["par:w"]
+        original = kid._step_in_flight
+        main = threading.get_ident()
+        fired: List[bool] = []
+
+        def injected() -> bool:
+            verdict = original()
+            if threading.get_ident() == main and not fired:
+                fired.append(True)
+                # ⚡ The interleaving: the settle check has answered; now
+                #    the child starts a step on its own thread.
+                kid.send_threadsafe("GO")
+                started.wait(0.3)
+            return verdict
+
+        kid._step_in_flight = injected  # type: ignore[method-assign]
+        try:
+            blob = p.get_persisted_snapshot()
+            ctx = blob["actors"][kid.id]["snapshot"]["context"]
+            self.assertEqual(ctx["q"], ctx["p"], f"torn child blob: {ctx}")
+        except SnapshotMidStepError as exc:
+            self.assertTrue(exc.child)
+        finally:
+            release.set()
+        self.assertTrue(fired, "injection point was not reached")
 
     def test_settled_hierarchical_snapshot_still_captures_children(
         self,

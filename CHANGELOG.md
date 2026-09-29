@@ -481,6 +481,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - PR template gains an integrations checklist, including "this PR does
     not tag or publish a release".
 
+### Fixed
+
+- **A parent snapshot can no longer harvest a non-blocking sync child's
+  half-applied context.** "Wait until the child is settled" and "copy its
+  context" were two separate reads; the child's pump thread could begin a
+  step between them (a deterministic interleaving reproduced it even via
+  the supported `send_threadsafe()` path), and CI saw it as "1 torn of
+  150". The pump now runs each step under a per-child step gate that the
+  parent holds across the check and the copy; a gate not free within
+  0.5 s refuses with `SnapshotMidStepError(child=True)`. The async engine
+  needs no gate (its children step on the caller's loop). A foreign-thread
+  `send()` on a `SyncInterpreter` remains unsupported and voids the
+  guarantee -- use `send_threadsafe()`.
 ### Documentation
 
 - **Integrations journey (#309).** *Integrations* is now the entry point:

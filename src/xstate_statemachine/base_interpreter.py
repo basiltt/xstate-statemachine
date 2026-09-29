@@ -1663,6 +1663,41 @@ class BaseInterpreter(Generic[TContext]):
         #    The documented contract ("from inside an action -> refused")
         #    is what callers rely on; legality stays the test for the
         #    bounded wait on a CHILD caught mid-step by its parent.
+        # 🏛️ Child step gate (TOCTOU fix): "wait until settled, then copy"
+        #    was two separate reads. A non-blocking sync child's pump
+        #    thread could begin its next step between them, and the parent
+        #    harvested a half-applied context that restored cleanly. When
+        #    the engine supplies a gate (the sync pump holds it for every
+        #    step it runs) the parent holds it across the check AND the
+        #    copy, so the two can never interleave. The async engine
+        #    supplies none: its children step on the caller's loop, so the
+        #    check below is already race-free there. Never taken on the
+        #    root call or the child's own thread (a non-reentrant lock).
+        gate = None
+        if _seen is not None and self._step_thread_ident() not in (
+            None,
+            threading.get_ident(),
+        ):
+            gate = self._step_gate_lock()
+            if gate is not None and not gate.acquire(timeout=0.5):
+                exc = SnapshotMidStepError(self.id, child=True)
+                self._report_snapshot_error(exc)  # #159
+                raise exc
+        try:
+            return self._persisted_snapshot_body(_seen)
+        finally:
+            if gate is not None:
+                gate.release()
+
+    def _step_gate_lock(self) -> Optional[Any]:
+        """Engine hook: a lock held while this actor steps on a FOREIGN
+        thread (the sync pump), or ``None`` when no gate is needed."""
+        return None
+
+    def _persisted_snapshot_body(
+        self, _seen: Optional[Set[int]]
+    ) -> Dict[str, Any]:
+        """`get_persisted_snapshot` minus the child step gate."""
         if self._step_in_flight():
             if _seen is None:
                 exc = SnapshotMidStepError(self.id)
