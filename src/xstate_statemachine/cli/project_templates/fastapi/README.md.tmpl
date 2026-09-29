@@ -1,0 +1,26 @@
+# ${name}
+
+A FastAPI service driven by a statechart, scaffolded by
+`xsm new --template fastapi` from the
+[`fastapi_orders` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders).
+
+| File | What it is |
+|:--|:--|
+| `machine.json` | The chart (id `${machine_id}`). Edit it in the Stately editor and re-export. |
+| `models.py` | One Pydantic `EventModel` per event, plus the context model. |
+| `logic.py` | Actions, guards and the (fake) payment service. |
+| `app.py` | `StatechartRegistry` + `StatechartRouter` + `instrument_app`. |
+| `tests/` | Plain pytest + `TestClient`. |
+
+```bash
+pip install -r requirements.txt
+xsm validate --plain machine.json
+python -m pytest tests -q
+python app.py --role init                 # create the SQLite schema once
+uvicorn app:app --workers 4               # the API, at /${name}/{id}
+python app.py --role scheduler            # exactly one: wakes `after` timers
+```
+
+Set `XSM_REDIS_URL=redis://...` to switch from SQLite to Redis (install
+`xstate-statemachine[fastapi,redis]`). See the integrations guide:
+https://basiltt.github.io/xstate-statemachine/guide/integrations/

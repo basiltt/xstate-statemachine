@@ -1,0 +1,56 @@
+name: xsm-check self-test
+
+# Runs the repository's own `xsm-check` action (action.yml) and the
+# pre-commit hook commands (.pre-commit-hooks.yaml) on the example app.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - action.yml
+      - .pre-commit-hooks.yaml
+      - .github/workflows/xsm-check-selftest.yml
+      - examples/integrations/fastapi_orders/**
+
+permissions:
+  contents: read
+
+jobs:
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Generate code to check against
+        run: |
+          python -m pip install --disable-pip-version-check .
+          xsm gt examples/integrations/fastapi_orders/machine.json \
+            -o "$RUNNER_TEMP/generated" -t pythonic-class -f --plain
+
+      - name: xsm-check (validate + gt --check)
+        uses: ./
+        with:
+          files: examples/integrations/fastapi_orders/machine.json
+          generated-dir: ${{ runner.temp }}/generated
+          gt-args: -t pythonic-class
+          package: .
+
+      - name: xsm-check must FAIL on stale generated code
+        run: |
+          echo "# drift" >> "$RUNNER_TEMP/generated/order_logic.py"
+          if xsm gt --check --plain examples/integrations/fastapi_orders/machine.json \
+               -o "$RUNNER_TEMP/generated" -t pythonic-class; then
+            echo "::error::--check accepted stale code"; exit 1
+          fi
+
+  pre-commit-hooks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+      - name: Run the hook commands through pre-commit try-repo
+        run: |
+          python -m pip install --disable-pip-version-check pre-commit
+          pre-commit try-repo . xsm-validate \
+            --files examples/integrations/fastapi_orders/machine.json

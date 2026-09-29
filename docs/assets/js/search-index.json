@@ -108,6 +108,18 @@
     "description": "actionErrorPolicy rollback, onUnhandled, strict mode, event_schemas, guardErrorPolicy, OverflowPolicy, Receipt, SnapshotDriftError, SimulatedClock — every failure policy with a runnable example."
   },
   {
+    "title": "Integrations",
+    "section": "Integrations",
+    "url": "/guide/integrations/",
+    "description": "Start here: pick your path (framework x store x worker model x events-in), a 15-minute tutorial from a Stately export to FastAPI on SQLite and Redis with an idempotency inbox, what you get and what you don't."
+  },
+  {
+    "title": "Integration extras",
+    "section": "Integrations",
+    "url": "/guide/integrations-extras/",
+    "description": "Every optional pip extra with its status and issue: pydantic, redis, starlette, fastapi, litestar shipped; django, flask, sqlalchemy, celery, kafka, observability, testing, agents planned. MissingExtraError, design rules."
+  },
+  {
     "title": "Guarantees",
     "section": "Integrations",
     "url": "/guide/guarantees/",
@@ -166,6 +178,12 @@
     "section": "CLI",
     "title": "Hierarchical Generation",
     "url": "/guide/cli-hierarchy/"
+  },
+  {
+    "title": "Stately Editor → Python",
+    "section": "CLI Tool",
+    "url": "/guide/stately-export/",
+    "description": "Export from the Stately editor, the version key, meta / description / x- keys (meta.publish and meta.tools planned), xsm validate, the VS Code JSON Schema for *.machine.json, the round trip."
   },
   {
     "description": "Complete reference — create_machine, Interpreter, SyncInterpreter, MachineLogic, State, StateMachine, MachineBuilder, Event, exceptions.",

@@ -150,6 +150,8 @@ pip install xstate-statemachine
 
 That's the whole story. **Zero runtime dependencies** — pure standard library, Python 3.9 → 3.14.
 
+[![xsm-check](https://img.shields.io/badge/GitHub%20Action-xsm--check-blue?logo=githubactions&logoColor=white)](https://basiltt.github.io/xstate-statemachine/guide/cli/#in-ci-and-pre-commit) [![pre-commit](https://img.shields.io/badge/pre--commit-xsm--validate-FAB040?logo=pre-commit&logoColor=white)](https://basiltt.github.io/xstate-statemachine/guide/cli/#in-ci-and-pre-commit) — validate machine JSON and keep generated code current in CI. New here? Start with the [integrations journey](https://basiltt.github.io/xstate-statemachine/guide/integrations/) or `xsm new my_service`.
+
 Releases are published from GitHub Actions through PyPI **Trusted Publishing** (no long-lived
 token) and carry **PEP 740 build provenance attestations** binding each wheel and sdist to the
 exact run, commit and workflow that built it. To verify an artefact instead of trusting a

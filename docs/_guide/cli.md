@@ -410,7 +410,7 @@ The runner will start the interpreter, send the `SUBMIT` event, invoke the payme
 ```
 xsm [-h] [-v] [--plain] [--no-color] [--no-anim] [--verbose]
     {generate-template,gt,list-templates,lt,validate,val,info,update,setup,
-     inspect,ins,paths,diagram,dia,simulate,sim,docs} ...
+     inspect,ins,paths,diagram,dia,simulate,sim,docs,new} ...
 ```
 
 | Command | Alias | Description |
@@ -427,6 +427,7 @@ xsm [-h] [-v] [--plain] [--no-color] [--no-anim] [--verbose]
 | `info` | — | Version, environment, feature cards, links |
 | `update` | — | Check PyPI and upgrade to the latest release with the installer that installed you (`--check`, `--yes`) |
 | `setup` | — | Windows: swap pip's blocked `xsm.exe` launcher for a batch shim (`--check`, `--undo`) |
+| `new` | — | Scaffold a project from an example app ([`--template fastapi`](#new-project), `--list`) |
 
 Every command that reports facts also has a `--json` switch (`validate`, `inspect`, `paths`, `simulate`, `list-templates`, `info`) so the same information can be consumed by scripts.
 
@@ -449,6 +450,7 @@ On a terminal, a bare `xsm` draws the banner and a menu:
   Templates            Browse the code generation catalogue
   About                Version, environment, links
   Update               Check PyPI and upgrade to the latest release
+  New project          Scaffold a FastAPI project from the example
   Quit
   ↑↓ move · enter select · esc cancel
 ```
@@ -871,6 +873,60 @@ overwrite confirmation, so they are safe in a non-interactive pipeline.
         --template pythonic-builder \
         --output src/machines \
         --check
+```
+
+## In CI and pre-commit
+
+### The `xsm-check` GitHub Action
+
+The repository is itself a composite action. It installs the library, runs `xsm validate --plain` on every file matching `files`, and — when `generated-dir` is set — `xsm gt --check` against that directory:
+
+```yaml
+- uses: actions/checkout@v4
+- uses: basiltt/xstate-statemachine@v0.14.0   # pin a tag (or a commit SHA)
+  with:
+    files: "machines/**/*.machine.json"       # bash globstar pattern
+    generated-dir: src/machines               # optional
+    gt-args: "-t pythonic-builder"            # the flags you generated with
+    python-version: "3.13"                    # optional
+    package: "xstate-statemachine==0.14.0"    # optional: pin the CLI too
+```
+
+The action fails when no file matches, when any machine has an error, or when the generated code is stale. The repository runs it on the `fastapi_orders` example in `.github/workflows/xsm-check-selftest.yml`.
+
+### pre-commit hooks
+
+`.pre-commit-hooks.yaml` publishes two hooks:
+
+| Hook | Runs | On |
+|:--|:--|:--|
+| `xsm-validate` | `xsm validate --plain <staged files>` | files ending in `machine.json` (so `order.machine.json` and `machine.json`) |
+| `xsm-gt-check` | `xsm gt --check --plain <args>` | once per commit (`pass_filenames: false`); **`args` is required** — the input JSON, `-o` and the template flags you generate with |
+
+```yaml
+repos:
+  - repo: https://github.com/basiltt/xstate-statemachine
+    rev: v0.14.0
+    hooks:
+      - id: xsm-validate
+      - id: xsm-gt-check
+        args: [machines/order.machine.json, -o, src/machines, -t, pythonic-builder]
+```
+
+Both hooks are `language: python`, so pre-commit installs the library into its own environment; nothing is needed on your `PATH`.
+
+## New project
+
+```bash
+xsm new --list                                  # templates and their status
+xsm new my_service                              # --template fastapi, --name orders
+xsm new my_service --name shop_orders --force   # write into a non-empty dir
+```
+
+`xsm new --template fastapi DIR` copies the [`fastapi_orders` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders) into `DIR`: `machine.json`, `models.py`, `logic.py`, `app.py`, `static/`, `tests/`, a `README.md` and a `requirements.txt` pinning `xstate-statemachine[fastapi]`. `--name` (lower_snake_case, default `orders`) becomes the URL prefix, the store prefix and — camelCased — the machine id. Templating is the standard library's `string.Template`; there is no cookiecutter dependency. A non-empty `DIR` is refused unless you pass `--force`. `django` and `flask` are listed as planned and refused with their issue numbers ([#280](https://github.com/basiltt/xstate-statemachine/issues/280), [#285](https://github.com/basiltt/xstate-statemachine/issues/285)). Exit status 2 on any refusal.
+
+```bash
+cd my_service && pip install -r requirements.txt && python -m pytest tests -q
 ```
 
 ---

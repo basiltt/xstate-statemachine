@@ -211,12 +211,13 @@ class TestIntegrationsSection(unittest.TestCase):
         self.assertIn("missingextraerror", text)  # _read lower-cases
         layout = _read(ROOT / "docs" / "_layouts" / "default.html")
         self.assertIn("/guide/integrations/", layout)
-        self.assertIn("cli-hierarchy,integrations,", layout)  # pages_order
+        self.assertIn("stately-export,integrations,", layout)  # pages_order
 
     def test_overview_lists_every_registry_extra(self) -> None:
         from src.xstate_statemachine.contrib._registry import EXTRAS
 
-        text = _read(GUIDE / "integrations.md")
+        # 📝 #309: the extras table moved off the journey page.
+        text = _read(GUIDE / "integrations-extras.md")
         missing = [f"`{name}`" for name in EXTRAS if f"`{name}`" not in text]
         self.assertEqual(missing, [], f"extras not documented: {missing}")
 
@@ -257,6 +258,46 @@ class TestIntegrationsSection(unittest.TestCase):
             text = _read(GUIDE / f"{name}.md")
             self.assertIn("## guarantees", text, name)
             self.assertIn("## threat model", text, name)
+
+
+class TestAdoptionKitPages(unittest.TestCase):
+    """#309: the journey page, the extras page and the Stately page."""
+
+    PAGES = ("integrations-extras", "stately-export")
+
+    def test_new_pages_are_in_nav_order_and_search(self) -> None:
+        layout = _read(ROOT / "docs" / "_layouts" / "default.html")
+        index = _read(ROOT / "docs" / "assets" / "js" / "search-index.json")
+        for page in self.PAGES:
+            self.assertTrue((GUIDE / f"{page}.md").is_file(), page)
+            self.assertIn(f"/guide/{page}/", layout, f"{page} not in sidebar")
+            self.assertIn(f"{page},", layout, f"{page} not in pages_order")
+            self.assertIn(f"/guide/{page}/", index, f"{page} not searchable")
+
+    def test_journey_has_the_four_sections_and_a_mermaid_tree(self) -> None:
+        text = _read(GUIDE / "integrations.md")
+        for section in (
+            "## pick your path",
+            "## 15-minute tutorial",
+            "## what you get / what you don't",
+            "## where next",
+        ):
+            self.assertIn(section, text)
+        self.assertIn("```mermaid", text)
+        self.assertIn("../guarantees/", text)
+        self.assertIn("../security/", text)
+        # 📝 Unshipped steps are prose with their issue, never fake code.
+        self.assertIn("#270", text)
+        self.assertIn("#274", text)
+
+    def test_stately_page_marks_planned_meta_conventions(self) -> None:
+        text = _read(GUIDE / "stately-export.md")
+        self.assertIn("meta.publish", text)
+        self.assertIn("meta.tools", text)
+        self.assertIn("planned", text)
+        self.assertIn(
+            '"filematch": ["*.machine.json"]', text
+        )  # _read lower-cases
 
 
 class TestSecurityBaseline(unittest.TestCase):
