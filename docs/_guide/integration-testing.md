@@ -162,6 +162,66 @@ Ids name the leaf configurations the path walks through (parallel leaves joined 
 
 📝 Named `after` delays (declared in `MachineLogic.delays`) have no static duration: their steps advance the clock by a large sentinel and carry a `delay:<name>=unknown` assumption. With real `logic=` the *generation* still uses stubs; `replay` then runs your real guards, so a path whose guard assumption your logic does not satisfy will (correctly) not reach its configuration.
 
+## State & transition coverage
+
+Line coverage cannot tell you whether any test ever reached `timeout` or took `paying --PAY_FAILED--> failed`. The chart knows every state and transition; `--xsm-coverage` records which ones ran:
+
+```text
+$ pytest --xsm-coverage --xsm-fail-under-transition-coverage=90
+...
+---- xstate coverage ----
+checkout          states 12/15 (80%)  transitions 18/22 (81.8%)
+  unvisited: timeout, errorRecovery, refund.partial
+  unhit:     paying --PAY_FAILED--> failed, after 30000 ...
+FAIL xstate coverage: checkout: transition coverage 81.8% < 90%
+```
+
+The session registers one `CoverageCollector` with core's [`plugins.register_global`](../plugins/) at start-up and unregisters it at the end, so **every** interpreter built during the run is counted — the `xsm_*` fixtures, a test's own `SyncInterpreter(...)` / `Interpreter(...)`, `from_snapshot` restores (their configuration counts at `start()`), spawned children, on any thread. Machines are grouped by `machine.id` + `structure_hash`, so two builds of one chart merge and an edited chart is a new row. A parallel configuration marks every active leaf and its ancestors; a history restore marks the states actually re-entered. Denominators: every state except the root and history pseudo-states, and [`transition_coverage_targets(machine)`](../testing-and-pure-api/) for transitions (`on`, `always`, `after`, `onDone`, invoke `onDone`/`onError`).
+
+| Option | Effect |
+|:--|:--|
+| `--xsm-coverage` | Enable. Without it nothing is registered and no section is printed. |
+| `--xsm-coverage-report=term\|json[:PATH]\|html[:PATH]` | Repeatable; default `term`. `json` defaults to `xsm-coverage.json`, `html` to `xsm-coverage.html` (one self-contained file: inline CSS, no scripts, no external links). |
+| `--xsm-fail-under-state-coverage=N` | Session exits 1 if any machine's state coverage is below N %. |
+| `--xsm-fail-under-transition-coverage=N` | Same for transitions. |
+
+The same collector works outside pytest:
+
+```python
+from xstate_statemachine import SyncInterpreter, create_machine
+from xstate_statemachine.coverage import CoverageCollector
+
+m = create_machine({"id": "t", "initial": "a", "states": {
+    "a": {"on": {"GO": "b"}}, "b": {"on": {"BACK": "a"}}}})
+cov = CoverageCollector()
+SyncInterpreter(m).use(cov).start().send("GO")
+report = cov.report(m)
+assert (report.states_visited, report.transitions_hit) == (2, 1)
+print(report.to_text())      # also .to_json(), .to_html()
+```
+
+**JSON schema (`version: 1`, stable).** A reader must reject any other `version`.
+
+```text
+{"version": 1,
+ "machines": [{"machine": "checkout", "key": "checkout@<structure_hash>",
+               "states":      {"visited": 12, "total": 15, "percent": 80.0,
+                               "unvisited": ["checkout.timeout", ...]},
+               "transitions": {"hit": 18, "total": 22, "percent": 81.82,
+                               "unhit": [{"from": "checkout.paying",
+                                          "label": "on 'PAY_FAILED'",
+                                          "to": "checkout.failed"}, ...]}}]}
+```
+
+`xsm coverage xsm-coverage.json [--fail-under N] [--plain] [--json]` renders it in CI logs and exits 1 when any machine is under `N` % (state or transition). A CI job:
+
+```yaml
+- run: pytest --xsm-coverage --xsm-coverage-report=term --xsm-coverage-report=json:xsm-coverage.json
+- run: xsm coverage xsm-coverage.json --fail-under 90 --plain
+- uses: actions/upload-artifact@v4
+  with: {name: xstate-coverage, path: xsm-coverage.json}
+```
+
 ## Guarantees
 
 > **What this does:** builds the machine once per test from the marker, starts the interpreter on a simulated clock so no test waits on wall time, stops it at teardown, and fails loudly — with the test id — on any marker or logic mistake. Snapshot files are deterministic (sorted keys, fixed indent, behavioural fields only) and are written **only** under `--xsm-update-snapshots`. Without the marker the plugin does nothing: it registers fixtures and two options and requires no configuration. Both engines share the same semantics.

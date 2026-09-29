@@ -54,6 +54,7 @@ from ...models import MachineNode
 from ...persistence.store import MemoryStore
 from ...sync_interpreter import SyncInterpreter
 from ...testing_utils import stub_logic
+from ._coverage import CoverageSession, add_coverage_options
 from ._paths import add_path_options, generate_path_tests, xsm_path
 
 __all__ = [
@@ -69,6 +70,9 @@ __all__ = [
     "pytest_configure",
     "pytest_cmdline_main",
     "pytest_generate_tests",
+    "pytest_unconfigure",
+    "pytest_sessionfinish",
+    "pytest_terminal_summary",
     "xsm_path",
 ]
 
@@ -460,6 +464,7 @@ def pytest_addoption(parser: Any) -> None:
         help="rewrite snapshot files asserted with the xsm_snapshot fixture",
     )
     add_path_options(group)
+    add_coverage_options(group)
 
 
 def pytest_cmdline_main(config: Any) -> Optional[int]:
@@ -499,11 +504,28 @@ def pytest_configure(config: Any) -> None:
         from . import _async_fixtures
 
         config.pluginmanager.register(_async_fixtures, _ASYNC_FIXTURES_PLUGIN)
+    CoverageSession.configure(config)
+
+
+def pytest_unconfigure(config: Any) -> None:
+    CoverageSession.unconfigure(config)
 
 
 def pytest_generate_tests(metafunc: Any) -> None:
     """Parametrise ``xsm_path`` over the machine's paths (#269)."""
     generate_path_tests(metafunc)
+
+
+def pytest_sessionfinish(session: Any, exitstatus: Any) -> None:
+    cov = CoverageSession.get(session.config)
+    if cov is not None:
+        cov.finish(session)
+
+
+def pytest_terminal_summary(terminalreporter: Any) -> None:
+    cov = CoverageSession.get(terminalreporter.config)
+    if cov is not None:
+        cov.summary(terminalreporter)
 
 
 # -----------------------------------------------------------------------------
