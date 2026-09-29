@@ -76,6 +76,26 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
   - `EventModel` validators ignore the transport-level `idempotency_key`
     payload field, so `Idempotency-Key` works with `extra="forbid"`
     models.
+  - **`examples/integrations/fastapi_orders` + multi-worker guide (#277).**
+    A runnable order-lifecycle service (`cart → paying → paid → shipped`,
+    `after` expiry, an invoked gateway retried with `RetryPolicy`, a
+    parallel `fulfilment` region) on `StatechartRegistry` over
+    `SQLiteStore` or, with `XSM_REDIS_URL`, `RedisStore`; typed events,
+    `Idempotency-Key`, a `BackgroundTasks` confirmation email scheduled only
+    for a committed first-time change, SSE consumed by a static page, and a
+    `--role scheduler` process running `DueTimerScanner` (timers in exactly
+    one process). `loadtest.py` starts N uvicorn workers (Windows-safe
+    launcher polling `/_xsm/health`) and fires 200 concurrent `PAY`s at one
+    order: exactly one changed receipt, with and without a key. Docker
+    Compose runs 4 workers + scheduler + Redis. The FastAPI guide gains
+    *Multi-worker deployments*, *Side effects*, *Sessions & wizards*,
+    *Testing* and *Troubleshooting*; `tests/test_examples_integrations.py`
+    validates every example chart and runs each example's suite in the
+    `[fastapi]` CI cell.
+  - **Fixed:** `send_event()` no longer persists a duplicate / in-flight
+    receipt. Saving a replay bumped the version so the ORIGINAL request's
+    save lost with 409; under a burst of retries with one
+    `Idempotency-Key`, nobody won.
 
 - **Graph algorithms `shortest_paths`, `simple_paths`, `reachable_states`,
   `transition_coverage_targets`, `Path`, `Step`** (#269; core, zero-dep;

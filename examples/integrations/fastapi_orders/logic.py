@@ -1,0 +1,110 @@
+# examples/integrations/fastapi_orders/logic.py
+# -----------------------------------------------------------------------------
+# 🧠 Actions, guards and services for the order chart
+# -----------------------------------------------------------------------------
+# 🏛️ Rules every piece of logic here follows (see the guide's "Side
+#    effects" section): actions are FAST and IDEMPOTENT -- they only touch
+#    `context`; the one slow, failure-prone thing (charging a card) is an
+#    `invoke`d service, so a failure is an `onError` transition the chart
+#    models, retried by `RetryPolicy`. The service is a plain `def` so both
+#    engines can run it: the async `Interpreter` in the web workers and the
+#    `SyncInterpreter` the `DueTimerScanner` uses to wake retries.
+# -----------------------------------------------------------------------------
+"""Order logic: catalogue, fake payment gateway, `RetryPolicy` wiring."""
+
+from __future__ import annotations
+
+import hashlib
+import os
+from typing import Any, Dict
+
+from xstate_statemachine import MachineLogic
+from xstate_statemachine.patterns import RetryPolicy
+
+#: 💡 A tiny fixed catalogue: prices are the server's, never the client's.
+CATALOGUE: Dict[str, int] = {"tea": 450, "mug": 1200, "kettle": 3900}
+DEFAULT_UNIT_CENTS = 999
+
+#: Card tokens the fake gateway treats specially (demo + tests).
+DECLINED_TOKEN = "tok_declined"  # every attempt fails → paymentFailed
+FLAKY_TOKEN = "tok_flaky"  # the first attempt fails, the retry succeeds
+
+
+class GatewayError(Exception):
+    """The fake gateway refused the charge."""
+
+
+def retry_policy() -> RetryPolicy:
+    """3 attempts, exponential backoff without jitter (reproducible)."""
+    base_ms = float(os.environ.get("XSM_ORDERS_RETRY_BASE_MS", "2000"))
+    return RetryPolicy(max_attempts=3, base_ms=base_ms, jitter="none")
+
+
+# -----------------------------------------------------------------------------
+# 🎬 Actions -- fast, context-only, idempotent
+# -----------------------------------------------------------------------------
+def add_item(i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
+    sku, qty = str(e.payload["sku"]), int(e.payload["qty"])
+    unit = CATALOGUE.get(sku, DEFAULT_UNIT_CENTS)
+    items = [dict(x) for x in ctx.get("items", [])]
+    items.append({"sku": sku, "qty": qty, "unit_cents": unit})
+    ctx["items"] = items
+    ctx["total_cents"] = sum(x["qty"] * x["unit_cents"] for x in items)
+
+
+def store_card(i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
+    ctx["card_token"] = str(e.payload["card_token"])
+
+
+def record_charge(i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
+    data = getattr(e, "data", None) or {}
+    ctx["charge_id"] = data.get("charge_id")
+
+
+def record_cancel(i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
+    ctx["cancel_reason"] = e.payload.get("reason", "customer request")
+
+
+# -----------------------------------------------------------------------------
+# 🛡️ Guards
+# -----------------------------------------------------------------------------
+def has_items(ctx: Dict[str, Any], e: Any) -> bool:
+    return bool(ctx.get("items"))
+
+
+# -----------------------------------------------------------------------------
+# 💳 Service -- the fake payment gateway
+# -----------------------------------------------------------------------------
+def charge_card(i: Any, ctx: Dict[str, Any], e: Any) -> Dict[str, Any]:
+    """Charge ``ctx["card_token"]``; deterministic by token.
+
+    ``tok_declined`` always raises (→ ``onError`` → retry → after the
+    last attempt, ``paymentFailed``). ``tok_flaky`` raises on the first
+    attempt only. Anything else succeeds. The charge id is derived from
+    the order and the attempt, so a replayed charge is recognisable --
+    what a real gateway's idempotency key gives you.
+    """
+    token = str(ctx.get("card_token") or "")
+    attempt = int(ctx.get("attempt", 0))
+    if token == DECLINED_TOKEN:
+        raise GatewayError("card declined")
+    if token == FLAKY_TOKEN and attempt == 0:
+        raise GatewayError("gateway timeout")
+    seed = f"{getattr(i, 'store_key', '')}:{ctx.get('total_cents')}"
+    digest = hashlib.sha256(seed.encode()).hexdigest()[:12]
+    return {"charge_id": f"ch_{digest}", "amount_cents": ctx["total_cents"]}
+
+
+def build_logic() -> MachineLogic:
+    own = MachineLogic(
+        actions={
+            "addItem": add_item,
+            "storeCard": store_card,
+            "recordCharge": record_charge,
+            "recordCancel": record_cancel,
+        },
+        guards={"hasItems": has_items},
+        services={"chargeCard": charge_card},
+    )
+    # 🔁 `retryDelay` / `retryCanRetry` / `retryBump` / `retryReset`.
+    return retry_policy().logic().merge(own)

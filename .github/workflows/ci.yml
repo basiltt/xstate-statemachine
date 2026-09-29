@@ -232,6 +232,10 @@ jobs:
           else
             echo "no tests for [${{ matrix.extra }}] yet -- placeholder cell"
           fi
+          # 🛒 #277: the examples/integrations apps run their own suites here.
+          if [ "${{ matrix.extra }}" = "fastapi" ]; then
+            targets="$targets tests/test_examples_integrations.py"
+          fi
           pytest $targets -q --no-header --disable-socket --allow-hosts=127.0.0.1,::1
 
   # ---------------------------------------------------------------------------
