@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Order live view</title>
+  <style>
+    body { font: 15px/1.4 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; }
+    code { background: #f3f3f3; padding: 0 .3em; }
+    #log li { margin: .2em 0; }
+  </style>
+</head>
+<body>
+  <h1>Order <code id="order"></code></h1>
+  <p>State: <strong id="state">…</strong></p>
+  <p>Available events: <span id="events"></span></p>
+  <ol id="log"></ol>
+  <script>
+    // The SSE stream cannot send headers, so the demo identity travels in a
+    // cookie (see app.customer_of). Open /?order=o1 in a browser, then drive
+    // the order with the curl walkthrough in README.md.
+    const params = new URLSearchParams(location.search);
+    const order = params.get("order") || "o1";
+    document.cookie = "customer=" + (params.get("customer") || "ann") + "; SameSite=Strict; path=/";
+    document.getElementById("order").textContent = order;
+
+    function show(data) {
+      document.getElementById("state").textContent = JSON.stringify(data.state);
+      document.getElementById("events").textContent = (data.available_events || []).join(", ");
+    }
+
+    const source = new EventSource("/orders/" + encodeURIComponent(order) + "/stream");
+    source.addEventListener("snapshot", (e) => show(JSON.parse(e.data)));
+    source.addEventListener("transition", (e) => {
+      const data = JSON.parse(e.data);
+      show(data);
+      const li = document.createElement("li");
+      li.textContent = "#" + e.lastEventId + " → " + JSON.stringify(data.state);
+      document.getElementById("log").appendChild(li);
+    });
+    source.onerror = () => { document.getElementById("state").textContent = "(reconnecting…)"; };
+  </script>
+</body>
+</html>
