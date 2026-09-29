@@ -9,11 +9,43 @@ All notable changes to XState-StateMachine for Python are documented here.
 
 For the full changelog with commit history, see [CHANGELOG.md on GitHub](https://github.com/basiltt/xstate-statemachine/blob/main/CHANGELOG.md).
 
+This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) for the core and persistence APIs; `contrib` extras are provisional. See the [Deprecation Policy](../deprecation-policy/) for how deprecated APIs are warned about and removed.
+
 ---
 
 ## [Unreleased]
 
 ### Added
+
+- **Entry-point plugin discovery (#296).** Third-party packages can ship
+  plugins, stores and brokers without a core change by declaring entry
+  points in the `xstate_statemachine.plugins` / `.stores` / `.brokers`
+  groups. `xstate_statemachine.plugins.discover(group=, allow=, strict=)`
+  returns `DiscoveredPlugin(name, distribution, version, obj, hooks,
+  group)`, and `attach_discovered(interp, allow=)` constructs each plugin
+  and `.use()`s it (the hook that `instrument_all(discovered=True)` in
+  `[observability]` builds on). Discovery is **never implicit**: nothing
+  loads on import, `allow=` filters before import,
+  `XSM_DISABLE_PLUGIN_DISCOVERY=1` turns it off, and a loader that raises
+  is logged and skipped unless `strict=True`. Python 3.9's dict-shaped
+  `entry_points()` is shimmed.
+- **`xsm plugins [--json]` (#296)** lists name, distribution, version,
+  group and the `PluginBase` hooks each discovered plugin implements.
+- **`xstate_statemachine.deprecations` (#296).** `deprecated(what, since=,
+  removal=, alternative=)` emits a `DeprecationWarning` **once per call
+  site**, and `deprecations()` is the registry the policy page renders.
+  `ErrorEvent.data`, `--style` and the `events.engine_*` aliases now go
+  through it.
+- **Compatibility matrix (#296).** `tests/contrib/compat_matrix.json`
+  records, per shipped extra, the declared floor, the oldest release proven
+  on Python 3.9 and the newest release. A new `Compat` workflow runs both
+  cells for every extra (weekly, on demand, and on PRs that touch
+  `pyproject.toml` or the matrix), and the docs table is generated from
+  the same file.
+- **`[all]` wheel smoke on Linux, macOS and Windows (#296).** CI installs
+  the built wheel with `[all]` into a clean venv, imports every `contrib`
+  subpackage, runs each extra's docs Quick start, and re-checks that
+  `import xstate_statemachine` alone loads no third-party module.
 
 - **Example app: `examples/integrations/sqlalchemy_orders/` (#286).** An
   order lifecycle on SQLAlchemy 2.0 in a sync variant (`StatechartMixin`
@@ -690,6 +722,24 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
   guarantee -- use `send_threadsafe()`.
 ### Documentation
 
+- **Deprecation Policy page (#296).** SemVer covers the core and the
+  persistence layer; `contrib` APIs are **provisional**. A deprecated API
+  warns for at least one minor release and is removed no earlier than the
+  next major. The page includes a current-deprecations table that a test
+  keeps in sync with the registry. It is linked from this changelog's
+  header and from the README's new "Versioning & support" section, which
+  also states the supported Python range.
+- **Compatibility page (#296)**, generated from the matrix. Five declared
+  floors do not pass on Python 3.9, and the page shows declared vs oldest
+  tested with the reason for each: `[fastapi]` 0.100 -> 0.106.0,
+  `[litestar]` 2.0 -> 2.14.0, `[sqlalchemy]` 2.0.0 -> 2.0.2, and
+  `[starlette]` 0.27 -> 0.45.3. For `[flask]`, 2.3.0 passes, but its Quart
+  shim needs Werkzeug 3.
+- **Plugins guide: "Third-party plugins: discovery" and "Writing a
+  third-party plugin" (#296).** SECURITY.md gains the plugin trust model
+  (discovered plugins run in-process with full privileges), and the
+  security page's X0.14 row covers discovery.
+
 - **Comparison pages vs django-fsm, transitions and python-statemachine
   (#286).** Feature tables (hierarchy, parallel, timers, invoke, actors,
   async, locking, versioning, admin, REST/DRF, audit, visual editor, typed
@@ -756,6 +806,12 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
   line under Install.
 
 ### Changed
+
+- **Deprecation targets now follow the policy (#296).** `ErrorEvent.data`
+  said "removed in 0.9" and `--style` said "removed in v0.8.0", but both
+  still work. Their warnings now name 1.0, the next major, and share the
+  helper's message shape (what / since / removal / alternative). They warn
+  once per call site instead of on every access.
 
 - **`SyncInterpreter.send_events()` now applies the same admission checks as `send()`** — `strict` / `event_schemas` (`UnknownEventError` / `InvalidEventPayloadError` at the call site) and the reserved-payload-key warning — and both engines' `send_events()` run the new `on_before_send` interception (#304). Previously a batched send on the sync engine bypassed `strict` entirely.
 - AGENTS.md now states the real Python floor, **3.9** (it said 3.8+;
