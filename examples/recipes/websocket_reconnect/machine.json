@@ -1,0 +1,40 @@
+{
+  "id": "socket",
+  "description": "A WebSocket client that reconnects with jittered exponential backoff. The live connection is a callback actor: it exists only while `connected` is active.",
+  "initial": "disconnected",
+  "context": { "attempt": 0, "received": 0 },
+  "states": {
+    "disconnected": {
+      "on": { "CONNECT": "connecting" }
+    },
+    "connecting": {
+      "invoke": {
+        "src": "openSocket",
+        "onDone": { "target": "connected", "actions": "retryReset" },
+        "onError": { "target": "reconnecting", "actions": "retryBump" }
+      },
+      "on": { "DISCONNECT": "disconnected" }
+    },
+    "connected": {
+      "invoke": { "id": "link", "src": "listen" },
+      "on": {
+        "MESSAGE": { "actions": "countMessage" },
+        "DROPPED": { "target": "reconnecting", "actions": "retryBump" },
+        "DISCONNECT": "disconnected"
+      }
+    },
+    "reconnecting": {
+      "on": { "DISCONNECT": "disconnected" },
+      "after": {
+        "retryDelay": [
+          { "target": "connecting", "guard": "retryCanRetry" },
+          { "target": "failed" }
+        ]
+      }
+    },
+    "failed": {
+      "description": "Gave up after max_attempts. CONNECT starts over.",
+      "on": { "CONNECT": { "target": "connecting", "actions": "retryReset" } }
+    }
+  }
+}
