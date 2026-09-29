@@ -240,14 +240,16 @@ class TestGolden(_Quiet):
         code, text = _generate(src, str(out), "-f")
         self.assertEqual(code, 0, text)
         for name in ("checkout_models.py", "checkout_api.py"):
-            got = _normalise((out / name).read_text(encoding="utf-8"))
+            raw = (out / name).read_text(encoding="utf-8")
             golden = GOLDEN / (name + ".golden")
             if os.environ.get("XSM_REGEN_GOLDEN"):
-                golden.write_text(got, encoding="utf-8", newline="\n")
+                # 📝 keep the golden as the FORMATTED module (readable, and
+                #    the docs test matches its lines); compare normalised.
+                golden.write_text(raw, encoding="utf-8", newline="\n")
             with self.subTest(file=name):
                 self.assertEqual(
-                    got,
-                    golden.read_text(encoding="utf-8").replace("\r\n", "\n"),
+                    _normalise(raw),
+                    _normalise(golden.read_text(encoding="utf-8")),
                 )
 
     def test_documented_fragments_match_the_goldens(self) -> None:
@@ -271,12 +273,37 @@ class TestGolden(_Quiet):
 
 
 def _normalise(code: str) -> str:
-    """Drop the generator-version line so a release bump is not a diff."""
-    return "\n".join(
+    """Make a generated module comparable across environments.
+
+    📝 The generator formats with black / isort only when they are
+    installed (`postprocess.py`, best-effort); the coverage job has
+    neither, so a byte comparison flipped on blank lines, quote style,
+    line wrapping and import order while the PROGRAM was identical. So
+    compare the program: the generator-version line dropped, imports as
+    a sorted set of AST dumps (isort decides their order, not the
+    generator), and the rest re-emitted by `ast.unparse` (3.9+), which
+    erases every layout choice a formatter makes.
+    """
+    import ast as _ast
+
+    text = "\n".join(
         line
         for line in code.replace("\r\n", "\n").split("\n")
         if not line.startswith("Generator:")
     )
+    tree = _ast.parse(text)
+    imports = sorted(
+        _ast.dump(node)
+        for node in tree.body
+        if isinstance(node, (_ast.Import, _ast.ImportFrom))
+    )
+    rest = [
+        node
+        for node in tree.body
+        if not isinstance(node, (_ast.Import, _ast.ImportFrom))
+    ]
+    body = _ast.unparse(_ast.Module(body=rest, type_ignores=[]))
+    return "\n".join(imports) + "\n" + body + "\n"
 
 
 if __name__ == "__main__":
