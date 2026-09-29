@@ -252,6 +252,59 @@ class TestGeneratedPytestSuitesPass(_Quiet):
             )
             self.assertIn("passed", proc.stdout)
 
+    def test_generated_tests_find_the_json_one_level_up(self) -> None:
+        """`xsm gt machine.json --with-tests -o generated/` -- the layout the
+        docs recommend -- leaves the JSON in the PARENT of the output dir.
+        The scaffold used `Path(__file__).with_name(...)`, which only looked
+        beside the test module, so the very first real-world run failed with
+        FileNotFoundError. Now: beside the module first, then one level up
+        (the same lookup the runner template already used)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            fp = next(f for f in FIXTURES if f.endswith("AdvancePayment.json"))
+            (root / "payment.json").write_text(
+                pathlib.Path(fp).read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            code, text = _run(
+                [
+                    "gt",
+                    str(root / "payment.json"),
+                    "--with-tests",
+                    "-o",
+                    str(root / "generated"),
+                    "--plain",
+                    "-f",
+                ]
+            )
+            self.assertEqual(code, 0, text)
+            tests = list((root / "generated").glob("test_*.py"))
+            self.assertEqual(len(tests), 1, tests)
+            self.assertNotIn("payment.json", os.listdir(root / "generated"))
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    "-q",
+                    "-p",
+                    "no:cacheprovider",
+                    f"--rootdir={root / 'generated'}",
+                    str(root / "generated"),
+                ],
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "PYTHONPATH": SRC,
+                    "PYTHONIOENCODING": "utf-8",
+                },
+                cwd=str(root / "generated"),
+                timeout=600,
+            )
+            self.assertEqual(
+                proc.returncode, 0, proc.stdout[-3000:] + proc.stderr[-1000:]
+            )
+
 
 class TestUnbuildableFixturesFailLoudly(_Quiet):
     """A companion asked for on a machine the library refuses must raise the

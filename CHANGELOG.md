@@ -460,6 +460,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`--with-tests` output could not find its JSON when generated into a
+  subdirectory** (`xsm gt machine.json --with-tests -o generated/`, the
+  layout the docs recommend): the scaffold looked only beside the test
+  module and failed with `FileNotFoundError` on the first run. It now looks
+  beside the module first, then one level up -- the lookup the runner
+  template already used. Found by installing the wheel into a clean venv
+  and running the generated project.
 - **Bare-string `and` / `or` / `not` guard names** are user predicates
   (only the dict form declares composition), but the CLI's guard parser
   dropped them and `camel_to_snake` stripped the `_` suffix `safe_identifier`

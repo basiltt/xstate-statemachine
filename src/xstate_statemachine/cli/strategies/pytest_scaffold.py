@@ -79,7 +79,18 @@ class PytestScaffoldStrategy(BaseStrategy):
             ")",
             "",
             generate_section_header("Machine under test"),
-            f"CONFIG_PATH = Path(__file__).with_name({json.dumps(ctx.json_filenames[0])})",
+            # 📝 Same lookup the runner template uses: the JSON may sit next
+            #    to the generated module (copied in) or one level up (the
+            #    common `xsm gt machine.json -o generated/` layout). A
+            #    bare `with_name()` failed with FileNotFoundError the moment
+            #    the tests ran from the output directory.
+            f"_CONFIG_NAME = {json.dumps(ctx.json_filenames[0])}",
+            "_HERE = Path(__file__).resolve().parent",
+            "CONFIG_PATH = (",
+            "    _HERE / _CONFIG_NAME",
+            "    if (_HERE / _CONFIG_NAME).exists()",
+            "    else _HERE.parent / _CONFIG_NAME",
+            ")",
             "",
             "",
             "def load_config() -> Dict[str, Any]:",
