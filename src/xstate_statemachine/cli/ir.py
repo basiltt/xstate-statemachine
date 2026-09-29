@@ -94,9 +94,14 @@ class GuardIR:
             for child in self.children:
                 out.extend(child.leaf_names())
             return tuple(out)
-        # 📝 A childless composite operator has nothing to implement.
-        if self.type in _COMPOSITE_OPERATORS:
-            return ()
+        # 📝 A childless `and` / `or` / `not` is NOT an operator. The engine
+        #    (`models.GuardDefinition`) only treats the dict form
+        #    `{"type": "and", ...}` as composition; a bare string `"and"` is
+        #    a user-named guard it will look up at runtime. Dropping it here
+        #    made `stub_logic(raw_config)` miss a guard the engine demands
+        #    (`DebtState_v4.json` -> ImplementationMissingError, #269), and
+        #    the generated module would reference a stub that never existed.
+        #    Return it; `safe_identifier` renames the Python keyword.
         return (self.type,)
 
 

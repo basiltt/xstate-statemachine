@@ -14,6 +14,42 @@ from src.xstate_statemachine.cli.naming import (
 class TestToIdentifier(unittest.TestCase):
     """Shape-level conversion of arbitrary names."""
 
+    def test_camel_to_snake_never_returns_a_keyword(self) -> None:
+        """A chart may name a guard `and` / `not` / `class` -- the engine
+        accepts a bare-string keyword as a user predicate. `safe_identifier`
+        suffixes `_` but `camel_to_snake` used to strip it again, so the
+        typed template emitted `def and(...)` (SyntaxError, DebtState_v4)."""
+        from src.xstate_statemachine.cli.strategies._shared import (
+            safe_identifier,
+        )
+        from src.xstate_statemachine.cli.utils import camel_to_snake
+
+        for word in ("and", "not", "or", "class", "None"):
+            with self.subTest(word=word):
+                for candidate in (
+                    camel_to_snake(word),
+                    camel_to_snake(safe_identifier(word)),
+                ):
+                    self.assertFalse(keyword.iskeyword(candidate), candidate)
+                    self.assertTrue(candidate.isidentifier(), candidate)
+        self.assertEqual(camel_to_snake("isReady"), "is_ready")  # unchanged
+
+    def test_bare_string_operator_name_is_a_guard(self) -> None:
+        """`parse_guard("and").leaf_names()` must yield `and`: only the dict
+        form declares composition (models.GuardDefinition). Dropping it made
+        `stub_logic(raw_cfg)` disagree with `stub_logic(machine)` and the
+        engine raised ImplementationMissingError."""
+        from src.xstate_statemachine.cli.ir import parse_guard
+
+        self.assertEqual(parse_guard("and").leaf_names(), ("and",))
+        self.assertEqual(
+            parse_guard(
+                {"type": "and", "params": {"guards": ["a", "b"]}}
+            ).leaf_names(),
+            ("a", "b"),
+        )
+        self.assertEqual(parse_guard("!x").leaf_names(), ("x",))
+
     def test_keywords_are_suffixed(self) -> None:
         """Defect #7: `None = none` was a hard SyntaxError."""
         for word in ("class", "None", "return", "lambda", "import"):
