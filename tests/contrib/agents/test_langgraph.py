@@ -17,7 +17,7 @@ from .conftest import weather_tools
 
 pytestmark = requires_extra("agents")
 pytest.importorskip("pydantic")
-pytest.importorskip("langgraph.graph")
+pytest.importorskip("langgraph.graph", exc_type=ImportError)
 
 from langgraph.checkpoint.memory import MemorySaver  # noqa: E402
 from langgraph.graph import END, StateGraph  # noqa: E402

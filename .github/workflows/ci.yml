@@ -216,6 +216,9 @@ jobs:
             starlette) python -m pip install "httpx>=0.24" ;;
             fastapi) python -m pip install "httpx>=0.24" "openapi-spec-validator>=0.7" ;;
             litestar) python -m pip install "httpx>=0.24" "openapi-spec-validator>=0.7" "pydantic>=2.5" ;;
+            # 🤖 #288/#289: soft-import interop (never pinned in pyproject)
+            #    so the LangGraph / pydantic-ai / instructor tests run here.
+            agents) python -m pip install langgraph langchain-core pydantic-ai-slim instructor "httpx>=0.24" ;;
           esac
           python -m pip list
 

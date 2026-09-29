@@ -22,6 +22,8 @@ keywords = [
     "event-driven",
     "fastapi",
     "persistence",
+    "llm-agents",
+    "agent-orchestration",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
