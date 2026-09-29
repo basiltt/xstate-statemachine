@@ -278,4 +278,5 @@ The full crash-consistency specification is [Guarantees](../guarantees/); the tr
 - **Every extra, with status** — [Integration extras](../integrations-extras/).
 - **Design in the editor** — [Stately editor → Python](../stately-export/).
 - **LLM agents** — [LLM agents](../integration-agents/): the model proposes, the machine decides.
-- **Comparisons** — planned with [#291](https://github.com/basiltt/xstate-statemachine/issues/291).
+- **Comparisons** — [vs django-fsm](../vs-django-fsm/), [vs transitions](../vs-transitions/), [vs python-statemachine](../vs-python-statemachine/); for agent frameworks, [vs LangGraph](../vs-langgraph/).
+- **Runnable apps** — [`sqlalchemy_orders`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/sqlalchemy_orders) (sync + async, Alembic, timers) and [`flask_wizard`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/flask_wizard) (session-keyed wizard), next to [`fastapi_orders`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders).
