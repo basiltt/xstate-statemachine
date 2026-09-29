@@ -4,9 +4,10 @@
 * Every ``machine.json`` passes ``xsm validate --plain`` (strict config)
   and builds with `stub_logic` -- no extra needed, default job.
 * Every example with a ``tests/`` folder runs its own suite in a
-  subprocess (the example dir on ``sys.path`` via its conftest). Needs the
-  web extras, so it skips cleanly without ``fastapi``; the ``[fastapi]``
-  contrib CI cell runs it.
+  subprocess (the example dir on ``sys.path`` via its conftest). Each
+  suite needs its own extra (`REQUIRES`) and skips cleanly without it;
+  the matching contrib CI cell (``[fastapi]``, ``[sqlalchemy]``,
+  ``[flask]``) runs it.
 """
 
 from __future__ import annotations
@@ -25,6 +26,13 @@ ROOT = Path(__file__).resolve().parents[1]
 INTEGRATIONS = ROOT / "examples" / "integrations"
 MACHINES = sorted(INTEGRATIONS.glob("*/machine.json"))
 SUITES = sorted(p.parent for p in INTEGRATIONS.glob("*/tests"))
+#: #286: the importable modules each example suite needs; anything not
+#: listed needs the web stack (the original #277 rule).
+REQUIRES = {
+    "sqlalchemy_orders": ("sqlalchemy", "alembic"),
+    "flask_wizard": ("flask",),
+}
+DEFAULT_REQUIRES = ("fastapi", "httpx")
 
 
 def _env() -> dict:
@@ -38,6 +46,23 @@ def _env() -> dict:
 
 def test_there_are_integration_examples():
     assert MACHINES, "examples/integrations/*/machine.json disappeared"
+
+
+def test_every_example_has_a_readme_and_a_suite():
+    """#286: each app is documented and tested, not just a chart."""
+    for name in ("fastapi_orders", "sqlalchemy_orders", "flask_wizard"):
+        assert (INTEGRATIONS / name / "README.md").is_file(), name
+        assert (INTEGRATIONS / name / "tests").is_dir(), name
+    assert set(REQUIRES) <= {p.name for p in SUITES}
+
+
+def test_sqlalchemy_orders_ships_its_alembic_migration():
+    ex = INTEGRATIONS / "sqlalchemy_orders"
+    assert (ex / "alembic.ini").is_file()
+    assert sorted((ex / "migrations" / "versions").glob("0001_*.py"))
+    readme = (ex / "README.md").read_text("utf-8")
+    assert "alembic upgrade head" in readme
+    assert "#293" in readme  # the outbox is not faked
 
 
 @pytest.mark.parametrize("path", MACHINES, ids=lambda p: p.parent.name)
@@ -68,8 +93,8 @@ def test_machine_builds_with_stub_logic(path):
 
 @pytest.mark.parametrize("example", SUITES, ids=lambda p: p.name)
 def test_example_suite_passes(example):
-    pytest.importorskip("fastapi")
-    pytest.importorskip("httpx")
+    for module in REQUIRES.get(example.name, DEFAULT_REQUIRES):
+        pytest.importorskip(module)
     proc = subprocess.run(
         [
             sys.executable,

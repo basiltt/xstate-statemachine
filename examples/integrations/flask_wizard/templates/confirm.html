@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% from "_forms.html" import csrf, back with context %}
+{% block body %}
+<h1>Step 4: check and submit</h1>
+<dl>
+  <dt>Name</dt><dd>{{ ctx.name }}</dd>
+  <dt>Email</dt><dd>{{ ctx.email }}</dd>
+  <dt>Company</dt><dd>{{ ctx.company }}</dd>
+  <dt>Plan</dt><dd>{{ ctx.plan }}</dd>
+</dl>
+<form method="post" action="{{ url_for('step', action='submit') }}">
+  {{ csrf() }}
+  <button>Submit</button>
+</form>
+{{ back() }}
+{% endblock %}
