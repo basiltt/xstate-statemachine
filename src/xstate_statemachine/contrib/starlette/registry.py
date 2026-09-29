@@ -121,6 +121,15 @@ class _Recorder(PluginBase):  # type: ignore[type-arg]
             self.changed.append(receipt)
 
 
+class _SkipSave(Exception):
+    """Raised inside `act()` to leave without persisting (duplicates)."""
+
+    def __init__(self, receipt: Receipt, body: Dict[str, Any]) -> None:
+        super().__init__("skip save")
+        self.receipt = receipt
+        self.body = body
+
+
 class _Resident:
     __slots__ = ("interp", "version", "last_used")
 
@@ -421,11 +430,25 @@ class StatechartRegistry:
             if principal is None:
                 principal = self._principal_of(request)
             reg = self._reg(name)
-            async with self.act(name, key, principal=principal) as interp:
-                receipt = await interp.send(event_type, wait=True, **payload)
-                body = receipt_body(
-                    interp, receipt, context_serializer=reg.context_serializer
-                )
+            try:
+                async with self.act(name, key, principal=principal) as interp:
+                    receipt = await interp.send(
+                        event_type, wait=True, **payload
+                    )
+                    body = receipt_body(
+                        interp,
+                        receipt,
+                        context_serializer=reg.context_serializer,
+                    )
+                    if receipt.duplicate:
+                        # 🔁 A replay / in-flight refusal changed nothing:
+                        #    do NOT save. Saving would bump the version and
+                        #    make the ORIGINAL request's save lose with a
+                        #    409 -- under a burst of retries with one key,
+                        #    nobody would win (#277 load test).
+                        raise _SkipSave(receipt, body)
+            except _SkipSave as skip:
+                receipt, body = skip.receipt, skip.body
             return JSONResponse(body, status_code=receipt_to_status(receipt))
         except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
             if receipt_to_status_is_server_error(exc):

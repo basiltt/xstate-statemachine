@@ -9,16 +9,18 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
 from typing import Literal
 
 import pytest
 
-from src.xstate_statemachine import create_machine
+from src.xstate_statemachine import MachineLogic, create_machine
 from src.xstate_statemachine.exceptions import ConflictError
 from src.xstate_statemachine.persistence import (
     MemoryInbox,
     MemoryStore,
     OptimisticLock,
+    SQLiteInbox,
     SQLiteStore,
 )
 
@@ -316,6 +318,68 @@ def test_fifty_concurrent_sends_sqlite(tmp_path):
     rec = store.load("c.k")
     assert rec.version == changed
     assert json.loads(rec.snapshot)["context"]["n"] == 50
+
+
+def test_concurrent_replays_of_one_key_do_not_steal_the_save(tmp_path):
+    """#277: a duplicate / in-flight receipt must not be persisted -- a
+    replay's save would bump the version and make the ORIGINAL request
+    lose with 409, so a burst of retries with one key had no winner."""
+    store = SQLiteStore(str(tmp_path / "s.db"))
+
+    def charge(i, ctx, e):
+        time.sleep(0.05)  # a slow gateway: replays arrive mid-flight
+        return {"ok": True}
+
+    slow = create_machine(
+        {
+            "id": "order",
+            "initial": "open",
+            "states": {
+                "open": {"on": {"PAY": "paying"}},
+                "paying": {"invoke": {"src": "charge", "onDone": "paid"}},
+                "paid": {},
+            },
+        },
+        logic=MachineLogic(services={"charge": charge}),
+    )
+    reg = make(
+        slow,
+        store=store,
+        lock=OptimisticLock(retries=0),
+        inbox=SQLiteInbox(store),
+        principal=lambda c: "anon",
+    )
+    app = app_for(reg)
+
+    async def go():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://t", timeout=10
+        ) as client:
+            return await asyncio.wait_for(
+                asyncio.gather(
+                    *(
+                        client.post(
+                            "/order/k/send",
+                            json={"type": "PAY"},
+                            headers={"Idempotency-Key": "same"},
+                        )
+                        for _ in range(30)
+                    )
+                ),
+                60,
+            )
+
+    results = asyncio.run(go())
+    winners = [
+        r
+        for r in results
+        if r.status_code == 200
+        and r.json()["changed"]
+        and not r.json()["duplicate"]
+    ]
+    assert len(winners) == 1
+    assert store.load("order.k").version == 1
 
 
 # -----------------------------------------------------------------------------
