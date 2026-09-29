@@ -71,7 +71,9 @@ ALL_TOOLS = "*"
 
 
 class _StrictArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # 🛡️ strict: no "1e3" → float or "true" → bool coercion of what a
+    #    (possibly injected) model proposed; unknown keys are refused.
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
 @dataclass(frozen=True)
@@ -148,7 +150,12 @@ def _args_model(fn: Callable[..., Any], name: str) -> type:
                 f"tool {name!r}: *args/**kwargs cannot be described to a "
                 "model; declare every parameter explicitly"
             )
-        ann = hints.get(pname, Any)
+        if pname not in hints:
+            raise AgentConfigError(
+                f"tool {name!r}: parameter {pname!r} has no type annotation; "
+                "every argument a model supplies must have a schema"
+            )
+        ann = hints[pname]
         default = ... if p.default is inspect.Parameter.empty else p.default
         fields[pname] = (ann, default)
     return create_model(  # type: ignore[call-overload,no-any-return]

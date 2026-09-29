@@ -27,6 +27,7 @@ import importlib
 import inspect
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
@@ -65,6 +66,7 @@ __all__ = [
     "agent_logic",
     "budget_guards",
     "load_chart",
+    "scrub",
     "state_tools",
     "validate_agent_chart",
 ]
@@ -87,6 +89,31 @@ AGENT_REDACT_KEYS: Tuple[str, ...] = (
     "private_key",
     "credential",
 )
+
+
+#: Best-effort VALUE patterns scrubbed from strings (key-based redaction
+#: cannot see a secret inside free text): bearer tokens, ``sk-``/``sk_``
+#: style API keys, JWTs.
+_SECRET_VALUE = re.compile(
+    r"(?i)(bearer\s+[A-Za-z0-9._~+/=-]{8,})"
+    r"|\b(sk|pk|rk|xox[abp])[-_][A-Za-z0-9_-]{8,}"
+    r"|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"
+)
+
+
+def scrub(value: Any, *, by_key: bool = True) -> Any:
+    """`redact()` by key (unless *by_key* is false), then mask
+    secret-looking substrings in string values. Best-effort: it cannot
+    recognise every secret format."""
+    if by_key:
+        value = redact(value, AGENT_REDACT_KEYS)
+    if isinstance(value, str):
+        return _SECRET_VALUE.sub("***", value)
+    if isinstance(value, dict):
+        return {k: scrub(v, by_key=by_key) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(scrub(v, by_key=by_key) for v in value)
+    return value
 
 
 def load_chart(name: str = "tool_loop") -> Dict[str, Any]:
@@ -313,6 +340,7 @@ class _AgentLogic:
         max_output_retries: int,
         system_prompt: Optional[str],
         tracer: Any = None,
+        max_tool_calls: int = 8,
     ) -> None:
         self.model = model
         self.tools = tools
@@ -323,6 +351,7 @@ class _AgentLogic:
         self.max_output_retries = max_output_retries
         self.system_prompt = system_prompt
         self.tracer = tracer
+        self.max_tool_calls = max_tool_calls
 
     # -- helpers ----------------------------------------------------------
     def _trace(self, i: Any, kind: str, **fields: Any) -> None:
@@ -387,6 +416,27 @@ class _AgentLogic:
         data.update(extra)
         return data
 
+    def _bounded(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Cap what a (possibly injected) response can put in context:
+        text truncated like tool output, arguments scrubbed. Too many tool
+        calls is refused outright (flagged, then denied by the guard)."""
+        data["text"] = self.tools.truncate(data.get("text") or "")
+        calls = data.get("tool_calls") or []
+        if len(calls) > self.max_tool_calls:
+            data["too_many_tool_calls"] = len(calls)
+            calls = calls[: self.max_tool_calls]
+        ids = [c.get("id") for c in calls]
+        if len(set(ids)) != len(ids):
+            data["duplicate_call_ids"] = True
+        data["tool_calls"] = [
+            # 📝 VALUE patterns only: a parameter legitimately named
+            #    `page_token` must not be blanked. Credentials belong in
+            #    the tool's closure, never in model-proposed arguments.
+            {**c, "arguments": scrub(c.get("arguments") or {}, by_key=False)}
+            for c in calls
+        ]
+        return data
+
     def call_model_sync(self, i: Any, ctx: Dict[str, Any], e: Any) -> Any:
         messages, schemas, extra = self._model_request(i, ctx, e)
         resp = self.model(messages, schemas)
@@ -398,8 +448,9 @@ class _AgentLogic:
                 "the model returned an awaitable under SyncInterpreter; "
                 "use a sync ModelCall (FakeModel(is_async=False))"
             )
-        data = self._response_data(resp, extra)
-        self._trace(i, "model_call", response=data, messages=messages)
+        raw = self._response_data(resp, extra)
+        self._trace(i, "model_call", response=raw, messages=messages)
+        data = self._bounded(raw)
         return data
 
     async def call_model_async(
@@ -409,8 +460,9 @@ class _AgentLogic:
         resp = self.model(messages, schemas)
         if inspect.isawaitable(resp):
             resp = await resp
-        data = self._response_data(resp, extra)
-        self._trace(i, "model_call", response=data, messages=messages)
+        raw = self._response_data(resp, extra)
+        self._trace(i, "model_call", response=raw, messages=messages)
+        data = self._bounded(raw)
         return data
 
     def _authorise_all(
@@ -434,7 +486,7 @@ class _AgentLogic:
         return plan
 
     def _result(self, i: Any, call: ToolCall, value: Any) -> Dict[str, Any]:
-        safe = redact(value, AGENT_REDACT_KEYS)
+        safe = scrub(value)
         self._trace(
             i,
             "tool_call",
@@ -469,6 +521,8 @@ class _AgentLogic:
 
     def g_tool_allowed(self, ctx: Dict[str, Any], e: Any) -> bool:
         d = self._data(e)
+        if d.get("too_many_tool_calls") or d.get("duplicate_call_ids"):
+            return False
         allowed = d.get("allowed_tools") or []
         for c in calls_from(d.get("tool_calls") or []):
             if c.name not in self.tools or c.name not in allowed:
@@ -528,6 +582,7 @@ class _AgentLogic:
             usage.get("cost_usd", 0.0)
         )
         ctx["attempt"] = 0  # a successful call resets the retry counter
+        ctx["approved_call_ids"] = []  # approvals never outlive a batch
         calls = list(d.get("tool_calls") or [])
         ctx["pending_tool_calls"] = calls
         msg: Message = {"role": "assistant", "content": d.get("text", "")}
@@ -543,9 +598,21 @@ class _AgentLogic:
         ctx["pending_tool_calls"] = []
         ctx["approved_call_ids"] = []
 
+    @staticmethod
+    def g_approval_matches(ctx: Dict[str, Any], e: Any) -> bool:
+        """``HUMAN_APPROVED`` must name EXACTLY the pending call ids, so a
+        late or replayed approval for an earlier batch cannot approve a
+        later one (it is `Receipt.denied` instead)."""
+        ids = (getattr(e, "payload", None) or {}).get("call_ids")
+        pending = [c.get("id") for c in ctx.get("pending_tool_calls") or []]
+        return isinstance(ids, (list, tuple)) and sorted(
+            map(str, ids)
+        ) == sorted(map(str, pending))
+
     def a_approve(self, i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
-        # 📝 Approval is per CALL ID of what is pending right now -- it
-        #    cannot pre-approve a call the model has not proposed yet.
+        # 📝 Approval is per CALL ID of what is pending right now (checked
+        #    by `approvalMatches`) -- it cannot pre-approve a call the
+        #    model has not proposed yet.
         ctx["approved_call_ids"] = [
             c["id"] for c in ctx.get("pending_tool_calls") or []
         ]
@@ -566,6 +633,7 @@ class _AgentLogic:
             ),
         )
         ctx["pending_tool_calls"] = []
+        ctx["approved_call_ids"] = []
         ctx["human_approved"] = False
 
     def a_store_result(
@@ -616,6 +684,19 @@ class _AgentLogic:
             self._fail(ctx, "tool_denied", str(err))
             return
         d = self._data(e)
+        if d.get("too_many_tool_calls"):
+            self._fail(
+                ctx,
+                "tool_denied",
+                f"{d['too_many_tool_calls']} tool calls in one turn "
+                f"(max_tool_calls={self.max_tool_calls})",
+            )
+            ctx["pending_tool_calls"] = []
+            return
+        if d.get("duplicate_call_ids"):
+            self._fail(ctx, "tool_denied", "duplicate tool call ids")
+            ctx["pending_tool_calls"] = []
+            return
         allowed = d.get("allowed_tools") or []
         bad = [
             c.name
@@ -631,6 +712,7 @@ class _AgentLogic:
         err = getattr(e, "error", None)
         # 📝 Class name only -- an exception message may quote the prompt.
         ctx["last_failure"] = type(err).__name__ if err else "unknown"
+        ctx["approved_call_ids"] = []
 
     def a_notify_parent(
         self, i: Any, ctx: Dict[str, Any], e: Any, a: Any
@@ -663,6 +745,7 @@ def agent_logic(
     retry: Optional[RetryPolicy] = None,
     sync: Optional[bool] = None,
     tracer: Any = None,
+    max_tool_calls: int = 8,
 ) -> MachineLogic:
     """The `MachineLogic` for `TOOL_LOOP` (and charts that reuse its names).
 
@@ -682,8 +765,9 @@ def agent_logic(
         system_prompt: Prepended to every model request (never stored in
             context, so never in a snapshot).
         model_timeout_s / human_timeout_s: The ``modelTimeout`` /
-            ``humanTimeout`` delays. ``toolTimeout`` is the largest tool
-            ``timeout_s`` plus one second (each tool also enforces its own).
+            ``humanTimeout`` delays. ``toolTimeout`` is the sum of the
+            pending calls' ``timeout_s`` plus one second (each tool also
+            enforces its own).
         retry: `RetryPolicy` for ``timed_out`` (default 3 attempts, no
             jitter, 1 s base).
         sync: Force the sync (``True``) or async (``False``) service
@@ -692,6 +776,8 @@ def agent_logic(
             kind, **fields)``) that receives model/tool records. Passing
             it here -- not only via ``interp.use()`` -- is what makes
             spawned sub-agents land in the same trace.
+        max_tool_calls: More tool calls than this in ONE model turn is
+            denied (``error``) -- bounds work and context per turn.
 
     Raises:
         AgentConfigError: invalid budgets, output model or bounds.
@@ -710,12 +796,20 @@ def agent_logic(
         max_output_retries,
         system_prompt,
         tracer,
+        max_tool_calls,
     )
     use_sync = (not _is_async_model(model)) if sync is None else sync
     policy = retry or RetryPolicy(max_attempts=3, base_ms=1000, jitter="none")
-    tool_ms = 1000.0 * (
-        max((t.timeout_s for t in registry.tools.values()), default=30.0) + 1.0
-    )
+
+    def tool_ms(ctx: Dict[str, Any], e: Any) -> float:
+        # ⏱️ The whole batch runs sequentially inside one invoke, so the
+        #    state-level bound is the SUM of the pending calls' timeouts.
+        total = 0.0
+        for c in ctx.get("pending_tool_calls") or []:
+            t = registry.get(str(c.get("name")))
+            total += t.timeout_s if t is not None else 0.0
+        return 1000.0 * (total + 1.0)
+
     logic: MachineLogic[Any] = MachineLogic(
         actions={
             "appendUserMessage": st.a_append_user,
@@ -749,6 +843,7 @@ def agent_logic(
             "isToolDenied": st.g_is_tool_denied,
             "outputValid": st.g_output_valid,
             "hasTask": st.g_has_task,
+            "approvalMatches": st.g_approval_matches,
         },
         services={
             "callModel": (

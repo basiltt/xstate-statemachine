@@ -476,7 +476,8 @@ class TestSafety:
         i = SyncInterpreter(create_machine(TOOL_LOOP, logic=logic)).start()
         i.send("START", prompt="mail a")
         assert leaf(i) == "awaiting_human"
-        i.send("HUMAN_APPROVED")
+        ids = [c["id"] for c in i.context["pending_tool_calls"]]
+        i.send("HUMAN_APPROVED", call_ids=ids)
         assert leaf(i) == "done" and ran["send_email"] == 1
         i.stop()
 
@@ -497,6 +498,133 @@ class TestSafety:
         assert leaf(i) == "done" and ran["send_email"] == 0
         assert "rejected" in model.calls[1]["messages"][-1]["content"]
         i.stop()
+
+    def test_replayed_approval_cannot_approve_a_later_batch(
+        self, tools_and_ran
+    ) -> None:
+        """Review finding: an approval must name EXACTLY the pending ids.
+        A late duplicate of batch A's approval arriving while batch B
+        waits is denied, and B's side effect does not run."""
+        reg, ran = tools_and_ran
+        model = FakeModel(
+            [
+                {"tool": "send_email", "args": {"to": "a", "body": "1"}},
+                {
+                    "tool": "send_email",
+                    "id": "c2",
+                    "args": {"to": "b", "body": "2"},
+                },
+                {"text": "done"},
+            ],
+            is_async=False,
+        )
+        i = SyncInterpreter(
+            create_machine(TOOL_LOOP, logic=agent_logic(model, reg))
+        ).start()
+        i.send("START", prompt="p")
+        batch_a = [c["id"] for c in i.context["pending_tool_calls"]]
+        i.send("HUMAN_APPROVED", call_ids=batch_a)
+        assert ran["send_email"] == 1 and leaf(i) == "awaiting_human"
+        replay = i.send("HUMAN_APPROVED", call_ids=batch_a, wait=True)
+        assert replay.denied and ran["send_email"] == 1
+        assert i.send("HUMAN_APPROVED", wait=True).denied  # no ids at all
+        i.send("HUMAN_APPROVED", call_ids=["c2"])
+        assert ran["send_email"] == 2 and leaf(i) == "done"
+        i.stop()
+
+    def test_too_many_tool_calls_denied(self) -> None:
+        ran = {"n": 0}
+
+        def ping() -> str:
+            ran["n"] += 1
+            return "pong"
+
+        calls = [{"name": "ping"} for _ in range(5)]
+        res = run_agent_sync(
+            model=FakeModel([{"tool_calls": calls}], is_async=False),
+            tools=tool_registry(ping),
+            prompt="p",
+            max_tool_calls=4,
+        )
+        assert res.error["kind"] == "tool_denied" and ran["n"] == 0
+        assert "max_tool_calls=4" in res.error["message"]
+
+    def test_duplicate_call_ids_denied(self) -> None:
+        def ping() -> str:
+            return "pong"
+
+        res = run_agent_sync(
+            model=FakeModel(
+                [
+                    {
+                        "tool_calls": [
+                            {"id": "x", "name": "ping"},
+                            {"id": "x", "name": "ping"},
+                        ]
+                    }
+                ],
+                is_async=False,
+            ),
+            tools=tool_registry(ping),
+            prompt="p",
+        )
+        assert res.error["message"] == "duplicate tool call ids"
+
+    def test_strict_arguments_no_coercion(self) -> None:
+        got = []
+
+        def add(x: float, flag: bool) -> str:
+            got.append((x, flag))
+            return "ok"
+
+        res = run_agent_sync(
+            model=FakeModel(
+                [{"tool": "add", "args": {"x": "1e3", "flag": "true"}}],
+                is_async=False,
+            ),
+            tools=tool_registry(add),
+            prompt="p",
+        )
+        assert res.error["kind"] == "tool_denied" and got == []
+
+    def test_unannotated_parameter_refused(self) -> None:
+        def loose(x):  # type: ignore[no-untyped-def]
+            return x
+
+        with pytest.raises(AgentConfigError, match="no type annotation"):
+            tool_registry(loose)
+
+    def test_secret_values_scrubbed(self) -> None:
+        def leak() -> str:
+            return (
+                "Authorization: Bearer abcdefghijkl1234 key sk-live_ABCDEFGH12"
+            )
+
+        res = run_agent_sync(
+            model=FakeModel(
+                [
+                    {
+                        "tool": "leak",
+                        "text": "use sk-proj-ZZZZZZZZZZ",
+                    },
+                    {"text": "ok"},
+                ],
+                is_async=False,
+            ),
+            tools=tool_registry(leak),
+            prompt="p",
+        )
+        blob = json.dumps(res.context)
+        assert "abcdefghijkl1234" not in blob and "ABCDEFGH12" not in blob
+        assert blob.count("***") >= 2
+
+    def test_long_model_text_truncated(self) -> None:
+        res = run_agent_sync(
+            model=FakeModel([{"text": "y" * 10_000}], is_async=False),
+            tools=tool_registry(max_output_chars=100),
+            prompt="p",
+        )
+        assert len(res.output) < 200 and "truncated" in res.output
 
     def test_unregistered_tool_denied(self) -> None:
         res = run_agent_sync(

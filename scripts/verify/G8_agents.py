@@ -179,7 +179,7 @@ def durable_human() -> None:
             machine({"text": "done"}),
             store=store,
             key="k1",
-            event={"type": "HUMAN_APPROVED"},
+            approve=True,
         )
         print("resumed:", b.final_state, sent)
         assert b.final_state.endswith("done") and sent == ["ops"]

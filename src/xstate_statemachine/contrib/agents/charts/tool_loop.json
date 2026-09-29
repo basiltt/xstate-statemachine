@@ -135,6 +135,7 @@
       "tags": ["waiting"],
       "on": {
         "HUMAN_APPROVED": {
+          "guard": "approvalMatches",
           "target": "awaiting_tool",
           "actions": "approveHuman"
         },

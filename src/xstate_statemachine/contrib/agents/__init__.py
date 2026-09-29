@@ -32,6 +32,7 @@ from .core import (  # noqa: E402
     agent_logic,
     budget_guards,
     load_chart,
+    scrub,
     state_tools,
     validate_agent_chart,
 )
@@ -50,6 +51,7 @@ from .multi import BudgetPlugin, handoff_guard, spawn_agent  # noqa: E402
 from .runner import (  # noqa: E402
     WAITING_STATES,
     AgentResult,
+    pending_approval,
     run_agent,
     run_agent_sync,
 )
@@ -91,8 +93,10 @@ __all__ = [
     "budget_guards",
     "handoff_guard",
     "load_chart",
+    "pending_approval",
     "run_agent",
     "run_agent_sync",
+    "scrub",
     "spawn_agent",
     "state_tools",
     "tool",

@@ -67,9 +67,7 @@ class TestDurableHumanSync:
 
         # 🔁 "restart": a new process builds a new machine object, same chart
         m2 = _machine(model, reg)
-        second = run_agent_sync(
-            m2, store=store, key="agent:1", event={"type": "HUMAN_APPROVED"}
-        )
+        second = run_agent_sync(m2, store=store, key="agent:1", approve=True)
         assert second.final_state == "toolLoop.done"
         assert second.output == "Mail sent."
         assert ran["send_email"] == 1
@@ -107,9 +105,7 @@ class TestDurableHumanSync:
             clock=SimulatedClock(wall_start=T0),
         )
         DueTimerScanner(store, lambda k: m).run_once(now=T0 + 7200)
-        late = run_agent_sync(
-            m, store=store, key="k", event={"type": "HUMAN_APPROVED"}
-        )
+        late = run_agent_sync(m, store=store, key="k", approve=True)
         assert late.final_state == "toolLoop.error"
         assert ran["send_email"] == 0
 
@@ -133,7 +129,7 @@ class TestDurableHumanAsync:
                 _machine(model, reg),
                 store=store,
                 key="a:1",
-                event={"type": "HUMAN_APPROVED"},
+                approve=True,
                 timeout_s=5,
             )
             return second

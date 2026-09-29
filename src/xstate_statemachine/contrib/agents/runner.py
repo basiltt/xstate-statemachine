@@ -23,6 +23,7 @@ from typing import (
     Any,
     Dict,
     Iterable,
+    List,
     Mapping,
     Optional,
     Sequence,
@@ -35,7 +36,13 @@ from ...models import MachineNode
 from .core import TOOL_LOOP, agent_logic, validate_agent_chart
 from .messages import AgentConfigError
 
-__all__ = ["AgentResult", "run_agent", "run_agent_sync", "WAITING_STATES"]
+__all__ = [
+    "AgentResult",
+    "WAITING_STATES",
+    "pending_approval",
+    "run_agent",
+    "run_agent_sync",
+]
 
 #: States in which the loop returns because a HUMAN (or another process)
 #: must act next. They persist; the machine is not finished.
@@ -150,6 +157,26 @@ def _result(interp: Any) -> AgentResult:
     )
 
 
+def pending_approval(context: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """The calls a reviewer is being asked to approve (from
+    ``AgentResult.context``): ``[{"id", "name", "arguments"}]``."""
+    return [dict(c) for c in context.get("pending_tool_calls") or []]
+
+
+def _resume_events(
+    interp: Any, event: Optional[Mapping[str, Any]], approve: Optional[bool]
+) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    if event is not None:
+        out.append(dict(event))
+    if approve is True:
+        ids = [c["id"] for c in pending_approval(interp.context)]
+        out.append({"type": "HUMAN_APPROVED", "call_ids": ids})
+    elif approve is False:
+        out.append({"type": "HUMAN_REJECTED"})
+    return out
+
+
 def _start_payload(interp: Any, prompt: Optional[str]) -> bool:
     return prompt is not None and any(
         s.rsplit(".", 1)[-1] == "idle" for s in interp.current_state_ids
@@ -183,6 +210,7 @@ async def run_agent(
     tools: Any = None,
     prompt: Optional[str] = None,
     event: Optional[Mapping[str, Any]] = None,
+    approve: Optional[bool] = None,
     store: Any = None,
     key: Optional[str] = None,
     until: Iterable[str] = ("done", "error"),
@@ -200,8 +228,11 @@ async def run_agent(
             ``tools=`` and any `agent_logic` keyword (``max_turns=`` is
             accepted as a shortcut for ``budgets={"max_turns": ...}``).
         prompt: Sent as ``START`` when the machine is in ``idle``.
-        event: Any other event to send on entry (e.g. ``{"type":
-            "HUMAN_APPROVED"}`` when resuming a durable wait).
+        event: Any other event to send on entry.
+        approve: Resume a durable wait: ``True`` sends ``HUMAN_APPROVED``
+            naming the currently pending call ids (what the reviewer was
+            shown -- see `pending_approval`), ``False`` sends
+            ``HUMAN_REJECTED``.
         store / key: Persist via `apersisted` (both or neither).
         until: State keys that end the run (besides final and waiting).
         clock: Forwarded to the interpreter (`SimulatedClock` in tests).
@@ -223,8 +254,8 @@ async def run_agent(
         #    (e.g. still `awaiting_human`) and return at once.
         if _start_payload(interp, prompt):
             await interp.send("START", prompt=prompt, wait=True)
-        if event is not None:
-            await interp.send(dict(event), wait=True)
+        for ev in _resume_events(interp, event, approve):
+            await interp.send(ev, wait=True)
         await _until_rest(interp, stop_at, timeout_s)
         return _result(interp)
 
@@ -256,6 +287,7 @@ def run_agent_sync(
     tools: Any = None,
     prompt: Optional[str] = None,
     event: Optional[Mapping[str, Any]] = None,
+    approve: Optional[bool] = None,
     store: Any = None,
     key: Optional[str] = None,
     until: Iterable[str] = ("done", "error"),
@@ -282,8 +314,8 @@ def run_agent_sync(
     def _drive(interp: Any) -> AgentResult:
         if _start_payload(interp, prompt):
             interp.send("START", prompt=prompt)
-        if event is not None:
-            interp.send(dict(event))
+        for ev in _resume_events(interp, event, approve):
+            interp.send(ev)
         return _result(interp)
 
     if store is not None:

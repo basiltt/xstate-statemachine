@@ -226,16 +226,18 @@ class TestSupervisor:
 FLAT = {
     "id": "boss",
     "initial": "active",
+    "actionErrorPolicy": "rollback",
     "context": {"spawned": 0},
     "states": {
         "active": {
+            "meta": {"tools": ["search"]},
             "on": {
                 "TASK": {"actions": "spawnWorker"},
                 "AGENT_DONE": {},
                 "AGENT_FAILED": {},
                 "BUDGET_EXCEEDED": {"actions": "noteStop"},
                 "MORE": {"guard": "underGlobalBudget", "target": "more"},
-            }
+            },
         },
         "more": {},
     },
@@ -363,6 +365,26 @@ class TestSubsetRule:
                 FakeModel([]),
                 budget={},
             )
+
+    def test_no_parent_allow_list_means_no_tools(self) -> None:
+        """Closed by default: without `parent_tools=` or a spawning-state
+        `meta.tools`, a child holding any tool is refused."""
+        chart = {
+            "id": "p",
+            "initial": "a",
+            "actionErrorPolicy": "rollback",
+            "states": {"a": {"on": {"TASK": {"actions": "spawnAgent"}}}},
+        }
+        logic = spawn_agent(
+            None,
+            FakeModel([], is_async=False),
+            tool_registry(search, timeout_s=1),
+            budget={"max_turns": 1},
+        )
+        i = SyncInterpreter(create_machine(chart, logic=logic)).start()
+        r = i.send("TASK", task="x", wait=True)
+        assert isinstance(r.error, AgentConfigError) and not i._actors
+        i.stop()
 
     def test_task_required(self) -> None:
         chart = {

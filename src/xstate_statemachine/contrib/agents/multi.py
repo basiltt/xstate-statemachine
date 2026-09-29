@@ -143,6 +143,9 @@ def spawn_agent(
             )
             return None
         # 🛡️ Runtime subset check against the spawning state's allow-list.
+        #    Closed by default: with neither `parent_tools=` nor a
+        #    `meta.tools` on the spawning state, a child with ANY tool is
+        #    refused -- the parent's allow-list is then empty.
         declared = any(
             isinstance(m, dict) and "tools" in m for m in i.get_meta().values()
         )
@@ -150,6 +153,8 @@ def spawn_agent(
             _check_subset(
                 child_names, set(state_tools(i, e)), "state meta.tools"
             )
+        elif parent_tools is None and child_names:
+            _check_subset(child_names, set(), "no parent allow-list")
         payload = getattr(e, "payload", None) or {}
         task = payload.get("task", ctx.get(task_key))
         if not task:
