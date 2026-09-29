@@ -631,6 +631,14 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Fixed
 
+- **One `after` delay with several guarded candidates armed one timer per
+  candidate.** All candidates under `"1000": [...]` share the event
+  `after.1000.<state>` and guard selection happens when it is processed,
+  so N identical events were queued at the same instant; when the winner
+  re-entered its own state the extra copy fired against the freshly
+  re-entered state in the same pump -- a `nudge` re-entry counted twice
+  per second. One timer per delay now, on both engines. Found by the
+  slot-filling recipe (#308).
 - **`SyncInterpreter.send(..., wait=True)` on a finished or stopped machine
   now returns a `Receipt`** carrying `InterpreterStoppedError`, exactly as
   the async engine does -- not `None`, which the `wait=True -> Receipt`
@@ -690,6 +698,14 @@ For the full changelog with commit history, see [CHANGELOG.md on GitHub](https:/
 
 ### Fixed
 
+- **One `after` delay with several guarded candidates armed one timer per
+  candidate.** All candidates under `"1000": [...]` share the event
+  `after.1000.<state>` and guard selection happens when it is processed,
+  so N identical events were queued at the same instant; when the winner
+  re-entered its own state the extra copy fired against the freshly
+  re-entered state in the same pump -- a `nudge` re-entry counted twice
+  per second. One timer per delay now, on both engines. Found by the
+  slot-filling recipe (#308).
 - **`SyncInterpreter.send(..., wait=True)` on a finished or stopped machine
   now returns a `Receipt`** carrying `InterpreterStoppedError`, exactly as
   the async engine does -- not `None`, which the `wait=True -> Receipt`

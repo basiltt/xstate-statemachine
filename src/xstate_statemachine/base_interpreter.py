@@ -5793,7 +5793,20 @@ class BaseInterpreter(Generic[TContext]):
                     delay_ms,
                 )
                 continue
+            # 🏛️ ONE timer per delay, not one per candidate transition. All
+            #    candidates under `"1000": [...]` share the event type
+            #    `after.1000.<state>`; guard selection happens when that
+            #    event is PROCESSED. Arming a timer per candidate queued N
+            #    identical events at the same instant, and when the chosen
+            #    transition re-entered its own state the second copy fired
+            #    against the freshly re-entered state in the same pump --
+            #    a `nudge` re-entry counted twice per second (found by the
+            #    slot-filling recipe, #308).
+            seen_events: Set[str] = set()
             for t_def in transitions:
+                if t_def.event in seen_events:
+                    continue
+                seen_events.add(t_def.event)
                 effective_ms = float(resolved_ms)
                 if remaining is not None and t_def.event in remaining:
                     effective_ms = max(0.0, remaining[t_def.event])

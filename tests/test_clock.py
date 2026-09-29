@@ -505,5 +505,83 @@ class TestClockLaneFollowsOwner(_Quiet):
         i.stop()
 
 
+class TestOneTimerPerDelay(_Quiet):
+    """One `after` delay with several guarded candidates arms ONE timer.
+
+    🏛️ All candidates under ``"1000": [...]`` share the event
+    ``after.1000.<state>``; guard selection happens when it is processed.
+    Arming one timer per candidate queued N identical events at the same
+    instant, and when the winner re-entered its own state the extra copy
+    fired against the freshly re-entered state in the same pump -- a
+    `nudge` re-entry counted twice per second (found by the slot-filling
+    recipe, #308). Both engines share `_schedule_state_timers_with`.
+    """
+
+    CFG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "asking",
+        "context": {"nudges": 0},
+        "states": {
+            "asking": {
+                "after": {
+                    "1000": [
+                        {"target": "gaveUp", "guard": "tooMany"},
+                        {
+                            "target": "asking",
+                            "actions": "nudge",
+                            "reenter": True,
+                        },
+                    ]
+                },
+                "on": {"ANSWER": "done"},
+            },
+            "gaveUp": {"type": "final"},
+            "done": {"type": "final"},
+        },
+    }
+
+    @staticmethod
+    def _logic() -> MachineLogic:
+        def nudge(i: Any, c: Any, e: Any, a: Any) -> None:
+            c["nudges"] += 1
+
+        return MachineLogic(
+            actions={"nudge": nudge},
+            guards={"tooMany": lambda c, e: c["nudges"] >= 3},
+        )
+
+    def test_sync_exactly_one_nudge_per_second(self) -> None:
+        clock = SimulatedClock()
+        i = SyncInterpreter(
+            create_machine(self.CFG, logic=self._logic()), clock=clock
+        ).start()
+        self.assertEqual(len(i._timer_handles.get("m.asking", [])), 1)
+        seen = []
+        for _ in range(5):
+            clock.increment(1000)
+            seen.append(i.context["nudges"])
+        # 1, 2, 3 nudges over three seconds, then the guard wins at the 4th
+        self.assertEqual(seen, [1, 2, 3, 3, 3])
+        self.assertEqual(i.current_state_ids, {"m.gaveUp"})
+
+    def test_async_exactly_one_nudge_per_second(self) -> None:
+        async def main() -> Any:
+            clock = SimulatedClock()
+            i = await Interpreter(
+                create_machine(self.CFG, logic=self._logic()), clock=clock
+            ).start()
+            seen = []
+            for _ in range(5):
+                await clock.increment(1000)
+                seen.append(i.context["nudges"])
+            ids = set(i.current_state_ids)
+            await i.stop()
+            return seen, ids
+
+        seen, ids = asyncio.run(main())
+        self.assertEqual(seen, [1, 2, 3, 3, 3])
+        self.assertEqual(ids, {"m.gaveUp"})
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
