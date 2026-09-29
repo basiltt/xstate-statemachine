@@ -13,6 +13,8 @@ from .pythonic_functional import PythonicFunctionalStrategy
 from .pytest_scaffold import PytestScaffoldStrategy
 from .typed import TypedStrategy
 from .plugin_skeleton import PluginSkeletonStrategy
+from .fastapi_router import FastAPIRouterStrategy
+from .pydantic_models import PydanticModelsStrategy
 
 STRATEGY_REGISTRY: Dict[str, Type[BaseStrategy]] = {
     "class-json": ClassJsonStrategy,
@@ -21,10 +23,13 @@ STRATEGY_REGISTRY: Dict[str, Type[BaseStrategy]] = {
     "pythonic-builder": PythonicBuilderStrategy,
     "pythonic-functional": PythonicFunctionalStrategy,
     # 🧩 Companion outputs: one file each, usable as the primary template or
-    #    added to any other via --with-tests / --with-types / --with-plugin.
+    #    added to any other via --with-tests / --with-types / --with-plugin
+    #    / --with-api / --with-models.
     "pytest": PytestScaffoldStrategy,
     "typed": TypedStrategy,
     "plugin": PluginSkeletonStrategy,
+    "fastapi-router": FastAPIRouterStrategy,
+    "pydantic-models": PydanticModelsStrategy,
 }
 
 

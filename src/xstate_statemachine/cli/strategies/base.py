@@ -3,7 +3,7 @@
 
 import dataclasses
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 
 @dataclasses.dataclass
@@ -27,6 +27,9 @@ class GenerationContext:
     sleep_time: int
     loader: bool
     style: Optional[str] = None
+    #: Companion templates emitted in the same run (lets `fastapi-router`
+    #: import the `pydantic-models` output when both are requested).
+    companions: Tuple[str, ...] = ()
 
 
 class BaseStrategy(ABC):

@@ -197,6 +197,8 @@ def _default_namespace(files: List[str]) -> argparse.Namespace:
         with_tests=False,
         with_types=False,
         with_plugin=False,
+        with_api=False,
+        with_models=False,
         plain=False,
         no_color=False,
         no_anim=False,
@@ -229,6 +231,11 @@ def generate_wizard(
             ("tests", "pytest module recorded from the engine"),
             ("types", "TypedDict context, Literal events, typed stubs"),
             ("plugin", "PluginBase wired for this chart's hooks"),
+            ("FastAPI router", "editable APIRouter, one route per event"),
+            (
+                "Pydantic models",
+                "context BaseModel + one EventModel per event",
+            ),
         ],
         source=source,
     )
@@ -263,6 +270,7 @@ def generate_wizard(
         (1 in add),
         (2 in add),
     )
+    ns.with_api, ns.with_models = (3 in add), (4 in add)
     ns.file_count = 1 if 0 in opts else 2
     ns.async_mode = "yes" if 1 in opts else None
     ns.log = "yes" if 2 in opts else "no"
@@ -315,6 +323,8 @@ def generate_wizard(
             ("pytest", ns.with_tests),
             ("typed", ns.with_types),
             ("plugin", ns.with_plugin),
+            ("pydantic-models", ns.with_models),
+            ("fastapi-router", ns.with_api),
         )
         if on
     ]

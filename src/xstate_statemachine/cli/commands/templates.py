@@ -65,6 +65,18 @@ TEMPLATES = (
         "A PluginBase subclass wired for exactly the hooks this machine can fire, with structured logging.",
         "companion",
     ),
+    (
+        "fastapi-router",
+        "FastAPI router",
+        "An editable APIRouter: GET state + one typed POST per event, Depends(get_interpreter), closed-by-default authorize stub. [fastapi] extra.",
+        "companion",
+    ),
+    (
+        "pydantic-models",
+        "Pydantic models",
+        "A context BaseModel inferred from the chart plus one EventModel per event (declared payloads typed). [pydantic] extra.",
+        "companion",
+    ),
 )
 
 
