@@ -1,0 +1,172 @@
+{
+  "id": "toolLoop",
+  "description": "TOOL_LOOP -- the model proposes, the machine decides (#287).",
+  "initial": "idle",
+  "actionErrorPolicy": "fail",
+  "context": {
+    "turns": 0,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "cost_usd": 0,
+    "messages": [],
+    "pending_tool_calls": [],
+    "human_approved": false,
+    "attempt": 0,
+    "output_retries": 0,
+    "result": null,
+    "error": null
+  },
+  "states": {
+    "idle": {
+      "description": "Waiting for the task. START carries `prompt`; a spawned agent starts on its `input.prompt`.",
+      "always": {
+        "guard": "hasTask",
+        "target": "checking_budget",
+        "actions": "appendUserMessage"
+      },
+      "on": {
+        "START": {
+          "target": "checking_budget",
+          "actions": "appendUserMessage"
+        }
+      }
+    },
+    "checking_budget": {
+      "description": "Every model call passes the budget guards first.",
+      "always": [
+        {
+          "guard": "!underTurnLimit",
+          "target": "error",
+          "actions": "failTurnLimit"
+        },
+        {
+          "guard": "!underTokenBudget",
+          "target": "error",
+          "actions": "failTokenBudget"
+        },
+        {
+          "guard": "!underCostBudget",
+          "target": "error",
+          "actions": "failCostBudget"
+        },
+        { "target": "awaiting_model" }
+      ]
+    },
+    "awaiting_model": {
+      "description": "The model is thinking. Only `meta.tools` are advertised.",
+      "meta": { "tools": ["*"] },
+      "tags": ["busy"],
+      "invoke": {
+        "src": "callModel",
+        "onDone": [
+          {
+            "guard": "!toolAllowed",
+            "target": "error",
+            "actions": ["recordModelResponse", "denyTool"]
+          },
+          {
+            "guard": "needsHuman",
+            "target": "awaiting_human",
+            "actions": "recordModelResponse"
+          },
+          {
+            "guard": "hasToolCalls",
+            "target": "awaiting_tool",
+            "actions": "recordModelResponse"
+          },
+          {
+            "guard": "outputValid",
+            "target": "done",
+            "actions": ["recordModelResponse", "storeResult"]
+          },
+          {
+            "guard": "canRetryOutput",
+            "target": "checking_budget",
+            "actions": ["recordModelResponse", "retryOutput"]
+          },
+          {
+            "target": "error",
+            "actions": ["recordModelResponse", "failOutput"]
+          }
+        ],
+        "onError": {
+          "target": "timed_out",
+          "actions": "recordFailure"
+        }
+      },
+      "after": {
+        "modelTimeout": {
+          "target": "timed_out",
+          "actions": "recordModelTimeout"
+        }
+      }
+    },
+    "awaiting_tool": {
+      "description": "run_tool re-checks the allow-list, schema, approval and timeout.",
+      "meta": { "tools": ["*"] },
+      "tags": ["busy"],
+      "invoke": {
+        "src": "runTool",
+        "onDone": {
+          "target": "checking_budget",
+          "actions": "appendToolResults"
+        },
+        "onError": [
+          {
+            "guard": "isToolDenied",
+            "target": "error",
+            "actions": "denyTool"
+          },
+          {
+            "target": "timed_out",
+            "actions": "recordFailure"
+          }
+        ]
+      },
+      "after": {
+        "toolTimeout": {
+          "target": "timed_out",
+          "actions": "recordToolTimeout"
+        }
+      }
+    },
+    "awaiting_human": {
+      "description": "Durable wait: a side-effect tool needs HUMAN_APPROVED.",
+      "tags": ["waiting"],
+      "on": {
+        "HUMAN_APPROVED": {
+          "target": "awaiting_tool",
+          "actions": "approveHuman"
+        },
+        "HUMAN_REJECTED": {
+          "target": "checking_budget",
+          "actions": "rejectPending"
+        }
+      },
+      "after": {
+        "humanTimeout": {
+          "target": "error",
+          "actions": "escalateHuman"
+        }
+      }
+    },
+    "timed_out": {
+      "description": "Backoff (RetryPolicy) then retry the model turn.",
+      "entry": "retryBump",
+      "after": {
+        "retryDelay": [
+          { "guard": "retryCanRetry", "target": "checking_budget" },
+          { "target": "error", "actions": "failRetries" }
+        ]
+      }
+    },
+    "done": {
+      "type": "final",
+      "entry": "notifyParent"
+    },
+    "error": {
+      "type": "final",
+      "entry": "notifyParent"
+    }
+  }
+}
