@@ -97,7 +97,10 @@ def scaffold(
         out = target / rel
         out.parent.mkdir(parents=True, exist_ok=True)
         text = Template(src.read_text("utf-8")).substitute(values)
-        out.write_text(text, encoding="utf-8", newline="\n")
+        # 📝 `Path.write_text(newline=)` is 3.10+; the floor is 3.9. Open
+        #    explicitly so the scaffold has LF endings on every platform.
+        with open(out, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
         written.append(out)
     return written
 
