@@ -153,7 +153,9 @@ All of it runs offline with `FakeModel`. It interoperates with
 [LangGraph and pydantic-ai](https://basiltt.github.io/xstate-statemachine/guide/integration-agents/),
 and there are honest [comparisons](https://basiltt.github.io/xstate-statemachine/guide/vs-langgraph/).
 
+<!-- doc-requires: pydantic -->
 ```python
+# pip install "xstate-statemachine[agents]"   # … the extra's only hard dependency is pydantic
 import asyncio
 from xstate_statemachine.contrib.agents import FakeModel, run_agent, tool_registry
 
