@@ -212,16 +212,18 @@ class ErrorEvent(NamedTuple):
 
     @property
     def data(self) -> BaseException:
-        """Deprecated alias for :attr:`error` (removed in 0.9).
+        """Deprecated alias for :attr:`error` (removed in 1.0).
 
         Kept so an ``onError`` action written against 0.8.0 --
         ``context["err"] = str(event.data)`` -- keeps working unchanged.
         """
-        warnings.warn(
-            "ErrorEvent.data is deprecated and will be removed in 0.9; "
-            "read ErrorEvent.error instead.",
-            DeprecationWarning,
-            stacklevel=2,
+        from .deprecations import deprecated
+
+        deprecated(
+            "ErrorEvent.data",
+            since="0.9.0",
+            removal="1.0",
+            alternative="ErrorEvent.error",
         )
         return self.error
 
@@ -716,13 +718,17 @@ def _deprecated_mint(
     """#235: one-release shim for the pre-0.9.0 unprefixed helper names."""
 
     def shim(*args: Any, **kwargs: Any) -> Any:
-        warnings.warn(
-            f"`xstate_statemachine.events.{name}` is internal and was "
-            f"renamed `_{name}` (#235). It mints engine-trusted events and "
-            f"was never part of the public API; the unprefixed alias is "
-            f"removed in 1.0.",
-            DeprecationWarning,
-            stacklevel=2,
+        from .deprecations import deprecated
+
+        deprecated(
+            f"xstate_statemachine.events.{name}",
+            since="0.9.0",
+            removal="1.0",
+            alternative=f"nothing -- internal; `_{name}` is private",
+            detail=(
+                f"It was renamed `_{name}` (#235): it mints engine-trusted "
+                f"events and was never part of the public API."
+            ),
         )
         return target(*args, **kwargs)
 

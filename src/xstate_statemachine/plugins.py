@@ -1071,3 +1071,18 @@ class LoggingInspector(PluginBase[Any]):
             interpreter.id,
             output,
         )
+
+
+# -----------------------------------------------------------------------------
+# 🔎 Entry-point discovery (#296) -- re-exported so the documented spelling is
+#    `xstate_statemachine.plugins.discover`. Defining a function loads nothing;
+#    discovery only happens when the application calls it (X0.14).
+# -----------------------------------------------------------------------------
+from .plugin_discovery import (  # noqa: E402
+    BROKERS_GROUP,
+    PLUGINS_GROUP,
+    STORES_GROUP,
+    DiscoveredPlugin,
+    attach_discovered,
+    discover,
+)

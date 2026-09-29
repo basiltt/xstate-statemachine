@@ -551,6 +551,87 @@ Rules of the registry:
 - **Thread-safe.** Registration and removal take a lock; `global_plugins()` returns a copy. Registering the same object twice is a no-op.
 - **Leave it as you found it.** A pytest fixture should `unregister_global` (or `xstate_statemachine.plugins.clear_global_plugins()`) in teardown.
 
+## 🔎 Third-party plugins: discovery
+
+Other packages can ship plugins, stores and brokers **without a core change** by declaring an [entry point](https://packaging.python.org/en/latest/specifications/entry-points/). The library finds them only when **you** ask: discovery is never implicit (security baseline X0.14). Importing `xstate_statemachine` loads nothing, no interpreter looks for plugins by itself, and nothing is attached until you call `attach_discovered` (or `.use()` what `discover()` returned).
+
+| Entry-point group | Holds | What the library does with it |
+|:--|:--|:--|
+| `xstate_statemachine.plugins` | `PluginBase` subclasses (or zero-argument factories returning a plugin) | `discover()` loads and describes them; `attach_discovered(interp)` constructs each one and `.use()`s it |
+| `xstate_statemachine.stores` | Store adapters | Discovered and listed only. Never instantiated: stores need your configuration |
+| `xstate_statemachine.brokers` | Broker adapters | Discovered and listed only |
+
+```python
+from xstate_statemachine import SyncInterpreter, create_machine
+from xstate_statemachine.plugins import attach_discovered, discover
+
+for p in discover():                      # [] when nothing is installed
+    print(p.name, p.distribution, p.version, p.hooks)
+
+machine = create_machine({"id": "m", "initial": "a", "states": {"a": {}}})
+interp = SyncInterpreter(machine)
+attached = attach_discovered(interp, allow=["acme-audit"])  # opt in by name
+interp.start().stop()
+```
+
+- **`allow=`** takes entry-point names **or** distribution names. An entry point that is not allowed is never imported.
+- **A broken plugin does not take you down.** A loader (or a constructor, in `attach_discovered`) that raises is logged at `WARNING` with its traceback and skipped. Pass `strict=True` to re-raise instead, which is what a CI check that "every plugin loads" wants.
+- **`XSM_DISABLE_PLUGIN_DISCOVERY=1`** turns discovery off for the whole process: `discover()` returns `[]` and logs that once. Use it in locked-down deployments where the environment may contain packages you did not vet.
+- **`DiscoveredPlugin`** is `(name, distribution, version, obj, hooks, group)`. `hooks` lists the `PluginBase` hooks the class overrides.
+- **Python 3.9.** `importlib.metadata.entry_points(group=...)` is 3.10+; on 3.9 the library selects the group from the dict the old API returns. The behaviour is identical.
+- **`[observability]`**: `instrument_all(discovered=True)` in the observability extra is built on `attach_discovered`.
+
+`xsm plugins` lists everything installed in all three groups (`--json` for tooling). Listing **imports** each entry point, since it has to load a plugin to report its hooks. That is why it is a command you run, not something the library does for you:
+
+```text
+$ xsm plugins --plain
+acme_audit  acme-audit 1.2.3  [xstate_statemachine.plugins]
+    hooks: on_interpreter_start, on_transition
+```
+
+## 📦 Writing a third-party plugin
+
+A minimal package needs a plugin class and one table in `pyproject.toml`:
+
+```text
+acme-audit/
+├── pyproject.toml
+└── acme_audit/
+    └── __init__.py
+```
+
+```toml
+[project]
+name = "acme-audit"
+version = "1.2.3"
+dependencies = ["xstate-statemachine>=1.0,<2"]
+
+[project.entry-points."xstate_statemachine.plugins"]
+acme_audit = "acme_audit:AuditPlugin"
+```
+
+```python
+# acme_audit/__init__.py
+from xstate_statemachine import PluginBase
+
+
+class AuditPlugin(PluginBase):
+    def on_interpreter_start(self, interpreter):
+        print("started", interpreter.id)
+
+    def on_transition(self, interpreter, from_states, to_states, transition):
+        print("->", sorted(s.id for s in to_states))
+```
+
+Guidelines:
+
+- **Construct with no arguments.** `attach_discovered` calls the class (or factory) without arguments. Read configuration from environment variables or offer a factory function as the entry point.
+- **Override only the hooks you need.** `xsm plugins` reports exactly those, and every hook is optional.
+- **Keep import cheap and side-effect free.** Your module is imported by `discover()` and `xsm plugins`. Do no I/O at import time.
+- **Pin a major range** of `xstate-statemachine`. `PluginBase` hooks follow the [deprecation policy](../deprecation-policy/).
+- **Test it** the way the library tests its fixture package (`tests/fixtures/xsm_thirdparty_plugin`): install it, then assert that `discover()` finds it and that `xsm plugins --json` lists your hooks.
+
+> 🔐 **Trust model.** A discovered plugin runs **in your process with your privileges**. There is no sandbox, and it sees every event and the context. Only allow plugins from distributions you would `import` yourself. See [SECURITY.md](https://github.com/basiltt/xstate-statemachine/blob/main/SECURITY.md#trust-model).
 ## 📜 Complete Example: Custom Audit Logger
 
 ```python

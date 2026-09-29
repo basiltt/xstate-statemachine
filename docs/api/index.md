@@ -2036,6 +2036,30 @@ Process-wide plugins (#305). Attached — with the same `_SafePlugin` containmen
 | `global_plugins()` | `() -> List[Any]` | A copy of the registry in registration order. |
 | `plugins.clear_global_plugins()` | `() -> None` | Empty the registry (test teardown). Not exported at top level. |
 
+### Entry-point discovery **[1.0]**
+
+Third-party plugins declared under the `xstate_statemachine.plugins` / `.stores` / `.brokers` entry-point groups (#296). **Never implicit**: nothing loads until you call one of these. See [Third-party plugins: discovery](../guide/plugins/#third-party-plugins-discovery).
+
+| Name (`xstate_statemachine.plugins`) | Signature | Description |
+|----------|-----------|-------------|
+| `discover(*, group=PLUGINS_GROUP, allow=None, strict=False)` | `-> List[DiscoveredPlugin]` | Load the entry points in *group*. `allow` names entry points or distributions (others are not imported); a raising loader is logged and skipped unless `strict`. `[]` under `XSM_DISABLE_PLUGIN_DISCOVERY=1`. |
+| `attach_discovered(interpreter, *, allow=None, strict=False)` | `-> List[Any]` | Discover `PLUGINS_GROUP`, construct each plugin (no arguments), and `.use()` it. Returns the instances. `instrument_all(discovered=True)` in `[observability]` calls this. |
+| `DiscoveredPlugin` | `NamedTuple(name, distribution, version, obj, hooks, group)` | One loaded entry point. `hooks` lists the `PluginBase` hooks the class overrides. |
+| `PLUGINS_GROUP` / `STORES_GROUP` / `BROKERS_GROUP` | `str` | `"xstate_statemachine.plugins"` / `".stores"` / `".brokers"`. Stores and brokers are discovered, never instantiated. |
+
+CLI: `xsm plugins [--json] [--plain]` lists name, distribution, version, group and hooks.
+
+### Deprecations **[1.0]**
+
+`xstate_statemachine.deprecations`: see the [deprecation policy](../guide/deprecation-policy/).
+
+| Name | Signature | Description |
+|------|-----------|-------------|
+| `deprecated(what, *, since, removal, alternative, detail=None, stacklevel=2)` | `-> bool` | Emit a `DeprecationWarning` **once per call site** (keyed by `what` + caller file + line). Returns whether it warned. |
+| `deprecations()` | `-> List[Deprecation]` | Every registered deprecation (`what`, `since`, `removal`, `alternative`). |
+| `register(what, *, since, removal, alternative)` | `-> Deprecation` | Record without warning. |
+| `reset_deprecation_warnings()` | `-> None` | Forget which call sites warned (tests). |
+| `Deprecation` | `NamedTuple` | A registry row. |
 ### `PluginBase`
 
 ```python
@@ -2295,7 +2319,9 @@ Everything above is importable from the package root (`from xstate_statemachine 
 | `validation` | Build-time checks | `KNOWN_ROOT_KEYS`, `KNOWN_STATE_KEYS`, `KNOWN_TRANSITION_KEYS`, `KNOWN_INVOKE_KEYS` — the per-level known-key sets (#220) |
 | `actions` | The builtin action creators, `BUILTIN_ACTION_ALIASES`, `BUILTIN_ACTION_PARAM_SPEC` | — |
 | `clock` | `Clock`, `RealClock`, `SimulatedClock` | — |
-| `plugins` | `PluginBase`, `LoggingInspector`, `DEFAULT_REDACT_KEYS`, `redact()` | — |
+| `plugins` | `PluginBase`, `LoggingInspector`, `DEFAULT_REDACT_KEYS`, `redact()`, entry-point `discover()` / `attach_discovered()` | `discover`, `attach_discovered`, `DiscoveredPlugin` |
+| `plugin_discovery` | The implementation behind `plugins.discover` (3.9 shim, `XSM_DISABLE_PLUGIN_DISCOVERY`) | — |
+| `deprecations` | `deprecated()`, the `deprecations()` registry | Policy tooling |
 | `helpers` | The pure API (`PureSnapshot`, `initial_transition`, `pure_transition`, `get_*_snapshot`) and the waiting helpers | — |
 | `pythonic` | `State`, `StateMachine`, `MachineBuilder`, `Transition`, `build_machine` | — |
 | `resolver` | Transition-target resolution (`#id`, `.child`, sibling fallback + its `DeprecationWarning`) | — |
@@ -2546,11 +2572,12 @@ Every integration is an optional extra you install explicitly (`pip install "xst
 | `[pydantic]` | `xstate_statemachine.contrib.pydantic` | `context_model`, `typed_context`, `TypedContextPlugin`, `ContextValidationError`, `EventModel`, `events_union`, `models_of`, `context_of`, `validate_machine_json`, `machine_json_schema`, `MachineConfig` / `StateConfig` / `TransitionConfig` / `InvokeConfig`, `PydanticCodec` | [Pydantic](../guide/integration-pydantic/) |
 | `[redis]` | `xstate_statemachine.contrib.redis` | `RedisStore`, `AsyncRedisStore`, `RedisInbox`, `RedisLog`, `escape_glob` | [Redis](../guide/integration-redis/) |
 | `[sqlalchemy]` | `xstate_statemachine.contrib.sqlalchemy` | `StatechartType`, `StatechartMixin`, `send_with_retry`, `xsm_sqlalchemy_ddl`, `SQLAlchemyStore`, `AsyncSQLAlchemyStore`, `SQLAlchemyInbox`, `SQLAlchemyLog`, `ModelStore`, `SCHEMA_VERSION` | [SQLAlchemy](../guide/integration-sqlalchemy/) |
-| `[flask]` | `xstate_statemachine.contrib.flask` (+ `contrib.quart`) | `XState`, `create_statechart_blueprint`, `receipt_response`, `problem_response`, `SessionStore`, `SessionStoreTooLargeError`, `allow_all`, `REQUIRED`, HTTP problem errors; Quart: `QuartXState`, `create_quart_statechart_blueprint` | [Flask](../guide/integration-flask/) |
+| `[flask]` | `xstate_statemachine.contrib.flask` (+ `contrib.quart`) | `XState`, `create_statechart_blueprint`, `receipt_response`, `problem_response`, `SessionStore`, `SessionStoreTooLargeError`, `DEFAULT_SESSION_LIMIT`, `allow_all`, `REQUIRED`, HTTP problem errors (incl. `MethodNotAllowedError`, `UnprocessableBodyError`); Quart: `QuartXState`, `create_quart_statechart_blueprint` | [Flask](../guide/integration-flask/) |
 | `[starlette]` | `xstate_statemachine.contrib.starlette` | `StatechartRegistry` (`register`, `act`, `send_event`, `resident`, `lifespan`, `health_route`, `ready_route`), `allow_all`, `receipt_to_status`, `receipt_body`, `ReceiptResponse`, `problem`, `problem_for_exception`, `status_for_exception`, `HTTPProblemError` (+ `BadRequestError`, `ForbiddenError`, `PayloadTooLargeError`, `UnsupportedMediaTypeError`), `idempotency_key_from`, `json_body`, `transition_stream`, `websocket_endpoint`, `mount_inspector` | [Starlette](../guide/integration-starlette/) |
 | `[fastapi]` | `xstate_statemachine.contrib.fastapi` | `StatechartRouter`, `get_interpreter`, `instrument_app`, `compose_lifespan`, `StateModel`, `ReceiptModel`, `Problem`; re-exports `StatechartRegistry`, `allow_all`, `ReceiptResponse`, `receipt_to_status`, `problem`, `problem_for_exception` | [FastAPI](../guide/integration-fastapi/) |
 | `[litestar]` | `xstate_statemachine.contrib.litestar` | `XStatePlugin`, `create_statechart_controller`, `get_interpreter`; re-exports as above | [Litestar](../guide/integration-litestar/) |
-| `[agents]` | `xstate_statemachine.contrib.agents` | `TOOL_LOOP`, `load_chart`, `CHARTS_DIR`, `agent_logic`, `budget_guards`, `Budget`, `state_tools`, `validate_agent_chart`, `tool_registry`, `tool`, `Tool`, `ToolRegistry`, `ALL_TOOLS`, `DEFAULT_TOOL_TIMEOUT_S`, `DEFAULT_MAX_OUTPUT_CHARS`, `AGENT_REDACT_KEYS`, `run_agent`, `run_agent_sync`, `AgentResult`, `WAITING_STATES`, `FakeModel`, `ModelCall`, `ModelResponse`, `ToolCall`, `Usage`, `AgentTracePlugin`, `spawn_agent`, `BudgetPlugin`, `handoff_guard`, `AgentError`, `AgentConfigError`, `ToolDeniedError`, `ToolTimeoutError`; `providers.openai.openai_model`, `providers.anthropic.anthropic_model` | [LLM agents](../guide/integration-agents/) |
+| `[agents]` | `xstate_statemachine.contrib.agents` | `TOOL_LOOP`, `load_chart`, `CHARTS_DIR`, `agent_logic`, `budget_guards`, `Budget`, `state_tools`, `validate_agent_chart`, `tool_registry`, `tool`, `Tool`, `ToolRegistry`, `ALL_TOOLS`, `DEFAULT_TOOL_TIMEOUT_S`, `DEFAULT_MAX_OUTPUT_CHARS`, `AGENT_REDACT_KEYS`, `run_agent`, `run_agent_sync`, `AgentResult`, `WAITING_STATES`, `FakeModel`, `ModelCall`, `ModelResponse`, `ToolCall`, `Usage`, `AgentTracePlugin`, `spawn_agent`, `BudgetPlugin`, `handoff_guard`, `AgentError`, `AgentConfigError`, `ToolDeniedError`, `ToolTimeoutError`, `pending_approval`, `scrub`, `structured_output`, `validate_structured`; `providers.openai.openai_model`, `providers.anthropic.anthropic_model` | [LLM agents](../guide/integration-agents/) |
+| `[testing]` | `xstate_statemachine.contrib.testing` (pytest plugin, auto-loaded via the `pytest11` entry point) | `PLUGIN_NAME`, `SnapshotMismatchError`, `normalize_snapshot`, `parse_marker`, `render_snapshot`; fixtures `xsm_*` and the `xstate_machine` marker | [Testing](../guide/integration-testing/) |
 
 The `xsm` CLI grows with them: `xsm gt --with-api --with-models` emits a FastAPI router and Pydantic event models you own ([templates](../guide/cli-templates/)); `xsm new --template fastapi` scaffolds a project from the example app; `xsm paths` lists a path to every reachable configuration ([CLI](../guide/cli/)).
 

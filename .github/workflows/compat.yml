@@ -1,0 +1,99 @@
+# /.github/workflows/compat.yml
+# -----------------------------------------------------------------------------
+# 🧮 Framework compatibility matrix (#296)
+# -----------------------------------------------------------------------------
+# Two cells per SHIPPED extra: the OLDEST version the extra allows (pinned
+# exactly, on the oldest supported Python) and the NEWEST release (latest the
+# resolver picks, on a current Python). The cells come from
+# tests/contrib/compat_matrix.json via scripts/gen_compatibility.py --matrix,
+# the same file that generates docs/_guide/compatibility.md, so the published
+# table is proven, not aspirational.
+#
+# 🏛️ Its own workflow, not a job in ci.yml: a `paths:` filter only exists at
+#    workflow level, and ~16 cells on every ordinary PR would triple the
+#    cost of CI for changes that cannot move a dependency. It runs:
+#      * weekly (new upstream releases land without a PR here),
+#      * on demand (workflow_dispatch),
+#      * on PRs / pushes that touch pyproject.toml or the matrix itself.
+# -----------------------------------------------------------------------------
+name: Compat
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "pyproject.toml"
+      - "tests/contrib/compat_matrix.json"
+      - "scripts/gen_compatibility.py"
+      - ".github/workflows/compat.yml"
+  push:
+    branches: [main]
+    paths:
+      - "pyproject.toml"
+      - "tests/contrib/compat_matrix.json"
+      - "scripts/gen_compatibility.py"
+      - ".github/workflows/compat.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "41 4 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && 'weekly' || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: "1"
+  PYTHONUTF8: "1"
+
+jobs:
+  cells:
+    name: Plan the compat cells
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: 📋 Table is in sync with the matrix
+        run: python scripts/gen_compatibility.py --check
+
+      - name: 🧮 Emit the matrix
+        id: plan
+        run: echo "matrix=$(python scripts/gen_compatibility.py --matrix)" >> "$GITHUB_OUTPUT"
+
+  compat:
+    name: "[${{ matrix.extra }}] ${{ matrix.kind }} (py${{ matrix.python }})"
+    needs: cells
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.cells.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: 🐍 Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: 📦 Install the ${{ matrix.kind }} pins for [${{ matrix.extra }}]
+        run: |
+          python -m pip install --upgrade pip
+          mapfile -t args < <(python scripts/gen_compatibility.py --pip-args "${{ matrix.extra }}" "${{ matrix.kind }}")
+          # 📝 --pip-args already includes the runner (pytest, pytest-asyncio,
+          #    pytest-socket), minus pytest when the cell pins it itself.
+          python -m pip install -e "${args[@]}"
+          python -m pip list
+
+      - name: 🧪 Run the extra's tests
+        run: |
+          pytest "tests/contrib/${{ matrix.extra }}" tests/contrib/test_extras_matrix.py \
+            -q --no-header --disable-socket --allow-hosts=127.0.0.1,::1

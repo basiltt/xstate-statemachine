@@ -278,7 +278,7 @@ examples:
   xsm validate machine.json
   xsm list-templates
   xsm info
-  xsm update                            upgrade to the latest release
+  xsm plugins                           list installed third-party plugins  xsm update                            upgrade to the latest release
   python -m xstate_statemachine setup   Windows: fix a blocked xsm.exe launcher
             """,
     )
@@ -419,6 +419,23 @@ examples:
         description="Displays information about the xstate-statemachine installation.",
     )
     info_parser.add_argument(
+        "--json", action="store_true", help="Emit as JSON."
+    )
+
+    # 🔎 plugins subcommand (#296) -- explicit entry-point discovery
+    plugins_parser = subparsers.add_parser(
+        "plugins",
+        parents=[presentation],
+        help="List installed third-party plugins, stores and brokers.",
+        description=(
+            "Loads the entry points declared under the "
+            "xstate_statemachine.plugins / .stores / .brokers groups and "
+            "lists name, distribution, version, group and the PluginBase "
+            "hooks each implements. Listing imports them; set "
+            "XSM_DISABLE_PLUGIN_DISCOVERY=1 to disable."
+        ),
+    )
+    plugins_parser.add_argument(
         "--json", action="store_true", help="Emit as JSON."
     )
 
@@ -702,8 +719,6 @@ def resolve_template(
     if template is not None:
         return template
     if style is not None:
-        import warnings
-
         mapping = {
             "class": "class-json",
             "function": "function-json",
@@ -713,20 +728,16 @@ def resolve_template(
             raise ValueError(
                 f"Unknown --style value: {style}. " f"Use --template instead."
             )
-        warnings.warn(
-            f"--style is deprecated, use --template " f"{resolved} instead. "
-            # 📝 The notice must always name a FUTURE release. Naming the
-            #    current one makes the promise broken at the moment the
-            #    user reads it. v0.6.0 shipped saying "removed in v0.7.0";
-            #    v0.7.0 still honours the flag, so the target moves again.
-            #
-            # 🏛️ Deliberately NOT removed in v0.7.0: this release already
-            #    asks every user of the pythonic templates to regenerate
-            #    their code. Breaking their CLI invocations in the same
-            #    release would compound one disruption with another.
-            f"Will be removed in v0.8.0",
-            DeprecationWarning,
-            stacklevel=2,
+        from ..deprecations import deprecated
+
+        # 📝 The notice must always name a FUTURE release (v0.6.0 promised
+        #    "removed in v0.7.0" and then kept it). Removal follows the
+        #    deprecation policy: no earlier than the next major (1.0).
+        deprecated(
+            "--style",
+            since="0.4.1",
+            removal="1.0",
+            alternative=f"--template {resolved}",
         )
         return resolved
     return "class-json"

@@ -1,0 +1,95 @@
+{
+  "_comment": "Source of truth for docs/_guide/compatibility.md (scripts/gen_compatibility.py) and the compat CI workflow (.github/workflows/compat.yml). One entry per SHIPPED extra. 'declared' is the lower bound in pyproject.toml (a test keeps them equal). 'oldest' is the oldest release PROVEN to pass the extra's test folder on the oldest supported Python: equal to 'declared' where the floor holds, higher where probing showed it does not (see 'note'). 'newest' lets the resolver pick the latest release. 'extra_pins' pin companion packages for the oldest cell only; 'test_deps' are test-only packages for both cells.",
+  "extras": {
+    "agents": {
+      "package": "pydantic",
+      "declared": "2.5",
+      "oldest": "pydantic==2.5.0",
+      "newest": "pydantic>=2.5",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": [],
+      "test_deps": ["httpx>=0.24"],
+      "note": ""
+    },
+    "fastapi": {
+      "package": "fastapi",
+      "declared": "0.100",
+      "oldest": "fastapi==0.106.0",
+      "newest": "fastapi>=0.100",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": ["pydantic==2.5.0", "httpx==0.27.2"],
+      "test_deps": ["httpx>=0.24", "openapi-spec-validator>=0.7"],
+      "note": "0.100.0 and 0.103.2 fail on Python 3.9: a ConflictError raised while persisting after the response started is not mapped to 409 (\"response already started\"). 0.106.0 changed yield-dependency exit semantics and passes."
+    },
+    "flask": {
+      "package": "flask",
+      "declared": "2.3",
+      "oldest": "flask==2.3.0",
+      "newest": "flask>=2.3",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": ["werkzeug==2.3.0"],
+      "test_deps": ["flask-wtf>=1.2"],
+      "note": "The Quart shim needs quart>=0.19, which requires Werkzeug 3, so it is exercised in the newest cell and the regular [flask] CI cell."
+    },
+    "litestar": {
+      "package": "litestar",
+      "declared": "2.0",
+      "oldest": "litestar==2.14.0",
+      "newest": "litestar>=2.0",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": ["sniffio>=1.3"],
+      "test_deps": ["httpx>=0.24", "openapi-spec-validator>=0.7", "pydantic>=2.5"],
+      "note": "2.0.x does not import on Python 3.9 (PEP 604 annotations evaluated at runtime); 2.1-2.13 emit OpenAPI whose per-event path parameters do not validate. 2.14.0 imports sniffio without declaring it, hence the companion pin."
+    },
+    "pydantic": {
+      "package": "pydantic",
+      "declared": "2.5",
+      "oldest": "pydantic==2.5.0",
+      "newest": "pydantic>=2.5",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": [],
+      "test_deps": [],
+      "note": ""
+    },
+    "redis": {
+      "package": "redis",
+      "declared": "5",
+      "oldest": "redis==5.0.0",
+      "newest": "redis>=5",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": ["pytest-asyncio==0.23.8"],
+      "test_deps": ["fakeredis[lua]>=2.20"],
+      "note": "fakeredis's FakeAsyncRedis constructs an asyncio.Lock() outside a running loop under pytest-asyncio>=0.24 on Python 3.9 (RuntimeError: no current event loop); pytest-asyncio==0.23.8 keeps a loop running for fixture setup."
+    },
+    "sqlalchemy": {
+      "package": "sqlalchemy",
+      "declared": "2.0",
+      "oldest": "sqlalchemy[asyncio]==2.0.2",
+      "newest": "sqlalchemy[asyncio]>=2.0",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": ["greenlet==3.0.3"],
+      "test_deps": ["aiosqlite>=0.19", "alembic>=1.12"],
+      "note": "2.0.0-2.0.1: the optimistic-lock version check does not raise ConflictError on a stale row."
+    },
+    "starlette": {
+      "package": "starlette",
+      "declared": "0.27",
+      "oldest": "starlette==0.45.3",
+      "newest": "starlette>=0.27",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": ["httpx==0.27.2"],
+      "test_deps": ["httpx>=0.24"],
+      "note": "0.27-0.45.0 on Python 3.9: the TestClient hangs in the WebSocket close-1008 test (teardown), so the cell cannot prove them. The HTTP surface passes."
+    },
+    "testing": {
+      "package": "pytest",
+      "declared": "8",
+      "oldest": "pytest==8.0.0",
+      "newest": "pytest>=8",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": ["hypothesis==6.100.0", "pytest-asyncio==0.23.8"],
+      "test_deps": [],
+      "note": ""
+    }
+  }
+}
