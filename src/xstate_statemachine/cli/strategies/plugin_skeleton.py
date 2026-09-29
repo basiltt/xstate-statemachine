@@ -3,7 +3,7 @@
 # 🔌 `plugin` template -- a PluginBase subclass shaped by the machine
 # -----------------------------------------------------------------------------
 # Only the hooks this chart can actually fire are emitted, each with a
-# structured-log body and a `TODO`, so the reader is not handed 23 empty
+# structured-log body and a fill-me-in marker, so the reader is not handed 23 empty
 # methods. The mapping is deliberate (documented inline): a chart with no
 # `invoke` gets no `on_service_*`, one with no `after` gets no timer note,
 # and the sticky-signal hooks (`on_chain_budget_exceeded`,

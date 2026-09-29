@@ -735,5 +735,9 @@ class TestCliSafePrint(unittest.TestCase):
         self.assertIn("✅".encode("utf-8"), buffer.getvalue())
 
 
+# ✅ #296: the 1.0 checklist -- including `contrib.*.__all__` against the API
+#    reference's contrib table -- runs as part of this surface suite.
+from tests.test_one_point_oh import TestOnePointOhChecklist  # noqa: E402,F401
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
