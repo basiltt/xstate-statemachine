@@ -425,6 +425,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md now states the real Python floor, **3.9** (it said 3.8+;
   `requires-python` and CI have been 3.9 since 0.9).
 
+### Fixed
+
+- **Bare-string `and` / `or` / `not` guard names** are user predicates
+  (only the dict form declares composition), but the CLI's guard parser
+  dropped them and `camel_to_snake` stripped the `_` suffix `safe_identifier`
+  adds for Python keywords -- so `stub_logic(raw_config)` missed a guard the
+  engine demanded (`ImplementationMissingError` on `DebtState_v4.json`) and
+  the typed template emitted `def and(...)`, a SyntaxError. Both fixed;
+  generated names for keyword guards are now `and_` / `not_` (#269).
+
 ## [0.10.5] - 2026-09-25
 
 ### Fixed

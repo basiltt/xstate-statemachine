@@ -11,6 +11,7 @@
 Utility functions for the xstate-statemachine CLI.
 """
 
+import keyword
 import re
 import sys
 
@@ -51,6 +52,14 @@ def camel_to_snake(name: str) -> str:
     # 5. Fallback for completely empty names
     if not name:
         name = "machine"
+    # 6. A Python keyword is a valid-looking identifier that will not
+    #    compile (`def and(...)`). `safe_identifier` appends `_` for the
+    #    same reason, but step 3 strips trailing underscores, so the guard
+    #    has to live HERE, after the strip -- a chart may legitimately name
+    #    a guard `and` / `not` / `class` (models.GuardDefinition accepts a
+    #    bare-string keyword as a user predicate).
+    if keyword.iskeyword(name):
+        name = f"{name}_"
     return name
 
 
