@@ -52,6 +52,12 @@ STATUS_UNPROCESSABLE = 422  # idempotency key reused with a different payload
 _CLIENT_ERROR_STATUS = {
     "IdempotencyMismatchError": STATUS_UNPROCESSABLE,
     "IdempotencyInFlightError": STATUS_CONFLICT,
+    # 🏁 An event for an instance that already finished (or was stopped):
+    #    the transition can no longer happen. Refused like a guard, not a
+    #    server fault. Both engines report it on the receipt (#123 parity;
+    #    the sync engine used to return None and the Flask blueprint
+    #    answered a POST to a finished order with a 500).
+    "InterpreterStoppedError": STATUS_CONFLICT,
 }
 
 
@@ -82,6 +88,7 @@ def receipt_to_status(receipt: Receipt) -> int:
     |:------------------------------|:------:|:---------------------------|
     | ``error`` is a key mismatch   |  422   | idempotency key reused     |
     | ``error`` is key in flight    |  409   | first delivery still running |
+    | ``error`` is instance stopped |  409   | already finished / stopped |
     | ``error is not None`` (other) |  500   | processing failed          |
     | ``deferred``                  |  202   | held for a later state     |
     | ``denied``                    |  409   | a guard refused it         |

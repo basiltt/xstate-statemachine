@@ -48,7 +48,11 @@ from typing import (
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from .base_interpreter import AnyEvent, BaseInterpreter, _RollbackRequested
-from .exceptions import ReentrantWaitError, RunawayChainError
+from .exceptions import (
+    InterpreterStoppedError,
+    ReentrantWaitError,
+    RunawayChainError,
+)
 from .clock import Clock, SimulatedClock
 from .actor_logic import RunningLogic
 from .events import (
@@ -663,6 +667,22 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 return None
             for plugin in self._plugins:
                 plugin.on_event_dropped(self, dropped, "not_running")
+            if wait:
+                # 🧾 The overload promises `wait=True -> Receipt`, and the
+                #    async engine resolves one with `InterpreterStoppedError`
+                #    here (`_refuse_if_not_running`). Returning None broke
+                #    every caller that trusted the contract -- the Flask
+                #    blueprint answered a POST to a finished order with a
+                #    500 instead of a receipt (found by the [flask] battle
+                #    test). Same receipt shape as the async engine.
+                return Receipt(
+                    frozenset(self.current_state_ids),
+                    False,
+                    InterpreterStoppedError(
+                        f"Interpreter '{self.id}' is {self.status}; event "
+                        f"'{dropped.type}' was dropped."
+                    ),
+                )
             return None
 
         event_obj = self._prepare_event_reporting(event_or_type, **payload)

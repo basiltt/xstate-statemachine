@@ -17,6 +17,7 @@ from src.xstate_statemachine import create_machine
 from src.xstate_statemachine.events import Receipt
 from src.xstate_statemachine.exceptions import (
     ConflictError,
+    InterpreterStoppedError,
     LockTimeoutError,
     SnapshotDriftError,
     UnknownEventError,
@@ -115,6 +116,8 @@ class TestReceiptToStatus:
             (Receipt(IDS, False, deferred=True), 202),
             (Receipt(IDS, True, duplicate=True), 200),
             (Receipt(IDS, False, error=RuntimeError("x")), 500),
+            # 🏁 a finished / stopped instance refuses like a guard, not 500
+            (Receipt(IDS, False, error=InterpreterStoppedError("done")), 409),
             (
                 Receipt(
                     IDS, False, IdempotencyMismatchError("k"), duplicate=True
@@ -221,6 +224,31 @@ class TestHTTP:
         with TestClient(build_app(reg)) as c:
             r = c.post("/m/1/events/SUBMIT")
             assert r.status_code == 409 and r.json()["denied"] is True
+
+    def test_event_to_finished_instance_is_409_not_500(self):
+        """An order that reached its final state is re-loaded as `done`;
+        a further POST is a refusal (409 + receipt), not a server fault.
+        The sync engine used to return None from `send(wait=True)` here,
+        which surfaced as a 500 in the Flask blueprint (battle test)."""
+        cfg = {
+            "id": "o",
+            "initial": "open",
+            "states": {
+                "open": {"on": {"PAY": "paid"}},
+                "paid": {"type": "final"},
+            },
+        }
+        from src.xstate_statemachine import stub_logic
+
+        reg = make(machine=create_machine(cfg, logic=stub_logic(cfg)))
+        with TestClient(build_app(reg)) as c:
+            assert c.post("/m/1/events/PAY").json()["changed"] is True
+            r = c.post("/m/1/events/PAY")
+            assert r.status_code == 409, r.text
+            body = r.json()
+            assert body["changed"] is False
+            assert body["error"] == "InterpreterStoppedError"
+            assert body["state_ids"] == ["o.paid"]
 
     def test_context_serializer_opt_in(self):
         reg = StatechartRegistry(MemoryStore())
