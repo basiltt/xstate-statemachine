@@ -21,7 +21,9 @@ HOOKS = ROOT / ".pre-commit-hooks.yaml"
 ACTION = ROOT / "action.yml"
 SELFTEST = ROOT / ".github" / "workflows" / "xsm-check-selftest.yml"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
-MACHINE = ROOT / "examples" / "integrations" / "fastapi_orders" / "machine.json"
+MACHINE = (
+    ROOT / "examples" / "integrations" / "fastapi_orders" / "machine.json"
+)
 KV = re.compile(r"^(?:- )?\s*([\w-]+):\s*(.*)$")
 
 
@@ -95,7 +97,9 @@ def test_action_is_composite_and_pins_setup_python_like_ci() -> None:
     assert "using: composite" in text
     for name in ("files:", "generated-dir:", "python-version:"):
         assert name in text
-    pin = re.search(r"actions/setup-python@([0-9a-f]{40})", CI.read_text("utf-8"))
+    pin = re.search(
+        r"actions/setup-python@([0-9a-f]{40})", CI.read_text("utf-8")
+    )
     assert pin and f"actions/setup-python@{pin.group(1)}" in text
     assert "xsm validate --plain" in text
     assert "xsm gt --check" in text

@@ -79,6 +79,9 @@ def test_bad_names_are_refused(tmp_path: Path, bad: str) -> None:
 
 
 def test_run_new_list_and_errors(tmp_path: Path, capsys) -> None:
+    from src.xstate_statemachine.cli.commands import reset_console
+
+    reset_console()  # another test may have cached a console on old stdout
     N.run_new(None, list_only=True)
     out = capsys.readouterr().out
     assert "fastapi" in out and "planned, #280" in out
