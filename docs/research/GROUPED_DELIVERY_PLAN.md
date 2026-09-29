@@ -51,4 +51,5 @@ The per-phase RC issues are closed by the two RC PRs with a comment pointing her
    - `PrometheusPlugin`, `OpenTelemetryPlugin` — G3; G4's `instrument_app()` imports them.
    - `StatechartRegistry` (G4) is the model for `DjangoStore`/`SQLAlchemyStore` act-loops (G5/G6); the loop itself is `persisted()` from Phase A.
 4. Before opening the PR: full suite locally, `python scripts/verify/G<n>_<name>.py` → `ALL OK`, PR body = Summary / Test plan / deviations / Integrations checklist / `Closes #…` for every issue in the group.
+   **Also run the new/changed test files under a real Python 3.9 interpreter** (`py -3.9 -m venv .venv39` or `uv python install 3.9`; `pip install -e ".[<extras>]"` there). mypy cannot pin 3.9 any more, so the 3.9 CI cell is the only compatibility gate — and it has already caught `asyncio.Lock()` at construction (#334) and `Path.write_text(newline=)` (#342), both green on 3.14. Twenty seconds locally beats a red matrix an hour later.
 5. Reviewer (agent A) merges group PRs; the maintainer confirms releases only.
