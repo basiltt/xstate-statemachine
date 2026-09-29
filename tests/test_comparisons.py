@@ -140,9 +140,7 @@ class TestPythonLibraryComparisons(unittest.TestCase):
                 self.assertIn(entry["name"], row["source"], row["feature"])
 
     def test_ours_column_is_identical_across_the_three_pages(self) -> None:
-        ours = [
-            [r["ours"] for r in self.data[k]["rows"]] for k in self.PAGES
-        ]
+        ours = [[r["ours"] for r in self.data[k]["rows"]] for k in self.PAGES]
         self.assertEqual(ours[0], ours[1])
         self.assertEqual(ours[0], ours[2])
 

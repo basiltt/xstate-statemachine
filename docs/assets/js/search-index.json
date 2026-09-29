@@ -186,6 +186,24 @@
     "description": "Comparison with @statelyai/agent: same XState chart model, Python runtime, stores, budgets and tool policy. When to choose @statelyai/agent."
   },
   {
+    "title": "xstate-statemachine vs django-fsm",
+    "section": "Integrations",
+    "url": "/guide/vs-django-fsm/",
+    "description": "Comparison with django-fsm-2: hierarchy, parallel regions, durable timers, locking, admin, audit, XState JSON; side-by-side order lifecycle; migration recipe (xsm_migrate_fsm, planned). When to choose django-fsm."
+  },
+  {
+    "title": "xstate-statemachine vs transitions",
+    "section": "Integrations",
+    "url": "/guide/vs-transitions/",
+    "description": "Comparison with pytransitions: HierarchicalMachine vs native nesting, Timeout threads vs persisted deadlines, persistence, typed context, XState JSON portability. When to choose transitions."
+  },
+  {
+    "title": "xstate-statemachine vs python-statemachine",
+    "section": "Integrations",
+    "url": "/guide/vs-python-statemachine/",
+    "description": "Comparison with python-statemachine: declarative class API and diagrams vs portable XState JSON, stores, locking and durable timers. When to choose python-statemachine."
+  },
+  {
     "description": "Generate diagrams from machines — Mermaid, PlantUML, ASCII format, statechart visualization.",
     "section": "Advanced",
     "title": "Diagram Export",

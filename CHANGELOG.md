@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Example app: `examples/integrations/sqlalchemy_orders/` (#286).** An
+  order lifecycle on SQLAlchemy 2.0 in a sync variant (`StatechartMixin`
+  with `optimistic()`, `send_with_retry`, `in_state` queries, audit rows)
+  and an async variant (`AsyncSQLAlchemyStore` + `apersisted()` on
+  aiosqlite), sharing one database. The 15-minute payment `after` is fired
+  by `DueTimerScanner` for orders nobody touches. Ships an Alembic
+  environment and the generated migration for the model and every `xsm_*`
+  table; a test runs `alembic upgrade head` and asserts autogenerate sees
+  no diff. The transactional outbox is not faked: the README points at
+  #293.
+- **Example app: `examples/integrations/flask_wizard/` (#286).** A 4-step
+  server-rendered onboarding wizard: one machine per browser session
+  (`XState` + session-derived key), NEXT / BACK / SUBMIT as events the
+  chart validates, `SessionStore` by default with a `SQLiteStore` variant
+  (`WIZARD_STORE=sqlite`), an oversize context refused with 413 and
+  nothing saved, Flask-WTF CSRF when installed, and
+  `flask xsm inspect wizard`. `tests/test_examples_integrations.py` now
+  runs each example's suite under its own extra, and the `[sqlalchemy]`
+  and `[flask]` CI cells run it.
+
 - **SQLAlchemy & Flask (Phase D) -- `[sqlalchemy]` extra (#284 parts 1–2).**
   A statechart on your mapped row, or a `StateStore` on any RDBMS.
   - `StatechartType` (JSON; `JSONB` on Postgres; size-capped both ways)
@@ -626,6 +646,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `send()` on a `SyncInterpreter` remains unsupported and voids the
   guarantee -- use `send_threadsafe()`.
 ### Documentation
+
+- **Comparison pages vs django-fsm, transitions and python-statemachine
+  (#286).** Feature tables (hierarchy, parallel, timers, invoke, actors,
+  async, locking, versioning, admin, REST/DRF, audit, visual editor, typed
+  context, persistence, XState JSON) render from three new entries in
+  `docs/_data/comparisons.json`; every row carries a source note naming
+  the competitor version checked, and a test enforces it. Each page has
+  a side-by-side order lifecycle (ours executed by the docs test, theirs
+  fenced as `text`) and an honest "When to choose them instead" section.
+  The django-fsm page has a migration recipe pointing at the planned
+  `xsm_migrate_fsm` (#310). Linked from the README, the landing page and
+  the Integrations journey.
 
 - **Integrations journey (#309).** *Integrations* is now the entry point:
   a Mermaid "pick your path" tree (framework × store × worker model ×

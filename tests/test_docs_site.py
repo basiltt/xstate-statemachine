@@ -351,5 +351,29 @@ class TestSecurityBaseline(unittest.TestCase):
         self.assertIn("(../guarantees/)", tpl)
 
 
+class TestPythonLibraryComparisonPages(unittest.TestCase):
+    """#286: the three comparison pages exist, are in nav and search, and
+    are reachable from the README, the landing page and the journey."""
+
+    PAGES = ("vs-django-fsm", "vs-transitions", "vs-python-statemachine")
+
+    def test_pages_exist_and_are_linked_everywhere(self) -> None:
+        layout = _read(ROOT / "docs" / "_layouts" / "default.html")
+        index = _read(ROOT / "docs" / "assets" / "js" / "search-index.json")
+        readme = _read(ROOT / "README.md")
+        landing = _read(ROOT / "docs" / "index.html")
+        journey = _read(GUIDE / "integrations.md")
+        for page in self.PAGES:
+            self.assertTrue(
+                (GUIDE / "comparisons" / f"{page}.md").is_file(), page
+            )
+            self.assertIn(f"/guide/{page}/", layout, f"{page} not in sidebar")
+            self.assertIn(f"{page},", layout, f"{page} not in pages_order")
+            self.assertIn(f"/guide/{page}/", index, f"{page} not searchable")
+            self.assertIn(f"/guide/{page}/", readme, f"{page} not in README")
+            self.assertIn(f"/guide/{page}/", landing, f"{page} not landing")
+            self.assertIn(f"../{page}/", journey, f"{page} not in journey")
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
