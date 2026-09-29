@@ -368,7 +368,7 @@ also a `TypeError` — and `RootTargetError`), new plugin hooks
 `from_snapshot(clock=, restart_timers=, minimum_version=)`, sticky
 `chain_trips` / `last_chain_error`, `Interpreter(service_pool_size=)`,
 `MachineLogic(strict=True)` and redaction in `LoggingInspector`. See
-[What's New in 0.10.0](#whats-new-in-0100), [0.9.0](#whats-new-in-090) and [0.9.1](#whats-new-in-091) below.
+[What's New in 0.11](#whats-new-in-011-unreleased-on-main), [0.10.0](#whats-new-in-0100), [0.9.0](#whats-new-in-090) and [0.9.1](#whats-new-in-091) below.
 
 **From v0.5.x to v0.6.0:**
 
@@ -453,6 +453,59 @@ asyncio.run(main())
 > has actually been processed (see [Receipts and priority sends](../interpreters/#receipts-and-priority-sends-39)).
 
 > **Tip:** Use `SyncInterpreter` for scripts, CLI tools, and testing. Use `Interpreter` for web servers, event loops, and real-time applications.
+
+## 🆕 What's New in 0.11 (unreleased — on `main`)
+
+The **durable, testable, web-ready** release. The core stays zero-dependency;
+everything that needs a third-party library is an explicit extra under
+`xstate_statemachine.contrib`, each with a guide page that carries a
+**Guarantees** box and a **Threat model** box.
+
+- **Persistence & durability** (`xstate_statemachine.persistence`, core) —
+  `MemoryStore` / `FileStore` / `SQLiteStore` behind one `persisted()`
+  load → act → persist → discard loop; `OptimisticLock` (version + jittered
+  retry) or a fenced `PessimisticLock`, so two workers never lose an update;
+  `IdempotencyPlugin` + inbox (a replayed webhook gets the **original
+  receipt**; scope is per tenant); `AuditPlugin` / `TransitionLogPlugin` with
+  `replay()`; `SnapshotMigrator` for in-flight instances across a deploy;
+  **durable `after` timers** — deadlines persist as wall-clock instants,
+  `persisted()` resumes the *remaining* time and `DueTimerScanner` wakes
+  machines whose deadline passed while nothing was running. What is
+  exactly-once and what is at-least-once is specified on the
+  **[Guarantees](../guarantees/)** page; the trust model on **[Security](../security/)**.
+- **Resilience patterns** (`xstate_statemachine.patterns`, core) — `RetryPolicy`
+  (exponential backoff + jitter as an `after` delay), `dead_letter` transition
+  helper, `CircuitBreaker` chart + `@circuit_breaker`.
+- **Actor logic helpers** — `from_callback`, `from_async_iterator`,
+  `from_iterator`, `from_coroutine`, `from_callable`, `from_interpreter`:
+  XState's `fromPromise` / `fromCallback` / `fromObservable` parity as ordinary
+  services, on both engines.
+- **Graph algorithms** — `shortest_paths` / `simple_paths` /
+  `reachable_states` / `transition_coverage_targets`, executed by the real
+  engine (parallel regions, history and timers behave exactly as at runtime);
+  `xsm paths`; an engine-backed reachability finding in `xsm inspect`.
+- **`[pydantic]`** — typed context validated on every assign, `EventModel`
+  discriminated unions → `event_schemas=`, `validate_machine_json()`, JSON
+  Schema. **`[redis]`** — `RedisStore` / `RedisInbox` / `RedisLog` with fenced
+  locks for multi-host deployments.
+- **`[starlette]` · `[fastapi]` · `[litestar]`** — `StatechartRegistry` puts the
+  persisted loop behind HTTP: receipt → `200`/`202`/`409`/`422`, principal-scoped
+  `Idempotency-Key`, RFC 9457 problem responses that never carry exception
+  text, SSE and WebSocket transition streams, lifespan-managed timers.
+  `StatechartRouter` generates one route per event with OpenAPI built from your
+  Pydantic events; `Depends(get_interpreter(...))` for hand-written handlers.
+  **Closed by default:** `authorize=` is required. Start with the
+  [FastAPI guide](../integration-fastapi/) and the runnable
+  `examples/integrations/fastapi_orders` app.
+- **Core prerequisites** — snapshot layout v4 (`machine_version`, `deadlines`),
+  `interpreter.wall_now()`, a global plugin registry, the `context_validator`
+  seam, the `__xstate_event__` adapter, `SyncInterpreter.send_threadsafe()`,
+  `MachineNode.version`.
+- **Programme baseline** — `SECURITY.md`, a `pip-audit` CI job over every
+  shipped extra, SHA-pinned Actions, a no-`pickle`/`eval` tree guard, and
+  measured **performance budgets** (`benchmarks/budgets.json`, nightly).
+
+See the **[Changelog](../changelog/)** for the full list.
 
 ## 🆕 What's New in 0.10.0
 
