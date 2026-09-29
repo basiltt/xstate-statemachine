@@ -18,24 +18,26 @@ These files are touched by every group. Edit them **only at the very end** of a 
 
 ## The groups
 
-| Group | Issues | Owner | Branch | Why together |
+| Group | Issues | Owner | Branch | Status |
 |:--|:--|:--|:--|:--|
-| **G1 Testing** | #268 B1, #270 B3, #271 B4 (+ the `[testing]` `path` fixture of #269) | **agent B** (already on #268; continue into B3/B4 in the same `contrib/testing/` package) | `feat/b1-testing-plugin`, then `feat/g1b-coverage-hypothesis` | One extra `[testing]`, one package, one docs page. A parked reference implementation of B1 is on branch `wip/b1-pytest-plugin-reference` (not for merge; borrow freely — notably `pytest_cmdline_main` for `--xsm-version`, the `xsm_ainterp` skip-without-pytest-asyncio shape, and the 16-case pytester suite) |
-| **G1-core Graph** | #269 B2, core only: `xstate_statemachine/graph.py`, `xsm paths`, `xsm inspect` reachability | agent A | `feat/g1-graph` | Zero-dep core with no file overlap with `contrib/testing/`; unblocks the `shortest_paths` perf row. Agent B adds the `pytest_generate_tests` `path` fixture on top once merged |
-| **G2 EDA core** | #272 B5, #293 F2, #295 F4 | agent B (after G1) | `feat/g2-eda-core` | `Envelope`/`BrokerAdapter` defined once (#272) and extended (#293, #295); all zero-dep core under `xstate_statemachine/eda/` + `patterns/saga.py` + `contrib/testing/broker.py` (**only** that file inside `contrib/testing/`); SQLite outbox instead of waiting on D5 |
-| **G3 Observability & inspector** | #273 B6, #274 B7 | agent B (after G2) | `feat/g3-observability` | Both are plugin translations of the same hooks; `[observability]` extra + core `inspect/` package; CLI `xsm inspect --live`, `sim --record`, `replay` |
-| **G4 Web** | #275 C1, #276 C2, #278 C4, #279 C5, #277 C3 | agent A (after G1) | `feat/g4-web` | Starlette core → FastAPI → Litestar share `StatechartRegistry`; C5 codegen and C3 example app depend on C2's router. `[starlette] [fastapi] [litestar]` extras. Re-record the FastAPI perf row |
-| **G5 Django** | #280 D1, #281 D2, #282 D3, #283 D4, #310 D9 | agent B (after G3) | `feat/g5-django` | One test settings module, one `[django]`/`[drf]`/`[channels]` matrix cell set, one example app |
-| **G6 SQLAlchemy & Flask** | #284 D5, #285 D6, #286 D7 | agent A (after G4) | `feat/g6-sqla-flask` | D7's examples/comparison pages need D1–D6 shipped; D5's transactional outbox plugs into G2's `OutboxStore` protocol |
-| **G7 Brokers & Celery** | #294 F3, #292 F1 | agent B (after G5) | `feat/g7-brokers` | Adapters over G2's `BrokerAdapter`; testcontainers opt-in job; Celery Beat scheduler over the `DueTimerScanner` |
-| **G8 Agents** | #287 E1, #288 E2, #289 E3, #290 E4, #291 E5 | agent A (after G6) | `feat/g8-agents` | One `[agents]` extra; recipes + `BudgetPlugin` + comparison pages |
-| **G9 Adoption & recipes** | #308 B9, #309 C7 | whoever finishes first | `feat/g9-adoption` | Docs/CLI/GitHub-Action kit; independent of the extras but reads better once G4 exists |
-| **G10 1.0 hardening** | #296 G1 | agent A, last | `feat/g10-hardening` | Entry-point discovery, compatibility-matrix CI, deprecation policy, `[all]` smoke |
+| **G1 Testing** | #268 B1, #270 B3, #271 B4 (+ the `[testing]` `path` fixture of #269) | **agent B** | `feat/b1-testing-plugin`, then `feat/g1b-coverage-hypothesis` | **#268 in review (PR #332)** — needs a rebase and the 6 fixes in the review; B3/B4 not started. Reference implementation on `wip/b1-pytest-plugin-reference` |
+| **G1-core Graph** | #269 B2 core | agent A | `feat/g1-graph` | ✅ merged (#333) |
+| **G2 EDA core** | #272 B5, #293 F2, #295 F4 | agent B (after G1) | `feat/g2-eda-core` | not started — `HANDOVER_G2_G3_eda_observability.md` |
+| **G3 Observability & inspector** | #273 B6, #274 B7 | agent B (after G2) | `feat/g3-observability` | not started |
+| **G4 Web** | #275 C1, #276 C2, #278 C4, #279 C5, #277 C3, #309 C7 | agent A | `feat/g4-web` | ✅ merged (#334, #338, #339, #342) |
+| **G5 Django** | #280 D1, #281 D2, #282 D3, #283 D4, #310 D9 | agent B (after G3) | `feat/g5-django` | not started |
+| **G6 SQLAlchemy & Flask** | #284 D5, #285 D6, #286 D7 | agent A | `feat/g6-sqla-flask` | ✅ #284 (parts 1–2), #285 merged (#349); #286 examples + 3 comparison pages in progress; D5 outbox → #293; Django app → after G5 |
+| **G7 Brokers & Celery** | #294 F3, #292 F1 | agent B (after G5) | `feat/g7-brokers` | not started |
+| **G8 Agents** | #287 E1, #288 E2, #289 E3, #290 E4, #291 E5 | agent A | `feat/g8-agents` | ✅ merged (#346, #347) |
+| **G9 Recipes** | #308 B9 | agent A | `feat/g9-recipes` | in progress |
+| **G10 1.0 hardening** | #296 G1 | agent A, last | `feat/g10-hardening` | not started |
 
-Release-candidate issues (#297 A11, #298 B8, #301 E6, #299 C6, #300 D8, #302 F5) collapse into **two RCs**, cut by agent A with the maintainer's confirmation:
+Core fixes found by battle-testing along the way (all merged): #337 keyword-named guards, #340 scaffold JSON lookup, #341 idempotency problems, #345 child-snapshot race, #348 sync `send(wait=True)` on a finished machine.
 
-- **RC 0.11.0** after G1 + G2 + G3 merge (persistence foundation + testing + EDA core + observability = a coherent "durable, testable, observable" release). Before it: every open PR closed, README / landing page / getting-started "What's New" / API reference / changelog complete, `#307` budgets re-recorded, `#303` items re-verified, and the new surface **battle-tested**: the full matrix green, the perf nightly green three nights running, every example app smoke-tested in CI, and the verify scripts of every merged group re-run against the built wheel in a clean venv.
-- **RC 0.12.0** after G4–G8 (+ G9/G10 if ready). Same gate.
+Release-candidate issues (#297 A11, #298 B8, #301 E6, #299 C6, #300 D8, #302 F5) collapse into **two RCs**, cut by agent A only with the maintainer's confirmation. Delivery order diverged from the phase plan (web, SQLAlchemy/Flask and agents shipped before the EDA core and observability), so the RC boundary is defined by **what is on `main` and battle-tested**, not by phase letters:
+
+- **RC 0.11.0** = everything merged so far: persistence foundation, patterns, actor logic, graph, `[pydantic]`, `[redis]`, `[starlette]`/`[fastapi]`/`[litestar]`, `[sqlalchemy]`/`[flask]`, `[agents]`, the adoption kit, recipes and comparison pages — **plus `[testing]` (#332) if it lands in time**. Gate before the RC PR is opened: every open PR closed or explicitly deferred, README / landing page / getting-started "What's New" / API reference / changelog complete, `#307` budgets re-recorded on the reference runner, `#303` items re-verified, the full matrix green, the perf nightly green three nights running, every example app smoke-tested in CI, and every merged group's verify script re-run against the **built wheel in a clean venv** (the battle tests that found #340/#341/#348 stay in `scripts/verify/`).
+- **RC 0.12.0** after G2 (EDA core), G3 (observability + inspector), G5 (Django), G7 (brokers/Celery) and G10 (1.0 hardening). Same gate.
 
 The per-phase RC issues are closed by the two RC PRs with a comment pointing here.
 
