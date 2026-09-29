@@ -43,7 +43,7 @@ and your Python backend. Async **and** sync interpreters. Zero dependencies.
 | 🧩 | [**Context**](#-context--the-machines-memory) · [**Guards**](#️-guards--conditional-transitions) · [**Actions**](#-actions--side-effects) | The building blocks |
 | 🔌 | [**Services**](#-services--invoke) · [**Timers**](#️-timers--delayed-transitions) | Async work and time |
 | 🌳 | [**Nested**](#-nested--parallel-states) · [**Parallel**](#parallel-states--concurrent-regions) · [**History**](#-history--final-states) | Real-world hierarchy |
-| 🤖 | [**Actors**](#-the-actor-model) · [**Persistence**](#-persistence--snapshots) | Systems of machines |
+| 🤖 | [**Actors**](#-the-actor-model) · [**Persistence**](#-persistence--snapshots-and-stores) · [**Integrations**](#-integrations--optional-extras) | Systems of machines; stores, locks, FastAPI |
 | 🔍 | [**Introspection**](#-introspection--plugins) · [**Pure API**](#-the-pure-api--no-interpreter) | Observe and test |
 | 🐍 | [**Pythonic API**](#-prefer-pure-python-three-more-ways-to-define-a-machine) | No JSON required |
 | 🛠️ | [**CLI Tool**](#️-cli-tool) | Generate, inspect, simulate, diagram — zero deps |
@@ -798,7 +798,7 @@ pools, per-user session machines, job workers.
 
 ---
 
-## 💾 Persistence — Snapshots
+## 💾 Persistence — Snapshots and Stores
 
 Serialize a running machine to JSON, store it anywhere, rebuild it later. Long-running flows
 survive deploys and restarts.
@@ -819,19 +819,99 @@ print(resumed.current_state_ids)   # {'job.step2'}   ← exactly where it left o
 resumed.send("NEXT")
 ```
 
-State, context and `systemId` registrations all round-trip.
+State, context, pending `after` deadlines and `systemId` registrations all round-trip.
 `get_persisted_snapshot()` gives you the dict form if you'd rather store structured data.
+Every snapshot carries an envelope (`version`, `machine_id`, `machine_hash`, `machine_version`)
+so `from_snapshot()` refuses a structurally different machine with `SnapshotDriftError`
+instead of silently resuming into it; register a `SnapshotMigrator` step to upgrade
+in-flight instances across a deploy.
 
-> **Note** — pending `after` timers are **not** resumed by a restore. A machine saved while
-> waiting on a 30-minute timeout will wait indefinitely after restore. If a deadline must
-> survive a restart, store it in context and re-arm it yourself on resume.
+### Stores, locks and the safe loop — zero dependencies
 
-Every snapshot carries an envelope (`version`, `machine_id`, `machine_hash`) so
-`from_snapshot()` refuses a structurally different machine with `SnapshotDriftError`
-instead of silently resuming into it; pass `verify_machine_hash=False` after a deliberate
-migration. Invokes are not restarted either — pass `from_snapshot(..., restart_services=True)`
-to re-invoke every service `pending_invocations()` reports, or leave them stopped and
-re-trigger manually.
+Most apps never call `from_snapshot` by hand. `xstate_statemachine.persistence` ships the
+whole **load → act → persist → discard** loop with built-in stores — `MemoryStore`,
+`FileStore` (atomic writes, `0600`), `SQLiteStore` (WAL, stdlib `sqlite3`) — and
+`RedisStore` in the `[redis]` extra:
+
+```python
+from xstate_statemachine import MachineLogic, create_machine
+from xstate_statemachine.persistence import MemoryStore, persisted
+
+cfg = {"id": "order", "initial": "cart", "context": {"items": 0},
+       "states": {"cart": {"on": {"ADD": {"actions": "add"}, "PAY": "paid"}},
+                  "paid": {"type": "final"}}}
+machine = create_machine(cfg, logic=MachineLogic(
+    actions={"add": lambda i, ctx, e, a: ctx.__setitem__("items", ctx["items"] + 1)}))
+store = MemoryStore()                      # or SQLiteStore("orders.db"), RedisStore(...)
+
+with persisted(store, "order:42", machine) as order:   # loaded (or created), started
+    order.send("ADD")
+    order.send("ADD")
+# saved with expected_version on clean exit; a concurrent writer gets ConflictError
+
+with persisted(store, "order:42", machine) as order:
+    assert order.context["items"] == 2
+    assert order.send("PAY", wait=True).changed
+assert store.load("order:42").version == 2
+```
+
+What the loop gives you, all documented on the [Guarantees](https://basiltt.github.io/xstate-statemachine/guide/guarantees/) page:
+
+| Concern | What you get |
+|:--|:--|
+| Two workers, one instance | `OptimisticLock` (version check + jittered retry) or a fenced `PessimisticLock` — **never a silent lost update** |
+| Duplicate webhooks | `IdempotencyPlugin(inbox, principal=…)` answers a replay with the **original receipt** before the machine sees it; scope is per tenant |
+| Timers across restarts | `after` deadlines are persisted as wall-clock instants; `persisted()` resumes the **remaining** time, and `DueTimerScanner` wakes machines whose deadline passed while nothing was running |
+| Audit / replay | `AuditPlugin` + `TransitionLogPlugin` (who, what, when; `replay()` a log into a fresh machine) |
+| Schema drift | `@migrator.register("1.0", "1.1")` steps upgrade in-flight instances; unknown or newer layouts are refused, never guessed at |
+| Secrets | One `redact()` denylist applied by every built-in sink; a `SnapshotCodec` seam for encryption at rest |
+
+The honest boundary: transitions are **exactly-once** for an idempotency-keyed event; the
+side effects your actions perform are **at-least-once**. Put them behind `invoke` or an
+outbox and make them idempotent. Full guide → [Persistence & Durability](https://basiltt.github.io/xstate-statemachine/guide/persistence/).
+
+---
+
+## 🔌 Integrations — Optional Extras
+
+The core stays zero-dependency; every integration is an extra under `xstate_statemachine.contrib`
+that you install explicitly (`pip install "xstate-statemachine[fastapi]"`). Each has a guide
+page with a **Guarantees** box and a **Threat model** box — CI refuses a page without them.
+
+| Extra | What you get | Guide |
+|:--|:--|:--|
+| `[pydantic]` | Typed context validated on every `assign`, `EventModel` discriminated unions → `event_schemas=`, `validate_machine_json()`, JSON Schema | [Pydantic](https://basiltt.github.io/xstate-statemachine/guide/integration-pydantic/) |
+| `[redis]` | `RedisStore` / `RedisInbox` / `RedisLog` with fenced locks for multi-host deployments | [Redis](https://basiltt.github.io/xstate-statemachine/guide/integration-redis/) |
+| `[starlette]` | `StatechartRegistry` — the store-backed create → act → persist loop as ASGI middleware; receipt → HTTP status; principal-scoped `Idempotency-Key`; RFC 9457 problems; SSE and WebSocket transition streams | [Starlette](https://basiltt.github.io/xstate-statemachine/guide/integration-starlette/) |
+| `[fastapi]` | `StatechartRouter` generates `GET /{id}`, `POST /{id}/send` (discriminated-union body), one route per event, `/events`, `/diagram.mmd`, `/stream`, `/ws` — with OpenAPI that reflects your chart; `Depends(get_interpreter(...))` | [FastAPI](https://basiltt.github.io/xstate-statemachine/guide/integration-fastapi/) |
+| `[litestar]` | `XStatePlugin` + a generated `Controller` on the same registry | [Litestar](https://basiltt.github.io/xstate-statemachine/guide/integration-litestar/) |
+
+<!-- doc-fragment -->
+```python
+from fastapi import FastAPI
+from xstate_statemachine.contrib.fastapi import StatechartRouter, instrument_app
+from xstate_statemachine.contrib.starlette import StatechartRegistry
+from xstate_statemachine.persistence import SQLiteStore
+
+registry = StatechartRegistry(SQLiteStore(DB_PATH), run_timers=True)   # or RedisStore for many hosts
+registry.register("orders", order_machine, authorize=my_authorizer)   # closed by default; # … built elsewhere
+
+app = FastAPI()
+instrument_app(app, registry)                                           # lifespan, /_xsm/health, /_xsm/ready
+app.include_router(StatechartRouter(registry, "orders", event_models=[AddItem, Pay, Cancel]))
+# POST /orders/42/events/PAY  →  200 {state, state_ids, changed, available_events, …}
+#                            →  409 when a business rule (guard) refuses, 422 on a bad body
+```
+
+Every web integration is **closed by default** — `authorize=` is required, `GET` returns
+state only unless you opt into a `context_serializer`, and error bodies never carry exception
+text. The multi-worker model (why an interpreter cannot live in a uvicorn worker, where timers
+run, how 4 workers × 200 concurrent `PAY` yields exactly one success) is the
+[FastAPI guide's](https://basiltt.github.io/xstate-statemachine/guide/integration-fastapi/) first section, with a runnable
+[`examples/integrations/fastapi_orders`](examples/integrations/fastapi_orders) app and load test.
+Planned extras (`[django]`, `[sqlalchemy]`, `[flask]`, `[celery]`, brokers, `[observability]`,
+`[agents]`) are listed with their tracking issues on the
+[Integrations overview](https://basiltt.github.io/xstate-statemachine/guide/integrations/).
 
 ---
 
