@@ -78,6 +78,10 @@ def _validator_for(
     def _validate(payload: Any) -> None:
         data = dict(payload or {})
         data.setdefault("type", event_type)
+        # 📝 `idempotency_key` is transport metadata the inbox (#261) reads
+        #    (the HTTP `Idempotency-Key` header lands here), not a field of
+        #    the event -- an `extra="forbid"` model must not reject it.
+        data.pop("idempotency_key", None)
         # A pydantic ValidationError propagates as-is: the engine wraps it
         # in `InvalidEventPayloadError` (#51) with the structured
         # `.errors()` reachable through `.cause`.
