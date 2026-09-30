@@ -70,6 +70,7 @@ __all__ = [
     "pytest_configure",
     "pytest_cmdline_main",
     "pytest_generate_tests",
+    "pytest_pycollect_makeitem",
     "pytest_unconfigure",
     "pytest_sessionfinish",
     "pytest_terminal_summary",
@@ -465,6 +466,13 @@ def pytest_addoption(parser: Any) -> None:
     )
     add_path_options(group)
     add_coverage_options(group)
+    group.addoption(
+        "--xsm-failing-dir",
+        default=None,
+        metavar="DIR",
+        help="where model_test() writes the minimal failing sequence "
+        "(failing.json); default: next to the test module",
+    )
 
 
 def pytest_cmdline_main(config: Any) -> Optional[int]:
@@ -505,15 +513,72 @@ def pytest_configure(config: Any) -> None:
 
         config.pluginmanager.register(_async_fixtures, _ASYNC_FIXTURES_PLUGIN)
     CoverageSession.configure(config)
+    failing_dir = config.getoption("--xsm-failing-dir", default=None)
+    if failing_dir:
+        # 📝 `model` is hypothesis-free at import time.
+        from . import model
+
+        model.FAILING_DIR = pathlib.Path(failing_dir).resolve()
 
 
 def pytest_unconfigure(config: Any) -> None:
     CoverageSession.unconfigure(config)
+    if config.getoption("--xsm-failing-dir", default=None):
+        from . import model
+
+        model.FAILING_DIR = None
 
 
 def pytest_generate_tests(metafunc: Any) -> None:
     """Parametrise ``xsm_path`` over the machine's paths (#269)."""
     generate_path_tests(metafunc)
+
+
+def pytest_pycollect_makeitem(collector: Any, name: str, obj: Any) -> Any:
+    """Collect ``TestX = model_test(...)`` through its ``TestCase`` (#271).
+
+    📝 A ``RuleBasedStateMachine`` has an ``__init__``, so pytest would
+    skip it with a warning; its generated ``TestCase`` is the runnable
+    unittest class. Detected by a marker attribute -- no hypothesis
+    import here.
+    """
+    if (
+        isinstance(obj, type)
+        and getattr(obj, "_xsm_model_test", False)
+        and collector.classnamefilter(name)
+    ):
+        cls = _model_test_case_class(collector.config)
+        if cls is None:  # `-p no:unittest`: nothing can run a TestCase
+            return None
+        return cls.from_parent(collector, name=name)
+    return None
+
+
+_MODEL_TEST_CASE: Any = None
+
+
+def _model_test_case_class(config: Any) -> Any:
+    # 📝 pytest's unittest collector class, taken from its REGISTERED
+    #    `unittest` plugin rather than imported: this module imports only
+    #    `pytest` and core.
+    global _MODEL_TEST_CASE
+    if _MODEL_TEST_CASE is not None:
+        return _MODEL_TEST_CASE
+    plugin = config.pluginmanager.get_plugin("unittest")
+    if plugin is None:
+        return None
+    base = plugin.UnitTestCase
+
+    class ModelTestCase(base):  # type: ignore[misc, valid-type]
+        """pytest resolves a class node's object by NAME on its parent
+        module; the name is bound to the state machine, so answer with
+        its generated ``TestCase`` instead."""
+
+        def _getobj(self) -> Any:
+            return getattr(self.parent.obj, self.name).TestCase
+
+    _MODEL_TEST_CASE = ModelTestCase
+    return ModelTestCase
 
 
 def pytest_sessionfinish(session: Any, exitstatus: Any) -> None:

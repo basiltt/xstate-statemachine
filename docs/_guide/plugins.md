@@ -551,7 +551,7 @@ Rules of the registry:
 - **Thread-safe.** Registration and removal take a lock; `global_plugins()` returns a copy. Registering the same object twice is a no-op.
 - **Leave it as you found it.** A pytest fixture should `unregister_global` (or `xstate_statemachine.plugins.clear_global_plugins()`) in teardown.
 
-The `[testing]` plugin's `pytest --xsm-coverage` is built on exactly this seam: it registers one `xstate_statemachine.coverage.CoverageCollector` at session start and unregisters it at session end — see [State & transition coverage](../integration-testing/#state--transition-coverage).
+The `[testing]` plugin's `pytest --xsm-coverage` is built on exactly this seam: it registers one `xstate_statemachine.coverage.CoverageCollector` at session start and unregisters it at session end — see [State & transition coverage](../integration-testing/#state-transition-coverage).
 
 ## 🔎 Third-party plugins: discovery
 

@@ -1,0 +1,36 @@
+{
+  "id": "refund",
+  "initial": "empty",
+  "context": {"total": 0},
+  "states": {
+    "empty": {
+      "on": {
+        "ADD": {
+          "target": "cart",
+          "actions": {"type": "xstate.assign", "params": {"assignment": {"total": 10}}}
+        }
+      }
+    },
+    "cart": {
+      "on": {
+        "ADD": {"actions": {"type": "xstate.assign", "params": {"assignment": {"total": 20}}}},
+        "PAY": "paid"
+      }
+    },
+    "paid": {
+      "on": {
+        "REFUND": {
+          "target": "refunded",
+          "actions": {"type": "xstate.assign", "params": {"assignment": {"total": 0}}}
+        }
+      }
+    },
+    "refunded": {
+      "on": {
+        "REFUND": {
+          "actions": {"type": "xstate.assign", "params": {"assignment": {"total": -10}}}
+        }
+      }
+    }
+  }
+}

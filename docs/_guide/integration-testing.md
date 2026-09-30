@@ -222,6 +222,66 @@ print(report.to_text())      # also .to_json(), .to_html()
   with: {name: xstate-coverage, path: xsm-coverage.json}
 ```
 
+## Model-based testing
+
+`model_test()` turns the chart into a [Hypothesis](https://hypothesis.readthedocs.io/) `RuleBasedStateMachine`. Hypothesis then generates random event sequences, keeps to the **legal** ones, checks your invariants after every step and, when one fails, **shrinks** the run to the shortest sequence that still breaks it. It also writes that sequence to a file you can replay in `xsm simulate`.
+
+<!-- doc-requires: hypothesis -->
+```python
+import json, pathlib, tempfile
+from hypothesis import settings
+from hypothesis.stateful import run_state_machine_as_test
+from xstate_statemachine.contrib.testing import model_test
+
+chart = {"id": "refund", "initial": "empty", "context": {"total": 0},
+         "states": {
+    "empty": {"on": {"ADD": {"target": "cart", "actions": {
+        "type": "xstate.assign", "params": {"assignment": {"total": 10}}}}}},
+    "cart": {"on": {"PAY": "paid"}},
+    "paid": {"on": {"REFUND": {"target": "refunded", "actions": {
+        "type": "xstate.assign", "params": {"assignment": {"total": 0}}}}}},
+    # 🐛 the seeded bug: a second REFUND drives the total negative
+    "refunded": {"on": {"REFUND": {"actions": {
+        "type": "xstate.assign", "params": {"assignment": {"total": -10}}}}}},
+}}
+out = pathlib.Path(tempfile.mkdtemp()) / "failing.json"
+TestRefund = model_test(                       # in a test module, pytest collects this
+    chart,
+    invariants={"total never negative": lambda i: i.context["total"] >= 0},
+    settings=settings(max_examples=200, database=None, derandomize=True),
+    failing_path=out,
+)
+try:
+    run_state_machine_as_test(TestRefund, settings=TestRefund.TestCase.settings)
+except AssertionError as exc:
+    assert "invariant 'total never negative' violated" in str(exc)
+assert [c["send"] for c in json.loads(out.read_text())] == [
+    "ADD", "PAY", "REFUND", "REFUND"]           # shrunk to the minimal 4 events
+```
+
+In a test module you only write `TestRefund = model_test(...)`. The plugin collects it through its generated `TestCase` (plain unittest discovery can use `TestRefund.TestCase`). A failing run prints Hypothesis's usual step list, followed by:
+
+```text
+AssertionError: invariant 'total never negative' violated
+minimal failing sequence (4 step(s)) written to tests/failing.json
+replay: xsm simulate tests/refund.json --script tests/failing.json
+```
+
+**What gets generated**
+
+| Rule | When it runs |
+|:--|:--|
+| One rule per event the chart declares in any `on` | Hypothesis draws the payload first. The rule then sends only if `interp.can(Event(type, payload))` is true, so a guard that depends on the payload is checked against the payload that will actually be sent. With `allow_denied=True`, events that `can()` refuses are sent too, and denials are not treated as failures. |
+| `advance_clock` (`clock=True`) | Runs while an `after` timer is armed. It advances the `SimulatedClock` by one of the chart's declared delays, ±1 ms. A named delay without a static value is advanced past with a large sentinel. |
+| `snapshot_roundtrip` (default on) | Saves the interpreter mid-sequence, restores it (`restart_timers="resume"`) and continues on the copy. It fails when the context is not JSON-serialisable, or when the configuration or context does not survive the round trip. |
+| `flip_guard` (`guard_flip=True`, stub logic only) | Sets a stub guard to `True` or `False`. The script records it as `{"guard": name, "value": …}`, which `xsm simulate` replays. |
+
+`invariants` (`name → check(interp)`) run after start and after every step. `state_assertions` (`state → check(interp)`) run whenever `interp.matches(state)`, which includes every region of a parallel configuration. A check fails if it raises `AssertionError` or returns a falsy value; for `state_assertions`, only an explicit `False` counts. Payload strategies are chosen in this order: your `payloads={"ADD": strategy}`; otherwise strategies inferred from `event_schemas` / pydantic [`EventModel`](../integration-pydantic/) fields (`bool`, `int`, `float`, `str`, `None`, `Literal`, `Optional`/`Union`, `List`); otherwise an empty payload. If a required field has a type outside that mapping, you get a `ValueError` that tells you to pass `payloads=`. `events_strategy(chart, length=10)` is a plain strategy of legal event-name lists, for your own `@given` tests. The failing script is written next to the calling module by default. `--xsm-failing-dir=DIR` or `model_test(failing_path=…)` moves it.
+
+⚠️ **With real `logic=`, `can()` runs your real guards.** That is how the generated sequences stay legal, and it is safe as long as your guards are pure (no side effects), which they should be. A guard with side effects will run more often than your sends do.
+
+**Compared to `@xstate/test`.** `@xstate/test` builds a test model from the chart, walks the shortest or simple **paths** it generates, and runs per-state assertions at each state. Its coverage is systematic, but it only follows the paths it enumerates, and when something fails it reports the path it was on. In this library, that systematic walk is the [`xsm_path`](#path-generation) fixture. `model_test` works the other way round. It samples random legal sequences, which reach combinations of loops, payloads, timer races and snapshot restores that path enumeration never builds, and it shrinks each failure to a minimal sequence you can replay. The trade-off: it is probabilistic. A rare path can go unseen at a low `max_examples`, and a green run is evidence, not proof. Use both. `xsm_path` shows that every state is reachable, `model_test` looks for sequences that break your invariants, and `--xsm-coverage` shows what either one actually exercised.
+
 ## Guarantees
 
 > **What this does:** builds the machine once per test from the marker, starts the interpreter on a simulated clock so no test waits on wall time, stops it at teardown, and fails loudly — with the test id — on any marker or logic mistake. Snapshot files are deterministic (sorted keys, fixed indent, behavioural fields only) and are written **only** under `--xsm-update-snapshots`. Without the marker the plugin does nothing: it registers fixtures and two options and requires no configuration. Both engines share the same semantics.

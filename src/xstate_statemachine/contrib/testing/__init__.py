@@ -18,7 +18,8 @@
 #    user's own `machine` / `clock` / `store`.
 #
 # 🪶 Core never imports this package. `hypothesis` (the other module of the
-#    extra) is used by the model-based tester (#271), not here.
+#    extra) is used by the model-based tester (`model.py`, #271), imported
+#    lazily inside `model_test` -- this package imports without it.
 # -----------------------------------------------------------------------------
 """pytest integration.
 
@@ -31,6 +32,7 @@ from .._compat import require_extra
 
 require_extra("testing", "pytest")
 
+from .model import events_strategy, model_test, payload_strategy  # noqa: E402
 from .pytest_plugin import (  # noqa: E402
     PLUGIN_NAME,
     SnapshotMismatchError,
