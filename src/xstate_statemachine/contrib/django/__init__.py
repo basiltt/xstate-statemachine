@@ -66,6 +66,10 @@ _LAZY = {
     "has_event_permission": ".permissions",
     "permitted_events": ".permissions",
     "DjangoOutboxStore": ".outbox",
+    # 🛠️ #282 -- admin
+    "StatechartAdminMixin": ".admin",
+    "TransitionLogInline": ".admin",
+    "StateListFilter": ".admin",
 }
 
 __all__ = sorted(_LAZY)

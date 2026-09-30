@@ -1,0 +1,27 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+{% block content %}
+<div id="content-main" class="xsm-confirm">
+  <p>{% blocktranslate with label=label obj=object %}Perform “{{ label }}” on {{ obj }}?{% endblocktranslate %}</p>
+  {% block xsm_confirm_form %}
+  {% if allowed %}
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="{{ event_field }}" value="{{ event }}">
+    <input type="hidden" name="_xsm_confirmed" value="1">
+    <p>
+      <label for="id_reason">{% translate "Reason" %}</label><br>
+      <textarea name="reason" id="id_reason" rows="3" cols="60" maxlength="2000"></textarea>
+    </p>
+    <div class="submit-row">
+      <input type="submit" class="default" value="{% translate 'Confirm' %}">
+      <a href="{{ change_url }}" class="button cancel-link">{% translate "Cancel" %}</a>
+    </div>
+  </form>
+  {% else %}
+  <p class="errornote">{% translate "You may not perform this transition now." %}</p>
+  <a href="{{ change_url }}" class="button cancel-link">{% translate "Back" %}</a>
+  {% endif %}
+  {% endblock %}
+</div>
+{% endblock %}

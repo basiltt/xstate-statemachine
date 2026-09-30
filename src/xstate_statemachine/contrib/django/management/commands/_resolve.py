@@ -85,7 +85,8 @@ def run_cli(fn: Any, *a: Any, **kw: Any) -> None:
 
 
 def add_console_flags(parser: argparse.ArgumentParser) -> None:
+    # 📝 ``--no-color`` is Django's own BaseCommand flag; it is honoured
+    #    as the CLI's (``options["no_color"]``).
     parser.add_argument(
         "--plain", action="store_true", help="No colour, no box glyphs."
     )
-    parser.add_argument("--no-color", action="store_true", help="No colour.")
