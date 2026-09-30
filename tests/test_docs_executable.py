@@ -92,6 +92,10 @@ class TestDocCodeBlocksExecute(unittest.TestCase):
             "PYTHONPATH": str(ROOT),
             "PYTHONIOENCODING": "utf-8",
         }
+        # 📝 Each block is its own process; the [django] Quick starts
+        #    configure settings inline, so a DJANGO_SETTINGS_MODULE left
+        #    by the Django test project (#280) must not leak into them.
+        env.pop("DJANGO_SETTINGS_MODULE", None)
         failures = []
         with tempfile.TemporaryDirectory() as tmp:
             for rel, line, src in blocks:

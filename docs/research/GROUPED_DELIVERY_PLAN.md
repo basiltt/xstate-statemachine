@@ -25,7 +25,7 @@ These files are touched by every group. Edit them **only at the very end** of a 
 | **G2 EDA core** | #272 B5, #293 F2, #295 F4 | agent B (after G1) | `feat/g2-eda-core` | not started — `HANDOVER_G2_G3_eda_observability.md` |
 | **G3 Observability & inspector** | #273 B6, #274 B7 | agent B (after G2) | `feat/g3-observability` | not started |
 | **G4 Web** | #275 C1, #276 C2, #278 C4, #279 C5, #277 C3, #309 C7 | agent A | `feat/g4-web` | ✅ merged (#334, #338, #339, #342) |
-| **G5 Django** | #280 D1, #281 D2, #282 D3, #283 D4, #310 D9 | agent B (after G3) | `feat/g5-django` | not started |
+| **G5 Django** | #280 D1, #281 D2, #282 D3, #283 D4, #310 D9 | agent B (after G3) | `feat/g5-django` | ✅ implemented on `feat/g5-django` (PR pending) |
 | **G6 SQLAlchemy & Flask** | #284 D5, #285 D6, #286 D7 | agent A | `feat/g6-sqla-flask` | ✅ #284 (parts 1–2), #285 merged (#349); #286 examples + 3 comparison pages in progress; D5 outbox → #293; Django app → after G5 |
 | **G7 Brokers & Celery** | #294 F3, #292 F1 | agent B (after G5) | `feat/g7-brokers` | not started |
 | **G8 Agents** | #287 E1, #288 E2, #289 E3, #290 E4, #291 E5 | agent A | `feat/g8-agents` | ✅ merged (#346, #347) |

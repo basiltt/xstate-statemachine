@@ -241,6 +241,13 @@ jobs:
             # 📡 #294: brokers run the contract suite against fakes; SQS
             #    against moto. The Redis Streams adapter is in [redis].
             sqs) python -m pip install "moto[sqs]>=5" ;;
+            # 🦄 #280-#283/#310: the shared Django test project runs under
+            #    pytest-django; [django] also migrates a real django-fsm-2
+            #    model, [drf] validates the drf-spectacular schema, and
+            #    [channels]' WebsocketCommunicator needs daphne.
+            django) python -m pip install "pytest-django>=4.5" "django-fsm-2>=4" ;;
+            drf) python -m pip install "pytest-django>=4.5" "drf-spectacular>=0.26" ;;
+            channels) python -m pip install "pytest-django>=4.5" "daphne>=4" ;;
           esac
           python -m pip list
 
@@ -266,6 +273,12 @@ jobs:
             # 📡 #294: the shared adapter core lives in tests/contrib/brokers.
             redis|kafka|rabbitmq|nats|sqs)
               targets="$targets tests/contrib/brokers" ;;
+            # 🦄 #280: DjangoStore joins the A2 store contract suite; the
+            #    django_approvals example runs its own suite (it needs
+            #    [drf] + [channels] too, so it skips in the [django] cell
+            #    unless they are present -- the [all] / coverage jobs run it).
+            django)
+              targets="$targets tests/persistence/test_store_contract.py tests/test_examples_integrations.py" ;;
           esac
           pytest $targets -q --no-header --disable-socket --allow-hosts=127.0.0.1,::1
 
@@ -434,10 +447,11 @@ jobs:
           #    guide; placeholder extras stay out (nothing to measure).
           #    `[testing]`'s pytester suite also needs pytest-asyncio so
           #    the async fixture is measured rather than skipped.
-          python -m pip install -e ".[redis,pydantic,starlette,fastapi,litestar,sqlalchemy,flask,testing,cloudevents,kafka,rabbitmq,nats,sqs,celery]" \
+          python -m pip install -e ".[redis,pydantic,starlette,fastapi,litestar,sqlalchemy,flask,testing,cloudevents,kafka,rabbitmq,nats,sqs,celery,django,drf,channels]" \
             "fakeredis[lua]>=2.20" "httpx>=0.24" "openapi-spec-validator>=0.7" \
             "aiosqlite>=0.19" "alembic>=1.12" "quart>=0.19" "flask-wtf>=1.2" \
-            "pytest-asyncio>=0.24.0" "jsonschema>=4" "moto[sqs]>=5"
+            "pytest-asyncio>=0.24.0" "jsonschema>=4" "moto[sqs]>=5" \
+            "pytest-django>=4.5" "drf-spectacular>=0.26" "django-fsm-2>=4" "daphne>=4"
           # 🧷 mypy is a TEST dependency: tests/test_type_safety.py runs it
           #    over representative user programs.
           python -m pip install "pytest>=8.3.0" "mypy>=1.14" "pytest-cov>=6.0.0"

@@ -210,6 +210,8 @@ class TestIntegrationsSection(unittest.TestCase):
         "integration-eda",  # #272, #293, #295
         "integration-brokers",  # #294
         "integration-celery",  # #292
+        "integration-django",  # #280, #281, #282, #310
+        "integration-drf",  # #283 ([drf] + [channels])
     )
 
     def test_overview_page_exists_and_is_in_nav(self) -> None:

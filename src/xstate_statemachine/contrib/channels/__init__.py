@@ -28,10 +28,22 @@ from .._compat import require_extra
 
 require_extra("channels", "channels", "django")
 
-from .consumer import (  # noqa: E402
-    WS_POLICY_VIOLATION,
-    StatechartConsumer,
-    live_consumers,
-)
+import importlib  # noqa: E402
+from typing import Any  # noqa: E402
 
-__all__ = ["StatechartConsumer", "WS_POLICY_VIOLATION", "live_consumers"]
+#: 📝 Lazy, like ``contrib.django``: importable before ``django.setup()``
+#:    (the consumer module touches models through the permissions).
+_LAZY = {
+    "StatechartConsumer": ".consumer",
+    "WS_POLICY_VIOLATION": ".consumer",
+    "live_consumers": ".consumer",
+}
+
+__all__ = sorted(_LAZY)
+
+
+def __getattr__(name: str) -> Any:
+    module = _LAZY.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(importlib.import_module(module, __name__), name)

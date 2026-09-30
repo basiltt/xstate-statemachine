@@ -28,6 +28,12 @@ keywords = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Framework :: AsyncIO",
+    "Framework :: Django",
+    "Framework :: Django :: 4.2",
+    "Framework :: Django :: 5.0",
+    "Framework :: Django :: 5.1",
+    "Framework :: Django :: 5.2",
+    "Framework :: Django :: 6.0",
     "Framework :: FastAPI",
     "Framework :: Pytest",
     "Intended Audience :: Developers",
@@ -83,9 +89,9 @@ fastapi       = [  # #276; self-reference avoided so the audit test sees pins
 ]
 litestar      = ["litestar>=2.0", "starlette>=0.27"]  # #278
 flask         = ["flask>=2.3"]  # #285
-django        = []  # #280  django>=4.2
-drf           = []  # #283  djangorestframework>=3.14 + [django]
-channels      = []  # #283  channels>=4 + [django]
+django        = ["django>=4.2"]  # #280-#282, #310
+drf           = ["djangorestframework>=3.14", "django>=4.2"]  # #283; drf-spectacular is a soft import (schema)
+channels      = ["channels>=4", "django>=4.2"]  # #283
 celery        = ["celery>=5.3"]  # #292
 kafka         = ["aiokafka>=0.10"]  # #294
 rabbitmq      = ["aio-pika>=9"]  # #294
@@ -122,6 +128,9 @@ all           = [  # every SHIPPED extra; grows as issues land
     "aio-pika>=9",  # #294 rabbitmq
     "nats-py>=2",  # #294 nats
     "boto3>=1.28",  # #294 sqs
+    "django>=4.2",  # #280 django (+ drf, channels)
+    "djangorestframework>=3.14",  # #283 drf
+    "channels>=4",  # #283 channels
 ]
 
 [project.urls]

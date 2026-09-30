@@ -27,18 +27,25 @@ from .._compat import require_extra
 
 require_extra("drf", "rest_framework", "django")
 
-from .fields import StatechartSerializerField, event_serializer  # noqa: E402
-from .permissions import (  # noqa: E402
-    StatechartEventPermission,
-    StatechartHistoryPermission,
-)
-from .viewsets import StatechartViewSetMixin, problem_response  # noqa: E402
+import importlib  # noqa: E402
+from typing import Any  # noqa: E402
 
-__all__ = [
-    "StatechartEventPermission",
-    "StatechartHistoryPermission",
-    "StatechartSerializerField",
-    "StatechartViewSetMixin",
-    "event_serializer",
-    "problem_response",
-]
+#: 📝 Lazy, like ``contrib.django``: importable before ``django.setup()``
+#:    (DRF itself reads settings on import of its views / fields).
+_LAZY = {
+    "StatechartEventPermission": ".permissions",
+    "StatechartHistoryPermission": ".permissions",
+    "StatechartSerializerField": ".fields",
+    "StatechartViewSetMixin": ".viewsets",
+    "event_serializer": ".fields",
+    "problem_response": ".viewsets",
+}
+
+__all__ = sorted(_LAZY)
+
+
+def __getattr__(name: str) -> Any:
+    module = _LAZY.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(importlib.import_module(module, __name__), name)

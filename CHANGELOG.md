@@ -56,6 +56,80 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   state-entry generation (X0.9); `outbox_relay_task` drains the outbox.
   Pin: `celery>=5.3`. Guide: Celery.
 
+### Django, DRF & Channels (Phase D) -- #280, #281, #282, #283, #310
+
+- **`[django]`: a real statechart on a Django model (#280).**
+  `StatechartField` stores the snapshot as JSON. Sibling columns
+  (`<name>_state` indexed, `_state_ids`, `_version`, `_machine_version`)
+  are added in `contribute_to_class`, so `makemigrations` works normally
+  and a second run is clean. `filter(statechart__state=...)`,
+  `__state__in` and `objects.in_state("order.review")` (whole-segment
+  match, bound parameters) are indexed queries. The snapshot is
+  size-capped on write and read (X0.4). `StatechartModelMixin.send()` runs
+  in `transaction.atomic()` with `select_for_update()` by default (on
+  SQLite a write lock first). `lock="optimistic"` fences on the version
+  column and raises `ConflictError` (`send_with_retry`). Sixteen threads x
+  100 sends is exactly 1600 in both modes. Also added: `can` /
+  `available_events` / `machine` / `matches`, `asend` for async views,
+  `forget_statechart()` (X0.5), and `save()` that never rolls the state
+  back. `DjangoStore` passes the A2 `StateStore` contract suite.
+  Persisted `after` deadlines live in an indexed table that
+  `manage.py xsm_deadlines` (`DueTimerScanner` over `DjangoModelStore`)
+  fires. New: `refresh_statechart_columns` and the
+  `refresh_statechart_columns_op` migration helper.
+- **Signals, audit and permissions (#281).** `pre_transition` (raise
+  `TransitionVetoed` → `denied`, no change, no audit row),
+  `post_transition` (inside the transaction: a raising receiver rolls back
+  the state and its audit row; `connect(..., on_commit=True)` defers to
+  `transaction.on_commit`), and `statechart_error`. `TransitionLog` rows
+  are written in the same transaction as the state change, with a
+  redacted payload and `actor` / `reason`. `forget` redacts by default.
+  `PermissionGuard` (object-level `has_perm`), `RoleGuard`, `AnyOf`,
+  `AllOf`. `has_event_permission(user, obj, event)` answers "may this user
+  do it" once for the admin, DRF and Channels. `DjangoOutboxStore` (EDA
+  `OutboxStore`) rows join the open `atomic()`, so a rollback leaves no
+  row.
+- **Admin and management commands (#282).** `StatechartAdminMixin` renders
+  one button per event this user may send. Each button is a
+  **CSRF-protected POST form**, and the permission is re-checked on POST.
+  A GET changes nothing. `meta.confirm` events get a confirmation page
+  with a reason that is stored in the audit row. Also added: a history
+  inline, a state filter, bulk actions (`n changed / m denied`) and a
+  Mermaid diagram view. `manage.py xsm_inspect / xsm_diagram / xsm_docs /
+  xsm_simulate` match `xsm` byte for byte. New: `xsm_snapshots --stale`.
+- **`[drf]` and `[channels]` (#283).** `StatechartViewSetMixin` generates
+  one `@action` per declared event plus `send/`, `events/`, `history/`
+  (the view's pagination and filters, with a separate permission) and
+  `stream/`. The receipt maps to 200/202/409/422 through the core
+  `receipts` table, and a permission-guard refusal is 403. A viewset
+  without explicit `permission_classes` does not build (closed by
+  default, X0.1). `Idempotency-Key` is scoped to `request.user` through
+  the new `DjangoInbox` (X0.2). New: `StatechartSerializerField` (the
+  FastAPI `GET /{id}` shape, shared golden fixture) and a drf-spectacular
+  schema with typed 403/409/422 responses, validated in CI.
+  `StatechartConsumer` requires `AuthMiddlewareStack` (close 1008
+  otherwise), sends a snapshot on connect, broadcasts each transition to
+  every connection on the row, and has a heartbeat. 100
+  connect/disconnect cycles leave nothing behind.
+- **Migrating from django-fsm-2 (#310).**
+  `manage.py xsm_migrate_fsm app.Model --field state` extracts XState
+  JSON from the `@transition` decorators (`--dry-run` / `--write-chart`;
+  conditions and permissions become guard names). It then fills
+  snapshots from the FSM column, batched, resumable and idempotent.
+  `FSMDualWriteMixin` keeps the old column in sync for the dual-read
+  release. New core primitive: `persistence.from_state_ids(machine, ids,
+  context)` builds a snapshot for a configuration without running
+  anything, and loudly refuses illegal configurations.
+- **Packaging.** The `[django]`, `[drf]` and `[channels]` extras now pin
+  `django>=4.2`, `djangorestframework>=3.14` and `channels>=4`, and join
+  `[all]`. The Django classifiers are added. The three CI cells install
+  pytest-django (+ drf-spectacular / daphne / django-fsm-2). The oldest
+  proven set on Python 3.9 is Django 4.2, DRF 3.14 and Channels 4.0.
+- **Docs.** New pages: [Django](../integration-django/) and
+  [DRF & Channels](../integration-drf/). The
+  [vs django-fsm](../comparisons/vs-django-fsm/) migration recipe now
+  describes the shipped command. New example:
+  `examples/integrations/django_approvals`.
 ### Event-driven architecture (Phase F core) -- #272, #293, #295
 
 - **`xstate_statemachine.eda` (#272, #293).** A zero-dependency core

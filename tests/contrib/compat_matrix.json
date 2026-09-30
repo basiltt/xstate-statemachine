@@ -21,6 +21,16 @@
       "test_deps": [],
       "note": ""
     },
+    "channels": {
+      "package": "channels",
+      "declared": "4",
+      "oldest": "channels==4.0.0",
+      "newest": "channels>=4",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": ["django==4.2.30"],
+      "test_deps": ["pytest-django>=4.5", "daphne>=4"],
+      "note": "Runs on the shared Django test project (tests/contrib/django/project); channels.testing needs daphne."
+    },
     "cloudevents": {
       "package": "cloudevents",
       "declared": "1.10",
@@ -31,7 +41,26 @@
       "test_deps": [],
       "note": "2.x moved the 1.x HTTP API to cloudevents.v1.http; both layouts are supported."
     },
-    "fastapi": {
+    "django": {
+      "package": "django",
+      "declared": "4.2",
+      "oldest": "django==4.2.30",
+      "newest": "django>=4.2",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": [],
+      "test_deps": ["pytest-django>=4.5", "django-fsm-2>=4"],
+      "note": "4.2 is the oldest Django LTS supported on Python 3.9; django-fsm-2 is only needed by the xsm_migrate_fsm tests."
+    },
+    "drf": {
+      "package": "djangorestframework",
+      "declared": "3.14",
+      "oldest": "djangorestframework==3.14.0",
+      "newest": "djangorestframework>=3.14",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": ["django==4.2.30"],
+      "test_deps": ["pytest-django>=4.5", "drf-spectacular>=0.26"],
+      "note": "drf-spectacular is a soft import: the OpenAPI schema test is skipped without it."
+    },    "fastapi": {
       "package": "fastapi",
       "declared": "0.100",
       "oldest": "fastapi==0.106.0",

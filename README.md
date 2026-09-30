@@ -914,6 +914,8 @@ page with a **Guarantees** box and a **Threat model** box — CI refuses a page 
 | `[redis]` | `RedisStore` / `RedisInbox` / `RedisLog` with fenced locks for multi-host deployments | [Redis](https://basiltt.github.io/xstate-statemachine/guide/integration-redis/) |
 | `[sqlalchemy]` | `StatechartMixin` (state on your row, `version_id_col` locking, `in_state()`), `SQLAlchemyStore` / `AsyncSQLAlchemyStore` | [SQLAlchemy](https://basiltt.github.io/xstate-statemachine/guide/integration-sqlalchemy/) |
 | `[flask]` | `XState` extension, statechart blueprint, `SessionStore` wizards, `flask xsm` CLI, Quart shim | [Flask](https://basiltt.github.io/xstate-statemachine/guide/integration-flask/) |
+| `[django]` | `StatechartField` on your model (`in_state()`, `__state` lookups), `send()` in `atomic()` + row lock, signals, `TransitionLog` audit in the same transaction, `PermissionGuard`, admin transition buttons, `xsm_*` commands, `xsm_migrate_fsm` from django-fsm-2 | [Django](https://basiltt.github.io/xstate-statemachine/guide/integration-django/) |
+| `[drf]` / `[channels]` | `StatechartViewSetMixin` (an `@action` per event, receipt → status, drf-spectacular schema); `StatechartConsumer` (live transitions over WebSocket) | [DRF & Channels](https://basiltt.github.io/xstate-statemachine/guide/integration-drf/) |
 | `[starlette]` | `StatechartRegistry` — the store-backed create → act → persist loop as ASGI middleware; receipt → HTTP status; principal-scoped `Idempotency-Key`; RFC 9457 problems; SSE and WebSocket transition streams | [Starlette](https://basiltt.github.io/xstate-statemachine/guide/integration-starlette/) |
 | `[fastapi]` | `StatechartRouter` generates `GET /{id}`, `POST /{id}/send` (discriminated-union body), one route per event, `/events`, `/diagram.mmd`, `/stream`, `/ws` — with OpenAPI that reflects your chart; `Depends(get_interpreter(...))` | [FastAPI](https://basiltt.github.io/xstate-statemachine/guide/integration-fastapi/) |
 | `[litestar]` | `XStatePlugin` + a generated `Controller` on the same registry | [Litestar](https://basiltt.github.io/xstate-statemachine/guide/integration-litestar/) |
@@ -947,8 +949,7 @@ text. The multi-worker model (why an interpreter cannot live in a uvicorn worker
 run, how 4 workers × 200 concurrent `PAY` yields exactly one success) is the
 [FastAPI guide's](https://basiltt.github.io/xstate-statemachine/guide/integration-fastapi/) first section, with a runnable
 [`examples/integrations/fastapi_orders`](examples/integrations/fastapi_orders) app and load test.
-Planned extras (`[django]`, `[sqlalchemy]`, `[flask]`, `[celery]`, brokers, `[observability]`,
-`[agents]`) are listed with their tracking issues on the
+Every extra, with its status and tracking issue, is listed on the
 [Integrations overview](https://basiltt.github.io/xstate-statemachine/guide/integrations/).
 
 ---
