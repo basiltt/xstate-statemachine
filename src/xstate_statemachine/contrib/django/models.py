@@ -1,6 +1,6 @@
 # src/xstate_statemachine/contrib/django/models.py
 # -----------------------------------------------------------------------------
-# ðŸ—ƒï¸ The app's own tables (label ``xsm_django``)
+# 🗃️ The app's own tables (label ``xsm_django``)
 # -----------------------------------------------------------------------------
 #    xsm_django_snapshot   `DjangoStore` key-value records
 #    xsm_django_deadline   durable `after` deadlines, indexed by due time --
@@ -11,7 +11,7 @@
 #    xsm_django_outboxmessage  transactional outbox (`DjangoOutboxStore`)
 #    xsm_django_idempotencyrecord  `DjangoInbox` (Idempotency-Key, X0.2)
 #
-# ðŸ“ ``source`` names the owner of a key: a model's ``db_table`` for
+# 📝 ``source`` names the owner of a key: a model's ``db_table`` for
 #    `StatechartModelMixin` rows, the store's namespace for `DjangoStore`.
 # -----------------------------------------------------------------------------
 """Models of the ``xsm_django`` app."""

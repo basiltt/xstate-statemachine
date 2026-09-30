@@ -75,7 +75,10 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   in `transaction.atomic()` with `select_for_update()` by default (on
   SQLite a write lock first). `lock="optimistic"` fences on the version
   column and raises `ConflictError` (`send_with_retry`). Sixteen threads x
-  100 sends is exactly 1600 in both modes. Also added: `can` /
+  100 sends is exactly 1600 in both modes. A writer that waits out the
+  database's busy timeout (SQLite `database is locked`, Postgres `lock
+  timeout`) raises the retryable `LockTimeoutError` -- `send_with_retry`
+  retries it -- never a bare driver `OperationalError`. Also added: `can` /
   `available_events` / `machine` / `matches`, `asend` for async views,
   `forget_statechart()` (X0.5), and `save()` that never rolls the state
   back. `DjangoStore` passes the A2 `StateStore` contract suite.

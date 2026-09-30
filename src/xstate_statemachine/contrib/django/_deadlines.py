@@ -1,8 +1,8 @@
 ﻿# src/xstate_statemachine/contrib/django/_deadlines.py
 # -----------------------------------------------------------------------------
-# â° Deadline-index primitives on the ORM (internal)
+# ⏰ Deadline-index primitives on the ORM (internal)
 # -----------------------------------------------------------------------------
-# ðŸ›ï¸ `StatechartModelMixin` (source = the model's ``db_table``) and
+# 🏛️ `StatechartModelMixin` (source = the model's ``db_table``) and
 #    `DjangoStore` (source = its namespace) keep one row per armed `after`
 #    timer in ``xsm_django_deadline``; `due_keys` answers the scanner from
 #    the ``(source, due_at_wall)`` index instead of loading every snapshot.
