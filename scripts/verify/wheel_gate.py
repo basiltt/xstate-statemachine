@@ -42,10 +42,13 @@ TEST_REQUIREMENTS = [
     "drf-spectacular",
     "daphne",
     "build",
-    # 258_scaffolding runs the lint + type gate inside the venv.
-    "black==25.1.0",
-    "flake8",
-    "mypy",
+    # 258_scaffolding / 304_core_hooks run the lint + type gate inside the
+    # venv; the pins mirror ci.yml's lint job.
+    "black==26.1.0",
+    "flake8==7.3.0",
+    "flake8-isort==7.0.0",
+    "mypy>=1.14",
+    "trove-classifiers",
 ]
 SKIP = {"wheel_gate.py", "all_smoke.py", "django_fsm_migration.py"}
 

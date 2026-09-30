@@ -177,7 +177,7 @@ from .events import Event
 
 ### Formatting
 - **Line length**: 79 characters (Black)
-- **Formatter**: Black 25.1.0 with Python 3.13
+- **Formatter**: Black 26.1.0 (pinned in `.pre-commit-config.yaml` and `ci.yml`; earlier releases reject the `py314` target)
 - **Quote style**: Double quotes
 - **Trailing commas**: Use in multi-line structures
 
