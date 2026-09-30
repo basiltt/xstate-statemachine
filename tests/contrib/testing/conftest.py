@@ -14,6 +14,7 @@ non-top-level conftest because it would apply to the whole suite.
 
 from __future__ import annotations
 
+import importlib.util
 import pathlib
 
 import pytest
@@ -44,6 +45,12 @@ def _entry_point_registered() -> bool:
 #:    the same module twice and pytest refuses. In a bare checkout the entry
 #:    point does not exist, so `-p <module>` is how the session gets it.
 PLUGIN_ARGS = () if _entry_point_registered() else ("-p", PLUGIN)
+#: See `run`: in-process inner sessions never load pytest-django.
+NO_DJANGO = (
+    ("-p", "no:django")
+    if importlib.util.find_spec("pytest_django") is not None
+    else ()
+)
 
 
 @pytest.fixture
@@ -63,5 +70,18 @@ def xsm_pytester(pytester: pytest.Pytester) -> pytest.Pytester:
 
 
 def run(pytester: pytest.Pytester, *args: str) -> pytest.RunResult:
-    """Run the throw-away session in-process with the plugin loaded."""
-    return pytester.runpytest_inprocess(*PLUGIN_ARGS, "-q", *args)
+    """Run the throw-away session in-process with the plugin loaded.
+
+    📝 ``-p no:django``: when the suite also runs the [django] test project
+    (#280), Django is configured in THIS process, and an in-process inner
+    session would make pytest-django call ``setup_test_environment()`` a
+    second time. The inner sessions never need Django.
+    """
+    extra = ("-p", "no:django") if _has_pytest_django() else ()
+    return pytester.runpytest_inprocess(*PLUGIN_ARGS, *extra, "-q", *args)
+
+
+def _has_pytest_django() -> bool:
+    import importlib.util
+
+    return importlib.util.find_spec("pytest_django") is not None

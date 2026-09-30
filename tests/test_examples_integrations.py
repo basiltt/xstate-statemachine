@@ -31,12 +31,25 @@ SUITES = sorted(p.parent for p in INTEGRATIONS.glob("*/tests"))
 REQUIRES = {
     "sqlalchemy_orders": ("sqlalchemy", "alembic"),
     "flask_wizard": ("flask",),
+    # 🦄 #280-#283: the Django app needs all three extras + test helpers.
+    "django_approvals": (
+        "django",
+        "rest_framework",
+        "drf_spectacular",
+        "channels",
+        "daphne",
+        "pytest_django",
+    ),
 }
 DEFAULT_REQUIRES = ("fastapi", "httpx")
 
 
 def _env() -> dict:
     env = dict(os.environ)
+    # 📝 A Django test project configured earlier in this session (#280)
+    #    sets DJANGO_SETTINGS_MODULE; each example suite is its own
+    #    process and must pick its own settings.
+    env.pop("DJANGO_SETTINGS_MODULE", None)
     src = str(ROOT / "src")
     env["PYTHONPATH"] = os.pathsep.join(
         [src, str(ROOT)] + [p for p in [env.get("PYTHONPATH")] if p]
@@ -50,7 +63,12 @@ def test_there_are_integration_examples():
 
 def test_every_example_has_a_readme_and_a_suite():
     """#286: each app is documented and tested, not just a chart."""
-    for name in ("fastapi_orders", "sqlalchemy_orders", "flask_wizard"):
+    for name in (
+        "fastapi_orders",
+        "sqlalchemy_orders",
+        "flask_wizard",
+        "django_approvals",
+    ):
         assert (INTEGRATIONS / name / "README.md").is_file(), name
         assert (INTEGRATIONS / name / "tests").is_dir(), name
     assert set(REQUIRES) <= {p.name for p in SUITES}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{{ expense }} — status</title></head>
+<body>
+  <h1>{{ expense }}</h1>
+  <p>State: <strong id="state">{{ expense.state }}</strong></p>
+  <ul id="log"></ul>
+  <script>
+    // Live updates from StatechartConsumer; the session cookie authenticates
+    // the socket (AuthMiddlewareStack). Nothing here can change the state.
+    const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/expenses/{{ expense.pk }}/`);
+    ws.onmessage = (m) => {
+      const msg = JSON.parse(m.data);
+      if (msg.kind === "snapshot" || msg.kind === "transition") {
+        document.getElementById("state").textContent = JSON.stringify(msg.state);
+      }
+      if (msg.kind === "transition") {
+        const li = document.createElement("li");
+        li.textContent = `${msg.event} → ${JSON.stringify(msg.state)}`;
+        document.getElementById("log").prepend(li);
+      }
+    };
+  </script>
+</body>
+</html>

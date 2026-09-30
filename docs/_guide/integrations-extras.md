@@ -1,6 +1,6 @@
 ---
 title: "Integration extras"
-description: "Every optional pip extra — pydantic, redis, starlette, fastapi, litestar, agents, observability, cloudevents, celery, the brokers (redis streams, kafka, rabbitmq, nats, sqs), and the planned django, flask, sqlalchemy and testing — with its status and issue."
+description: "Every optional pip extra — pydantic, redis, starlette, fastapi, litestar, flask, sqlalchemy, django, drf, channels, agents, observability, cloudevents, celery, the brokers (redis streams, kafka, rabbitmq, nats, sqs), and the planned django, flask, sqlalchemy and testing — with its status and issue."
 ---
 
 # Integration extras
@@ -42,9 +42,9 @@ except MissingExtraError as exc:
 | `fastapi` | `Depends(get_interpreter)`, `StatechartRouter` with OpenAPI generated from the chart | **shipped** — [guide](../integration-fastapi/) · [#276](https://github.com/basiltt/xstate-statemachine/issues/276) |
 | `litestar` | `XStatePlugin`, `Provide()` dependency, statechart controller | **shipped** — [guide](../integration-litestar/) · [#278](https://github.com/basiltt/xstate-statemachine/issues/278) |
 | `flask` | `XState` extension (`init_app`), blueprint per machine, session-keyed wizards, `flask xsm` CLI, Quart shim | **shipped** — [guide](../integration-flask/) · [#285](https://github.com/basiltt/xstate-statemachine/issues/285) |
-| `django` | `StatechartField`, model mixin with `select_for_update`, signals, permission guards, admin transition buttons, management commands | planned — [#280](https://github.com/basiltt/xstate-statemachine/issues/280) |
-| `drf` | ViewSet mixin with an `@action` per event, serializer field | planned — [#283](https://github.com/basiltt/xstate-statemachine/issues/283) |
-| `channels` | WebSocket consumer broadcasting transitions | planned — [#283](https://github.com/basiltt/xstate-statemachine/issues/283) |
+| `django` | `StatechartField` (queryable sibling columns, `in_state()`), model mixin with `transaction.atomic()` + `select_for_update` or optimistic `send_with_retry`, signals, `TransitionLog` audit in the same transaction, `PermissionGuard`, admin transition buttons, `xsm_*` management commands, `DjangoStore`, `xsm_deadlines`, `xsm_migrate_fsm` from django-fsm-2 | **shipped** — [guide](../integration-django/) · [#280](https://github.com/basiltt/xstate-statemachine/issues/280)–[#282](https://github.com/basiltt/xstate-statemachine/issues/282) · [#310](https://github.com/basiltt/xstate-statemachine/issues/310) |
+| `drf` | `StatechartViewSetMixin` with an `@action` per event, receipt → status, `Idempotency-Key`, drf-spectacular schema, `StatechartSerializerField` | **shipped** — [guide](../integration-drf/) · [#283](https://github.com/basiltt/xstate-statemachine/issues/283) |
+| `channels` | `StatechartConsumer`: snapshot on connect, transition broadcast to every connection on the row, auth on connect (close 1008) | **shipped** — [guide](../integration-drf/#statechartconsumer-channels) · [#283](https://github.com/basiltt/xstate-statemachine/issues/283) |
 | `celery` | A Celery task as an `invoke` service; `@statechart_task` worker act-loop; Celery Beat as the durable `after` scheduler | ✅ shipped — [Celery](../integration-celery/) ([#292](https://github.com/basiltt/xstate-statemachine/issues/292)) |
 | `cloudevents` | CloudEvents SDK objects and HTTP binary / structured interop for the core `Envelope` (the envelope, dispatcher, outbox, dead letters, sagas and AsyncAPI are core and need no extra) | **shipped** — [guide](../integration-eda/) · [#293](https://github.com/basiltt/xstate-statemachine/issues/293) |
 | `kafka` · `rabbitmq` · `nats` · `sqs` | Broker adapters (plus Redis Streams in `[redis]`): consume envelopes into machines, publish tagged transitions | ✅ shipped — [Brokers](../integration-brokers/) ([#294](https://github.com/basiltt/xstate-statemachine/issues/294)) |

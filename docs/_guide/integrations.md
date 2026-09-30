@@ -19,17 +19,21 @@ flowchart LR
     Q1 -->|FastAPI| FA["pip install xstate-statemachine[fastapi]<br/>read: FastAPI"]
     Q1 -->|Starlette| ST["[starlette]<br/>read: Starlette"]
     Q1 -->|Litestar| LS["[litestar]<br/>read: Litestar"]
-    Q1 -->|Django / Flask| PL1["planned #280 / #285<br/>read: Integration extras"]
+    Q1 -->|Django| DJ["[django] + [drf] / [channels]<br/>read: Django, DRF & Channels"]
+    Q1 -->|Flask| FL["[flask]<br/>read: Flask"]
     Q1 -->|none| Q2
     FA --> Q2
     ST --> Q2
     LS --> Q2
+    DJ --> Q2
+    FL --> Q2
     Q2{Store?}
     Q2 -->|one host| SQ["SQLiteStore (core)<br/>read: Persistence"]
     Q2 -->|several hosts| RD["[redis]<br/>read: Redis"]
-    Q2 -->|SQL / Django ORM| PL2["planned #284 / #280<br/>read: Integration extras"]
+    Q2 -->|SQL / Django ORM| SQL["[sqlalchemy] / [django]<br/>read: SQLAlchemy, Django"]
     SQ --> Q3
     RD --> Q3
+    SQL --> Q3
     Q3{Worker model?}
     Q3 -->|per request| ACT["create → act → persist → discard<br/>read: Guarantees"]
     Q3 -->|long-lived| RES["resident() / actors<br/>read: Starlette, Actors"]
@@ -47,10 +51,11 @@ flowchart LR
 | FastAPI | `[fastapi]` | [FastAPI](../integration-fastapi/) → [Starlette](../integration-starlette/) (the registry it re-exports) → [Pydantic](../integration-pydantic/) |
 | Starlette | `[starlette]` | [Starlette](../integration-starlette/) |
 | Litestar | `[litestar]` | [Litestar](../integration-litestar/) |
-| Django / Flask | — | planned, [#280](https://github.com/basiltt/xstate-statemachine/issues/280) / [#285](https://github.com/basiltt/xstate-statemachine/issues/285) — see [Integration extras](../integrations-extras/) |
+| Django | `[django]` + `[drf]` / `[channels]` | [Django](../integration-django/) → [DRF & Channels](../integration-drf/) |
+| Flask | `[flask]` | [Flask](../integration-flask/) → [SQLAlchemy](../integration-sqlalchemy/) |
 | One host | core | [Persistence](../persistence/) → [Snapshots](../snapshots/) |
 | Several hosts | `[redis]` | [Redis](../integration-redis/) → [Persistence](../persistence/) |
-| SQLAlchemy / Django ORM | — | planned, [#284](https://github.com/basiltt/xstate-statemachine/issues/284) / [#280](https://github.com/basiltt/xstate-statemachine/issues/280) — see [Integration extras](../integrations-extras/) |
+| SQLAlchemy / Django ORM | `[sqlalchemy]` / `[django]` | [SQLAlchemy](../integration-sqlalchemy/) / [Django](../integration-django/) → [Persistence](../persistence/) |
 | Per request | — | [Guarantees](../guarantees/) → [Production characteristics](../production-characteristics/) |
 | Long-lived | — | [Starlette](../integration-starlette/) (`resident()`) → [Actors](../actors/) |
 | Celery workers | `[celery]` | [Celery](../integration-celery/) |

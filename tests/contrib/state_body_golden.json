@@ -1,0 +1,11 @@
+{
+  "_comment": "#283: the state body of GET /{id} -- FastAPI's StateModel and DRF's StatechartSerializerField must produce these exact keys for the shared order chart in its initial state (tests/contrib/drf, tests/contrib/fastapi).",
+  "keys": ["available_events", "machine_version", "state", "state_ids"],
+  "receipt_keys": ["available_events", "changed", "deferred", "denied", "duplicate", "error", "machine_version", "state", "state_ids"],
+  "order_initial": {
+    "state": "draft",
+    "state_ids": ["order.draft"],
+    "available_events": ["CANCEL", "INC", "SUBMIT"],
+    "machine_version": "1"
+  }
+}

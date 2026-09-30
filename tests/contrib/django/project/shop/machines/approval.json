@@ -1,0 +1,22 @@
+{
+  "id": "approval",
+  "initial": "pending",
+  "actionErrorPolicy": "continue",
+  "context": {},
+  "states": {
+    "pending": {
+      "on": {
+        "APPROVE": {
+          "target": "approved",
+          "guard": "canApprove",
+          "meta": {"title": "Approve", "confirm": true}
+        },
+        "REJECT": {"target": "rejected", "guard": "canApprove"},
+        "COMMENT": {"actions": "note"},
+        "BOOM": {"actions": "explode"}
+      }
+    },
+    "approved": {"tags": ["publish"], "on": {"REOPEN": {"target": "pending", "guard": "isManager"}}},
+    "rejected": {"type": "final"}
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "id": "ticket",
+  "initial": "new",
+  "states": {
+    "new": {
+      "on": {
+        "RESET": {
+          "target": "new",
+          "meta": {
+            "method": "reset"
+          }
+        },
+        "START": {
+          "target": "in_progress",
+          "meta": {
+            "method": "start"
+          },
+          "guard": "hasAssignee"
+        }
+      }
+    },
+    "in_progress": {
+      "on": {
+        "CLOSE": {
+          "target": "closed",
+          "meta": {
+            "method": "close"
+          },
+          "guard": "closeTicket"
+        },
+        "RESET": {
+          "target": "new",
+          "meta": {
+            "method": "reset"
+          }
+        },
+        "RESOLVE": {
+          "target": "resolved",
+          "meta": {
+            "method": "resolve"
+          }
+        }
+      }
+    },
+    "resolved": {
+      "on": {
+        "CLOSE": {
+          "target": "closed",
+          "meta": {
+            "method": "close"
+          },
+          "guard": "closeTicket"
+        },
+        "REOPEN": {
+          "target": "in_progress",
+          "meta": {
+            "method": "reopen"
+          }
+        },
+        "RESET": {
+          "target": "new",
+          "meta": {
+            "method": "reset"
+          }
+        }
+      }
+    },
+    "closed": {
+      "on": {
+        "RESET": {
+          "target": "new",
+          "meta": {
+            "method": "reset"
+          }
+        }
+      }
+    }
+  }
+}

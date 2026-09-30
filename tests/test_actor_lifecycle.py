@@ -419,14 +419,26 @@ class TestReapingAsync(_Quiet):
             #    proxies (Django's `LazyObject` after the [django] tests)
             #    whose `__class__` lookup evaluates the proxy and raises.
             return sum(
-                1
-                for o in gc.get_objects()
-                if issubclass(type(o), Interpreter)
-                and o.machine.id == "slow"
-                and o.status != "stopped"
+                1 for o in gc.get_objects() if _live_slow_interpreter(o)
             )
 
         self.assertEqual(asyncio.run(main()), 0)
+
+
+def _live_slow_interpreter(o: object) -> bool:
+    """📝 `gc.get_objects()` can hand back a `weakref.proxy` whose referent
+    is gone (Django / DRF create them when imported in the same process);
+    attribute access on it raises `ReferenceError` (`type(o)` does not,
+    #360). Such an object is not an
+    `Interpreter`."""
+    try:
+        return (
+            issubclass(type(o), Interpreter)
+            and o.machine.id == "slow"
+            and o.status != "stopped"
+        )
+    except ReferenceError:
+        return False
 
 
 class TestReapingSync(_Quiet):

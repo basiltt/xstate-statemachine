@@ -1,0 +1,33 @@
+{% extends "admin/change_form.html" %}
+{% load i18n %}
+{% comment %}
+  xstate-statemachine: transition buttons for StatechartAdminMixin.
+  Each button is its own POST form with a CSRF token, rendered AFTER the
+  admin's change form (forms cannot nest). Override the blocks
+  `xsm_badge` / `xsm_transitions` to restyle; no JavaScript is needed.
+{% endcomment %}
+{% block content %}
+{{ block.super }}
+{% if original and xsm_transition_url %}
+<div class="module xsm-statechart" id="xsm-statechart">
+  {% block xsm_badge %}
+  <h2>{% translate "Statechart" %}: <span class="xsm-state">{{ original.state|default:"-" }}</span></h2>
+  {% endblock %}
+  {% block xsm_transitions %}
+  {% if xsm_buttons %}
+  <div class="submit-row xsm-transitions">
+    {% for b in xsm_buttons %}
+    <form method="post" action="{{ xsm_transition_url }}" class="xsm-transition-form">
+      {% csrf_token %}
+      <input type="hidden" name="{{ xsm_event_field }}" value="{{ b.event }}">
+      <button type="submit" class="button{% if b.confirm %} xsm-confirm{% endif %}" name="_xsm_submit" value="{{ b.event }}">{{ b.label }}{% if b.confirm %}&hellip;{% endif %}</button>
+    </form>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="help">{% translate "No transitions are available to you in this state." %}</p>
+  {% endif %}
+  {% endblock %}
+</div>
+{% endif %}
+{% endblock %}

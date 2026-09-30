@@ -1,0 +1,46 @@
+{
+  "id": "order",
+  "version": "1",
+  "initial": "draft",
+  "context": {"count": 0, "total": 0},
+  "states": {
+    "draft": {
+      "on": {
+        "SUBMIT": {"target": "review", "meta": {"title": "Submit for review"}},
+        "INC": {"actions": "inc"},
+        "CANCEL": "cancelled"
+      }
+    },
+    "review": {
+      "type": "parallel",
+      "states": {
+        "legal": {
+          "initial": "pending",
+          "states": {
+            "pending": {"on": {"LEGAL_OK": "ok"}},
+            "ok": {"type": "final"}
+          }
+        },
+        "finance": {
+          "initial": "pending",
+          "states": {
+            "pending": {"on": {"FINANCE_OK": "ok"}},
+            "ok": {"type": "final"}
+          }
+        }
+      },
+      "onDone": "approved",
+      "on": {"RESET": "draft"}
+    },
+    "approved": {
+      "after": {"60000": "expired"},
+      "on": {
+        "PAY": {"target": "paid", "guard": "positiveAmount", "actions": "record"},
+        "INC": {"actions": "inc"}
+      }
+    },
+    "expired": {"on": {"RESET": "draft"}},
+    "paid": {"type": "final"},
+    "cancelled": {"type": "final"}
+  }
+}

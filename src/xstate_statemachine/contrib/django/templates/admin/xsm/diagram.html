@@ -1,0 +1,15 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+{% comment %}
+  The chart as Mermaid source with the active leaves highlighted
+  (classDef xsmActive). Rendered client-side only if you load Mermaid
+  (block `xsm_mermaid_script`; add its origin to your CSP) -- otherwise
+  the source is shown as text, which https://mermaid.live also renders.
+{% endcomment %}
+{% block content %}
+<div id="content-main">
+  <p><a href="{{ change_url }}">&larr; {{ object }}</a> &middot; {% translate "active" %}: <code>{{ object.state }}</code></p>
+  <pre class="mermaid xsm-diagram">{{ mermaid }}</pre>
+  {% block xsm_mermaid_script %}{% endblock %}
+</div>
+{% endblock %}

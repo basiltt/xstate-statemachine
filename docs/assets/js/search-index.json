@@ -173,6 +173,18 @@
     "url": "/guide/integration-flask/",
     "description": "[flask] extra — XState init_app extension, act(), statechart blueprint, Idempotency-Key, SSE, SessionStore wizards, flask xsm CLI, Flask-WTF CSRF, Quart shim."
   },
+    {
+      "title": "Django integration",
+      "section": "Integrations",
+      "url": "/guide/integration-django/",
+      "description": "[django] extra — StatechartField + StatechartModelMixin (atomic + select_for_update, optimistic send_with_retry), in_state(), signals, TransitionLog audit in the same transaction, PermissionGuard, admin transition buttons (CSRF POST), xsm_* management commands, DjangoStore, xsm_deadlines, xsm_migrate_fsm from django-fsm-2."
+    },
+    {
+      "title": "DRF & Channels integration",
+      "section": "Integrations",
+      "url": "/guide/integration-drf/",
+      "description": "[drf] StatechartViewSetMixin — one @action per event, receipt→status, Idempotency-Key, drf-spectacular schema, StatechartSerializerField; [channels] StatechartConsumer — snapshot on connect, transition broadcast, 1008 on unauthenticated."
+    },
   {
     "title": "LLM agents",
     "section": "Integrations",

@@ -67,7 +67,44 @@ if importlib.util.find_spec("sqlalchemy") is not None:
     STORE_FACTORIES["sqlalchemy"] = _sqlalchemy_store
 
 
-@pytest.fixture(params=sorted(STORE_FACTORIES))
+def _django_store(tmp: Any, **kw: Any) -> StateStore:
+    """#280: `DjangoStore` on the [django] test project's database -- the
+    ORM twin held to the SAME contract. One namespace per tmp dir keeps
+    the stores a test builds apart in the shared tables."""
+    from src.xstate_statemachine.contrib.django.stores import DjangoStore
+
+    ns = "c-" + str(abs(hash(str(tmp))))
+    return DjangoStore(ns, **kw)
+
+
+_DJANGO = all(
+    importlib.util.find_spec(m) is not None
+    for m in ("django", "pytest_django")
+)
+if _DJANGO:
+    from tests.contrib.django import bootstrap as _dj_bootstrap
+
+    _dj_bootstrap.ensure()
+    STORE_FACTORIES["django"] = _django_store
+
+
+def _store_params() -> List[Any]:
+    out: List[Any] = []
+    for name in sorted(STORE_FACTORIES):
+        if name == "django":
+            # Real commits: the lock / parallel tests use one connection
+            # per thread, which a wrapping test transaction would hide.
+            out.append(
+                pytest.param(
+                    name, marks=pytest.mark.django_db(transaction=True)
+                )
+            )
+        else:
+            out.append(name)
+    return out
+
+
+@pytest.fixture(params=_store_params())
 def store(request: Any, tmp_path: Any) -> Iterator[StateStore]:
     s = STORE_FACTORIES[request.param](tmp_path)
     yield s
@@ -279,6 +316,9 @@ class TestContract:
         elif store.backend == "sqlalchemy":
             enc = _sqlalchemy_store(tmp_path / "enc", codec=Rot())
             raw = _sqlalchemy_store(tmp_path / "enc")
+        elif store.backend == "django":
+            enc = _django_store(tmp_path / "enc", codec=Rot())
+            raw = _django_store(tmp_path / "enc")
         else:
             enc = SQLiteStore(tmp_path / "enc.db", codec=Rot())
             raw = SQLiteStore(tmp_path / "enc.db")
@@ -309,7 +349,14 @@ class TestContract:
         rec = store.load("order-1")
         assert rec.machine_version == ""  # CFG declares no version
 
-    def test_aload_interpreter(self, store: StateStore) -> None:
+    def test_aload_interpreter(self, store: StateStore, monkeypatch) -> None:
+        if store.backend == "django":
+            # 📝 The test calls the SYNC `save_interpreter` from inside a
+            #    coroutine, which Django refuses by design (an async view
+            #    must go through `sync_to_async` / `as_async`); the
+            #    contract under test is the async LOAD path.
+            monkeypatch.setenv("DJANGO_ALLOW_ASYNC_UNSAFE", "true")
+
         async def go() -> Any:
             m = machine()
             interp, ver = await aload_interpreter(store, "k", m)

@@ -126,7 +126,7 @@
       },
       {
         "feature": "Locking / concurrent writers",
-        "ours": "`OptimisticLock` / `PessimisticLock` on every store; SQLAlchemy `version_id_col` via `StatechartMixin.optimistic()`",
+        "ours": "`OptimisticLock` / `PessimisticLock` on every store; Django `send()` in `transaction.atomic()` + `select_for_update()` (or a version fence + `send_with_retry`); SQLAlchemy `version_id_col`",
         "theirs": "`ConcurrentTransitionMixin` raises `ConcurrentTransition` on a stale write",
         "source": "django-fsm-2 4.2.4: `ConcurrentTransitionMixin` in `django_fsm/__init__.py`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
@@ -138,19 +138,19 @@
       },
       {
         "feature": "Admin / UI",
-        "ours": "No Django admin yet (#282); `xsm inspect` / `flask xsm` CLI and a web inspector for FastAPI",
+        "ours": "`StatechartAdminMixin`: permission-computed CSRF-protected transition buttons, confirm + reason, history inline, state filter, bulk actions; `manage.py xsm_inspect` / `xsm_diagram`",
         "theirs": "Yes: `fsm_admin` transition buttons in the Django admin",
         "source": "django-fsm-2 4.2.4: `fsm_admin` package ships with django-fsm-2; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "REST / DRF",
-        "ours": "Statechart routers for FastAPI, Flask, Litestar and Starlette; DRF viewset planned (#283)",
+        "ours": "`StatechartViewSetMixin` generates one DRF `@action` per event (plus drf-spectacular schema); routers for FastAPI, Flask, Litestar, Starlette",
         "theirs": "DIY: call the transition from a DRF view",
         "source": "django-fsm-2 4.2.4: no REST helpers in the package; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "Audit trail",
-        "ours": "`AuditPlugin` / transition log (SQLite, JSON lines, SQLAlchemy `xsm_transitions`), written with the state change",
+        "ours": "Django `TransitionLog` rows written in the SAME transaction as the state change (plus `pre_transition` / `post_transition` signals); transition log for SQLite, JSON lines, SQLAlchemy",
         "theirs": "`pre_transition` / `post_transition` signals; logging via django-fsm-log",
         "source": "django-fsm-2 4.2.4: `django_fsm.signals`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
@@ -168,7 +168,7 @@
       },
       {
         "feature": "Persistence",
-        "ours": "Snapshots in SQLite, Redis, SQLAlchemy, files or your own ORM row",
+        "ours": "`StatechartField` on your Django model row (queryable `__state` / `in_state()`), or snapshots in SQLite, Redis, SQLAlchemy, files",
         "theirs": "The Django model row (native)",
         "source": "django-fsm-2 4.2.4: the state is a model field; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
@@ -223,7 +223,7 @@
       },
       {
         "feature": "Locking / concurrent writers",
-        "ours": "`OptimisticLock` / `PessimisticLock` on every store; SQLAlchemy `version_id_col` via `StatechartMixin.optimistic()`",
+        "ours": "`OptimisticLock` / `PessimisticLock` on every store; Django `send()` in `transaction.atomic()` + `select_for_update()` (or a version fence + `send_with_retry`); SQLAlchemy `version_id_col`",
         "theirs": "`LockedMachine`: an in-process `RLock`; nothing across processes",
         "source": "transitions 0.9.3: `transitions.extensions.LockedMachine`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
@@ -235,19 +235,19 @@
       },
       {
         "feature": "Admin / UI",
-        "ours": "No Django admin yet (#282); `xsm inspect` / `flask xsm` CLI and a web inspector for FastAPI",
+        "ours": "`StatechartAdminMixin`: permission-computed CSRF-protected transition buttons, confirm + reason, history inline, state filter, bulk actions; `manage.py xsm_inspect` / `xsm_diagram`",
         "theirs": "No",
         "source": "transitions 0.9.3: no web or admin integration; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "REST / DRF",
-        "ours": "Statechart routers for FastAPI, Flask, Litestar and Starlette; DRF viewset planned (#283)",
+        "ours": "`StatechartViewSetMixin` generates one DRF `@action` per event (plus drf-spectacular schema); routers for FastAPI, Flask, Litestar, Starlette",
         "theirs": "No",
         "source": "transitions 0.9.3: no web integration; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "Audit trail",
-        "ours": "`AuditPlugin` / transition log (SQLite, JSON lines, SQLAlchemy `xsm_transitions`), written with the state change",
+        "ours": "Django `TransitionLog` rows written in the SAME transaction as the state change (plus `pre_transition` / `post_transition` signals); transition log for SQLite, JSON lines, SQLAlchemy",
         "theirs": "DIY with `after_state_change` callbacks",
         "source": "transitions 0.9.3: callback hooks on `Machine`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
@@ -265,7 +265,7 @@
       },
       {
         "feature": "Persistence",
-        "ours": "Snapshots in SQLite, Redis, SQLAlchemy, files or your own ORM row",
+        "ours": "`StatechartField` on your Django model row (queryable `__state` / `in_state()`), or snapshots in SQLite, Redis, SQLAlchemy, files",
         "theirs": "DIY: pickle the model or store `state`",
         "source": "transitions 0.9.3: `MarkupMachine` can dump the definition, not a runtime snapshot; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
@@ -320,7 +320,7 @@
       },
       {
         "feature": "Locking / concurrent writers",
-        "ours": "`OptimisticLock` / `PessimisticLock` on every store; SQLAlchemy `version_id_col` via `StatechartMixin.optimistic()`",
+        "ours": "`OptimisticLock` / `PessimisticLock` on every store; Django `send()` in `transaction.atomic()` + `select_for_update()` (or a version fence + `send_with_retry`); SQLAlchemy `version_id_col`",
         "theirs": "DIY",
         "source": "python-statemachine 3.2.1: no store, so no cross-process locking; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
@@ -332,19 +332,19 @@
       },
       {
         "feature": "Admin / UI",
-        "ours": "No Django admin yet (#282); `xsm inspect` / `flask xsm` CLI and a web inspector for FastAPI",
+        "ours": "`StatechartAdminMixin`: permission-computed CSRF-protected transition buttons, confirm + reason, history inline, state filter, bulk actions; `manage.py xsm_inspect` / `xsm_diagram`",
         "theirs": "No",
         "source": "python-statemachine 3.2.1: a Django `MachineMixin`, but no admin integration; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "REST / DRF",
-        "ours": "Statechart routers for FastAPI, Flask, Litestar and Starlette; DRF viewset planned (#283)",
+        "ours": "`StatechartViewSetMixin` generates one DRF `@action` per event (plus drf-spectacular schema); routers for FastAPI, Flask, Litestar, Starlette",
         "theirs": "No",
         "source": "python-statemachine 3.2.1: no web integration; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "Audit trail",
-        "ours": "`AuditPlugin` / transition log (SQLite, JSON lines, SQLAlchemy `xsm_transitions`), written with the state change",
+        "ours": "Django `TransitionLog` rows written in the SAME transaction as the state change (plus `pre_transition` / `post_transition` signals); transition log for SQLite, JSON lines, SQLAlchemy",
         "theirs": "DIY with listeners",
         "source": "python-statemachine 3.2.1: observer / listener callbacks; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
@@ -362,7 +362,7 @@
       },
       {
         "feature": "Persistence",
-        "ours": "Snapshots in SQLite, Redis, SQLAlchemy, files or your own ORM row",
+        "ours": "`StatechartField` on your Django model row (queryable `__state` / `in_state()`), or snapshots in SQLite, Redis, SQLAlchemy, files",
         "theirs": "`MachineMixin` stores the state on a model field",
         "source": "python-statemachine 3.2.1: `statemachine.mixins.MachineMixin`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },

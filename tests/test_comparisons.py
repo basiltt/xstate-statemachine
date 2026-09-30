@@ -169,12 +169,16 @@ class TestPythonLibraryComparisons(unittest.TestCase):
             self.assertIn("```text", theirs, slug)
             self.assertNotIn("```python", theirs, slug)
 
-    def test_django_page_has_the_planned_migration_recipe(self) -> None:
+    def test_django_page_has_the_shipped_migration_recipe(self) -> None:
+        """#310 shipped: the recipe names the command and its four steps,
+        and no longer says it is planned."""
         text = (PAGES / "vs-django-fsm.md").read_text("utf-8")
         self.assertIn("## Migration recipe", text)
         self.assertIn("xsm_migrate_fsm", text)
         self.assertIn("issues/310", text)
-        self.assertIn("not shipped yet", text)
+        self.assertNotIn("not shipped yet", text)
+        for step in ("--dry-run", "from_state_ids", "FSMDualWriteMixin"):
+            self.assertIn(step, text)
 
     def test_pages_are_in_nav_order_and_search(self) -> None:
         layout = (ROOT / "docs" / "_layouts" / "default.html").read_text(

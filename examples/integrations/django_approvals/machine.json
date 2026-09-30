@@ -1,0 +1,63 @@
+{
+  "id": "approval",
+  "version": "1",
+  "description": "An expense approval: legal and finance review in parallel; an escalation fires if nobody acts for 48 hours.",
+  "initial": "draft",
+  "context": {"amount": 0, "escalated": false},
+  "actionErrorPolicy": "rollback",
+  "states": {
+    "draft": {
+      "on": {
+        "SUBMIT": {"target": "review", "meta": {"title": "Submit for review"}}
+      }
+    },
+    "review": {
+      "type": "parallel",
+      "after": {
+        "172800000": {"actions": "escalate"}
+      },
+      "states": {
+        "legal": {
+          "initial": "pending",
+          "states": {
+            "pending": {
+              "on": {
+                "LEGAL_APPROVE": {
+                  "target": "approved",
+                  "guard": "isLegal",
+                  "meta": {"title": "Legal: approve"}
+                }
+              }
+            },
+            "approved": {"type": "final"}
+          }
+        },
+        "finance": {
+          "initial": "pending",
+          "states": {
+            "pending": {
+              "on": {
+                "FINANCE_APPROVE": {
+                  "target": "approved",
+                  "guard": "isFinance",
+                  "meta": {"title": "Finance: approve"}
+                }
+              }
+            },
+            "approved": {"type": "final"}
+          }
+        }
+      },
+      "onDone": "approved",
+      "on": {
+        "REJECT": {
+          "target": "rejected",
+          "guard": "isReviewer",
+          "meta": {"title": "Reject", "confirm": true}
+        }
+      }
+    },
+    "approved": {"tags": ["publish"], "type": "final"},
+    "rejected": {"type": "final"}
+  }
+}
