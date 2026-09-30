@@ -22,7 +22,7 @@ from src.xstate_statemachine.contrib.testing.pytest_plugin import (
     render_snapshot,
 )
 
-from .conftest import CORPUS, PLUGIN, PLUGIN_ARGS, run
+from .conftest import CORPUS, NO_DJANGO, PLUGIN, PLUGIN_ARGS, run
 
 # 📝 No `requires_extra("testing")` gate: the plugin needs only pytest (always
 #    present here) and ships through an unconditional entry point, so every
@@ -447,7 +447,7 @@ class TestAsyncEngine:
                     raise AssertionError("must not run")
                 """))
         result = xsm_pytester.runpytest_inprocess(
-            *PLUGIN_ARGS, "-p", "no:asyncio", "-q", "-rs"
+            *PLUGIN_ARGS, *NO_DJANGO, "-p", "no:asyncio", "-q", "-rs"
         )
         result.assert_outcomes(skipped=1)
         result.stdout.fnmatch_lines(
@@ -619,7 +619,7 @@ class TestPlumbing:
                 )
             """)
         result = xsm_pytester.runpytest_inprocess(
-            "-p", "no:xstate_statemachine", "-q"
+            *NO_DJANGO, "-p", "no:xstate_statemachine", "-q"
         )
         result.assert_outcomes(passed=1)
 

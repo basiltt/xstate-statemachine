@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import importlib.util
-import os
 import sys
 from pathlib import Path
 
@@ -37,9 +36,20 @@ def ensure() -> None:
         sys.path.insert(0, src)
     if str(PROJECT) not in sys.path:
         sys.path.insert(0, str(PROJECT))
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "project.settings")
     import django
     from django.apps import apps
+    from django.conf import settings
 
+    if not settings.configured:
+        # 📝 Configure from the module WITHOUT exporting
+        #    DJANGO_SETTINGS_MODULE: the rest of the suite spawns pytest /
+        #    python subprocesses (generated projects, doc blocks, example
+        #    apps) that must not inherit this project's settings.
+        import importlib
+
+        mod = importlib.import_module("project.settings")
+        settings.configure(
+            **{k: getattr(mod, k) for k in dir(mod) if k.isupper()}
+        )
     if not apps.ready:
         django.setup()
