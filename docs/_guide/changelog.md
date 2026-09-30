@@ -202,9 +202,16 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 - **Example: `examples/integrations/eda_fulfilment`.** An order chart and a
   warehouse chart that talk only through events (`ChoreographyRouter`),
   with the SQLite outbox committed with the snapshot, inbox dedup, poison
-  -> dead letters and `xsm dlq`, Redis Streams on fakeredis, the Celery
-  bridge in eager mode, and Prometheus / OpenTelemetry / inspector sinks
-  in memory. It needs no running service: `python -m eda_fulfilment`.
+  -> dead letters and `xsm dlq`, the Celery bridge in eager mode, and
+  Prometheus / OpenTelemetry / inspector sinks in memory. The same demo
+  runs on all five real broker adapters -- Redis Streams, Kafka,
+  RabbitMQ, NATS JetStream and SQS -- offline over in-process stand-ins
+  (fakeredis, fake aiokafka / aio-pika / nats-py clients, moto) or
+  against a live server when `REDIS_URL` / `XSM_KAFKA_BOOTSTRAP` /
+  `XSM_RABBITMQ_URL` / `XSM_NATS_URL` / `XSM_SQS_ENDPOINT` is set, with a
+  parametrised suite (order, outbox == published, poison -> DLQ,
+  redelivery carries the attempt). It needs no running service:
+  `python -m eda_fulfilment --broker kafka`.
 - **Fixed: `[sqlalchemy]` on SQLite: a newly created snapshot could survive a
   rollback of its `PessimisticLock` block (#293).** pysqlite emits no
   `BEGIN` before a `SAVEPOINT`, so when the create-only INSERT was the
