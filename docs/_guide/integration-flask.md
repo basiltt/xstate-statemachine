@@ -16,6 +16,8 @@ pip install quart          # optional: the Quart shim
 
 Requires Flask `>=2.3`. Tested versions are in the [compatibility table](#compatibility).
 
+For a complete, runnable app -- a multi-step wizard on `SessionStore`, CSRF-protected forms, the `flask xsm` CLI and a test suite -- see the [`flask_wizard` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/flask_wizard).
+
 ## Quick start
 
 <!-- doc-requires: flask -->

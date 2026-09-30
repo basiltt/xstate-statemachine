@@ -21,6 +21,8 @@ INSTALLED_APPS = [..., "django.contrib.contenttypes", "xstate_statemachine.contr
 
 Requires Django `>=4.2`. Run `python manage.py migrate` to create the app's tables (`xsm_django_*`: deadlines, audit log, outbox, idempotency, `DjangoStore`). Tested versions are in the [compatibility table](#compatibility).
 
+For a complete, runnable project -- parallel legal/finance review, `PermissionGuard` with two roles, admin transition buttons with an audit inline, a DRF viewset with schema, a Channels status page, an `after` escalation through the deadlines table and a test suite -- see the [`django_approvals` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/django_approvals).
+
 ## Quick start
 
 <!-- doc-requires: django -->

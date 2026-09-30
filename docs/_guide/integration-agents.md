@@ -16,6 +16,8 @@ pip install openai        # or: pip install anthropic -- provider SDKs are separ
 
 `[agents]` is `pydantic>=2.5` (tool schemas, structured output). Provider SDKs are imported only inside `openai_model()` / `anthropic_model()` and never pinned; without them everything else — including `FakeModel` — works.
 
+For a complete, runnable agent -- a support bot with per-state tool allow-lists, a budget guard, durable human approval over FastAPI, a JSONL trace and a test suite -- see the [`agents_support_bot` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/agents_support_bot).
+
 ## Quick start
 
 <!-- doc-requires: pydantic -->
