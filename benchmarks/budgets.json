@@ -34,12 +34,12 @@
       "budget_p50_us": 174.728
     },
     "plugins_async": {
-      "baseline_p50_us": 111.743,
-      "budget_p50_us": 139.679
+      "baseline_p50_us": 142.939,
+      "budget_p50_us": 178.674
     },
     "plugins_sync": {
-      "baseline_p50_us": 104.809,
-      "budget_p50_us": 131.011
+      "baseline_p50_us": 133.67,
+      "budget_p50_us": 167.087
     },
     "shortest_paths": null,
     "snapshot_get_async": {
@@ -72,8 +72,8 @@
     "fastapi_router": "FastAPI router is not shipped yet",
     "hooks_empty_async": "no-plugin send path; no historical 0.10.x runtime in this run",
     "hooks_empty_sync": "no-plugin send path; no historical 0.10.x runtime in this run",
-    "plugins_async": "IdempotencyPlugin + AuditPlugin; PrometheusPlugin is not shipped",
-    "plugins_sync": "IdempotencyPlugin + AuditPlugin; PrometheusPlugin is not shipped",
+    "plugins_async": "IdempotencyPlugin + AuditPlugin + PrometheusPlugin (#273); re-recorded from perf run 36659646069 (attempt 2, ubuntu-24.04, AMD EPYC 9V74) -- that run measured every other row ~25-30% above its baseline too",
+    "plugins_sync": "IdempotencyPlugin + AuditPlugin + PrometheusPlugin (#273); re-recorded from perf run 36659646069 (attempt 2, ubuntu-24.04, AMD EPYC 9V74) -- that run measured every other row ~25-30% above its baseline too",
     "shortest_paths": "shortest_paths is not shipped yet",
     "snapshot_get_async": "v4; historical v3 runtime not present",
     "snapshot_get_sync": "v4; historical v3 runtime not present",

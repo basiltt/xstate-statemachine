@@ -171,15 +171,28 @@ def _machine(fields: int = 1, validator: Any = None) -> Any:
     )
 
 
+def _prometheus() -> Any:
+    """A real `PrometheusPlugin` on a private registry, or ``None`` when
+    `[observability]` is not installed (#273)."""
+    if importlib.util.find_spec("prometheus_client") is None:
+        return None
+    from prometheus_client import CollectorRegistry
+
+    from xstate_statemachine.contrib.observability import PrometheusPlugin
+
+    return PrometheusPlugin(registry=CollectorRegistry())
+
+
 def _plugins() -> Any:
     log = MemoryLog()
-    return (
-        (
-            IdempotencyPlugin(MemoryInbox(), principal=lambda event: "p"),
-            AuditPlugin(log),
-        ),
-        log,
-    )
+    attached: List[Any] = [
+        IdempotencyPlugin(MemoryInbox(), principal=lambda event: "p"),
+        AuditPlugin(log),
+    ]
+    prom = _prometheus()
+    if prom is not None:
+        attached.append(prom)
+    return tuple(attached), log
 
 
 def _send_sync(
@@ -350,7 +363,6 @@ def benchmark_persisted_sqlite_async() -> Dict[str, Any]:
 
 
 def benchmark_plugins_sync(events: int) -> Dict[str, Any]:
-    # 📝 PrometheusPlugin is not shipped yet; its issue adds that row.
     bare = _send_sync(events, keyed=True)
     measured = _send_sync(events, keyed=True, plugins=True)
     measured["bare_p50_us"] = bare["p50_us"]
@@ -494,13 +506,21 @@ def benchmark_fastapi_router() -> None:
     return None
 
 
+PLUGINS_NOTE = "IdempotencyPlugin + AuditPlugin + PrometheusPlugin (#273)"
+NO_PROMETHEUS_NOTE = (
+    "IdempotencyPlugin + AuditPlugin; install [observability] to include "
+    "PrometheusPlugin"
+)
+
+
 def run(quick: bool = False) -> Dict[str, Any]:
     events = 1_000 if quick else EVENTS
     snapshots = 100 if quick else SNAPSHOTS
     results: Dict[str, Any] = {}
+    plugins_note = PLUGINS_NOTE if _prometheus() else NO_PROMETHEUS_NOTE
     notes = {
-        "plugins_sync": "IdempotencyPlugin + AuditPlugin; PrometheusPlugin is not shipped",
-        "plugins_async": "IdempotencyPlugin + AuditPlugin; PrometheusPlugin is not shipped",
+        "plugins_sync": plugins_note,
+        "plugins_async": plugins_note,
         "hooks_empty_sync": "no-plugin send path; no historical 0.10.x runtime in this run",
         "hooks_empty_async": "no-plugin send path; no historical 0.10.x runtime in this run",
         "snapshot_get_sync": "v4; historical v3 runtime not present",

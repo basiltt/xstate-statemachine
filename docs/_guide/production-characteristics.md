@@ -157,8 +157,8 @@ package import *inside* a fresh subprocess, excluding Python startup.
 | `apersisted()` + `MemoryStore` (async) | 309.499 µs | 386.874 µs | Thread-backed store adapter |
 | `persisted()` + SQLite WAL (sync) | 139.782 µs | 174.728 µs | Local temporary database |
 | `apersisted()` + SQLite WAL (async) | 360.305 µs | 450.381 µs | Thread-backed store adapter |
-| Idempotency + audit (sync) | 104.809 µs/event | 131.011 µs/event | 542.1% over bare keyed send (16.322 µs) |
-| Idempotency + audit (async) | 111.743 µs/event | 139.679 µs/event | 313.9% over bare keyed send (26.995 µs) |
+| Idempotency + audit + Prometheus (sync) | 133.670 µs/event | 167.087 µs/event | 538.3% over bare keyed send (20.942 µs); re-recorded for #273 † |
+| Idempotency + audit + Prometheus (async) | 142.939 µs/event | 178.674 µs/event | 311.5% over bare keyed send (34.740 µs); re-recorded for #273 † |
 | Empty-plugin hook path (sync) | 15.873 µs/event | 19.841 µs/event | `on_before_send` and `on_event_processed` seams |
 | Empty-plugin hook path (async) | 26.418 µs/event | 33.023 µs/event | Same seams; no plugin callbacks |
 | Pydantic 20-field validator (sync) | 46.031 µs/event | 57.539 µs/event | 22.364 µs above unvalidated send |
@@ -178,11 +178,22 @@ import itself is ~65 ms against a ≤ 60 ms target on this runner. The plugin
 measurements exercise **unique idempotency keys** and write an audit record for
 every event; they do not measure an inert plugin, and the 15 % target is **not
 met** — nor could it be, since a per-event inbox claim, mark and audit append is
-several times the cost of the trivial macrostep it wraps. `PrometheusPlugin` has
-not shipped, so it is not silently counted. There is also no historical 0.10.x
+several times the cost of the trivial macrostep it wraps. Since #273 the two
+plugin rows also attach a real `PrometheusPlugin`. There is also no historical 0.10.x
 runtime or v3 snapshot implementation in the measurement: the no-plugin and v4
 rows are forward-looking regression baselines, not claims that the earlier
 2 % / 1.2× comparisons passed.
+
+† The plugin rows were re-recorded from `workflow_dispatch` perf run
+[36659646069](https://github.com/basiltt/xstate-statemachine/actions/runs/36659646069)
+(attempt 2, same runner label and CPU model as the reference). That run
+measured **every** other row 25–30 % above its recorded baseline as well, and
+a same-day control run of unmodified `main`
+([36662085551](https://github.com/basiltt/xstate-statemachine/actions/runs/36662085551))
+landed on a different CPU and exceeded every budget, so hosted-runner drift
+explains most of the difference — the overhead ratio against the bare keyed
+send (538 % / 312 %) is essentially unchanged from the original recording. The
+other rows were deliberately **not** re-baselined here.
 
 The nightly-only `perf` job runs `XSM_PERF=1` on the reference runner and
 compares each p50 against [`benchmarks/budgets.json`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/budgets.json).

@@ -59,7 +59,7 @@ flowchart LR
 | Broker | — | planned, [#294](https://github.com/basiltt/xstate-statemachine/issues/294) — see [Integration extras](../integrations-extras/) |
 | LLM agents | `[agents]` | [LLM agents](../integration-agents/) → [Security](../security/) (X0.13) |
 | Testing | `[testing]` | [pytest](../integration-testing/) — `xstate_machine` marker and `xsm_*` fixtures |
-| Observability | — | planned, [#273](https://github.com/basiltt/xstate-statemachine/issues/273) — see [Integration extras](../integrations-extras/) |
+| Observability | `[observability]` | [Observability](../integration-observability/) ([#273](https://github.com/basiltt/xstate-statemachine/issues/273)) → [Live inspector](../integration-inspector/) (core, [#274](https://github.com/basiltt/xstate-statemachine/issues/274)) |
 
 ## 15-minute tutorial
 
@@ -259,11 +259,11 @@ Because no worker holds an order in memory, the same app runs under `uvicorn app
 ### 7. Test it, then the coverage gate and live inspector
 
 - **Tests** — `pip install "xstate-statemachine[testing]"` and mark a test `@pytest.mark.xstate_machine("order.json")`: the plugin hands you a started `xsm_interp`, a `xsm_clock` for the `after` timers, `xsm_ran` for the actions that fired and `xsm_snapshot` for file-backed snapshot assertions ([pytest guide](../integration-testing/)). `xsm gt order.json -t pytest --fixtures` scaffolds such a module.
+- **Live inspector** — `xsm inspect order.json --live --open` streams the machine to the Stately Inspector (or the built-in page) over the `@statelyai/inspect` protocol; `xsm sim --record` / `xsm replay --live` record and replay; under Starlette/FastAPI, `mount_inspector(app, registry, debug=True)` serves it over WebSocket ([Live inspector](../integration-inspector/)). Metrics, traces and log context come from `[observability]` ([Observability](../integration-observability/)).
 
 Not shipped yet:
 
 - **State/transition coverage gate** (`pytest --xsm-coverage --xsm-fail-under-state-coverage=90`) arrives with [#270](https://github.com/basiltt/xstate-statemachine/issues/270).
-- **Live inspector** (`xsm inspect --live`, the Stately Inspector protocol) arrives with [#274](https://github.com/basiltt/xstate-statemachine/issues/274). Today, `mount_inspector(app, registry, debug=True)` serves a development-only JSON view of live keys ([Starlette](../integration-starlette/)).
 
 ## What you get / what you don't
 

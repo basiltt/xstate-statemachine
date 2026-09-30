@@ -137,7 +137,7 @@ Returns a `WebSocketEndpoint` subclass for `WebSocketRoute("/ws/{key}", ...)`. O
 
 ### `mount_inspector(app, registry, path="/_xsm/inspect", *, debug=False)`
 
-Raises `RuntimeError` unless `debug=True`. The mounted route currently answers 501: the live inspector sink ships with [#274](https://github.com/basiltt/xstate-statemachine/issues/274).
+Raises `RuntimeError` unless `debug=True`. Mounts the live inspector over WebSocket (`WebSocketSink`, one Stately Inspector protocol message per frame) and appends an `InspectorPlugin` to `registry.plugins`; token, loopback `Host` and `Origin` checks per X0.7. Keyword options `token`, `context_allowlist`, `include_payloads`, `allow_remote`; returns the sink. See [Live inspector](../integration-inspector/) ([#274](https://github.com/basiltt/xstate-statemachine/issues/274)).
 
 ## Guarantees
 

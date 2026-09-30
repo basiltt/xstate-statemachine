@@ -17,6 +17,50 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ### Added
 
+- **Observability & live inspector (Phase B) -- `[observability]` extra
+  (#273).** `OpenTelemetryPlugin` opens one `statechart.transition` span per
+  processed event and closes it in `on_event_processed` with the outcome
+  (`statechart.from` / `.to` / `.changed` / `.denied` / `.deferred` /
+  `.actions`); guard evaluations are span events, action / guard / service
+  errors and chain trips are `record_exception`, each invoked service is a
+  child span, and a `traceparent` payload header becomes a span link.
+  `PrometheusPlugin` exports transitions, event dispositions, guard
+  evaluations and errors, action errors, service duration and errors,
+  chain trips, active interpreters and a polled `queue_depth`.
+  `StructlogPlugin` / `LoguruPlugin` bind `machine_id`, `state`, `event`
+  (and `correlation_id`) around each event so log lines inside actions
+  carry them; `SentryPlugin` adds breadcrumbs and, opt-in, captures
+  errors. `instrument_all()` attaches them to every interpreter built
+  afterwards (global registry), to one interpreter, or to a registry's
+  `plugins` list; `discovered=True` goes through
+  `plugins.attach_discovered`. X0.6 telemetry hygiene: event labels come
+  from the chart allow-list (`unknown` fallback), every label dimension is
+  capped (`max_label_values` -> `other`), and payloads, instance keys and
+  correlation ids are never labels. The extra pins `opentelemetry-api>=1.20`
+  and `prometheus-client>=0.17`; structlog, loguru and sentry-sdk are soft
+  imports. `AgentTracePlugin(on_span="otel")` emits real `gen_ai.*` spans.
+  The `plugins_*` performance rows now include `PrometheusPlugin`. Guide:
+  *Integrations -> Observability*.
+- **Observability & live inspector (Phase B) -- live inspector (#274).**
+  `xstate_statemachine.inspect` (stdlib only) speaks the
+  `@statelyai/inspect` wire protocol (`@xstate.actor` / `.event` /
+  `.snapshot`), pinned against fixtures recorded from the real npm package.
+  `InspectorPlugin(sink, context_allowlist=...)` with `MemorySink`,
+  `JsonLinesSink` (files 0600), `SseSink` (SSE over `http.server`, own
+  fallback page plus the hosted Stately UI) and `replay_messages()`. CLI:
+  `xsm inspect machine.json --live [--port] [--open]`,
+  `xsm sim --record session.jsonl`, `xsm replay session.jsonl [--live]`.
+  New plugin hook `on_event_sent(interpreter, target_id, event)` fires on
+  the sender of `sendTo` / `sendParent` / `forwardTo` on both engines.
+  `MachineNode.source_config` keeps the config the machine was built
+  from. X0.7: per-run `secrets.token_urlsafe(32)` compared with
+  `hmac.compare_digest`, the token in the URL only on first load (then an
+  `HttpOnly; SameSite=Strict` cookie), loopback bind with `Host` and
+  `Origin` checks, a non-loopback host requires `--token`, strict CSP,
+  context deny-by-default. `[starlette]` / `[fastapi]`:
+  `mount_inspector(app, registry, debug=True)` now serves the stream over
+  WebSocket (`WebSocketSink`) instead of answering 501. Guide:
+  *Integrations -> Live inspector*; `xsm` guide section "Live inspector".
 - **`[testing]`: generated path tests (#269).** Request the `xsm_path`
   fixture under an `xstate_machine` marker and the test is parametrised
   over `graph.shortest_paths(machine)` -- one case per reachable

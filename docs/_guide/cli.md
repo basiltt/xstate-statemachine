@@ -681,6 +681,35 @@ Feature support
          xsm gt <file.json> -t pythonic-class --with-types --with-tests
 ```
 
+## 📡 Live inspector
+
+**[0.12.0]** Watch a machine live in the browser — in the Stately Inspector or the built-in fallback page — speaking the `@statelyai/inspect` protocol ([guide](../integration-inspector/), [#274](https://github.com/basiltt/xstate-statemachine/issues/274)).
+
+```bash
+xsm inspect machine.json --live --open               # serve + interactive simulator
+xsm inspect machine.json --live -e SUBMIT,+2000 --duration 60   # scripted
+xsm sim machine.json -e SUBMIT,+2001 --record session.jsonl     # record (file is 0600)
+xsm replay session.jsonl                              # print the recording
+xsm replay session.jsonl --live --speed 1             # stream it at recorded pace
+```
+
+| Flag | Meaning |
+|:--|:--|
+| `--live` | serve the stream (stdlib SSE over `http.server`) instead of printing the machine facts |
+| `--port N` | default `8765`; `0` picks a free port |
+| `--host H` | default `127.0.0.1`; any non-loopback host **requires** `--token` |
+| `--token T` | default: a fresh `secrets.token_urlsafe(32)` per run |
+| `--open` | open the printed URL in a browser |
+| `--context a,b` | context keys the page may see — **none by default** (also on `sim --record`) |
+| `-e / --duration` | with `--live`: run a scripted session and serve for N seconds |
+| `--speed` | `replay --live`: `1.0` = recorded pace, `0` = all at once |
+
+The printed URL carries the token **once**: the first load answers with an `HttpOnly; SameSite=Strict` cookie and redirects to `/`, so the token does not stay in the address bar. `curl` works with `-H "X-XSM-Token: …"`:
+
+```bash
+curl -sN -H "X-XSM-Token: $TOKEN" http://127.0.0.1:8765/events
+```
+
 ## ✅ Validate
 
 Builds each file with the real library and reports what it found:
