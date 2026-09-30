@@ -269,11 +269,18 @@ class TestConfiguration:
         Stub.statechart_machine = create_machine(
             {"id": "s", "initial": "a", "states": {"a": {"on": {"SEND": "a"}}}}
         )
-        with pytest.raises(ImproperlyConfigured, match="reserved"):
+        try:
+            with pytest.raises(ImproperlyConfigured, match="reserved"):
 
-            class Bad(StatechartViewSetMixin, viewsets.GenericViewSet):
-                queryset = Stub.objects.all()
-                permission_classes = [AllowAny]
+                class Bad(StatechartViewSetMixin, viewsets.GenericViewSet):
+                    queryset = Stub.objects.all()
+                    permission_classes = [AllowAny]
+
+        finally:
+            from django.apps import apps
+
+            del apps.all_models["shop"]["stub"]
+            apps.clear_cache()
 
     def test_event_slug(self) -> None:
         from xstate_statemachine.contrib.drf.viewsets import event_slug

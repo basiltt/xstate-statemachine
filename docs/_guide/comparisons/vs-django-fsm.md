@@ -11,7 +11,7 @@ permalink: /guide/vs-django-fsm/
 {% assign c = site.data.comparisons.django_fsm %}
 The table is generated from [`docs/_data/comparisons.json`](https://github.com/basiltt/xstate-statemachine/blob/main/docs/_data/comparisons.json). Every row carries a source note, and corrections are welcome as PRs against that file. It was checked against {{ c.checked }}; see [{{ c.name }}]({{ c.url }}) for the current state.
 
-⚠️ **Django status.** The `[django]` extra (model field, admin, DRF, signals) is still in development ([#280](https://github.com/basiltt/xstate-statemachine/issues/280)–[#283](https://github.com/basiltt/xstate-statemachine/issues/283)). Rows below describe what ships today, which is mostly framework-neutral, and mark Django pieces as planned.
+✅ **Django status.** The `[django]` extra ships the model field, locking, signals, audit, permissions and the admin ([#280](https://github.com/basiltt/xstate-statemachine/issues/280)–[#282](https://github.com/basiltt/xstate-statemachine/issues/282)); `[drf]` and `[channels]` ship the REST and WebSocket surfaces ([#283](https://github.com/basiltt/xstate-statemachine/issues/283)); `xsm_migrate_fsm` does the migration below ([#310](https://github.com/basiltt/xstate-statemachine/issues/310)). See the [Django integration](../integration-django/) page.
 
 ## Feature table
 
@@ -92,17 +92,17 @@ On a database row, the [sqlalchemy_orders example](https://github.com/basiltt/xs
 
 ## Migration recipe
 
-The planned `xsm_migrate_fsm` management command ([#310](https://github.com/basiltt/xstate-statemachine/issues/310)) will do these steps mechanically. It is **not shipped yet**. Until then, the steps are:
+The `xsm_migrate_fsm` management command ([#310](https://github.com/basiltt/xstate-statemachine/issues/310)) does these steps mechanically and reversibly:
 
-1. **Extract the chart.** Each `@transition(source=..., target=...)` becomes an `on` entry of its `source` state, keyed by an event named after the method (`checkout` → `CHECKOUT`). `conditions=` become named guards, and `source="*"` becomes a transition on the root. Validate the result with `xsm validate order.json --plain`.
-2. **Keep the column.** Leave the `FSMField` in place during the move. A data migration writes each row's snapshot from its current state value.
-3. **Dual-read.** For one release, read the state from the snapshot and assert that it matches the old column, then drop the column.
-4. **Move side effects.** Code in the transition method body becomes an action, or an `invoke`d service if it can fail. `post_transition` receivers become plugin hooks or audit-log readers.
+1. **Extract the chart.** `python manage.py xsm_migrate_fsm shop.Order --field state --dry-run` reads the `@transition` decorators and prints XState JSON: each `@transition(source=..., target=...)` becomes an `on` entry of its `source` state, keyed by an event named after the method (`checkout` → `CHECKOUT`, with `meta.method` recording the original name); `conditions=` and `permission=` become named guards (implement a permission with `PermissionGuard`); `source="*"` / `"+"` fan out over the states. Review it, then `--write-chart shop/machines/order.json`.
+2. **Keep the column.** Add `statechart = StatechartField()` **beside** the `FSMField`, point `statechart_machine` at the chart, and run `makemigrations` / `migrate`.
+3. **Fill the snapshots.** `python manage.py xsm_migrate_fsm shop.Order --field state` writes each row's snapshot from its current state value with `from_state_ids()` (nothing runs: no entry actions, no services). It is batched (`--batch 1000`), resumable (only rows with an empty snapshot are touched) and idempotent (a second run changes nothing).
+4. **Dual-read for one release.** Mix `FSMDualWriteMixin` into the model: every `send()` also writes the old column, so code that still reads `order.state` keeps working. Then drop the `FSMField`.
 
+Code in the transition method body becomes an action, or an `invoke`d service if it can fail; `post_transition` receivers keep working through our own `post_transition` signal (use `on_commit=True` for external side effects).
 ## When to choose django-fsm instead
 
 - Your states are a **flat list** with a handful of transitions, and you want the smallest possible dependency.
-- You want Django-native pieces **today**: admin buttons (`fsm_admin`), signals, `has_transition_perm`. Our Django extra is not released yet.
 - Your team thinks in model methods, not in a chart, and nobody will open the machine in a visual editor.
 - You never need timers, nested or parallel states, or to share the machine with a frontend.
 

@@ -71,6 +71,10 @@ _LAZY = {
     "StatechartAdminMixin": ".admin",
     "TransitionLogInline": ".admin",
     "StateListFilter": ".admin",
+    # 🔁 #310 -- migrating from django-fsm
+    "extract_chart": ".fsm",
+    "migrate_rows": ".fsm",
+    "FSMDualWriteMixin": ".fsm",
 }
 
 __all__ = sorted(_LAZY)
