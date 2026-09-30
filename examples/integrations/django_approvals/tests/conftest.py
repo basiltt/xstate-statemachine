@@ -24,9 +24,8 @@ if EXAMPLE_DIR not in sys.path:
 
 from django.conf import settings as _settings  # noqa: E402
 
-if _settings.configured and os.environ.get("DJANGO_SETTINGS_MODULE") not in (
-    None,
-    "config.settings",
+if _settings.configured and getattr(_settings, "ROOT_URLCONF", None) != (
+    "config.urls"
 ):
     # 📝 Django configures ONE project per process. Collected in the same
     #    session as the library's test project (tests/contrib/django), this
