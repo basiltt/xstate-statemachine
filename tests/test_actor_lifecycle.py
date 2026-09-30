@@ -415,10 +415,13 @@ class TestReapingAsync(_Quiet):
                     break
                 await asyncio.sleep(0.005)
             gc.collect()
+            # 📝 `type(o)`, not `isinstance`: the heap also holds lazy
+            #    proxies (Django's `LazyObject` after the [django] tests)
+            #    whose `__class__` lookup evaluates the proxy and raises.
             return sum(
                 1
                 for o in gc.get_objects()
-                if isinstance(o, Interpreter)
+                if issubclass(type(o), Interpreter)
                 and o.machine.id == "slow"
                 and o.status != "stopped"
             )
