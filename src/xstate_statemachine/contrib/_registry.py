@@ -40,7 +40,7 @@ EXTRAS: Dict[str, Extra] = {
     "agents": Extra("agents", ("pydantic",), 287),
     "celery": Extra("celery", ("celery",), 292),
     "channels": Extra("channels", ("channels", "django"), 283),
-    "cloudevents": Extra("brokers", ("cloudevents",), 293),
+    "cloudevents": Extra("cloudevents", ("cloudevents",), 293),
     "django": Extra("django", ("django",), 280),
     "drf": Extra("drf", ("rest_framework", "django"), 283),
     "fastapi": Extra("fastapi", ("fastapi", "pydantic", "starlette"), 276),

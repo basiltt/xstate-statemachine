@@ -56,7 +56,7 @@ flowchart LR
 | Celery workers | — | planned, [#292](https://github.com/basiltt/xstate-statemachine/issues/292) — see [Integration extras](../integrations-extras/) |
 | HTTP | — | [Security](../security/) (principal, `Idempotency-Key`) |
 | Timers | core | [Persistence](../persistence/) (`DueTimerScanner`) → [Delayed transitions](../delayed-transitions/) |
-| Broker | — | planned, [#294](https://github.com/basiltt/xstate-statemachine/issues/294) — see [Integration extras](../integrations-extras/) |
+| Broker | core `eda` + `[cloudevents]` | envelope, consumer loop, outbox, DLQ, sagas: [Event-driven](../integration-eda/); broker adapters planned, [#294](https://github.com/basiltt/xstate-statemachine/issues/294) |
 | LLM agents | `[agents]` | [LLM agents](../integration-agents/) → [Security](../security/) (X0.13) |
 | Testing | `[testing]` | [pytest](../integration-testing/) — `xstate_machine` marker and `xsm_*` fixtures |
 | Observability | `[observability]` | [Observability](../integration-observability/) ([#273](https://github.com/basiltt/xstate-statemachine/issues/273)) → [Live inspector](../integration-inspector/) (core, [#274](https://github.com/basiltt/xstate-statemachine/issues/274)) |

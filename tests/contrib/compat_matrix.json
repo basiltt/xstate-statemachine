@@ -11,6 +11,16 @@
       "test_deps": ["httpx>=0.24"],
       "note": ""
     },
+    "cloudevents": {
+      "package": "cloudevents",
+      "declared": "1.10",
+      "oldest": "cloudevents==1.10.0",
+      "newest": "cloudevents>=1.10",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": [],
+      "test_deps": [],
+      "note": "2.x moved the 1.x HTTP API to cloudevents.v1.http; both layouts are supported."
+    },
     "fastapi": {
       "package": "fastapi",
       "declared": "0.100",

@@ -18,9 +18,9 @@
 #        transaction so inbox marks and audit rows commit with the save
 #        (X0.3) and `forget(key)` erases every table (X0.5).
 #
-# 📦 The transactional OUTBOX (#284 part 3) arrives with the EDA core
-#    (#293) -- it needs that group's `BrokerAdapter` / `OutboxStore`
-#    protocols and is deliberately not invented here.
+# 📦 The transactional OUTBOX (#284 part 3) is `SQLAlchemyOutboxStore`,
+#    implementing the EDA core's `OutboxStore` protocol (#293) and sharing
+#    this store's transaction.
 # -----------------------------------------------------------------------------
 """SQLAlchemy 2.x integration.
 
@@ -37,6 +37,7 @@ from ._schema import SCHEMA_VERSION, xsm_sqlalchemy_ddl  # noqa: E402
 from .inbox_log import SQLAlchemyInbox, SQLAlchemyLog  # noqa: E402
 from .mixin import StatechartMixin, send_with_retry  # noqa: E402
 from .model_store import ModelStore  # noqa: E402
+from .outbox import SQLAlchemyOutboxStore  # noqa: E402
 from .store import AsyncSQLAlchemyStore, SQLAlchemyStore  # noqa: E402
 from .types import StatechartType  # noqa: E402
 
@@ -46,6 +47,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "SQLAlchemyInbox",
     "SQLAlchemyLog",
+    "SQLAlchemyOutboxStore",
     "SQLAlchemyStore",
     "StatechartMixin",
     "StatechartType",

@@ -557,6 +557,16 @@ class TransitionDefinition:
         #: Selecting it consumes the event without changing state, which stops
         #: the upward walk from reaching an ancestor's handler.
         self.forbidden: bool = bool(config.get("__forbidden__", False))
+        #: #293: transition-level ``meta`` (already an accepted key under
+        #: ``strictConfig``). The EDA outbox reads ``meta.publish`` here.
+        raw_meta = config.get("meta")
+        if raw_meta is not None and not isinstance(raw_meta, dict):
+            raise InvalidConfigError(
+                f"Transition '{event}' on '{source.id}' has an invalid "
+                f"'meta' value of type '{type(raw_meta).__name__}'. "
+                f"Expected an object/dict."
+            )
+        self.meta: Dict[str, Any] = raw_meta or {}
 
     @property
     def guard(self) -> Optional[str]:

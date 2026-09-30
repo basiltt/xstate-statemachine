@@ -232,6 +232,9 @@ jobs:
             # 🧪 #268: the [testing] cell needs an async runner so the
             #    `xsm_ainterp` fixture is exercised, not skipped.
             testing) python -m pip install "pytest-asyncio>=0.24.0" ;;
+            # ☁️ #293: the [cloudevents] cell also runs the EDA core suite's
+            #    AsyncAPI validation against the vendored schema.
+            cloudevents) python -m pip install "jsonschema>=4" ;;
           esac
           python -m pip list
 
@@ -331,8 +334,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .
           # 🧷 mypy is a TEST dependency: tests/test_type_safety.py runs it
-          #    over representative user programs.
-          python -m pip install "pytest>=8.3.0" "mypy>=1.14" "pytest-socket>=0.7"
+          #    over representative user programs. jsonschema (#293) lets the
+          #    AsyncAPI test validate against the vendored schema offline.
+          python -m pip install "pytest>=8.3.0" "mypy>=1.14" "pytest-socket>=0.7" "jsonschema>=4"
 
       - name: 🧪 Run test suite
         # 🌐 X0.16 (#303): the default suite must never touch the network.
@@ -390,10 +394,10 @@ jobs:
           #    guide; placeholder extras stay out (nothing to measure).
           #    `[testing]`'s pytester suite also needs pytest-asyncio so
           #    the async fixture is measured rather than skipped.
-          python -m pip install -e ".[redis,pydantic,starlette,fastapi,litestar,sqlalchemy,flask,testing]" \
+          python -m pip install -e ".[redis,pydantic,starlette,fastapi,litestar,sqlalchemy,flask,testing,cloudevents]" \
             "fakeredis[lua]>=2.20" "httpx>=0.24" "openapi-spec-validator>=0.7" \
             "aiosqlite>=0.19" "alembic>=1.12" "quart>=0.19" "flask-wtf>=1.2" \
-            "pytest-asyncio>=0.24.0"
+            "pytest-asyncio>=0.24.0" "jsonschema>=4"
           # 🧷 mypy is a TEST dependency: tests/test_type_safety.py runs it
           #    over representative user programs.
           python -m pip install "pytest>=8.3.0" "mypy>=1.14" "pytest-cov>=6.0.0"

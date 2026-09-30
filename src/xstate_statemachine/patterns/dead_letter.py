@@ -22,10 +22,10 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import asdict, dataclass, field
+import uuid
+from dataclasses import asdict, dataclass, fields, replace
 from typing import (
     Any,
-    Callable,
     Dict,
     Iterable,
     List,
@@ -40,6 +40,7 @@ __all__ = [
     "DeadLetter",
     "DeadLetterPlugin",
     "DeadLetterStore",
+    "MemoryDeadLetterStore",
     "DEAD_LETTER_TAG",
 ]
 
@@ -62,6 +63,17 @@ class DeadLetter:
             "message"}``.
         snapshot: The redacted `get_persisted_snapshot()` dict.
         taken_at: Epoch seconds (`interpreter.wall_now()`).
+        id: Record id (#293). For a dead-lettered ENVELOPE it is the
+            envelope id, so a replay re-uses it and an inbox dedups a
+            double replay.
+        reason: ``"dead_letter_state"`` (chart-driven), ``"max_attempts"``
+            (poison, X0.8), ``"unknown_event"``, ``"corrupt"``, ...
+        envelope: The redacted envelope as a dict (EDA dead letters).
+        topic: The topic the envelope came from.
+        machine_hash: `structure_hash` of the machine that failed; replay
+            refuses a different machine without ``--force``.
+        machine_version: The chart's ``version`` at capture.
+        resolved_at: Epoch seconds a replay resolved it, else ``None``.
     """
 
     machine_id: str
@@ -71,6 +83,17 @@ class DeadLetter:
     errors: List[Dict[str, str]]
     snapshot: Dict[str, Any]
     taken_at: float
+    id: str = ""
+    reason: str = "dead_letter_state"
+    envelope: Optional[Dict[str, Any]] = None
+    topic: Optional[str] = None
+    machine_hash: Optional[str] = None
+    machine_version: Optional[str] = None
+    resolved_at: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        if not self.id:
+            object.__setattr__(self, "id", uuid.uuid4().hex)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -78,14 +101,20 @@ class DeadLetter:
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), default=str, sort_keys=True)
 
+    @classmethod
+    def from_dict(cls, raw: Dict[str, Any]) -> "DeadLetter":
+        names = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in raw.items() if k in names})
+
 
 class DeadLetterStore:
-    """Thread-safe in-memory sink; also the reference `DeadLetterSink` shape.
+    """Thread-safe in-memory sink; also the reference store shape.
 
-    A sink is anything callable as ``sink(dead_letter)``. This one keeps
-    the records in a list so tests and small services can inspect them;
-    #293 adds broker sinks and the ``xsm dlq`` CLI on top of the same
-    record.
+    A sink is anything callable as ``sink(dead_letter)``. Stores add the
+    operator surface the ``xsm dlq`` CLI uses (#293): ``get``, ``list``,
+    ``mark_resolved``, ``delete``, ``purge_older_than``. `MemoryDeadLetterStore`
+    is this class; `SQLiteDeadLetterStore` (``xstate_statemachine.eda``)
+    persists the same records.
     """
 
     def __init__(self) -> None:
@@ -93,8 +122,45 @@ class DeadLetterStore:
         self._lock = threading.Lock()
 
     def __call__(self, record: DeadLetter) -> None:
+        self.put(record)
+
+    def put(self, record: DeadLetter) -> None:
         with self._lock:
+            self._records = [r for r in self._records if r.id != record.id]
             self._records.append(record)
+
+    def get(self, record_id: str) -> Optional[DeadLetter]:
+        with self._lock:
+            for r in self._records:
+                if r.id == record_id:
+                    return r
+        return None
+
+    def list(
+        self, *, include_resolved: bool = False, limit: int = 1000
+    ) -> List[DeadLetter]:
+        with self._lock:
+            rows = [
+                r
+                for r in self._records
+                if include_resolved or r.resolved_at is None
+            ]
+        rows.sort(key=lambda r: (r.taken_at, r.id))
+        return rows[:limit]
+
+    def mark_resolved(self, record_id: str, when: float) -> bool:
+        with self._lock:
+            for n, r in enumerate(self._records):
+                if r.id == record_id:
+                    self._records[n] = replace(r, resolved_at=when)
+                    return True
+        return False
+
+    def delete(self, record_id: str) -> bool:
+        with self._lock:
+            before = len(self._records)
+            self._records = [r for r in self._records if r.id != record_id]
+            return len(self._records) != before
 
     def all(self) -> List[DeadLetter]:
         with self._lock:
@@ -119,13 +185,21 @@ class DeadLetterStore:
             self._records.clear()
 
 
+#: #293 name for the in-memory store (the `DeadLetterStore` protocol's
+#: reference implementation).
+MemoryDeadLetterStore = DeadLetterStore
+
+
 class DeadLetterPlugin(PluginBase[Any]):
     """Emit a `DeadLetter` when the machine enters a dead-letter state.
 
     Args:
         sink: ``callable(DeadLetter)`` -- a `DeadLetterStore`, a function
-            that publishes to a queue, ... Exceptions from the sink are
-            contained by the plugin system (`on_plugin_error`).
+            that publishes to a queue, `eda.SQLiteDeadLetterStore`,
+            `eda.BrokerDeadLetterSink` (publishes to ``<topic>.dlq``,
+            #293) ... An object with ``put()`` is accepted too.
+            Exceptions from the sink are contained by the plugin system
+            (`on_plugin_error`).
         state_ids: Explicit dead-letter state ids. When empty, any state
             tagged ``"dead-letter"`` counts.
         attempt_key: Context key holding the attempt counter.
@@ -138,14 +212,14 @@ class DeadLetterPlugin(PluginBase[Any]):
 
     def __init__(
         self,
-        sink: Callable[[DeadLetter], Any],
+        sink: Any,
         *,
         state_ids: Iterable[str] = (),
         attempt_key: str = "attempt",
         redact_keys: Tuple[str, ...] = DEFAULT_REDACT_KEYS,
         include_snapshot: bool = True,
     ) -> None:
-        self.sink = sink
+        self.sink = sink if callable(sink) else getattr(sink, "put")
         self.state_ids: Set[str] = set(state_ids)
         self.attempt_key = attempt_key
         self.redact_keys = redact_keys
@@ -270,4 +344,15 @@ class DeadLetterPlugin(PluginBase[Any]):
             errors=errors,
             snapshot=snapshot,
             taken_at=float(interpreter.wall_now()),
+            machine_hash=_machine_hash(interpreter.machine),
+            machine_version=getattr(interpreter.machine, "version", None),
         )
+
+
+def _machine_hash(machine: Any) -> Optional[str]:
+    from ..persistence.snapshot import structure_hash
+
+    try:
+        return structure_hash(machine)
+    except Exception:  # noqa: BLE001 - a record beats no record
+        return None

@@ -28,6 +28,7 @@ from sqlalchemy.exc import IntegrityError
 
 from ...persistence.idempotency import InboxEntry, _expiry
 from ...persistence.log import TransitionRecord
+from . import _ops
 from .store import SQLAlchemyStore
 
 __all__ = ["SQLAlchemyInbox", "SQLAlchemyLog"]
@@ -74,7 +75,7 @@ class SQLAlchemyInbox:
                 )
             )
             try:
-                with conn.begin_nested():
+                with _ops.nested(conn):
                     conn.execute(
                         insert(t).values(
                             scope=scope,

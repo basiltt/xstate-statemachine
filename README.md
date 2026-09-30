@@ -920,6 +920,7 @@ page with a **Guarantees** box and a **Threat model** box — CI refuses a page 
 | `[agents]` | LLM agents as statecharts: `TOOL_LOOP`, per-state tool allow-lists, budgets, durable human approval, `spawn_agent` | [LLM agents](https://basiltt.github.io/xstate-statemachine/guide/integration-agents/) |
 | `[observability]` | `OpenTelemetryPlugin` spans, `PrometheusPlugin` metrics, structlog / loguru context, Sentry breadcrumbs — `instrument_all()` in one line; label allow-list by default | [Observability](https://basiltt.github.io/xstate-statemachine/guide/integration-observability/) |
 | *(core)* | Live inspector: `xsm inspect --live` streams any machine to the Stately Inspector (`@statelyai/inspect` protocol); `xsm sim --record` / `xsm replay` | [Live inspector](https://basiltt.github.io/xstate-statemachine/guide/integration-inspector/) |
+| *(core)* + `[cloudevents]` | Event-driven core: CloudEvents `Envelope`, `InboundDispatcher` (dedup, per-subject order, poison → DLQ), transactional outbox from `meta.publish`, `xsm dlq` safe replay, `SagaBuilder`, `ChoreographyRouter`, `xsm asyncapi`; the extra adds CloudEvents SDK / HTTP interop | [Event-driven](https://basiltt.github.io/xstate-statemachine/guide/integration-eda/) |
 
 <!-- doc-fragment -->
 ```python

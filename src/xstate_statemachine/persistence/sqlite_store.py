@@ -157,7 +157,29 @@ class SQLiteStore(BaseStore):
         conn.execute(f"PRAGMA busy_timeout = {int(self.busy_timeout * 1000)}")
         conn.execute("PRAGMA foreign_keys = ON")
         if not self._memory:
-            conn.execute(f"PRAGMA journal_mode = {self.journal_mode}")
+            # 📝 `journal_mode` is PERSISTENT in the file, and changing it
+            #    needs an exclusive lock -- so a second handle opening a
+            #    database another connection is reading (a CLI against a
+            #    live store, a second process) failed here with `database
+            #    is locked` (seen on the Linux runners, #293's DLQ tests).
+            #    Only switch when the file is not already in the requested
+            #    mode, and if that switch is refused by a lock, keep the
+            #    mode the file already has rather than fail to open.
+            current = str(conn.execute("PRAGMA journal_mode").fetchone()[0])
+            if current.upper() != self.journal_mode:
+                try:
+                    conn.execute(f"PRAGMA journal_mode = {self.journal_mode}")
+                except sqlite3.OperationalError as exc:
+                    if not _is_locked_error(exc):
+                        raise
+                    warnings.warn(
+                        f"SQLiteStore({self.path}): could not switch "
+                        f"journal_mode {current} -> {self.journal_mode} "
+                        "(database is locked by another connection); "
+                        f"continuing with {current}.",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
             conn.execute("PRAGMA synchronous = NORMAL")
         return conn
 

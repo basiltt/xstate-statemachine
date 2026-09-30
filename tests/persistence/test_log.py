@@ -164,7 +164,11 @@ def machine():
 
 class TestPluginSync:
     def test_records_transitions_and_non_transitions(self, log: Any) -> None:
-        i = SyncInterpreter(machine()).use(TransitionLogPlugin(log)).start()
+        i = (
+            SyncInterpreter(machine(), clock=SimulatedClock())
+            .use(TransitionLogPlugin(log))
+            .start()
+        )
         i.send("NOPE")  # denied: declared in draft, guard says no
         i.send("SUBMIT", token="s3cret", note="hi")
         i.send("WHATEVER")  # unhandled (not declared; default onUnhandled)
@@ -193,7 +197,7 @@ class TestPluginSync:
 
     def test_include_non_transitions_false(self, log: Any) -> None:
         i = (
-            SyncInterpreter(machine())
+            SyncInterpreter(machine(), clock=SimulatedClock())
             .use(TransitionLogPlugin(log, include_non_transitions=False))
             .start()
         )
@@ -219,7 +223,15 @@ class TestPluginSync:
         assert rows[-1].to_states == ("appr.expired",)
 
     def test_audit_fields_and_correlation(self, log: Any) -> None:
-        i = SyncInterpreter(machine()).use(AuditPlugin(log)).start()
+        # 🕰️ SimulatedClock: `review` has `after: 1000`. On a RealClock a
+        #    slow runner (Windows CI) let that timer mature before REJECT
+        #    was drained, so record `b` was the engine's `after` event --
+        #    no `actor` -- and the assertion flipped (#356).
+        i = (
+            SyncInterpreter(machine(), clock=SimulatedClock())
+            .use(AuditPlugin(log))
+            .start()
+        )
         i.send(
             "SUBMIT",
             actor="basil",
@@ -244,7 +256,7 @@ class TestPluginSync:
 
     def test_custom_audit_keys(self, log: Any) -> None:
         i = (
-            SyncInterpreter(machine())
+            SyncInterpreter(machine(), clock=SimulatedClock())
             .use(AuditPlugin(log, actor_key="user", reason_key="why"))
             .start()
         )
@@ -255,7 +267,7 @@ class TestPluginSync:
 
     def test_duplicate_disposition_with_idempotency(self, log: Any) -> None:
         i = (
-            SyncInterpreter(machine())
+            SyncInterpreter(machine(), clock=SimulatedClock())
             .use(IdempotencyPlugin(MemoryInbox(), principal=lambda e: "p"))
             .use(TransitionLogPlugin(log))
             .start()
@@ -271,7 +283,11 @@ class TestPluginSync:
 class TestPluginAsync:
     def test_parity(self, log: Any) -> None:
         async def go() -> List[TransitionRecord]:
-            i = await Interpreter(machine()).use(AuditPlugin(log)).start()
+            i = (
+                await Interpreter(machine(), clock=SimulatedClock())
+                .use(AuditPlugin(log))
+                .start()
+            )
             await i.send("NOPE", wait=True)
             await i.send("SUBMIT", wait=True, actor="a")
             await i.send("APPROVE", wait=True, actor="b", reason="ok")

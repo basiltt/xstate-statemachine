@@ -36,6 +36,7 @@
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import inspect
 import time
 from typing import (
@@ -86,6 +87,79 @@ DEFAULT_RESTART_TIMERS: Any = "resume"
 DEFAULT_BACKOFF = RetryPolicy(
     max_attempts=6, base_ms=2.0, factor=2.0, max_ms=100.0, jitter="full"
 )
+
+#: 🔑 #293: the persisted() block the current thread / task is inside.
+#:    A `contextvars.ContextVar` is per-thread AND per-asyncio-task, so a
+#:    plugin shared by concurrent blocks (the dispatcher runs subjects on
+#:    worker threads; `apersisted` blocks interleave on one loop) can key
+#:    its post-save buffer by the block that produced it. ``None`` outside
+#:    any block.
+current_session: "contextvars.ContextVar[Optional[object]]" = (
+    contextvars.ContextVar("xsm_persisted_session", default=None)
+)
+#: Callbacks to run once the OUTERMOST persisted() scope -- including the
+#: `PessimisticLock` transaction -- has exited cleanly (see `after_commit`).
+_post_commit: "contextvars.ContextVar[Optional[List[Callable[[], Any]]]]" = (
+    contextvars.ContextVar("xsm_post_commit", default=None)
+)
+
+
+def after_commit(fn: Callable[[], Any]) -> None:
+    """Run *fn* after the enclosing persisted() block has committed.
+
+    For non-transactional side effects (a direct broker publish) that must
+    not happen for a state a rollback discards. Outside any block, *fn*
+    runs immediately. Dropped if the block raises.
+    """
+    pending = _post_commit.get()
+    if pending is None:
+        fn()
+    else:
+        pending.append(fn)
+
+
+@contextlib.contextmanager
+def _commit_scope() -> Iterator[None]:
+    """Collect `after_commit` callbacks; run them on clean exit only.
+    Nested scopes defer to the outermost."""
+    if _post_commit.get() is not None:
+        yield
+        return
+    pending: List[Callable[[], Any]] = []
+    token = _post_commit.set(pending)
+    try:
+        yield
+    except BaseException:
+        _post_commit.reset(token)
+        raise
+    _post_commit.reset(token)
+    for fn in pending:
+        fn()
+
+
+@contextlib.asynccontextmanager
+async def _commit_scope_async() -> AsyncIterator[None]:
+    """`_commit_scope` for ``async with`` (the lock context is async)."""
+    with _commit_scope():
+        yield
+
+
+@contextlib.contextmanager
+def _session(markers: List[Any]) -> Iterator[object]:
+    """Enter a persisted() block: a fresh session token, and
+    ``buffer_marks`` on for its markers -- restored on exit so a plugin
+    also used OUTSIDE persisted() goes back to writing immediately."""
+    token_obj = object()
+    token = current_session.set(token_obj)
+    previous = [(m, getattr(m, "buffer_marks", False)) for m in markers]
+    for m in markers:
+        m.buffer_marks = True
+    try:
+        yield token_obj
+    finally:
+        for m, was in previous:
+            m.buffer_marks = was
+        current_session.reset(token)
 
 
 @runtime_checkable
@@ -163,20 +237,19 @@ def _cycle(
         restore_kwargs or {},
     )
     markers = _mark_plugins(plugins)
-    for m in markers:
-        m.buffer_marks = True
     interp.store_key = key  # #261: the instance identity for scoped plugins
-    interp.start()
-    try:
-        result = fn(interp)
-        _save_with_marks(store, key, interp, expected(version), markers)
-        return result
-    except BaseException:
-        for m in markers:
-            m.discard_marks()
-        raise
-    finally:
-        interp.stop()
+    with _session(markers):
+        interp.start()
+        try:
+            result = fn(interp)
+            _save_with_marks(store, key, interp, expected(version), markers)
+            return result
+        except BaseException:
+            for m in markers:
+                m.discard_marks()
+            raise
+        finally:
+            interp.stop()
 
 
 class OptimisticLock:
@@ -244,19 +317,20 @@ class OptimisticLock:
         while True:
             attempt += 1
             try:
-                return _cycle(
-                    store,
-                    key,
-                    machine,
-                    fn,
-                    self.fence,
-                    clock,
-                    plugins,
-                    create_if_missing,
-                    _restore_kwargs(
-                        migrator, on_version_mismatch, restart_timers
-                    ),
-                )
+                with _commit_scope():
+                    return _cycle(
+                        store,
+                        key,
+                        machine,
+                        fn,
+                        self.fence,
+                        clock,
+                        plugins,
+                        create_if_missing,
+                        _restore_kwargs(
+                            migrator, on_version_mismatch, restart_timers
+                        ),
+                    )
             except ConflictError as exc:
                 if attempt > self.retries:
                     exc.attempts = attempt  # type: ignore[attr-defined]
@@ -300,7 +374,7 @@ class PessimisticLock:
         on_version_mismatch: Optional[str] = None,
         restart_timers: Any = DEFAULT_RESTART_TIMERS,
     ) -> T:
-        with self.acquire(store, key):
+        with _commit_scope(), self.acquire(store, key):
             return _cycle(
                 store,
                 key,
@@ -343,25 +417,47 @@ class NoLock:
         on_version_mismatch: Optional[str] = None,
         restart_timers: Any = DEFAULT_RESTART_TIMERS,
     ) -> T:
-        return _cycle(
-            store,
-            key,
-            machine,
-            fn,
-            self.fence,
-            clock,
-            plugins,
-            create_if_missing,
-            _restore_kwargs(migrator, on_version_mismatch, restart_timers),
-        )
+        with _commit_scope():
+            return _cycle(
+                store,
+                key,
+                machine,
+                fn,
+                self.fence,
+                clock,
+                plugins,
+                create_if_missing,
+                _restore_kwargs(migrator, on_version_mismatch, restart_timers),
+            )
 
 
 _DEFAULT_LOCK = OptimisticLock()
 
 
 def _mark_plugins(plugins: Iterable[Any]) -> List[Any]:
-    """Plugins that buffer inbox marks (`IdempotencyPlugin`, #261)."""
-    return [p for p in plugins if callable(getattr(p, "flush_marks", None))]
+    """Plugins that buffer post-save writes (`IdempotencyPlugin` #261,
+    `OutboxPlugin` #293), ordered by ``flush_priority`` (lower first) so
+    the inbox mark -- which stops a committed event being redelivered --
+    is written before anything that may still fail."""
+    found = [p for p in plugins if callable(getattr(p, "flush_marks", None))]
+    return sorted(found, key=lambda p: getattr(p, "flush_priority", 0))
+
+
+def _flush_all(markers: List[Any]) -> None:
+    """Flush every marker even if one raises; re-raise the first error.
+
+    📝 A failing outbox flush must not stop the inbox mark: the snapshot
+    is already saved, so skipping the mark would make the dispatcher
+    retry a committed event."""
+    first: Optional[BaseException] = None
+    for m in markers:
+        try:
+            m.flush_marks()
+        except BaseException as exc:  # noqa: BLE001 - re-raised below
+            if first is None:
+                first = exc
+    if first is not None:
+        raise first
 
 
 def _save_with_marks(
@@ -384,8 +480,7 @@ def _save_with_marks(
         for m in markers:
             m.discard_marks()
         raise
-    for m in markers:
-        m.flush_marks()
+    _flush_all(markers)
     return version
 
 
@@ -421,7 +516,7 @@ def persisted(
     from ..sync_interpreter import SyncInterpreter
 
     strategy = lock if lock is not None else _DEFAULT_LOCK
-    with strategy.acquire(store, key):
+    with _commit_scope(), strategy.acquire(store, key):
         interp, version = _build(
             store,
             key,
@@ -434,23 +529,22 @@ def persisted(
             _restore_kwargs(migrator, on_version_mismatch, restart_timers),
         )
         markers = _mark_plugins(plugins)
-        for m in markers:
-            m.buffer_marks = True
         interp.store_key = key  # #261
-        interp.start()
-        try:
-            yield interp
-        except BaseException:
-            for m in markers:
-                m.discard_marks()
-            interp.stop()
-            raise
-        try:
-            _save_with_marks(
-                store, key, interp, strategy.fence(version), markers
-            )
-        finally:
-            interp.stop()
+        with _session(markers):
+            interp.start()
+            try:
+                yield interp
+            except BaseException:
+                for m in markers:
+                    m.discard_marks()
+                interp.stop()
+                raise
+            try:
+                _save_with_marks(
+                    store, key, interp, strategy.fence(version), markers
+                )
+            finally:
+                interp.stop()
 
 
 @contextlib.asynccontextmanager
@@ -486,7 +580,7 @@ async def apersisted(
         return contextlib.nullcontext()
 
     lock_cm = await _hold()
-    async with _maybe_async(lock_cm):
+    async with _commit_scope_async(), _maybe_async(lock_cm):
         record = await astore.load(key)
         if record is None:
             if not create_if_missing:
@@ -509,36 +603,34 @@ async def apersisted(
             )
             version = record.version
         markers = _mark_plugins(plugins)
-        for m in markers:
-            m.buffer_marks = True
         interp.store_key = key  # #261
-        await interp.start()
-        try:
-            yield interp
-        except BaseException:
-            for m in markers:
-                m.discard_marks()
-            await interp.stop()
-            raise
-        try:
-            snapshot = interp.get_snapshot()
-            deadlines = tuple(interp._persist_deadlines())
+        with _session(markers):
+            await interp.start()
             try:
-                await astore.save(
-                    key,
-                    snapshot,
-                    expected_version=strategy.fence(version),
-                    machine_version=machine.version or "",
-                    deadlines=deadlines,
-                )
+                yield interp
             except BaseException:
                 for m in markers:
                     m.discard_marks()
+                await interp.stop()
                 raise
-            for m in markers:
-                m.flush_marks()
-        finally:
-            await interp.stop()
+            try:
+                snapshot = interp.get_snapshot()
+                deadlines = tuple(interp._persist_deadlines())
+                try:
+                    await astore.save(
+                        key,
+                        snapshot,
+                        expected_version=strategy.fence(version),
+                        machine_version=machine.version or "",
+                        deadlines=deadlines,
+                    )
+                except BaseException:
+                    for m in markers:
+                        m.discard_marks()
+                    raise
+                _flush_all(markers)
+            finally:
+                await interp.stop()
 
 
 def _is_async_store(store: Any) -> bool:

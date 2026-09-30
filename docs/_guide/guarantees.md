@@ -15,14 +15,15 @@ For one event handled inside `persisted()` (or by an integration built on it):
 flowchart LR
     A["1 · actions run<br/><small>side effects happen here</small>"] --> B["2 · snapshot saved<br/><small>save(expected_version)</small>"]
     B --> C["3 · inbox marked<br/><small>same transaction when shared</small>"]
-    C --> D["4 · outbox publish<br/><small>(later phase)</small>"]
-    D --> E["5 · broker ack<br/><small>(later phase)</small>"]
+    C --> D["4 · outbox rows written<br/><small>same transaction when shared</small>"]
+    D --> E["5 · broker ack<br/><small>after the commit</small>"]
 ```
 
 1. **Actions run.** Every side effect an action performs happens *before* anything is persisted.
 2. **The snapshot is saved** with `expected_version`, so a concurrent writer produces `ConflictError` and nothing is written (`tests/persistence/test_store_contract.py::TestContract::test_expected_version_conflict`).
 3. **The inbox is marked** with the real `Receipt`. When the inbox shares the store's backend (`SQLiteInbox(store)` on the same `SQLiteStore`, or `RedisInbox`/`RedisStore` on one prefix), the mark is written **inside the same transaction** as the save under `PessimisticLock`, so they commit or roll back together (`test_idempotency.py::TestWithPersisted::test_shared_backend_commits_mark_in_lock_transaction`). Otherwise: save, then mark.
-4. **Outbox publish** and 5. **broker ack** belong to the event-driven phase and slot in here unchanged.
+4. **Outbox rows are written** (shipped, [#293](../integration-eda/#outbox)). `OutboxPlugin` with an `OutboxStore` that shares the store (`SQLiteOutboxStore(store)`, `SQLAlchemyOutboxStore(store)`) writes its rows right after the save, **inside the same transaction** under `PessimisticLock`, so a rollback drops them with the snapshot (`tests/eda/test_outbox.py::TestSQLiteTransactional::test_forced_failure_after_the_write_leaves_no_row`, `tests/contrib/sqlalchemy/test_sqlalchemy_outbox.py::TestSQLAlchemyOutbox::test_forced_rollback_leaves_no_row`). `OutboxRelay` publishes committed rows afterwards: at-least-once, never exactly-once.
+5. **The broker delivery is acked** (shipped, [#293](../integration-eda/#inbound-dispatcher)). `InboundDispatcher` acks only after steps 1–4 committed; a failure requeues, and after `max_attempts` the envelope is dead-lettered and acked, so a poison message cannot loop (`tests/eda/test_dispatcher.py::TestPoison`).
 
 ## What is exactly-once and what is not
 

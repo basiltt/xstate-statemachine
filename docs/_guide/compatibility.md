@@ -27,6 +27,7 @@ tested version as the practical minimum.
 | Extra | Framework | Declared | Oldest tested | Newest tested | Also pinned in the oldest cell |
 |:--|:--|:--|:--|:--|:--|
 | `[agents]` | pydantic | `>=2.5` | **2.5.0** (Python 3.9) | latest `pydantic>=2.5` (Python 3.13) | -- |
+| `[cloudevents]` | cloudevents | `>=1.10` | **1.10.0** (see notes) (Python 3.9) | latest `cloudevents>=1.10` (Python 3.13) | -- |
 | `[fastapi]` | fastapi | `>=0.100` | **0.106.0** (see notes) (Python 3.9) | latest `fastapi>=0.100` (Python 3.13) | `pydantic==2.5.0`, `httpx==0.27.2` |
 | `[flask]` | flask | `>=2.3` | **2.3.0** (see notes) (Python 3.9) | latest `flask>=2.3` (Python 3.13) | `werkzeug==2.3.0` |
 | `[litestar]` | litestar | `>=2.0` | **2.14.0** (see notes) (Python 3.9) | latest `litestar>=2.0` (Python 3.13) | `sniffio>=1.3` |
@@ -39,6 +40,7 @@ tested version as the practical minimum.
 
 ### Notes
 
+- **`[cloudevents]`**: 2.x moved the 1.x HTTP API to cloudevents.v1.http; both layouts are supported.
 - **`[fastapi]`**: 0.100.0 and 0.103.2 fail on Python 3.9: a ConflictError raised while persisting after the response started is not mapped to 409 ("response already started"). 0.106.0 changed yield-dependency exit semantics and passes.
 - **`[flask]`**: The Quart shim needs quart>=0.19, which requires Werkzeug 3, so it is exercised in the newest cell and the regular [flask] CI cell.
 - **`[litestar]`**: 2.0.x does not import on Python 3.9 (PEP 604 annotations evaluated at runtime); 2.1-2.13 emit OpenAPI whose per-event path parameters do not validate. 2.14.0 imports sniffio without declaring it, hence the companion pin.
