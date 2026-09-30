@@ -99,6 +99,12 @@ class _Fixture(unittest.TestCase):
             dead_letters=self.dlq,
         ).handle(self.env, topic="in")
         state.close()
+        # 🔒 The CLI opens its OWN connection to dlq.db. The seeding store's
+        #    connection stays open only for assertions and is closed before
+        #    every CLI call (`_run` below), because the Linux runners
+        #    reported `database is locked` when both were open at once.
+        self.dlq.close()
+        self.dlq = SQLiteDeadLetterStore(self.dir / "dlq.db")
         # logic module for the fixed chart
         (self.dir / "counter_logic.py").write_text(
             "def add(i, ctx, e, a):\n    ctx['n'] += 1\n", encoding="utf-8"

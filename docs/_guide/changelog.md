@@ -854,6 +854,13 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ### Fixed
 
+- **Opening a second `SQLiteStore` handle on a file another connection was
+  reading failed with `database is locked`.** `PRAGMA journal_mode = WAL`
+  is persistent in the file but issuing it needs an exclusive lock, so a
+  CLI (`xsm dlq`) or a second process opening a live store could not even
+  connect. The mode is now switched only when it differs from the file's,
+  and a switch refused by a lock keeps the file's mode with a
+  `RuntimeWarning` instead of failing to open.
 - **One `after` delay with several guarded candidates armed one timer per
   candidate.** All candidates under `"1000": [...]` share the event
   `after.1000.<state>` and guard selection happens when it is processed,
@@ -981,6 +988,13 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ### Fixed
 
+- **Opening a second `SQLiteStore` handle on a file another connection was
+  reading failed with `database is locked`.** `PRAGMA journal_mode = WAL`
+  is persistent in the file but issuing it needs an exclusive lock, so a
+  CLI (`xsm dlq`) or a second process opening a live store could not even
+  connect. The mode is now switched only when it differs from the file's,
+  and a switch refused by a lock keeps the file's mode with a
+  `RuntimeWarning` instead of failing to open.
 - **One `after` delay with several guarded candidates armed one timer per
   candidate.** All candidates under `"1000": [...]` share the event
   `after.1000.<state>` and guard selection happens when it is processed,

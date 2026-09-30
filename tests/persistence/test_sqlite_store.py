@@ -58,6 +58,37 @@ class TestSchema:
         assert s2.load("k").version == 1
         s2.close()
 
+    def test_second_handle_opens_while_a_reader_holds_a_transaction(
+        self, tmp_path: Any
+    ) -> None:
+        """Opening a second store on a file another connection is reading
+        must not fail. `PRAGMA journal_mode = WAL` on an already-WAL file
+        is a no-op, but issuing it needs an exclusive lock -- the Linux
+        runners hit `database is locked` in the `xsm dlq` CLI tests when
+        the seeding store still held a read transaction (#293). Now the
+        mode is only switched when it differs, and a refused switch keeps
+        the file's mode with a warning instead of failing to open."""
+        path = tmp_path / "s.db"
+        SQLiteStore(path).save("k", SNAP)
+        reader = sqlite3.connect(str(path), isolation_level=None)
+        reader.execute("BEGIN")
+        reader.execute("SELECT count(*) FROM statecharts").fetchone()
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")  # no warning on the fast path
+                s2 = SQLiteStore(path)  # same mode: no PRAGMA write at all
+                assert s2.load("k").version == 1
+                s2.close()
+            # A DIFFERENT mode cannot be switched under the reader's lock:
+            # open anyway, warn, keep the file's mode.
+            with pytest.warns(RuntimeWarning, match="could not switch"):
+                s3 = SQLiteStore(path, journal_mode="DELETE", busy_timeout=0.2)
+            assert s3.load("k").version == 1
+            s3.close()
+        finally:
+            reader.execute("COMMIT")
+            reader.close()
+
     def test_newer_schema_refused(self, tmp_path: Any) -> None:
         SQLiteStore(tmp_path / "s.db").close()
         conn = sqlite3.connect(str(tmp_path / "s.db"))
