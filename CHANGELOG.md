@@ -1009,6 +1009,18 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   the typed template emitted `def and(...)`, a SyntaxError. Both fixed;
   generated names for keyword guards are now `and_` / `not_` (#269).
 
+### Tests
+
+- **The `raise(delay=)` / `after` heartbeat parity tests no longer depend
+  on wall time.** `TestDelayedSelfSendIsATimer` ran a 30 ms heartbeat for
+  1.0 s of real time on a `RealClock` and asserted a tolerance band on the
+  beat counts, which flaked once on a box running two other suites. Both
+  engines now run on a `SimulatedClock` advanced in 10 ms steps, so the
+  counts are exact (34 / 11 / 5 beats for 30 / 100 / 250 ms over 1000 ms)
+  and the two idioms are asserted **equal**, not close. A sync-engine
+  parity case was added on the same clock. The `RunawayChainError` case is
+  unchanged -- it never depended on time.
+
 ## [0.10.5] - 2026-09-25
 
 ### Fixed
