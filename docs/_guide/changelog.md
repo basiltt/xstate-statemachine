@@ -15,6 +15,48 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
+### Brokers & Celery (Phase F) -- #294, #292
+
+- **Broker adapters (#294), `xstate_statemachine.contrib.brokers`.**
+  `RedisStreamsBroker` / `SyncRedisStreamsBroker` (`[redis]`: consumer
+  groups, `XACK`, `XAUTOCLAIM` of a dead consumer's pending entries after
+  `min_idle_ms`, optional subject-hashed shards), `KafkaBroker`
+  (`[kafka]`, aiokafka: key = subject, commits only the contiguous acked
+  prefix), `RabbitMQBroker` (`[rabbitmq]`, aio-pika: durable queues,
+  persistent messages, optional consistent-hash exchange routed on
+  subject), `NatsBroker` (`[nats]`, JetStream: `<topic>.<subject>`,
+  `Nats-Msg-Id` dedup) and `SqsBroker` / `SyncSqsBroker` (`[sqs]`,
+  boto3: FIFO `MessageGroupId` = subject, `MessageDeduplicationId` =
+  envelope id, `extend_visibility`). One shared core gives every adapter
+  local requeue-to-head, settle-once, broker redelivery counts stamped as
+  envelope attempts (so poison reaches the DLQ across restarts, X0.8),
+  the size cap before parsing (X0.4), undecodable messages dropped never
+  looped, and `healthy` / `on_disconnect` / `on_reconnect`. Every adapter
+  passes `AsyncBrokerContract` in CI (fakeredis, moto, in-memory client
+  stand-ins) and, opt-in (`XSM_CONTAINERS=1`, manual `live-brokers` CI
+  job), on real brokers in testcontainers with 1,000 envelopes / 10
+  subjects and a broker restart mid-consume. Registered under the
+  `xstate_statemachine.brokers` entry-point group (`xsm plugins`).
+  Pins: `aiokafka>=0.10`, `aio-pika>=9`, `nats-py>=2`, `boto3>=1.28`;
+  `[eda]` umbrella filled. Guide: Brokers.
+- **`[celery]` (#292), `xstate_statemachine.contrib.celery`.**
+  `celery_service(task, *, args_from, timeout_s, queue)` makes a Celery
+  task an `invoke` service: `onDone` from the result, `onError` on
+  failure or timeout, `revoke()` on state exit (best effort). Completion
+  is delivered through the engine's own actor-logic path (a forged
+  `done.invoke` is still refused): live through a result-backend watcher,
+  durably through `deliver_result` from `task_success` / `task_failure`
+  signal handlers (`connect_signals`) or `poll_results`. Task headers are
+  trusted only after the persisted instance confirms the invocation is
+  still active with that task id; stale completions are ignored and
+  reported to `on_event_dropped`. `@statechart_task(app, store, machine)`
+  runs the `persisted()` act-loop on a worker and retries `ConflictError`
+  through `autoretry_for`; it refuses a non-JSON / pickle-accepting app.
+  `DurableTimerScheduler` runs `DueTimerScanner.run_once` from Celery
+  Beat (`xsm_deadlines_every`) plus `eta` jobs that carry the
+  state-entry generation (X0.9); `outbox_relay_task` drains the outbox.
+  Pin: `celery>=5.3`. Guide: Celery.
+
 ### Event-driven architecture (Phase F core) -- #272, #293, #295
 
 - **`xstate_statemachine.eda` (#272, #293).** A zero-dependency core

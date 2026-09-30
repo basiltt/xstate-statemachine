@@ -1,6 +1,6 @@
 ---
 title: "Integration extras"
-description: "Every optional pip extra — pydantic, redis, starlette, fastapi, litestar, agents, observability, cloudevents, and the planned django, flask, sqlalchemy, celery, brokers and testing — with its status and issue."
+description: "Every optional pip extra — pydantic, redis, starlette, fastapi, litestar, agents, observability, cloudevents, celery, the brokers (redis streams, kafka, rabbitmq, nats, sqs), and the planned django, flask, sqlalchemy and testing — with its status and issue."
 ---
 
 # Integration extras
@@ -45,9 +45,9 @@ except MissingExtraError as exc:
 | `django` | `StatechartField`, model mixin with `select_for_update`, signals, permission guards, admin transition buttons, management commands | planned — [#280](https://github.com/basiltt/xstate-statemachine/issues/280) |
 | `drf` | ViewSet mixin with an `@action` per event, serializer field | planned — [#283](https://github.com/basiltt/xstate-statemachine/issues/283) |
 | `channels` | WebSocket consumer broadcasting transitions | planned — [#283](https://github.com/basiltt/xstate-statemachine/issues/283) |
-| `celery` | A Celery task as an `invoke` service; Celery Beat as the durable `after` scheduler | planned — [#292](https://github.com/basiltt/xstate-statemachine/issues/292) |
+| `celery` | A Celery task as an `invoke` service; `@statechart_task` worker act-loop; Celery Beat as the durable `after` scheduler | ✅ shipped — [Celery](../integration-celery/) ([#292](https://github.com/basiltt/xstate-statemachine/issues/292)) |
 | `cloudevents` | CloudEvents SDK objects and HTTP binary / structured interop for the core `Envelope` (the envelope, dispatcher, outbox, dead letters, sagas and AsyncAPI are core and need no extra) | **shipped** — [guide](../integration-eda/) · [#293](https://github.com/basiltt/xstate-statemachine/issues/293) |
-| `kafka` · `rabbitmq` · `nats` · `sqs` | Broker adapters: consume envelopes into machines, publish tagged transitions | planned — [#294](https://github.com/basiltt/xstate-statemachine/issues/294) |
+| `kafka` · `rabbitmq` · `nats` · `sqs` | Broker adapters (plus Redis Streams in `[redis]`): consume envelopes into machines, publish tagged transitions | ✅ shipped — [Brokers](../integration-brokers/) ([#294](https://github.com/basiltt/xstate-statemachine/issues/294)) |
 | `agents` | `TOOL_LOOP` chart, tool registry with per-state allow-lists enforced in `run_tool`, budgets, timeouts, durable human-in-the-loop, structured output, OpenAI/Anthropic adapters (soft imports), `spawn_agent` + `BudgetPlugin` multi-agent recipes | **shipped** — [guide](../integration-agents/) · [#287](https://github.com/basiltt/xstate-statemachine/issues/287) · [#290](https://github.com/basiltt/xstate-statemachine/issues/290) |
 | `web` · `eda` · `all` | Umbrella extras | — |
 

@@ -27,14 +27,19 @@ tested version as the practical minimum.
 | Extra | Framework | Declared | Oldest tested | Newest tested | Also pinned in the oldest cell |
 |:--|:--|:--|:--|:--|:--|
 | `[agents]` | pydantic | `>=2.5` | **2.5.0** (Python 3.9) | latest `pydantic>=2.5` (Python 3.13) | -- |
+| `[celery]` | celery | `>=5.3` | **5.3.0** (Python 3.9) | latest `celery>=5.3` (Python 3.13) | -- |
 | `[cloudevents]` | cloudevents | `>=1.10` | **1.10.0** (see notes) (Python 3.9) | latest `cloudevents>=1.10` (Python 3.13) | -- |
 | `[fastapi]` | fastapi | `>=0.100` | **0.106.0** (see notes) (Python 3.9) | latest `fastapi>=0.100` (Python 3.13) | `pydantic==2.5.0`, `httpx==0.27.2` |
 | `[flask]` | flask | `>=2.3` | **2.3.0** (see notes) (Python 3.9) | latest `flask>=2.3` (Python 3.13) | `werkzeug==2.3.0` |
+| `[kafka]` | aiokafka | `>=0.10` | **0.10.0** (Python 3.9) | latest `aiokafka>=0.10` (Python 3.13) | -- |
 | `[litestar]` | litestar | `>=2.0` | **2.14.0** (see notes) (Python 3.9) | latest `litestar>=2.0` (Python 3.13) | `sniffio>=1.3` |
+| `[nats]` | nats-py | `>=2` | **2.0.0** (see notes) (Python 3.9) | latest `nats-py>=2` (Python 3.13) | -- |
 | `[observability]` | opentelemetry-api | `>=1.20` | **1.20.0** (see notes) (Python 3.9) | latest `opentelemetry-api>=1.20` (Python 3.13) | `prometheus-client==0.17.0`, `opentelemetry-sdk==1.20.0` |
 | `[pydantic]` | pydantic | `>=2.5` | **2.5.0** (Python 3.9) | latest `pydantic>=2.5` (Python 3.13) | -- |
+| `[rabbitmq]` | aio-pika | `>=9` | **9.0.0** (Python 3.9) | latest `aio-pika>=9` (Python 3.13) | -- |
 | `[redis]` | redis | `>=5` | **5.0.0** (see notes) (Python 3.9) | latest `redis>=5` (Python 3.13) | `pytest-asyncio==0.23.8` |
 | `[sqlalchemy]` | sqlalchemy | `>=2.0` | **2.0.2** (see notes) (Python 3.9) | latest `sqlalchemy[asyncio]>=2.0` (Python 3.13) | `greenlet==3.0.3` |
+| `[sqs]` | boto3 | `>=1.28` | **1.28.0** (Python 3.9) | latest `boto3>=1.28` (Python 3.13) | -- |
 | `[starlette]` | starlette | `>=0.27` | **0.45.3** (see notes) (Python 3.9) | latest `starlette>=0.27` (Python 3.13) | `httpx==0.27.2` |
 | `[testing]` | pytest | `>=8` | **8.0.0** (Python 3.9) | latest `pytest>=8` (Python 3.13) | `hypothesis==6.100.0`, `pytest-asyncio==0.23.8` |
 
@@ -44,6 +49,7 @@ tested version as the practical minimum.
 - **`[fastapi]`**: 0.100.0 and 0.103.2 fail on Python 3.9: a ConflictError raised while persisting after the response started is not mapped to 409 ("response already started"). 0.106.0 changed yield-dependency exit semantics and passes.
 - **`[flask]`**: The Quart shim needs quart>=0.19, which requires Werkzeug 3, so it is exercised in the newest cell and the regular [flask] CI cell.
 - **`[litestar]`**: 2.0.x does not import on Python 3.9 (PEP 604 annotations evaluated at runtime); 2.1-2.13 emit OpenAPI whose per-event path parameters do not validate. 2.14.0 imports sniffio without declaring it, hence the companion pin.
+- **`[nats]`**: JetStream only; 2.0.0 installs from sdist.
 - **`[observability]`**: structlog, loguru and sentry-sdk are soft imports (never pinned); the cells install their latest releases so those plugins are exercised. Floors proven locally on CPython 3.9.25: opentelemetry-api/-sdk 1.20.0 + prometheus-client 0.17.0.
 - **`[redis]`**: fakeredis's FakeAsyncRedis constructs an asyncio.Lock() outside a running loop under pytest-asyncio>=0.24 on Python 3.9 (RuntimeError: no current event loop); pytest-asyncio==0.23.8 keeps a loop running for fixture setup.
 - **`[sqlalchemy]`**: 2.0.0-2.0.1: the optimistic-lock version check does not raise ConflictError on a stale row.

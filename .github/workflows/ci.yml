@@ -194,6 +194,9 @@ jobs:
           # Oldest interpreter for the two heaviest surfaces.
           - { extra: django, os: ubuntu-latest, python-version: "3.9" }
           - { extra: fastapi, os: ubuntu-latest, python-version: "3.9" }
+          # 📡 #294 / #292: thread + asyncio heavy -- also on the oldest.
+          - { extra: celery, os: ubuntu-latest, python-version: "3.9" }
+          - { extra: kafka, os: ubuntu-latest, python-version: "3.9" }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -235,6 +238,9 @@ jobs:
             # ☁️ #293: the [cloudevents] cell also runs the EDA core suite's
             #    AsyncAPI validation against the vendored schema.
             cloudevents) python -m pip install "jsonschema>=4" ;;
+            # 📡 #294: brokers run the contract suite against fakes; SQS
+            #    against moto. The Redis Streams adapter is in [redis].
+            sqs) python -m pip install "moto[sqs]>=5" ;;
           esac
           python -m pip list
 
@@ -257,8 +263,42 @@ jobs:
           case "${{ matrix.extra }}" in
             fastapi|sqlalchemy|flask)
               targets="$targets tests/test_examples_integrations.py" ;;
+            # 📡 #294: the shared adapter core lives in tests/contrib/brokers.
+            redis|kafka|rabbitmq|nats|sqs)
+              targets="$targets tests/contrib/brokers" ;;
           esac
           pytest $targets -q --no-header --disable-socket --allow-hosts=127.0.0.1,::1
+
+  # ---------------------------------------------------------------------------
+  # 📡 Live brokers (#294) -- OPT-IN: manual dispatch only, never the default
+  #    matrix. testcontainers starts Redis, Redpanda, RabbitMQ, NATS and
+  #    LocalStack (images pinned by digest in the test file) and runs the
+  #    contract suite + 1,000-envelope / restart-mid-consume scenario.
+  # ---------------------------------------------------------------------------
+  live-brokers:
+    name: Live brokers (testcontainers)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: 📦 Install every broker extra + testcontainers
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[redis,kafka,rabbitmq,nats,sqs,celery]" "pytest>=8.3.0" "testcontainers>=4" "fakeredis[lua]>=2.20" "moto[sqs]>=5"
+
+      - name: 🧪 Contract + resume scenario on real brokers
+        env:
+          XSM_CONTAINERS: "1"
+          XSM_LIVE_BROKERS: "1"
+        run: pytest tests/contrib/brokers -m containers -q --no-header
 
   # ---------------------------------------------------------------------------
   # 🔒 Supply chain (X0.14, #303)
