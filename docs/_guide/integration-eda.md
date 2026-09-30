@@ -7,7 +7,7 @@ description: "CloudEvents envelopes, a consumer loop with dedup and per-subject 
 
 Event-driven services built on state machines keep re-writing the same plumbing: a message envelope, a consumer loop that loads the right instance and survives redelivery, an outbox so a published event and the state change it describes cannot disagree, a dead-letter queue that is safe to replay, and sagas with compensation. `xstate_statemachine.eda` ships that plumbing in **core, with zero dependencies**, and the chart itself declares what is published, so the AsyncAPI document of your service is generated from the same JSON that runs it.
 
-The real brokers (Kafka, RabbitMQ, NATS, SQS, Redis Streams) arrive with [#294](https://github.com/basiltt/xstate-statemachine/issues/294) and implement the `BrokerAdapter` protocol defined here. Until then, `FakeBrokerAdapter` lets you build and test the whole flow in-process.
+The real brokers (Redis Streams, Kafka, RabbitMQ, NATS JetStream and Amazon SQS) implement the `BrokerAdapter` protocol defined here. They are documented on [Brokers](../integration-brokers/), which includes a **choosing a broker** table. `FakeBrokerAdapter` lets you build and test the whole flow in-process with no broker at all. For Celery workers, Beat-driven `after` timers and an outbox relay task, see [Celery](../integration-celery/).
 
 ## Install
 

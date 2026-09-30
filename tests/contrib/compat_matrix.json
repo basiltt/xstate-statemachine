@@ -11,6 +11,16 @@
       "test_deps": ["httpx>=0.24"],
       "note": ""
     },
+    "celery": {
+      "package": "celery",
+      "declared": "5.3",
+      "oldest": "celery==5.3.0",
+      "newest": "celery>=5.3",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": [],
+      "test_deps": [],
+      "note": ""
+    },
     "cloudevents": {
       "package": "cloudevents",
       "declared": "1.10",
@@ -41,6 +51,16 @@
       "test_deps": ["flask-wtf>=1.2"],
       "note": "The Quart shim needs quart>=0.19, which requires Werkzeug 3, so it is exercised in the newest cell and the regular [flask] CI cell."
     },
+    "kafka": {
+      "package": "aiokafka",
+      "declared": "0.10",
+      "oldest": "aiokafka==0.10.0",
+      "newest": "aiokafka>=0.10",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": [],
+      "test_deps": [],
+      "note": ""
+    },
     "litestar": {
       "package": "litestar",
       "declared": "2.0",
@@ -50,6 +70,16 @@
       "extra_pins": ["sniffio>=1.3"],
       "test_deps": ["httpx>=0.24", "openapi-spec-validator>=0.7", "pydantic>=2.5"],
       "note": "2.0.x does not import on Python 3.9 (PEP 604 annotations evaluated at runtime); 2.1-2.13 emit OpenAPI whose per-event path parameters do not validate. 2.14.0 imports sniffio without declaring it, hence the companion pin."
+    },
+    "nats": {
+      "package": "nats-py",
+      "declared": "2",
+      "oldest": "nats-py==2.0.0",
+      "newest": "nats-py>=2",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": [],
+      "test_deps": [],
+      "note": "JetStream only; 2.0.0 installs from sdist."
     },
     "observability": {
       "package": "opentelemetry-api",
@@ -66,6 +96,16 @@
       "declared": "2.5",
       "oldest": "pydantic==2.5.0",
       "newest": "pydantic>=2.5",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": [],
+      "test_deps": [],
+      "note": ""
+    },
+    "rabbitmq": {
+      "package": "aio-pika",
+      "declared": "9",
+      "oldest": "aio-pika==9.0.0",
+      "newest": "aio-pika>=9",
       "python": {"oldest": "3.9", "newest": "3.13"},
       "extra_pins": [],
       "test_deps": [],
@@ -90,6 +130,16 @@
       "extra_pins": ["greenlet==3.0.3"],
       "test_deps": ["aiosqlite>=0.19", "alembic>=1.12"],
       "note": "2.0.0-2.0.1: the optimistic-lock version check does not raise ConflictError on a stale row."
+    },
+    "sqs": {
+      "package": "boto3",
+      "declared": "1.28",
+      "oldest": "boto3==1.28.0",
+      "newest": "boto3>=1.28",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": [],
+      "test_deps": ["moto[sqs]>=5"],
+      "note": ""
     },
     "starlette": {
       "package": "starlette",

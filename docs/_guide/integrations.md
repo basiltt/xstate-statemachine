@@ -33,7 +33,7 @@ flowchart LR
     Q3{Worker model?}
     Q3 -->|per request| ACT["create → act → persist → discard<br/>read: Guarantees"]
     Q3 -->|long-lived| RES["resident() / actors<br/>read: Starlette, Actors"]
-    Q3 -->|Celery workers| PL3["planned #292<br/>read: Integration extras"]
+    Q3 -->|Celery workers| PL3["[celery]<br/>read: Celery"]
     ACT --> Q4
     RES --> Q4
     Q4{Events in?}
@@ -53,7 +53,7 @@ flowchart LR
 | SQLAlchemy / Django ORM | — | planned, [#284](https://github.com/basiltt/xstate-statemachine/issues/284) / [#280](https://github.com/basiltt/xstate-statemachine/issues/280) — see [Integration extras](../integrations-extras/) |
 | Per request | — | [Guarantees](../guarantees/) → [Production characteristics](../production-characteristics/) |
 | Long-lived | — | [Starlette](../integration-starlette/) (`resident()`) → [Actors](../actors/) |
-| Celery workers | — | planned, [#292](https://github.com/basiltt/xstate-statemachine/issues/292) — see [Integration extras](../integrations-extras/) |
+| Celery workers | `[celery]` | [Celery](../integration-celery/) |
 | HTTP | — | [Security](../security/) (principal, `Idempotency-Key`) |
 | Timers | core | [Persistence](../persistence/) (`DueTimerScanner`) → [Delayed transitions](../delayed-transitions/) |
 | Broker | core `eda` + `[cloudevents]` | envelope, consumer loop, outbox, DLQ, sagas: [Event-driven](../integration-eda/); broker adapters planned, [#294](https://github.com/basiltt/xstate-statemachine/issues/294) |

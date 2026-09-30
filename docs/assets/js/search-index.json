@@ -332,6 +332,18 @@
     "url": "/guide/integration-eda/"
   },
   {
+    "description": "Broker adapters: Redis Streams, Kafka (aiokafka), RabbitMQ (aio-pika), NATS JetStream, Amazon SQS (boto3) -- at-least-once, per-subject order, redelivery counts as attempts, poison to DLQ, choosing a broker.",
+    "section": "Integrations",
+    "title": "Brokers",
+    "url": "/guide/integration-brokers/"
+  },
+  {
+    "description": "Celery: celery_service invoke bridge (onDone / onError / timeout / revoke), @statechart_task act-loop with ConflictError retry, Celery Beat DurableTimerScheduler, outbox relay task.",
+    "section": "Integrations",
+    "title": "Celery",
+    "url": "/guide/integration-celery/"
+  },
+  {
     "description": "Complete reference — create_machine, Interpreter, SyncInterpreter, MachineLogic, State, StateMachine, MachineBuilder, Event, exceptions.",
     "section": "Reference",
     "title": "API Reference",

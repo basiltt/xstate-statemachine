@@ -208,6 +208,8 @@ class TestIntegrationsSection(unittest.TestCase):
         "integration-observability",  # #273
         "integration-inspector",  # #274
         "integration-eda",  # #272, #293, #295
+        "integration-brokers",  # #294
+        "integration-celery",  # #292
     )
 
     def test_overview_page_exists_and_is_in_nav(self) -> None:

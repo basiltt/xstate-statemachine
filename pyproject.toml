@@ -86,16 +86,24 @@ flask         = ["flask>=2.3"]  # #285
 django        = []  # #280  django>=4.2
 drf           = []  # #283  djangorestframework>=3.14 + [django]
 channels      = []  # #283  channels>=4 + [django]
-celery        = []  # #292  celery>=5.3
-kafka         = []  # #294  aiokafka>=0.10
-rabbitmq      = []  # #294  aio-pika>=9
-nats          = []  # #294  nats-py>=2
-sqs           = []  # #294  boto3>=1.28
+celery        = ["celery>=5.3"]  # #292
+kafka         = ["aiokafka>=0.10"]  # #294
+rabbitmq      = ["aio-pika>=9"]  # #294
+nats          = ["nats-py>=2"]  # #294
+sqs           = ["boto3>=1.28"]  # #294
 cloudevents   = ["cloudevents>=1.10"]  # #293 (SDK interop; the envelope itself is core)
 agents        = ["pydantic>=2.5"]  # #287/#290; provider SDKs (openai, anthropic) are soft imports, never pinned
 # umbrella extras -- filled when their members are
 web           = []  # [fastapi,django,drf,flask,sqlalchemy]
-eda           = []  # [celery,redis,kafka,rabbitmq,cloudevents,observability]
+eda           = [  # [celery,redis,kafka,rabbitmq,cloudevents,observability] (#294, #292)
+    "celery>=5.3",
+    "redis>=5",
+    "aiokafka>=0.10",
+    "aio-pika>=9",
+    "cloudevents>=1.10",
+    "opentelemetry-api>=1.20",
+    "prometheus-client>=0.17",
+]
 all           = [  # every SHIPPED extra; grows as issues land
     "redis>=5",
     "pydantic>=2.5",
@@ -109,6 +117,11 @@ all           = [  # every SHIPPED extra; grows as issues land
     "opentelemetry-api>=1.20",  # #273 observability
     "prometheus-client>=0.17",  # #273 observability
     "cloudevents>=1.10",  # #293 cloudevents
+    "celery>=5.3",  # #292 celery
+    "aiokafka>=0.10",  # #294 kafka
+    "aio-pika>=9",  # #294 rabbitmq
+    "nats-py>=2",  # #294 nats
+    "boto3>=1.28",  # #294 sqs
 ]
 
 [project.urls]
@@ -124,6 +137,16 @@ xsm = "xstate_statemachine.cli.__main__:main"
 #    the `xstate_machine` marker. Opt out with `-p no:xstate_statemachine`.
 [project.entry-points.pytest11]
 xstate_statemachine = "xstate_statemachine.contrib.testing.pytest_plugin"
+
+# 📡 #294: the broker adapters, listed by `xsm plugins` (discovered and
+#    described, never instantiated). Loading one imports its client, so
+#    an adapter whose extra is missing is logged and skipped.
+[project.entry-points."xstate_statemachine.brokers"]
+redis-streams = "xstate_statemachine.contrib.brokers.redis_streams:RedisStreamsBroker"
+kafka = "xstate_statemachine.contrib.brokers.kafka:KafkaBroker"
+rabbitmq = "xstate_statemachine.contrib.brokers.rabbitmq:RabbitMQBroker"
+nats = "xstate_statemachine.contrib.brokers.nats:NatsBroker"
+sqs = "xstate_statemachine.contrib.brokers.sqs:SqsBroker"
 
 [dependency-groups]
 dev = [
