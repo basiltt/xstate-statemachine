@@ -20,24 +20,26 @@ These files are touched by every group. Edit them **only at the very end** of a 
 
 | Group | Issues | Owner | Branch | Status |
 |:--|:--|:--|:--|:--|
-| **G1 Testing** | #268 B1, #270 B3, #271 B4 (+ the `[testing]` `path` fixture of #269) | **agent B** | `feat/b1-testing-plugin`, then `feat/g1b-coverage-hypothesis` | **#268 in review (PR #332)** — needs a rebase and the 6 fixes in the review; B3/B4 not started. Reference implementation on `wip/b1-pytest-plugin-reference` |
+| **G1 Testing** | #268 B1, #270 B3, #271 B4 (+ the `[testing]` `path` fixture of #269) | agent B | `feat/b1-testing-plugin`, `feat/g1b-coverage-hypothesis` | ✅ merged (#332, #355) |
 | **G1-core Graph** | #269 B2 core | agent A | `feat/g1-graph` | ✅ merged (#333) |
-| **G2 EDA core** | #272 B5, #293 F2, #295 F4 | agent B (after G1) | `feat/g2-eda-core` | not started — `HANDOVER_G2_G3_eda_observability.md` |
-| **G3 Observability & inspector** | #273 B6, #274 B7 | agent B (after G2) | `feat/g3-observability` | not started |
+| **G2 EDA core** | #272 B5, #293 F2, #295 F4 | agent B | `feat/g2-eda-core` | ✅ merged (#356) |
+| **G3 Observability & inspector** | #273 B6, #274 B7 | agent B | `feat/g3-observability` | ✅ merged (#357) |
 | **G4 Web** | #275 C1, #276 C2, #278 C4, #279 C5, #277 C3, #309 C7 | agent A | `feat/g4-web` | ✅ merged (#334, #338, #339, #342) |
-| **G5 Django** | #280 D1, #281 D2, #282 D3, #283 D4, #310 D9 | agent B (after G3) | `feat/g5-django` | ✅ implemented on `feat/g5-django` (PR pending) |
-| **G6 SQLAlchemy & Flask** | #284 D5, #285 D6, #286 D7 | agent A | `feat/g6-sqla-flask` | ✅ #284 (parts 1–2), #285 merged (#349); #286 examples + 3 comparison pages in progress; D5 outbox → #293; Django app → after G5 |
-| **G7 Brokers & Celery** | #294 F3, #292 F1 | agent B (after G5) | `feat/g7-brokers` | not started |
+| **G5 Django** | #280 D1, #281 D2, #282 D3, #283 D4, #310 D9 | agent A | `feat/g5-django` | ✅ merged (#361) — reviewed by a Django specialist pass (H1 reserved `send()` kwargs, H2 `actor_id` spoofing fixed before merge); wheel battle-tested via `scripts/verify/G5_django.py` |
+| **G6 SQLAlchemy & Flask** | #284 D5, #285 D6, #286 D7 | agent A | `feat/g6-sqla-flask`, `feat/g6b-examples-comparisons` | ✅ merged (#349, #351); D5 outbox shipped with #293; `django_approvals` example shipped with G5 |
+| **G7 Brokers & Celery** | #294 F3, #292 F1 | agent A | `feat/g7-brokers` | ✅ merged (#359) — 3 HIGH / 6 MEDIUM review findings fixed before merge; five adapters run against real brokers (testcontainers, opt-in `live-brokers` job); wheel battle-tested via `scripts/verify/G7_brokers.py` |
 | **G8 Agents** | #287 E1, #288 E2, #289 E3, #290 E4, #291 E5 | agent A | `feat/g8-agents` | ✅ merged (#346, #347) |
-| **G9 Recipes** | #308 B9 | agent A | `feat/g9-recipes` | in progress |
-| **G10 1.0 hardening** | #296 G1 | agent A, last | `feat/g10-hardening` | not started |
+| **G9 Recipes** | #308 B9 | agent A | `feat/g9-recipes` | ✅ merged (#353) |
+| **G10 1.0 hardening** | #296 G1 | agent A | `feat/g10-hardening` | ✅ merged (#354) |
 
-Core fixes found by battle-testing along the way (all merged): #337 keyword-named guards, #340 scaffold JSON lookup, #341 idempotency problems, #345 child-snapshot race, #348 sync `send(wait=True)` on a finished machine.
+Core fixes found by battle-testing along the way (all merged): #337 keyword-named guards, #340 scaffold JSON lookup, #341 idempotency problems, #345 child-snapshot race, #348 sync `send(wait=True)` on a finished machine, #352 one timer per `after` delay, #360 heap walk vs lazy proxies, `c5b1992` perf nightly skips on a different CPU model.
 
 Release-candidate issues (#297 A11, #298 B8, #301 E6, #299 C6, #300 D8, #302 F5) collapse into **two RCs**, cut by agent A only with the maintainer's confirmation. Delivery order diverged from the phase plan (web, SQLAlchemy/Flask and agents shipped before the EDA core and observability), so the RC boundary is defined by **what is on `main` and battle-tested**, not by phase letters:
 
 - **RC 0.11.0** = everything merged so far: persistence foundation, patterns, actor logic, graph, `[pydantic]`, `[redis]`, `[starlette]`/`[fastapi]`/`[litestar]`, `[sqlalchemy]`/`[flask]`, `[agents]`, the adoption kit, recipes and comparison pages — **plus `[testing]` (#332) if it lands in time**. Gate before the RC PR is opened: every open PR closed or explicitly deferred, README / landing page / getting-started "What's New" / API reference / changelog complete, `#307` budgets re-recorded on the reference runner, `#303` items re-verified, the full matrix green, the perf nightly green three nights running, every example app smoke-tested in CI, and every merged group's verify script re-run against the **built wheel in a clean venv** (the battle tests that found #340/#341/#348 stay in `scripts/verify/`).
 - **RC 0.12.0** after G2 (EDA core), G3 (observability + inspector), G5 (Django), G7 (brokers/Celery) and G10 (1.0 hardening). Same gate.
+
+**Update (2026-09-30):** every group is merged, so the two RCs collapse into **one RC PR** (`rc/0.11.0`, branch off `main`) that covers everything under `[Unreleased]`. The version number is the maintainer's call at review time; the PR bumps nothing. Gate status at the time the RC PR is opened is recorded in the PR body, item by item.
 
 The per-phase RC issues are closed by the two RC PRs with a comment pointing here.
 
