@@ -415,19 +415,62 @@ class TestDelayedSelfSendIsATimer(_Quiet):
             },
         }
 
-    def _beats(self, cfg: Dict[str, Any], kind: str, window: float) -> Any:
+    #: Virtual window every heartbeat test advances, and the step it is
+    #: advanced in. 📝 Deterministic by construction: on a `SimulatedClock`
+    #: a 30 ms heartbeat over 1000 ms beats once on entry and once per due
+    #: timer at 30, 60, …, 990 ms -- 1 + 33 = 34, on every machine, every
+    #: run. The old version slept 1.0 s of REAL time and asserted a tolerance
+    #: band, which flaked on a loaded box.
+    WINDOW_MS = 1000
+    STEP_MS = 10
+
+    @staticmethod
+    def expected_beats(period: int, window: int = WINDOW_MS) -> int:
+        """Entry beat plus one beat per timer due within the window."""
+        return 1 + window // period
+
+    def _beats(
+        self,
+        cfg: Dict[str, Any],
+        kind: str,
+        window_ms: int = WINDOW_MS,
+        *,
+        engine: str = "async",
+        step_ms: int = STEP_MS,
+    ) -> Any:
+        """Run *cfg* for *window_ms* of VIRTUAL time on the chosen engine.
+
+        Returns ``(beats, last_error, drop_reasons)``. The clock is advanced
+        in *step_ms* increments so a timer armed by a fired timer lands in
+        the correct later step, exactly as it would on a real clock.
+        """
+
         def bump(i: Any, c: Any) -> None:
             c["n"] += 1
 
-        async def main() -> Any:
+        machine = _mk(
+            cfg, logic=MachineLogic(actions={"beat": _act(kind, bump)})
+        )
+        steps = window_ms // step_ms
+
+        if engine == "sync":
+            clock = SimulatedClock()
             d = _Drops()
-            i = Interpreter(
-                _mk(
-                    cfg, logic=MachineLogic(actions={"beat": _act(kind, bump)})
-                )
-            ).use(d)
+            s = SyncInterpreter(machine, clock=clock).use(d)
+            s.start()
+            for _ in range(steps):
+                clock.increment(step_ms)
+            out = (s.context["n"], s.last_error, [r for _, r in d.dropped])
+            s.stop()
+            return out
+
+        async def main() -> Any:
+            clock = SimulatedClock()
+            d = _Drops()
+            i = Interpreter(machine, clock=clock).use(d)
             await i.start()
-            await asyncio.sleep(window)
+            for _ in range(steps):
+                await clock.increment(step_ms)
             out = (i.context["n"], i.last_error, [r for _, r in d.dropped])
             await i.stop()
             return out
@@ -436,49 +479,63 @@ class TestDelayedSelfSendIsATimer(_Quiet):
 
     def test_raise_delay_heartbeat_survives_max_iterations(self) -> None:
         # #212: with maxIterations 8, every period must beat PAST 8 with no
-        # error and no drop, for both action kinds. The window is sized per
-        # period so the floor is comfortably above the old cut-off (9).
+        # error and no drop, for both action kinds. Exact counts on a
+        # SimulatedClock: 34 / 11 / 5 beats for 30 / 100 / 250 ms.
         for kind in KINDS:
-            for period, window, floor in (
-                (30, 1.0, 20),
-                (100, 2.0, 14),
-                (250, 3.5, 10),
-            ):
+            for period in (30, 100, 250):
                 with self.subTest(kind=kind, period=period):
-                    n, err, drops = self._beats(
-                        self._raise_cfg(period), kind, window
-                    )
-                    self.assertGreater(n, floor)
+                    n, err, drops = self._beats(self._raise_cfg(period), kind)
+                    self.assertEqual(n, self.expected_beats(period))
                     self.assertIsNone(err)
                     self.assertNotIn("chain_budget", drops)
+        # 8 is the budget; 30 ms must clear it with room to spare.
+        self.assertGreater(self.expected_beats(30), 8)
 
     def test_raise_delay_matches_after_idiom(self) -> None:
-        # The two spellings of a heartbeat behave alike (within jitter).
+        # The two spellings of a heartbeat are the SAME periodic process:
+        # identical beat counts on identical virtual time, no tolerance.
         for kind in KINDS:
             with self.subTest(kind=kind):
-                r, _, _ = self._beats(self._raise_cfg(30), kind, 1.0)
-                a, _, _ = self._beats(self._after_cfg(30), kind, 1.0)
-                self.assertGreater(r, 15)
-                self.assertGreater(a, 15)
-                self.assertLess(abs(r - a), max(6, a // 3))
+                r, _, _ = self._beats(self._raise_cfg(30), kind)
+                a, _, _ = self._beats(self._after_cfg(30), kind)
+                self.assertEqual(r, a)
+                self.assertEqual(r, self.expected_beats(30))
+
+    def test_raise_delay_matches_after_idiom_sync_engine(self) -> None:
+        # Engine parity: the SyncInterpreter on the same clock gives the
+        # same exact count for both idioms.
+        r, err_r, drops_r = self._beats(
+            self._raise_cfg(30), "def", engine="sync"
+        )
+        a, err_a, drops_a = self._beats(
+            self._after_cfg(30), "def", engine="sync"
+        )
+        self.assertEqual(r, a)
+        self.assertEqual(r, self.expected_beats(30))
+        self.assertIsNone(err_r)
+        self.assertIsNone(err_a)
+        self.assertEqual(drops_r, [])
+        self.assertEqual(drops_a, [])
 
     def test_after_heartbeat_unaffected(self) -> None:
         for kind in KINDS:
             with self.subTest(kind=kind):
-                n, err, drops = self._beats(self._after_cfg(30), kind, 1.0)
-                self.assertGreater(n, 20)
+                n, err, drops = self._beats(self._after_cfg(30), kind)
+                self.assertEqual(n, self.expected_beats(30))
                 self.assertIsNone(err)
                 self.assertEqual(drops, [])
 
     def test_zero_delay_raise_cycle_still_trips(self) -> None:
         # The chain budget's actual target is untouched: a same-step
         # self-raise cycle trips at maxIterations on both action kinds.
+        # No timers are involved, so virtual time is irrelevant here; the
+        # cycle runs to its budget inside `start()`'s own step.
         cfg = self._raise_cfg(0)
         for st in cfg["states"].values():
             st["entry"][0] = {"type": "raise", "params": {"event": "BEAT"}}
         for kind in KINDS:
             with self.subTest(kind=kind):
-                n, err, drops = self._beats(cfg, kind, 0.5)
+                n, err, drops = self._beats(cfg, kind)
                 self.assertIs(type(err), RunawayChainError)
                 self.assertIn("chain_budget", drops)
                 self.assertLess(n, 3 * 8)
