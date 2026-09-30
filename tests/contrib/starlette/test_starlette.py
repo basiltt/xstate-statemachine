@@ -1,5 +1,5 @@
 # tests/contrib/starlette/test_starlette.py
-"""#275: StatechartRegistry, Receipt â†’ HTTP, Idempotency-Key, SSE/WS,
+"""#275: StatechartRegistry, Receipt → HTTP, Idempotency-Key, SSE/WS,
 residents, lifespan + timer scanner, probes, inspector refusal.
 
 Every network read is bounded (`_support.bounded`, httpx timeouts).
@@ -104,7 +104,7 @@ def test_registry_builds_without_a_running_loop_and_uses_one_lock():
 
 
 # -----------------------------------------------------------------------------
-# ðŸ§¾ receipt_to_status / exceptions / problem
+# 🧾 receipt_to_status / exceptions / problem
 # -----------------------------------------------------------------------------
 class TestReceiptToStatus:
     @pytest.mark.parametrize(
@@ -188,7 +188,7 @@ class TestReceiptToStatus:
 
 
 # -----------------------------------------------------------------------------
-# ðŸŒ HTTP: statuses, strict, JSON-only, size cap, authorize, idempotency
+# 🌐 HTTP: statuses, strict, JSON-only, size cap, authorize, idempotency
 # -----------------------------------------------------------------------------
 class TestHTTP:
     def test_changed_unchanged_and_state_only_body(self):
@@ -340,7 +340,7 @@ class TestHTTP:
             )
             assert r3.json()["title"] == "Idempotency key reused"
             assert "state_ids" not in r3.json()
-            # ðŸ” X0.2: another principal with the SAME key is not a dup.
+            # 🔐 X0.2: another principal with the SAME key is not a dup.
             hb = {**h, "x-user": "bob"}
             r4 = c.post("/m/1/events/INC", headers=hb, content=b'{"n":1}')
             assert r4.json()["duplicate"] is False
@@ -362,7 +362,7 @@ class TestHTTP:
 
 
 # -----------------------------------------------------------------------------
-# âš¡ Concurrency: 50 POSTs to one key, no lost updates
+# ⚡ Concurrency: 50 POSTs to one key, no lost updates
 # -----------------------------------------------------------------------------
 @pytest.mark.parametrize("backend", ["memory", "sqlite"])
 def test_fifty_concurrent_posts_no_lost_updates(backend, tmp_path):
@@ -381,7 +381,7 @@ def test_fifty_concurrent_posts_no_lost_updates(backend, tmp_path):
     app = build_app(reg)
 
     async def one(client):
-        # ðŸ’¡ A conflict (409) is the documented "retry" signal.
+        # 💡 A conflict (409) is the documented "retry" signal.
         for _ in range(200):
             r = await client.post("/m/k/events/INC")
             if r.status_code != 409:
@@ -409,7 +409,7 @@ def test_fifty_concurrent_posts_no_lost_updates(backend, tmp_path):
 
 
 # -----------------------------------------------------------------------------
-# ðŸ“¡ SSE
+# 📡 SSE
 # -----------------------------------------------------------------------------
 class TestSSE:
     def test_snapshot_then_one_transition_per_changed_in_order(self):
@@ -496,7 +496,7 @@ class TestSSE:
 
 
 # -----------------------------------------------------------------------------
-# ðŸ”Œ WebSocket
+# 🔌 WebSocket
 # -----------------------------------------------------------------------------
 class TestWebSocket:
     def test_snapshot_receipt_transition_push(self):
@@ -548,7 +548,7 @@ class TestWebSocket:
 
 
 # -----------------------------------------------------------------------------
-# ðŸ§¹ Leak test (X0.12)
+# 🧹 Leak test (X0.12)
 # -----------------------------------------------------------------------------
 def test_hundred_connect_disconnect_cycles_leak_nothing():
     reg = make()
@@ -578,7 +578,7 @@ def test_hundred_connect_disconnect_cycles_leak_nothing():
 
 
 # -----------------------------------------------------------------------------
-# ðŸ  Residents
+# 🏠 Residents
 # -----------------------------------------------------------------------------
 class TestResidents:
     def test_lru_cap_saves_evicted(self):

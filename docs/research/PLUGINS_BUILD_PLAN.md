@@ -1,4 +1,4 @@
-﻿# Integration Plugins & Event-Driven Architecture — Master Build Plan
+# Integration Plugins & Event-Driven Architecture — Master Build Plan
 
 > Companion to [`PLUGINS_AND_EDA_RESEARCH.md`](./PLUGINS_AND_EDA_RESEARCH.md).
 > Every task below is mirrored as a GitHub issue (label `epic/plugins`,
@@ -28,7 +28,7 @@
 | **Docs are executable.** Every Python block in a new guide page runs in CI (existing `tests/test_docs_executable.py` harness). Contrib pages that need a framework are skipped-with-reason when the extra is absent. | Extend the harness with an `# doc-requires: fastapi` marker. |
 | **Honest guarantees.** Every persistence/EDA page carries the "What this does / does not guarantee" box (at-least-once + idempotent inbox; resume-from-last-snapshot; loud version mismatch; no exactly-once; no automatic mid-flight migration). | Docs review checklist item; `tests/test_docs_site.py` asserts the box exists on the listed pages. |
 | **Changelog + docs + examples** updated in the same PR as the code. | PR template checklist. |
-| **Code standard.** Black 79, flake8 (CI flags), mypy clean, emoji-prefixed architecture comments (`ðŸ›ï¸ / 📝 / âš ï¸`) explaining *why*, Google docstrings. | `lint` job. |
+| **Code standard.** Black 79, flake8 (CI flags), mypy clean, emoji-prefixed architecture comments (`🏛️ / 📝 / ⚠️`) explaining *why*, Google docstrings. | `lint` job. |
 | **Verification script.** Each issue has a committed `scripts/verify/<issue>.py` a reviewer can run on any OS (the shell snippets in issue bodies are illustrative). | X0.16 |
 | **Security & operability baseline** ([#303](https://github.com/basiltt/xstate-statemachine/issues/303)): closed-by-default HTTP surfaces, principal-scoped idempotency, crash-consistency spec, JSON-only deserialisation with limits, redaction + `forget(key)`, telemetry hygiene, web hardening (CSRF/Origin/RFC 9457), poison/backpressure, entry-generation-tagged timers, schema lifecycle, graceful shutdown, health/metrics, agent tool safety, supply chain, platform rules (Python floor **3.9**), test hygiene (`pytest-socket`, containers opt-in). | Each RC issue ticks "X0 items for this phase verified". |
 | **Performance budgets** ([#307](https://github.com/basiltt/xstate-statemachine/issues/307)): import time, `persisted()` round-trip, plugin overhead, snapshot v4 cost; nightly job; import-time guard in the default job. | `benchmarks/budgets.json`. |

@@ -293,7 +293,7 @@ class TestLoop:
         m = create_machine(TOOL_LOOP, logic=logic)
         i = SyncInterpreter(m).start()
         i.send("START", prompt="p")
-        # TypeError in callModel â†’ onError â†’ timed_out (retry path)
+        # TypeError in callModel → onError → timed_out (retry path)
         assert leaf(i) == "timed_out"
         assert i.context["last_failure"] == "TypeError"
         i.stop()

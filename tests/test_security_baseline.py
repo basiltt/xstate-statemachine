@@ -63,6 +63,31 @@ class TestNoUnsafeDeserialisation(unittest.TestCase):
                     )
 
 
+class TestNoMojibake(unittest.TestCase):
+    """UTF-8 text re-saved through a cp1252 console turns `⚠️` into
+    `âš ï¸`. It reached log messages and a warning string once (RC sweep);
+    `scripts/verify/_mojibake_scan.py --fix` reverses it."""
+
+    _PAT = re.compile("ðŸ|â€|â†’|Ã©|Â·|âš|Ã¢")
+
+    def test_no_double_encoded_text_under_src_or_docs(self) -> None:
+        hits = []
+        for base in (SRC, ROOT / "docs", ROOT / "examples"):
+            for path in sorted(base.rglob("*")):
+                if path.suffix not in {".py", ".md", ".html", ".json"}:
+                    continue
+                if "node_modules" in path.parts or ".venv" in path.parts:
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except (UnicodeDecodeError, OSError):
+                    continue
+                for no, line in enumerate(text.splitlines(), 1):
+                    if self._PAT.search(line):
+                        hits.append(f"{path.relative_to(ROOT)}:{no}")
+        self.assertEqual(hits, [], "\n".join(hits))
+
+
 class TestActionsArePinned(unittest.TestCase):
     def test_every_uses_is_a_full_sha(self) -> None:
         bad = []

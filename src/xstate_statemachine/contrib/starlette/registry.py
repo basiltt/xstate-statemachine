@@ -1,22 +1,22 @@
 # src/xstate_statemachine/contrib/starlette/registry.py
 # -----------------------------------------------------------------------------
-# ðŸ—‚ï¸ StatechartRegistry -- create â†’ act â†’ persist â†’ discard, over HTTP
+# 🗂️ StatechartRegistry -- create → act → persist → discard, over HTTP
 # -----------------------------------------------------------------------------
-# ðŸ›ï¸ Under N workers there is no shared memory, so the honest model is:
+# 🏛️ Under N workers there is no shared memory, so the honest model is:
 #    per request, load the snapshot, run ONE async `Interpreter` over it,
 #    save with `expected_version`, and throw the interpreter away. That is
 #    `persistence.apersisted` (#260) -- `act()` is a thin wrapper that adds
 #    the registry's plugins, the idempotency inbox (#261), strict mode and
 #    a post-save fan-out to SSE/WebSocket subscribers.
 #
-# ðŸ  `resident()` is the opt-in exception: a long-lived in-process actor for
+# 🏠 `resident()` is the opt-in exception: a long-lived in-process actor for
 #    single-worker deployments and dev. Bounded (`max_residents`, idle TTL,
 #    X0.11/12), stopped -- and saved -- on eviction and on shutdown.
 #
 # â° Timers: a persisted `after` deadline is woken by `DueTimerScanner`
 #    (#264), which `lifespan` runs in a daemon thread when `run_timers=True`.
 #
-# ðŸ” X0.1 closed-by-default: `register(authorize=)` is REQUIRED; `allow_all`
+# 🔐 X0.1 closed-by-default: `register(authorize=)` is REQUIRED; `allow_all`
 #    is the explicit, logged opt-out.
 # -----------------------------------------------------------------------------
 """`StatechartRegistry` and the `allow_all` authorizer."""
@@ -94,7 +94,7 @@ def allow_all(
     if not _allow_all_warned.is_set():
         _allow_all_warned.set()
         logger.warning(
-            "âš ï¸ xstate-statemachine: `allow_all` authorizer in use for "
+            "⚠️ xstate-statemachine: `allow_all` authorizer in use for "
             "machine %r -- every client may read and drive every "
             "instance. Do not ship this to production (X0.1).",
             name,
@@ -266,7 +266,7 @@ class StatechartRegistry:
             context_serializer: ``(context) -> JSON`` -- when given,
                 responses include ``context``; otherwise state only.
             strict: Override `machine.strict` for requests (undeclared
-                events â†’ 422 instead of 200-unchanged).
+                events → 422 instead of 200-unchanged).
         """
         if not callable(authorize):
             raise TypeError(
@@ -319,7 +319,7 @@ class StatechartRegistry:
         if not verdict:
             raise ForbiddenError()
 
-    # -- create â†’ act â†’ persist â†’ discard ------------------------------------
+    # -- create → act → persist → discard ------------------------------------
     @contextlib.asynccontextmanager
     async def act(
         self, name: str, key: str, *, principal: Optional[str] = None
@@ -468,7 +468,7 @@ class StatechartRegistry:
         except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
             if receipt_to_status_is_server_error(exc):
                 logger.exception(
-                    "ðŸ”¥ %s %r failed on %s/%s",
+                    "🔥 %s %r failed on %s/%s",
                     type(exc).__name__,
                     event_type,
                     name,
@@ -569,7 +569,7 @@ class StatechartRegistry:
                 )
         except Exception:  # noqa: BLE001 -- eviction must not fail
             logger.exception(
-                "ðŸ”¥ resident %s/%s: save on retire failed", *topic
+                "🔥 resident %s/%s: save on retire failed", *topic
             )
         finally:
             with contextlib.suppress(Exception):
@@ -649,7 +649,7 @@ class StatechartRegistry:
             self._scanner_thread.join(timeout)
             if self._scanner_thread.is_alive():
                 logger.warning(
-                    "âš ï¸ timer scanner did not stop in %.1fs", timeout
+                    "⚠️ timer scanner did not stop in %.1fs", timeout
                 )
         self.scanner = None
         self._scanner_thread = None
@@ -679,7 +679,7 @@ class StatechartRegistry:
                 )
             except asyncio.TimeoutError:
                 logger.warning(
-                    "âš ï¸ resident drain exceeded %.1fs; abandoning %d",
+                    "⚠️ resident drain exceeded %.1fs; abandoning %d",
                     self.drain_timeout_s,
                     len(self._residents),
                 )
