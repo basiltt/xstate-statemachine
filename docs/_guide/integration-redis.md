@@ -15,6 +15,8 @@ pip install "xstate-statemachine[redis]"
 
 Requires `redis>=5`. Tested versions are in the [compatibility table](#compatibility). Tests run against `fakeredis` by default and against a live server when `XSM_REDIS_URL` is set.
 
+For a complete, runnable app that uses the Redis Streams adapter -- run it on `fakeredis` with `python -m eda_fulfilment --broker redis-streams`, or point it at a real server by setting `REDIS_URL` -- see the [`eda_fulfilment` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/eda_fulfilment).
+
 ## Quick start
 
 <!-- doc-requires: redis, fakeredis -->
