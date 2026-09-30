@@ -1125,6 +1125,16 @@ def _dispatch() -> None:
         )
         return
 
+    if args.subcommand == "coverage":
+        from .commands.coverage import run_coverage
+
+        run_coverage(
+            args.report_file,
+            fail_under=getattr(args, "fail_under", None),
+            as_json=bool(getattr(args, "json", False)),
+        )
+        return
+
     if args.subcommand in {"diagram", "dia"}:
         from .commands.diagram import run_diagram
 

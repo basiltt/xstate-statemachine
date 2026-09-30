@@ -345,8 +345,9 @@ context/events, testing.**
 | JS | Python proposal | Value / effort |
 |:--|:--|:--|
 | `@xstate/inspect` + Stately Inspector (WS protocol: `@xstate.actor/event/snapshot`) | `InspectorPlugin` speaking the same protocol over a local WS; `xsm inspect --live`; reuse Stately's UI | **High** / M-H |
-| `@xstate/graph` (`getShortestPaths`, `getSimplePaths`) | `shortest_paths()`/`simple_paths()`; pytest auto-parametrised reachability tests | **High** / M |
-| `@xstate/test` | Hypothesis `RuleBasedStateMachine` generated from the chart (preconditions derived from legal events), per-state assertions | **Very high** (exceeds JS) / M-H |
+| `@xstate/graph` (`getShortestPaths`, `getSimplePaths`) | `shortest_paths()`/`simple_paths()`; pytest auto-parametrised reachability tests — **shipped** (#269: `graph.py`, `xsm paths`, the `[testing]` `xsm_path` fixture) | **High** / M |
+| `@xstate/test` | Hypothesis `RuleBasedStateMachine` generated from the chart (preconditions derived from legal events), per-state assertions — **shipped** (#271: `contrib.testing.model_test`, `events_strategy`; shrinking + replayable `xsm simulate --script`) | **Very high** (exceeds JS) / M-H |
+| Stately coverage view | State & transition coverage — **shipped** (#270: `coverage.CoverageCollector`, `pytest --xsm-coverage`, `xsm coverage`) | High / M |
 | `getPersistedSnapshot` + versioning | §5 store adapters + `SnapshotMigrator` | High / M |
 | `fromPromise/fromCallback/fromObservable` | `from_coroutine`, `from_callback`, `from_async_iterator` actor logic | M-H / M |
 | `setup()` typed API | Pydantic typed context/events plugin (§2.6) | High / M-H |

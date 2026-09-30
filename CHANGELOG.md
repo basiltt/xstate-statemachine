@@ -11,6 +11,51 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ### Added
 
+- **`[testing]`: generated path tests (#269).** Request the `xsm_path`
+  fixture under an `xstate_machine` marker and the test is parametrised
+  over `graph.shortest_paths(machine)` -- one case per reachable
+  configuration, with ids like `path[editing->authenticating3DS->challenge]`.
+  `xsm_path.replay(xsm_interp, xsm_clock)` drives the interpreter there.
+  `--xsm-full-paths` switches to `simple_paths` (`--xsm-max-paths`,
+  `--xsm-max-depth`); `--xsm-path-guards true|false|both` also reaches the
+  configurations that only a False guard or a failing service leads to.
+- **State & transition coverage (#270).** Core
+  `xstate_statemachine.coverage.CoverageCollector` is a `PluginBase` that
+  records every configuration entered and every chart transition taken.
+  Parallel configurations mark all leaves and their ancestors, history
+  restores mark what was re-entered, and restored interpreters count at
+  `start()`. `report(machine)` returns `CoverageReport(states_visited,
+  states_total, unvisited, transitions_hit, transitions_total, unhit)`,
+  using `graph.transition_coverage_targets` as the denominator. Machines
+  are keyed by `id@structure_hash`. The collector is thread-safe. It
+  renders to a stable `{"version": 1, ...}` JSON document, a single
+  self-contained HTML file, or a terminal summary. In pytest,
+  `--xsm-coverage` registers one collector through the existing
+  `plugins.register_global` for the whole session (unregistered at the
+  end), so interpreters a test builds itself are counted as well as the
+  fixtures' ones. Related options: `--xsm-coverage-report=term|json[:PATH]|html[:PATH]`,
+  `--xsm-fail-under-state-coverage=N` and
+  `--xsm-fail-under-transition-coverage=N`. The new
+  `xsm coverage report.json [--fail-under N] [--plain] [--json]` renders the
+  report in CI.
+- **Hypothesis model-based testing (#271).**
+  `xstate_statemachine.contrib.testing.model_test(chart, *, logic=,
+  invariants=, state_assertions=, payloads=, clock=True, max_steps=50,
+  settings=, allow_denied=False, snapshot_roundtrip=True, guard_flip=False)`
+  generates a Hypothesis `RuleBasedStateMachine` that pytest collects
+  (`TestX = model_test(...)`). There is one rule per declared event. Each
+  rule draws its payload first and sends only when
+  `can(Event(type, payload))` is true, so only legal sequences are
+  generated. `can()` runs real guards when you pass real logic, so keep
+  guards pure. Further rules advance the clock over the declared `after`
+  delays, round-trip a snapshot mid-sequence, and flip stub guards.
+  Payloads are inferred from `event_schemas` / pydantic `EventModel`
+  fields. When an invariant fails, Hypothesis shrinks the run to a minimal
+  sequence and `model_test` writes it as an `xsm simulate --script` file
+  (`failing.json`, or into `--xsm-failing-dir`). `events_strategy(chart,
+  length=)` is a plain strategy of legal event sequences. `hypothesis` is
+  imported lazily: without it, `model_test` raises `MissingExtraError`
+  naming `[testing]`, which already pins `hypothesis>=6.100`.
 - **Entry-point plugin discovery (#296).** Third-party packages can ship
   plugins, stores and brokers without a core change by declaring entry
   points in the `xstate_statemachine.plugins` / `.stores` / `.brokers`

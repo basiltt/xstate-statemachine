@@ -551,6 +551,8 @@ Rules of the registry:
 - **Thread-safe.** Registration and removal take a lock; `global_plugins()` returns a copy. Registering the same object twice is a no-op.
 - **Leave it as you found it.** A pytest fixture should `unregister_global` (or `xstate_statemachine.plugins.clear_global_plugins()`) in teardown.
 
+The `[testing]` plugin's `pytest --xsm-coverage` is built on exactly this seam: it registers one `xstate_statemachine.coverage.CoverageCollector` at session start and unregisters it at session end — see [State & transition coverage](../integration-testing/#state-transition-coverage).
+
 ## 🔎 Third-party plugins: discovery
 
 Other packages can ship plugins, stores and brokers **without a core change** by declaring an [entry point](https://packaging.python.org/en/latest/specifications/entry-points/). The library finds them only when **you** ask: discovery is never implicit (security baseline X0.14). Importing `xstate_statemachine` loads nothing, no interpreter looks for plugins by itself, and nothing is attached until you call `attach_discovered` (or `.use()` what `discover()` returned).

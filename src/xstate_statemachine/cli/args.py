@@ -411,6 +411,31 @@ examples:
         "--json", action="store_true", help="Emit the paths as JSON."
     )
 
+    # 📊 coverage subcommand (#270)
+    coverage_parser = subparsers.add_parser(
+        "coverage",
+        parents=[presentation],
+        help="Render a statechart coverage report (pytest --xsm-coverage).",
+        description=(
+            "Renders the version-1 JSON report written by "
+            "`pytest --xsm-coverage --xsm-coverage-report=json:PATH` and "
+            "exits 1 when any machine is under --fail-under."
+        ),
+    )
+    coverage_parser.add_argument(
+        "report_file", help="The JSON coverage report."
+    )
+    coverage_parser.add_argument(
+        "--fail-under",
+        type=float,
+        default=None,
+        metavar="N",
+        help="Exit 1 if any machine's state or transition coverage is < N%%.",
+    )
+    coverage_parser.add_argument(
+        "--json", action="store_true", help="Re-emit the report as JSON."
+    )
+
     # ℹ️ info subcommand
     info_parser = subparsers.add_parser(
         "info",
