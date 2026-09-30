@@ -248,6 +248,10 @@ jobs:
             django) python -m pip install "pytest-django>=4.5" "django-fsm-2>=4" ;;
             drf) python -m pip install "pytest-django>=4.5" "drf-spectacular>=0.26" ;;
             channels) python -m pip install "pytest-django>=4.5" "daphne>=4" ;;
+            # 📦 eda_fulfilment example: Redis Streams on fakeredis, eager
+            #    Celery, Prometheus + OTel in memory -- the [celery] cell
+            #    runs the whole app suite (see the targets case below).
+            celery) python -m pip install -e ".[redis,observability]" "fakeredis[lua]>=2.20" "opentelemetry-sdk>=1.20" ;;
           esac
           python -m pip list
 
@@ -268,7 +272,7 @@ jobs:
           # 📝 #286: [sqlalchemy] and [flask] run theirs (sqlalchemy_orders,
           #    flask_wizard); the test skips suites whose extra is missing.
           case "${{ matrix.extra }}" in
-            fastapi|sqlalchemy|flask)
+            fastapi|sqlalchemy|flask|celery)
               targets="$targets tests/test_examples_integrations.py" ;;
             # 📡 #294: the shared adapter core lives in tests/contrib/brokers.
             redis|kafka|rabbitmq|nats|sqs)
@@ -447,11 +451,12 @@ jobs:
           #    guide; placeholder extras stay out (nothing to measure).
           #    `[testing]`'s pytester suite also needs pytest-asyncio so
           #    the async fixture is measured rather than skipped.
-          python -m pip install -e ".[redis,pydantic,starlette,fastapi,litestar,sqlalchemy,flask,testing,cloudevents,kafka,rabbitmq,nats,sqs,celery,django,drf,channels]" \
+          python -m pip install -e ".[redis,pydantic,starlette,fastapi,litestar,sqlalchemy,flask,testing,cloudevents,kafka,rabbitmq,nats,sqs,celery,django,drf,channels,observability]" \
             "fakeredis[lua]>=2.20" "httpx>=0.24" "openapi-spec-validator>=0.7" \
             "aiosqlite>=0.19" "alembic>=1.12" "quart>=0.19" "flask-wtf>=1.2" \
             "pytest-asyncio>=0.24.0" "jsonschema>=4" "moto[sqs]>=5" \
-            "pytest-django>=4.5" "drf-spectacular>=0.26" "django-fsm-2>=4" "daphne>=4"
+            "pytest-django>=4.5" "drf-spectacular>=0.26" "django-fsm-2>=4" "daphne>=4" \
+            "opentelemetry-sdk>=1.20"
           # 🧷 mypy is a TEST dependency: tests/test_type_safety.py runs it
           #    over representative user programs.
           python -m pip install "pytest>=8.3.0" "mypy>=1.14" "pytest-cov>=6.0.0"
