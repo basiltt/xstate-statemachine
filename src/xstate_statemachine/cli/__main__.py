@@ -1232,6 +1232,20 @@ def _dispatch() -> None:
         run_dlq(args)
         return
 
+    if args.subcommand == "asyncapi":
+        from .commands.asyncapi import run_asyncapi
+
+        run_asyncapi(
+            args.json_file,
+            output=args.output,
+            server=args.server,
+            protocol=args.protocol,
+            inbound=args.inbound,
+            outbound=args.outbound,
+            validate=bool(args.validate),
+        )
+        return
+
     if args.subcommand == "new":
         from .commands.new import run_new
 

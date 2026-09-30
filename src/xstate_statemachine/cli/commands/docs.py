@@ -8,7 +8,7 @@ diagram, state table, transition table, logic to implement, policies."""
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from ...validation import walk
 from . import get_console
@@ -98,7 +98,37 @@ def render_markdown(facts: Facts) -> str:
         ", ".join(f"`{e}`" for e in sorted(facts.events)),
         "",
     ]
+    out += _integration_events(m)
     return "\n".join(out)
+
+
+def _integration_events(m: Any) -> List[str]:
+    """#295: the chart's EDA surface -- what it consumes and publishes."""
+    from ...eda.asyncapi import consumed_events
+    from ...eda.outbox import publish_specs
+
+    try:
+        published = publish_specs(m)
+    except ValueError as exc:  # a malformed meta.publish: say so
+        return ["## Integration events", "", f"> ⚠️ {exc}", ""]
+    out = [
+        "## Integration events",
+        "",
+        "Consumed (CloudEvents type `xsm.<machine>.<EVENT>`): "
+        + (", ".join(f"`{e}`" for e in consumed_events(m)) or "_none_"),
+        "",
+    ]
+    if not published:
+        return out + [
+            "Published: _none_ (no `meta.publish` / `publish` tag).",
+            "",
+        ]
+    out += ["| Published type | On | From |", "|---|---|---|"]
+    for s in published:
+        on = f"`{s['event']}`" if s["event"] else "entry"
+        out.append(f"| `{_md_escape(s['type'])}` | {on} | `{s['from']}` |")
+    out += ["", "Generate the full AsyncAPI document with `xsm asyncapi`.", ""]
+    return out
 
 
 def run_docs(paths: List[str], *, output: Optional[str] = None) -> None:

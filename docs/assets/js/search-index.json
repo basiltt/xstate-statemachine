@@ -307,7 +307,7 @@
     "title": "Stately Editor → Python",
     "section": "CLI Tool",
     "url": "/guide/stately-export/",
-    "description": "Export from the Stately editor, the version key, meta / description / x- keys (meta.publish and meta.tools planned), xsm validate, the VS Code JSON Schema for *.machine.json, the round trip."
+    "description": "Export from the Stately editor, the version key, meta / description / x- keys (meta.publish read by the outbox; meta.tools planned), xsm validate, the VS Code JSON Schema for *.machine.json, the round trip."
   },
   {
     "description": "pytest plugin from the [testing] extra: @pytest.mark.xstate_machine, xsm_interp / xsm_ainterp / xsm_clock / xsm_ran / xsm_store fixtures, xstate_guards_false, xsm_send_all, xsm_snapshot with --xsm-update-snapshots.",
@@ -325,7 +325,11 @@
     "description": "Live inspector: InspectorPlugin speaks the @statelyai/inspect protocol; SseSink, JsonLinesSink, WebSocketSink; xsm inspect --live, xsm sim --record, xsm replay; token, loopback and context allow-list.",
     "section": "Integrations",
     "title": "Live inspector",
-    "url": "/guide/integration-inspector/"
+    "url": "/guide/integration-inspector/",
+    "description": "Event-driven core: CloudEvents Envelope, BrokerAdapter / FakeBrokerAdapter, InboundDispatcher (dedup, per-subject order, poison to DLQ), transactional outbox (meta.publish, SQLiteOutboxStore), dead letters and xsm dlq replay, SagaBuilder, ChoreographyRouter, AsyncAPI, [cloudevents] extra.",
+    "section": "Integrations",
+    "title": "Event-driven (EDA)",
+    "url": "/guide/integration-eda/"
   },
   {
     "description": "Complete reference — create_machine, Interpreter, SyncInterpreter, MachineLogic, State, StateMachine, MachineBuilder, Event, exceptions.",

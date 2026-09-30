@@ -14,6 +14,7 @@ from src.xstate_statemachine.eda import (
     load_asyncapi_schema,
     validate_asyncapi,
 )
+from src.xstate_statemachine.patterns import SagaBuilder
 
 try:
     import jsonschema  # noqa: F401
@@ -91,7 +92,12 @@ class TestDocument(unittest.TestCase):
 
     @unittest.skipUnless(HAVE_JSONSCHEMA, "jsonschema not installed")
     def test_validates_against_the_vendored_schema(self) -> None:
-        for machine in (create_machine(CFG),):
+        saga = SagaBuilder("demo").step("a", invoke="doA", compensate="undoA")
+        saga.step("b", invoke="doB")
+        for machine in (
+            create_machine(CFG),
+            create_machine(saga.build(), logic=saga.logic().merge(_stub())),
+        ):
             with self.subTest(machine=machine.id):
                 validate_asyncapi(
                     asyncapi_document(
@@ -107,6 +113,14 @@ class TestDocument(unittest.TestCase):
         doc["asyncapi"] = "9.9.9"
         with self.assertRaises(js.ValidationError):
             validate_asyncapi(doc)
+
+
+def _stub() -> object:
+    from src.xstate_statemachine import MachineLogic
+
+    return MachineLogic(
+        services={n: (lambda i, c, e: None) for n in ("doA", "undoA", "doB")}
+    )
 
 
 if __name__ == "__main__":

@@ -15,6 +15,79 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
+### Event-driven architecture (Phase F core) -- #272, #293, #295
+
+- **`xstate_statemachine.eda` (#272, #293).** A zero-dependency core
+  package (not loaded by `import xstate_statemachine`). `Envelope` is a
+  frozen CloudEvents 1.0 event with the `correlationid` / `causationid` /
+  `machineid` / `machineversion` extensions; `subject` is the instance key
+  and the partition key; ids are sortable UUIDv7-style values. It is
+  validated before `to_event()` (`EnvelopeCorruptError`), size-capped
+  before parsing (`EnvelopeTooLargeError`, X0.4), refuses
+  credential-bearing extensions and validates `traceparent` (X0.8).
+- **`BrokerAdapter` / `SyncBrokerAdapter` protocols (#272)** with a
+  contract suite (`tests/eda/contract.py`) the #294 adapters will run, and
+  in-memory `FakeBrokerAdapter` / `SyncFakeBrokerAdapter` (failure
+  injection, `deliver()`, `drain()`), also importable from
+  `xstate_statemachine.contrib.testing` next to `replay()` and the new
+  `assert_replay_consistent()`.
+- **`InboundDispatcher` (#293)**: envelope → `persisted(key=subject)` →
+  `send(envelope.to_event())`, with inbox dedup on the envelope id,
+  per-subject ordering with `max_in_flight` concurrency, and poison
+  handling (X0.8): a failed delivery is not committed and is requeued; at
+  `max_attempts` it is dead-lettered and acked. Unknown types and corrupt
+  envelopes are dead-lettered, never raised into the loop.
+- **Transactional outbox (#293, #284 part 3).** `OutboxPlugin` publishes
+  what the chart declares: `meta.publish` on a transition (now parsed as
+  `TransitionDefinition.meta`) or a `publish`-tagged state. Its sinks are
+  an `OutboxStore` (zero-dep `SQLiteOutboxStore`, or
+  `SQLAlchemyOutboxStore` in `[sqlalchemy]`) that commits with the
+  snapshot under `PessimisticLock` and is drained by `OutboxRelay`, or a
+  broker directly. `causationid` is the inbound envelope that caused the
+  transition.
+- **Dead letters (#293).** `patterns.DeadLetter` / `DeadLetterPlugin` are
+  extended, not forked. Records gain `id`, `reason`, `envelope`, `topic`,
+  `machine_hash`, `machine_version` and `resolved_at`. Stores gain `put`,
+  `get`, `list`, `mark_resolved` and `delete`. New:
+  `SQLiteDeadLetterStore` (redacted, audited) and `BrokerDeadLetterSink`
+  (publishes to `<topic>.dlq`). The plugin also accepts any object with
+  `put()`.
+- **`xsm dlq list|show|replay|purge` (#293).** `replay` is a dry run
+  unless `--no-dry-run --yes --reason`, reuses the envelope id (the inbox
+  dedups a double replay), refuses a changed machine without `--force`,
+  and writes an audit row, as does `purge`.
+- **AsyncAPI (#293, #295).** `asyncapi_document(machine)` renders consumed
+  and published events as an AsyncAPI 3.0.0 document with CloudEvents
+  messages, validated offline against a vendored schema
+  (`validate_asyncapi`). New `xsm asyncapi machine.json [-o] [--validate]`;
+  `xsm docs` gains an "Integration events" section.
+- **`patterns.SagaBuilder` (#295)** emits plain, `strictConfig`-clean
+  chart JSON for an orchestrated saga: per-step invoke, timeout and
+  optional `RetryPolicy`, reverse compensation exactly once, and
+  `compensationFailed` dead-lettered. Every step transition is published.
+  **`patterns.ChoreographyRouter`** routes `type → (machine, EVENT)` over
+  `InboundDispatcher`, and the causation chain ties the conversation
+  together.
+- **`[cloudevents]` extra (#293)** (`cloudevents>=1.10`, 1.x and 2.x):
+  `to_cloudevent` / `from_cloudevent` and HTTP `to_binary` /
+  `to_structured` / `from_http`, which reads only `ce-*` headers and drops
+  credential-bearing ones. Added to `[all]`, the compat matrix and the CI
+  extras cell.
+- Docs: new [Event-driven architecture](https://basiltt.github.io/xstate-statemachine/guide/integration-eda/)
+  page; the Guarantees page's outbox and ack steps are now shipped.
+- **Fixed: `[sqlalchemy]` on SQLite: a newly created snapshot could survive a
+  rollback of its `PessimisticLock` block (#293).** pysqlite emits no
+  `BEGIN` before a `SAVEPOINT`, so when the create-only INSERT was the
+  first write of the lease, its savepoint's `RELEASE` committed. The inbox,
+  log and outbox rows in the same block rolled back while the snapshot did
+  not. The savepoint now nests inside an explicit transaction.
+- **Fixed: `persisted()` / `apersisted()` restore `buffer_marks` on exit and
+  key post-save buffers by block (#293).** A plugin shared by concurrent
+  blocks (worker threads, interleaved `apersisted` tasks) can no longer
+  flush another block's rows, and one reused outside `persisted()`
+  writes immediately again. Markers flush inbox-first and all run even
+  if one fails.
+
 ### Added
 
 - **Observability & live inspector (Phase B) -- `[observability]` extra

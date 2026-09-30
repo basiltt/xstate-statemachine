@@ -305,6 +305,7 @@ examples:
   xsm simulate machine.json
   xsm diagram machine.json -f mermaid -o docs/
   xsm docs machine.json -o docs/
+  xsm asyncapi machine.json -o asyncapi.json
   xsm dlq --dlq sqlite:///dlq.db list
   xsm validate machine.json
   xsm list-templates
@@ -785,7 +786,7 @@ examples:
 
 
 def _add_eda_parsers(subparsers: Any, presentation: Any) -> None:
-    """`xsm dlq` (#293)."""
+    """`xsm dlq` and `xsm asyncapi` (#293, #295)."""
     dlq = subparsers.add_parser(
         "dlq",
         parents=[presentation],
@@ -854,6 +855,29 @@ def _add_eda_parsers(subparsers: Any, presentation: Any) -> None:
     pg.add_argument("--reason", help="Why (audited).")
     pg.add_argument("--json", action="store_true", help="Emit as JSON.")
 
+    aa = subparsers.add_parser(
+        "asyncapi",
+        parents=[presentation],
+        help="Generate an AsyncAPI 3.0 document from a machine.",
+        description=(
+            "Consumed events (the chart's `on` keys) and published events "
+            "(`meta.publish` transitions, `publish`-tagged states) as an "
+            "AsyncAPI 3.0.0 document with CloudEvents messages."
+        ),
+    )
+    aa.add_argument("json_file", help="The machine JSON file.")
+    aa.add_argument("-o", "--output", help="Write to this file.")
+    aa.add_argument("--server", help="Broker host, e.g. localhost:9092.")
+    aa.add_argument("--protocol", default="kafka", help="Server protocol.")
+    aa.add_argument("--inbound", help="Inbound channel address.")
+    aa.add_argument(
+        "--outbound", default="events", help="Outbound channel address."
+    )
+    aa.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate against the vendored schema (needs jsonschema).",
+    )
 
 
 def validate_args(parser: argparse.ArgumentParser) -> None:

@@ -245,5 +245,46 @@ class TestDlqPurge(_Fixture):
             parse_age("soon")
 
 
+class TestAsyncAPI(unittest.TestCase):
+    def setUp(self) -> None:
+        self.dir = pathlib.Path(tempfile.mkdtemp())
+        self.file = self.dir / "counter.json"
+        self.file.write_text(json.dumps(CFG), encoding="utf-8")
+
+    def test_stdout_and_file(self) -> None:
+        code, out = _run(["asyncapi", str(self.file), "--server", "h:9092"])
+        self.assertEqual(code, 0, out)
+        doc = json.loads(out)
+        self.assertEqual(doc["asyncapi"], "3.0.0")
+        self.assertEqual(doc["servers"]["default"]["host"], "h:9092")
+        target = self.dir / "out.json"
+        code, _ = _run(["asyncapi", str(self.file), "-o", str(target)])
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            json.loads(target.read_text("utf-8"))["asyncapi"], "3.0.0"
+        )
+
+    @unittest.skipUnless(HAVE_JSONSCHEMA, "jsonschema not installed")
+    def test_validate_flag(self) -> None:
+        code, out = _run(["asyncapi", str(self.file), "--validate"])
+        self.assertEqual(code, 0, out)
+
+    def test_docs_shows_integration_events(self) -> None:
+        code, out = _run(["docs", str(self.file)])
+        self.assertEqual(code, 0, out)
+        self.assertIn("## Integration events", out)
+        self.assertIn("`counter.added`", out)
+        self.assertIn("`ADD`", out)
+
+    def test_docs_without_publications(self) -> None:
+        f = self.dir / "plain.json"
+        f.write_text(
+            json.dumps({"id": "p", "initial": "a", "states": {"a": {}}}),
+            encoding="utf-8",
+        )
+        code, out = _run(["docs", str(f)])
+        self.assertIn("Published: _none_", out)
+
+
 if __name__ == "__main__":
     unittest.main()

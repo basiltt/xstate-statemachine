@@ -10,10 +10,18 @@
 #    context, plugins -- so they live here and every integration (Celery
 #    #279, the persistence locking in #260, the broker adapters) builds on
 #    the same objects rather than its own copy.
+#
+# 🧾 #295 adds the two EDA patterns: `SagaBuilder` (orchestration, plain
+#    JSON) and `ChoreographyRouter` (machines reacting over a bus). The
+#    router pulls in the EDA core, which `import xstate_statemachine` must
+#    not load (persistence imports this package), so it resolves lazily.
 # -----------------------------------------------------------------------------
-"""Resilience patterns: `RetryPolicy`, `DeadLetterPlugin`, `CircuitBreaker`."""
+"""Resilience and EDA patterns: `RetryPolicy`, `DeadLetterPlugin`,
+`CircuitBreaker`, `SagaBuilder`, `ChoreographyRouter`."""
 
 from __future__ import annotations
+
+from typing import Any
 
 from .circuit_breaker import (
     CIRCUIT_BREAKER_CONFIG,
@@ -28,11 +36,26 @@ from .dead_letter import (
     DeadLetter,
     DeadLetterPlugin,
     DeadLetterStore,
+    MemoryDeadLetterStore,
 )
 from .retry import JitterMode, RetryPolicy
+from .saga import SagaBuilder, SagaStep
+
+_LAZY = {"ChoreographyRouter": ".choreography", "Route": ".choreography"}
+
+
+def __getattr__(name: str) -> Any:
+    module = _LAZY.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    return getattr(importlib.import_module(module, __name__), name)
+
 
 __all__ = [
     "CIRCUIT_BREAKER_CONFIG",
+    "ChoreographyRouter",
     "CircuitBreaker",
     "CircuitOpenError",
     "CircuitState",
@@ -43,5 +66,9 @@ __all__ = [
     "DeadLetterPlugin",
     "DeadLetterStore",
     "JitterMode",
+    "MemoryDeadLetterStore",
     "RetryPolicy",
+    "Route",
+    "SagaBuilder",
+    "SagaStep",
 ]
