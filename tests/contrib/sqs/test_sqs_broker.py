@@ -1,4 +1,4 @@
-﻿# tests/contrib/sqs/test_sqs_broker.py
+# tests/contrib/sqs/test_sqs_broker.py
 """#294: `SqsBroker` / `SyncSqsBroker` -- `AsyncBrokerContract` against
 moto (FIFO queue), plus SQS specifics: MessageGroupId = subject and
 MessageDeduplicationId = envelope id on FIFO, DeleteMessage on

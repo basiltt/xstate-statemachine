@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict, List, Optional
 
 from .._compat import require_extra
@@ -54,10 +55,17 @@ class SqsTransport:
         client: Any,
         *,
         visibility_timeout_s: Optional[int] = None,
+        batch: int = _MAX_BATCH,
         max_bytes: int,
     ) -> None:
         self.client = client
         self.visibility_timeout_s = visibility_timeout_s
+        #: M1: the SQS default visibility timeout is 30 s; a queue with a
+        #: different one should pass it explicitly.
+        self.redelivery_window_s = float(
+            visibility_timeout_s if visibility_timeout_s is not None else 30
+        )
+        self.batch = int(batch)
         self.max_bytes = max_bytes
         self._urls: Dict[str, str] = {}
 
@@ -85,7 +93,7 @@ class SqsTransport:
         url = self.url(topic)
         kw: Dict[str, Any] = {
             "QueueUrl": url,
-            "MaxNumberOfMessages": _MAX_BATCH,
+            "MaxNumberOfMessages": max(1, min(self.batch, _MAX_BATCH)),
             "WaitTimeSeconds": min(_MAX_WAIT_S, int(wait_s)),
             "AttributeNames": ["ApproximateReceiveCount"],
         }
@@ -129,7 +137,11 @@ class SyncSqsBroker(SyncBroker):
     Args:
         client: A boto3 SQS client (default ``boto3.client("sqs")``).
         region_name: Used only when *client* is omitted.
-        visibility_timeout_s: Per-receive visibility timeout override.
+        visibility_timeout_s: Per-receive visibility timeout override;
+            also the local hold window (default 30 s, SQS's default).
+        batch: Messages per receive (1-10). Keep it near your
+            concurrency: fetched messages wait locally while the
+            visibility clock runs.
         max_bytes / on_disconnect / on_reconnect / on_undecodable: See
             `contrib.brokers`. SQS caps a message at 256 KiB anyway.
     """
@@ -140,25 +152,32 @@ class SyncSqsBroker(SyncBroker):
         *,
         region_name: Optional[str] = None,
         visibility_timeout_s: Optional[int] = None,
+        batch: int = _MAX_BATCH,
         **kw: Any,
     ) -> None:
         super().__init__(None, **kw)
         self.sqs = SqsTransport(
             _client(client, region_name),
             visibility_timeout_s=visibility_timeout_s,
+            batch=batch,
             max_bytes=self.max_bytes,
         )
         self.transport = self.sqs
 
     def extend_visibility(self, delivery: Any, seconds: int) -> None:
         """Keep an in-flight delivery invisible for *seconds* more."""
-        with self._lock:
-            entry = self._inflight.get(id(delivery))
-        if entry is not None:
-            self.sqs.extend(entry[1], seconds)
+        native = _native_of(self, delivery)
+        if native is not None:
+            self.sqs.extend(native, seconds)
 
     def __repr__(self) -> str:
         return "SyncSqsBroker()"
+
+
+def _native_of(broker: Any, delivery: Any) -> Any:
+    with broker._lock:
+        entry = broker._inflight.get(id(delivery))
+    return None if entry is None else entry[1]
 
 
 class SqsBroker(AsyncBroker):
@@ -171,15 +190,25 @@ class SqsBroker(AsyncBroker):
         *,
         region_name: Optional[str] = None,
         visibility_timeout_s: Optional[int] = None,
+        batch: int = _MAX_BATCH,
         **kw: Any,
     ) -> None:
         super().__init__(None, **kw)
         self.sqs = SqsTransport(
             _client(client, region_name),
             visibility_timeout_s=visibility_timeout_s,
+            batch=batch,
             max_bytes=self.max_bytes,
         )
         self.transport = ThreadedTransport(self.sqs)
+
+    async def extend_visibility(self, delivery: Any, seconds: int) -> None:
+        """Async twin of `SyncSqsBroker.extend_visibility`."""
+        native = _native_of(self, delivery)
+        if native is not None:
+            await asyncio.get_running_loop().run_in_executor(
+                None, self.sqs.extend, native, seconds
+            )
 
     def __repr__(self) -> str:
         return "SqsBroker()"

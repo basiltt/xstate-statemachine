@@ -1,8 +1,8 @@
 # src/xstate_statemachine/contrib/brokers/_base.py
 # -----------------------------------------------------------------------------
-# ðŸ§± The shared adapter skeleton: one bookkeeping core, thin transports (#294)
+# 🧱 The shared adapter skeleton: one bookkeeping core, thin transports (#294)
 # -----------------------------------------------------------------------------
-# ðŸ›ï¸ Every broker adapter is `SyncBroker` / `AsyncBroker` + a *transport*
+# 🏛️ Every broker adapter is `SyncBroker` / `AsyncBroker` + a *transport*
 #    that knows four native operations and nothing else:
 #
 #        send(topic, envelope)            -> publish, raise on failure
@@ -38,6 +38,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import threading
 import time
@@ -91,7 +92,7 @@ class Raw(NamedTuple):
 def default_on_undecodable(topic: str, raw: Raw, exc: Exception) -> None:
     """Log (never the body -- it may be hostile or sensitive) and drop."""
     logger.warning(
-        "ðŸ”¥ dropping undecodable message on %r: %s: %s",
+        "🔥 dropping undecodable message on %r: %s: %s",
         topic,
         type(exc).__name__,
         exc,
@@ -108,14 +109,19 @@ class _Core:
         on_disconnect: Optional[Callable[[Exception], Any]] = None,
         on_reconnect: Optional[Callable[[], Any]] = None,
         on_undecodable: Optional[Callable[[str, Raw, Exception], Any]] = None,
+        dead_letters: Optional[Any] = None,
     ) -> None:
         self.max_bytes = int(max_bytes)
         self.on_disconnect = on_disconnect
         self.on_reconnect = on_reconnect
         self.on_undecodable = on_undecodable or default_on_undecodable
+        #: X0.8: a DeadLetterStore; undecodable / oversized messages are
+        #: recorded here (reason ``"corrupt"``) before being dropped.
+        self.dead_letters = dead_letters
         self._lock = threading.Lock()
-        self._local: Dict[str, Deque[Tuple[Envelope, Any]]] = {}
-        self._inflight: Dict[int, Tuple[Delivery, Any]] = {}
+        #: topic -> deque of (envelope, native, fetched_at monotonic)
+        self._local: Dict[str, Deque[Tuple[Envelope, Any, float]]] = {}
+        self._inflight: Dict[int, Tuple[Delivery, Any, float]] = {}
         self._healthy = True
 
     # -- health ---------------------------------------------------------------
@@ -127,22 +133,54 @@ class _Core:
     def _io_ok(self) -> None:
         if not self._healthy:
             self._healthy = True
-            logger.info("âœ… broker connection healthy again")
+            logger.info("✅ broker connection healthy again")
             if self.on_reconnect is not None:
                 self.on_reconnect()
 
     def _io_failed(self, exc: Exception) -> None:
         if self._healthy:
             self._healthy = False
-            logger.warning("ðŸ”¥ broker call failed: %s", exc)
+            # 🔐 type only: client errors may embed URLs with credentials
+            logger.warning("🔥 broker call failed: %s", type(exc).__name__)
             if self.on_disconnect is not None:
                 self.on_disconnect(exc)
 
     # -- local queue ----------------------------------------------------------
-    def _pop(self, topic: str) -> Optional[Tuple[Envelope, Any]]:
+    def _hold_s(self) -> Optional[float]:
+        """How long a fetched message may wait locally (M1): half the
+        transport's redelivery window (ack_wait / visibility timeout /
+        min_idle_ms). ``None`` / ``0`` = never released (no clock, or a
+        zero window -- a degenerate configuration)."""
+        window = getattr(self._transport_obj(), "redelivery_window_s", None)
+        return None if window is None else float(window) / 2.0
+
+    def _transport_obj(self) -> Any:
+        t = getattr(self, "transport", None)
+        return getattr(t, "inner", t)
+
+    def _pop(self, topic: str) -> Optional[Tuple[Envelope, Any, float]]:
+        """Next local entry. Entries held past `_hold_s` are RELEASED:
+        forgotten locally without a native ack, so the broker redelivers
+        them on its own clock -- never delivered here too late (which
+        would inflate attempts and dead-letter healthy messages)."""
+        hold = self._hold_s()
+        released: List[Any] = []
+        item = None
         with self._lock:
             q = self._local.get(topic)
-            return q.popleft() if q else None
+            while q:
+                env, native, at = q.popleft()
+                if hold and time.monotonic() - at > hold:
+                    released.append(native)
+                    continue
+                item = (env, native, at)
+                break
+        forget = getattr(self._transport_obj(), "forget", None)
+        for native in released:
+            logger.debug("released a locally expired message on %r", topic)
+            if forget is not None:
+                forget(native)
+        return item
 
     def _decode(self, topic: str, raws: List[Raw]) -> List[Tuple[Any, Any]]:
         """Decode fetched messages; returns ``(envelope | None, native)``
@@ -152,6 +190,7 @@ class _Core:
             try:
                 env = Envelope.from_json(raw.body, max_bytes=self.max_bytes)
             except EnvelopeCorruptError as exc:
+                self._dead_letter_raw(topic, raw, exc)
                 self.on_undecodable(topic, raw, exc)
                 out.append((None, raw.native))
                 continue
@@ -177,11 +216,46 @@ class _Core:
             self._stash(topic, good)
         return bad
 
-    def _stash(self, topic: str, items: List[Tuple[Envelope, Any]]) -> None:
-        with self._lock:
-            self._local.setdefault(topic, deque()).extend(items)
+    def _dead_letter_raw(self, topic: str, raw: Raw, exc: Exception) -> None:
+        """X0.8: record an undecodable message (body NOT stored -- it
+        may be hostile or sensitive; size and error only)."""
+        if self.dead_letters is None:
+            return
+        from ...patterns.dead_letter import DeadLetter
 
-    def _deliver(self, topic: str, env: Envelope, native: Any) -> Delivery:
+        body = raw.body
+        size = len(body) if isinstance(body, (bytes, bytearray, str)) else 0
+        record = DeadLetter(
+            machine_id="?",
+            state_id="",
+            event={"type": "", "payload": {"bytes": size}},
+            attempts=raw.attempts + 1,
+            errors=[
+                {
+                    "source": "broker",
+                    "name": "corrupt",
+                    "type": type(exc).__name__,
+                    "message": str(exc)[:200],
+                }
+            ],
+            snapshot={},
+            taken_at=time.time(),
+            reason="corrupt",
+            topic=topic,
+        )
+        put = getattr(self.dead_letters, "put", None) or self.dead_letters
+        put(record)
+
+    def _stash(self, topic: str, items: List[Tuple[Envelope, Any]]) -> None:
+        now = time.monotonic()
+        with self._lock:
+            self._local.setdefault(topic, deque()).extend(
+                (env, native, now) for env, native in items
+            )
+
+    def _deliver(
+        self, topic: str, env: Envelope, native: Any, at: float
+    ) -> Delivery:
         box: List[Delivery] = []
 
         def ack() -> Any:
@@ -193,22 +267,23 @@ class _Core:
         d = Delivery(env, topic, ack, nack)
         box.append(d)
         with self._lock:
-            self._inflight[id(d)] = (d, native)
+            self._inflight[id(d)] = (d, native, at)
         return d
 
-    def _claim(self, delivery: Delivery) -> Tuple[bool, Any]:
+    def _claim(self, delivery: Delivery) -> Tuple[bool, Any, float]:
+        """``(claimed, native, fetched_at)``; claimed once only."""
         with self._lock:
             entry = self._inflight.pop(id(delivery), None)
         if entry is None:
-            return False, None
-        return True, entry[1]
+            return False, None, 0.0
+        return True, entry[1], entry[2]
 
-    def _requeue(self, delivery: Delivery, native: Any) -> None:
+    def _requeue(self, delivery: Delivery, native: Any, at: float) -> None:
         env = delivery.envelope
         env = env.with_attempt(env.attempt + 1)
         with self._lock:
             self._local.setdefault(delivery.topic, deque()).appendleft(
-                (env, native)
+                (env, native, at)
             )
 
     @property
@@ -286,16 +361,16 @@ class SyncBroker(_Core):
                 self._call(self.transport.drop, native)
 
     def ack(self, delivery: Delivery) -> None:
-        claimed, native = self._claim(delivery)
+        claimed, native, at = self._claim(delivery)
         if claimed:
             self._call(self.transport.ack, native)
 
     def nack(self, delivery: Delivery, *, requeue: bool) -> None:
-        claimed, native = self._claim(delivery)
+        claimed, native, at = self._claim(delivery)
         if not claimed:
             return
         if requeue:
-            self._requeue(delivery, native)
+            self._requeue(delivery, native, at)
         else:
             self._call(self.transport.drop, native)
 
@@ -378,17 +453,17 @@ class AsyncBroker(_Core):
 
     async def ack(self, delivery: Delivery) -> None:
         self._check_loop()
-        claimed, native = self._claim(delivery)
+        claimed, native, at = self._claim(delivery)
         if claimed:
             await self._call(self.transport.ack, native)
 
     async def nack(self, delivery: Delivery, *, requeue: bool) -> None:
         self._check_loop()
-        claimed, native = self._claim(delivery)
+        claimed, native, at = self._claim(delivery)
         if not claimed:
             return
         if requeue:
-            self._requeue(delivery, native)
+            self._requeue(delivery, native, at)
         else:
             await self._call(self.transport.drop, native)
 
@@ -398,6 +473,42 @@ class AsyncBroker(_Core):
             result = close()
             if asyncio.iscoroutine(result):
                 await result
+
+
+def close_stale(*closers: Any) -> None:
+    """Best-effort close of clients opened on a loop that is gone (H2).
+
+    Each *closer* is a zero-argument callable returning an awaitable (or
+    ``None``). They run on a PRIVATE short-lived loop in a helper thread,
+    bounded by `STALE_CLOSE_S`; any error is logged at debug and ignored
+    -- the goal is to release sockets, not to be graceful.
+    """
+    todo = [c for c in closers if c is not None]
+    if not todo:
+        return
+
+    async def run_all() -> None:
+        for closer in todo:
+            try:
+                res = closer()
+                if inspect.isawaitable(res):
+                    await asyncio.wait_for(res, STALE_CLOSE_S)
+            except Exception:  # noqa: BLE001 - best effort by contract
+                logger.debug("closing a stale client failed", exc_info=True)
+
+    def target() -> None:
+        try:
+            asyncio.run(run_all())
+        except Exception:  # noqa: BLE001
+            logger.debug("stale-client close loop failed", exc_info=True)
+
+    t = threading.Thread(target=target, name="xsm-close-stale", daemon=True)
+    t.start()
+    t.join(STALE_CLOSE_S * (len(todo) + 1))
+
+
+#: Seconds allowed per stale client close.
+STALE_CLOSE_S = 2.0
 
 
 class ThreadedTransport:

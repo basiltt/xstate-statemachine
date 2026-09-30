@@ -203,6 +203,94 @@ class TestSyncBase(unittest.TestCase):
         self.assertTrue(t2.closed)
 
 
+class WindowTransport(MemTransport):
+    """A transport whose broker redelivers after `redelivery_window_s`."""
+
+    redelivery_window_s = 10.0
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.forgotten: List[Any] = []
+
+    def forget(self, native: Any) -> None:
+        self.forgotten.append(native)
+
+
+class TestReviewFindings(unittest.TestCase):
+    def test_locally_held_messages_expire_before_the_broker_window(
+        self,
+    ) -> None:
+        """M1: a message that waited locally past half the broker's
+        redelivery window is released (the broker will redeliver it with
+        a correct count), never handed out late with a stale attempt."""
+        from unittest import mock
+
+        t = WindowTransport()
+        b = SyncBroker(t)
+        clock = [1000.0]
+        with mock.patch(
+            "src.xstate_statemachine.contrib.brokers._base.time.monotonic",
+            side_effect=lambda: clock[0],
+        ):
+            b.publish("t", env(n=1))
+            b.publish("t", env(n=2))
+            it = b.subscribe("t", timeout=0)
+            first = next(it)  # both fetched; #2 waits locally
+            first.ack()
+            clock[0] += 6.0  # > 10 s / 2
+            b.publish("t", env(n=3))  # a later fetch happens
+            got = [d.envelope.data["n"] for d in b.subscribe("t", timeout=0)]
+        self.assertEqual(got, [3])  # #2 was released, not delivered late
+        self.assertEqual(len(t.forgotten), 1)
+
+    def test_undecodable_is_dead_lettered_without_the_body(self) -> None:
+        """X0.8: with a dead-letter store, a corrupt / oversized message is
+        recorded (reason ``corrupt``, size only) before it is dropped."""
+        from src.xstate_statemachine.eda import MemoryDeadLetterStore
+
+        t = MemTransport()
+        dlq = MemoryDeadLetterStore()
+        b = SyncBroker(t, dead_letters=dlq, max_bytes=100)
+        t.q.append(("secret=hunter2 not json", 0))
+        t.q.append(("x" * 500, 0))
+        self.assertEqual(list(b.subscribe("t", timeout=0)), [])
+        recs = dlq.list() if hasattr(dlq, "list") else list(dlq)
+        self.assertEqual([r.reason for r in recs], ["corrupt", "corrupt"])
+        self.assertNotIn("hunter2", repr(recs))
+        self.assertEqual(len(t.dropped), 2)
+
+    def test_failure_log_never_contains_the_error_text(self) -> None:
+        t = MemTransport()
+        b = SyncBroker(t)
+
+        def boom(topic: str, e: Any) -> None:
+            raise ConnectionError("amqp://user:pw@host failed")
+
+        t.send = boom  # type: ignore[method-assign]
+        with (
+            self.assertLogs(
+                "src.xstate_statemachine.contrib.brokers._base", "WARNING"
+            ) as logs,
+            self.assertRaises(ConnectionError),
+        ):
+            b.publish("t", env())
+        self.assertNotIn("pw@", "\n".join(logs.output))
+
+    def test_close_stale_runs_every_closer_and_swallows_errors(self) -> None:
+        from src.xstate_statemachine.contrib.brokers._base import close_stale
+
+        closed: List[str] = []
+
+        async def ok() -> None:
+            closed.append("a")
+
+        def bad() -> None:
+            raise RuntimeError("x")
+
+        close_stale(ok, bad, lambda: closed.append("b"))
+        self.assertEqual(closed, ["a", "b"])
+
+
 class TestAsyncBase(unittest.TestCase):
     def test_async_nack_drop_and_health(self) -> None:
         t = MemTransport()

@@ -1,8 +1,8 @@
 # src/xstate_statemachine/contrib/brokers/redis_streams.py
 # -----------------------------------------------------------------------------
-# ðŸŸ¥ Redis Streams broker -- consumer groups, XACK, PEL reclaim (#294)
+# 🟥 Redis Streams broker -- consumer groups, XACK, PEL reclaim (#294)
 # -----------------------------------------------------------------------------
-# ðŸ›ï¸ Lives under `contrib/brokers/` (not `contrib/redis/`) so every broker
+# 🏛️ Lives under `contrib/brokers/` (not `contrib/redis/`) so every broker
 #    is found in one place; it is gated by the SAME `[redis]` extra and
 #    shares `contrib.redis`'s key conventions (mandatory `prefix`, X0.15):
 #
@@ -59,7 +59,9 @@ __all__ = [
     "SyncRedisStreamsBroker",
 ]
 
-_BATCH = 100
+#: M1: small by default -- fetched entries wait locally while the
+#: broker's redelivery clock runs.
+_BATCH = 10
 
 
 def _default_consumer() -> str:
@@ -100,6 +102,15 @@ class RedisStreamsTransport:
         #: XAUTOCLAIM cursor per stream: the scan resumes where it stopped
         #: so entries past a run of our own held ones are reached.
         self._cursor: Dict[str, str] = {}
+
+    @property
+    def redelivery_window_s(self) -> float:
+        """Entries idle this long may be reclaimed by another consumer."""
+        return self.min_idle_ms / 1000.0
+
+    def forget(self, native: Any) -> None:
+        """Released locally (M1): another consumer may reclaim it."""
+        self._held.discard(native)
 
     # -- keys -------------------------------------------------------------------
     def stream(self, topic: str, shard: int = 0) -> str:
@@ -163,30 +174,52 @@ class RedisStreamsTransport:
         return out
 
     def _reclaim(self, stream: str) -> List[Raw]:
-        """Claim entries idle >= min_idle_ms (a dead consumer's PEL)."""
-        reply = self.client.xautoclaim(
+        """Claim entries idle >= min_idle_ms (a dead consumer's PEL).
+
+        🏛️ M3: ONE ``XPENDING`` lists the candidates with their
+        delivery counts; entries this transport still holds are excluded
+        BEFORE claiming (a claim bumps ``times_delivered`` -- re-claiming
+        our own would inflate attempts), then one ``XCLAIM`` takes the
+        rest. The scan resumes from a per-stream cursor.
+        """
+        start = self._cursor.get(stream, "-")
+        pending = self.client.xpending_range(
             stream,
             self.group,
-            self.consumer,
-            self.min_idle_ms,
-            start_id=self._cursor.get(stream, "0-0"),
-            count=self.batch,
+            min=start,
+            max="+",
+            count=self.batch * 4,
         )
-        if reply:
-            self._cursor[stream] = _text(reply[0])
-        entries = reply[1] if reply else []
-        out: List[Raw] = []
-        for entry_id, fields in entries:
-            if (stream, _text(entry_id)) in self._held:
+        if not pending:
+            self._cursor.pop(stream, None)  # wrapped: rescan from the top
+            return []
+        last = _text(pending[-1]["message_id"])
+        self._cursor[stream] = "(" + last
+        counts: Dict[str, int] = {}
+        for row in pending:
+            eid = _text(row["message_id"])
+            if (stream, eid) in self._held:
                 continue  # ours, still being processed
+            # 📝 idle filtered here, not with XPENDING IDLE: identical on
+            #    every Redis >= 5 (IDLE is 6.2+) and on fakeredis.
+            if int(row.get("time_since_delivered", 0)) < self.min_idle_ms:
+                continue
+            counts[eid] = int(row["times_delivered"])
+            if len(counts) >= self.batch:
+                break
+        if not counts:
+            return []
+        claimed = self.client.xclaim(
+            stream, self.group, self.consumer, self.min_idle_ms, list(counts)
+        )
+        out: List[Raw] = []
+        for entry_id, fields in claimed or []:
+            eid = _text(entry_id)
             if not fields:  # deleted while pending: nothing to deliver
                 self.client.xack(stream, self.group, entry_id)
                 continue
-            info = self.client.xpending_range(
-                stream, self.group, min=entry_id, max=entry_id, count=1
-            )
-            times = int(info[0]["times_delivered"]) if info else 1
-            out.append(self._raw(stream, entry_id, fields, max(0, times - 1)))
+            # the claim itself was a delivery: attempts = count before it
+            out.append(self._raw(stream, entry_id, fields, counts[eid]))
         return out
 
     @staticmethod

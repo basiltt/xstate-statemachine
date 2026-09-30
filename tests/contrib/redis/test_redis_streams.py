@@ -116,6 +116,32 @@ class TestRedisStreamsSpecific(_Fresh, unittest.TestCase):
         alive.ack(d)
         self.assertEqual(list(alive.subscribe("orders", timeout=0)), [])
 
+    def test_reclaim_never_bumps_our_own_held_entries(self) -> None:
+        """M3: two live consumers; the second one's reclaim must not
+        claim (and so re-count) entries the first still holds, nor its
+        own; a dead consumer's entries are claimed with one XCLAIM."""
+        a = self.sync(consumer="a", min_idle_ms=0)
+        b = self.sync(consumer="b", min_idle_ms=0)
+        for n in range(3):
+            a.publish("t", _env("k", n))
+        held_by_b = list(b.subscribe("t", timeout=0))  # b holds all 3
+        stream = f"{self.prefix}:stream:t"
+        before = {
+            r["message_id"]: r["times_delivered"]
+            for r in self.client.xpending_range(stream, "xsm", "-", "+", 10)
+        }
+        list(b.subscribe("t", timeout=0))  # b polls again: skips its own
+        after = {
+            r["message_id"]: (r["consumer"], r["times_delivered"])
+            for r in self.client.xpending_range(stream, "xsm", "-", "+", 10)
+        }
+        for mid, n in before.items():
+            self.assertEqual(after[mid], (b"b", n))
+        # a is alive and idle: b's entries ARE eligible for a (b "died")
+        got = list(a.subscribe("t", timeout=0))
+        self.assertEqual([d.envelope.attempt for d in got], [1, 1, 1])
+        self.assertEqual(len(held_by_b), 3)
+
     def test_not_reclaimed_before_min_idle(self) -> None:
         dead = self.sync(consumer="dead")
         dead.publish("orders", _env("o-1", 1))

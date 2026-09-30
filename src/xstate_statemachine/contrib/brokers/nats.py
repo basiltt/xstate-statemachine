@@ -1,8 +1,8 @@
-﻿# src/xstate_statemachine/contrib/brokers/nats.py
+# src/xstate_statemachine/contrib/brokers/nats.py
 # -----------------------------------------------------------------------------
-# ðŸŸ© NATS JetStream broker (nats-py) -- subject suffix = partition (#294)
+# 🟩 NATS JetStream broker (nats-py) -- subject suffix = partition (#294)
 # -----------------------------------------------------------------------------
-# ðŸ›ï¸ Core NATS is at-most-once; the adapter uses JETSTREAM (persisted,
+# 🏛️ Core NATS is at-most-once; the adapter uses JETSTREAM (persisted,
 #    acked) only:
 #
 #    * topic ``orders`` = a stream capturing ``orders.>``; an envelope is
@@ -33,11 +33,18 @@ from .._compat import require_extra
 require_extra("nats", "nats")
 
 from ...eda.envelope import Envelope  # noqa: E402
-from ._base import CE_CONTENT_TYPE, AsyncBroker, Raw, structured  # noqa: E402
+from ._base import (
+    CE_CONTENT_TYPE,
+    AsyncBroker,
+    Raw,
+    close_stale,
+    structured,
+)  # noqa: E402
 
 __all__ = ["NatsBroker", "NatsTransport", "subject_token"]
 
-_BATCH = 100
+#: M1: small by default (fetched messages wait while ack_wait runs).
+_BATCH = 10
 _UNSAFE = re.compile(r"[.*>\s]")
 
 
@@ -71,6 +78,7 @@ class NatsTransport:
         self.batch = int(batch)
         self.max_bytes = max_bytes
         self._connect_kw = dict(connect_kw or {})
+        self.redelivery_window_s = self.ack_wait_s
         self._streams: Dict[str, Any] = {}
         self._subs: Dict[str, Any] = {}
 
@@ -141,6 +149,8 @@ class NatsTransport:
     def rebind(self) -> None:
         """Forget a connection opened on a previous event loop."""
         if self._servers is not None:
+            if self._nc is not None:
+                close_stale(self._nc.close)
             self._nc = None
             self._js = None
             self._streams.clear()

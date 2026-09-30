@@ -1,8 +1,8 @@
 # src/xstate_statemachine/contrib/brokers/rabbitmq.py
 # -----------------------------------------------------------------------------
-# ðŸ‡ RabbitMQ broker (aio-pika) -- one durable queue per topic (#294)
+# 🐇 RabbitMQ broker (aio-pika) -- one durable queue per topic (#294)
 # -----------------------------------------------------------------------------
-# ðŸ›ï¸ The thinnest mapping that keeps the contract:
+# 🏛️ The thinnest mapping that keeps the contract:
 #
 #    * topic = a durable queue of the same name, published through the
 #      default exchange (routing key = topic) as PERSISTENT messages with
@@ -34,11 +34,19 @@ require_extra("rabbitmq", "aio_pika")
 import aio_pika  # noqa: E402
 
 from ...eda.envelope import Envelope  # noqa: E402
-from ._base import CE_CONTENT_TYPE, AsyncBroker, Raw, structured  # noqa: E402
+from ._base import (
+    CE_CONTENT_TYPE,
+    AsyncBroker,
+    Raw,
+    close_stale,
+    structured,
+)  # noqa: E402
 
 __all__ = ["RabbitMQBroker", "RabbitMQTransport"]
 
-_BATCH = 100
+#: M2: `prefetch` is the un-acked ceiling; `batch` one fetch.
+_PREFETCH = 20
+_BATCH = 10
 _GET_TIMEOUT_S = 5.0
 _EMPTY_POLL_S = 0.05
 
@@ -52,7 +60,7 @@ class RabbitMQTransport:
         url: Optional[str] = None,
         channel: Any = None,
         exchange: Optional[str] = None,
-        prefetch: int = _BATCH,
+        prefetch: int = _PREFETCH,
         batch: int = _BATCH,
         max_bytes: int,
         connect_kw: Optional[Dict[str, Any]] = None,
@@ -66,6 +74,8 @@ class RabbitMQTransport:
         self.batch = int(batch)
         self.max_bytes = max_bytes
         self._connect_kw = dict(connect_kw or {})
+        #: messages fetched and not yet acked/rejected (QoS window)
+        self.unacked = 0
         self._connection: Any = None
         self._queues: Dict[str, Any] = {}
         self._exchange: Any = None
@@ -119,7 +129,11 @@ class RabbitMQTransport:
         # 📝 basic.get answers "empty" at once; its timeout is only the RPC
         #    ceiling. A short one makes aio-pika CLOSE the channel on
         #    expiry, so it is always generous and waiting is a sleep.
-        while len(out) < self.batch:
+        # 🏛️ M2: basic.qos only bounds basic.CONSUME, not basic.get -- so
+        #    the adapter enforces `prefetch` itself: never more un-acked
+        #    messages than `prefetch` (held locally + handed out).
+        room = min(self.batch, self.prefetch - self.unacked)
+        while len(out) < room:
             try:
                 msg = await queue.get(
                     no_ack=False, fail=False, timeout=_GET_TIMEOUT_S
@@ -129,23 +143,29 @@ class RabbitMQTransport:
             if msg is None:
                 break
             out.append(Raw(msg.body, msg, _attempts(msg)))
+            self.unacked += 1
         if not out and wait_s > 0:
             await asyncio.sleep(min(wait_s, _EMPTY_POLL_S))
         return out
 
     async def ack(self, native: Any) -> None:
         await native.ack()
+        self.unacked = max(0, self.unacked - 1)
 
     async def drop(self, native: Any) -> None:
         await native.reject(requeue=False)
+        self.unacked = max(0, self.unacked - 1)
 
     def rebind(self) -> None:
         """Forget a connection opened on a previous event loop."""
         if self._url is not None:
+            if self._connection is not None:
+                close_stale(self._connection.close)
             self._connection = None
             self._channel = None
             self._exchange = None
             self._queues.clear()
+            self.unacked = 0
 
     async def close(self) -> None:
         if self._connection is not None:
@@ -189,7 +209,7 @@ class RabbitMQBroker(AsyncBroker):
         url: Optional[str] = None,
         channel: Any = None,
         exchange: Optional[str] = None,
-        prefetch: int = _BATCH,
+        prefetch: int = _PREFETCH,
         batch: int = _BATCH,
         connect_kw: Optional[Dict[str, Any]] = None,
         **kw: Any,

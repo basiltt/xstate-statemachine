@@ -103,3 +103,63 @@ class TestRabbitSpecific(unittest.TestCase):
         b = _broker(Chan(), exchange="orders-hash")
         asyncio.run(b.publish("orders", _env("o-7", 1)))
         self.assertEqual(published, ["o-7"])
+
+
+class TestQosAndRebind(unittest.TestCase):
+    def test_prefetch_bounds_unacked_messages(self) -> None:
+        """M2: basic.get ignores basic.qos, so the adapter enforces
+        `prefetch` itself (held locally + handed out)."""
+        amqp = FakeAmqpBroker()
+        chan = amqp.channel()
+
+        async def go() -> List[int]:
+            b = _broker(chan, prefetch=3, batch=10)
+            for n in range(8):
+                await b.publish("t", _env("k", n))
+            got = []
+            async for d in b.subscribe("t", timeout=0):
+                got.append(d)
+            first = len(got)
+            for d in got:
+                await b.ack(d)
+            again = [d async for d in b.subscribe("t", timeout=0)]
+            return [first, len(again)]
+
+        self.assertEqual(asyncio.run(go()), [3, 3])
+
+    def test_rebind_closes_the_old_connection(self) -> None:
+        """H2: a new event loop per call must not leak connections."""
+        from src.xstate_statemachine.contrib.brokers import rabbitmq as mod
+
+        opened: List[Any] = []
+
+        class Conn:
+            def __init__(self) -> None:
+                self.closed = False
+                opened.append(self)
+
+            async def channel(self) -> Any:
+                chan = FakeAmqpBroker().channel()
+
+                async def set_qos(prefetch_count: int) -> None:
+                    pass
+
+                chan.set_qos = set_qos  # type: ignore[attr-defined]
+                return chan
+
+            async def close(self) -> None:
+                self.closed = True
+
+        async def connect_robust(url: str, **kw: Any) -> Any:
+            return Conn()
+
+        orig = mod.aio_pika.connect_robust
+        mod.aio_pika.connect_robust = connect_robust  # type: ignore
+        try:
+            b = mod.RabbitMQBroker(url="amqp://u:p@h/")
+            for n in range(4):
+                asyncio.run(b.publish("t", _env("k", n)))
+        finally:
+            mod.aio_pika.connect_robust = orig  # type: ignore
+        self.assertEqual(len(opened), 4)
+        self.assertEqual([c.closed for c in opened], [True] * 3 + [False])

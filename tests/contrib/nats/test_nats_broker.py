@@ -88,3 +88,39 @@ class TestNatsSpecific(unittest.TestCase):
         from src.xstate_statemachine.contrib.brokers.nats import _attempts
 
         self.assertEqual(_attempts(object()), 0)
+
+
+class TestRebind(unittest.TestCase):
+    def test_rebind_closes_the_old_connection(self) -> None:
+        """H2: one NATS connection per event loop, the old one closed."""
+        import nats
+
+        opened: List[Any] = []
+
+        class NC:
+            def __init__(self) -> None:
+                self.closed = False
+                opened.append(self)
+
+            def jetstream(self) -> Any:
+                return FakeJetStream()
+
+            async def close(self) -> None:
+                self.closed = True
+
+        async def connect(servers: Any, **kw: Any) -> Any:
+            return NC()
+
+        orig = nats.connect
+        nats.connect = connect  # type: ignore[assignment]
+        try:
+            from src.xstate_statemachine.contrib.brokers.nats import (
+                NatsBroker,
+            )
+
+            b = NatsBroker(servers="nats://x")
+            for n in range(3):
+                asyncio.run(b.publish("t", _env("k", n)))
+        finally:
+            nats.connect = orig  # type: ignore[assignment]
+        self.assertEqual([c.closed for c in opened], [True, True, False])

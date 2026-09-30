@@ -1,8 +1,8 @@
 # src/xstate_statemachine/contrib/brokers/kafka.py
 # -----------------------------------------------------------------------------
-# ðŸŸ« Kafka broker (aiokafka) -- key = subject, commit the acked prefix (#294)
+# 🟫 Kafka broker (aiokafka) -- key = subject, commit the acked prefix (#294)
 # -----------------------------------------------------------------------------
-# ðŸ›ï¸ Kafka has no per-message ack: a consumer commits an OFFSET per
+# 🏛️ Kafka has no per-message ack: a consumer commits an OFFSET per
 #    partition. The adapter keeps, per partition, the offsets it handed
 #    out and the ones settled, and commits only the contiguous settled
 #    prefix -- so a crash re-delivers everything from the first
@@ -27,18 +27,25 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from collections import deque
+from typing import Any, Callable, Deque, Dict, List, Optional, Set, Tuple
 
 from .._compat import require_extra
 
 require_extra("kafka", "aiokafka")
 
 from ...eda.envelope import Envelope  # noqa: E402
-from ._base import CE_CONTENT_TYPE, AsyncBroker, Raw, structured  # noqa: E402
+from ._base import (
+    CE_CONTENT_TYPE,
+    AsyncBroker,
+    Raw,
+    close_stale,
+    structured,
+)  # noqa: E402
 
 __all__ = ["KafkaBroker", "KafkaTransport"]
 
-_BATCH = 100
+_BATCH = 50
 #: Longest first poll of a freshly started consumer (group join).
 _JOIN_WAIT_MS = 10_000
 
@@ -46,10 +53,12 @@ _JOIN_WAIT_MS = 10_000
 class _Partition:
     """Offsets handed out / settled on one partition (commit bookkeeping)."""
 
-    __slots__ = ("handed", "settled", "committed")
+    __slots__ = ("handed", "_handed_set", "settled", "committed")
 
     def __init__(self) -> None:
-        self.handed: List[int] = []
+        # ⚡ deque + set: O(1) membership and pop-left (was list: O(n)).
+        self.handed: Deque[int] = deque()
+        self._handed_set: Set[int] = set()
         self.settled: Set[int] = set()
         self.committed: Optional[int] = None
 
@@ -58,18 +67,23 @@ class _Partition:
         rebalance (already handed, or below the committed point) is
         delivered again but NOT tracked twice, so commits never move
         backwards."""
-        if offset in self.handed or (
+        if offset in self._handed_set or (
             self.committed is not None and offset < self.committed
         ):
             return False
         self.handed.append(offset)
+        self._handed_set.add(offset)
         return True
+
+    def is_handed(self, offset: int) -> bool:
+        return offset in self._handed_set
 
     def commit_point(self) -> Optional[int]:
         """The next offset to commit, or ``None`` if nothing advanced."""
         last = None
         while self.handed and self.handed[0] in self.settled:
-            off = self.handed.pop(0)
+            off = self.handed.popleft()
+            self._handed_set.discard(off)
             self.settled.discard(off)
             last = off
         if last is None:
@@ -195,7 +209,7 @@ class KafkaTransport:
     async def ack(self, native: Any) -> None:
         topic, tp, offset = native
         part = self._parts.setdefault((topic, tp), _Partition())
-        if offset not in part.handed:
+        if not part.is_handed(offset):
             return  # a re-fetched duplicate, or committed already
         part.settled.add(offset)
         point = part.commit_point()
@@ -208,7 +222,14 @@ class KafkaTransport:
 
     def rebind(self) -> None:
         """Forget clients opened on a previous event loop (see `_base`).
-        Only clients WE built are dropped; injected ones are kept."""
+        Only clients WE built are dropped; injected ones are kept. The
+        dropped ones are closed best-effort (`close_stale`) so a Beat
+        task calling ``asyncio.run`` per tick does not leak a connection
+        per tick."""
+        stale = [c.stop for c in self._consumers.values()]
+        if self._owns_producer and self._producer is not None:
+            stale.append(self._producer.stop)
+        close_stale(*stale)
         self._consumers.clear()
         self._joined.clear()
         self._parts.clear()

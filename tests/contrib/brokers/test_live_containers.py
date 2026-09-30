@@ -1,4 +1,4 @@
-﻿# tests/contrib/brokers/test_live_containers.py
+# tests/contrib/brokers/test_live_containers.py
 """#294 acceptance on REAL brokers (opt-in: ``XSM_CONTAINERS=1`` + Docker).
 
 For each broker: the `AsyncBrokerContract`, then 1,000 envelopes across

@@ -123,3 +123,43 @@ class TestKafkaSpecific(unittest.TestCase):
             return type(consumer).__name__
 
         self.assertEqual(asyncio.run(build()), "AIOKafkaConsumer")
+
+
+class TestRebindClosesClients(unittest.TestCase):
+    def test_asyncio_run_per_tick_does_not_leak_clients(self) -> None:
+        """H2: a Beat task calling `asyncio.run` per tick rebinds the
+        adapter each time; the previous loop's clients are closed."""
+        from src.xstate_statemachine.contrib.brokers.kafka import KafkaBroker
+
+        cluster = FakeKafkaCluster()
+        made: List[Any] = []
+
+        class Prod:
+            def __init__(self) -> None:
+                self.open = False
+                made.append(self)
+
+            async def start(self) -> None:
+                self.open = True
+
+            async def stop(self) -> None:
+                self.open = False
+
+            async def send_and_wait(self, *a: Any, **k: Any) -> None:
+                await cluster.producer().send_and_wait(*a, **k)
+
+        import aiokafka
+
+        orig = aiokafka.AIOKafkaProducer
+        aiokafka.AIOKafkaProducer = lambda **kw: Prod()  # type: ignore
+        try:
+            b = KafkaBroker(
+                bootstrap_servers="x",
+                consumer_factory=cluster.consumer_factory("g"),
+            )
+            for n in range(5):
+                asyncio.run(b.publish("t", _env("k", n)))
+        finally:
+            aiokafka.AIOKafkaProducer = orig  # type: ignore
+        self.assertEqual(len(made), 5)
+        self.assertEqual(sum(p.open for p in made), 1)  # only the live one
