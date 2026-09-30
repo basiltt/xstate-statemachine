@@ -199,6 +199,12 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   extras cell.
 - Docs: new [Event-driven architecture](https://basiltt.github.io/xstate-statemachine/guide/integration-eda/)
   page; the Guarantees page's outbox and ack steps are now shipped.
+- Also in `xstate_statemachine.eda`: the `OutboxRecord` row type and
+  in-memory `MemoryOutboxStore`, the `DispatchResult` returned by the
+  dispatcher, `BrokerPublishError`, `ReplayRefusedError` / `ReplayResult` /
+  `replay_dead_letter`, `redact_record`, `load_asyncapi_schema`, and the
+  constants `PUBLISH_TAG`, `ATTEMPT_EXTENSION`, `DEFAULT_MAX_ATTEMPTS` and
+  `DEFAULT_MAX_IN_FLIGHT`.
 - **Example: `examples/integrations/eda_fulfilment`.** An order chart and a
   warehouse chart that talk only through events (`ChoreographyRouter`),
   with the SQLite outbox committed with the snapshot, inbox dedup, poison
