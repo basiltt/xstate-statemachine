@@ -27,7 +27,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -176,6 +176,20 @@ class StatechartField(models.JSONField):
                 max_length=255, null=True, blank=True, editable=False
             ),
         }
+
+    def sibling_fields_named(
+        self, name: str
+    ) -> List[Tuple[str, models.Field]]:  # type: ignore[type-arg]
+        """`sibling_fields` for a field that will be called *name* --
+        for hand-written migrations adding the field to an existing
+        model: ``[("statechart", StatechartField()),
+        *StatechartField().sibling_fields_named("statechart")]``."""
+        old = getattr(self, "name", None)
+        self.name = name
+        try:
+            return list(self.sibling_fields().items())
+        finally:
+            self.name = old  # type: ignore[assignment]
 
     def contribute_to_class(
         self, cls: Any, name: str, *args: Any, **kwargs: Any
