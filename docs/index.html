@@ -153,8 +153,22 @@ interp  = <span class="k">await</span> Interpreter(machine).start()</code></pre>
     <article class="card reveal">
       <div class="card-glow" style="--gx:0%;--gy:50%"></div>
       <div class="card-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
-      <h3><a href="{{ '/guide/integration-fastapi/' | relative_url }}">Web-ready, closed by default</a></h3>
-      <p><code>[fastapi]</code>, <code>[starlette]</code> and <code>[litestar]</code> extras turn a chart into routes: one <code>POST</code> per event with OpenAPI generated from your Pydantic events, receipts mapped to <code>200</code>/<code>409</code>/<code>422</code>, SSE and WebSocket streams. <code>authorize=</code> is required, error bodies never leak exception text, and the core stays zero-dependency.</p>
+      <h3><a href="{{ '/guide/integrations/' | relative_url }}">Web-ready, closed by default</a></h3>
+      <p><code>[fastapi]</code>, <code>[starlette]</code>, <code>[litestar]</code>, <code>[flask]</code>, <code>[django]</code> and <code>[drf]</code> turn a chart into routes: one <code>POST</code> per event with OpenAPI from your Pydantic events, receipts mapped to <code>200</code>/<code>409</code>/<code>422</code>, SSE, WebSocket and Django Channels streams, a Django admin with CSRF-protected transition buttons, <code>[sqlalchemy]</code> columns and stores. <code>authorize=</code> is required, error bodies never leak exception text, and the core stays zero-dependency.</p>
+    </article>
+
+    <article class="card reveal">
+      <div class="card-glow" style="--gx:100%;--gy:0%"></div>
+      <div class="card-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h4l2-6 4 12 2-6h4"/></svg></div>
+      <h3><a href="{{ '/guide/integration-eda/' | relative_url }}">Event-driven, at least once</a></h3>
+      <p>CloudEvents envelopes, a transactional outbox that commits with the snapshot, an inbound dispatcher with per-subject order and inbox dedup, dead letters with <code>xsm dlq</code>, sagas and choreography. Adapters for <a href="{{ '/guide/integration-brokers/' | relative_url }}">Redis Streams, Kafka, RabbitMQ, NATS and SQS</a>, plus a <a href="{{ '/guide/integration-celery/' | relative_url }}">Celery</a> bridge for invoked tasks, Beat-driven durable timers and worker helpers.</p>
+    </article>
+
+    <article class="card reveal">
+      <div class="card-glow" style="--gx:0%;--gy:0%"></div>
+      <div class="card-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/></svg></div>
+      <h3><a href="{{ '/guide/integration-observability/' | relative_url }}">Seen, traced, tested</a></h3>
+      <p><code>[observability]</code> emits OpenTelemetry spans and Prometheus metrics with label hygiene, structlog/loguru/Sentry hooks; a stdlib <a href="{{ '/guide/integration-inspector/' | relative_url }}">live inspector</a> speaks the Stately wire protocol. <code>[testing]</code> ships pytest fixtures, state and transition coverage, Hypothesis strategies and <code>replay()</code> for audit logs.</p>
     </article>
 
     <article class="card reveal">

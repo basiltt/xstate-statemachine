@@ -497,6 +497,70 @@ everything that needs a third-party library is an explicit extra under
   **Closed by default:** `authorize=` is required. Start with the
   [FastAPI guide](../integration-fastapi/) and the runnable
   `examples/integrations/fastapi_orders` app.
+- **`[sqlalchemy]` · `[flask]`** — `StatechartType` column + `StatechartMixin`
+  (`send()` under `SELECT … FOR UPDATE` or an optimistic version),
+  `SQLAlchemyStore` / inbox / log / outbox sharing your session, Alembic
+  helpers; a Flask extension + blueprint (one `POST` per event, CSRF-aware
+  forms, `flask xsm` CLI) and Quart parity. Example apps
+  `sqlalchemy_orders` and `flask_wizard`. See [SQLAlchemy](../integration-sqlalchemy/)
+  and [Flask](../integration-flask/).
+- **`[django]` · `[drf]` · `[channels]`** — `StatechartField` (JSON snapshot
+  plus indexed `_state` / `_version` columns and `state__in` lookups),
+  `StatechartModelMixin.send()` inside `transaction.atomic()` +
+  `select_for_update()` (or optimistic + `send_with_retry`), `DjangoStore`,
+  durable deadlines via `manage.py xsm_deadlines`; `pre_transition` /
+  `post_transition` signals, `TransitionLog` written **in the same
+  transaction**, `PermissionGuard` / `has_event_permission`, a
+  `DjangoOutboxStore`; an admin mixin with CSRF-protected transition buttons
+  (permission re-checked on POST, confirm + reason, history inline) and
+  `xsm_*` management commands; a DRF viewset mixin (one `@action` per event,
+  explicit `permission_classes` required, user-scoped `Idempotency-Key`,
+  drf-spectacular schema) and a Channels consumer re-authorised on every
+  push; `xsm_migrate_fsm` migrates a `django-fsm-2` model mechanically.
+  Example app `django_approvals`. See [Django](../integration-django/) and
+  [DRF & Channels](../integration-drf/).
+- **`[testing]`** — a pytest plugin with `xsm_*` fixtures, a `SimulatedClock`
+  fixture, state and transition **coverage** with
+  `--xsm-fail-under-state-coverage` / `--xsm-fail-under-transition-coverage`,
+  an `xsm_path` fixture that walks every engine-verified path,
+  Hypothesis strategies for events and paths, `replay()` /
+  `assert_replay_consistent()` for audit logs, in-memory fake brokers.
+  See [Testing](../integration-testing/).
+- **Event-driven architecture** (`xstate_statemachine.eda`, core) — CloudEvents
+  1.0 `Envelope` with correlation / causation ids, `BrokerAdapter` protocols,
+  `InboundDispatcher` (per-subject order, inbox dedup, poison → dead letters),
+  a **transactional outbox** (`OutboxPlugin` commits with the snapshot,
+  `OutboxRelay` publishes), `SQLiteDeadLetterStore` + `xsm dlq
+  list|show|replay|purge`, `SagaBuilder` / `ChoreographyRouter`, `xsm asyncapi`,
+  `[cloudevents]` interop. See [EDA](../integration-eda/).
+- **Brokers & Celery** — `[kafka]`, `[rabbitmq]`, `[nats]`, `[sqs]` and Redis
+  Streams (`[redis]`) adapters, each passing one contract suite and a
+  real-broker restart test, with the broker's redelivery count carried on the
+  envelope so poison reaches the DLQ across restarts; `[celery]` gives
+  `celery_service` (an `invoke` bridge), `@statechart_task`,
+  `DurableTimerScheduler` for Beat and an outbox relay task; pickle and YAML
+  serializers are refused. See [Brokers](../integration-brokers/) and
+  [Celery](../integration-celery/).
+- **`[observability]` + live inspector** — OpenTelemetry spans and Prometheus
+  metrics with label hygiene (state and event names from the chart allow-list,
+  never payloads or keys), structlog / loguru / Sentry hooks, `gen_ai.*` spans
+  for agents; a stdlib `InspectorPlugin` speaking the Stately Inspector wire
+  protocol with SSE, JSONL and replay sinks and `xsm inspect --live`. See
+  [Observability](../integration-observability/) and [Inspector](../integration-inspector/).
+- **`[agents]`** — a `TOOL_LOOP` chart where the model proposes and the machine
+  decides: per-state tool allow-lists, `run_tool` safety, budgets and timeouts
+  as guards, durable human approval, structured output with retry, LangGraph
+  / pydantic-ai interop, `AgentTracePlugin`. Example app `agents_support_bot`.
+  See [Agents](../integration-agents/) and [vs LangGraph](../vs-langgraph/).
+- **Recipes, comparisons, adoption kit** — nine tested [recipes](../recipes/)
+  (Stripe webhooks, APScheduler, RQ, slot filling, …); comparison pages vs
+  transitions, python-statemachine, django-fsm and LangGraph; `xsm new`
+  templates, Stately export and the integrations journey.
+- **1.0 hardening** — explicit plugin discovery (`plugins.discover`, entry-point
+  groups incl. `xstate_statemachine.brokers`), a proven
+  [compatibility matrix](../compatibility/) (oldest and newest of every
+  extra on Python 3.9 and 3.13), a [deprecation policy](../deprecation-policy/)
+  and the [security baseline](../security/) (X0) re-verified per group.
 - **Core prerequisites** — snapshot layout v4 (`machine_version`, `deadlines`),
   `interpreter.wall_now()`, a global plugin registry, the `context_validator`
   seam, the `__xstate_event__` adapter, `SyncInterpreter.send_threadsafe()`,
