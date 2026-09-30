@@ -40,14 +40,11 @@ REQUIRES = {
         "daphne",
         "pytest_django",
     ),
-    # 📡 G2/G3/G7: EDA + Redis Streams (fakeredis) + Celery + observability.
-    "eda_fulfilment": (
-        "redis",
-        "fakeredis",
-        "celery",
-        "prometheus_client",
-        "opentelemetry.sdk",
-    ),
+    # 📡 G2/G3/G7: the EDA core needs no extra. Every broker / Celery /
+    #    observability test inside the app importorskips its own client,
+    #    so a [kafka]-only cell runs the Kafka tests (and the core demo)
+    #    and skips the rest -- never the whole suite.
+    "eda_fulfilment": (),
 }
 DEFAULT_REQUIRES = ("fastapi", "httpx")
 

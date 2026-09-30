@@ -29,7 +29,7 @@ pip install "xstate-statemachine[sqs]"       # boto3>=1.28
 
 Tested versions are in the [compatibility table](#compatibility). The contract suite runs in CI against fakeredis, moto, and in-memory stand-ins for the aiokafka, aio-pika and nats-py client objects. An opt-in job (`XSM_CONTAINERS=1`, manually triggered) runs it against real brokers in testcontainers.
 
-For a complete, runnable app -- the same choreography on the fake broker and on Redis Streams (fakeredis), a crashed consumer's pending entries reclaimed with their attempt count, an oversize message dead-lettered as `corrupt`, and a test suite -- see the [`eda_fulfilment` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/eda_fulfilment).
+For a complete, runnable app -- the same choreography on the fake broker and on **all five adapters** (Redis Streams, Kafka, RabbitMQ, NATS JetStream, SQS), offline over in-process stand-ins (fakeredis, fake client objects, moto) or against a live server via an environment variable (`python -m eda_fulfilment --broker kafka`), a crashed consumer's messages redelivered with their attempt count through each broker's own redelivery path, an oversize message dead-lettered as `corrupt`, and a parametrised test suite -- see the [`eda_fulfilment` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/eda_fulfilment).
 
 ## Quick start
 

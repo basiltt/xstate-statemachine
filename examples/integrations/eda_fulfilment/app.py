@@ -8,15 +8,19 @@
                 shipped --outbox--> OrderShipped
 
 Nothing here needs a running service: SQLite files in a temp directory,
-`SyncFakeBrokerAdapter` (or Redis Streams on fakeredis), Celery in eager
-mode and in-memory Prometheus / OpenTelemetry / inspector sinks.
+`SyncFakeBrokerAdapter` or one of the five real broker adapters on an
+in-process stand-in (`brokers_local`: fakeredis, fake Kafka / AMQP /
+JetStream clients, moto SQS), Celery in eager mode and in-memory
+Prometheus / OpenTelemetry / inspector sinks. Set a broker's `LIVE_ENV`
+variable to run the same demo against a real server.
 """
 
+import asyncio
 import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from xstate_statemachine import create_machine
 from xstate_statemachine.eda import (
@@ -45,7 +49,7 @@ MAX_ATTEMPTS = 3
 #: X0.4: inbound size cap for the real-broker adapters (bytes).
 MAX_ENVELOPE_BYTES = 64 * 1024
 MAX_ROUNDS = 100
-BROKERS = ("fake", "redis-streams")
+BROKERS = ("fake", "redis-streams", "kafka", "rabbitmq", "nats", "sqs")
 
 
 def load_chart(name: str) -> Dict[str, Any]:
@@ -69,6 +73,24 @@ def warehouse_machine() -> Any:
 # -------------------------------------------------------------------------
 
 
+#: The environment variable that points each real broker at a live
+#: server. Unset = the in-process stand-in from `brokers_local`.
+LIVE_ENV = {
+    "redis-streams": "REDIS_URL",
+    "kafka": "XSM_KAFKA_BOOTSTRAP",
+    "rabbitmq": "XSM_RABBITMQ_URL",
+    "nats": "XSM_NATS_URL",
+    "sqs": "XSM_SQS_ENDPOINT",
+}
+#: The consumer group / durable name the live adapters share.
+GROUP = "fulfilment"
+
+
+def is_live(name: str) -> bool:
+    env = LIVE_ENV.get(name)
+    return bool(env and os.environ.get(env))
+
+
 def select_broker(
     name: Optional[str] = None,
     *,
@@ -76,34 +98,192 @@ def select_broker(
     client: Any = None,
     consumer: str = "fulfilment-1",
 ) -> Any:
-    """``"fake"`` (default) or ``"redis-streams"``.
+    """A broker adapter by name: one of `BROKERS`.
 
-    ``EDA_BROKER`` picks the default. ``redis-streams`` uses *client*, else
-    ``REDIS_URL`` when set, else an in-process ``fakeredis`` server.
+    ``EDA_BROKER`` picks the default (``fake``). Every other name builds
+    the REAL adapter from ``xstate_statemachine.contrib.brokers``:
+
+    * against a live server when its `LIVE_ENV` variable is set;
+    * else against *client* -- the in-process stand-in shared by several
+      app instances (see `brokers_local.new_stand_in`);
+    * else against a fresh stand-in this adapter owns (closed with it).
+
+    Async-only adapters (Kafka, RabbitMQ, NATS) come back wrapped in
+    `SyncBridge`, so the app's publish / dispatch code is one code path.
     """
     name = name or os.environ.get("EDA_BROKER", "fake")
     if name == "fake":
         return SyncFakeBrokerAdapter()
-    if name != "redis-streams":
+    if name not in BROKERS:
         raise ValueError(f"unknown broker {name!r}; choose from {BROKERS}")
+    import brokers_local
+
+    owned = None
+    if client is None and not is_live(name):
+        client = owned = brokers_local.new_stand_in(name)
+    kw: Dict[str, Any] = {
+        "max_bytes": MAX_ENVELOPE_BYTES,
+        "dead_letters": dead_letters,
+    }
+    broker = _BUILDERS[name](client, consumer, kw)
+    broker.owned_stand_in = owned
+    return broker
+
+
+def _redis_streams(client: Any, consumer: str, kw: Dict[str, Any]) -> Any:
     from xstate_statemachine.contrib.brokers.redis_streams import (
         SyncRedisStreamsBroker,
     )
 
-    url = os.environ.get("REDIS_URL")
-    if client is None and not url:
-        import fakeredis
-
-        client = fakeredis.FakeRedis()
+    url = None if client is not None else os.environ["REDIS_URL"]
     return SyncRedisStreamsBroker(
         client,
-        url=None if client is not None else url,
+        url=url,
         prefix="fulfilment",
         consumer=consumer,
         min_idle_ms=0,
-        max_bytes=MAX_ENVELOPE_BYTES,
-        dead_letters=dead_letters,
+        **kw,
     )
+
+
+def _kafka(cluster: Any, consumer: str, kw: Dict[str, Any]) -> Any:
+    from xstate_statemachine.contrib.brokers.kafka import KafkaBroker
+
+    if cluster is None:
+        adapter = KafkaBroker(
+            bootstrap_servers=os.environ["XSM_KAFKA_BOOTSTRAP"],
+            group_id=GROUP,
+            **kw,
+        )
+    else:
+        adapter = KafkaBroker(
+            producer=cluster.producer(),
+            consumer_factory=cluster.consumer_factory(GROUP),
+            group_id=GROUP,
+            **kw,
+        )
+    return SyncBridge(adapter)
+
+
+def _rabbitmq(amqp: Any, consumer: str, kw: Dict[str, Any]) -> Any:
+    from xstate_statemachine.contrib.brokers.rabbitmq import RabbitMQBroker
+
+    if amqp is None:
+        adapter = RabbitMQBroker(url=os.environ["XSM_RABBITMQ_URL"], **kw)
+    else:
+        adapter = RabbitMQBroker(channel=amqp.channel(), **kw)
+    return SyncBridge(adapter)
+
+
+def _nats(js: Any, consumer: str, kw: Dict[str, Any]) -> Any:
+    from xstate_statemachine.contrib.brokers.nats import NatsBroker
+
+    if js is None:
+        adapter = NatsBroker(
+            servers=os.environ["XSM_NATS_URL"], durable=GROUP, **kw
+        )
+    else:
+        adapter = NatsBroker(js=js, durable=GROUP, **kw)
+    return SyncBridge(adapter)
+
+
+def _sqs(moto_sqs: Any, consumer: str, kw: Dict[str, Any]) -> Any:
+    import brokers_local
+    from xstate_statemachine.contrib.brokers.sqs import SyncSqsBroker
+
+    if moto_sqs is None:
+        import boto3
+
+        client = boto3.client(
+            "sqs",
+            endpoint_url=os.environ["XSM_SQS_ENDPOINT"],
+            region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+        )
+        brokers_local.ensure_queue(client)
+    else:
+        client = moto_sqs.client
+    return SqsTopic(SyncSqsBroker(client, **kw), brokers_local.SQS_QUEUE)
+
+
+_BUILDERS = {
+    "redis-streams": _redis_streams,
+    "kafka": _kafka,
+    "rabbitmq": _rabbitmq,
+    "nats": _nats,
+    "sqs": _sqs,
+}
+
+
+class SqsTopic:
+    """Maps the app's logical topic onto the SQS FIFO queue name (SQS
+    needs the ``.fifo`` suffix; the router and outbox keep ``events``)."""
+
+    def __init__(self, broker: Any, queue: str) -> None:
+        self.inner = broker
+        self.queue = queue
+
+    def publish(self, topic: str, envelope: Envelope) -> None:
+        self.inner.publish(self.queue, envelope)
+
+    def subscribe(self, topic: str, *, timeout: Optional[float] = None):
+        return self.inner.subscribe(self.queue, timeout=timeout)
+
+    def ack(self, delivery: Any) -> None:
+        self.inner.ack(delivery)
+
+    def nack(self, delivery: Any, *, requeue: bool) -> None:
+        self.inner.nack(delivery, requeue=requeue)
+
+    def extend_visibility(self, delivery: Any, seconds: int) -> None:
+        self.inner.extend_visibility(delivery, seconds)
+
+    def close(self) -> None:
+        self.inner.close()
+
+
+class SyncBridge:
+    """The blocking face of an async adapter: every call runs on ONE
+    private event loop (aiokafka / aio-pika / nats-py connections belong
+    to the loop that opened them, so a fresh ``asyncio.run`` per call
+    would reconnect every time). Subscribing is lazy -- one delivery per
+    step -- so a dispatcher that stops early never strands deliveries."""
+
+    def __init__(self, adapter: Any) -> None:
+        self.inner = adapter
+        self.loop = asyncio.new_event_loop()
+
+    def _run(self, awaitable: Any) -> Any:
+        return self.loop.run_until_complete(awaitable)
+
+    def publish(self, topic: str, envelope: Envelope) -> None:
+        self._run(self.inner.publish(topic, envelope))
+
+    def subscribe(
+        self, topic: str, *, timeout: Optional[float] = None
+    ) -> Iterator[Any]:
+        agen = self.inner.subscribe(topic, timeout=timeout)
+        try:
+            while True:
+                try:
+                    yield self._run(agen.__anext__())
+                except StopAsyncIteration:
+                    return
+        finally:
+            self._run(agen.aclose())
+
+    def ack(self, delivery: Any) -> None:
+        self._run(self.inner.ack(delivery))
+
+    def nack(self, delivery: Any, *, requeue: bool) -> None:
+        self._run(self.inner.nack(delivery, requeue=requeue))
+
+    def close(self) -> None:
+        if self.loop.is_closed():
+            return
+        try:
+            self._run(self.inner.close())
+        finally:
+            self.loop.close()
 
 
 # -------------------------------------------------------------------------
@@ -202,6 +382,7 @@ class FulfilmentApp:
         *,
         celery: bool = True,
         redis_client: Any = None,
+        stand_in: Any = None,
         consumer: str = "fulfilment-1",
     ) -> None:
         self.workdir = Path(workdir)
@@ -214,10 +395,14 @@ class FulfilmentApp:
         self.broker = select_broker(
             broker,
             dead_letters=self.dead_letters,
-            client=redis_client,
+            client=stand_in if stand_in is not None else redis_client,
             consumer=consumer,
         )
-        self.relay = OutboxRelay(self.outbox, self.broker)
+        #: every envelope the relay put on the broker, in publish order
+        self.sent: List[Envelope] = []
+        self.relay = OutboxRelay(
+            self.outbox, _Recorder(self.broker, self.sent)
+        )
         self.instruments = instrument()
         self.outbox_plugin = OutboxPlugin(self.outbox, topic=TOPIC)
         self.plugins = [
@@ -303,6 +488,18 @@ class FulfilmentApp:
         if close is not None:
             close()
         self.store.close()
+
+
+class _Recorder:
+    """The relay's view of the broker: publish, and remember what went."""
+
+    def __init__(self, broker: Any, sent: List[Envelope]) -> None:
+        self.broker = broker
+        self.sent = sent
+
+    def publish(self, topic: str, envelope: Envelope) -> None:
+        self.broker.publish(topic, envelope)
+        self.sent.append(envelope)
 
 
 def build_app(

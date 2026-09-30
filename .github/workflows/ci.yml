@@ -275,8 +275,12 @@ jobs:
             fastapi|sqlalchemy|flask|celery)
               targets="$targets tests/test_examples_integrations.py" ;;
             # 📡 #294: the shared adapter core lives in tests/contrib/brokers.
-            redis|kafka|rabbitmq|nats|sqs)
+            redis)
               targets="$targets tests/contrib/brokers" ;;
+            # 📦 ...and the eda_fulfilment example runs on this cell's
+            #    broker (its per-broker tests importorskip their client).
+            kafka|rabbitmq|nats|sqs)
+              targets="$targets tests/contrib/brokers tests/test_examples_integrations.py" ;;
             # 🦄 #280: DjangoStore joins the A2 store contract suite; the
             #    django_approvals example runs its own suite (it needs
             #    [drf] + [channels] too, so it skips in the [django] cell

@@ -11,7 +11,8 @@ the [inspector](../../../docs/_guide/integration-inspector.md).
 
 It runs with **no external services**. State, outbox, inbox, dead letters
 and audit log live in one SQLite file in a temp directory. The broker is
-`SyncFakeBrokerAdapter`, or Redis Streams on `fakeredis`. Celery runs in
+`SyncFakeBrokerAdapter` or any of the five real adapters (Redis Streams,
+Kafka, RabbitMQ, NATS, SQS) on an in-process stand-in. Celery runs in
 `task_always_eager` mode. Prometheus, OpenTelemetry and the inspector
 write to in-memory sinks.
 
@@ -31,9 +32,10 @@ checkout ──xsm.order.PAY──▶ order: placed ─▶ paid ──OrderPaid�
 | `machine.json` | The `order` chart: `placed → paid → packed → shipped \| cancelled`, `meta.publish` on the transitions that are integration events, an `after` escalation on `paid`, and `actionErrorPolicy: "fail"` so a poison `PAYMENT_FAILED` is not committed. |
 | `warehouse.json` | The `warehouse` chart: `PACK` publishes `OrderPacked`. |
 | `logic.py` | Actions, the `hasTotal` guard and the deterministic fake carrier. |
-| `app.py` | `build_app()` wires everything; `select_broker()`, `instrument()` and `run_demo()`. |
+| `app.py` | `build_app()` wires everything; `select_broker()`, `instrument()` and `run_demo()`. `SyncBridge` drives the async-only adapters from one private event loop. |
+| `brokers_local.py` | The offline stand-ins for the real adapters: fake aiokafka / aio-pika / nats-py client objects (copies of the library's unit-test fakes), moto SQS, and `crash()`, which triggers each broker's own redelivery path. |
 | `celery_app.py` | JSON-only Celery app, `ship_order` via `celery_service`, `@statechart_task` `handle_order_event`, `DurableTimerScheduler`, `outbox_relay_task`. |
-| `__main__.py` | `python -m eda_fulfilment [--broker fake\|redis-streams]`. |
+| `__main__.py` | `python -m eda_fulfilment [--broker fake\|redis-streams\|kafka\|rabbitmq\|nats\|sqs]`. |
 | `tests/` | Plain pytest. The suites for optional extras skip cleanly without them. |
 
 ## Run it
@@ -45,6 +47,62 @@ python -m eda_fulfilment                          # fake broker
 python -m eda_fulfilment --broker redis-streams   # Redis Streams on fakeredis
 python -m pytest eda_fulfilment/tests -q
 ```
+
+### Run it against each broker
+
+Every broker below uses the **real** adapter class from
+`xstate_statemachine.contrib.brokers`. Only the client underneath changes:
+offline it is an in-process stand-in; set the env var and it is a live
+server. The summary has the same shape for each one.
+
+| Broker | Offline stand-in | Live env var | Command |
+|:--|:--|:--|:--|
+| Redis Streams | `fakeredis` | `REDIS_URL` | `python -m eda_fulfilment --broker redis-streams` |
+| Kafka | fake aiokafka producer/consumer (`brokers_local.FakeKafkaCluster`) | `XSM_KAFKA_BOOTSTRAP` (e.g. `localhost:9092`) | `python -m eda_fulfilment --broker kafka` |
+| RabbitMQ | fake aio-pika channel (`brokers_local.FakeAmqpBroker`) | `XSM_RABBITMQ_URL` (e.g. `amqp://guest:guest@localhost/`) | `python -m eda_fulfilment --broker rabbitmq` |
+| NATS JetStream | fake JetStream (`brokers_local.FakeJetStream`) | `XSM_NATS_URL` (e.g. `nats://localhost:4222`) | `python -m eda_fulfilment --broker nats` |
+| SQS | `moto` (`mock_aws`), FIFO queue `events.fifo` | `XSM_SQS_ENDPOINT` (e.g. LocalStack `http://localhost:4566`) | `python -m eda_fulfilment --broker sqs` |
+
+Install the matching extra first (`[redis]`, `[kafka]`, `[rabbitmq]`,
+`[nats]`, `[sqs]`), plus `fakeredis[lua]` or `moto[sqs]` for the offline
+Redis and SQS runs. Kafka, RabbitMQ and NATS adapters are async-only. The
+app drives them through `SyncBridge`, one private event loop per adapter,
+so the order and warehouse dispatch code is the same for every broker.
+`tests/test_all_brokers.py` runs the demo on all five. It covers the
+3 orders reaching `shipped`, outbox rows equal to published envelopes,
+per-subject order, the poison envelope in the DLQ with
+`attempts == 3`, and a crashed consumer's messages redelivered with their
+attempt count. With `XSM_CONTAINERS=1` and Docker, it also runs the demo
+against real containers, using the repository's pinned testcontainers
+images.
+
+What is faked, per broker:
+
+- **Redis Streams.** fakeredis runs the real stream commands
+  (`XREADGROUP`, `XAUTOCLAIM`) in process. No persistence, no cluster.
+- **Kafka.** A partitioned log with committed offsets per group. There is
+  **no rebalance**, since one consumer owns every partition. There is no
+  replication and no retention, and nothing waits for the group-join
+  delay. A restarted consumer re-reads from the last commit, as with real
+  Kafka. Kafka keeps no delivery count, so a crash-redelivered envelope
+  reports attempt 0 unless the envelope carried one.
+- **RabbitMQ.** One in-memory deque per queue. Un-acked messages return
+  with `redelivered=True` when their channel closes. There are no
+  exchanges beyond the default, no `x-delivery-count` (quorum queues), and
+  no QoS enforcement by the fake. The adapter enforces its own prefetch
+  window.
+- **NATS JetStream.** A stream per topic and a durable pull consumer with
+  `num_delivered`. `ack_wait` never elapses on its own. The crash test
+  expires it explicitly. The `Nats-Msg-Id` duplicate window never
+  expires, so the demo's deliberate redelivery is dropped **at publish**
+  and the summary shows `duplicates 0`. Real JetStream does the same
+  within its default 2-minute window.
+- **SQS.** moto emulates the SQS API in process: `MessageGroupId`
+  ordering, `MessageDeduplicationId` dedup, `ApproximateReceiveCount`, and
+  visibility timeouts. The FIFO deduplication id is the envelope id, but
+  unlike real SQS, moto does not apply the 5-minute dedup interval to the
+  redelivered envelope. The inbox absorbs it either way. The logical topic
+  `events` maps to the queue `events.fifo`.
 
 The demo places three orders, drives the choreography to `shipped`,
 injects one poison message and redelivers one envelope. Then it prints the
@@ -155,17 +213,18 @@ packed --> [*]
 EDA_BROKER=redis-streams REDIS_URL=redis://localhost:6379/0 python -m eda_fulfilment
 ```
 
-Kafka, RabbitMQ, NATS and SQS adapters take the same place. They satisfy
-the same `SyncBrokerAdapter` protocol (see the brokers guide's *choosing a
-broker* table). For a real Celery worker, build the app with
+Kafka, RabbitMQ, NATS and SQS work the same way. Pick one with
+`EDA_BROKER` / `--broker` and point it at a server with its env var (see
+*Run it against each broker* above). For a real Celery worker, build the app with
 `make_celery(eager=False)`, run a worker plus **exactly one** Beat process
 with `xsm_deadlines_every(scheduler)`, and call `connect_signals()` so
 completions are delivered durably.
 
 ## What is faked here
 
-- **The broker.** `SyncFakeBrokerAdapter`, or `fakeredis` in place of a
-  Redis server. The adapter code is the real one.
+- **The broker.** `SyncFakeBrokerAdapter`, or a real adapter over an
+  in-process stand-in (see the per-broker notes above). The adapter code
+  is the real one.
 - **Celery.** It runs in `task_always_eager` mode with the `memory://`
   transport. No worker process, no result backend.
 - **The carrier.** `ship_order` returns `TRK-<order id>`.
