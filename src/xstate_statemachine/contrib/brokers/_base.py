@@ -359,6 +359,10 @@ class SyncBroker(_Core):
             bad = self._stash_decoded(topic, raws)
             for native in bad:  # after stashing: a failing drop loses none
                 self._call(self.transport.drop, native)
+            if raws and timeout is not None:
+                # the protocol: end once NOTHING arrived for `timeout`
+                # (a draining consumer must not stop mid-backlog)
+                deadline = _deadline(timeout)
 
     def ack(self, delivery: Delivery) -> None:
         claimed, native, at = self._claim(delivery)
@@ -450,6 +454,10 @@ class AsyncBroker(_Core):
             bad = self._stash_decoded(topic, raws)
             for native in bad:  # after stashing: a failing drop loses none
                 await self._call(self.transport.drop, native)
+            if raws and timeout is not None:
+                # the protocol: end once NOTHING arrived for `timeout`
+                # (a draining consumer must not stop mid-backlog)
+                deadline = _deadline(timeout)
 
     async def ack(self, delivery: Delivery) -> None:
         self._check_loop()
