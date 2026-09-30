@@ -1,6 +1,6 @@
 ---
 title: "Integration extras"
-description: "Every optional pip extra — pydantic, redis, starlette, fastapi, litestar, agents, and the planned django, flask, sqlalchemy, celery, brokers, observability and testing — with its status and issue."
+description: "Every optional pip extra — pydantic, redis, starlette, fastapi, litestar, agents, observability, and the planned django, flask, sqlalchemy, celery, brokers and testing — with its status and issue."
 ---
 
 # Integration extras
@@ -34,7 +34,7 @@ except MissingExtraError as exc:
 | Extra | Gives you | Status |
 |:--|:--|:--|
 | `pydantic` | Typed context validated on every `assign`, typed events as discriminated unions, machine-JSON validation, JSON Schema export | **shipped** — [guide](../integration-pydantic/) · [#266](https://github.com/basiltt/xstate-statemachine/issues/266) |
-| `observability` | OpenTelemetry spans, Prometheus metrics, structlog/loguru context binding, Sentry breadcrumbs — all from the plugin hooks | planned — [#273](https://github.com/basiltt/xstate-statemachine/issues/273) |
+| `observability` | `OpenTelemetryPlugin` spans, `PrometheusPlugin` metrics, `StructlogPlugin` / `LoguruPlugin` context binding, `SentryPlugin` breadcrumbs, `instrument_all()` — all from the plugin hooks, with an X0.6 label allow-list | **shipped** — [guide](../integration-observability/) · [#273](https://github.com/basiltt/xstate-statemachine/issues/273) |
 | `testing` | pytest plugin: `xstate_machine` marker → `xsm_interp` / `xsm_ainterp` / `xsm_clock` / `xsm_ran` / `xsm_store` fixtures, `xstate_guards_false`, `xsm_send_all`, file-backed `xsm_snapshot` assertions; path generation, coverage and Hypothesis model-based testing follow in B2–B4 | **shipped** (plugin) — [guide](../integration-testing/) · [#268](https://github.com/basiltt/xstate-statemachine/issues/268) |
 | `redis` | Shared snapshot store, inbox and log for multi-worker deployments | **shipped** — [guide](../integration-redis/) · [#306](https://github.com/basiltt/xstate-statemachine/issues/306) |
 | `sqlalchemy` | `StatechartType`, mixin with optimistic locking, stores for sync and `AsyncSession`, inbox + log; transactional outbox arrives with #293 | **shipped** — [guide](../integration-sqlalchemy/) · [#284](https://github.com/basiltt/xstate-statemachine/issues/284) |

@@ -41,6 +41,16 @@
       "test_deps": ["httpx>=0.24", "openapi-spec-validator>=0.7", "pydantic>=2.5"],
       "note": "2.0.x does not import on Python 3.9 (PEP 604 annotations evaluated at runtime); 2.1-2.13 emit OpenAPI whose per-event path parameters do not validate. 2.14.0 imports sniffio without declaring it, hence the companion pin."
     },
+    "observability": {
+      "package": "opentelemetry-api",
+      "declared": "1.20",
+      "oldest": "opentelemetry-api==1.20.0",
+      "newest": "opentelemetry-api>=1.20",
+      "python": {"oldest": "3.9", "newest": "3.13"},
+      "extra_pins": ["prometheus-client==0.17.0", "opentelemetry-sdk==1.20.0"],
+      "test_deps": ["opentelemetry-sdk>=1.20", "structlog", "loguru", "sentry-sdk"],
+      "note": "structlog, loguru and sentry-sdk are soft imports (never pinned); the cells install their latest releases so those plugins are exercised. Floors proven locally on CPython 3.9.25: opentelemetry-api/-sdk 1.20.0 + prometheus-client 0.17.0."
+    },
     "pydantic": {
       "package": "pydantic",
       "declared": "2.5",

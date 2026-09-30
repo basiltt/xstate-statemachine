@@ -918,6 +918,8 @@ page with a **Guarantees** box and a **Threat model** box — CI refuses a page 
 | `[fastapi]` | `StatechartRouter` generates `GET /{id}`, `POST /{id}/send` (discriminated-union body), one route per event, `/events`, `/diagram.mmd`, `/stream`, `/ws` — with OpenAPI that reflects your chart; `Depends(get_interpreter(...))` | [FastAPI](https://basiltt.github.io/xstate-statemachine/guide/integration-fastapi/) |
 | `[litestar]` | `XStatePlugin` + a generated `Controller` on the same registry | [Litestar](https://basiltt.github.io/xstate-statemachine/guide/integration-litestar/) |
 | `[agents]` | LLM agents as statecharts: `TOOL_LOOP`, per-state tool allow-lists, budgets, durable human approval, `spawn_agent` | [LLM agents](https://basiltt.github.io/xstate-statemachine/guide/integration-agents/) |
+| `[observability]` | `OpenTelemetryPlugin` spans, `PrometheusPlugin` metrics, structlog / loguru context, Sentry breadcrumbs — `instrument_all()` in one line; label allow-list by default | [Observability](https://basiltt.github.io/xstate-statemachine/guide/integration-observability/) |
+| *(core)* | Live inspector: `xsm inspect --live` streams any machine to the Stately Inspector (`@statelyai/inspect` protocol); `xsm sim --record` / `xsm replay` | [Live inspector](https://basiltt.github.io/xstate-statemachine/guide/integration-inspector/) |
 
 <!-- doc-fragment -->
 ```python
@@ -1125,6 +1127,7 @@ Python has good state machine libraries. Here's an honest read on when to pick w
 | Sync **and** async runtimes | ✅ two engines | ✅ | ✅ |
 | Diagram export | ✅ no binaries | ⚙️ needs graphviz | ✅ |
 | CLI: generate, inspect, simulate, diagram, docs | ✅ | ❌ | ❌ |
+| Live inspector (Stately Inspector protocol, like `@statelyai/inspect`) | ✅ `xsm inspect --live` | ❌ | ❌ |
 | Virtual clock for tests | ✅ `SimulatedClock` | ❌ | ❌ |
 | Bounded inbox / backpressure | ✅ `max_queue_size` | — | — |
 | Runtime dependencies | **0** | 1 (`six`) | 0 |

@@ -249,6 +249,36 @@ def _add_simulation_option_args(parser: argparse.ArgumentParser) -> None:
 # -----------------------------------------------------------------------------
 
 
+def _add_live_args(
+    parser: argparse.ArgumentParser, *, with_context: bool = True
+) -> None:
+    """Server flags shared by `inspect --live` and `replay --live` (#274)."""
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind address (default 127.0.0.1). A non-loopback host "
+        "requires --token.",
+    )
+    parser.add_argument(
+        "--port", type=int, default=8765, help="Port (default 8765)."
+    )
+    parser.add_argument(
+        "--token",
+        default=None,
+        help="Access token (default: a fresh random one per run).",
+    )
+    parser.add_argument(
+        "--open", action="store_true", help="Open the page in a browser."
+    )
+    if with_context:
+        parser.add_argument(
+            "--context",
+            metavar="KEYS",
+            help="Comma-separated context keys the page may see "
+            "(default: none -- deny by default).",
+        )
+
+
 def get_parser() -> argparse.ArgumentParser:
     """
     Creates, configures, and returns the main argument parser for the CLI.
@@ -583,6 +613,53 @@ examples:
     ins_parser.add_argument(
         "--no-events", action="store_true", help="Skip the transitions table."
     )
+    _add_live_args(ins_parser)
+    ins_parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Serve the live inspector (Stately Inspector protocol over SSE) "
+        "and drive the machine with the simulator.",
+    )
+    ins_parser.add_argument(
+        "-e",
+        "--events",
+        help="With --live: run these events (simulate grammar) instead of "
+        "the interactive simulator.",
+    )
+    ins_parser.add_argument(
+        "--duration",
+        type=float,
+        default=None,
+        help="With --live and --events: seconds to keep serving (default: "
+        "until Ctrl-C).",
+    )
+
+    # ⏪ replay subcommand (#274)
+    rep_parser = subparsers.add_parser(
+        "replay",
+        parents=[presentation],
+        help="Print or stream (--live) a recorded inspector session.",
+        description="Reads a JSON Lines file written by `xsm sim --record`.",
+    )
+    rep_parser.add_argument("jsonl_file", help="The recording (.jsonl).")
+    rep_parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Serve it on the live inspector instead of printing.",
+    )
+    rep_parser.add_argument(
+        "--speed",
+        type=float,
+        default=0.0,
+        help="With --live: 1.0 replays at recorded pace, 0 (default) at once.",
+    )
+    rep_parser.add_argument(
+        "--duration",
+        type=float,
+        default=None,
+        help="With --live: seconds to keep serving (default: until Ctrl-C).",
+    )
+    _add_live_args(rep_parser, with_context=False)
 
     # 🗺️ diagram subcommand
     dia_parser = subparsers.add_parser(
@@ -634,6 +711,18 @@ examples:
         "--json",
         action="store_true",
         help="Emit the final state and history as JSON.",
+    )
+    sim_parser.add_argument(
+        "--record",
+        metavar="PATH",
+        help="Write the session as inspector protocol messages to a JSON "
+        "Lines file (mode 0600); stream it later with `xsm replay`.",
+    )
+    sim_parser.add_argument(
+        "--context",
+        metavar="KEYS",
+        help="With --record: comma-separated context keys to include "
+        "(default: none -- deny by default).",
     )
 
     # 📄 docs subcommand

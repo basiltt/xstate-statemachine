@@ -19,6 +19,9 @@
 #    Real OTel SPANS belong to the `[observability]` extra (G3, #273); this
 #    plugin leaves the seam: `on_span=callable(record)` is called for every
 #    record so an exporter can open/close spans without re-parsing JSONL.
+#    `on_span="otel"` wires `contrib.observability.agent_span_exporter()`
+#    (one `gen_ai.<operation>` span per record) -- resolved lazily, so
+#    `[agents]` alone never imports OpenTelemetry.
 # -----------------------------------------------------------------------------
 """JSONL agent traces with ``gen_ai.*`` fields and cost rollup."""
 
@@ -63,7 +66,10 @@ class AgentTracePlugin(PluginBase[Any]):
         record_content: Include prompts / completions / tool I/O
             (redacted). Default ``False``.
         on_span: Optional ``callable(record)`` -- the documented seam for
-            an OpenTelemetry exporter (G3). Exceptions are contained.
+            an OpenTelemetry exporter. Pass ``"otel"`` to emit real spans
+            via ``[observability]``'s `agent_span_exporter()` (raises
+            `MissingExtraError` if that extra is absent). Exceptions
+            raised by the callable are contained.
         clock: ``() -> float`` epoch seconds for the ``ts`` field.
 
     Attach it with ``interp.use(trace)`` for lifecycle/state records AND
@@ -76,12 +82,20 @@ class AgentTracePlugin(PluginBase[Any]):
         sink: Sink = None,
         *,
         record_content: bool = False,
-        on_span: Optional[Callable[[Dict[str, Any]], None]] = None,
+        on_span: Union[Callable[[Dict[str, Any]], None], str, None] = None,
         clock: Optional[Callable[[], float]] = None,
     ) -> None:
+        if on_span == "otel":
+            from ..observability import agent_span_exporter
+
+            on_span = agent_span_exporter()
+        elif isinstance(on_span, str):
+            raise ValueError(
+                f"on_span must be a callable, 'otel' or None; got {on_span!r}"
+            )
         self.sink = sink
         self.record_content = record_content
-        self.on_span = on_span
+        self.on_span: Optional[Callable[[Dict[str, Any]], None]] = on_span
         self.clock = clock or time.time
         self.records: List[Dict[str, Any]] = []
         self._lock = threading.Lock()

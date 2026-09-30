@@ -1529,6 +1529,10 @@ class MachineNode(StateNode[TContext]):
                 "❌ Machine configuration must have a root 'id'."
             )
         self.logic = logic
+        #: The config dict this machine was built from (by reference; never
+        #: mutated by the library). Read by the live inspector (#274) for
+        #: `@xstate.actor.definition`; ``{}``-safe for hand-built nodes.
+        self.source_config: Dict[str, Any] = config
         raw_context = config.get("context", {})
         # 🛡️ Context is a mapping by contract — `assign` and every action
         #    subscript it by key. A list or scalar failed much later with an

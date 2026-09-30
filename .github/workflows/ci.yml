@@ -220,6 +220,9 @@ jobs:
             litestar) python -m pip install "httpx>=0.24" "openapi-spec-validator>=0.7" "pydantic>=2.5" ;;
             # 🤖 #288/#289: soft-import interop (never pinned in pyproject)
             #    so the LangGraph / pydantic-ai / instructor tests run here.
+            # 🔭 #273: structlog / loguru / sentry-sdk are soft imports
+            #    (never pinned); the OTel SDK provides the in-memory exporter.
+            observability) python -m pip install opentelemetry-sdk structlog loguru sentry-sdk ;;
             agents) python -m pip install langgraph langchain-core pydantic-ai-slim instructor "httpx>=0.24" ;;
             # 🗄️ #284: the async store runs on aiosqlite; alembic proves
             #    autogenerate sees no diff (X0.10).
@@ -542,7 +545,7 @@ jobs:
       - name: 📦 Install the shipped extras and pytest
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[redis,pydantic]" "pytest>=8.3.0"
+          python -m pip install -e ".[redis,pydantic,observability]" "pytest>=8.3.0"
 
       - name: 📏 Compare measured p50s to recorded budgets
         run: python -m pytest tests/test_perf_budgets.py -q

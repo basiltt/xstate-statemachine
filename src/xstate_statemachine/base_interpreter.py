@@ -2874,6 +2874,20 @@ class BaseInterpreter(Generic[TContext]):
                 return receipt
         return None
 
+    def _notify_event_sent(self, target: Any, event: Any) -> None:
+        """Fire `on_event_sent` on THIS (sending) actor's plugins (#274).
+
+        Shared by both engines: ``sendTo`` / ``sendParent`` / ``forwardTo``
+        all resolve in `_execute_builtin_action`, which neither engine
+        overrides. Plugins are `_SafePlugin`-wrapped, so a raising hook is
+        contained like every other.
+        """
+        if not self._plugins:
+            return
+        target_id = str(getattr(target, "id", target))
+        for plugin in self._plugins:
+            plugin.on_event_sent(self, target_id, event)
+
     def _notify_event_processed(self, event: Any, receipt: "Receipt") -> None:
         """Fire `on_event_processed` once for a settled event (#304)."""
         for plugin in self._plugins:
@@ -4212,6 +4226,7 @@ class BaseInterpreter(Generic[TContext]):
                 )
                 return
             delay = self._resolve_delay(params.get("delay"), event)
+            self._notify_event_sent(actor, target_event)
             await self._deliver(actor, target_event, delay, params.get("id"))
 
         elif canonical == SEND_PARENT:
@@ -4220,6 +4235,7 @@ class BaseInterpreter(Generic[TContext]):
                 return
             target_event = self._resolve_event_spec(params.get("event"), event)
             delay = self._resolve_delay(params.get("delay"), event)
+            self._notify_event_sent(self.parent, target_event)
             await self._deliver(
                 self.parent, target_event, delay, params.get("id")
             )
@@ -4233,6 +4249,7 @@ class BaseInterpreter(Generic[TContext]):
                     "forwardTo", params.get("to"), event
                 )
                 return
+            self._notify_event_sent(actor, event)
             await self._deliver(actor, event, None, None)
 
         elif canonical == ESCALATE:
