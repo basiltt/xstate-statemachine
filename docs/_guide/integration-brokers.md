@@ -112,7 +112,7 @@ Shared semantics (`contrib.brokers._base`):
 
 ### Amazon SQS: `SqsBroker` / `SyncSqsBroker`
 
-`(client=None, *, region_name=None, visibility_timeout_s=None)`. The topic is a queue **name**. **FIFO queues** (`*.fifo`) get `MessageGroupId = subject` and `MessageDeduplicationId = envelope.id`. **Standard queues do not preserve order**, so use them only for charts that tolerate reordering. `ack` and drop both call `DeleteMessage`. Long polling waits up to 20 s. Attempts are `ApproximateReceiveCount - 1`. `extend_visibility(delivery, seconds)` keeps a slow delivery hidden. Credentials come only from boto3's own chain. For fan-out, publish to SNS and subscribe FIFO queues to it.
+`(client=None, *, region_name=None, visibility_timeout_s=None)`. The topic is a queue **name**. **FIFO queues** (`*.fifo`) get `MessageGroupId = subject` and `MessageDeduplicationId = envelope.id`. **Standard queues do not preserve order**, so use them only for charts that tolerate reordering. `ack` and drop both call `DeleteMessage`. Long polling waits up to 20 s. Attempts are `ApproximateReceiveCount - 1`. `extend_visibility(delivery, seconds)` keeps a slow delivery hidden. A batch of up to 10 messages is received at once, and messages still waiting in the local buffer are subject to the same visibility clock. Size `visibility_timeout_s` for a whole batch: if it expires, SQS hands the message to another consumer (at-least-once; the inbox dedups). Credentials come only from boto3's own chain. For fan-out, publish to SNS and subscribe FIFO queues to it.
 
 ## Guarantees
 

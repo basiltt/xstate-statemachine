@@ -133,7 +133,15 @@ def celery_service(
         if watch:
             threading.Thread(
                 target=_watch,
-                args=(interp, invocation, result, timeout_s, poll_s, stop),
+                args=(
+                    interp,
+                    invocation,
+                    handle,
+                    result,
+                    timeout_s,
+                    poll_s,
+                    stop,
+                ),
                 name=f"xsm-celery-{invocation.id}",
                 daemon=True,
             ).start()
@@ -162,9 +170,36 @@ def _revoke(result: Any) -> None:
         logger.debug("revoke of %s failed", getattr(result, "id", "?"))
 
 
+def _still_mine(interp: Any, invocation: Any, handle: Any) -> bool:
+    """This watcher's invocation is still the live one. Invocation ids
+    are static per state, so after exit + re-entry a NEW handle sits
+    under the same id -- an old watcher must never complete it."""
+    return (
+        interp.status == "running"
+        and interp._running_logic.get(invocation.id) is handle
+    )
+
+
+def _settle_live(
+    interp: Any, invocation: Any, handle: Any, result: Any, fn: Any
+) -> None:
+    """Deliver once, and only for this handle. The live completion also
+    retires the durable ``_xsm_celery`` record so a signal handler or
+    `poll_results` cannot apply the same completion a second time."""
+    if not _still_mine(interp, invocation, handle):
+        return
+    pending = interp.context.get(CONTEXT_KEY)
+    if isinstance(pending, dict):
+        rec = pending.get(invocation.id)
+        if isinstance(rec, dict) and rec.get("task_id") == result.id:
+            pending.pop(invocation.id, None)
+    fn()
+
+
 def _watch(
     interp: Any,
     invocation: Any,
+    handle: Any,
     result: Any,
     timeout_s: Optional[float],
     poll_s: float,
@@ -173,22 +208,39 @@ def _watch(
     started = time.monotonic()
     while not stop.is_set():
         if _is_ready(result):
-            if stop.is_set() or interp.status != "running":
-                return
             try:
-                value = _value(result)
+                value = _value(result)  # may block on the backend
             except Exception as exc:  # noqa: BLE001 - the task failed
-                interp._fail_logic(invocation, exc)
+                err = exc
+                _settle_live(
+                    interp,
+                    invocation,
+                    handle,
+                    result,
+                    lambda: interp._fail_logic(invocation, err),
+                )
             else:
-                interp._complete_logic(invocation, value)
+                _settle_live(
+                    interp,
+                    invocation,
+                    handle,
+                    result,
+                    lambda: interp._complete_logic(invocation, value),
+                )
             return
         if timeout_s is not None and time.monotonic() - started > timeout_s:
+            if stop.is_set() or not _still_mine(interp, invocation, handle):
+                return
             _revoke(result)
-            interp._fail_logic(
+            timeout_err = TimeoutError(
+                f"celery task {result.id} did not finish in {timeout_s}s"
+            )
+            _settle_live(
+                interp,
                 invocation,
-                TimeoutError(
-                    f"celery task {result.id} did not finish in {timeout_s}s"
-                ),
+                handle,
+                result,
+                lambda: interp._fail_logic(invocation, timeout_err),
             )
             return
         stop.wait(poll_s)

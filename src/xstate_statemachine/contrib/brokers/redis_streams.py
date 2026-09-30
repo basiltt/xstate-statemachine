@@ -1,4 +1,4 @@
-﻿# src/xstate_statemachine/contrib/brokers/redis_streams.py
+# src/xstate_statemachine/contrib/brokers/redis_streams.py
 # -----------------------------------------------------------------------------
 # ðŸŸ¥ Redis Streams broker -- consumer groups, XACK, PEL reclaim (#294)
 # -----------------------------------------------------------------------------
@@ -97,6 +97,9 @@ class RedisStreamsTransport:
         #: (stream, entry id) fetched by THIS transport and not yet
         #: settled -- never reclaimed from ourselves.
         self._held: Set[Any] = set()
+        #: XAUTOCLAIM cursor per stream: the scan resumes where it stopped
+        #: so entries past a run of our own held ones are reached.
+        self._cursor: Dict[str, str] = {}
 
     # -- keys -------------------------------------------------------------------
     def stream(self, topic: str, shard: int = 0) -> str:
@@ -166,9 +169,11 @@ class RedisStreamsTransport:
             self.group,
             self.consumer,
             self.min_idle_ms,
-            start_id="0-0",
+            start_id=self._cursor.get(stream, "0-0"),
             count=self.batch,
         )
+        if reply:
+            self._cursor[stream] = _text(reply[0])
         entries = reply[1] if reply else []
         out: List[Raw] = []
         for entry_id, fields in entries:

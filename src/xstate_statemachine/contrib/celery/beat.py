@@ -1,4 +1,4 @@
-﻿# src/xstate_statemachine/contrib/celery/beat.py
+# src/xstate_statemachine/contrib/celery/beat.py
 # -----------------------------------------------------------------------------
 # â° Celery Beat as the durable `after` scheduler; outbox relay task (#292)
 # -----------------------------------------------------------------------------
@@ -124,10 +124,20 @@ class DurableTimerScheduler:
             return False
         kw = dict(self._scanner_kw)
         kw["prefix"] = key
-        scanner = DueTimerScanner(self.store, self.machine_for_key, **kw)
-        return any(k == key for k, _ in scanner.due_keys()) and bool(
-            scanner.run_once()
-        )
+        scanner = _OneKeyScanner(key, self.store, self.machine_for_key, **kw)
+        return bool(scanner.run_once())
+
+
+class _OneKeyScanner(DueTimerScanner):
+    """A scanner restricted to ONE key (``prefix=key`` alone would also
+    match ``order-10`` for ``order-1``)."""
+
+    def __init__(self, key: str, *args: Any, **kw: Any) -> None:
+        super().__init__(*args, **kw)
+        self._key = key
+
+    def due_keys(self, now: Optional[float] = None) -> List[Any]:
+        return [kd for kd in super().due_keys(now) if kd[0] == self._key]
 
 
 def xsm_deadlines_every(

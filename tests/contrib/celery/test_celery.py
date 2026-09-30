@@ -1,4 +1,4 @@
-﻿# tests/contrib/celery/test_celery.py
+# tests/contrib/celery/test_celery.py
 """#292: `[celery]` -- Celery in ``task_always_eager`` mode with an
 in-memory result backend (no broker), plus a real in-process worker
 thread (``memory://`` broker, ``cache+memory://`` backend) and a
@@ -219,6 +219,37 @@ class TestLiveWatcher(unittest.TestCase):
         task2, i2 = self._run()
         i2.stop()
         self.assertFalse(task2.result.revoked)
+
+    def test_old_watcher_never_completes_a_reentered_invocation(
+        self,
+    ) -> None:
+        from src.xstate_statemachine.contrib.celery import service as svc
+
+        task, i = self._run()
+        old_handle = i._running_logic["charge"]
+        inv = [v for s in i._active_state_nodes for v in s.invoke][0]
+        i._running_logic["charge"] = object()  # re-entered: a new handle
+        task.result.value, task.result.done = {"stale": 1}, True
+        svc._watch(
+            i,
+            inv,
+            old_handle,
+            task.result,
+            None,
+            0.01,
+            __import__("threading").Event(),
+        )
+        i.tick()
+        self.assertIn("o.paying", i.current_state_ids)
+        i._running_logic["charge"] = old_handle
+        i.stop()
+
+    def test_live_completion_retires_the_durable_record(self) -> None:
+        task, i = self._run()
+        task.result.value, task.result.done = {"ok": 1}, True
+        _wait(lambda: "o.paid" in i.current_state_ids, i)
+        self.assertEqual(i.context["_xsm_celery"], {})
+        i.stop()
 
     def test_revoke_failure_is_swallowed(self) -> None:
         task, i = self._run()
@@ -566,6 +597,17 @@ class TestBeat(unittest.TestCase):
         self.assertFalse(s.fire(key, state_id, seq))  # fired already
         self.assertEqual(s.run_once(), 0)  # scanner safety net: nothing
         self.assertEqual(s.schedule_exact("missing"), [])
+
+    def test_fire_does_not_wake_keys_sharing_the_prefix(self) -> None:
+        with persisted(self.store, "t10", self.m, clock=self.clock):
+            pass
+        s = self._sched()
+        self.now = 1_000_002.0
+        (d,) = self.store.load("t1").deadlines
+        self.assertTrue(s.fire("t1", d.state_id, d.entry_seq))
+        rec = self.store.load("t10")
+        assert rec is not None
+        self.assertIn("waiting", json.dumps(json.loads(rec.snapshot)["value"]))
 
     def test_eta_job_for_a_left_state_is_skipped(self) -> None:
         s = self._sched()

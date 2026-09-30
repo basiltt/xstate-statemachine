@@ -1,4 +1,4 @@
-﻿# tests/contrib/kafka/test_kafka_broker.py
+# tests/contrib/kafka/test_kafka_broker.py
 """#294: `KafkaBroker` -- `AsyncBrokerContract` over an in-memory
 aiokafka stand-in (partitions + committed offsets), plus Kafka specifics:
 key = subject, CloudEvents headers, commit only the contiguous settled
@@ -76,6 +76,21 @@ class TestKafkaSpecific(unittest.TestCase):
             ]
 
         self.assertEqual(asyncio.run(go()), [2])
+
+    def test_refetch_after_rebalance_never_moves_commit_backwards(
+        self,
+    ) -> None:
+        from src.xstate_statemachine.contrib.brokers.kafka import _Partition
+
+        p = _Partition()
+        for off in (5, 6, 7):
+            p.track(off)
+        p.settled.update({5, 6, 7})
+        self.assertEqual(p.commit_point(), 8)
+        p.committed = 8
+        self.assertFalse(p.track(5))  # re-fetched after a rebalance
+        self.assertTrue(p.track(8))
+        self.assertIsNone(p.commit_point())
 
     def test_publish_failure_raises_and_marks_unhealthy(self) -> None:
         cluster = FakeKafkaCluster()

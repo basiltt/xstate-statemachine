@@ -1,4 +1,4 @@
-﻿# src/xstate_statemachine/contrib/brokers/_base.py
+# src/xstate_statemachine/contrib/brokers/_base.py
 # -----------------------------------------------------------------------------
 # ðŸ§± The shared adapter skeleton: one bookkeeping core, thin transports (#294)
 # -----------------------------------------------------------------------------
@@ -160,6 +160,23 @@ class _Core:
             out.append((env, raw.native))
         return out
 
+    def _stash_decoded(self, topic: str, raws: List[Raw]) -> List[Any]:
+        """Stash every decodable message FIRST; return the natives of the
+        undecodable ones for the caller to drop. A drop (or a user
+        ``on_undecodable``) that raises must never strand good messages
+        that the transport already marked as fetched."""
+        good: List[Tuple[Envelope, Any]] = []
+        bad: List[Any] = []
+        try:
+            for env, native in self._decode(topic, raws):
+                if env is None:
+                    bad.append(native)
+                else:
+                    good.append((env, native))
+        finally:
+            self._stash(topic, good)
+        return bad
+
     def _stash(self, topic: str, items: List[Tuple[Envelope, Any]]) -> None:
         with self._lock:
             self._local.setdefault(topic, deque()).extend(items)
@@ -264,13 +281,9 @@ class SyncBroker(_Core):
                 return
             fetched = True
             raws = self._call(self.transport.fetch, topic, _wait_for(deadline))
-            good = []
-            for env, native in self._decode(topic, raws):
-                if env is None:
-                    self._call(self.transport.drop, native)
-                else:
-                    good.append((env, native))
-            self._stash(topic, good)
+            bad = self._stash_decoded(topic, raws)
+            for native in bad:  # after stashing: a failing drop loses none
+                self._call(self.transport.drop, native)
 
     def ack(self, delivery: Delivery) -> None:
         claimed, native = self._claim(delivery)
@@ -311,6 +324,12 @@ class AsyncBroker(_Core):
         if self._loop is loop:
             return
         if self._loop is not None:
+            # 📝 The old loop is closed (asyncio.run returned), so its
+            #    sockets cannot be closed gracefully from here: the broker
+            #    notices the dead connection and redelivers what it held
+            #    un-acked (AMQP / JetStream at once, a Kafka group member
+            #    after its session timeout). Long-lived services should
+            #    keep ONE loop per adapter and call `close()` on shutdown.
             rebind = getattr(self.transport, "rebind", None)
             if rebind is not None:
                 rebind()
@@ -353,13 +372,9 @@ class AsyncBroker(_Core):
             raws = await self._call(
                 self.transport.fetch, topic, _wait_for(deadline)
             )
-            good = []
-            for env, native in self._decode(topic, raws):
-                if env is None:
-                    await self._call(self.transport.drop, native)
-                else:
-                    good.append((env, native))
-            self._stash(topic, good)
+            bad = self._stash_decoded(topic, raws)
+            for native in bad:  # after stashing: a failing drop loses none
+                await self._call(self.transport.drop, native)
 
     async def ack(self, delivery: Delivery) -> None:
         self._check_loop()

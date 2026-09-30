@@ -1,4 +1,4 @@
-﻿# src/xstate_statemachine/contrib/brokers/kafka.py
+# src/xstate_statemachine/contrib/brokers/kafka.py
 # -----------------------------------------------------------------------------
 # ðŸŸ« Kafka broker (aiokafka) -- key = subject, commit the acked prefix (#294)
 # -----------------------------------------------------------------------------
@@ -51,6 +51,18 @@ class _Partition:
         self.settled: Set[int] = set()
         self.committed: Optional[int] = None
 
+    def track(self, offset: int) -> bool:
+        """Remember a handed-out offset. A record re-fetched after a
+        rebalance (already handed, or below the committed point) is
+        delivered again but NOT tracked twice, so commits never move
+        backwards."""
+        if offset in self.handed or (
+            self.committed is not None and offset < self.committed
+        ):
+            return False
+        self.handed.append(offset)
+        return True
+
     def commit_point(self) -> Optional[int]:
         """The next offset to commit, or ``None`` if nothing advanced."""
         last = None
@@ -58,7 +70,12 @@ class _Partition:
             off = self.handed.pop(0)
             self.settled.discard(off)
             last = off
-        return None if last is None else last + 1
+        if last is None:
+            return None
+        point = last + 1
+        if self.committed is not None and point <= self.committed:
+            return None
+        return point
 
 
 class KafkaTransport:
@@ -158,13 +175,15 @@ class KafkaTransport:
         for tp, records in batches.items():
             part = self._parts.setdefault((topic, tp), _Partition())
             for rec in records:
-                part.handed.append(rec.offset)
+                part.track(rec.offset)
                 out.append(Raw(rec.value, (topic, tp, rec.offset), 0))
         return out
 
     async def ack(self, native: Any) -> None:
         topic, tp, offset = native
         part = self._parts.setdefault((topic, tp), _Partition())
+        if offset not in part.handed:
+            return  # a re-fetched duplicate, or committed already
         part.settled.add(offset)
         point = part.commit_point()
         if point is not None:

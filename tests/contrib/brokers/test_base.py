@@ -128,6 +128,21 @@ class TestSyncBase(unittest.TestCase):
         )
         self.assertEqual(len(t.dropped), 2)
 
+    def test_failing_drop_never_strands_good_messages(self) -> None:
+        t = MemTransport()
+        t.q.append(("junk", 0))
+        t.q.append((env(n=7).to_json(), 0))
+
+        def drop(native: Any) -> None:
+            raise ConnectionError("drop failed")
+
+        t.drop = drop  # type: ignore[method-assign]
+        b = SyncBroker(t, on_undecodable=lambda *a: None)
+        with self.assertRaises(ConnectionError):
+            list(b.subscribe("t", timeout=0))
+        (d,) = list(b.subscribe("t", timeout=0))  # the good one is kept
+        self.assertEqual(d.envelope.data["n"], 7)
+
     def test_default_undecodable_handler_logs(self) -> None:
         t = MemTransport()
         t.q.append(("[]", 0))
