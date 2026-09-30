@@ -1,5 +1,11 @@
 # src/xstate_statemachine/contrib/django/management/commands/_resolve.py
-"""Shared argument handling for the ``xsm_*`` management commands."""
+"""Shared argument handling for the ``xsm_*`` management commands.
+
+📝 L4 (#361 review): these commands surface ``str(exc)`` in
+`CommandError` on purpose -- they run in the OPERATOR's own shell, not
+behind an HTTP/WebSocket boundary, so X0.7's class-name-only rule for
+problem bodies does not apply.
+"""
 
 from __future__ import annotations
 
