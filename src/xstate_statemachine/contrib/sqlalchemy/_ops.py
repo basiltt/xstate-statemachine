@@ -34,6 +34,53 @@ __all__: List[str] = []
 RawRecord = Tuple[str, int, str, float, Sequence[Deadline]]
 
 
+def nested(conn: Any) -> Any:
+    """`conn.begin_nested()` that really nests on SQLite (#293).
+
+    🐛 The sqlite3 driver's legacy transaction control (pysqlite, and
+    aiosqlite on top of it) emits no `BEGIN` before a `SAVEPOINT`. When
+    the savepoint was the first write of the outer transaction it opened
+    SQLite's transaction itself and its `RELEASE` COMMITTED -- so under
+    PessimisticLock a newly created snapshot survived a failure later in
+    the same lease while the inbox / log / outbox rows rolled back.
+    Emitting `BEGIN` first (the very next statement is the write, so lock
+    order is unchanged) keeps the savepoint inside the outer transaction.
+    Skipped in AUTOCOMMIT mode (nothing would ever commit that BEGIN) and
+    on every other dialect.
+    """
+    if conn.dialect.name == "sqlite" and not _autocommit(conn):
+        in_tx = _sqlite_in_transaction(conn)
+        if in_tx is False:
+            conn.exec_driver_sql("BEGIN")
+    return conn.begin_nested()
+
+
+def _autocommit(conn: Any) -> bool:
+    try:
+        return str(conn.get_isolation_level()).upper() == "AUTOCOMMIT"
+    except Exception:  # noqa: BLE001 - dialect without the query
+        return False
+
+
+def _sqlite_in_transaction(conn: Any) -> Optional[bool]:
+    """The sqlite3 connection's own ``in_transaction``, through the
+    pysqlite connection or the aiosqlite adapter; ``None`` if unknown."""
+    raw: Any = conn.connection.dbapi_connection
+    for _ in range(3):
+        if raw is None:
+            return None
+        flag = getattr(type(raw), "in_transaction", None)
+        if flag is not None or hasattr(raw, "in_transaction"):
+            try:
+                return bool(raw.in_transaction)
+            except Exception:  # noqa: BLE001 - adapter without it
+                pass
+        raw = getattr(raw, "_connection", None) or getattr(
+            raw, "driver_connection", None
+        )
+    return None
+
+
 def _prefix_clause(col: Any, prefix: str) -> Any:
     # 📝 `substr` rather than LIKE: SQLite's LIKE is case-insensitive and
     #    both need escaping; an exact prefix comparison is neither.
@@ -134,7 +181,7 @@ def save_raw(
         if exists is not None:
             raise ConflictError(key, 0, exists)
         try:
-            with conn.begin_nested():
+            with nested(conn):
                 conn.execute(insert(s).values(key=key, version=1, **values))
         except IntegrityError:
             raise ConflictError(key, 0, _current_version(conn, t, key))
@@ -229,7 +276,7 @@ def try_lock(
         )
     )
     try:
-        with conn.begin_nested():
+        with nested(conn):
             conn.execute(
                 insert(lk).values(
                     source=source, key=key, owner=owner, expires_at=now + ttl

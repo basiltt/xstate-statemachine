@@ -17,7 +17,7 @@
 import argparse
 import logging
 import sys
-from typing import Optional
+from typing import Any, Optional
 
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
@@ -305,6 +305,7 @@ examples:
   xsm simulate machine.json
   xsm diagram machine.json -f mermaid -o docs/
   xsm docs machine.json -o docs/
+  xsm dlq --dlq sqlite:///dlq.db list
   xsm validate machine.json
   xsm list-templates
   xsm info
@@ -562,6 +563,7 @@ examples:
     )
 
     # 🪟 setup subcommand -- make `xsm` work where pip's launcher is blocked
+    _add_eda_parsers(subparsers, presentation)
     setup_parser = subparsers.add_parser(
         "setup",
         parents=[presentation],
@@ -780,6 +782,78 @@ examples:
     )
 
     return parser
+
+
+def _add_eda_parsers(subparsers: Any, presentation: Any) -> None:
+    """`xsm dlq` (#293)."""
+    dlq = subparsers.add_parser(
+        "dlq",
+        parents=[presentation],
+        help="List, show, replay or purge dead-lettered messages.",
+        description=(
+            "Operates a dead-letter store (sqlite:///dlq.db). `replay` is a "
+            "DRY RUN by default; a real replay needs --no-dry-run --yes "
+            "--reason, reuses the envelope id (the inbox dedups a double "
+            "replay), refuses a changed machine without --force, and is "
+            "audited. `purge` needs --yes --reason."
+        ),
+    )
+    dlq.add_argument(
+        "--dlq",
+        required=True,
+        help="Dead-letter store: sqlite:///path.db (or a file path).",
+    )
+    verbs = dlq.add_subparsers(dest="dlq_command", required=True)
+    ls = verbs.add_parser("list", help="List unresolved dead letters.")
+    ls.add_argument(
+        "--all", action="store_true", help="Include resolved ones."
+    )
+    ls.add_argument("--limit", type=int, default=1000)
+    ls.add_argument("--json", action="store_true", help="Emit as JSON.")
+    show = verbs.add_parser("show", help="Print one record as JSON.")
+    show.add_argument("record_id")
+    rp = verbs.add_parser(
+        "replay", help="Re-send a dead-lettered envelope (dry run default)."
+    )
+    rp.add_argument("record_id")
+    rp.add_argument("--store", help="State store URL the machine lives in.")
+    rp.add_argument(
+        "--machine",
+        action="append",
+        help="Machine JSON (repeatable); the current, fixed chart.",
+    )
+    rp.add_argument(
+        "--logic", help="Module with the machine's logic (import path)."
+    )
+    mode = rp.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--dry-run",
+        dest="no_dry_run",
+        action="store_false",
+        default=False,
+        help="Only report what would happen (the default).",
+    )
+    mode.add_argument(
+        "--no-dry-run",
+        dest="no_dry_run",
+        action="store_true",
+        help="Really replay (also needs --yes and --reason).",
+    )
+    rp.add_argument("--yes", action="store_true", help="Confirm.")
+    rp.add_argument("--reason", help="Why it is safe now (audited).")
+    rp.add_argument(
+        "--force",
+        action="store_true",
+        help="Replay even if the machine changed since capture.",
+    )
+    rp.add_argument("--json", action="store_true", help="Emit as JSON.")
+    pg = verbs.add_parser("purge", help="Delete dead letters (audited).")
+    pg.add_argument("--id", dest="record_id", help="One record id.")
+    pg.add_argument("--older-than", help="Age cutoff, e.g. 30d, 12h, 15m.")
+    pg.add_argument("--yes", action="store_true", help="Confirm.")
+    pg.add_argument("--reason", help="Why (audited).")
+    pg.add_argument("--json", action="store_true", help="Emit as JSON.")
+
 
 
 def validate_args(parser: argparse.ArgumentParser) -> None:

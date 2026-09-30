@@ -1226,6 +1226,12 @@ def _dispatch() -> None:
         )
         return
 
+    if args.subcommand == "dlq":
+        from .commands.dlq import run_dlq
+
+        run_dlq(args)
+        return
+
     if args.subcommand == "new":
         from .commands.new import run_new
 
