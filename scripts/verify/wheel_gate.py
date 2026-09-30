@@ -53,6 +53,12 @@ TEST_REQUIREMENTS = [
 SKIP = {"wheel_gate.py", "all_smoke.py", "django_fsm_migration.py"}
 
 
+def _is_verify_script(path: pathlib.Path) -> bool:
+    # 📝 Helpers are underscore-prefixed (e.g. `_mojibake_scan.py`, which
+    #    needs the checkout, not the wheel) and are not gate scripts.
+    return path.name not in SKIP and not path.name.startswith("_")
+
+
 def sh(*cmd: str, **kw: object) -> subprocess.CompletedProcess:
     # 📝 Child output is UTF-8 (emoji in the scripts); never let the
     #    console code page (cp1252 on Windows) turn a passing script into
@@ -117,7 +123,7 @@ def main() -> int:
     )
     env.pop("PYTHONPATH", None)
     results: List[Tuple[str, str, float]] = []
-    scripts = sorted(p for p in VERIFY.glob("*.py") if p.name not in SKIP)
+    scripts = sorted(p for p in VERIFY.glob("*.py") if _is_verify_script(p))
     if args.only:
         scripts = [p for p in scripts if p.stem in set(args.only)]
     for script in scripts:
