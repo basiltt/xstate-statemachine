@@ -146,8 +146,10 @@ package import *inside* a fresh subprocess, excluding Python startup.
 > [36429782133](https://github.com/basiltt/xstate-statemachine/actions/runs/36429782133)).
 > Hosted runners are not pinned to one CPU model: a run on the same label a few
 > minutes earlier landed on different silicon and measured the bare sync send at
-> 26.9 µs instead of 15.9 µs, so a red nightly must be read together with the CPU
-> the failure message names.
+> 26.9 µs instead of 15.9 µs. A budget is only meaningful on the hardware it was
+> recorded on, so the nightly **skips** every row when the runner's CPU model
+> differs from the reference (the skip reason names both) and asserts only on a
+> matching model — a red nightly is therefore always a same-hardware regression.
 
 | Measurement | Baseline p50 | Budget (×1.25) | What it includes |
 |:--|--:|--:|:--|

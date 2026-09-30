@@ -852,43 +852,6 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   - PR template gains an integrations checklist, including "this PR does
     not tag or publish a release".
 
-### Fixed
-
-- **Opening a second `SQLiteStore` handle on a file another connection was
-  reading failed with `database is locked`.** `PRAGMA journal_mode = WAL`
-  is persistent in the file but issuing it needs an exclusive lock, so a
-  CLI (`xsm dlq`) or a second process opening a live store could not even
-  connect. The mode is now switched only when it differs from the file's,
-  and a switch refused by a lock keeps the file's mode with a
-  `RuntimeWarning` instead of failing to open.
-- **One `after` delay with several guarded candidates armed one timer per
-  candidate.** All candidates under `"1000": [...]` share the event
-  `after.1000.<state>` and guard selection happens when it is processed,
-  so N identical events were queued at the same instant; when the winner
-  re-entered its own state the extra copy fired against the freshly
-  re-entered state in the same pump -- a `nudge` re-entry counted twice
-  per second. One timer per delay now, on both engines. Found by the
-  slot-filling recipe (#308).
-- **`SyncInterpreter.send(..., wait=True)` on a finished or stopped machine
-  now returns a `Receipt`** carrying `InterpreterStoppedError`, exactly as
-  the async engine does -- not `None`, which the `wait=True -> Receipt`
-  overload never promised and which made the `[flask]` blueprint answer a
-  POST to a completed order with a 500. The core `receipts.receipt_to_status`
-  table (and the Starlette/FastAPI/Litestar layer, which now defers to it
-  for error classes) maps that receipt to **409** -- the instance refused
-  the event, like a guard -- instead of 500. Fire-and-forget `send()` still
-  returns `None` and fires `on_event_dropped`.
-- **A parent snapshot can no longer harvest a non-blocking sync child's
-  half-applied context.** "Wait until the child is settled" and "copy its
-  context" were two separate reads; the child's pump thread could begin a
-  step between them (a deterministic interleaving reproduced it even via
-  the supported `send_threadsafe()` path), and CI saw it as "1 torn of
-  150". The pump now runs each step under a per-child step gate that the
-  parent holds across the check and the copy; a gate not free within
-  0.5 s refuses with `SnapshotMidStepError(child=True)`. The async engine
-  needs no gate (its children step on the caller's loop). A foreign-thread
-  `send()` on a `SyncInterpreter` remains unsupported and voids the
-  guarantee -- use `send_threadsafe()`.
 ### Documentation
 
 - **Deprecation Policy page (#296).** SemVer covers the core and the
@@ -988,6 +951,24 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ### Fixed
 
+- **The nightly perf job went red on a runner with a different CPU model.**
+  Hosted `ubuntu-24.04` runners are not pinned to one CPU: a run that
+  landed on an EPYC 7763 measured every row a uniform ~1.33x over a
+  baseline recorded on an EPYC 9V74 -- different silicon, not a
+  regression. `tests/test_perf_budgets.py` now skips the budget rows
+  (naming both CPUs) when the runner's model differs from the reference,
+  so a red nightly is always a same-hardware regression.
+- **A parent snapshot can no longer harvest a non-blocking sync child's
+  half-applied context.** "Wait until the child is settled" and "copy its
+  context" were two separate reads; the child's pump thread could begin a
+  step between them (a deterministic interleaving reproduced it even via
+  the supported `send_threadsafe()` path), and CI saw it as "1 torn of
+  150". The pump now runs each step under a per-child step gate that the
+  parent holds across the check and the copy; a gate not free within
+  0.5 s refuses with `SnapshotMidStepError(child=True)`. The async engine
+  needs no gate (its children step on the caller's loop). A foreign-thread
+  `send()` on a `SyncInterpreter` remains unsupported and voids the
+  guarantee -- use `send_threadsafe()`.
 - **Opening a second `SQLiteStore` handle on a file another connection was
   reading failed with `database is locked`.** `PRAGMA journal_mode = WAL`
   is persistent in the file but issuing it needs an exclusive lock, so a
