@@ -206,6 +206,28 @@ class PluginBase(Generic[TInterpreter]):
         """
         pass  # pragma: no cover
 
+    def on_event_sent(
+        self, interpreter: TInterpreter, target_id: str, event: "AnyEvent"
+    ) -> None:
+        """**[0.12.0]** This actor addressed an event to ANOTHER actor (#274).
+
+        Fires on the SENDER when a ``sendTo``, ``sendParent`` or
+        ``forwardTo`` built-in resolves its target, just before the event
+        is handed to that actor (for a delayed send: when it is
+        scheduled, not when it lands). ``on_event_received`` fires later
+        on the *receiver*; this hook is the only place the sender's
+        identity is known, which is what the live inspector needs for
+        ``@xstate.event.sourceId`` provenance. Not fired for ``raise``
+        (self-sends) or for unresolved targets (``on_resolve_error`` /
+        the unresolved-target warning covers those).
+
+        Args:
+            interpreter: The sending interpreter.
+            target_id: The receiving actor's id.
+            event: The event being sent.
+        """
+        pass  # pragma: no cover
+
     def on_transition(
         self,
         interpreter: TInterpreter,

@@ -702,10 +702,106 @@ def test_mount_inspector_refuses_without_debug():
     reg = make()
     with pytest.raises(RuntimeError):
         mount_inspector(app, reg)
-    mount_inspector(app, reg, debug=True)
-    r = TestClient(app).get("/_xsm/inspect")
-    assert r.status_code == 501
-    assert "#274" in r.json()["detail"]
+
+
+class TestInspectorWebSocket:
+    """#274: the 501 placeholder is replaced by the real `WebSocketSink`."""
+
+    def _app(self, **kw):
+        app = Starlette()
+        reg = make()
+        sink = mount_inspector(app, reg, debug=True, **kw)
+        app.router.routes.append(reg.health_route("/h"))
+        return app, reg, sink
+
+    def test_stream_carries_protocol_messages_from_act(self):
+        from starlette.routing import Route
+        from starlette.responses import JSONResponse
+
+        app, reg, sink = self._app(context_allowlist=["amount"])
+
+        async def pay(request):
+            async with reg.act("payment", "k1") as i:
+                r = await i.send("SUBMIT", wait=True)
+            return JSONResponse({"changed": r.changed})
+
+        app.router.routes.append(Route("/pay", pay, methods=["POST"]))
+        with TestClient(app) as c:
+            with c.websocket_connect(
+                "/_xsm/inspect", headers={"X-XSM-Token": sink.token}
+            ) as ws:
+                c.post("/pay")
+                got = []
+                for _ in range(10):  # bounded: actor, init x2, PAY x2, ...
+                    got.append(ws.receive_json())
+                    if got[-1]["type"] == "@xstate.snapshot" and (
+                        got[-1]["event"]["type"] == "SUBMIT"
+                    ):
+                        break
+        kinds = [m["type"] for m in got]
+        assert kinds[0] == "@xstate.actor"
+        assert all(m["_version"] for m in got)
+        pay = [m for m in got if m.get("event", {}).get("type") == "SUBMIT"]
+        assert [m["type"] for m in pay] == [
+            "@xstate.event",
+            "@xstate.snapshot",
+        ]
+        assert pay[1]["snapshot"]["context"] == {"amount": 0} or (
+            set(pay[1]["snapshot"]["context"]) <= {"amount"}
+        )
+
+    def test_token_cookie_host_and_origin(self):
+        from starlette.websockets import WebSocketDisconnect
+
+        app, reg, sink = self._app()
+        with TestClient(app) as c:
+            with pytest.raises(WebSocketDisconnect) as ei:
+                with c.websocket_connect("/_xsm/inspect") as ws:
+                    ws.receive_json()
+            assert ei.value.code == 1008
+            with pytest.raises(WebSocketDisconnect):
+                with c.websocket_connect(
+                    "/_xsm/inspect",
+                    headers={
+                        "X-XSM-Token": sink.token,
+                        "Origin": "http://evil.example",
+                    },
+                ) as ws:
+                    ws.receive_json()
+            assert c.get("/_xsm/inspect").status_code == 401
+            assert c.get("/_xsm/inspect?token=nope").status_code == 401
+            r = c.get(
+                f"/_xsm/inspect?token={sink.token}", follow_redirects=False
+            )
+            assert r.status_code == 303
+            assert "httponly" in r.headers["set-cookie"].lower()
+            assert "samesite=strict" in r.headers["set-cookie"].lower()
+            # cookie now carried by the client
+            assert c.get("/_xsm/inspect").status_code == 200
+        with TestClient(app, base_url="http://evil.example") as c2:
+            r = c2.get("/_xsm/inspect", headers={"X-XSM-Token": sink.token})
+            assert r.status_code == 421
+        app2, _, sink2 = self._app(allow_remote=True)
+        with TestClient(app2, base_url="http://lan.example") as c3:
+            r = c3.get(
+                "/_xsm/inspect",
+                headers={"Authorization": f"Bearer {sink2.token}"},
+            )
+            assert r.status_code == 200
+
+    def test_registry_is_not_forked_and_context_denied(self):
+        app, reg, sink = self._app()
+        assert any(type(p).__name__ == "InspectorPlugin" for p in reg.plugins)
+
+        async def go():
+            async with reg.act("payment", "k2") as i:
+                await i.send("SUBMIT", wait=True)
+
+        run(go())
+        assert sink.messages
+        for m in sink.messages:
+            if "snapshot" in m:
+                assert m["snapshot"]["context"] == {}
 
 
 def test_bounded_helper_times_out():

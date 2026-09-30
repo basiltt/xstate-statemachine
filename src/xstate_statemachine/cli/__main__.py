@@ -1103,12 +1103,41 @@ def _dispatch() -> None:
         return
 
     if args.subcommand in {"inspect", "ins"}:
+        if getattr(args, "live", False):
+            from .commands.live import run_inspect_live
+
+            run_inspect_live(
+                args.json_file,
+                host=args.host,
+                port=args.port,
+                token=args.token,
+                open_browser=bool(args.open),
+                context=args.context,
+                events=args.events,
+                duration=args.duration,
+            )
+            return
         from .commands.inspect import run_inspect
 
         run_inspect(
             args.json_file,
             as_json=bool(getattr(args, "json", False)),
             no_events=bool(getattr(args, "no_events", False)),
+        )
+        return
+
+    if args.subcommand == "replay":
+        from .commands.live import run_replay
+
+        run_replay(
+            args.jsonl_file,
+            live=bool(args.live),
+            host=args.host,
+            port=args.port,
+            token=args.token,
+            open_browser=bool(args.open),
+            speed=args.speed,
+            duration=args.duration,
         )
         return
 
@@ -1151,6 +1180,8 @@ def _dispatch() -> None:
             script=args.script,
             as_json=bool(getattr(args, "json", False)),
             guards_false=args.guards_false,
+            record=getattr(args, "record", None),
+            record_context=getattr(args, "context", None),
         )
         return
 

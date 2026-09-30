@@ -1,0 +1,237 @@
+{
+  "_provenance": {
+    "package": "@statelyai/inspect@0.7.2",
+    "xstate": "xstate@5.33.2",
+    "node": "v24.18.0",
+    "recorded_with": "tests/inspect/fixtures/record.mjs: createInspector({send}) collecting adapter; parent invokes child, sendTo + sendParent",
+    "regenerate": "see header of record.mjs",
+    "volatile_fields": [
+      "createdAt",
+      "sessionId",
+      "rootId",
+      "parentId",
+      "sourceId",
+      "id"
+    ]
+  },
+  "messages": [
+    {
+      "name": "parent",
+      "type": "@xstate.actor",
+      "definition": "{\"context\":{\"count\":0},\"id\":\"parent\",\"initial\":\"a\",\"invoke\":{\"id\":\"kid\",\"src\":{\"entry\":[],\"exit\":[],\"history\":false,\"id\":\"child\",\"initial\":{\"actions\":[],\"eventType\":null,\"source\":\"#child\",\"target\":[\"#child.idle\"]},\"invoke\":[],\"key\":\"child\",\"on\":{},\"order\":-1,\"states\":{\"idle\":{\"entry\":[],\"exit\":[],\"history\":false,\"id\":\"child.idle\",\"initial\":{\"actions\":[],\"eventType\":null,\"source\":\"#child.idle\",\"target\":[]},\"invoke\":[],\"key\":\"idle\",\"on\":{\"PING\":[{\"actions\":[{\"type\":\"sendTo\"}],\"eventType\":\"PING\",\"reenter\":false,\"source\":\"#child.idle\",\"target\":[\"#child.pinged\"],\"toJSON\":{\"type\":\"toJSON\"}}]},\"order\":1,\"states\":{},\"tags\":[],\"transitions\":[{\"actions\":[{\"type\":\"sendTo\"}],\"eventType\":\"PING\",\"reenter\":false,\"source\":\"#child.idle\",\"target\":[\"#child.pinged\"],\"toJSON\":{\"type\":\"toJSON\"}}],\"type\":\"atomic\"},\"pinged\":{\"entry\":[],\"exit\":[],\"history\":false,\"id\":\"child.pinged\",\"initial\":{\"actions\":[],\"eventType\":null,\"source\":\"#child.pinged\",\"target\":[]},\"invoke\":[],\"key\":\"pinged\",\"on\":{},\"order\":2,\"states\":{},\"tags\":[],\"transitions\":[],\"type\":\"atomic\"}},\"tags\":[],\"transitions\":[],\"type\":\"compound\"}},\"states\":{\"a\":{\"on\":{\"GO\":{\"actions\":{\"type\":\"sendTo\"},\"target\":\"b\"}}},\"b\":{\"on\":{\"PONG\":\"c\"}},\"c\":{}}}",
+      "_version": "0.7.2",
+      "createdAt": "1790731517295",
+      "id": null,
+      "rootId": "x:0",
+      "sessionId": "x:0",
+      "snapshot": {
+        "status": "active",
+        "context": {
+          "count": 0
+        },
+        "value": "c",
+        "children": {
+          "kid": {
+            "xstate$$type": 1,
+            "id": "kid"
+          }
+        },
+        "historyValue": {},
+        "tags": []
+      }
+    },
+    {
+      "name": "kid",
+      "type": "@xstate.actor",
+      "definition": "{\"id\":\"child\",\"initial\":\"idle\",\"states\":{\"idle\":{\"on\":{\"PING\":{\"actions\":{\"type\":\"sendTo\"},\"target\":\"pinged\"}}},\"pinged\":{}}}",
+      "_version": "0.7.2",
+      "createdAt": "1790731517295",
+      "id": null,
+      "rootId": "x:0",
+      "parentId": "x:0",
+      "sessionId": "x:1",
+      "snapshot": {
+        "status": "active",
+        "context": {},
+        "value": "pinged",
+        "children": {},
+        "historyValue": {},
+        "tags": []
+      }
+    },
+    {
+      "type": "@xstate.event",
+      "event": {
+        "type": "xstate.init"
+      },
+      "sessionId": "x:0",
+      "_version": "0.7.2",
+      "createdAt": "1790731517296",
+      "id": null,
+      "rootId": "x:0"
+    },
+    {
+      "type": "@xstate.event",
+      "event": {
+        "type": "xstate.init"
+      },
+      "sourceId": "x:0",
+      "sessionId": "x:1",
+      "_version": "0.7.2",
+      "createdAt": "1790731517296",
+      "id": null,
+      "rootId": "x:0"
+    },
+    {
+      "type": "@xstate.snapshot",
+      "event": {
+        "type": "xstate.init"
+      },
+      "snapshot": {
+        "children": {},
+        "context": {},
+        "historyValue": {},
+        "status": "active",
+        "tags": [],
+        "value": "idle"
+      },
+      "sessionId": "x:1",
+      "_version": "0.7.2",
+      "createdAt": "1790731517296",
+      "id": null,
+      "rootId": "x:0"
+    },
+    {
+      "type": "@xstate.snapshot",
+      "event": {
+        "type": "xstate.init"
+      },
+      "snapshot": {
+        "children": {
+          "kid": {
+            "id": "kid",
+            "xstate$$type": 1
+          }
+        },
+        "context": {
+          "count": 0
+        },
+        "historyValue": {},
+        "status": "active",
+        "tags": [],
+        "value": "a"
+      },
+      "sessionId": "x:0",
+      "_version": "0.7.2",
+      "createdAt": "1790731517296",
+      "id": null,
+      "rootId": "x:0"
+    },
+    {
+      "type": "@xstate.event",
+      "event": {
+        "type": "GO"
+      },
+      "sessionId": "x:0",
+      "_version": "0.7.2",
+      "createdAt": "1790731517296",
+      "id": null,
+      "rootId": "x:0"
+    },
+    {
+      "type": "@xstate.event",
+      "event": {
+        "type": "PING"
+      },
+      "sourceId": "x:0",
+      "sessionId": "x:1",
+      "_version": "0.7.2",
+      "createdAt": "1790731517296",
+      "id": null,
+      "rootId": "x:0"
+    },
+    {
+      "type": "@xstate.event",
+      "event": {
+        "type": "PONG"
+      },
+      "sourceId": "x:1",
+      "sessionId": "x:0",
+      "_version": "0.7.2",
+      "createdAt": "1790731517296",
+      "id": null,
+      "rootId": "x:0"
+    },
+    {
+      "type": "@xstate.snapshot",
+      "event": {
+        "type": "PING"
+      },
+      "snapshot": {
+        "children": {},
+        "context": {},
+        "historyValue": {},
+        "status": "active",
+        "tags": [],
+        "value": "pinged"
+      },
+      "sessionId": "x:1",
+      "_version": "0.7.2",
+      "createdAt": "1790731517296",
+      "id": null,
+      "rootId": "x:0"
+    },
+    {
+      "type": "@xstate.snapshot",
+      "event": {
+        "type": "GO"
+      },
+      "snapshot": {
+        "children": {
+          "kid": {
+            "id": "kid",
+            "xstate$$type": 1
+          }
+        },
+        "context": {
+          "count": 0
+        },
+        "historyValue": {},
+        "status": "active",
+        "tags": [],
+        "value": "b"
+      },
+      "sessionId": "x:0",
+      "_version": "0.7.2",
+      "createdAt": "1790731517296",
+      "id": null,
+      "rootId": "x:0"
+    },
+    {
+      "type": "@xstate.snapshot",
+      "event": {
+        "type": "PONG"
+      },
+      "snapshot": {
+        "children": {
+          "kid": {
+            "id": "kid",
+            "xstate$$type": 1
+          }
+        },
+        "context": {
+          "count": 0
+        },
+        "historyValue": {},
+        "status": "active",
+        "tags": [],
+        "value": "c"
+      },
+      "sessionId": "x:0",
+      "_version": "0.7.2",
+      "createdAt": "1790731517296",
+      "id": null,
+      "rootId": "x:0"
+    }
+  ]
+}

@@ -496,12 +496,27 @@ def run_simulate(
     as_json: bool = False,
     guards_false: Optional[str] = None,
     source: Optional[K.KeySource] = None,
+    record: Optional[str] = None,
+    record_context: Optional[str] = None,
 ) -> None:
     """Entry for `xsm simulate`. *source* injects a key reader for the live
     loop (the launcher passes its own so the whole flow is one keyboard
-    -- and testable); when given, a terminal is not required."""
+    -- and testable); when given, a terminal is not required.
+
+    *record* writes the session as Stately Inspector protocol messages to
+    a JSON Lines file (0600) that `xsm replay` streams (#274)."""
     c = get_console()
     logging.disable(logging.CRITICAL)
+    recorder = None
+    if record:
+        from .live import recording_plugin
+
+        try:
+            recorder = recording_plugin(record, context=record_context)
+        except OSError as exc:
+            c.error(f"--record {record}: {exc}")
+            logging.disable(logging.NOTSET)
+            raise SystemExit(1)
     try:
         config = json.loads(Path(path).read_text(encoding="utf-8"))
         guards = {
@@ -511,6 +526,9 @@ def run_simulate(
         }
         session = Session(config, guards=guards)
     except Exception as exc:  # noqa: BLE001 -- reported, exit 1
+        if recorder is not None:
+            recorder[0].uninstall()
+            recorder[1].close()
         c.error(f"{path}: {type(exc).__name__}: {exc}")
         raise SystemExit(1)
 
@@ -539,4 +557,7 @@ def run_simulate(
         interactive(session, source=source)
     finally:
         session.stop()
+        if recorder is not None:
+            recorder[0].uninstall()
+            recorder[1].close()
         logging.disable(logging.NOTSET)

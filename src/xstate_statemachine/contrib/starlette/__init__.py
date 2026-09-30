@@ -43,7 +43,7 @@ from ._http import (  # noqa: E402
     receipt_to_status,
     status_for_exception,
 )
-from .inspector import mount_inspector  # noqa: E402
+from .inspector import WebSocketSink, mount_inspector  # noqa: E402
 from .registry import StatechartRegistry, allow_all  # noqa: E402
 from .streaming import transition_stream, websocket_endpoint  # noqa: E402
 
@@ -55,6 +55,7 @@ __all__ = [
     "ReceiptResponse",
     "StatechartRegistry",
     "UnsupportedMediaTypeError",
+    "WebSocketSink",
     "allow_all",
     "idempotency_key_from",
     "json_body",
