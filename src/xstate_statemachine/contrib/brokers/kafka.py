@@ -39,6 +39,8 @@ from ._base import CE_CONTENT_TYPE, AsyncBroker, Raw, structured  # noqa: E402
 __all__ = ["KafkaBroker", "KafkaTransport"]
 
 _BATCH = 100
+#: Longest first poll of a freshly started consumer (group join).
+_JOIN_WAIT_MS = 10_000
 
 
 class _Partition:
@@ -112,6 +114,7 @@ class KafkaTransport:
         self._producer_started = False
         self._factory = consumer_factory or self._real_consumer
         self._consumers: Dict[str, Any] = {}
+        self._joined: Set[str] = set()
         self._parts: Dict[Tuple[str, Any], _Partition] = {}
 
     # -- clients ----------------------------------------------------------------
@@ -168,8 +171,18 @@ class KafkaTransport:
 
     async def fetch(self, topic: str, wait_s: float) -> List[Raw]:
         consumer = await self._consumer(topic)
+        wait_ms = int(wait_s * 1000)
+        if topic not in self._joined:
+            # 📝 A new group member has no partitions until the join /
+            #    rebalance completes; polling it for `timeout=0` would
+            #    report an empty topic that is not empty. The FIRST poll
+            #    waits (bounded) for the assignment.
+            assignment = getattr(consumer, "assignment", None)
+            if callable(assignment) and not assignment():
+                wait_ms = max(wait_ms, _JOIN_WAIT_MS)
+            self._joined.add(topic)
         batches = await consumer.getmany(
-            timeout_ms=int(wait_s * 1000), max_records=self.batch
+            timeout_ms=wait_ms, max_records=self.batch
         )
         out: List[Raw] = []
         for tp, records in batches.items():
@@ -197,6 +210,7 @@ class KafkaTransport:
         """Forget clients opened on a previous event loop (see `_base`).
         Only clients WE built are dropped; injected ones are kept."""
         self._consumers.clear()
+        self._joined.clear()
         self._parts.clear()
         if self._owns_producer:
             self._producer = None
@@ -206,6 +220,7 @@ class KafkaTransport:
         for c in list(self._consumers.values()):
             await c.stop()
         self._consumers.clear()
+        self._joined.clear()
         if self._producer is not None and self._producer_started:
             await self._producer.stop()
             self._producer_started = False

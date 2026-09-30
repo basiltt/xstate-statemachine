@@ -1,4 +1,4 @@
-﻿# src/xstate_statemachine/contrib/brokers/rabbitmq.py
+# src/xstate_statemachine/contrib/brokers/rabbitmq.py
 # -----------------------------------------------------------------------------
 # ðŸ‡ RabbitMQ broker (aio-pika) -- one durable queue per topic (#294)
 # -----------------------------------------------------------------------------
@@ -40,6 +40,7 @@ __all__ = ["RabbitMQBroker", "RabbitMQTransport"]
 
 _BATCH = 100
 _GET_TIMEOUT_S = 5.0
+_EMPTY_POLL_S = 0.05
 
 
 class RabbitMQTransport:
@@ -115,19 +116,21 @@ class RabbitMQTransport:
     async def fetch(self, topic: str, wait_s: float) -> List[Raw]:
         queue = await self._queue(topic)
         out: List[Raw] = []
-        timeout = max(wait_s, 0.001)
+        # 📝 basic.get answers "empty" at once; its timeout is only the RPC
+        #    ceiling. A short one makes aio-pika CLOSE the channel on
+        #    expiry, so it is always generous and waiting is a sleep.
         while len(out) < self.batch:
             try:
                 msg = await queue.get(
-                    no_ack=False,
-                    fail=False,
-                    timeout=timeout if not out else _GET_TIMEOUT_S,
+                    no_ack=False, fail=False, timeout=_GET_TIMEOUT_S
                 )
-            except asyncio.TimeoutError:  # the basic.get RPC timed out
+            except asyncio.TimeoutError:  # the RPC itself timed out
                 msg = None
             if msg is None:
                 break
             out.append(Raw(msg.body, msg, _attempts(msg)))
+        if not out and wait_s > 0:
+            await asyncio.sleep(min(wait_s, _EMPTY_POLL_S))
         return out
 
     async def ack(self, native: Any) -> None:
