@@ -2631,5 +2631,5 @@ The `xsm` CLI grows with them: `xsm gt --with-api --with-models` emits a FastAPI
 
 ```python
 from xstate_statemachine import __version__
-print(__version__)  # "0.10.5"
+print(__version__)  # "0.11.0"
 ```

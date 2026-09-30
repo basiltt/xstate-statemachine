@@ -188,7 +188,7 @@ diff you ran yourself:
 ```bash
 pip install pypi-attestations
 pypi-attestations verify pypi --repository https://github.com/basiltt/xstate-statemachine \
-  pypi:xstate_statemachine-0.10.5-py3-none-any.whl   # prints "OK: <file>" on success
+  pypi:xstate_statemachine-0.11.0-py3-none-any.whl   # prints "OK: <file>" on success
 ```
 
 ```bash

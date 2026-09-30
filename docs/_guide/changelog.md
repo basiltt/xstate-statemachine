@@ -15,6 +15,10 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
+_No unreleased changes yet._
+
+## [0.11.0] - 2026-10-01
+
 ### Brokers & Celery (Phase F) -- #294, #292
 
 - **Broker adapters (#294), `xstate_statemachine.contrib.brokers`.**

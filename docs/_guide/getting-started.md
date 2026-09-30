@@ -27,7 +27,7 @@ poetry add xstate-statemachine
 
 ```bash
 xsm --version
-# Output: xsm 0.10.5
+# Output: xsm 0.11.0
 ```
 
 You can also verify the CLI tool is available:
@@ -368,7 +368,7 @@ also a `TypeError` — and `RootTargetError`), new plugin hooks
 `from_snapshot(clock=, restart_timers=, minimum_version=)`, sticky
 `chain_trips` / `last_chain_error`, `Interpreter(service_pool_size=)`,
 `MachineLogic(strict=True)` and redaction in `LoggingInspector`. See
-[What's New in 0.11](#whats-new-in-011-unreleased-on-main), [0.10.0](#whats-new-in-0100), [0.9.0](#whats-new-in-090) and [0.9.1](#whats-new-in-091) below.
+[What's New in 0.11.0](#whats-new-in-0110), [0.10.0](#whats-new-in-0100), [0.9.0](#whats-new-in-090) and [0.9.1](#whats-new-in-091) below.
 
 **From v0.5.x to v0.6.0:**
 
@@ -454,7 +454,7 @@ asyncio.run(main())
 
 > **Tip:** Use `SyncInterpreter` for scripts, CLI tools, and testing. Use `Interpreter` for web servers, event loops, and real-time applications.
 
-## 🆕 What's New in 0.11 (unreleased — on `main`)
+## 🆕 What's New in 0.11.0
 
 The **durable, testable, web-ready** release. The core stays zero-dependency;
 everything that needs a third-party library is an explicit extra under

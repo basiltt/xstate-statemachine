@@ -9,6 +9,10 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ## [Unreleased]
 
+_No unreleased changes yet._
+
+## [0.11.0] - 2026-10-01
+
 ### Brokers & Celery (Phase F) -- #294, #292
 
 - **Broker adapters (#294), `xstate_statemachine.contrib.brokers`.**
@@ -3734,7 +3738,8 @@ existing.
 <!-- Without these definitions they render as literal bracketed text.  -->
 <!-- ---------------------------------------------------------------- -->
 
-[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.5...HEAD
+[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.5...v0.11.0
 [0.10.5]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.4...v0.10.5
 [0.10.4]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.3...v0.10.4
 [0.10.3]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.2...v0.10.3
