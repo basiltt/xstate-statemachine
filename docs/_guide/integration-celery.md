@@ -52,7 +52,7 @@ Returns an `invoke` service. On entry to the state it calls `task.apply_async(ar
 
 - **Result already available** (eager mode): it behaves exactly like a plain service, so `onDone` / `onError` fire in the same step.
 - **Live interpreter**: a daemon watcher polls the result backend and completes the invocation through the engine's own actor-logic path. The engine mints the events, so a user `send("done.invoke.x")` is still refused. If `timeout_s` elapses first, the task is revoked and `onError` fires with a `TimeoutError`.
-- **Durable** (create → act → persist → discard): the task id is recorded in the snapshot under `context["_xsm_celery"][<invoke id>]`, and the headers `xsm_store_key`, `xsm_invocation_id` and `xsm_state_seq` travel with the task. The completion arrives later through `deliver_result`.
+- **Durable** (create → act → persist → discard): the task id is recorded in the snapshot under `context["_xsm_celery"][<invoke id>]`, and the headers `xsm_store_key` and `xsm_invocation_id` travel with the task. The completion arrives later through `deliver_result`. **`poll_results` is the durable path**, and the signal handlers are a low-latency shortcut.
 
 **Exiting the state** calls `AsyncResult.revoke(terminate=False)`, which is best effort. **`stop()`** (for example, the end of a `persisted()` block) only stops the watcher and never revokes.
 
@@ -60,17 +60,17 @@ Returns an `invoke` service. On entry to the state it calls `task.apply_async(ar
 
 Completes an invocation on a persisted instance and saves it, retrying `ConflictError`. The header values count as **trusted only after this check**: the instance must exist, the invocation must still be active, and it must record `task_id`. Anything else is a stale completion: it is ignored, logged, and reported to `on_event_dropped(..., "stale_invocation")`. Returns whether the completion was applied.
 
-### `connect_signals(store, machine_for_key, *, lock=None, plugins=()) -> disconnect`
+### `connect_signals(store, machine_for_key, *, app, lock=None, plugins=(), pending=None) -> disconnect`
 
-Installs `task_success` / `task_failure` handlers in the **worker** process that call `deliver_result` for `celery_service` tasks. Eager tasks and tasks without the headers are ignored.
+Installs `task_success` / `task_failure` handlers in the **worker** process that call `deliver_result` for `celery_service` tasks. Eager tasks and tasks without the headers are ignored. A worker can finish **before** the caller's `persisted()` block has saved the `_xsm_celery` record. That completion is not stale: it is parked in `pending` (a `MemoryPendingResults`), and `poll_results(pending=...)` applies it once the record exists. Pass the same table to both. Without a table, the completion is left to `poll_results`, which reads it from the result backend.
 
-### `poll_results(store, machine_for_key, *, app, prefix="", now=None, lock=None, plugins=()) -> int`
+### `poll_results(store, machine_for_key, *, app, prefix="", now=None, lock=None, plugins=(), pending=None) -> int`
 
 A fallback that polls the result backend, for when signals are not available (the worker runs in another process and cannot reach the store). It delivers every finished task and fails and revokes every invocation past its `timeout_s` deadline. Schedule it with Beat.
 
 ### `@statechart_task(app, store, machine_for_key, *, lock=None, plugins=(), name=None, max_retries=10, **task_options)`
 
-Registers `fn(interp, *args, **kwargs)` as a task whose first argument is the instance key. The body runs inside `persisted(store, key, machine)`. `ConflictError` is retried through Celery's own `autoretry_for`, with backoff and jitter. The decorator raises `InvalidConfigError` unless `app.conf.task_serializer == "json"` and `accept_content` excludes pickle (`assert_json_serializer`).
+Registers `fn(interp, *args, **kwargs)` as a task whose first argument is the instance key. The body runs inside `persisted(store, key, machine)`. `ConflictError` is retried through Celery's own `autoretry_for`, with exponential backoff from 1 s (Celery rounds `retry_backoff` up to whole seconds) to 2 s, with jitter. A retry **re-runs `fn` from the start**, including any side effect it performed outside the machine, so keep side effects in machine actions or make them idempotent.
 
 ```python
 @statechart_task(app, store, order_machine)
@@ -93,7 +93,11 @@ Double firing (the `eta` job plus the scan) is idempotent: the scanner re-checks
 
 ### `outbox_relay_task(app, outbox, broker, *, name="xsm.outbox.relay", batch=100)`
 
-A task that runs `OutboxRelay.relay_once` (the async form for an async broker, the sync form otherwise). Schedule it with Beat. See [Event-driven architecture](../integration-eda/).
+A task that runs `OutboxRelay.relay_once` (the async form for an async broker, the sync form otherwise). Schedule it with Beat. An async broker is driven from **one private event loop per worker process**, never a new loop per tick. Call `task.close_relay_loop()` from `worker_process_shutdown` to close the broker and the loop.
+
+### `assert_json_serializer(app)`
+
+Raises `InvalidConfigError` unless `task_serializer` and `result_serializer` are `"json"` and neither `accept_content` nor `result_accept_content` admits pickle or YAML, by name or by MIME type (`application/x-python-serialize`, `application/x-yaml`; see `UNSAFE_CONTENT`). `result.get()` deserialises with the *result* settings, so both matter. `celery_service`, `@statechart_task`, `connect_signals` and `poll_results` all call it. See [Event-driven architecture](../integration-eda/).
 
 ## Guarantees
 
@@ -109,7 +113,7 @@ A task that runs `OutboxRelay.relay_once` (the async form for an async broker, t
 >
 > **What it exposes:** task arguments and results travel through the broker and the result backend in clear JSON. Keep secrets out of `args_from` and task results, and use TLS on the broker (`rediss://`, `amqps://`).
 >
-> **You must configure:** `task_serializer="json"` and an `accept_content` without pickle (enforced by `@statechart_task`); broker credentials, TLS and ACLs; exactly one Beat process; a result backend for the live watcher and `poll_results`.
+> **You must configure:** JSON-only task **and** result serialisation (`task_serializer`, `result_serializer`, `accept_content`, `result_accept_content` with no pickle or YAML; enforced by every entry point); broker credentials, TLS and ACLs; exactly one Beat process; a result backend for the live watcher and `poll_results`.
 
 ## Compatibility
 
@@ -122,7 +126,7 @@ A task that runs `OutboxRelay.relay_once` (the async form for an async broker, t
 | Symptom | Cause | Fix |
 |:--|:--|:--|
 | `MissingExtraError: … pip install "xstate-statemachine[celery]"` | extra not installed | run the command |
-| `InvalidConfigError: statechart tasks need task_serializer='json'` | pickle serializer configured | set `task_serializer="json"` and drop pickle from `accept_content` |
-| The instance never leaves the invoking state after a `persisted()` block | durable mode with no delivery path | call `connect_signals` in the worker, or schedule `poll_results` |
+| `InvalidConfigError: statechart tasks need task_serializer='json'` (or `result_serializer`, or `… allows pickle`) | pickle / YAML configured | JSON for tasks and results; drop pickle / YAML (and their MIME types) from both accept lists |
+| The instance never leaves the invoking state after a `persisted()` block | durable mode with no delivery path | schedule `poll_results` (the durable path); `connect_signals` only speeds it up |
 | "stale celery completion … ignored" in the logs | the state was left (or re-entered) before the task finished | expected: the late result is discarded |
 | `after` timers of stored instances never fire | no Beat process runs the scan task | add `xsm_deadlines_every(scheduler)` to `beat_schedule` |

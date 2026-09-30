@@ -185,7 +185,7 @@ class TestLiveWatcher(unittest.TestCase):
         self.assertEqual((args, kwargs), ((1,), {"x": 2}))
         self.assertEqual(opts["queue"], "payments")
         self.assertEqual(opts["headers"]["xsm_invocation_id"], "charge")
-        self.assertIn("xsm_state_seq", opts["headers"])
+        self.assertNotIn("xsm_state_seq", opts["headers"])  # never checked
         self.assertEqual(
             i.context["_xsm_celery"]["charge"]["task_id"], task.result.id
         )
@@ -220,28 +220,34 @@ class TestLiveWatcher(unittest.TestCase):
         i2.stop()
         self.assertFalse(task2.result.revoked)
 
-    def test_old_watcher_never_completes_a_reentered_invocation(
-        self,
-    ) -> None:
+    def test_race_exit_reenter_between_post_and_drain(self) -> None:
+        """M4 (deterministic): the post lands while an exit+re-entry has
+        replaced the handle under the same invocation id."""
         from src.xstate_statemachine.contrib.celery import service as svc
 
         task, i = self._run()
-        old_handle = i._running_logic["charge"]
-        inv = [v for s in i._active_state_nodes for v in s.invoke][0]
-        i._running_logic["charge"] = object()  # re-entered: a new handle
-        task.result.value, task.result.done = {"stale": 1}, True
-        svc._watch(
-            i,
-            inv,
-            old_handle,
-            task.result,
-            None,
-            0.01,
-            __import__("threading").Event(),
+        live_old = next(
+            p.wrapped if hasattr(p, "wrapped") else p
+            for p in i._plugins
+            if type(getattr(p, "wrapped", p)).__name__ == "_LiveGuard"
         )
+        inv = [v for s in i._active_state_nodes for v in s.invoke][0]
+        stale = svc._Live(inv, task.result, handle=object())  # not current
+        event = svc._engine_done(
+            type="done.invoke.charge", data={"stale": 1}, src="charge"
+        )
+        live_old.post(i, stale, event)
         i.tick()
         self.assertIn("o.paying", i.current_state_ids)
-        i._running_logic["charge"] = old_handle
+        self.assertIn("charge", i.context["_xsm_celery"])  # untouched
+        i.stop()
+
+    def test_settled_task_is_not_revoked(self) -> None:
+        """M6: a successful live completion must not revoke its task."""
+        task, i = self._run()
+        task.result.value, task.result.done = {"ok": 1}, True
+        _wait(lambda: "o.paid" in i.current_state_ids, i)
+        self.assertFalse(task.result.revoked)
         i.stop()
 
     def test_live_completion_retires_the_durable_record(self) -> None:
@@ -390,7 +396,7 @@ class TestDurableDelivery(unittest.TestCase):
         from src.xstate_statemachine.contrib.celery import connect_signals
         from celery.signals import task_failure, task_success
 
-        disconnect = connect_signals(self.store, self.m)
+        disconnect = connect_signals(self.store, self.m, app=_app())
         try:
 
             class Req:
@@ -414,6 +420,115 @@ class TestDurableDelivery(unittest.TestCase):
         with persisted(self.store, "o1", self.m) as i:
             self.assertIn("o.paid", i.current_state_ids)
             self.assertEqual(i.context["result"], {"ok": 4})
+
+
+class TestEarlyCompletion(unittest.TestCase):
+    """H1: the worker finishes BEFORE the caller's persisted() block saved
+    the `_xsm_celery` record. The signal-path completion is parked, not
+    dropped, and `poll_results` applies it once the record exists."""
+
+    def test_worker_finishes_before_save(self) -> None:
+        from celery.signals import task_success
+
+        from src.xstate_statemachine.contrib.celery import (
+            MemoryPendingResults,
+            celery_service,
+            connect_signals,
+            poll_results,
+        )
+
+        task = _Task()
+        m = _machine(celery_service(task, watch=False))
+        store = MemoryStore()
+        pending = MemoryPendingResults()
+        app = _app(eager=False)
+        disconnect = connect_signals(store, m, app=app, pending=pending)
+
+        class Req:
+            id = task.result.id
+            is_eager = False
+            headers = {"xsm_store_key": "e1", "xsm_invocation_id": "charge"}
+
+        class Sender:
+            request = Req()
+
+        plug = _Drops()
+        try:
+            with persisted(store, "e1", m, plugins=[plug]):
+                # the worker is faster than this block's save:
+                task_success.send(sender=Sender(), result={"early": 1})
+        finally:
+            disconnect()
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(plug.drops, [])  # not treated as stale
+        import celery.result as cr
+
+        orig = cr.AsyncResult
+        cr.AsyncResult = lambda tid, app=None: _Result()  # type: ignore
+        try:
+            n = poll_results(store, m, app=app, pending=pending)
+        finally:
+            cr.AsyncResult = orig  # type: ignore[misc]
+        self.assertEqual(n, 1)
+        self.assertEqual(len(pending), 0)
+        with persisted(store, "e1", m) as i:
+            self.assertIn("o.paid", i.current_state_ids)
+            self.assertEqual(i.context["result"], {"early": 1})
+
+    def test_parked_entries_expire(self) -> None:
+        from src.xstate_statemachine.contrib.celery import (
+            MemoryPendingResults,
+            PendingResult,
+            poll_results,
+        )
+
+        pending = MemoryPendingResults(ttl_s=10)
+        pending.add(PendingResult("x", "charge", "t", parked_at=0.0))
+        store = MemoryStore()
+        poll_results(store, None, app=_app(), pending=pending, now=lambda: 99)
+        self.assertEqual(len(pending), 0)
+
+
+class TestJsonOnly(unittest.TestCase):
+    """H3: every entry point refuses pickle / YAML, by name or MIME type,
+    for task AND result deserialisation."""
+
+    def test_refusals(self) -> None:
+        from src.xstate_statemachine.contrib.celery import (
+            assert_json_serializer,
+            celery_service,
+            connect_signals,
+            poll_results,
+            statechart_task,
+        )
+
+        bad = [
+            {"accept_content": ["json", "application/x-python-serialize"]},
+            {"accept_content": ["json", "yaml"]},
+            {"result_accept_content": ["pickle"]},
+            {"result_serializer": "pickle"},
+            {"task_serializer": "yaml"},
+        ]
+        for conf in bad:
+            app = _app()
+            for k, v in conf.items():
+                setattr(app.conf, k, v)
+
+            @app.task
+            def t() -> None:
+                pass
+
+            with self.subTest(conf=conf):
+                for call in (
+                    lambda: assert_json_serializer(app),
+                    lambda: celery_service(t),
+                    lambda: statechart_task(app, MemoryStore(), None),
+                    lambda: connect_signals(MemoryStore(), None, app=app),
+                    lambda: poll_results(MemoryStore(), None, app=app),
+                ):
+                    with self.assertRaises(InvalidConfigError):
+                        call()
+        assert_json_serializer(_app())  # the default app is fine
 
 
 class TestRealWorkerThread(unittest.TestCase):
@@ -440,7 +555,7 @@ class TestRealWorkerThread(unittest.TestCase):
             )
         )
         store = MemoryStore()
-        disconnect = connect_signals(store, m)
+        disconnect = connect_signals(store, m, app=app)
         try:
             with start_worker(
                 app, perform_ping_check=False, shutdown_timeout=10
@@ -609,6 +724,18 @@ class TestBeat(unittest.TestCase):
         assert rec is not None
         self.assertIn("waiting", json.dumps(json.loads(rec.snapshot)["value"]))
 
+    def test_fire_ignores_the_global_scan_limit(self) -> None:
+        """M5: with a backlog larger than `limit`, the eta job for one key
+        still fires (it reads that key's deadlines directly)."""
+        for n in range(5):
+            with persisted(self.store, f"a{n}", self.m, clock=self.clock):
+                pass
+        s = self._sched(limit=2)
+        self.now = 1_000_002.0
+        (d,) = self.store.load("t1").deadlines
+        self.assertTrue(s.fire("t1", d.state_id, d.entry_seq))
+        self.assertIn("expired", self._state())
+
     def test_eta_job_for_a_left_state_is_skipped(self) -> None:
         s = self._sched()
         rec = self.store.load("t1")
@@ -622,6 +749,35 @@ class TestBeat(unittest.TestCase):
 
 
 class TestOutboxRelayTask(unittest.TestCase):
+    def test_one_loop_per_worker_no_connection_per_tick(self) -> None:
+        """H2: an async broker is used from ONE private loop across Beat
+        ticks (no rebind, no leaked client); `close_relay_loop` closes the
+        broker and the loop."""
+        from src.xstate_statemachine.contrib.celery import outbox_relay_task
+        from src.xstate_statemachine.eda import Envelope, MemoryOutboxStore
+
+        loops: List[Any] = []
+        closed: List[bool] = []
+
+        class Broker:
+            async def publish(self, topic: str, env: Any) -> None:
+                import asyncio
+
+                loops.append(asyncio.get_running_loop())
+
+            async def close(self) -> None:
+                closed.append(True)
+
+        outbox = MemoryOutboxStore()
+        task = outbox_relay_task(_app(), outbox, Broker(), name="relay-h2")
+        for _ in range(5):
+            outbox.add("t", Envelope.new(type="x", subject="s"))
+            self.assertEqual(task.delay().result, 1)
+        self.assertEqual(len(set(map(id, loops))), 1)
+        task.close_relay_loop()
+        self.assertEqual(closed, [True])
+        self.assertTrue(loops[0].is_closed())
+
     def test_sync_and_async_brokers(self) -> None:
         from src.xstate_statemachine.contrib.celery import outbox_relay_task
         from src.xstate_statemachine.eda import (
@@ -668,7 +824,7 @@ def test_live_broker_round_trip() -> None:
 
     m = _machine(celery_service(charge, watch=False))
     store = MemoryStore()
-    disconnect = connect_signals(store, m)
+    disconnect = connect_signals(store, m, app=app)
     try:
         with start_worker(app, perform_ping_check=False):
             with persisted(store, "l1", m):

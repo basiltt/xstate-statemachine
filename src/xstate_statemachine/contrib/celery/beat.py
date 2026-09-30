@@ -1,8 +1,8 @@
 # src/xstate_statemachine/contrib/celery/beat.py
 # -----------------------------------------------------------------------------
-# â° Celery Beat as the durable `after` scheduler; outbox relay task (#292)
+# ⏰ Celery Beat as the durable `after` scheduler; outbox relay task (#292)
 # -----------------------------------------------------------------------------
-# ðŸ›ï¸ `DurableTimerScheduler` registers ONE task that runs
+# 🏛️ `DurableTimerScheduler` registers ONE task that runs
 #    `DueTimerScanner.run_once` and a Beat entry that calls it every N
 #    seconds -- the SAFETY NET that fires every matured deadline. For
 #    exact timing, `schedule_exact(key)` also enqueues an ``eta`` job per
@@ -13,7 +13,7 @@
 #    skipped. Double firing is idempotent: the scanner re-checks under the
 #    lock and `fire_due` fires a deadline once.
 #
-# âš ï¸ Run EXACTLY ONE Beat process. Two Beats double the scan traffic
+# ⚠️ Run EXACTLY ONE Beat process. Two Beats double the scan traffic
 #    (still correct -- the scan is idempotent -- but wasteful); zero
 #    Beats means `after` timers of discarded instances never fire.
 # -----------------------------------------------------------------------------
@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -116,7 +117,7 @@ class DurableTimerScheduler:
         )
         if not live:
             logger.info(
-                "â° eta job for %r (%s#%s) is stale; skipped",
+                "⏰ eta job for %r (%s#%s) is stale; skipped",
                 key,
                 state_id,
                 entry_seq,
@@ -129,15 +130,23 @@ class DurableTimerScheduler:
 
 
 class _OneKeyScanner(DueTimerScanner):
-    """A scanner restricted to ONE key (``prefix=key`` alone would also
-    match ``order-10`` for ``order-1``)."""
+    """A scanner for ONE key. `due_keys` reads that key's own deadlines
+    (review M5): going through the store's global index would apply the
+    scan ``limit`` BEFORE filtering, so under a backlog the eta job for
+    this key could see nothing and no-op; ``prefix=key`` alone would
+    also match ``order-10`` for ``order-1``."""
 
     def __init__(self, key: str, *args: Any, **kw: Any) -> None:
         super().__init__(*args, **kw)
         self._key = key
 
     def due_keys(self, now: Optional[float] = None) -> List[Any]:
-        return [kd for kd in super().due_keys(now) if kd[0] == self._key]
+        at = (self.now() if now is None else now) + self.skew_tolerance_s
+        rec = self.store.load(self._key)
+        if rec is None or not rec.deadlines:
+            return []
+        earliest = min(d.due_at_wall for d in rec.deadlines)
+        return [(self._key, earliest)] if earliest <= at else []
 
 
 def xsm_deadlines_every(
@@ -156,12 +165,46 @@ def outbox_relay_task(
     batch: int = 100,
 ) -> Any:
     """Register a task that drains *outbox* to *broker* once per call
-    (schedule it with Beat). Works with a sync or an async broker."""
+    (schedule it with Beat). Works with a sync or an async broker.
+
+    An async broker's clients belong to one event loop. Review H2: the
+    task keeps ONE private loop per worker process (created lazily,
+    re-created only if closed), instead of ``asyncio.run`` per tick, which
+    left one broker connection behind per tick. `close_relay_loop` (the
+    returned task's ``close`` attribute) closes the broker and the loop
+    -- call it from ``worker_process_shutdown``.
+    """
     relay = OutboxRelay(outbox, broker, batch=batch)
+    state: Dict[str, Any] = {"loop": None}
+    lock = threading.Lock()
+
+    def _loop() -> asyncio.AbstractEventLoop:
+        loop = state["loop"]
+        if loop is None or loop.is_closed():
+            loop = state["loop"] = asyncio.new_event_loop()
+        return loop
 
     def relay_once() -> int:
-        if inspect.iscoroutinefunction(getattr(broker, "publish", None)):
-            return asyncio.run(relay.relay_once())
-        return relay.relay_once_sync()
+        if not inspect.iscoroutinefunction(getattr(broker, "publish", None)):
+            return relay.relay_once_sync()
+        with lock:  # a loop is not re-entrant across worker threads
+            return _loop().run_until_complete(relay.relay_once())
 
-    return app.task(name=name, serializer="json")(relay_once)
+    def close() -> None:
+        with lock:
+            loop = state["loop"]
+            if loop is None or loop.is_closed():
+                return
+            closer = getattr(broker, "close", None)
+            try:
+                if closer is not None:
+                    res = closer()
+                    if inspect.isawaitable(res):
+                        loop.run_until_complete(res)
+            finally:
+                loop.close()
+                state["loop"] = None
+
+    task = app.task(name=name, serializer="json")(relay_once)
+    task.close_relay_loop = close
+    return task

@@ -48,21 +48,28 @@ from .beat import (  # noqa: E402
 from .service import (  # noqa: E402
     HEADER_INVOCATION,
     HEADER_KEY,
-    HEADER_STATE_SEQ,
     CeleryInvocation,
+    MemoryPendingResults,
+    PendingResult,
     celery_service,
     connect_signals,
     deliver_result,
     poll_results,
 )
-from .worker import assert_json_serializer, statechart_task  # noqa: E402
+from .worker import (  # noqa: E402
+    UNSAFE_CONTENT,
+    assert_json_serializer,
+    statechart_task,
+)
 
 __all__ = [
     "CeleryInvocation",
     "DurableTimerScheduler",
     "HEADER_INVOCATION",
     "HEADER_KEY",
-    "HEADER_STATE_SEQ",
+    "UNSAFE_CONTENT",
+    "MemoryPendingResults",
+    "PendingResult",
     "assert_json_serializer",
     "celery_service",
     "connect_signals",

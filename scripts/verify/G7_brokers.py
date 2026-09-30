@@ -314,13 +314,13 @@ def f1_statechart_task() -> None:
 
     app = Celery("g7", broker="memory://", backend="cache+memory://")
     app.conf.task_always_eager = True
-    app.conf.task_serializer = "pickle"
+    app.conf.accept_content = ["json", "application/x-python-serialize"]
     try:
         statechart_task(app, MemoryStore(), None)
         raise AssertionError("pickle accepted")
     except InvalidConfigError:
-        print("  pickle serializer refused")
-    app.conf.task_serializer = "json"
+        print("  pickle (MIME) in accept_content refused")
+    app.conf.accept_content = ["json"]
 
     def inc(i: Any, ctx: Any, e: Any, a: Any) -> None:
         ctx["n"] += 1

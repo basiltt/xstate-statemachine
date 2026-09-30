@@ -46,6 +46,11 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   reported to `on_event_dropped`. `@statechart_task(app, store, machine)`
   runs the `persisted()` act-loop on a worker and retries `ConflictError`
   through `autoretry_for`; it refuses a non-JSON / pickle-accepting app.
+  `poll_results` is the durable delivery path; a signal-path
+  completion that beats the caller's save is parked
+  (`MemoryPendingResults`) and retried there, never dropped. Every
+  entry point refuses pickle / YAML (by name or MIME type) for task
+  and result deserialisation (`assert_json_serializer`).
   `DurableTimerScheduler` runs `DueTimerScanner.run_once` from Celery
   Beat (`xsm_deadlines_every`) plus `eta` jobs that carry the
   state-entry generation (X0.9); `outbox_relay_task` drains the outbox.
