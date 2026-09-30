@@ -391,6 +391,11 @@ class StatechartModelMixin(models.Model):
         receipt, new_snap, deadlines = self._xsm_run(
             snap, event_type, payload, plugins
         )
+        if receipt.duplicate:
+            # 🔁 An idempotent replay (or an inbox refusal): nothing ran,
+            #    so nothing is written -- a write would bump the version
+            #    and make a concurrent original lose its fence.
+            return receipt
         values = sibling_values(name, new_snap)
         values[name] = new_snap
         values[vcol] = expected + 1

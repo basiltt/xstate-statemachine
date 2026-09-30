@@ -1,4 +1,4 @@
-﻿# src/xstate_statemachine/contrib/django/models.py
+# src/xstate_statemachine/contrib/django/models.py
 # -----------------------------------------------------------------------------
 # ðŸ—ƒï¸ The app's own tables (label ``xsm_django``)
 # -----------------------------------------------------------------------------
@@ -9,6 +9,7 @@
 #                          no row locks)
 #    xsm_django_transitionlog  audit rows, written in send()'s transaction
 #    xsm_django_outboxmessage  transactional outbox (`DjangoOutboxStore`)
+#    xsm_django_idempotencyrecord  `DjangoInbox` (Idempotency-Key, X0.2)
 #
 # ðŸ“ ``source`` names the owner of a key: a model's ``db_table`` for
 #    `StatechartModelMixin` rows, the store's namespace for `DjangoStore`.
@@ -21,6 +22,7 @@ from django.conf import settings
 from django.db import models
 
 __all__ = [
+    "IdempotencyRecord",
     "OutboxMessage",
     "StatechartDeadline",
     "StatechartLock",
@@ -159,4 +161,22 @@ class OutboxMessage(models.Model):
         app_label = "xsm_django"
         indexes = [
             models.Index(fields=["sent_at", "seq"], name="xsm_outbox_pending")
+        ]
+
+
+class IdempotencyRecord(models.Model):
+    """One ``(scope, key)`` of `DjangoInbox` (#283, X0.2)."""
+
+    scope = models.CharField(max_length=400)
+    key = models.CharField(max_length=200)
+    fingerprint = models.CharField(max_length=64)
+    receipt_json = models.TextField(null=True, blank=True)
+    expires_at = models.FloatField(null=True, blank=True)
+
+    class Meta:
+        app_label = "xsm_django"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["scope", "key"], name="xsm_idem_scope_key"
+            )
         ]

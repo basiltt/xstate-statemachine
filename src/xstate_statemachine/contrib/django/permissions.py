@@ -178,18 +178,24 @@ def permission_guards_for(instance: Any, event: str) -> List[Any]:
     return out
 
 
-def has_event_permission(user: Any, instance: Any, event: str) -> bool:
+def has_event_permission(
+    user: Any, instance: Any, event: str, *, require_enabled: bool = True
+) -> bool:
     """May *user* send *event* to *instance* right now?
 
     ``instance.can(event, actor=user)`` -- guards run with *user* as the
     actor -- AND every permission guard on the event's candidate
     transitions passes for *user*. Anonymous / inactive users → ``False``.
+
+    ``require_enabled=False`` drops the ``can()`` half: "is this user
+    ALLOWED to try" -- what an API answers 403 on, leaving a business
+    guard's refusal to the receipt (409).
     """
     if user is None or not getattr(user, "is_authenticated", False):
         return False
     if not getattr(user, "is_active", True):
         return False
-    if not instance.can(event, actor=user):
+    if require_enabled and not instance.can(event, actor=user):
         return False
     token_a = current_actor.set(user)
     token_i = current_instance.set(instance)

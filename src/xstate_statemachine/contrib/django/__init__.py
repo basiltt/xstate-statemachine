@@ -66,6 +66,7 @@ _LAZY = {
     "has_event_permission": ".permissions",
     "permitted_events": ".permissions",
     "DjangoOutboxStore": ".outbox",
+    "DjangoInbox": ".inbox",  # #283 Idempotency-Key
     # 🛠️ #282 -- admin
     "StatechartAdminMixin": ".admin",
     "TransitionLogInline": ".admin",
