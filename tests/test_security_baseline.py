@@ -64,11 +64,13 @@ class TestNoUnsafeDeserialisation(unittest.TestCase):
 
 
 class TestNoMojibake(unittest.TestCase):
-    """UTF-8 text re-saved through a cp1252 console turns `⚠️` into
-    `âš ï¸`. It reached log messages and a warning string once (RC sweep);
+    """UTF-8 text re-saved through a cp1252 console turns a warning sign into
+    its cp1252 mojibake. It reached log messages and a warning string once (RC sweep);
     `scripts/verify/_mojibake_scan.py --fix` reverses it."""
 
-    _PAT = re.compile("ðŸ|â€|â†’|Ã©|Â·|âš|Ã¢")
+    _PAT = re.compile(
+        "\u00f0\u0178|\u00e2\u20ac|\u00e2\u2020\u2019|\u00c3\u00a9|\u00c2\u00b7|\u00e2\u0161|\u00c3\u00a2"
+    )
 
     def test_no_double_encoded_text_under_src_or_docs(self) -> None:
         hits = []

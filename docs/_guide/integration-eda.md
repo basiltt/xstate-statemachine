@@ -19,6 +19,8 @@ pip install "xstate-statemachine[cloudevents]"
 
 Requires `cloudevents>=1.10` (1.x and 2.x layouts are both supported). Tested versions are in the [compatibility table](#compatibility).
 
+For a complete, runnable app -- an order chart and a warehouse chart in choreography, the SQLite outbox committed with the snapshot, inbox dedup, poison messages dead-lettered and listed with `xsm dlq`, and a test suite -- see the [`eda_fulfilment` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/eda_fulfilment).
+
 ## Quick start
 
 A chart that publishes `order.paid` when it is paid, a consumer that turns inbound commands into events on the right persisted instance, and an outbox that stamps the causation chain:

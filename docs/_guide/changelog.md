@@ -199,6 +199,12 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   extras cell.
 - Docs: new [Event-driven architecture](https://basiltt.github.io/xstate-statemachine/guide/integration-eda/)
   page; the Guarantees page's outbox and ack steps are now shipped.
+- **Example: `examples/integrations/eda_fulfilment`.** An order chart and a
+  warehouse chart that talk only through events (`ChoreographyRouter`),
+  with the SQLite outbox committed with the snapshot, inbox dedup, poison
+  -> dead letters and `xsm dlq`, Redis Streams on fakeredis, the Celery
+  bridge in eager mode, and Prometheus / OpenTelemetry / inspector sinks
+  in memory. It needs no running service: `python -m eda_fulfilment`.
 - **Fixed: `[sqlalchemy]` on SQLite: a newly created snapshot could survive a
   rollback of its `PessimisticLock` block (#293).** pysqlite emits no
   `BEGIN` before a `SAVEPOINT`, so when the create-only INSERT was the

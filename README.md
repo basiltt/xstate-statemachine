@@ -950,6 +950,9 @@ text. The multi-worker model (why an interpreter cannot live in a uvicorn worker
 run, how 4 workers × 200 concurrent `PAY` yields exactly one success) is the
 [FastAPI guide's](https://basiltt.github.io/xstate-statemachine/guide/integration-fastapi/) first section, with a runnable
 [`examples/integrations/fastapi_orders`](examples/integrations/fastapi_orders) app and load test.
+The event-driven pieces (outbox, dispatcher, dead letters, Redis Streams, the Celery bridge,
+metrics, traces and the inspector) run together, with no external service, in
+[`examples/integrations/eda_fulfilment`](examples/integrations/eda_fulfilment).
 Every extra, with its status and tracking issue, is listed on the
 [Integrations overview](https://basiltt.github.io/xstate-statemachine/guide/integrations/).
 

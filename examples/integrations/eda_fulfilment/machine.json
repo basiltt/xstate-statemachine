@@ -1,0 +1,71 @@
+{
+  "id": "order",
+  "version": "1",
+  "initial": "placed",
+  "actionErrorPolicy": "fail",
+  "context": {
+    "orderId": null,
+    "total": 0,
+    "trackingId": null,
+    "failure": null
+  },
+  "states": {
+    "placed": {
+      "on": {
+        "PAY": {
+          "target": "paid",
+          "guard": "hasTotal",
+          "actions": "recordPayment",
+          "meta": {
+            "publish": {"type": "OrderPaid", "data": ["orderId", "total"]}
+          }
+        },
+        "PAYMENT_FAILED": {
+          "target": "cancelled",
+          "actions": "recordPaymentFailure"
+        },
+        "CANCEL": "cancelled"
+      }
+    },
+    "paid": {
+      "after": {
+        "60000": {
+          "target": "packingLate",
+          "meta": {"publish": {"type": "PackingLate", "data": ["orderId"]}}
+        }
+      },
+      "on": {
+        "PACKED": "packed",
+        "CANCEL": "cancelled"
+      }
+    },
+    "packingLate": {
+      "on": {
+        "PACKED": "packed",
+        "CANCEL": "cancelled"
+      }
+    },
+    "packed": {
+      "invoke": {
+        "id": "shipOrder",
+        "src": "shipOrder",
+        "onDone": {
+          "target": "shipped",
+          "actions": "storeTracking",
+          "meta": {
+            "publish": {
+              "type": "OrderShipped",
+              "data": ["orderId", "trackingId"]
+            }
+          }
+        },
+        "onError": "shippingFailed"
+      }
+    },
+    "shippingFailed": {
+      "on": {"CANCEL": "cancelled"}
+    },
+    "shipped": {"type": "final"},
+    "cancelled": {"type": "final"}
+  }
+}

@@ -15,6 +15,8 @@ pip install "xstate-statemachine[celery]"
 
 Requires `celery>=5.3`. Tested versions are in the [compatibility table](#compatibility). The tests use `task_always_eager` plus an in-memory result backend (no broker), and a real in-process worker on the `memory://` transport. A live broker test runs when `CELERY_BROKER_URL` is set.
 
+For a complete, runnable app -- `celery_service` as an `invoke`, `@statechart_task`, `DurableTimerScheduler` firing an `after` escalation once, `outbox_relay_task`, a forged task id ignored, pickle refused, and a test suite -- see the [`eda_fulfilment` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/eda_fulfilment).
+
 ## Quick start
 
 <!-- doc-requires: celery -->

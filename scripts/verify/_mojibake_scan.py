@@ -8,7 +8,9 @@ import re
 import subprocess
 import sys
 
-PAT = re.compile("ðŸ|â€|â†’|Ã©|Â·|âš|Ã¢")
+PAT = re.compile(
+    "\u00f0\u0178|\u00e2\u20ac|\u00e2\u2020\u2019|\u00c3\u00a9|\u00c2\u00b7|\u00e2\u0161|\u00c3\u00a2"
+)
 EXT = (".py", ".md", ".html", ".json", ".yml", ".yaml", ".toml", ".txt")
 
 

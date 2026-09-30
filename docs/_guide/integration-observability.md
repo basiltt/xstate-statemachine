@@ -16,6 +16,8 @@ pip install structlog loguru sentry-sdk   # optional -- soft imports, never pinn
 
 `[observability]` pins exactly two packages: `opentelemetry-api>=1.20` and `prometheus-client>=0.17`. You still configure the OpenTelemetry **SDK** (exporter, sampler) yourself — the library only talks to the API, as the OTel project recommends for libraries. structlog, loguru and sentry-sdk are detected when their plugin is constructed; a missing one raises `MissingExtraError` naming the package (`pip install structlog`). Tested versions are in the [compatibility table](#compatibility).
 
+For a complete, runnable app -- `PrometheusPlugin` and `OpenTelemetryPlugin` over two charts in choreography with in-memory exporters, tests that no order id becomes a label, and a test suite -- see the [`eda_fulfilment` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/eda_fulfilment).
+
 ## Quick start
 
 <!-- doc-requires: prometheus_client, opentelemetry -->

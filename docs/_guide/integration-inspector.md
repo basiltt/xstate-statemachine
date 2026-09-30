@@ -15,6 +15,8 @@ Nothing to install: the core (`xstate_statemachine.inspect`) is stdlib only — 
 pip install "xstate-statemachine[starlette]"   # only for WebSocketSink / mount_inspector
 ```
 
+For a complete, runnable app -- `InspectorPlugin` with a context allow-list on two charts in choreography, the recording replayed with `replay_messages`, and a test suite -- see the [`eda_fulfilment` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/eda_fulfilment).
+
 ## Quick start
 
 ```python
