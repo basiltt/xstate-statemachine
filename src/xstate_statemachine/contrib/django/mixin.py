@@ -1,4 +1,4 @@
-﻿# src/xstate_statemachine/contrib/django/mixin.py
+# src/xstate_statemachine/contrib/django/mixin.py
 # -----------------------------------------------------------------------------
 # ðŸ§¬ StatechartModelMixin -- ``order.send("PAY")`` in one transaction
 # -----------------------------------------------------------------------------
@@ -30,10 +30,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import json
 import time
-from typing import Any, ClassVar, Dict, List, Optional, Tuple
+from typing import Any, ClassVar, Dict, Iterator, List, Optional, Tuple
 
 from django.apps import apps
 from django.db import models, router, transaction
@@ -55,6 +56,7 @@ __all__ = [
     "StatechartModelMixin",
     "StatechartQuerySet",
     "current_actor",
+    "current_instance",
     "send_with_retry",
 ]
 
@@ -69,6 +71,10 @@ _RETRY_BACKOFF = RetryPolicy(
 #: the payload stays JSON (only the id travels in it).
 current_actor: "contextvars.ContextVar[Any]" = contextvars.ContextVar(
     "xsm_django_actor", default=None
+)
+#: The row a guard is being evaluated for (object-level permissions).
+current_instance: "contextvars.ContextVar[Any]" = contextvars.ContextVar(
+    "xsm_django_instance", default=None
 )
 
 
@@ -152,6 +158,12 @@ class StatechartModelMixin(models.Model):
     statechart_on_version_mismatch: ClassVar[Optional[str]] = None
     statechart_clock: ClassVar[Any] = None
     statechart_initialize: ClassVar[bool] = True
+    #: Write `TransitionLog` rows in send()'s transaction (#281).
+    #: ``None`` (default) = on when the app + contenttypes are installed.
+    statechart_audit: ClassVar[Optional[bool]] = None
+    #: Extra plugins per send: a list, or ``(row) -> list`` (e.g.
+    #: ``lambda row: [OutboxPlugin(DjangoOutboxStore())]``).
+    statechart_plugins: ClassVar[Any] = ()
 
     objects = StatechartManager()
 
@@ -242,11 +254,8 @@ class StatechartModelMixin(models.Model):
         *actor* visible to `PermissionGuard`); nothing is written."""
         etype = event if isinstance(event, str) else event.get("type")
         body = self._xsm_payload(actor, None, dict(payload))
-        token = current_actor.set(actor)
-        try:
+        with self._xsm_bind(actor):
             return bool(self.machine.can({"type": etype, **body}))
-        finally:
-            current_actor.reset(token)
 
     @property
     def available_events(self) -> List[str]:
@@ -257,16 +266,24 @@ class StatechartModelMixin(models.Model):
     def available_events_for(self, actor: Any) -> List[str]:
         """`available_events` as *actor* sees them."""
         interp = self.machine
-        token = current_actor.set(actor)
-        try:
-            body = self._xsm_payload(actor, None, {})
+        body = self._xsm_payload(actor, None, {})
+        with self._xsm_bind(actor):
             return [
                 e
                 for e in declared_events(interp.machine)
                 if interp.can({"type": e, **body})
             ]
+
+    @contextlib.contextmanager
+    def _xsm_bind(self, actor: Any) -> Iterator[None]:
+        """Expose *actor* and this row to guards for the duration."""
+        ta = current_actor.set(actor)
+        ti = current_instance.set(self)
+        try:
+            yield
         finally:
-            current_actor.reset(token)
+            current_instance.reset(ti)
+            current_actor.reset(ta)
 
     # -- write side ---------------------------------------------------------------
     @staticmethod
@@ -315,14 +332,10 @@ class StatechartModelMixin(models.Model):
         if self.pk is None:
             self.save(using=using)
         body = self._xsm_payload(actor, reason, dict(payload))
-        token = current_actor.set(actor)
-        try:
-            with transaction.atomic(using=using):
-                return self._xsm_send_locked(
-                    event_type, body, lock, list(plugins), using, actor
-                )
-        finally:
-            current_actor.reset(token)
+        with self._xsm_bind(actor), transaction.atomic(using=using):
+            return self._xsm_send_locked(
+                event_type, body, lock, list(plugins), using, actor
+            )
 
     async def asend(self, event_type: str, **kw: Any) -> Receipt:
         """`send` for async views: the WHOLE locked section runs in one
@@ -428,17 +441,61 @@ class StatechartModelMixin(models.Model):
             interp.stop()
         return receipt, new_snap, deadlines
 
-    # -- extension points (#281 fills these) ----------------------------------------
+    # -- signals / audit / plugins (#281) --------------------------------------------
     def _xsm_plugins(self, ctx: Dict[str, Any]) -> List[Any]:
-        """Plugins attached to every send of this row."""
-        return []
+        """Plugins attached to every send of this row: the signal plugin,
+        the audit plugin (`statechart_audit`), and `statechart_plugins`."""
+        from .signals import DjangoSignalPlugin
+
+        sig = DjangoSignalPlugin(self)
+        ctx["signal_plugin"] = sig
+        out: List[Any] = [sig]
+        if type(self)._xsm_audit_enabled():
+            from .audit import DjangoAuditPlugin
+
+            audit = DjangoAuditPlugin(self, using=ctx["using"])
+            audit.store.actor = ctx.get("actor")
+            audit.store.buffer = []
+            ctx["audit_plugin"] = audit
+            out.append(audit)
+        extra = type(self).statechart_plugins
+        if callable(extra):
+            extra = extra(self)
+        out.extend(extra or ())
+        return out
+
+    @classmethod
+    def _xsm_audit_enabled(cls) -> bool:
+        flag = cls.statechart_audit
+        if flag is None:
+            return cls._xsm_has_tables() and apps.is_installed(
+                "django.contrib.contenttypes"
+            )
+        return bool(flag)
 
     def _xsm_before_run(self, ctx: Dict[str, Any]) -> Optional[Receipt]:
-        """Return a receipt to answer the send WITHOUT running the machine."""
-        return None
+        """`pre_transition`: a `TransitionVetoed` answers ``denied``."""
+        from .signals import emit_pre
+
+        return emit_pre(self, ctx)
 
     def _xsm_after_write(self, ctx: Dict[str, Any]) -> None:
-        """Runs after the UPDATE, inside the same transaction."""
+        """Audit rows, then `post_transition` -- both inside the send's
+        transaction: a failing insert or a raising receiver rolls back
+        the state AND its audit row."""
+        from .signals import emit_post
+
+        audit = ctx.get("audit_plugin")
+        if audit is not None:
+            audit.store.flush()
+        emit_post(self, ctx, ctx["signal_plugin"])
+
+    @property
+    def history(self) -> Any:
+        """This row's `TransitionLog` rows, ordered by ``seq``."""
+        from .audit import history_of
+
+        return history_of(self)
 
     # -- deadlines -------------------------------------------------------------------
     @classmethod
@@ -533,7 +590,16 @@ class StatechartModelMixin(models.Model):
         return counts
 
     def _xsm_forget_extra(self, using: str) -> Dict[str, int]:
-        return {}
+        if not type(self)._xsm_audit_enabled():
+            return {}
+        from .audit import forget_log
+
+        mode = type(self).statechart_forget_log
+        return {"log_entries": forget_log(self, using=using, mode=mode)}
+
+    #: X0.5 choice for the audit trail on `forget_statechart`:
+    #: ``"redact"`` keeps the append-only chain, ``"delete"`` removes it.
+    statechart_forget_log: ClassVar[str] = "redact"
 
 
 # -----------------------------------------------------------------------------

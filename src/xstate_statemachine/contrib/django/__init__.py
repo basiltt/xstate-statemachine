@@ -49,6 +49,23 @@ _LAZY = {
     "StatechartDeadline": ".models",
     "refresh_statechart_columns": ".migration_helpers",
     "resolve_machine": "._machine",
+    # 📣 #281 -- signals, audit, permissions, outbox
+    "pre_transition": ".signals",
+    "post_transition": ".signals",
+    "statechart_error": ".signals",
+    "TransitionVetoed": ".signals",
+    "DjangoSignalPlugin": ".signals",
+    "TransitionLog": ".models",
+    "DjangoAuditPlugin": ".audit",
+    "DjangoTransitionLogStore": ".audit",
+    "PermissionGuard": ".permissions",
+    "RoleGuard": ".permissions",
+    "AnyOf": ".permissions",
+    "AllOf": ".permissions",
+    "StatechartPermission": ".permissions",
+    "has_event_permission": ".permissions",
+    "permitted_events": ".permissions",
+    "DjangoOutboxStore": ".outbox",
 }
 
 __all__ = sorted(_LAZY)

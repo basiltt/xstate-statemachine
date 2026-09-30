@@ -43,3 +43,43 @@ def counter_logic() -> object:
         ctx["n"] = ctx["n"] + 1
 
     return MachineLogic(actions={"bump": bump})
+
+
+def approval_logic() -> object:
+    """#281: two roles -- ``shop.approve_approval`` (approvers) and the
+    ``managers`` group (may reopen)."""
+    from xstate_statemachine import MachineLogic
+    from xstate_statemachine.contrib.django.permissions import (
+        PermissionGuard,
+        RoleGuard,
+    )
+
+    def note(i: object, ctx: dict, e: object, a: object) -> None:
+        ctx.setdefault("notes", []).append(e.payload.get("text", ""))
+
+    def explode(i: object, ctx: dict, e: object, a: object) -> None:
+        raise RuntimeError("action failed")
+
+    return MachineLogic(
+        actions={"note": note, "explode": explode},
+        guards={
+            "canApprove": PermissionGuard("shop.approve_approval"),
+            "isManager": RoleGuard("managers"),
+        },
+    )
+
+
+class Approval(StatechartModelMixin, models.Model):
+    """#281/#282: permission-guarded approval with an audit trail."""
+
+    statechart_machine = "machines/approval.json"
+    statechart_logic = "shop.models:approval_logic"
+
+    title = models.CharField(max_length=100, blank=True, default="")
+    statechart = StatechartField()
+
+    class Meta:
+        permissions = [("approve_approval", "Can approve approvals")]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"Approval #{self.pk}"
