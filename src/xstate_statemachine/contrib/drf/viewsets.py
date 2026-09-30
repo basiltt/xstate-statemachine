@@ -44,6 +44,7 @@ from ..django._problems import (
     problem_for_exception,
     receipt_fields,
 )
+from ..django.mixin import reserved_keys
 from ..django.permissions import has_event_permission, permitted_events
 from .fields import state_body
 from .permissions import StatechartHistoryPermission
@@ -173,6 +174,8 @@ class StatechartViewSetMixin:
     xsm_stream_poll_s: float = 0.5
     xsm_stream_max_s: float = 300.0
     xsm_heartbeat_s: float = 15.0
+    #: Re-check permissions every N polls of `stream/` (M4).
+    xsm_stream_recheck_every: int = 10
 
     #: The event being handled (read by `StatechartEventPermission`).
     xsm_event: Optional[str] = None
@@ -184,7 +187,7 @@ class StatechartViewSetMixin:
         if model is None:
             return  # an abstract intermediate base
         cls._xsm_check_permissions()
-        events = declared_events(model().statechart_machine_node())
+        events = declared_events(model.statechart_class_machine())
         slugs: Dict[str, str] = {}
         for event in events:
             slug = event_slug(event)
@@ -242,12 +245,18 @@ class StatechartViewSetMixin:
         pk = getattr(user, "pk", None)
         return f"user:{pk}" if pk is not None else "anonymous"
 
-    def _xsm_inbox(self) -> Any:
+    def _xsm_inbox(self, obj: Any = None) -> Any:
         inbox = self.xsm_inbox
         if inbox == "default":
+            from django.db import router
+
             from ..django.inbox import DjangoInbox
 
-            return DjangoInbox()
+            # 🔐 M3: the claim/mark must join the send's transaction, so
+            #    it goes to the database the ROW is written to.
+            model = type(obj) if obj is not None else self._xsm_model()
+            using = getattr(getattr(obj, "_state", None), "db", None)
+            return DjangoInbox(using=using or router.db_for_write(model))
         return inbox
 
     def _xsm_state(self, request: Any, obj: Any) -> Dict[str, Any]:
@@ -266,6 +275,16 @@ class StatechartViewSetMixin:
                     422, "Request body must be a JSON object"
                 )
         payload = {k: v for k, v in data.items() if k != "type"}
+        # 🔐 H1/H2: framework options and server-assigned identity fields
+        #    are never client data.
+        bad = reserved_keys(payload)
+        if bad:
+            return problem_response(
+                422,
+                "Reserved key in request body",
+                error="ReservedKeyError",
+                keys=bad,
+            )
         ser_cls = self.xsm_event_serializers.get(event)
         if ser_cls is None:
             return payload
@@ -292,7 +311,7 @@ class StatechartViewSetMixin:
             return payload
         plugins: List[Any] = []
         idem = request.headers.get(IDEMPOTENCY_HEADER)
-        inbox = self._xsm_inbox()
+        inbox = self._xsm_inbox(obj)
         if idem and inbox is not None:
             from ...persistence.idempotency import IdempotencyPlugin
 
@@ -305,7 +324,7 @@ class StatechartViewSetMixin:
                 actor=request.user,
                 lock=self.xsm_lock,
                 plugins=plugins,
-                **payload,
+                payload=payload,
             )
         except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
             status, body = problem_for_exception(exc)
@@ -340,7 +359,7 @@ class StatechartViewSetMixin:
         if not isinstance(etype, str) or not etype:
             return problem_response(422, 'Body must carry a string "type"')
         model = type(self)._xsm_model()
-        if etype not in declared_events(model().statechart_machine_node()):
+        if etype not in declared_events(model.statechart_class_machine()):
             return problem_response(
                 422, "Unknown event", error="UnknownEventError"
             )
@@ -404,13 +423,38 @@ class StatechartViewSetMixin:
         resp["X-Accel-Buffering"] = "no"
         return resp
 
+    def _xsm_stream_allowed(self, request: Any, obj: Any) -> bool:
+        """Fresh user row + the view's permission classes on *obj*."""
+        user = request.user
+        try:
+            fresh = type(user)._default_manager.get(pk=user.pk)
+        except Exception:  # noqa: BLE001 - deleted user
+            return False
+        if not getattr(fresh, "is_active", True):
+            return False
+        request.user = fresh
+        try:
+            self.check_permissions(request)  # type: ignore[attr-defined]
+            self.check_object_permissions(request, obj)  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 - PermissionDenied / NotAuth
+            return False
+        return True
+
     def _xsm_sse(self, request: Any, obj: Any) -> Iterator[str]:
         name = obj.statechart_field_obj().name
         vcol = f"{name}_version"
         mgr = type(obj)._base_manager
         seen = -1
+        polls = 0
         start = last_beat = time.monotonic()
         while time.monotonic() - start < self.xsm_stream_max_s:
+            polls += 1
+            if polls % max(
+                1, self.xsm_stream_recheck_every
+            ) == 0 and not self._xsm_stream_allowed(request, obj):
+                # 🔐 M4: access revoked mid-stream -> stop.
+                yield 'event: error\ndata: {"status":403}\n\n'
+                return
             version = (
                 mgr.filter(pk=obj.pk).values_list(vcol, flat=True).first()
             )

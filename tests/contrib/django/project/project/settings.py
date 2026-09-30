@@ -99,6 +99,14 @@ def _database() -> dict:
 
 
 DATABASES = {"default": _database()}
+if DATABASES["default"]["ENGINE"].endswith("sqlite3"):
+    # 📝 #361 M3: a second alias proves the inbox follows the row's DB.
+    _other = dict(DATABASES["default"])
+    _other["NAME"] = _other["NAME"].replace(".sqlite3", "_other.sqlite3")
+    _other["TEST"] = {
+        "NAME": _other["TEST"]["NAME"].replace(".sqlite3", "_other.sqlite3")
+    }
+    DATABASES["other"] = _other
 
 STATIC_URL = "/static/"
 

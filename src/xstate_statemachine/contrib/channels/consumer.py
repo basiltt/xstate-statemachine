@@ -24,6 +24,7 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from ...receipts import receipt_to_status
 from ..django._events import declared_events
 from ..django._problems import problem_for_exception, receipt_fields
+from ..django.mixin import reserved_keys
 from ..django.permissions import has_event_permission, permitted_events
 
 __all__ = ["StatechartConsumer", "WS_POLICY_VIOLATION", "live_consumers"]
@@ -126,7 +127,30 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
     async def _heartbeat(self) -> None:
         while True:
             await asyncio.sleep(self.heartbeat_s)
+            # 🔐 M2: a revoked / deactivated user is dropped within one
+            #    heartbeat even when the row is quiet.
+            if not await database_sync_to_async(self._still_allowed)():
+                await self.close(code=WS_POLICY_VIOLATION)
+                return
             await self.send_json({"kind": "ping"})
+
+    def _still_allowed(self) -> bool:
+        """Re-run the connect-time checks against a FRESH user row."""
+        user = self.scope.get("user")
+        inst = self.instance
+        if user is None or inst is None:
+            return False
+        try:
+            if getattr(user, "pk", None) is not None:
+                user = type(user)._default_manager.get(pk=user.pk)
+                self.scope["user"] = user
+        except Exception:  # noqa: BLE001 - deleted user
+            return False
+        if not getattr(user, "is_authenticated", False) or not getattr(
+            user, "is_active", True
+        ):
+            return False
+        return bool(self.authorize(user, inst))
 
     # -- inbound -----------------------------------------------------------------
     async def receive_json(self, content: Any, **kwargs: Any) -> None:
@@ -145,6 +169,19 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
         if not isinstance(payload, dict):
             await self._error(422, "payload must be an object")
             return
+        bad = reserved_keys(payload)
+        if bad:
+            # 🔐 H1/H2: never client data.
+            await self.send_json(
+                {
+                    "kind": "error",
+                    **_problem(
+                        422, "Reserved key in payload", "ReservedKeyError"
+                    ),
+                    "keys": bad,
+                }
+            )
+            return
         result = await database_sync_to_async(self._send)(etype, payload)
         if "problem" in result:
             await self.send_json({"kind": "error", **result["problem"]})
@@ -161,6 +198,8 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
             )
 
     def _send(self, etype: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not self._still_allowed():
+            return {"problem": _problem(403, "Forbidden", "PermissionDenied")}
         user = self.scope["user"]
         inst = self.instance
         inst.refresh_from_db()
@@ -171,7 +210,7 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
         if not has_event_permission(user, inst, etype, require_enabled=False):
             return {"problem": _problem(403, "Forbidden", "PermissionDenied")}
         try:
-            receipt = inst.send(etype, actor=user, **payload)
+            receipt = inst.send(etype, actor=user, payload=payload)
         except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
             status, body = problem_for_exception(exc)
             return {"problem": {**body, "status": status}}
@@ -205,11 +244,17 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
         if self.instance is None:
             return
 
-        def fresh() -> Dict[str, Any]:
+        def fresh() -> Optional[Dict[str, Any]]:
+            # 🔐 M2: re-authorise before every push.
+            if not self._still_allowed():
+                return None
             self.instance.refresh_from_db()
             return self._state(self.scope["user"])
 
         body = await database_sync_to_async(fresh)()
+        if body is None:
+            await self.close(code=WS_POLICY_VIOLATION)
+            return
         await self.send_json(
             {
                 "kind": "transition",

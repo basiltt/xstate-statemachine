@@ -14,6 +14,10 @@
 #                             0 rows â†’ `ConflictError` (``send_with_retry``
 #                             reloads and re-applies).
 #      none                   last writer wins (single-writer rows only).
+#                             ⚠️ Audit ``seq`` is Max()+1, safe under the
+#                             row lock; with "none" two concurrent writers
+#                             can collide on the unique (object, seq) and
+#                             one send fails with IntegrityError (L1).
 #
 #    The deadline rows (``xsm_django_deadline``) and -- with #281 -- the
 #    audit rows are written on the same connection, inside the same
@@ -34,7 +38,17 @@ import contextlib
 import contextvars
 import json
 import time
-from typing import Any, ClassVar, Dict, Iterator, List, Optional, Tuple
+from typing import (
+    Any,
+    ClassVar,
+    Dict,
+    FrozenSet,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Tuple,
+)
 
 from django.apps import apps
 from django.db import models, router, transaction
@@ -52,6 +66,8 @@ from .fields import SEP, StatechartField, sibling_values
 
 __all__ = [
     "LOCK_MODES",
+    "RESERVED_PAYLOAD_KEYS",
+    "reserved_keys",
     "StatechartManager",
     "StatechartModelMixin",
     "StatechartQuerySet",
@@ -61,6 +77,28 @@ __all__ = [
 ]
 
 LOCK_MODES = ("pessimistic", "optimistic", "none")
+#: Keys a CLIENT body may never carry (#361 H1/H2): framework options of
+#: `send()` and identity / audit fields the server assigns.
+RESERVED_PAYLOAD_KEYS: FrozenSet[str] = frozenset(
+    {
+        "lock",
+        "using",
+        "plugins",
+        "actor",
+        "actor_id",
+        "reason",
+        "wait",
+        "payload",
+        "idempotency_key",
+    }
+)
+
+
+def reserved_keys(data: Mapping[str, Any]) -> List[str]:
+    """The reserved keys present in a client *data* mapping (sorted)."""
+    return sorted(k for k in data if k in RESERVED_PAYLOAD_KEYS)
+
+
 APP = "xstate_statemachine.contrib.django"
 _RETRY_BACKOFF = RetryPolicy(
     max_attempts=8, base_ms=1.0, factor=2.0, max_ms=50.0, jitter="full"
@@ -175,19 +213,28 @@ class StatechartModelMixin(models.Model):
     def statechart_field_obj(cls) -> StatechartField:
         return statechart_field(cls)
 
+    @classmethod
+    def statechart_class_machine(cls) -> MachineNode[Any]:
+        """The chart without an instance (static specs; a spec that needs
+        the row is resolved with ``row=None``)."""
+        return cls._xsm_resolve(None)
+
     def statechart_machine_node(self) -> MachineNode[Any]:
         """The chart for this row (cached per class for static specs)."""
-        cls = type(self)
+        return type(self)._xsm_resolve(self)
+
+    @classmethod
+    def _xsm_resolve(cls, row: Any) -> MachineNode[Any]:
         spec, logic = cls.statechart_machine, cls.statechart_logic
         static = not callable(spec) or isinstance(spec, MachineNode)
         static = static and (logic is None or not callable(logic))
         if static:
             cache = cls.__dict__.get("_xsm_machine_cache")
             if cache is None:
-                cache = resolve_machine(spec, logic=logic, owner=cls, row=self)
+                cache = resolve_machine(spec, logic=logic, owner=cls, row=row)
                 setattr(cls, "_xsm_machine_cache", cache)
             return cache
-        return resolve_machine(spec, logic=logic, owner=cls, row=self)
+        return resolve_machine(spec, logic=logic, owner=cls, row=row)
 
     def _xsm_names(self) -> Tuple[str, str]:
         name = statechart_field(type(self)).name
@@ -290,10 +337,13 @@ class StatechartModelMixin(models.Model):
     def _xsm_payload(
         actor: Any, reason: Optional[str], payload: Dict[str, Any]
     ) -> Dict[str, Any]:
+        # 🔐 H2: the framework-supplied identity ALWAYS wins; a caller's
+        #    own "actor_id" / "reason" in the data can never forge it.
+        payload.pop("actor_id", None)
         if actor is not None:
-            payload.setdefault("actor_id", getattr(actor, "pk", actor))
+            payload["actor_id"] = getattr(actor, "pk", actor)
         if reason is not None:
-            payload.setdefault("reason", str(reason))
+            payload["reason"] = str(reason)
         return payload
 
     def send(
@@ -306,9 +356,15 @@ class StatechartModelMixin(models.Model):
         plugins: Any = (),
         using: Optional[str] = None,
         wait: bool = True,
-        **payload: Any,
+        payload: Optional[Mapping[str, Any]] = None,
+        **kwargs: Any,
     ) -> Receipt:
         """Apply *event_type* to this row's statechart and write it.
+
+        Event data goes in *payload* (a mapping) -- web surfaces MUST pass
+        client data that way, never as ``**body``, so a client cannot set
+        ``lock`` / ``using`` / ``plugins`` / ``actor`` (#361 H1). Python
+        callers may still pass data as keyword arguments.
 
         Args:
             lock: ``"pessimistic"`` (default, `statechart_lock`),
@@ -331,7 +387,9 @@ class StatechartModelMixin(models.Model):
         using = using or self._state.db or router.db_for_write(type(self))
         if self.pk is None:
             self.save(using=using)
-        body = self._xsm_payload(actor, reason, dict(payload))
+        data = dict(payload or {})
+        data.update(kwargs)
+        body = self._xsm_payload(actor, reason, data)
         with self._xsm_bind(actor), transaction.atomic(using=using):
             return self._xsm_send_locked(
                 event_type, body, lock, list(plugins), using, actor
@@ -546,6 +604,17 @@ class StatechartModelMixin(models.Model):
                 if not f.primary_key and f.name not in cols
             ]
         else:
+            named = set(kwargs.get("update_fields") or ()) & cols
+            if named and not kwargs.get("force_insert"):
+                # 🔐 M1: a partial UPDATE of the statechart columns would
+                #    leave the siblings / version stale (wrong in_state()
+                #    rows, no optimistic conflict).
+                raise ValueError(
+                    f"save(update_fields=...) may not name the statechart "
+                    f"columns {sorted(named)}; the state moves only through "
+                    f"send() (or DjangoModelStore / refresh_statechart_"
+                    f"columns for migrations)."
+                )
             for k, v in sibling_values(name, self._xsm_snapshot()).items():
                 setattr(self, k, v)
         super().save(*args, **kwargs)
@@ -628,6 +697,22 @@ def send_with_retry(
         raise ValueError("retries must be >= 0")
     policy = backoff or _RETRY_BACKOFF
     name, vcol = row._xsm_names()
+    from django.db import connections
+
+    using = row._state.db or router.db_for_write(type(row))
+    if connections[using].in_atomic_block:
+        # ⚠️ L2: inside an outer atomic() a retry re-reads the SAME
+        #    snapshot (REPEATABLE READ on Postgres) and sleeps holding
+        #    the transaction open.
+        import warnings
+
+        warnings.warn(
+            "send_with_retry() called inside transaction.atomic(): the "
+            "retry cannot see the winning write and holds the transaction "
+            "open while backing off; call it outside atomic().",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     attempt = 0
     while True:
         attempt += 1
