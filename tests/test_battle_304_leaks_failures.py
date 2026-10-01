@@ -121,6 +121,13 @@ def _count_receipts() -> int:
     return sum(1 for o in gc.get_objects() if issubclass(type(o), Receipt))
 
 
+def _run_async(coro_fn) -> None:
+    """📝 Run an async test body on a fresh loop. The repo's Test cells
+    install no pytest-asyncio (the convention is IsolatedAsyncioTestCase),
+    so a bare `@pytest.mark.asyncio` is silently a no-op there."""
+    asyncio.run(coro_fn())
+
+
 def _traced_growth(step, warmup: int = 300) -> Tuple[int, int]:
     """Run ``step`` ITERATIONS times; return (growth N/2->N, total)."""
     for _ in range(warmup):
@@ -230,8 +237,10 @@ class TestLeaksSync:
 
 
 class TestLeaksAsync:
-    @pytest.mark.asyncio
-    async def test_create_send_stop_discard_growth_is_bounded(self) -> None:
+    def test_create_send_stop_discard_growth_is_bounded(self) -> None:
+        _run_async(self._a_test_create_send_stop_discard_growth_is_bounded)
+
+    async def _a_test_create_send_stop_discard_growth_is_bounded(self) -> None:
         # Arrange
         machine = create_machine(LEAK_CFG, logic=_leak_logic())
 
@@ -250,8 +259,11 @@ class TestLeaksAsync:
         # Assert
         assert growth < GROWTH_CEILING_BYTES
 
-    @pytest.mark.asyncio
-    async def test_long_lived_interpreter_does_not_accumulate(self) -> None:
+    def test_long_lived_interpreter_does_not_accumulate(self) -> None:
+
+        _run_async(self._a_test_long_lived_interpreter_does_not_accumulate)
+
+    async def _a_test_long_lived_interpreter_does_not_accumulate(self) -> None:
         # Arrange
         machine = create_machine(LEAK_CFG, logic=_leak_logic())
         plug = Counter()
@@ -274,8 +286,11 @@ class TestLeaksAsync:
         await asyncio.sleep(0)
         assert len(asyncio.all_tasks()) < before_tasks + 1
 
-    @pytest.mark.asyncio
-    async def test_hoarding_plugin_is_the_only_growth(self) -> None:
+    def test_hoarding_plugin_is_the_only_growth(self) -> None:
+
+        _run_async(self._a_test_hoarding_plugin_is_the_only_growth)
+
+    async def _a_test_hoarding_plugin_is_the_only_growth(self) -> None:
         # Arrange
         machine = create_machine(LEAK_CFG, logic=_leak_logic())
         hoard = Hoarder()
@@ -343,8 +358,11 @@ class TestPerfReport:
         # magnitude (that would be a per-send `inspect` or similar).
         assert one / base < 10
 
-    @pytest.mark.asyncio
-    async def test_async_cost_of_hooks_is_reported_and_sane(self) -> None:
+    def test_async_cost_of_hooks_is_reported_and_sane(self) -> None:
+
+        _run_async(self._a_test_async_cost_of_hooks_is_reported_and_sane)
+
+    async def _a_test_async_cost_of_hooks_is_reported_and_sane(self) -> None:
         # Act
         base = min([await _async_us_per_send(0) for _ in range(3)])
         one = min([await _async_us_per_send(1) for _ in range(3)])
@@ -654,8 +672,13 @@ class TestComplexScenarios:
         assert len(tape.processed) == len(tape.received)
         assert "ar.c" in i.current_state_ids
 
-    @pytest.mark.asyncio
-    async def test_snapshot_restores_on_other_engine_with_hooks(self) -> None:
+    def test_snapshot_restores_on_other_engine_with_hooks(self) -> None:
+
+        _run_async(self._a_test_snapshot_restores_on_other_engine_with_hooks)
+
+    async def _a_test_snapshot_restores_on_other_engine_with_hooks(
+        self,
+    ) -> None:
         # Arrange: run on SYNC, snapshot, restore on ASYNC (and back)
         machine = create_machine(COMPLEX_CFG, logic=_complex_logic([]))
         src = SyncInterpreter(machine).start()
@@ -708,8 +731,13 @@ class TestComplexScenarios:
         # Assert
         assert seen == [("after.10.t.a", False)]
 
-    @pytest.mark.asyncio
-    async def test_after_timer_event_has_no_payload_attribute_async(
+    def test_after_timer_event_has_no_payload_attribute_async(self) -> None:
+
+        _run_async(
+            self._a_test_after_timer_event_has_no_payload_attribute_async
+        )
+
+    async def _a_test_after_timer_event_has_no_payload_attribute_async(
         self,
     ) -> None:
         # Arrange
@@ -800,9 +828,11 @@ class TestCorpusCharts:
         assert len(tape.processed) >= 1
         assert all(isinstance(r, Receipt) for _, r in tape.processed)
 
-    @pytest.mark.asyncio
     @pytest.mark.parametrize("name", CHARTS)
-    async def test_async_hook_count_equals_events_admitted(self, name) -> None:
+    def test_async_hook_count_equals_events_admitted(self, name) -> None:
+        _run_async(lambda: self._a_hook_count_equals_events_admitted(name))
+
+    async def _a_hook_count_equals_events_admitted(self, name) -> None:
         # Arrange
         cfg = _load(name)
         events: Set[str] = set()
