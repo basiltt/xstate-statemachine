@@ -8,7 +8,9 @@ the session). Checks that need a *bare* interpreter use ``XSM_BARE_PYTHON``
 when it has no extras installed; otherwise they skip with the reason.
 
 Network checks (PyPI floors, ``pip --dry-run``) skip under
-``--disable-socket``.
+``--disable-socket`` -- which every test job uses (X0.16), so in CI they
+run ONLY in the ``audit`` job (`-k TestExtrasResolveOnPyPI`), the one job
+that already talks to PyPI. Locally they run whenever sockets are open.
 """
 
 from __future__ import annotations

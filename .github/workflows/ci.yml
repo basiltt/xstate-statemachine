@@ -360,6 +360,14 @@ jobs:
           wc -l /tmp/audit.txt
           python -m pip_audit --strict --no-deps --progress-spinner off -r /tmp/audit.txt
 
+      - name: 📐 Extras resolve against PyPI (floors exist, [all] installs as one set)
+        # 📝 #258 battle: every other job runs `--disable-socket` (X0.16),
+        #    so the network half of the scaffolding battle file never ran
+        #    anywhere. This is the one job that already talks to PyPI.
+        run: |
+          python -m pip install "pytest>=8.3.0"
+          python -m pytest tests/test_battle_258_scaffolding.py -q -p no:cacheprovider -k TestExtrasResolveOnPyPI
+
   # ---------------------------------------------------------------------------
   # 🧪 Test Matrix
   # ---------------------------------------------------------------------------

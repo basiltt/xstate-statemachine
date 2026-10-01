@@ -27,7 +27,7 @@ except MissingExtraError as exc:
     assert isinstance(exc, ImportError)  # existing `except ImportError` fallbacks keep working
 ```
 
-> **When the error is raised.** Importing an integration subpackage checks its pinned dependencies **at import time** (`import xstate_statemachine.contrib.fastapi`). Three things are checked later, **on first use**, because they are optional soft dependencies that no extra pins: `StructlogPlugin()` / `LoguruPlugin()` (`structlog` / `loguru`), `SentryPlugin()` (`sentry-sdk`), `LangChainCallbackPlugin()` (`langchain-core`), and `[testing]`'s Hypothesis helpers (`model_test`, `events_strategy`, `payload_strategy`). `xstate_statemachine.contrib.brokers` itself imports with no extra; each adapter module (`brokers.kafka`, …) checks its own. The Quart shim (`contrib.quart`) needs `pip install quart` on top of `[flask]` — the error says so.
+> **When the error is raised.** Importing an integration subpackage checks its pinned dependencies **at import time** (`import xstate_statemachine.contrib.fastapi`). Three things are checked later, **on first use**, because they are optional soft dependencies that no extra pins: `StructlogPlugin()` / `LoguruPlugin()` (`structlog` / `loguru`), `SentryPlugin()` (`sentry-sdk`), `LangChainCallbackPlugin()` (`langchain-core` — its module still needs `langgraph` at import, from `[agents]`), and `[testing]`'s Hypothesis helpers (`model_test`, `events_strategy`, `payload_strategy`). `xstate_statemachine.contrib.brokers` itself imports with no extra; each adapter module (`brokers.kafka`, …) checks its own. The Quart shim (`contrib.quart`) needs `pip install quart` on top of `[flask]` — the error says so.
 
 ## The extras
 
