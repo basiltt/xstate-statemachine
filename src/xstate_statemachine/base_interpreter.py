@@ -218,6 +218,10 @@ class _LogicTarget:
         self.send(event, **payload)
 
 
+#: Sentinel before-image: the context could not be deep-copied (#305).
+_UNCOPYABLE = object()
+
+
 class _SafePlugin:
     """Wraps a plugin so a failing hook cannot break the interpreter.
 
@@ -4073,7 +4077,7 @@ class BaseInterpreter(Generic[TContext]):
         #    error, so `actionErrorPolicy` (rollback / ignore / fail)
         #    applies exactly as for an action that raised itself.
         validator = self.machine.context_validator
-        before = copy.deepcopy(self.context) if validator else None
+        before = self._context_before_image() if validator else None
         for action_def in actions:
             for plugin in self._plugins:
                 plugin.on_action_execute(self, action_def)
@@ -4123,7 +4127,7 @@ class BaseInterpreter(Generic[TContext]):
                         if vexc is not None:
                             failed.append((action_def, vexc))
                             return failed
-                        before = copy.deepcopy(self.context)
+                        before = self._context_before_image()
                     continue
                 raise ImplementationMissingError(
                     f"Action '{action_def.type}' is not implemented."
@@ -4153,8 +4157,32 @@ class BaseInterpreter(Generic[TContext]):
                 if vexc is not None:
                     failed.append((action_def, vexc))
                     return failed
-                before = copy.deepcopy(self.context)
+                before = self._context_before_image()
         return failed
+
+    def _context_before_image(self) -> Any:
+        """#305 battle: a deep copy of `context` for a "did it change?"
+        compare, or `_UNCOPYABLE` when the context cannot be deep-copied.
+
+        ⚠️ A context holding a lock, a socket or a client handle cannot be
+        deep-copied. Receipts (`wait=True`), `on_event_processed` and the
+        `context_validator` dirty check all take a before-image; a raw
+        `copy.deepcopy` there made the sync `send()` raise `TypeError`
+        and killed the async run loop SILENTLY (status flipped to
+        "stopped", the awaited receipt never resolved). Uncopyable means
+        "assume changed" -- see `_context_changed`.
+        """
+        try:
+            return copy.deepcopy(self.context)
+        except Exception:  # noqa: BLE001 -- arbitrary user objects
+            return _UNCOPYABLE
+
+    def _context_changed(self, before: Any) -> bool:
+        """Compare against a `_context_before_image()` (``None`` = not
+        taken). An uncopyable before-image conservatively reports True."""
+        if before is None:
+            return False
+        return before is _UNCOPYABLE or bool(self.context != before)
 
     def _validate_context(
         self,
@@ -4171,7 +4199,7 @@ class BaseInterpreter(Generic[TContext]):
         pins this), so a validator that is expensive -- a pydantic model
         rebuild (#266) -- costs nothing on the actions that only send.
         """
-        if self.context == before:
+        if not self._context_changed(before):
             return None
         try:
             validator(self.context)

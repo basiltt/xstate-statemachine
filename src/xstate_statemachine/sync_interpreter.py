@@ -137,6 +137,10 @@ class _Done(Generic[_T]):
         return repr(self.value)
 
 
+#: Statuses with no owner left to drain the #305 mailbox.
+_TERMINAL_STATUSES = ("stopped", "done", "error")
+
+
 class SyncInterpreter(BaseInterpreter[TContext]):
     """Brings a state machine definition to life by interpreting its behavior synchronously.
 
@@ -558,7 +562,12 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         # 📝 Status is set to "stopped" FIRST so a cyclic actor graph
         #    terminates: the child's own `stop()` re-enters this one, which
         #    now hits the idempotency guard instead of recursing forever.
-        self.status = "stopped"
+        # 🔒 #305 battle: flip status under the mailbox lock so a racing
+        #    `send_threadsafe()` either lands before the purge below (and is
+        #    reported as dropped) or sees "stopped" -- never neither.
+        with self._mailbox_lock:
+            self.status = "stopped"
+        self._purge_mailbox("stopped")
         self._teardown()
 
         # 4️⃣ Notify plugins about the stop event
@@ -661,6 +670,8 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             #    done / errored machine is a DROP and fires the hook, so an
             #    audit trail built from plugin hooks sees it on both engines.
             logger.warning("🚫 Cannot send event. Interpreter is not running.")
+            if not self._is_processing:
+                self._drain_mailbox()  # 🔔 report stranded producer events
             try:
                 dropped = self._prepare_event(event_or_type, **payload)
             except Exception:  # noqa: BLE001 -- malformed AND misdirected
@@ -726,7 +737,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         if wait:
             config_before = frozenset(self._active_state_nodes)
             if not self.machine.context_is_immutable:
-                context_before = copy.deepcopy(self.context)
+                context_before = self._context_before_image()
         self.last_transition_ok = True
         step_error: Optional[BaseException] = None
         # ⏰ #50: deliver every deadline that has elapsed BEFORE this event,
@@ -761,9 +772,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             return receipt
         if step_error is None and not self.last_transition_ok:
             step_error = self._last_action_error
-        changed = frozenset(self._active_state_nodes) != config_before or (
-            context_before is not None and self.context != context_before
-        )
+        changed = frozenset(
+            self._active_state_nodes
+        ) != config_before or self._context_changed(context_before)
         deferred = any(ev is event_obj for ev in self._deferred_this_step)
         receipt = Receipt(
             frozenset(self.current_state_ids),
@@ -810,7 +821,19 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         # the call site, where the traceback is useful.
         event_obj = self._prepare_event(event_or_type, **payload)
         with self._mailbox_lock:
-            self._mailbox.append(event_obj)
+            if self.status not in _TERMINAL_STATUSES:
+                self._mailbox.append(event_obj)
+                return
+        # 🔔 #305 battle: a stopped / finished machine has no owner left to
+        #    drain the mailbox. Queuing there was a SILENT loss (the event
+        #    sat in the deque forever); report it like `send()` does.
+        logger.warning(
+            "🚫 send_threadsafe() to '%s' dropped: interpreter is %s.",
+            self.id,
+            self.status,
+        )
+        for plugin in self._plugins:
+            plugin.on_event_dropped(self, event_obj, "not_running")
 
     def _drain_mailbox(self) -> int:
         """Run every mailbox event as its own step. Returns how many.
@@ -832,6 +855,23 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             batch = list(self._mailbox)
             self._mailbox.clear()
         for event_obj in batch:
+            if self.status != "running":
+                # 🔔 Battle #305: a producer's event for a machine that is
+                #    stopped / done -- or that FINISHED earlier in this same
+                #    batch -- used to sit in the mailbox forever (or be
+                #    silently discarded by the finished machine's `send`
+                #    path). Parity with `send()` on a non-running machine:
+                #    the drop is observable via `on_event_dropped`.
+                for plugin in self._plugins:
+                    plugin.on_event_dropped(self, event_obj, "not_running")
+                logger.warning(
+                    "🚫 send_threadsafe() event '%s' dropped: interpreter "
+                    "'%s' is %s.",
+                    getattr(event_obj, "type", event_obj),
+                    self.id,
+                    self.status,
+                )
+                continue
             try:
                 self._warn_reserved_payload_keys(event_obj)
                 self._check_strict(event_obj)
@@ -880,9 +920,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     ) -> None:
         """Build this event's `Receipt` from the before-image and fire the
         hook -- the same fields a ``send(wait=True)`` caller gets."""
-        changed = frozenset(self._active_state_nodes) != config_before or (
-            context_before is not None and self.context != context_before
-        )
+        changed = frozenset(
+            self._active_state_nodes
+        ) != config_before or self._context_changed(context_before)
         receipt = Receipt(
             frozenset(self.current_state_ids),
             changed,
@@ -916,7 +956,30 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     def _schedule_teardown(self) -> None:
         # 🧵 Sync engine: no loop to defer to, and `_complete()` runs at the
         #    end of a macrostep, so tearing down inline is safe.
+        # 🔔 Battle #305 (review M1): `status` is already "done"/"error"
+        #    here, so a racing `send_threadsafe()` is refused from now on;
+        #    anything that landed BEFORE the flip (a producer that read
+        #    "running", or the finishing action itself posting to its own
+        #    mailbox) is reported now instead of waiting for a `stop()`
+        #    that may never come.
+        self._purge_mailbox("not_running")
         self._teardown()
+
+    def _purge_mailbox(self, reason: str) -> None:
+        """Report and discard every mailbox event; never run them.
+
+        The one place the mailbox is emptied without processing, so the
+        "a producer's event is always either run or reported" rule has a
+        single implementation. Takes the lock so a `send_threadsafe()`
+        racing the terminal transition either lands before the purge and
+        is reported, or sees the non-running status and is refused.
+        """
+        with self._mailbox_lock:
+            orphaned = list(self._mailbox)
+            self._mailbox.clear()
+        for ev in orphaned:
+            for plugin in self._plugins:
+                plugin.on_event_dropped(self, ev, reason)
 
     def _teardown(self) -> None:
         """Release everything except `status` / `output` / `error` / `context`.
@@ -1224,7 +1287,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                     ep_context_before = (
                         None
                         if self.machine.context_is_immutable
-                        else copy.deepcopy(self.context)
+                        else self._context_before_image()
                     )
                     self._deferred_this_step.clear()
                     self._guard_denied_this_step = False
@@ -1948,6 +2011,8 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         thread. It is also the seam a `SimulatedClock` drives.
         """
         if self.status != "running" or self._is_processing:
+            if not self._is_processing:
+                self._drain_mailbox()  # 🔔 report stranded producer events
             return
         # 🔁 #122: a deadline delivered by this tick may take a transition
         #    into a state whose OWN deadline is already due -- or is armed

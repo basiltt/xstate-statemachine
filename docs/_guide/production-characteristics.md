@@ -126,7 +126,7 @@ So a machine that uses `after` and delayed sends is single-threaded end-to-end; 
 | Calling `send()` on one interpreter from two different threads concurrently | **No** — macrosteps will interleave; `context` mutations race |
 | Assuming a `spawn_<key>` child's action runs on the thread that called `start()` | **No** — it runs on the child's runner thread |
 
-A sync machine that must not miss a deadline while idle needs *someone* to call `tick()` (or `send()`) — a due `after` cannot fire on its own. If you need cross-thread delivery, use the async `Interpreter` with `send_threadsafe()`.
+A sync machine that must not miss a deadline while idle needs *someone* to call `tick()` (or `send()`) — a due `after` cannot fire on its own. For cross-thread delivery use `send_threadsafe()` on either engine: the async engine runs it on its loop; the sync engine queues it in a locked mailbox the owner drains on its next `send()` / `tick()` **[0.11.0]** — see [Interpreters → the mailbox](../interpreters/#syncinterpretersendthreadsafe-the-mailbox-0110).
 
 ---
 

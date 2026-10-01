@@ -275,6 +275,30 @@ def main() -> int:
         assert [k for tt, k in seen if tt == t] == list(range(1000)), t
     qi.stop()
 
+    step(
+        "battle tests (post-RC programme): mailbox / registry / validator / "
+        "snapshot fuzz / codec"
+    )
+    # 🛡️ The two battle files pin every documented rule for #305 on both
+    #    engines; `-p no:asyncio` mirrors the CI Test cells, which do not
+    #    install pytest-asyncio.
+    rc_tests = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_battle_305_mailbox_plugins_validator.py",
+            "tests/test_battle_305_snapshots_clock_codec.py",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:asyncio",
+        ],
+        cwd=str(ROOT),
+    ).returncode
+    assert rc_tests == 0, "battle tests failed"
+
     print("\nALL OK")
     return 0
 

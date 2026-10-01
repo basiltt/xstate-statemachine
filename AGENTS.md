@@ -115,6 +115,13 @@ these modules first:
   has a different, loop-based `send_threadsafe`. Shared and NOT overridden:
   `_prepare_event` (the `__xstate_event__` adapter lives there, once) and
   `_execute_actions` (the `context_validator` call lives there, once).
+  Before-images of `context` (receipts, `on_event_processed`, the
+  validator's dirty check) go through `_context_before_image()` /
+  `_context_changed()`, never a raw `copy.deepcopy` — user context may
+  hold an uncopyable handle, and that must mean "treat as changed", not
+  a dead run loop (battle #305). The sync mailbox drain reports every
+  event it cannot run (`on_event_dropped`, `"not_running"` / `"stopped"`);
+  a producer's event is never silently lost.
 - **Cross-thread access to a `SyncInterpreter` is `send_threadsafe()` only.**
   `send()` is not thread-safe and never was; do not add locks to it.
 - **Global plugins are read in `BaseInterpreter.__init__`**, so every

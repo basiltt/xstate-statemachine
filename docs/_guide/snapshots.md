@@ -277,6 +277,13 @@ As of 0.8.0, `get_snapshot()` writes a versioned **envelope** around the fields 
 - **`SnapshotVersionError`** — raised when the snapshot's `version` is *newer* than the library's `SNAPSHOT_VERSION`. A snapshot written by a newer release cannot be read safely, so it is refused rather than partially restored.
 - **`SnapshotDriftError`** — raised when the snapshot's `machine_id` doesn't match the machine being restored into, or (when hash verification is on) the machine's `structure_hash` no longer matches `machine_hash`. This is exactly the "a guard was added, or a state was renamed since this snapshot was taken" case.
 
+What else to expect at the boundary — each line below is pinned by a test in `tests/test_battle_305_snapshots_clock_codec.py`, which flips, truncates and inserts **every byte** of a v4 blob and mutates every top-level key on both engines:
+
+- **Corrupt bytes are always `SnapshotCorruptError`** (or a subclass), never a bare `TypeError` / `KeyError` / `OverflowError`. Invalid JSON raises `InvalidConfigError`; a `version` of `Infinity` / `NaN` (which `json.loads` accepts) is `SnapshotCorruptError`.
+- **Unknown extra top-level keys are accepted** and silently dropped on the next `get_snapshot()`. Only a *higher* `version` is refused — the layout is forward-tolerant, not forward-compatible.
+- **A chart `version` label mismatch** (`machine_version` in the blob vs the root `"version"` key) raises `MachineVersionMismatchError` unless `on_version_mismatch="warn"` is passed or a `SnapshotMigrator` step is registered. The label is deliberately *not* part of `structure_hash`.
+- **`Deadline.due_at_wall` is absolute wall time.** If the wall clock moves *backwards* between snapshot and restore, a deadline fires **later** than its declared delay, never earlier, and is never lost. `SimulatedClock(wall_start=…)` lets a test express "restarted an hour later"; `wall_start` must be a finite number (a `datetime` or string is rejected; negative, NaN and infinite values are not).
+
 Pass `verify_machine_hash=False` to skip the hash check after you've migrated a snapshot to match a changed machine shape:
 
 <!-- doc-fragment -->
