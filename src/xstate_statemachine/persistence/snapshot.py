@@ -165,7 +165,10 @@ def check_version(snapshot: Dict[str, Any]) -> int:
         )
     try:
         version = int(raw)
-    except (TypeError, ValueError):
+    # 🛡️ #305: `json.loads` accepts the bare token `Infinity`, and
+    #    `int(float("inf"))` raises OverflowError (not ValueError) -- a bare
+    #    builtin escaping the typed-error contract.
+    except (TypeError, ValueError, OverflowError):
         raise SnapshotCorruptError(
             f"Snapshot is malformed: 'version' {raw!r} is not an integer."
         ) from None
