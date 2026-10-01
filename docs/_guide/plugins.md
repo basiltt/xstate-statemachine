@@ -279,7 +279,14 @@ gate.enabled = False
 assert interp.send("GO", wait=True).changed                      # normal path
 ```
 
-> **Fail-open.** Plugin hooks are error-contained: if your interceptor *raises*, the failure is reported through `on_plugin_error` and the event is **admitted**. A blocker must return a receipt, not raise. Engine-minted events (`after`, `done.invoke`, `error.platform`) never pass through this hook — nobody "sends" them.
+> **Fail-open.** Plugin hooks are error-contained: if your interceptor *raises*, the failure is reported through `on_plugin_error` and the event is **admitted**. A blocker must return a receipt, not raise. The same rule applies to a wrong return type: anything other than a `Receipt` or `None` is reported as a `TypeError` through `on_plugin_error` and the event is admitted. Hooks contain `Exception` and `asyncio.CancelledError`; `KeyboardInterrupt` and `SystemExit` raised from a hook reach the caller of `send()`. Engine-minted events (`after`, `done.invoke`, `error.platform`) never pass through this hook — nobody "sends" them.
+
+**Interceptor rules under load** (battle-tested on both engines with 8 producer threads, 1 000 concurrent `gather(send())` calls and a seeded 2 000-operation stress run — `tests/test_battle_304_concurrency.py`):
+
+- **Where it runs.** `on_before_send` runs on the *sending* thread for `send()` / `send_events()`, and on the owning thread (sync) or the event loop (async) for events arriving via `send_threadsafe()`. It blocks that engine for as long as it runs, but `send_threadsafe()` producers are **never** blocked by it — the mailbox lock is not held while hooks run, so a parked interceptor cannot stall other threads' enqueues.
+- **Re-entrancy.** An `on_before_send` that calls `send()` on its own interpreter is allowed: the nested event is fully processed before the original is queued. An interceptor that *unconditionally* re-sends the same event recurses until `RecursionError`, which is contained like any other exception (reported via `on_plugin_error`, original event admitted) — add your own guard.
+- **Coherent receipts.** A receipt's `state_ids` is always a complete configuration — never a half-finished one — even when another thread is mid-transition, because both engines build it on the owning thread from an atomic `frozenset`.
+- **Mailbox growth.** A producer that calls `send_threadsafe()` in a tight loop can outpace the owner's drain indefinitely; the mailbox is unbounded by design. Bound your producers (batch, back-pressure, or a semaphore) — the engine will not do it for you.
 
 #### `on_event_processed(interpreter, event, receipt)` **[0.11.0]**
 
@@ -315,7 +322,12 @@ interp.send("GO")       # transitions
 assert out.seen == [("LOCKED", "denied"), ("NOPE", "no-op"), ("GO", "changed")]
 ```
 
-Both engines build the receipt from a per-event before-image, so a `send()` on the sync engine that also drains a due timer reports two outcomes — the user's event and the `after` event — each with its own flags. The per-event bookkeeping only runs when some attached plugin overrides this hook.
+Both engines build the receipt from a per-event before-image, so a `send()` on the sync engine that also drains a due timer reports two outcomes — the user's event and the `after` event — each with its own flags (the timer's outcome is reported *first*, since it was due before the user event ran). The per-event bookkeeping only runs when some attached plugin overrides this hook.
+
+Two things worth knowing before you build on it:
+
+- **Sending from the hook.** A `send()` made from `on_event_processed` on `SyncInterpreter` runs *at once*, inside the hook dispatch, so plugins registered after yours see the follow-up event's `on_event_processed` before the event that caused it. Register observers that care about order **before** plugins that send. On the async engine the follow-up is queued and reported in order.
+- **Timer events have no payload.** Events the engine mints for `after` timers carry `type` but no `payload` attribute; read it defensively with `getattr(event, "payload", None)` if your hook handles both kinds.
 
 #### `on_transition(interpreter, from_states, to_states, transition)`
 
