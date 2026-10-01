@@ -234,6 +234,17 @@ Windows a cold import is heavier relative to a send), so those rows skip with a
 reason. The absolute ×1.25 table above is still checked, as a secondary report,
 when the runner *is* the 9V74.
 
+> **The one blind spot, stated plainly.** A regression that slows *every* row by
+> the same factor — something in the shared `send()` path that every integration
+> goes through — is indistinguishable from a slower CPU and the relative gate
+> absorbs it into the speed factor. That is why the absolute table is kept and
+> still enforced whenever the nightly lands on the 9V74 (roughly one night in
+> three), and why `last_run.json` is uploaded every night: the speed factor
+> itself is in it, and a speed factor that drifts upward across runs on the
+> *same* CPU model is the signal a uniform regression leaves. Row-local
+> regressions — the common kind, one integration's hot path — are caught every
+> night on every CPU.
+
 Two alternatives were rejected:
 
 - A **ratio to one reference row** (every row ÷ bare send) still spread 1.5–1.7×

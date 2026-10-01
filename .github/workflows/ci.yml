@@ -447,6 +447,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # 📏 #307: `tests/test_perf_gate.py` compares budgets.json with
+          #    its previous revision (baselines only go down unless a note
+          #    names a perf run); a depth-1 clone would make that a skip.
+          fetch-depth: 2
 
       - name: 🐍 Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
