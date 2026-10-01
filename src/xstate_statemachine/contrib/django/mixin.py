@@ -1,8 +1,8 @@
 # src/xstate_statemachine/contrib/django/mixin.py
 # -----------------------------------------------------------------------------
-# ðŸ§¬ StatechartModelMixin -- ``order.send("PAY")`` in one transaction
+# 🧬 StatechartModelMixin -- ``order.send("PAY")`` in one transaction
 # -----------------------------------------------------------------------------
-# ðŸ›ï¸ create â†’ act â†’ persist â†’ discard against the ROW, inside
+# 🏛️ create → act → persist → discard against the ROW, inside
 #    ``transaction.atomic()``:
 #
 #      pessimistic (default)  lock the row (``select_for_update``; on SQLite
@@ -11,7 +11,7 @@
 #                             act, UPDATE. Concurrent senders serialise.
 #      optimistic             act on the snapshot in memory, then
 #                             ``UPDATE ... WHERE <name>_version = expected``;
-#                             0 rows â†’ `ConflictError` (``send_with_retry``
+#                             0 rows → `ConflictError` (``send_with_retry``
 #                             reloads and re-applies).
 #      none                   last writer wins (single-writer rows only).
 #                             ⚠️ Audit ``seq`` is Max()+1, safe under the
@@ -23,10 +23,10 @@
 #    audit rows are written on the same connection, inside the same
 #    ``atomic()``, so they commit with the state change or not at all.
 #
-# âš ï¸ X0.3: under optimistic retry the machine's ACTIONS MAY RUN MORE THAN
+# ⚠️ X0.3: under optimistic retry the machine's ACTIONS MAY RUN MORE THAN
 #    ONCE per logical send -- side effects belong in services, in an
 #    outbox (`DjangoOutboxStore`), or in ``post_transition(on_commit=True)``.
-# âš ï¸ Async views: there is no native async ``select_for_update``. Call
+# ⚠️ Async views: there is no native async ``select_for_update``. Call
 #    ``await order.asend(...)`` (``sync_to_async(thread_sensitive=True)``
 #    around the whole locked section), never the ORM pieces separately.
 # -----------------------------------------------------------------------------
@@ -51,12 +51,12 @@ from typing import (
 )
 
 from django.apps import apps
-from django.db import models, router, transaction
+from django.db import OperationalError, models, router, transaction
 from django.db.models import CharField, F, Q, Value
 from django.db.models.functions import Concat, StrIndex
 
 from ...events import Receipt
-from ...exceptions import ConflictError
+from ...exceptions import ConflictError, LockTimeoutError
 from ...models import MachineNode
 from ...patterns.retry import RetryPolicy
 from . import _deadlines
@@ -77,6 +77,31 @@ __all__ = [
 ]
 
 LOCK_MODES = ("pessimistic", "optimistic", "none")
+
+
+def _is_lock_error(exc: BaseException) -> bool:
+    """SQLite ``database is locked`` / ``busy``; Postgres ``lock timeout``
+    (55P03) and MySQL ``Lock wait timeout exceeded`` (1205)."""
+    msg = str(exc).lower()
+    return (
+        "locked" in msg
+        or "busy" in msg
+        or "lock timeout" in msg
+        or "lock wait timeout" in msg
+    )
+
+
+def _lock_timeout_s(using: str) -> float:
+    """Best-effort: SQLite's configured ``timeout`` (Django default 5 s)."""
+    from django.db import connections
+
+    opts = connections[using].settings_dict.get("OPTIONS") or {}
+    try:
+        return float(opts.get("timeout", 5.0))
+    except (TypeError, ValueError):  # pragma: no cover - odd settings
+        return 5.0
+
+
 #: Keys a CLIENT body may never carry (#361 H1/H2): framework options of
 #: `send()` and identity / audit fields the server assigns.
 RESERVED_PAYLOAD_KEYS: FrozenSet[str] = frozenset(
@@ -134,7 +159,7 @@ def statechart_field(model: Any) -> StatechartField:
 
 
 # -----------------------------------------------------------------------------
-# ðŸ”Ž QuerySet
+# 🔎 QuerySet
 # -----------------------------------------------------------------------------
 class StatechartQuerySet(models.QuerySet):  # type: ignore[type-arg]
     """``in_state(*ids)`` -- rows where ANY id is active: a leaf, or an
@@ -154,7 +179,7 @@ class StatechartQuerySet(models.QuerySet):  # type: ignore[type-arg]
         for sid in state_ids:
             if not isinstance(sid, str) or not sid:
                 raise ValueError("state ids must be non-empty strings")
-            # ðŸ“ StrIndex (instr / strpos) is case-sensitive and takes the
+            # 📝 StrIndex (instr / strpos) is case-sensitive and takes the
             #    needle as a bound PARAMETER -- no LIKE wildcards to escape,
             #    no SQL built from the id (SQL-injection test pins this).
             for needle in (f"{SEP}{sid}{SEP}", f"{SEP}{sid}."):
@@ -171,7 +196,7 @@ StatechartManager = models.Manager.from_queryset(StatechartQuerySet)
 
 
 # -----------------------------------------------------------------------------
-# ðŸ§¬ Mixin
+# 🧬 Mixin
 # -----------------------------------------------------------------------------
 class StatechartModelMixin(models.Model):
     """Mix into a model that declares one `StatechartField`.
@@ -390,10 +415,22 @@ class StatechartModelMixin(models.Model):
         data = dict(payload or {})
         data.update(kwargs)
         body = self._xsm_payload(actor, reason, data)
-        with self._xsm_bind(actor), transaction.atomic(using=using):
-            return self._xsm_send_locked(
-                event_type, body, lock, list(plugins), using, actor
-            )
+        try:
+            with self._xsm_bind(actor), transaction.atomic(using=using):
+                return self._xsm_send_locked(
+                    event_type, body, lock, list(plugins), using, actor
+                )
+        except OperationalError as exc:
+            # 🔒 SQLite (and a lock_timeout on Postgres/MySQL) report a
+            #    writer that waited out ``busy_timeout`` as a bare
+            #    OperationalError. That is the library's retryable
+            #    `LockTimeoutError`, exactly as `SQLiteStore` maps it --
+            #    never leaked to the caller as a driver exception.
+            if not _is_lock_error(exc):
+                raise
+            raise LockTimeoutError(
+                self._xsm_key(), _lock_timeout_s(using)
+            ) from exc
 
     async def asend(self, event_type: str, **kw: Any) -> Receipt:
         """`send` for async views: the WHOLE locked section runs in one
@@ -410,7 +447,7 @@ class StatechartModelMixin(models.Model):
         from django.db import connections
 
         if connections[using].vendor == "sqlite":
-            # ðŸ”’ SQLite has no row locks and `select_for_update` is a
+            # 🔒 SQLite has no row locks and `select_for_update` is a
             #    no-op: lead with a WRITE so this transaction holds the
             #    database write lock before it reads (other writers then
             #    wait on busy_timeout instead of deadlocking on upgrade).
@@ -567,7 +604,7 @@ class StatechartModelMixin(models.Model):
 
     def _xsm_write_deadlines(self, using: str, deadlines: Any) -> None:
         if not type(self)._xsm_has_tables():
-            # ðŸ“ Without the app the deadlines still live INSIDE the
+            # 📝 Without the app the deadlines still live INSIDE the
             #    snapshot and resume when the row is next touched; only
             #    the scanner's index is absent.
             return
@@ -677,7 +714,7 @@ class StatechartModelMixin(models.Model):
 
 
 # -----------------------------------------------------------------------------
-# ðŸ” retry
+# 🔁 retry
 # -----------------------------------------------------------------------------
 def send_with_retry(
     row: Any,
@@ -688,9 +725,11 @@ def send_with_retry(
     lock: str = "optimistic",
     **kw: Any,
 ) -> Receipt:
-    """`send()` retried on `ConflictError`: reload the row's statechart
-    columns, back off, re-apply. Actions may run once per attempt (X0.3).
-    On exhaustion the last `ConflictError` is raised with ``attempts``.
+    """`send()` retried on `ConflictError` (optimistic fence lost) and
+    `LockTimeoutError` (a pessimistic writer waited out ``busy_timeout``):
+    reload the row's statechart columns, back off, re-apply. Actions may
+    run once per attempt (X0.3). On exhaustion the last error is raised
+    with ``attempts``.
     Call it OUTSIDE an enclosing ``atomic()`` (a conflict inside one is
     only a savepoint rollback, but the retry needs a fresh read)."""
     if retries < 0:
@@ -718,7 +757,7 @@ def send_with_retry(
         attempt += 1
         try:
             return row.send(event_type, lock=lock, **kw)
-        except ConflictError as exc:
+        except (ConflictError, LockTimeoutError) as exc:
             if attempt > retries:
                 setattr(exc, "attempts", attempt)
                 raise

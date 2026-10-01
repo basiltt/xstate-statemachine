@@ -1,8 +1,8 @@
 ﻿# src/xstate_statemachine/contrib/django/stores.py
 # -----------------------------------------------------------------------------
-# ðŸ—„ï¸ DjangoStore / DjangoModelStore -- the A2 `StateStore` contract on the ORM
+# 🗄️ DjangoStore / DjangoModelStore -- the A2 `StateStore` contract on the ORM
 # -----------------------------------------------------------------------------
-# ðŸ›ï¸ Two shapes, like the SQLAlchemy extra:
+# 🏛️ Two shapes, like the SQLAlchemy extra:
 #
 #      * `DjangoStore(namespace)` -- key-value records in
 #        ``xsm_django_snapshot`` for `persisted()`, registries and the web
@@ -15,7 +15,7 @@
 #        `after` deadlines (``manage.py xsm_deadlines``). Rows are never
 #        created or deleted through it; its fence is ``<field>_version``.
 #
-# ðŸ” X0: key validation, size cap on save AND load (X0.4), `forget()`
+# 🔐 X0: key validation, size cap on save AND load (X0.4), `forget()`
 #    erases the record, its deadlines and its lease (X0.5).
 # -----------------------------------------------------------------------------
 """`DjangoStore`, `DjangoModelStore`."""
@@ -210,7 +210,7 @@ class DjangoStore(BaseStore):
     def _list_keys_raw(self, prefix: str, limit: int) -> List[str]:
         qs = self._qs()
         if prefix:
-            # ðŸ“ `startswith` escapes LIKE wildcards; on SQLite LIKE is
+            # 📝 `startswith` escapes LIKE wildcards; on SQLite LIKE is
             #    case-insensitive, so re-check exactly in Python.
             qs = qs.filter(key__startswith=prefix)
         keys = [
@@ -299,7 +299,7 @@ class DjangoStore(BaseStore):
 
 
 # -----------------------------------------------------------------------------
-# â° DjangoModelStore -- the scanner's view of a model
+# ⏰ DjangoModelStore -- the scanner's view of a model
 # -----------------------------------------------------------------------------
 class DjangoModelStore(BaseStore):
     """Row-backed store over a `StatechartModelMixin` model (see module

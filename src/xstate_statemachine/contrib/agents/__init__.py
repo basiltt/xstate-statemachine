@@ -1,15 +1,15 @@
 # src/xstate_statemachine/contrib/agents/__init__.py
 # -----------------------------------------------------------------------------
-# ðŸ¤– [agents] -- LLM agents as statecharts: the model proposes, the machine
+# 🤖 [agents] -- LLM agents as statecharts: the model proposes, the machine
 #    decides (#287 E1, #290 E4)
 # -----------------------------------------------------------------------------
-# ðŸ›ï¸ An agent is the `TOOL_LOOP` chart plus `agent_logic()`. Budgets,
+# 🏛️ An agent is the `TOOL_LOOP` chart plus `agent_logic()`. Budgets,
 #    per-state tool allow-lists, timeouts and human approval are CHART
 #    structure and guards -- inspectable with `xsm inspect`, persisted with
 #    any store -- and `run_tool` re-enforces the safety-relevant ones
 #    itself (X0.13, docs/_guide/security.md).
 #
-# ðŸ“ The extra is `[agents]` = `pydantic>=2.5` (tool schemas, structured
+# 📝 The extra is `[agents]` = `pydantic>=2.5` (tool schemas, structured
 #    output). Provider SDKs (`openai`, `anthropic`) are SOFT imports inside
 #    `providers.*` factories and never pinned.
 # -----------------------------------------------------------------------------

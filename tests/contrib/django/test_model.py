@@ -375,10 +375,27 @@ class TestConcurrency:
         return errors
 
     def test_pessimistic_exactly_1600(self) -> None:
+        """16 writers on one row: no lost update. A writer that waits out
+        SQLite's ``busy_timeout`` (seen once on a slow Windows runner)
+        surfaces as the retryable `LockTimeoutError`, never a bare driver
+        `OperationalError`, and is simply retried."""
         from shop.models import Counter
+        from xstate_statemachine.exceptions import LockTimeoutError
 
         c = Counter.objects.create()
-        errors = self._hammer(c.pk, lambda row: row.send("BUMP"))
+        timeouts: List[BaseException] = []
+
+        def send(row: Any) -> None:
+            for _ in range(50):
+                try:
+                    row.send("BUMP")
+                    return
+                except LockTimeoutError as exc:
+                    timeouts.append(exc)
+                    row.refresh_from_db()
+            raise AssertionError("50 consecutive lock timeouts")
+
+        errors = self._hammer(c.pk, send)
         assert errors == []
         fresh = Counter.objects.get(pk=c.pk)
         total = self.THREADS * self.PER_THREAD
@@ -396,6 +413,48 @@ class TestConcurrency:
         assert errors == []
         fresh = Counter.objects.get(pk=c.pk)
         assert fresh.machine.context["n"] == self.THREADS * self.PER_THREAD
+
+
+@pytest.mark.django_db(transaction=True)
+def test_busy_database_is_a_lock_timeout_not_a_driver_error(
+    monkeypatch: Any,
+) -> None:
+    """`database is locked` -> `LockTimeoutError` (retryable, carries the
+    key and the configured timeout); any other OperationalError passes
+    through untouched; `send_with_retry` retries the timeout."""
+    from django.db import OperationalError
+
+    from shop.models import Order
+    from xstate_statemachine.contrib.django import mixin
+    from xstate_statemachine.exceptions import LockTimeoutError
+
+    o = Order.objects.create()
+    calls = {"n": 0}
+    real = mixin.StatechartModelMixin._xsm_send_locked
+
+    def flaky(self: Any, *a: Any, **kw: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OperationalError("database is locked")
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(mixin.StatechartModelMixin, "_xsm_send_locked", flaky)
+    with pytest.raises(LockTimeoutError) as ei:
+        o.send("SUBMIT")
+    assert ei.value.key == o._xsm_key()
+    assert ei.value.timeout == 60.0  # the test project's OPTIONS.timeout
+    assert isinstance(ei.value.__cause__, OperationalError)
+    # retried by the helper -> the second attempt succeeds
+    r = mixin.send_with_retry(o, "SUBMIT", lock="pessimistic")
+    assert r.changed and calls["n"] == 2
+    assert Order.objects.get(pk=o.pk).matches("order.review")
+
+    def other(self: Any, *a: Any, **kw: Any) -> Any:
+        raise OperationalError("no such table: nope")
+
+    monkeypatch.setattr(mixin.StatechartModelMixin, "_xsm_send_locked", other)
+    with pytest.raises(OperationalError, match="no such table"):
+        o.send("APPROVE")
 
 
 @pytest.mark.django_db(transaction=True)

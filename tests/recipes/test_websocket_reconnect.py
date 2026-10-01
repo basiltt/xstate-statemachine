@@ -118,8 +118,16 @@ def test_drop_reconnects_after_jittered_backoff(sock: Driver) -> None:
 def test_gives_up_after_max_attempts(sock: Driver) -> None:
     sock.server.fail_next = 99
     sock.send("CONNECT")
-    for _ in range(5):
-        sock.wait(4_000)  # beyond any backoff for 3 attempts
+    # 📝 Each failed connect is a SERVICE error: on the async engine it is
+    #    delivered a loop turn after the clock step that armed the retry
+    #    timer, so a fixed "5 x 4 s" of virtual time can leave the machine
+    #    one hop short on a loaded runner (seen once in the coverage job).
+    #    Step the clock until the chart settles in `failed`; the bound is
+    #    far beyond 3 attempts of jittered backoff (1 s, 2 s, 4 s max).
+    for _ in range(40):
+        if sock.value == "failed":
+            break
+        sock.wait(1_000)
     assert sock.value == "failed"
     assert sock.server.connects == 3  # max_attempts, not one more
     sock.server.fail_next = 0

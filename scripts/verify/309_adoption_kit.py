@@ -159,11 +159,13 @@ def main() -> int:
         "Framework :: FastAPI",
         "Framework :: AsyncIO",
         "Framework :: Pytest",
+        # 📝 Added when the extras shipped (G5 #280-#283, G6 #285); the
+        #    compat matrix proves Django 4.2 (oldest) and latest (newest).
+        "Framework :: Django",
+        "Framework :: Django :: 4.2",
+        "Framework :: Flask",
     ):
         assert c in ours, c
-    assert (
-        "Framework :: Django" not in text and "Framework :: Flask" not in text
-    )
 
     print("\nALL OK")
     return 0

@@ -15,6 +15,8 @@ pip install "xstate-statemachine[celery]"
 
 Requires `celery>=5.3`. Tested versions are in the [compatibility table](#compatibility). The tests use `task_always_eager` plus an in-memory result backend (no broker), and a real in-process worker on the `memory://` transport. A live broker test runs when `CELERY_BROKER_URL` is set.
 
+For a complete, runnable app -- `celery_service` as an `invoke`, `@statechart_task`, `DurableTimerScheduler` firing an `after` escalation once, `outbox_relay_task`, a forged task id ignored, pickle refused, and a test suite -- see the [`eda_fulfilment` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/eda_fulfilment).
+
 ## Quick start
 
 <!-- doc-requires: celery -->
@@ -98,6 +100,19 @@ A task that runs `OutboxRelay.relay_once` (the async form for an async broker, t
 ### `assert_json_serializer(app)`
 
 Raises `InvalidConfigError` unless `task_serializer` and `result_serializer` are `"json"` and neither `accept_content` nor `result_accept_content` admits pickle or YAML, by name or by MIME type (`application/x-python-serialize`, `application/x-yaml`; see `UNSAFE_CONTENT`). `result.get()` deserialises with the *result* settings, so both matter. `celery_service`, `@statechart_task`, `connect_signals` and `poll_results` all call it. See [Event-driven architecture](../integration-eda/).
+
+### Every other public name
+
+The rest of `xstate_statemachine.contrib.celery.__all__`:
+
+| Name | Kind | What it is / when you use it |
+|:--|:--|:--|
+| `HEADER_KEY` = `"xsm_store_key"`, `HEADER_INVOCATION` = `"xsm_invocation_id"` | constants | The two task headers `celery_service` attaches so a worker can find the persisted instance and the invocation. `deliver_result` trusts them only after the instance itself confirms the task id. |
+| `UNSAFE_CONTENT` | constant | The serializer names and MIME types `assert_json_serializer` refuses (`pickle`, `application/x-python-serialize`, `yaml`, `application/x-yaml`, …). |
+| `CeleryInvocation` | dataclass | What `poll_results` found for one pending invocation: `key`, `invocation_id`, `task_id`, `deadline`. Useful when you write your own poller or dashboard. |
+| `PendingResult` | dataclass | A completion that arrived before its `_xsm_celery` record was saved: `key`, `invocation_id`, `task_id`, `result` / `error`, `parked_at`. |
+| `MemoryPendingResults(ttl_s=...)` | class | The per-process table `connect_signals` parks a `PendingResult` in and `poll_results(pending=...)` drains; entries older than `ttl_s` are given up and logged. Completions that must survive a worker restart rely on `poll_results` reading the result backend. |
+| `xsm_deadlines_every(scheduler, seconds=10.0)` | function | Builds the `beat_schedule` entry for `DurableTimerScheduler.task`: `app.conf.beat_schedule = xsm_deadlines_every(scheduler, 10)`. |
 
 ## Guarantees
 

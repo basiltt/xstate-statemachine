@@ -9,6 +9,10 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ## [Unreleased]
 
+_No unreleased changes yet._
+
+## [0.11.0] - 2026-10-01
+
 ### Brokers & Celery (Phase F) -- #294, #292
 
 - **Broker adapters (#294), `xstate_statemachine.contrib.brokers`.**
@@ -69,7 +73,10 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   in `transaction.atomic()` with `select_for_update()` by default (on
   SQLite a write lock first). `lock="optimistic"` fences on the version
   column and raises `ConflictError` (`send_with_retry`). Sixteen threads x
-  100 sends is exactly 1600 in both modes. Also added: `can` /
+  100 sends is exactly 1600 in both modes. A writer that waits out the
+  database's busy timeout (SQLite `database is locked`, Postgres `lock
+  timeout`) raises the retryable `LockTimeoutError` -- `send_with_retry`
+  retries it -- never a bare driver `OperationalError`. Also added: `can` /
   `available_events` / `machine` / `matches`, `asend` for async views,
   `forget_statechart()` (X0.5), and `save()` that never rolls the state
   back. `DjangoStore` passes the A2 `StateStore` contract suite.
@@ -190,6 +197,25 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   extras cell.
 - Docs: new [Event-driven architecture](https://basiltt.github.io/xstate-statemachine/guide/integration-eda/)
   page; the Guarantees page's outbox and ack steps are now shipped.
+- Also in `xstate_statemachine.eda`: the `OutboxRecord` row type and
+  in-memory `MemoryOutboxStore`, the `DispatchResult` returned by the
+  dispatcher, `BrokerPublishError`, `ReplayRefusedError` / `ReplayResult` /
+  `replay_dead_letter`, `redact_record`, `load_asyncapi_schema`, and the
+  constants `PUBLISH_TAG`, `ATTEMPT_EXTENSION`, `DEFAULT_MAX_ATTEMPTS` and
+  `DEFAULT_MAX_IN_FLIGHT`.
+- **Example: `examples/integrations/eda_fulfilment`.** An order chart and a
+  warehouse chart that talk only through events (`ChoreographyRouter`),
+  with the SQLite outbox committed with the snapshot, inbox dedup, poison
+  -> dead letters and `xsm dlq`, the Celery bridge in eager mode, and
+  Prometheus / OpenTelemetry / inspector sinks in memory. The same demo
+  runs on all five real broker adapters -- Redis Streams, Kafka,
+  RabbitMQ, NATS JetStream and SQS -- offline over in-process stand-ins
+  (fakeredis, fake aiokafka / aio-pika / nats-py clients, moto) or
+  against a live server when `REDIS_URL` / `XSM_KAFKA_BOOTSTRAP` /
+  `XSM_RABBITMQ_URL` / `XSM_NATS_URL` / `XSM_SQS_ENDPOINT` is set, with a
+  parametrised suite (order, outbox == published, poison -> DLQ,
+  redelivery carries the attempt). It needs no running service:
+  `python -m eda_fulfilment --broker kafka`.
 - **Fixed: `[sqlalchemy]` on SQLite: a newly created snapshot could survive a
   rollback of its `PessimisticLock` block (#293).** pysqlite emits no
   `BEGIN` before a `SAVEPOINT`, so when the create-only INSERT was the
@@ -3712,7 +3738,8 @@ existing.
 <!-- Without these definitions they render as literal bracketed text.  -->
 <!-- ---------------------------------------------------------------- -->
 
-[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.5...HEAD
+[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.5...v0.11.0
 [0.10.5]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.4...v0.10.5
 [0.10.4]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.3...v0.10.4
 [0.10.3]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.2...v0.10.3

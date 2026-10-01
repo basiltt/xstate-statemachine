@@ -123,6 +123,42 @@ A `JSONResponse` with `{state, state_ids, changed, denied, deferred, duplicate, 
 
 RFC 9457 `application/problem+json`. The exception mapping: `UnknownEventError`, `InvalidEventPayloadError`, `InvalidEventError`, `IdempotencyMismatchError` → 422; `SnapshotDriftError` / `MachineVersionMismatchError` → 409 with a `machine_version` hint; `ConflictError`, `LockTimeoutError`, `IdempotencyInFlightError` → 409; `KeyNotFoundError` → 404; `ForbiddenError` → 403; `UnsupportedMediaTypeError` → 415; `PayloadTooLargeError` → 413; anything else → 500. Problems carry a fixed title and `error` class name only.
 
+### `HTTPProblemError(title=None)` / `BadRequestError`
+
+`HTTPProblemError` is the base class (an `XStateMachineError`) for an error that already knows its HTTP `status` (default 400) and public `title`. `status_for_exception` returns its `status`, and `problem_for_exception` turns it into a problem document with that `title` and the `error` class name, so raising a subclass from your own code yields the answer you chose. The library raises subclasses internally (`ForbiddenError` 403, `PayloadTooLargeError` 413, `UnsupportedMediaTypeError` 415, `UnprocessableBodyError` 422). `BadRequestError` is the 400 subclass (title `"Bad Request"`); the library itself does not raise it, so it is there for your handlers. Pass a string to override the title; keep it fixed, never put user data in it.
+
+<!-- doc-fragment -->
+```python
+from xstate_statemachine.contrib.starlette import (
+    BadRequestError,
+    HTTPProblemError,
+    problem_for_exception,
+    status_for_exception,
+)
+
+
+class TeapotError(HTTPProblemError):
+    status = 418
+    title = "I'm a teapot"
+
+
+assert status_for_exception(BadRequestError()) == 400
+assert status_for_exception(TeapotError()) == 418
+response = problem_for_exception(BadRequestError("Missing order id"))
+assert response.status_code == 400
+```
+
+### `receipt_body(interp, receipt, *, context_serializer=None)`
+
+The plain `dict` that `ReceiptResponse` serialises (the WebSocket endpoint reuses it for its `receipt` messages): the state body for `interp`, plus the sorted `state_ids` and the receipt's `changed`, `denied`, `deferred`, `duplicate` flags and `error`, which is the exception *class name* or `None`, never its text. Use it when you need the JSON shape without a `JSONResponse`, for example to embed the receipt in your own envelope. Unlike `ReceiptResponse` it does not fall back to the serializer given to `register`; pass `context_serializer` explicitly if you need one.
+
+<!-- doc-fragment -->
+```python
+async with registry.act("order", key) as interp:
+    receipt = await interp.send("PAY")
+    body = receipt_body(interp, receipt)
+return JSONResponse({"result": body}, status_code=receipt_to_status(receipt))
+```
 ### `idempotency_key_from(conn)` / `await json_body(request, *, max_body_bytes=DEFAULT_MAX_SNAPSHOT_BYTES)`
 
 The `Idempotency-Key` header or `None`. `json_body` requires `Content-Type: application/json` (415), caps the size (413, checked on `Content-Length` and while streaming), and requires a JSON object (422). An empty body is `{}`.

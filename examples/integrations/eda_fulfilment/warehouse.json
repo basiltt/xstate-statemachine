@@ -1,0 +1,16 @@
+{
+  "id": "warehouse",
+  "version": "1",
+  "initial": "waiting",
+  "states": {
+    "waiting": {
+      "on": {
+        "PACK": {
+          "target": "packed",
+          "meta": {"publish": "OrderPacked"}
+        }
+      }
+    },
+    "packed": {"type": "final"}
+  }
+}

@@ -1,8 +1,8 @@
 # src/xstate_statemachine/contrib/sqlalchemy/mixin.py
 # -----------------------------------------------------------------------------
-# ðŸ§¬ StatechartMixin -- a statechart ON a mapped row, optimistic by default
+# 🧬 StatechartMixin -- a statechart ON a mapped row, optimistic by default
 # -----------------------------------------------------------------------------
-# ðŸ›ï¸ The snapshot lives in the business row (`statechart` column, a
+# 🏛️ The snapshot lives in the business row (`statechart` column, a
 #    `StatechartType`); four denormalised columns make it queryable:
 #
 #      statechart_state            "o.b.x.x1,o.b.y.y1"  (sorted leaf ids)
@@ -12,12 +12,12 @@
 #
 #    A `before_insert` / `before_update` mapper listener recomputes them
 #    from the snapshot on EVERY flush, so a direct edit of `statechart`
-#    cannot leave them stale. `send()` is create â†’ act â†’ persist â†’ discard
+#    cannot leave them stale. `send()` is create → act → persist → discard
 #    on a `SyncInterpreter` against the row, flushed in the caller's
 #    session: a `StaleDataError` from ``version_id_col`` becomes
 #    `ConflictError`, and `send_with_retry` rolls back, reloads, retries.
 #
-# âš ï¸ X0.3: under optimistic retry the machine's ACTIONS MAY RUN MORE THAN
+# ⚠️ X0.3: under optimistic retry the machine's ACTIONS MAY RUN MORE THAN
 #    ONCE per logical send -- side effects belong in services or an outbox.
 # -----------------------------------------------------------------------------
 """`StatechartMixin`, `send_with_retry`, and the row-backed `StateStore`."""
@@ -277,7 +277,7 @@ class StatechartMixin:
         commit (or roll back) with the state change."""
         tables = self._xsm_tables()
         if tables is None:
-            # ðŸ“ Without the DDL the deadlines still live INSIDE the
+            # 📝 Without the DDL the deadlines still live INSIDE the
             #    snapshot (they resume when the row is next touched); only
             #    the scanner's index is absent. Audit was checked in _run.
             return
@@ -399,7 +399,7 @@ def send_with_retry(
 ) -> Receipt:
     """Module-level form of `StatechartMixin.send_with_retry`.
 
-    âš ï¸ A retry ROLLS BACK the session's transaction (the only portable way
+    ⚠️ A retry ROLLS BACK the session's transaction (the only portable way
     to discard a stale read): call it on a session with no other pending
     work, then commit. Actions may run once per attempt (X0.3).
     """
@@ -421,7 +421,7 @@ def send_with_retry(
 
 
 # -----------------------------------------------------------------------------
-# ðŸ” Keep the denormalised columns true on every flush
+# 🔁 Keep the denormalised columns true on every flush
 # -----------------------------------------------------------------------------
 def _sync_columns(mapper: Any, connection: Any, target: Any) -> None:
     snap = getattr(target, "statechart", None)

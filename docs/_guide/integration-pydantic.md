@@ -15,6 +15,8 @@ pip install "xstate-statemachine[pydantic]"
 
 Requires `pydantic>=2.5`. Tested versions are in the [compatibility table](#compatibility).
 
+**Runnable example.** [`examples/integrations/fastapi_orders`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders) uses this extra: its `models.py` imports `EventModel` and `events_union` from `xstate_statemachine.contrib.pydantic`, and its `app.py` imports `context_model`. The `agents_support_bot` example does not import the extra itself; its `lookup_order` tool calls the `fastapi_orders` app in-process, so it exercises these validated events through that app's HTTP surface.
+
 ## Quick start
 
 <!-- doc-requires: pydantic -->

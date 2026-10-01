@@ -17,6 +17,8 @@ pip install drf-spectacular                    # optional: the OpenAPI schema
 
 Requires Django REST framework `>=3.14` and Channels `>=4`. Both also need the [`[django]`](../integration-django/) app in `INSTALLED_APPS`. Tested versions are in the [compatibility table](#compatibility).
 
+For a complete, runnable project that uses this viewset mixin and the Channels consumer together with the admin and signals, see the [`django_approvals` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/django_approvals).
+
 ## Quick start
 
 <!-- doc-requires: django, rest_framework -->

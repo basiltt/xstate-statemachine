@@ -19,6 +19,8 @@ pip install "xstate-statemachine[cloudevents]"
 
 Requires `cloudevents>=1.10` (1.x and 2.x layouts are both supported). Tested versions are in the [compatibility table](#compatibility).
 
+For a complete, runnable app -- an order chart and a warehouse chart in choreography, the SQLite outbox committed with the snapshot, inbox dedup, poison messages dead-lettered and listed with `xsm dlq`, and a test suite -- see the [`eda_fulfilment` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/eda_fulfilment).
+
 ## Quick start
 
 A chart that publishes `order.paid` when it is paid, a consumer that turns inbound commands into events on the right persisted instance, and an outbox that stamps the causation chain:
@@ -263,6 +265,34 @@ asyncio.run(main())
 xsm asyncapi order.json -o asyncapi.json --server localhost:9092 --protocol kafka --validate
 xsm docs order.json      # the generated page now has an "Integration events" section
 ```
+
+### Every other public name
+
+The rest of `xstate_statemachine.eda.__all__`, for readers who grep. Everything below imports from `xstate_statemachine.eda`.
+
+| Name | Kind | What it is / when you use it |
+|:--|:--|:--|
+| `DispatchResult` | dataclass | What one `InboundDispatcher.run_once()` / `handle()` did: `processed`, `duplicates`, `dead_lettered`, `retried`, `ignored` counts plus per-envelope `outcomes`. Assert on it in tests; log it in a worker loop. |
+| `Delivery` | NamedTuple | One received envelope plus the callables that settle it (`ack()` / `nack(requeue)`; settling twice is a no-op). Adapters yield these; you only touch them when writing your own `BrokerAdapter`. |
+| `OutboxRecord` | NamedTuple | One pending outbox row: `seq`, `topic`, `envelope`. What `OutboxStore.pending()` returns and `OutboxRelay` publishes. |
+| `MemoryOutboxStore` | class | In-memory `OutboxStore` for tests; pairs with `MemoryStore`. Production uses `SQLiteOutboxStore` / `SQLAlchemyOutboxStore` / `DjangoOutboxStore`. |
+| `MemoryDeadLetterStore` | class | Thread-safe in-memory dead-letter store and the reference store shape; production uses `SQLiteDeadLetterStore` or a `BrokerDeadLetterSink`. |
+| `ReplayResult` | dataclass | Returned by `replay_dead_letter` and `xsm dlq replay`: `record_id`, `dry_run`, `outcome`, `warnings`. |
+| `ReplayRefusedError` | exception | A dead-letter replay was refused: the record has no envelope, its `machine_hash` / `machine_version` differ from the dispatcher's machine (pass `force=True` to override), or no `reason` was given. |
+| `BrokerPublishError` | exception | The failure `FakeBrokerAdapter.fail_next_publish()` injects by default; catch it in tests that assert the outbox keeps the row on a failed publish. |
+| `replay_dead_letter(dead_letters, record_id, dispatcher, *, reason, dry_run=True, force=False, actor=None)` | function | Re-send one dead-lettered envelope through a dispatcher, reusing its `id` so an inbox dedups a double replay; audited with *reason* / *actor*. Dry-run by default; `xsm dlq replay` wraps it. |
+| `redact_record(record, keys=...)` | function | A `DeadLetter` with payload, snapshot and envelope data redacted (default key list covers passwords, tokens, secrets) before it is shown or exported (X0.5). |
+| `consumed_events(machine)` | function | Every caller-sendable event the chart handles, sorted; feeds AsyncAPI and `xsm docs`. |
+| `publish_specs(machine)` | function | Every publication the chart declares (`meta.publish` and `publish`-tagged states); feeds AsyncAPI and the `OutboxPlugin`. |
+| `default_event_name(envelope_type)` | function | The dispatcher's default type→event mapping: `xsm.<machine>.<EVENT>` → `EVENT`; anything else unchanged. Pass `InboundDispatcher(event_type=...)` to override. |
+| `dlq_topic(topic)` | function | `orders` → `orders.dlq`: the topic `BrokerDeadLetterSink` publishes to. |
+| `new_id(now_ms=None)` | function | A UUIDv7-style id, lexicographically sortable by creation time; used for envelope ids. |
+| `load_asyncapi_schema()` | function | The vendored AsyncAPI 3.0.0 JSON Schema as a dict (offline). |
+| `PUBLISH_TAG` = `"publish"` | constant | The state tag that makes `OutboxPlugin` publish on entry. |
+| `ATTEMPT_EXTENSION` = `"xsmattempt"` | constant | The CloudEvents extension carrying the delivery attempt (`Envelope.with_attempt`); adapters stamp the broker's redelivery count here (X0.8). |
+| `DEFAULT_MAX_ATTEMPTS` = `5` | constant | `InboundDispatcher(max_attempts=)` default before an envelope is dead-lettered. |
+| `DEFAULT_MAX_IN_FLIGHT` = `16` | constant | `InboundDispatcher(max_in_flight=)` default: concurrent subjects in flight. |
+| `ASYNCAPI_VERSION` = `"3.0.0"`, `SPECVERSION` = `"1.0"` | constants | The AsyncAPI and CloudEvents spec versions the module emits. |
 
 ## Guarantees
 

@@ -40,6 +40,11 @@ REQUIRES = {
         "daphne",
         "pytest_django",
     ),
+    # 📡 G2/G3/G7: the EDA core needs no extra. Every broker / Celery /
+    #    observability test inside the app importorskips its own client,
+    #    so a [kafka]-only cell runs the Kafka tests (and the core demo)
+    #    and skips the rest -- never the whole suite.
+    "eda_fulfilment": (),
 }
 DEFAULT_REQUIRES = ("fastapi", "httpx")
 
@@ -68,6 +73,7 @@ def test_every_example_has_a_readme_and_a_suite():
         "sqlalchemy_orders",
         "flask_wizard",
         "django_approvals",
+        "eda_fulfilment",
     ):
         assert (INTEGRATIONS / name / "README.md").is_file(), name
         assert (INTEGRATIONS / name / "tests").is_dir(), name

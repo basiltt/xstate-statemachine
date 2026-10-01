@@ -15,6 +15,8 @@ pip install "xstate-statemachine[sqlalchemy]"
 
 Requires SQLAlchemy `>=2.0`. For the async store, also install an async driver (`aiosqlite`, `asyncpg`, `psycopg[binary]`). Tested versions are in the [compatibility table](#compatibility).
 
+For a complete, runnable service -- `StatechartMixin` on an orders table, optimistic `send_with_retry`, the transactional outbox, an Alembic migration and a test suite -- see the [`sqlalchemy_orders` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/sqlalchemy_orders).
+
 ## Quick start
 
 <!-- doc-requires: sqlalchemy -->

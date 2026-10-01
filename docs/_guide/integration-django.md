@@ -21,6 +21,8 @@ INSTALLED_APPS = [..., "django.contrib.contenttypes", "xstate_statemachine.contr
 
 Requires Django `>=4.2`. Run `python manage.py migrate` to create the app's tables (`xsm_django_*`: deadlines, audit log, outbox, idempotency, `DjangoStore`). Tested versions are in the [compatibility table](#compatibility).
 
+For a complete, runnable project -- parallel legal/finance review, `PermissionGuard` with two roles, admin transition buttons with an audit inline, a DRF viewset with schema, a Channels status page, an `after` escalation through the deadlines table and a test suite -- see the [`django_approvals` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/django_approvals).
+
 ## Quick start
 
 <!-- doc-requires: django -->
@@ -122,7 +124,7 @@ Methods and properties:
 - **`save()`**. An `UPDATE` never rewrites the statechart columns unless you name them in `update_fields`. Only `send()` moves the state, so saving a stale instance for another field cannot roll the state back.
 - **`Model.objects.in_state(*ids)`**. Rows where any id is active, as a leaf or as an ancestor (`in_state("order.review")` matches `order.review.legal.pending`). It matches whole id segments with bound parameters (no `LIKE`, no SQL built from the id).
 
-**`send_with_retry(row, event, *, retries=10, backoff=None, lock="optimistic", **kw)`** reloads the statechart columns and re-applies the event on `ConflictError`. When the retries run out, the last error is raised with `attempts` set. Under retry, actions may run once per attempt (X0.3).
+**`send_with_retry(row, event, *, retries=10, backoff=None, lock="optimistic", **kw)`** reloads the statechart columns and re-applies the event on `ConflictError` (the optimistic fence was lost) or `LockTimeoutError` (a pessimistic writer waited out the database's busy timeout -- the driver's `OperationalError` is mapped, never leaked). When the retries run out, the last error is raised with `attempts` set. Under retry, actions may run once per attempt (X0.3).
 
 ### Durable timers and `xsm_deadlines`
 
@@ -256,7 +258,7 @@ See the generated [compatibility table](../compatibility/). SQLite runs everywhe
 | `MissingExtraError: ... pip install "xstate-statemachine[django]"` | extra not installed | run the command |
 | `no such table: xsm_django_...` | app not migrated | add `"xstate_statemachine.contrib.django"` to `INSTALLED_APPS` and `migrate` |
 | `ConflictError` from `send(lock="optimistic")` | another writer won the version fence | use `send_with_retry`, or the default pessimistic lock |
-| `database is locked` under load on SQLite | long transactions around `send()` | keep sends short; raise `OPTIONS["timeout"]`; use Postgres for real concurrency |
+| `LockTimeoutError` from `send()` (SQLite `database is locked`, Postgres `lock timeout`, MySQL `Lock wait timeout`) | a writer waited out the database's busy/lock timeout | retryable -- `send_with_retry` retries it; keep sends short; raise `OPTIONS["timeout"]`; use Postgres for real concurrency |
 | `SynchronousOnlyOperation` in an async view | the ORM was called on the event loop | `await order.asend(...)` |
 | `SnapshotDriftError` / `MachineVersionMismatchError` after a chart change | stored snapshots predate the chart | register a `SnapshotMigrator` step (`statechart_migrator`), then `xsm_snapshots --stale` and `refresh_statechart_columns` |
 | Admin shows no buttons | the user lacks change permission, or every guard refuses | check `permitted_events(user, obj)` |

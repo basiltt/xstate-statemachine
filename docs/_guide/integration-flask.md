@@ -16,6 +16,8 @@ pip install quart          # optional: the Quart shim
 
 Requires Flask `>=2.3`. Tested versions are in the [compatibility table](#compatibility).
 
+For a complete, runnable app -- a multi-step wizard on `SessionStore`, CSRF-protected forms, the `flask xsm` CLI and a test suite -- see the [`flask_wizard` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/flask_wizard).
+
 ## Quick start
 
 <!-- doc-requires: flask -->
@@ -102,6 +104,14 @@ xsm.register("wizard", wizard_machine, authorize=allow_all,
              key=lambda: session.setdefault("wizard_id", uuid4().hex))
 xsm.init_app(app, store=SessionStore())
 ```
+
+### `DEFAULT_SESSION_LIMIT`
+
+An `int`, `3 * 1024` (3072 bytes). It is the default `max_snapshot_bytes` of `SessionStore`: the cap on the snapshot size, applied on save and on load, that keeps the signed cookie under the browsers' limit.
+
+### `UnprocessableBodyError`
+
+An `HTTPProblemError` with `status = 422` and title `Request body must be a JSON object`. The body reader raises it when a non-empty `application/json` body is not valid JSON (the message is `Request body is not valid JSON`) or is valid JSON but not an object. The error handler turns it into a 422 problem response. An empty body is read as `{}` and does not raise.
 
 ### `flask xsm inspect|diagram|docs|simulate <name>`
 

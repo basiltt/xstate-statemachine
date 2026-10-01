@@ -188,7 +188,7 @@ diff you ran yourself:
 ```bash
 pip install pypi-attestations
 pypi-attestations verify pypi --repository https://github.com/basiltt/xstate-statemachine \
-  pypi:xstate_statemachine-0.10.5-py3-none-any.whl   # prints "OK: <file>" on success
+  pypi:xstate_statemachine-0.11.0-py3-none-any.whl   # prints "OK: <file>" on success
 ```
 
 ```bash
@@ -919,12 +919,13 @@ page with a **Guarantees** box and a **Threat model** box — CI refuses a page 
 | `[starlette]` | `StatechartRegistry` — the store-backed create → act → persist loop as ASGI middleware; receipt → HTTP status; principal-scoped `Idempotency-Key`; RFC 9457 problems; SSE and WebSocket transition streams | [Starlette](https://basiltt.github.io/xstate-statemachine/guide/integration-starlette/) |
 | `[fastapi]` | `StatechartRouter` generates `GET /{id}`, `POST /{id}/send` (discriminated-union body), one route per event, `/events`, `/diagram.mmd`, `/stream`, `/ws` — with OpenAPI that reflects your chart; `Depends(get_interpreter(...))` | [FastAPI](https://basiltt.github.io/xstate-statemachine/guide/integration-fastapi/) |
 | `[litestar]` | `XStatePlugin` + a generated `Controller` on the same registry | [Litestar](https://basiltt.github.io/xstate-statemachine/guide/integration-litestar/) |
-| `[agents]` | LLM agents as statecharts: `TOOL_LOOP`, per-state tool allow-lists, budgets, durable human approval, `spawn_agent` | [LLM agents](https://basiltt.github.io/xstate-statemachine/guide/integration-agents/) |
+| `[agents]` | LLM agents as statecharts: `TOOL_LOOP`, per-state tool allow-lists, budgets (`BudgetPlugin`, `budget_guards`, `Usage`), durable human approval, `spawn_agent`; `agent_logic`, `run_agent_sync`, `structured_output`, `handoff_guard`, `AgentTracePlugin`, `ToolDeniedError` | [LLM agents](https://basiltt.github.io/xstate-statemachine/guide/integration-agents/) |
 | `[observability]` | `OpenTelemetryPlugin` spans, `PrometheusPlugin` metrics, structlog / loguru context, Sentry breadcrumbs — `instrument_all()` in one line; label allow-list by default | [Observability](https://basiltt.github.io/xstate-statemachine/guide/integration-observability/) |
-| *(core)* | Live inspector: `xsm inspect --live` streams any machine to the Stately Inspector (`@statelyai/inspect` protocol); `xsm sim --record` / `xsm replay` | [Live inspector](https://basiltt.github.io/xstate-statemachine/guide/integration-inspector/) |
-| `[kafka]` `[rabbitmq]` `[nats]` `[sqs]` + `[redis]` | Broker adapters (Kafka, RabbitMQ, NATS JetStream, SQS, Redis Streams): at-least-once, per-subject order, redelivery counts as attempts, poison → DLQ | [Brokers](https://basiltt.github.io/xstate-statemachine/guide/integration-brokers/) |
-| `[celery]` | A Celery task as an `invoke` service, `@statechart_task` worker act-loop, Celery Beat as the durable `after` scheduler, outbox relay task | [Celery](https://basiltt.github.io/xstate-statemachine/guide/integration-celery/) |
-| *(core)* + `[cloudevents]` | Event-driven core: CloudEvents `Envelope`, `InboundDispatcher` (dedup, per-subject order, poison → DLQ), transactional outbox from `meta.publish`, `xsm dlq` safe replay, `SagaBuilder`, `ChoreographyRouter`, `xsm asyncapi`; the extra adds CloudEvents SDK / HTTP interop | [Event-driven](https://basiltt.github.io/xstate-statemachine/guide/integration-eda/) |
+| `[testing]` | A pytest plugin: `xsm_*` fixtures (machine, interpreter, simulated clock, recorded scenarios), `xsm_path` walks every engine-verified path, state / transition coverage with `--xsm-fail-under-*`, Hypothesis strategies, `replay()` / `assert_replay_consistent()` for audit logs, fake brokers (`FakeBrokerAdapter`); `model_test`, `events_strategy` | [Testing](https://basiltt.github.io/xstate-statemachine/guide/integration-testing/) |
+| *(core)* | Live inspector: `xsm inspect --live` streams any machine to the Stately Inspector (`@statelyai/inspect` protocol); `xsm sim --record` / `xsm replay`; `InspectorPlugin` with `MemorySink`, `SseSink`, `JsonLinesSink`, `replay_messages` | [Live inspector](https://basiltt.github.io/xstate-statemachine/guide/integration-inspector/) |
+| `[kafka]` `[rabbitmq]` `[nats]` `[sqs]` + `[redis]` | Broker adapters (`KafkaBroker`, `RabbitMQBroker`, `NatsBroker`, `SqsBroker` / `SyncSqsBroker`, `RedisStreamsBroker` / `SyncRedisStreamsBroker`): at-least-once, per-subject order, redelivery counts as attempts, poison → DLQ | [Brokers](https://basiltt.github.io/xstate-statemachine/guide/integration-brokers/) |
+| `[celery]` | A Celery task as an `invoke` service (`celery_service`), `@statechart_task` worker act-loop, Celery Beat as the durable `after` scheduler (`DurableTimerScheduler`), `outbox_relay_task` | [Celery](https://basiltt.github.io/xstate-statemachine/guide/integration-celery/) |
+| *(core)* + `[cloudevents]` | Event-driven core: CloudEvents `Envelope`, `InboundDispatcher` (dedup, per-subject order, poison → DLQ), transactional outbox from `meta.publish` (`OutboxPlugin`, `OutboxRelay`, `SQLiteOutboxStore`), `SQLiteDeadLetterStore` / `BrokerDeadLetterSink`, `xsm dlq` safe replay, `SagaBuilder`, `ChoreographyRouter`, `xsm asyncapi` / `asyncapi_document()`; the extra adds CloudEvents SDK / HTTP interop | [Event-driven](https://basiltt.github.io/xstate-statemachine/guide/integration-eda/) |
 
 <!-- doc-fragment -->
 ```python
@@ -949,6 +950,9 @@ text. The multi-worker model (why an interpreter cannot live in a uvicorn worker
 run, how 4 workers × 200 concurrent `PAY` yields exactly one success) is the
 [FastAPI guide's](https://basiltt.github.io/xstate-statemachine/guide/integration-fastapi/) first section, with a runnable
 [`examples/integrations/fastapi_orders`](examples/integrations/fastapi_orders) app and load test.
+The event-driven pieces (outbox, dispatcher, dead letters, Redis Streams, the Celery bridge,
+metrics, traces and the inspector) run together, with no external service, in
+[`examples/integrations/eda_fulfilment`](examples/integrations/eda_fulfilment).
 Every extra, with its status and tracking issue, is listed on the
 [Integrations overview](https://basiltt.github.io/xstate-statemachine/guide/integrations/).
 

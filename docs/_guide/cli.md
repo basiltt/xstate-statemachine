@@ -759,7 +759,7 @@ xsm info --json
 The page opens with the banner and an environment panel:
 
 ```
-  Version:      0.10.5
+  Version:      0.11.0
   Python:       3.12.0
   Platform:     Windows-11
   Install path: C:\...\xstate_statemachine
@@ -969,7 +969,7 @@ Every generated file starts with a provenance header:
 
 Source:    order.json
 Template:  pythonic-builder
-Generator: xstate-statemachine 0.10.5
+Generator: xstate-statemachine 0.11.0
 
 Regenerate with::
 

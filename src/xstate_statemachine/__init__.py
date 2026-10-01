@@ -249,7 +249,7 @@ from .receipts import receipt_from_json, receipt_to_json, receipt_to_status
 # -----------------------------------------------------------------------------
 
 # 📦 The official version number for the library.
-__version__ = "0.10.5"
+__version__ = "0.11.0"
 
 # -----------------------------------------------------------------------------
 # 🌐 Public API Definition

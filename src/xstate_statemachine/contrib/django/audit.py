@@ -1,8 +1,8 @@
 # src/xstate_statemachine/contrib/django/audit.py
 # -----------------------------------------------------------------------------
-# ðŸ“œ DjangoAuditPlugin -- the audit row commits with the state change
+# 📜 DjangoAuditPlugin -- the audit row commits with the state change
 # -----------------------------------------------------------------------------
-# ðŸ›ï¸ `django-fsm-log` writes its rows from a separate signal handler, so a
+# 🏛️ `django-fsm-log` writes its rows from a separate signal handler, so a
 #    crash between the save and the handler leaves a state with no audit
 #    row (or the reverse). Here the core `AuditPlugin` (#262) collects the
 #    record while the machine runs; the mixin writes it with
@@ -10,7 +10,7 @@
 #    SAME ``transaction.atomic()`` as the snapshot UPDATE. Payloads go
 #    through the shared `redact` (X0.5 / X0.6).
 #
-# ðŸ“ ``forget`` (X0.5) is a documented CHOICE: ``mode="redact"`` (default)
+# 📝 ``forget`` (X0.5) is a documented CHOICE: ``mode="redact"`` (default)
 #    keeps the append-only chain and blanks ``payload``/``actor``/
 #    ``reason``; ``mode="delete"`` removes the rows.
 # -----------------------------------------------------------------------------

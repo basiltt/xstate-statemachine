@@ -24,6 +24,39 @@ def _read(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8").lower()
 
 
+class TestPrevNextOrder(unittest.TestCase):
+    """`pages_order` drives the prev/next links on every guide page.
+
+    A shared-file merge once turned ``| split: ","`` into
+    ``| split: "<a copy of the list>"`` -- Liquid then returned ONE
+    element, no page ever matched and every prev/next link vanished,
+    while the substring checks elsewhere in this file stayed green.
+    """
+
+    LAYOUT = ROOT / "docs" / "_layouts" / "default.html"
+    _ASSIGN = re.compile(
+        r'\{% assign pages_order = "([^"]+)" \| split: "([^"]*)" %\}'
+    )
+
+    def _order(self) -> list:
+        m = self._ASSIGN.search(self.LAYOUT.read_text(encoding="utf-8"))
+        self.assertIsNotNone(m, "pages_order assign not found")
+        self.assertEqual(m.group(2), ",", "split delimiter must be ','")
+        return m.group(1).split(",")
+
+    def test_split_is_a_comma_and_names_are_unique(self) -> None:
+        order = self._order()
+        self.assertEqual(len(order), len(set(order)), "duplicate page")
+        for name in order:
+            self.assertRegex(name, r"^[a-z0-9-]+$", name)
+
+    def test_every_guide_page_is_in_the_order(self) -> None:
+        order = set(self._order())
+        pages = {p.stem for p in GUIDE.rglob("*.md")}
+        self.assertEqual(sorted(pages - order), [], "guide pages missing")
+        self.assertEqual(sorted(order - pages), [], "order names no page")
+
+
 class TestProductionCharacteristicsPage(unittest.TestCase):
     def test_production_characteristics_page_exists(self) -> None:
         self.assertTrue(PAGE.is_file(), PAGE)
