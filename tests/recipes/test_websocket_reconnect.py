@@ -79,9 +79,23 @@ def sock(request: Any) -> Any:
     d.close()
 
 
-def settle(d: Driver) -> None:
-    """Let callback-delivered events drain (they are queued sends)."""
+def settle(d: Driver, until: Any = None) -> None:
+    """Let callback-delivered events drain (they are queued sends).
+
+    📝 With ``until=<value>`` keep stepping zero-length turns (bounded)
+    until the chart reports that value: on the async engine a service
+    that completed in the SAME turn as the timer that armed it is
+    delivered one loop turn later, so a single ``wait(0)`` can observe
+    the intermediate ``connecting`` on a loaded runner (seen in the
+    coverage job on `main` at 8866574).
+    """
     d.wait(0)
+    if until is None:
+        return
+    for _ in range(20):
+        if d.value == until:
+            return
+        d.wait(0)
 
 
 def test_connect_receive_and_disconnect(sock: Driver) -> None:
@@ -109,7 +123,7 @@ def test_drop_reconnects_after_jittered_backoff(sock: Driver) -> None:
     sock.wait(expected_ms - 1)
     assert sock.value == "reconnecting"
     sock.wait(1)
-    settle(sock)
+    settle(sock, until="connected")
     assert sock.value == "connected"
     assert sock.i.context["attempt"] == 0  # reset on success
     assert sock.server.connects == 2
