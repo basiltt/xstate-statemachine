@@ -2072,7 +2072,7 @@ class Interpreter(BaseInterpreter[TContext]):
                 #    context, so `changed` reduces to the configuration
                 #    compare and the per-receipt deepcopy is skipped.
                 context_before = (
-                    copy.deepcopy(self.context)
+                    self._context_before_image()
                     if (observe or id(event) in self._receipts)
                     and not self.machine.context_is_immutable
                     else None
@@ -2179,10 +2179,7 @@ class Interpreter(BaseInterpreter[TContext]):
                         self.last_transition_ok = False
                     changed = frozenset(
                         self._active_state_nodes
-                    ) != config_before or (
-                        context_before is not None
-                        and self.context != context_before
-                    )
+                    ) != config_before or self._context_changed(context_before)
                     deferred = any(
                         ev is event for ev in self._deferred_this_step
                     )

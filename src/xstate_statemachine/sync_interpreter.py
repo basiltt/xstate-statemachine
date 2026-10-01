@@ -137,6 +137,10 @@ class _Done(Generic[_T]):
         return repr(self.value)
 
 
+#: Statuses with no owner left to drain the #305 mailbox.
+_TERMINAL_STATUSES = ("stopped", "done", "error")
+
+
 class SyncInterpreter(BaseInterpreter[TContext]):
     """Brings a state machine definition to life by interpreting its behavior synchronously.
 
@@ -558,7 +562,16 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         # 📝 Status is set to "stopped" FIRST so a cyclic actor graph
         #    terminates: the child's own `stop()` re-enters this one, which
         #    now hits the idempotency guard instead of recursing forever.
-        self.status = "stopped"
+        # 🔒 #305 battle: flip status under the mailbox lock so a racing
+        #    `send_threadsafe()` either lands before the purge below (and is
+        #    reported as dropped) or sees "stopped" -- never neither.
+        with self._mailbox_lock:
+            self.status = "stopped"
+            orphaned = list(self._mailbox)
+            self._mailbox.clear()
+        for ev in orphaned:
+            for plugin in self._plugins:
+                plugin.on_event_dropped(self, ev, "stopped")
         self._teardown()
 
         # 4️⃣ Notify plugins about the stop event
@@ -726,7 +739,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         if wait:
             config_before = frozenset(self._active_state_nodes)
             if not self.machine.context_is_immutable:
-                context_before = copy.deepcopy(self.context)
+                context_before = self._context_before_image()
         self.last_transition_ok = True
         step_error: Optional[BaseException] = None
         # ⏰ #50: deliver every deadline that has elapsed BEFORE this event,
@@ -761,9 +774,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             return receipt
         if step_error is None and not self.last_transition_ok:
             step_error = self._last_action_error
-        changed = frozenset(self._active_state_nodes) != config_before or (
-            context_before is not None and self.context != context_before
-        )
+        changed = frozenset(
+            self._active_state_nodes
+        ) != config_before or self._context_changed(context_before)
         deferred = any(ev is event_obj for ev in self._deferred_this_step)
         receipt = Receipt(
             frozenset(self.current_state_ids),
@@ -810,7 +823,19 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         # the call site, where the traceback is useful.
         event_obj = self._prepare_event(event_or_type, **payload)
         with self._mailbox_lock:
-            self._mailbox.append(event_obj)
+            if self.status not in _TERMINAL_STATUSES:
+                self._mailbox.append(event_obj)
+                return
+        # 🔔 #305 battle: a stopped / finished machine has no owner left to
+        #    drain the mailbox. Queuing there was a SILENT loss (the event
+        #    sat in the deque forever); report it like `send()` does.
+        logger.warning(
+            "🚫 send_threadsafe() to '%s' dropped: interpreter is %s.",
+            self.id,
+            self.status,
+        )
+        for plugin in self._plugins:
+            plugin.on_event_dropped(self, event_obj, "not_running")
 
     def _drain_mailbox(self) -> int:
         """Run every mailbox event as its own step. Returns how many.
@@ -880,9 +905,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     ) -> None:
         """Build this event's `Receipt` from the before-image and fire the
         hook -- the same fields a ``send(wait=True)`` caller gets."""
-        changed = frozenset(self._active_state_nodes) != config_before or (
-            context_before is not None and self.context != context_before
-        )
+        changed = frozenset(
+            self._active_state_nodes
+        ) != config_before or self._context_changed(context_before)
         receipt = Receipt(
             frozenset(self.current_state_ids),
             changed,
@@ -1224,7 +1249,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                     ep_context_before = (
                         None
                         if self.machine.context_is_immutable
-                        else copy.deepcopy(self.context)
+                        else self._context_before_image()
                     )
                     self._deferred_this_step.clear()
                     self._guard_denied_this_step = False
