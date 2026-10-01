@@ -1,9 +1,11 @@
 # HANDOVER — Battle-test programme for the 52 integration issues (#257–#310)
 
-**Audience:** the agent (or team of agents) taking over after the 0.11.0 release candidate.
+**Audience:** the agent (or team of agents) taking over the 0.11.0 release candidate.
 **Owner on the human side:** the maintainer (basiltt). **Nothing is published without their explicit go — ever.**
-**Repository:** `basiltt/xstate-statemachine` · default branch `main` · RC branch `rc/0.11.0` (PR #362).
-**Written:** 2026-10-01, at commit `010158b` on `rc/0.11.0`.
+**Repository:** `basiltt/xstate-statemachine` · default branch `main`. The RC PR #362 is **merged** (`8866574`); `main` carries version `0.11.0`, **unreleased**.
+**Written:** 2026-10-01. Updated after the merge.
+
+> **Maintainer's decision (2026-10-01):** *the battle-tested tree is what ships as 0.11.0.* Your PRs land on `main` under the existing `## [0.11.0] - 2026-10-01` changelog block (update the date when the release is cut); do not open a `[0.12.0]` section. Issue #297 is the open release tracker; `v0.11.0` is tagged and `publish.yml` runs only on the maintainer's explicit written go, after this programme.
 
 ---
 
@@ -92,7 +94,7 @@ After the code work, for each feature:
 - **New pages where necessary**: an "Operations" page per stateful extra (sizing, tuning knobs, metrics to alert on, runbooks for the failure modes you injected); a "Migration from X" page where a competitor exists (`vs-*.md` already exist for transitions, python-statemachine, django-fsm, LangGraph — add Burr, Temporal-lite, raw Celery canvas if relevant).
 - **Examples**: the scenario from §2.1 lives under `examples/` with a README (what it shows, exact commands, what is faked, how to go live), is registered in `tests/test_examples_integrations.py` (or the recipes test) and linked from the guide page above Quick start.
 - **README**: the Integrations row names the main public symbols; "What you get" / feature cards updated if the pitch changes.
-- **Changelog**: a bullet under `[Unreleased]` in **both** `CHANGELOG.md` and `docs/_guide/changelog.md` (bodies byte-identical), stating what the battle test found and changed — honest, reference-style.
+- **Changelog**: a bullet inside the `## [0.11.0]` block (the release is not cut; leave `[Unreleased]` as the placeholder) in **both** `CHANGELOG.md` and `docs/_guide/changelog.md` (bodies byte-identical), stating what the battle test found and changed — honest, reference-style.
 - **API index** (`docs/api/index.md`): 100 % of `__all__` (run the per-package script: import each package, diff `__all__` against the file).
 - **Nav**: sidebar + `pages_order` for any new page (structural test enforces it).
 - **Executed docs**: every Python block you add runs under `tests/test_docs_executable.py` (read its skip/fragment conventions first).
@@ -149,7 +151,7 @@ Work in **dependency order** (a flaw in persistence invalidates every battle tes
 ### Tier 7 — hardening and release
 #296 1.0 hardening (discovery, compat matrix, deprecation policy) · #297 RC tracker (stays open until the maintainer publishes; close it with the release) · #257 epic (close last).
 
-**Status at handover:** every issue above is CLOSED as *implemented* except #297 and #257. For the battle-test programme, **re-open nothing**; instead open one tracking issue `Battle-test programme (post-0.11.0)` with a checklist of the 43 features and link each `battle(<issue>)` PR to it. Add a `battle-tested` label and apply it to the original issue when its PR merges.
+**Status at handover:** every issue above is CLOSED as *implemented* except #297 (the open 0.11.0 release tracker) and #257. For the battle-test programme, **re-open nothing**; instead open one tracking issue `Battle-test programme (0.11.0)` with a checklist of the 43 features and link each `battle(<issue>)` PR to it. Add a `battle-tested` label and apply it to the original issue when its PR merges.
 
 ---
 
@@ -173,7 +175,7 @@ These were found during implementation and *documented* rather than fixed. Each 
 
 ## 5. Working agreement with the maintainer
 
-1. **No publish, tag, version bump or `publish.yml` run without the maintainer's explicit written go.** 0.11.0 is in PR #362 awaiting that go; the battle-test programme targets the release *after* it. Branch from `main` once #362 merges (or from `rc/0.11.0` if it has not).
+1. **No publish, tag, version bump or `publish.yml` run without the maintainer's explicit written go.** #362 is merged; `main` already says 0.11.0 but it is **unreleased** and the battle-tested tree is what will ship under that number. Branch every `battle(<issue>)` PR from `main`.
 2. One PR per issue; conventional commits; `Co-Authored-By: Claude <noreply@anthropic.com>` trailer (or the attribution line the session's system reminder specifies).
 3. PR body = evidence: what was attacked, what broke, what was fixed (with the regression test name), what was documented, numbers (iterations, soak duration, p50/p99, RSS), and the independent review's findings with their resolutions.
 4. Anything that contradicts a stated **Guarantee** is a release blocker: stop, fix, add to the changelog's Fixed section, re-run the X0 script.
@@ -190,7 +192,7 @@ python -m pip install -e ".[all]" "fakeredis[lua]>=2.20" "moto[sqs]>=5" "opentel
 py -3.9 -m venv .venv39 && .venv39\Scripts\python -m pip install --only-binary :all: -e ".[all]"
 python -m pytest -q -p no:cacheprovider --disable-socket --allow-hosts=127.0.0.1,::1      # expect ~5 460 passed
 python scripts/verify/wheel_gate.py                                                        # expect 30/30 ALL OK
-gh issue create --title "Battle-test programme (post-0.11.0)" --body-file <checklist from §3>
+gh issue create --title "Battle-test programme (0.11.0)" --body-file <checklist from §3>
 ```
 Then start with **#304** (Tier 0) and follow §2 to the letter.
 
