@@ -695,17 +695,31 @@ def redact(value: Any, keys: Tuple[str, ...] = DEFAULT_REDACT_KEYS) -> Any:
     """Return *value* with sensitive mapping keys replaced by ``"***"``.
 
     Recurses into nested dicts and lists; leaves everything else untouched.
-    Keys are matched by case-insensitive substring so ``apiKey``,
-    ``API_KEY`` and ``x-api-key`` all redact. Pure; never mutates input.
+    Keys are matched by case-insensitive substring with ``-`` treated as
+    ``_`` on BOTH sides, so ``apiKey``, ``API_KEY``, ``x-api-key`` all
+    redact and a user denylist entry spelled ``X-Custom-Token`` still
+    matches. Pure; never mutates input.
     """
+    # 🔐 #303 battle: header spellings (`x-api-key`, `Api-Key`) use '-'
+    #    where the denylist uses '_'; the docstring promised them and they
+    #    leaked. Review M1: normalising only the data side then broke a
+    #    user denylist spelled with '-'. Normalise both, once, up front.
+    return _redact(value, tuple(s.lower().replace("-", "_") for s in keys))
+
+
+def _redact(value: Any, norm_keys: Tuple[str, ...]) -> Any:
     if isinstance(value, dict):
         out: Dict[Any, Any] = {}
         for k, v in value.items():
-            ks = str(k).lower()
-            out[k] = "***" if any(s in ks for s in keys) else redact(v, keys)
+            ks = str(k).lower().replace("-", "_")
+            out[k] = (
+                "***"
+                if any(s in ks for s in norm_keys)
+                else _redact(v, norm_keys)
+            )
         return out
     if isinstance(value, (list, tuple)):
-        return type(value)(redact(v, keys) for v in value)
+        return type(value)(_redact(v, norm_keys) for v in value)
     return value
 
 

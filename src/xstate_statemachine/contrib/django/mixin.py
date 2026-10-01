@@ -113,6 +113,9 @@ RESERVED_PAYLOAD_KEYS: FrozenSet[str] = frozenset(
         "actor_id",
         "reason",
         "wait",
+        # 🔐 X0.7 (#303 battle): `send()`'s other option -- a client
+        #    `{"priority": true}` jumped the queue.
+        "priority",
         "payload",
         "idempotency_key",
     }

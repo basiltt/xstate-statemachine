@@ -57,6 +57,7 @@ from ...persistence.idempotency import (
     IdempotencyInFlightError,
     IdempotencyMismatchError,
     IdempotencyPlugin,
+    validate_principal,
 )
 from ...persistence.locking import _restore_kwargs, apersisted
 from ...persistence.store import validate_key
@@ -66,10 +67,12 @@ from ._http import (
     ForbiddenError,
     idempotency_key_from,
     json_body,
+    principal_or_401,
     problem,
     problem_for_exception,
     receipt_body,
     receipt_to_status,
+    refuse_reserved_send_keys,
     state_body,
 )
 
@@ -345,7 +348,10 @@ class StatechartRegistry:
                     "act(principal=) is required when the registry has an "
                     "idempotency inbox (X0.2)."
                 )
-            who = str(principal)
+            # 🔐 Battle #303 review H1: `str(principal)` turned None into
+            #    "None" and pooled every anonymous caller. Validate, never
+            #    coerce. A direct `act()` caller gets the ValueError.
+            who = validate_principal(principal)
             plugins.append(
                 IdempotencyPlugin(self.inbox, principal=lambda e: who)
             )
@@ -428,6 +434,7 @@ class StatechartRegistry:
                     request, max_body_bytes=self.max_body_bytes
                 )
             payload = dict(payload)
+            refuse_reserved_send_keys(payload)
             idem = idempotency_key_from(request)
             if idem is not None:
                 payload["idempotency_key"] = idem
@@ -484,7 +491,9 @@ class StatechartRegistry:
                 "StatechartRegistry(principal=) is required with inbox= "
                 "for the HTTP helpers (X0.2)."
             )
-        return str(self.principal(conn))
+        # 🔐 Battle #303 review H1: the HTTP helpers answer 401, not a
+        #    pooled "None" scope, when `principal(conn)` identifies nobody.
+        return principal_or_401(self.principal(conn))
 
     # -- residents ------------------------------------------------------------
     @property

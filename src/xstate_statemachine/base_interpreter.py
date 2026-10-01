@@ -2126,6 +2126,12 @@ class BaseInterpreter(Generic[TContext]):
         except json.JSONDecodeError as e:
             logger.error("❌ Invalid JSON in snapshot string: %s", e)
             raise InvalidConfigError(f"Snapshot is not valid JSON: {e}") from e
+        except RecursionError as e:
+            # 🛡️ #303 battle: `[[[[...` nested past the C stack limit is a
+            #    hostile/corrupt blob, not a library crash.
+            raise SnapshotCorruptError(
+                "Snapshot JSON is nested too deeply to decode."
+            ) from e
 
         if not isinstance(snapshot, dict):
             raise InvalidConfigError(

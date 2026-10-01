@@ -30,8 +30,14 @@ def reverse(line: str) -> str:
 
 def main(argv: list) -> int:
     fix = "--fix" in argv
+    # 📝 Tracked AND untracked-but-not-ignored files: the handover doc for
+    #    the battle programme was untracked when the local scan ran, passed
+    #    here, and then failed `TestNoMojibake` in all ten CI cells.
     files = subprocess.run(
-        ["git", "ls-files"], capture_output=True, text=True, check=True
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.split()
     bad = 0
     for f in files:

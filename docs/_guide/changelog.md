@@ -1086,6 +1086,28 @@ _No unreleased changes yet._
 
 ### Changed
 
+- **Idempotency inbox scopes are escaped (battle-test #303).** Scope parts
+  (`principal`, `machine.id`, `instance_key`) now escape `%` and `/` so the
+  join is injective. Parts without either character are byte-identical to
+  before, so existing rows keep their scope. **If a principal, machine id
+  or instance key in your deployment contains `%` or `/`**, inbox rows
+  written before the upgrade resolve to a *different* scope afterwards:
+  their cached receipts are unreachable, a retry inside the TTL
+  re-executes once, and `inbox.forget(old_scope)` no longer matches. Let
+  the TTL window elapse before relying on deduplication for such keys, or
+  purge the inbox at deploy time.
+- **A principal must identify a caller.** `IdempotencyPlugin.scope_for`
+  and every web adapter (`StatechartRegistry.act`, the Starlette / FastAPI
+  / Litestar / Flask / Quart HTTP helpers, DRF) route the principal through
+  `validate_principal`: a value that is not a non-empty `str`, or is one
+  of the literal placeholders `"None"` / `"null"` / `"anonymous"`, is
+  refused -- `ValueError` from a direct `act()` call, **401
+  `UnauthenticatedError`** from the HTTP helpers, 401 from DRF when an
+  `Idempotency-Key` arrives from an unauthenticated user. Previously the
+  adapters `str()`-coerced the value, so `None` became `"None"` and every
+  anonymous caller shared one scope. Code that relied on an anonymous
+  caller being deduplicated must authenticate it first.
+
 - **Plugin hook dispatch is ~2x cheaper (battle-test #304).** `_SafePlugin`
   built a fresh `functools.wraps` closure on every hook lookup -- four per
   event -- which cProfile put at ~30 % of a plugin-equipped `send()`. The
@@ -1105,6 +1127,42 @@ _No unreleased changes yet._
   `requires-python` and CI have been 3.9 since 0.9).
 
 ### Fixed
+
+- **Security (battle-test #303, X0 baseline).** An adversarial pass over
+  every X0 row, both engines, with the attacks pinned as tests in
+  `tests/test_battle_303_x0_core.py` and
+  `tests/test_battle_303_x0_integrations.py` (named in the X0 table on the
+  Security page). Findings, most severe first:
+  - **Idempotency scope pooled unauthenticated callers (HIGH, X0.1/X0.2).**
+    A `principal=` callable returning `None` or `""` became the shared
+    scope `"None"` / `""`, so every such caller could replay every other's
+    receipt. The principal must now be a non-empty `str`; anything else is
+    refused with a receipt, never pooled. The independent review found the
+    web adapters `str()`-coerced the principal first (`None` -> `"None"`),
+    so the rule is enforced at the adapters too -- see Changed.
+  - **Idempotency scope join was not injective (HIGH, X0.2).** Principal
+    `alice/c` + machine `c` collided with principal `alice` + machine
+    `c/c`. Each scope part now escapes `%` and `/`; parts without them are
+    unchanged, so existing inbox rows keep their scope.
+  - **`send()` options accepted from a client JSON body (HIGH, X0.7).**
+    `{"priority": true}` posted to the Starlette / FastAPI / Litestar /
+    Flask / Quart / WebSocket send routes really did jump the queue, and
+    `{"wait": false}` produced a 500 `TypeError`. A body naming a reserved
+    `send()` key is now 422 `ReservedKeyError`; Django's
+    `RESERVED_PAYLOAD_KEYS` gains `priority`.
+  - **`FileStore` parsed before it checked the size cap (X0.4).** The read
+    is now bounded before `json.loads`; an 8 MB file of spaces is refused
+    in well under a second without ever being parsed.
+  - **Deep nesting / non-UTF-8 escaped as bare exceptions (X0.4).** A
+    100 000-deep `[[[...]]]` raised `RecursionError`, non-UTF-8 bytes
+    `UnicodeDecodeError`, a BLOB row `AttributeError` -- all from inside
+    `except XStateMachineError`. Each is now `SnapshotCorruptError`.
+  - **`SQLiteStore.forget()` left a co-located transition log (X0.5).**
+    Log rows for the key are now deleted in the same transaction; the
+    result dict gains `log_entries`.
+  - **`redact()` missed hyphenated header keys (X0.5).** `x-api-key` and
+    `Api-Key` passed through because the denylist is spelled with `_`;
+    keys are now normalised before matching.
 
 - **A context that cannot be deep-copied no longer kills the run loop
   (battle-test #305).** Receipts, `on_event_processed` and the

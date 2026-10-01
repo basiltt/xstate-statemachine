@@ -120,6 +120,34 @@ def main() -> int:
     step("6. Changelog entry in both files")
     for rel in ("CHANGELOG.md", "docs/_guide/changelog.md"):
         assert "baseline X0 (#303)" in read(rel), rel
+        assert "battle-test #303, X0 baseline" in read(rel), rel
+    print("   OK")
+
+    step("7. Battle tests: live attacks on every X0 row (both engines)")
+    # 🛡️ Post-RC programme: the static greps above say the code *looks*
+    #    safe; these actually forge principals, smuggle send() options,
+    #    kill -9 inside os.replace, flood labels, post 50 MB bodies, …
+    #    `-p no:asyncio` mirrors the CI cells; socket-off like CI.
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_battle_303_x0_core.py",
+            "tests/test_battle_303_x0_integrations.py",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:asyncio",
+            "--no-header",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    print(proc.stdout.strip().splitlines()[-1])
+    assert proc.returncode == 0, proc.stdout + proc.stderr
     print("   OK")
 
     print("\nALL OK")

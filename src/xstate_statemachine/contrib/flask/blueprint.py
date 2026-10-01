@@ -43,8 +43,10 @@ from ._http import (
     declared_events,
     is_idempotency_refusal,
     parse_json_body,
+    principal_or_401,
     problem_body,
     receipt_body,
+    refuse_reserved_send_keys,
 )
 from .extension import XState, problem_response, receipt_response
 
@@ -110,13 +112,14 @@ def create_statechart_blueprint(
         r = reg()
         if r.inbox is None:
             return None
-        return str(r.principal(flask_request))
+        return principal_or_401(r.principal(flask_request))
 
     def send(key: str, etype: str, payload: Dict[str, Any]) -> Any:
         r = reg()
         guard(key, etype)
         payload = dict(payload)
         payload.pop("type", None)
+        refuse_reserved_send_keys(payload)
         idem = flask_request.headers.get(IDEMPOTENCY_HEADER)
         if idem:
             payload["idempotency_key"] = idem

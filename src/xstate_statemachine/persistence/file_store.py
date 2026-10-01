@@ -47,6 +47,7 @@ from ..exceptions import (
     InvalidKeyError,
     LockTimeoutError,
     SnapshotCorruptError,
+    SnapshotTooLargeError,
 )
 from .deadline import Deadline, check_deadline_record
 from .store import BaseStore
@@ -68,6 +69,8 @@ _WINDOWS_RESERVED = re.compile(
 )
 _WRITE_RETRIES = 20
 _WRITE_RETRY_SLEEP = 0.025
+#: Envelope + deadlines allowance on top of the escaped snapshot (X0.4).
+_RECORD_HEADROOM = 1024 * 1024
 
 
 def encode_key(key: str) -> str:
@@ -228,18 +231,29 @@ class FileStore(BaseStore):
     def _lock_path(self, key: str) -> Path:
         return self.directory / (encode_key(key) + _LOCK_SUFFIX)
 
+    def _record_limit(self) -> int:
+        """Largest legitimate record file: the snapshot JSON-escaped
+        (``\\uXXXX`` is at most 6 bytes per input byte) plus headroom for
+        the envelope and deadlines."""
+        return 6 * self.max_snapshot_bytes + _RECORD_HEADROOM
+
     # -- record I/O -----------------------------------------------------------------
     @staticmethod
-    def _read(path: Path) -> Optional[Dict[str, Any]]:
+    def _read(
+        path: Path, limit: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
         # 🪟 Windows: while another process's `os.replace` is in flight the
         #    target is briefly inaccessible and `open` raises
         #    PermissionError (not FileNotFoundError). Retry briefly, as the
         #    writer does on the other side of the same race.
-        text: Optional[str] = None
+        raw: Optional[bytes] = None
         for attempt in range(_WRITE_RETRIES):
             try:
-                with open(path, "r", encoding="utf-8") as fh:
-                    text = fh.read()
+                with open(path, "rb") as fh:
+                    # 🛡️ X0.4 (#303 battle): bound the read BEFORE parsing;
+                    #    `_check_size` only ran after the whole record had
+                    #    been read and `json.loads`-ed.
+                    raw = fh.read() if limit is None else fh.read(limit + 1)
                 break
             except FileNotFoundError:
                 return None
@@ -247,10 +261,16 @@ class FileStore(BaseStore):
                 if attempt == _WRITE_RETRIES - 1:
                     raise
                 time.sleep(_WRITE_RETRY_SLEEP)
-        assert text is not None
+        assert raw is not None
+        if limit is not None and len(raw) > limit:
+            raise SnapshotTooLargeError(path.name, len(raw), limit)
+        # 🛡️ #303 battle: non-UTF-8 bytes (UnicodeDecodeError) and a deeply
+        #    nested `[[[[...` (RecursionError) are corruption like any other
+        #    -- they must surface as `SnapshotCorruptError`, not escape the
+        #    documented `except XStateMachineError`.
         try:
-            rec = json.loads(text)
-        except ValueError as exc:
+            rec = json.loads(raw.decode("utf-8"))
+        except (ValueError, RecursionError) as exc:
             raise SnapshotCorruptError(
                 f"FileStore record {path.name} is not valid JSON: {exc}"
             ) from exc
@@ -314,7 +334,7 @@ class FileStore(BaseStore):
     def _load_raw(
         self, key: str
     ) -> Optional[Tuple[str, int, str, float, Sequence[Deadline]]]:
-        rec = self._read(self._path(key))
+        rec = self._read(self._path(key), self._record_limit())
         if rec is None:
             return None
         deadlines = []
@@ -343,7 +363,7 @@ class FileStore(BaseStore):
         #    thread already holds the key (a `PessimisticLock` block), reuse
         #    it -- the OS lock is not reentrant.
         with self._maybe_lock(key, timeout=10.0):
-            rec = self._read(path)
+            rec = self._read(path, self._record_limit())
             current = int(rec["version"]) if rec else 0
             if expected_version is not None and expected_version != current:
                 raise ConflictError(

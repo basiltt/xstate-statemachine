@@ -32,6 +32,7 @@ from ...persistence.helpers import KeyNotFoundError
 from ...persistence.idempotency import (
     IdempotencyInFlightError,
     IdempotencyMismatchError,
+    validate_principal,
 )
 
 __all__ = [
@@ -42,14 +43,19 @@ __all__ = [
     "MethodNotAllowedError",
     "PROBLEM_MEDIA_TYPE",
     "PayloadTooLargeError",
+    "RESERVED_SEND_KEYS",
+    "ReservedKeyError",
+    "UnauthenticatedError",
     "UnprocessableBodyError",
     "UnsupportedMediaTypeError",
     "available_events",
     "declared_events",
     "parse_json_body",
+    "principal_or_401",
     "problem_body",
     "problem_for_exception",
     "receipt_body",
+    "refuse_reserved_send_keys",
     "state_body",
     "status_for_exception",
 ]
@@ -82,6 +88,27 @@ class ForbiddenError(HTTPProblemError):
     title = "Forbidden"
 
 
+class UnauthenticatedError(HTTPProblemError):
+    """The `principal=` callable did not identify a caller (X0.1/X0.2).
+
+    🔐 Battle #303 review H1: `str(principal)` turned `None` into the
+    string `"None"` and pooled every anonymous caller into one
+    idempotency scope. The core rule is `validate_principal`; a
+    failure is the client's problem (401), never a shared scope.
+    """
+
+    status = 401
+    title = "Unauthenticated"
+
+
+def principal_or_401(value: Any) -> str:
+    """Run the core principal rule; map a refusal to a 401 problem."""
+    try:
+        return validate_principal(value)
+    except ValueError as exc:
+        raise UnauthenticatedError(str(exc)) from exc
+
+
 class MethodNotAllowedError(HTTPProblemError):
     """A state-changing call made from a safe method (``GET``)."""
 
@@ -102,6 +129,28 @@ class UnsupportedMediaTypeError(HTTPProblemError):
 class UnprocessableBodyError(HTTPProblemError):
     status = 422
     title = "Request body must be a JSON object"
+
+
+class ReservedKeyError(HTTPProblemError):
+    """A client body carried a `send()` OPTION name (X0.7).
+
+    🔐 Adapters splat the body into ``send(etype, wait=True, **payload)``:
+    ``{"priority": true}`` would jump the queue and ``{"wait": false}``
+    crashed the call into a 500. Client data never sets an engine option.
+    """
+
+    status = 422
+    title = "Reserved key in payload"
+
+
+#: `send()` keyword options a client body may never carry.
+RESERVED_SEND_KEYS = ("wait", "priority")
+
+
+def refuse_reserved_send_keys(payload: Dict[str, Any]) -> None:
+    """Raise `ReservedKeyError` if *payload* names a `send()` option."""
+    if any(k in payload for k in RESERVED_SEND_KEYS):
+        raise ReservedKeyError()
 
 
 _STATUS_TABLE = (
