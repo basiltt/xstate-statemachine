@@ -1,6 +1,6 @@
 """Battle test for #258: contrib/persistence scaffolding, extras, guards.
 
-ðŸ“ Every check that must control the import environment runs in a child
+📝 Every check that must control the import environment runs in a child
 interpreter (the #258 review amendment: an in-process ``sys.modules`` /
 ``sys.meta_path`` sweep re-creates exception classes and poisons the rest of
 the session). Checks that need a *bare* interpreter use ``XSM_BARE_PYTHON``
@@ -52,7 +52,7 @@ NOT_INTEGRATION = {"format"}  # the CLI's black/isort formatting extra
 
 
 # -----------------------------------------------------------------------------
-# ðŸ§° helpers
+# 🧰 helpers
 # -----------------------------------------------------------------------------
 def _bare_python() -> Optional[str]:
     """An interpreter with NO extras installed, or ``None``."""
@@ -360,7 +360,7 @@ class TestBareInterpreterSurface(unittest.TestCase):
         self.assertEqual(set(ex.__all__), classes)
 
     def test_import_wall_time_is_reported(self) -> None:
-        # ðŸ“ report, not a perf gate (tests/test_perf_budgets.py owns that;
+        # 📝 report, not a perf gate (tests/test_perf_budgets.py owns that;
         #    ~65 ms on Linux CI). The ceiling only catches a pathological
         #    regression such as an accidental heavy import.
         ms = self.rep["ms"]
@@ -514,7 +514,7 @@ class TestMissingExtraTransitiveAndLazy(unittest.TestCase):
     def test_drf_with_django_blocked_names_drf_not_django(self) -> None:
         r = _blocked(["django"], "import xstate_statemachine.contrib.drf")
         self.assertTrue(r["mee"], r)
-        # ðŸ“ `rest_framework` is installed, but importing it imports django:
+        # 📝 `rest_framework` is installed, but importing it imports django:
         #    the extra must still be the one the user tried to use.
         self.assertEqual(r["extra"], "drf")
 
@@ -572,7 +572,7 @@ class TestMissingExtraTransitiveAndLazy(unittest.TestCase):
         r = _blocked(["quart"], "import xstate_statemachine.contrib.quart")
         self.assertTrue(r["mee"], r)
         self.assertEqual((r["extra"], r["module"]), ("flask", "quart"))
-        # ðŸ“ [flask] does not install quart: the hint is what tells them so
+        # 📝 [flask] does not install quart: the hint is what tells them so
         self.assertIn("pip install quart", r["msg"])
 
     @_have("pydantic")
@@ -841,7 +841,7 @@ class TestCIMatrix(unittest.TestCase):
                 self.assertGreater(_count_tests(folder), 0)
 
     def test_no_exit_5_mask_in_the_contrib_job(self) -> None:
-        # ðŸ“ every extra now ships tests; "no tests collected" must be red
+        # 📝 every extra now ships tests; "no tests collected" must be red
         self.assertNotIn("$? -eq 5", _contrib_job())
 
     def test_every_run_step_uses_bash_for_windows_cells(self) -> None:
