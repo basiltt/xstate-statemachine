@@ -50,6 +50,7 @@ from src.xstate_statemachine.exceptions import (
 from src.xstate_statemachine.testing_utils import stub_logic
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT / "src" / "xstate_statemachine"
 CORPUS = ROOT / "tests" / "tests_cli" / "stately_machines"
 ITERATIONS = 10_000
 #: 📝 Measured growth stays in the low tens of KB; 200 KB is the ceiling
@@ -128,22 +129,35 @@ def _run_async(coro_fn) -> None:
     asyncio.run(coro_fn())
 
 
+def _library_bytes() -> int:
+    """Bytes held by allocations made from library source only.
+
+    ⚠️ `get_traced_memory()` counts everything -- under `pytest --cov` the
+    coverage tracer allocates per executed line (the #305 sibling test saw
+    a 36 MB "leak" on CI that was entirely coverage). Attribute by file.
+    """
+    snap = tracemalloc.take_snapshot().filter_traces(
+        (tracemalloc.Filter(True, str(SRC_DIR / "*")),)
+    )
+    return sum(s.size for s in snap.statistics("filename"))
+
+
 def _traced_growth(step, warmup: int = 300) -> Tuple[int, int]:
     """Run ``step`` ITERATIONS times; return (growth N/2->N, total)."""
     for _ in range(warmup):
         step()
     gc.collect()
-    tracemalloc.start()
+    tracemalloc.start(1)
     try:
         half = ITERATIONS // 2
         for _ in range(half):
             step()
         gc.collect()
-        mid, _ = tracemalloc.get_traced_memory()
+        mid = _library_bytes()
         for _ in range(ITERATIONS - half):
             step()
         gc.collect()
-        end, _ = tracemalloc.get_traced_memory()
+        end = _library_bytes()
     finally:
         tracemalloc.stop()
     return end - mid, end
@@ -153,17 +167,17 @@ async def _atraced_growth(step, warmup: int = 300) -> Tuple[int, int]:
     for _ in range(warmup):
         await step()
     gc.collect()
-    tracemalloc.start()
+    tracemalloc.start(1)
     try:
         half = ITERATIONS // 2
         for _ in range(half):
             await step()
         gc.collect()
-        mid, _ = tracemalloc.get_traced_memory()
+        mid = _library_bytes()
         for _ in range(ITERATIONS - half):
             await step()
         gc.collect()
-        end, _ = tracemalloc.get_traced_memory()
+        end = _library_bytes()
     finally:
         tracemalloc.stop()
     return end - mid, end

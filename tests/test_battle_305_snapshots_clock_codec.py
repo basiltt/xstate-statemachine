@@ -11,19 +11,21 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import gc
 import itertools
 import json
 import math
+import pathlib
 import random
 import time
 import tracemalloc
-import gc
 import unittest
 from typing import Any, Callable, Dict, List
 from unittest import mock
 
 import pytest
 
+import src.xstate_statemachine as _pkg
 from src.xstate_statemachine import (
     Interpreter,
     SyncInterpreter,
@@ -47,6 +49,10 @@ from src.xstate_statemachine.persistence import (
     snapshot as snapmod,
 )
 from src.xstate_statemachine.receipts import ReceiptError
+
+#: The package directory, for attributing tracemalloc allocations to the
+#: library (and not to pytest, coverage, or the test itself).
+SRC_DIR = pathlib.Path(_pkg.__file__).resolve().parent
 
 CFG: Dict[str, Any] = {
     "id": "m",
@@ -596,6 +602,20 @@ class TestLeaks(unittest.TestCase):
 
         asyncio.run(go())
 
+    @staticmethod
+    def _library_bytes() -> int:
+        """Bytes currently held by allocations made FROM library source.
+
+        ⚠️ `get_traced_memory()` counts everything -- under `pytest --cov`
+        the coverage tracer allocates per executed line and the raw total
+        grew 36 MB on CI while the library itself grew 0 B. Attributing by
+        traceback filename isolates what we are actually measuring.
+        """
+        snap = tracemalloc.take_snapshot().filter_traces(
+            (tracemalloc.Filter(True, str(SRC_DIR / "*")),)
+        )
+        return sum(s.size for s in snap.statistics("filename"))
+
     def _growth(self, fn: Callable[[int], None], n: int) -> float:
         # 📝 An interpreter is a reference cycle (plugins ↔ interpreter,
         #    actor system ↔ children), so it is reclaimed by the cyclic GC,
@@ -605,14 +625,16 @@ class TestLeaks(unittest.TestCase):
         #    in the allocator; with it the true growth is 0 B/cycle.
         fn(50)  # warm caches
         gc.collect()
-        tracemalloc.start()
-        fn(n // 2)
-        gc.collect()
-        half = tracemalloc.get_traced_memory()[0]
-        fn(n)
-        gc.collect()
-        full = tracemalloc.get_traced_memory()[0]
-        tracemalloc.stop()
+        tracemalloc.start(1)
+        try:
+            fn(n // 2)
+            gc.collect()
+            half = self._library_bytes()
+            fn(n)
+            gc.collect()
+            full = self._library_bytes()
+        finally:
+            tracemalloc.stop()
         return float(full - half)
 
     def test_sync_roundtrip_does_not_grow(self) -> None:
