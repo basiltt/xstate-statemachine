@@ -371,16 +371,21 @@ def _build(item: Any, spec: MachineSpec) -> _Built:
         config = _load_config(item, _resolve_path(item, spec.source))
     if spec.strict is not None:
         config["strict"] = bool(spec.strict)
-    if spec.logic is None:
-        logic = stub_logic(config, ran=ran, guards=guards)
-        stubbed = True
-    else:
-        logic = _load_logic(item, spec.logic)
-        stubbed = False
     try:
+        # 📝 `stub_logic` validates the chart too (battle #304), so an
+        #    invalid config now surfaces HERE, not in `create_machine`
+        #    below -- both must become the same usage error.
+        if spec.logic is None:
+            logic = stub_logic(config, ran=ran, guards=guards)
+            stubbed = True
+        else:
+            logic = _load_logic(item, spec.logic)
+            stubbed = False
         machine = create_machine(
             config, logic=logic, strict_config=spec.strict_config
         )
+    except pytest.UsageError:
+        raise  # `_load_logic` already phrased its own
     except Exception as exc:  # noqa: BLE001 -- surface as a usage error
         raise _usage_error(
             item, f"create_machine failed: {type(exc).__name__}: {exc}"
