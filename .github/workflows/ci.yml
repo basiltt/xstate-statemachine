@@ -348,7 +348,12 @@ jobs:
         #    are OUR problem to surface. `--strict` fails on any finding;
         #    `--ignore-vuln` with a justification comment is the only
         #    accepted way past a finding that does not apply.
-        run: python -m pip_audit --strict --progress-spinner off
+        # 📝 `--skip-editable`: the package under test is installed
+        #    editable and, on a release-candidate branch, carries a version
+        #    PyPI has not seen yet -- `--strict` then fails with "not found
+        #    on PyPI" before any dependency is checked. The dependencies
+        #    are the audit's subject; the project itself is this repo.
+        run: python -m pip_audit --strict --skip-editable --progress-spinner off
 
   # ---------------------------------------------------------------------------
   # 🧪 Test Matrix
