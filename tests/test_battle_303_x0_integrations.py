@@ -55,9 +55,19 @@ JSON = {"content-type": "application/json"}
 SECRET = "hunter2"
 
 
+def _importable(module: str) -> bool:
+    # 📝 `find_spec("a.b")` imports package `a` first and raises
+    #    ModuleNotFoundError when it is absent -- which took down the whole
+    #    file at collection on every CI Test cell (no extras installed).
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def requires(*modules: str) -> Any:
     """Skip (with the pip command) unless every module imports."""
-    missing = [m for m in modules if importlib.util.find_spec(m) is None]
+    missing = [m for m in modules if not _importable(m)]
     return pytest.mark.skipif(
         bool(missing),
         reason=f"soft dependency missing: pip install {' '.join(missing)}",
@@ -324,6 +334,7 @@ class _FakeSentry:
         self.captured.append(error)
 
 
+@requires("opentelemetry.sdk")  # the observability package imports it
 class TestX06Sentry(unittest.TestCase):
     def test_tags_and_breadcrumbs_carry_names_only(self) -> None:
         from src.xstate_statemachine.contrib.observability.sentry import (
