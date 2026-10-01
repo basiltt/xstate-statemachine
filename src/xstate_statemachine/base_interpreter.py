@@ -249,8 +249,10 @@ class _SafePlugin:
         # ⚡ Per-hook cache of guarded wrappers (battle #304): building a
         #    `functools.wraps` closure on EVERY dispatch was ~30 % of a
         #    plugin-equipped `send()` under cProfile (4 lookups per event).
-        #    Keyed on the underlying function so a hook rebound on a live
-        #    plugin instance is still picked up on the next call.
+        #    Each entry stores the callable it wrapped and is revalidated
+        #    with `==` on every lookup, so a hook rebound on a live plugin
+        #    (to another function OR another receiver) misses and is
+        #    re-wrapped. Bounded by the engine's fixed set of hook names.
         object.__setattr__(self, "_guards", {})
 
     @property
@@ -277,13 +279,14 @@ class _SafePlugin:
             return lambda *_a, **_k: None
         if not callable(attribute):
             return attribute
-        # 📝 Bound methods are fresh objects on every access, so identity
-        #    is taken on `__func__` (falls back to the callable itself for
-        #    plain functions / callable instances).
-        key = getattr(attribute, "__func__", attribute)
+        # 📝 Bound methods are fresh objects on every access, so the cache
+        #    cannot key on identity. Bound-method `==` compares BOTH the
+        #    function and the receiver, which is exactly the staleness we
+        #    must detect: a hook rebound to another function, OR to the same
+        #    method on a different object (review finding M1), each miss.
         guards = object.__getattribute__(self, "_guards")
         cached = guards.get(name)
-        if cached is not None and cached[0] is key:
+        if cached is not None and cached[0] == attribute:
             return cached[1]
 
         @functools.wraps(attribute)
@@ -328,7 +331,7 @@ class _SafePlugin:
                 return None
             return result
 
-        guards[name] = (key, _guarded)
+        guards[name] = (attribute, _guarded)
         return _guarded
 
     @staticmethod

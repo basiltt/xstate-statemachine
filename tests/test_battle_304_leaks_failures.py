@@ -389,6 +389,54 @@ class TestPerfReport:
         assert safe.on_before_send is safe.on_before_send
         assert safe.on_event_processed is safe.on_event_processed
 
+    def test_guard_cache_misses_when_same_method_is_rebound_to_another_receiver(  # noqa: E501
+        self,
+    ) -> None:
+        """Review finding M1: two bound methods of the SAME function on
+        DIFFERENT objects must not share a cached wrapper."""
+        # Arrange
+        from src.xstate_statemachine.base_interpreter import _SafePlugin
+
+        class Receiver:
+            def __init__(self, tag: int) -> None:
+                self.tag = tag
+
+            def hook(self, *_a: Any) -> int:
+                return self.tag
+
+        plugin = NoopBoth()
+        safe = _SafePlugin(plugin)
+        plugin.on_transition = Receiver(1).hook  # type: ignore[attr-defined]
+        first = safe.on_transition(None)
+
+        # Act: same function, different receiver
+        plugin.on_transition = Receiver(2).hook  # type: ignore[attr-defined]
+        second = safe.on_transition(None)
+
+        # Assert
+        assert (first, second) == (1, 2)
+
+    def test_guard_cache_misses_for_a_fresh_partial(self) -> None:
+        # Arrange
+        import functools
+
+        from src.xstate_statemachine.base_interpreter import _SafePlugin
+
+        def hook(tag: int, *_a: Any) -> int:
+            return tag
+
+        plugin = NoopBoth()
+        safe = _SafePlugin(plugin)
+        plugin.on_transition = functools.partial(hook, 1)  # type: ignore[attr-defined]  # noqa: E501
+        first = safe.on_transition(None)
+
+        # Act
+        plugin.on_transition = functools.partial(hook, 2)  # type: ignore[attr-defined]  # noqa: E501
+        second = safe.on_transition(None)
+
+        # Assert
+        assert (first, second) == (1, 2)
+
 
 # -------------------------------------------------------------------------
 # 🧩 3. Complex scenarios
@@ -632,6 +680,62 @@ class TestComplexScenarios:
         back.start()
         back.send("RESUME")
         assert [t for t, _ in tape2.processed][-1] == "RESUME"
+
+    def test_after_timer_event_has_no_payload_attribute_sync(self) -> None:
+        """📝 Documented in plugins.md: engine-minted `after` events carry
+        `type` but no `payload`; hooks must use `getattr(..., None)`."""
+        # Arrange
+        cfg = {
+            "id": "t",
+            "initial": "a",
+            "states": {"a": {"after": {"10": "b"}}, "b": {}},
+        }
+        seen: List[Tuple[str, bool]] = []
+
+        class Probe(PluginBase):
+            def on_event_processed(self, i: Any, e: Any, r: Any) -> None:
+                seen.append((e.type, hasattr(e, "payload")))
+
+        clock = SimulatedClock()
+        interp = SyncInterpreter(create_machine(cfg), clock=clock).use(Probe())
+        interp.start()
+
+        # Act
+        clock.increment(11)
+        interp.tick()
+        interp.stop()
+
+        # Assert
+        assert seen == [("after.10.t.a", False)]
+
+    @pytest.mark.asyncio
+    async def test_after_timer_event_has_no_payload_attribute_async(
+        self,
+    ) -> None:
+        # Arrange
+        cfg = {
+            "id": "t",
+            "initial": "a",
+            "states": {"a": {"after": {"10": "b"}}, "b": {}},
+        }
+        seen: List[Tuple[str, bool]] = []
+
+        class Probe(PluginBase):
+            def on_event_processed(self, i: Any, e: Any, r: Any) -> None:
+                seen.append((e.type, hasattr(e, "payload")))
+
+        clock = SimulatedClock()
+        interp = await (
+            Interpreter(create_machine(cfg), clock=clock).use(Probe()).start()
+        )
+
+        # Act
+        await clock.increment(11)
+        await asyncio.sleep(0.02)
+        await interp.stop()
+
+        # Assert
+        assert seen == [("after.10.t.a", False)]
 
 
 def _collect_events(node: Any, out: Set[str]) -> None:
