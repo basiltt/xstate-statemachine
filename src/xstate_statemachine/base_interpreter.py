@@ -237,7 +237,7 @@ class _SafePlugin:
         _plugin: The wrapped plugin instance.
     """
 
-    __slots__ = ("_plugin",)
+    __slots__ = ("_plugin", "_guards")
 
     def __init__(self, plugin: Any) -> None:
         """Stores the plugin being wrapped.
@@ -246,6 +246,14 @@ class _SafePlugin:
             plugin (Any): Any object exposing the plugin hooks.
         """
         object.__setattr__(self, "_plugin", plugin)
+        # ⚡ Per-hook cache of guarded wrappers (battle #304): building a
+        #    `functools.wraps` closure on EVERY dispatch was ~30 % of a
+        #    plugin-equipped `send()` under cProfile (4 lookups per event).
+        #    Each entry stores the callable it wrapped and is revalidated
+        #    with `==` on every lookup, so a hook rebound on a live plugin
+        #    (to another function OR another receiver) misses and is
+        #    re-wrapped. Bounded by the engine's fixed set of hook names.
+        object.__setattr__(self, "_guards", {})
 
     @property
     def wrapped(self) -> Any:
@@ -271,6 +279,15 @@ class _SafePlugin:
             return lambda *_a, **_k: None
         if not callable(attribute):
             return attribute
+        # 📝 Bound methods are fresh objects on every access, so the cache
+        #    cannot key on identity. Bound-method `==` compares BOTH the
+        #    function and the receiver, which is exactly the staleness we
+        #    must detect: a hook rebound to another function, OR to the same
+        #    method on a different object (review finding M1), each miss.
+        guards = object.__getattribute__(self, "_guards")
+        cached = guards.get(name)
+        if cached is not None and cached[0] == attribute:
+            return cached[1]
 
         @functools.wraps(attribute)
         def _guarded(*args: Any, **kwargs: Any) -> Any:
@@ -314,6 +331,7 @@ class _SafePlugin:
                 return None
             return result
 
+        guards[name] = (attribute, _guarded)
         return _guarded
 
     @staticmethod

@@ -1080,6 +1080,14 @@ _No unreleased changes yet._
 
 ### Changed
 
+- **Plugin hook dispatch is ~2x cheaper (battle-test #304).** `_SafePlugin`
+  built a fresh `functools.wraps` closure on every hook lookup -- four per
+  event -- which cProfile put at ~30 % of a plugin-equipped `send()`. The
+  guarded wrapper is now cached per hook, keyed on the underlying function
+  so rebinding a hook on a live plugin still takes effect at once. Measured
+  (Windows, 3.14, 10 000 sends): sync 5-plugin overhead 5.74x -> 3.14x of a
+  bare send; async 3.88x -> 1.49x. Behaviour is unchanged.
+
 - **Deprecation targets now follow the policy (#296).** `ErrorEvent.data`
   said "removed in 0.9" and `--style` said "removed in v0.8.0", but both
   still work. Their warnings now name 1.0, the next major, and share the
@@ -1091,6 +1099,16 @@ _No unreleased changes yet._
   `requires-python` and CI have been 3.9 since 0.9).
 
 ### Fixed
+
+- **`stub_logic()` missed composite guards written in `children` form
+  (battle-test #304).** `{"type": "and", "children": ["c1", ...]}` is
+  accepted by the engine, but the stub read names from the raw dict with
+  the CLI extractor, which only knows `params.guards` -- so the leaf guards
+  were unstubbed and the first send raised `ImplementationMissingError`.
+  Names are now read from the parsed `MachineNode`. In the same change an
+  invalid config passed to `stub_logic` raises the exact `InvalidConfigError`
+  `create_machine` would, instead of a misleading `TypeError` from
+  `dict(...)` or a silent empty stub.
 
 - **The nightly perf job went red on a runner with a different CPU model.**
   Hosted `ubuntu-24.04` runners are not pinned to one CPU: a run that

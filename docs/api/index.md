@@ -2463,7 +2463,7 @@ Drive any chart without owning its business logic. A machine that declares actio
 
 | Function | Description |
 |:--|:--|
-| `stub_logic(config_or_machine, *, ran=None, guards=True, service_results=None)` | A `MachineLogic` satisfying every declared name. Actions append their name to `ran`; `guards` is a bool for all or a **live** mapping of name → bool (mutate it between sends to flip a guard); services complete synchronously returning `service_results[name]` (→ `event.data` on `onDone`). |
+| `stub_logic(config_or_machine, *, ran=None, guards=True, service_results=None)` | A `MachineLogic` satisfying every declared name. Actions append their name to `ran`; `guards` is a bool for all or a **live** mapping of name → bool (mutate it between sends to flip a guard); services complete synchronously returning `service_results[name]` (→ `event.data` on `onDone`). A raw config is **built first**, so an invalid one raises the same `InvalidConfigError` as `create_machine`, and every guard form the engine accepts — `params.guards`, `children`, `!name`, `stateIn` — is stubbed. |
 | `logic_names(config_or_machine)` | `(actions, guards, services)` sets the chart references — from the raw JSON (via the CLI extractor) or from a built `MachineNode` (walking entry/exit/transition actions, leaf guards inside composites, invoke `src`). Built-in actions are excluded. |
 
 ```python

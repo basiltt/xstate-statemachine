@@ -17,7 +17,17 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional, Set, Tuple, Union
+from typing import (
+    Any,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    cast,
+)
 
 from .machine_logic import MachineLogic
 from .models import MachineNode
@@ -118,6 +128,27 @@ def stub_logic(
         >>> i = SyncInterpreter(m).start(); i.send("GO"); ran
         ['log']
     """
+    # 🏛️ Names are read from the PARSED machine, not the raw dict. The raw
+    #    extractor only understands the `params.guards` composite shape, so
+    #    `{"type": "and", "children": [...]}` (which the engine accepts)
+    #    left its leaves unstubbed -> ImplementationMissingError at runtime.
+    #    Building also makes an invalid config raise exactly what
+    #    `create_machine` raises, instead of a misleading `TypeError`/
+    #    `ValueError` from `dict(...)` or a silent empty stub.
+    if not isinstance(config_or_machine, MachineNode):
+        from .exceptions import ImplementationMissingError
+        from .factory import create_machine
+
+        # 📝 `create_machine` is typed on `Dict`; a non-mapping (int, list,
+        #    None) must still reach it so the caller gets ITS error, hence
+        #    the cast rather than a `dict(...)` that would raise first.
+        raw: Dict[str, Any] = cast(Dict[str, Any], config_or_machine)
+        try:
+            config_or_machine = create_machine(raw)
+        except ImplementationMissingError:
+            # 📝 Expected: the config is VALID but declares names we are
+            #    about to stub. Every other error is the caller's, verbatim.
+            config_or_machine = MachineNode(dict(raw), MachineLogic())
     action_names, guard_names, service_names = logic_names(config_or_machine)
     record: List[str] = ran if ran is not None else []
     # 📝 Keep the caller's mapping BY REFERENCE (no copy) so flipping a

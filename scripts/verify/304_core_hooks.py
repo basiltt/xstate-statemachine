@@ -122,6 +122,11 @@ def main() -> int:
             "pytest",
             "tests/test_plugin_hooks_send.py",
             "tests/test_plugins.py",
+            # 🛡️ Battle-test files (post-RC programme): concurrency /
+            #    re-entrancy / BaseException / seeded stress, and leaks /
+            #    hook cost / corpus / failure injection on both engines.
+            "tests/test_battle_304_concurrency.py",
+            "tests/test_battle_304_leaks_failures.py",
             "-q",
             "-p",
             "no:cacheprovider",
