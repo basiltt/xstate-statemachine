@@ -168,8 +168,14 @@ def setup_S4():
     interp = SyncInterpreter(machine).start()
 
     def hot(n: int) -> None:
-        for i in range(n):
-            interp.send("TOGGLE1" if i % 2 == 0 else "TOGGLE2")
+        # 📝 #307 audit: two events per iteration, like every other
+        #    adapter's S4 (`toggle1(); toggle2()`). This loop used to send
+        #    ONE event per iteration (alternating), which doubled our S4
+        #    ev/s against everyone else's and inflated the published
+        #    "7.5x parallel" ratio by exactly 2x.
+        for _ in range(n):
+            interp.send("TOGGLE1")
+            interp.send("TOGGLE2")
         assert len(interp.current_state_ids) == 2
 
     return hot

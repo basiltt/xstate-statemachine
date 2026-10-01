@@ -95,7 +95,11 @@ def _build_hierarchical():
             B1 = State(initial=True)
             B2 = State()
 
-        to_b2 = RootA.A2.to(RootB.B2)
+        # 📝 #307 audit: a1 -> b2 directly, two cross-branch events per
+        #    iteration like every other adapter. This used to route via
+        #    A2 (three events per iteration), which understated
+        #    python-statemachine's S3 rate by 1.5x.
+        to_b2 = RootA.A1.to(RootB.B2)
         to_a1 = RootB.B2.to(RootA.A1)
 
     return Hier()
@@ -106,7 +110,6 @@ def setup_S3():
 
     def hot(n: int) -> None:
         for _ in range(n):
-            sm.to_a2()
             sm.to_b2()
             sm.to_a1()
         assert "A1" in sm.current_state_value

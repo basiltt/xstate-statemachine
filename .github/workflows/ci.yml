@@ -624,14 +624,20 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[redis,pydantic,observability]" "pytest>=8.3.0"
 
-      - name: 📏 Compare measured p50s to recorded budgets
-        run: python -m pytest tests/test_perf_budgets.py -q
+      - name: 📏 Gate measured p50s (hardware-relative) and report absolute budgets
+        run: python -m pytest tests/test_perf_budgets.py -q -rs
+
+      - name: 📐 Big-O sweeps (shape checks only)
+        if: always()
+        run: python benchmarks/scaling.py --json-file benchmarks/scaling.json
 
       - name: 📤 Upload raw performance measurements
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: integration-perf
-          path: benchmarks/last_run.json
+          path: |
+            benchmarks/last_run.json
+            benchmarks/scaling.json
           if-no-files-found: warn
           retention-days: 30

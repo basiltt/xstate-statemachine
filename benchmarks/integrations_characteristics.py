@@ -51,7 +51,12 @@ from xstate_statemachine.persistence import (  # noqa: E402
 REPETITIONS = 7
 EVENTS = 10_000
 SNAPSHOTS = 1_000
-ROUND_TRIPS = 100
+# 📝 #307 battle test: was 100. At 100 a whole `persisted_sqlite_*` row
+#    lasted ~0.12 s, so one background I/O burst covered all seven samples
+#    and the median could not reject it (5 local runs: sync CV 47 %, one
+#    run 2.4x high). 500 spreads each row over ~0.6-2 s; a burst now hits
+#    a minority of samples and the p50 discards it.
+ROUND_TRIPS = 500
 MULTIPLIER = 1.25
 ROWS = (
     "import_clean",
@@ -496,9 +501,36 @@ def benchmark_snapshot_restore_async(count: int) -> Dict[str, Any]:
     return _snapshot_async("restore", count)
 
 
-def benchmark_shortest_paths() -> None:
-    """Reserved for the later phase that ships a shortest_paths helper."""
-    return None
+SHORTEST_PATHS_CHART = (
+    ROOT / "tests" / "tests_cli" / "stately_machines" / "savage.json"
+)
+
+
+def benchmark_shortest_paths() -> Optional[Dict[str, Any]]:
+    """Full `shortest_paths` exploration of one corpus chart (#269).
+
+    📝 `savage.json` is the largest Stately chart that both loads (the
+    larger `AtmScenario.json` is rejected by the build-time validator)
+    and explores in milliseconds. `addressFields.json` -- 8 parallel
+    regions, 3,456 configurations, ~54 s -- is a combinatorial-explosion
+    case reported by `benchmarks/scaling.py`, not a budget row.
+    """
+    if not SHORTEST_PATHS_CHART.is_file():
+        return None
+    from xstate_statemachine import shortest_paths
+    from xstate_statemachine.testing_utils import stub_logic
+
+    config = json.loads(SHORTEST_PATHS_CHART.read_text(encoding="utf-8"))
+    machine = create_machine(config, logic=stub_logic(config))
+    configurations = len(shortest_paths(machine))
+    samples = []
+    for _ in range(REPETITIONS):
+        start = time.perf_counter_ns()
+        shortest_paths(machine)
+        samples.append((time.perf_counter_ns() - start) / 1000)
+    return _metric(
+        samples, chart=SHORTEST_PATHS_CHART.name, configurations=configurations
+    )
 
 
 def benchmark_fastapi_router() -> None:
@@ -511,6 +543,22 @@ NO_PROMETHEUS_NOTE = (
     "IdempotencyPlugin + AuditPlugin; install [observability] to include "
     "PrometheusPlugin"
 )
+
+
+def _clean(benchmark: Callable[..., Any], *args: Any) -> Any:
+    """Run one row from a collected heap, GC still off while it times.
+
+    🏛️ #307 battle test: `run()` disables the cyclic GC for the whole run
+    so a collection never lands inside a timed loop -- but that also let
+    every earlier row's cycles (interpreters, event loops, SQLite
+    connections) pile up uncollected. Five local runs showed the four
+    allocation-heavy `persisted_*` rows at 11-25 % CV with one run 25-60 %
+    high on all four at once, while within-run samples stayed within 8 %:
+    a heap-state effect, not timer noise. Collecting *between* rows keeps
+    the timed sections GC-free and gives every row the same starting heap.
+    """
+    gc.collect()
+    return benchmark(*args)
 
 
 def run(quick: bool = False) -> Dict[str, Any]:
@@ -527,7 +575,7 @@ def run(quick: bool = False) -> Dict[str, Any]:
         "snapshot_restore_sync": "v4; historical v3 runtime not present",
         "snapshot_get_async": "v4; historical v3 runtime not present",
         "snapshot_restore_async": "v4; historical v3 runtime not present",
-        "shortest_paths": "shortest_paths is not shipped yet",
+        "shortest_paths": "savage.json (largest loadable corpus chart); no budget until a nightly records one",
         "fastapi_router": "FastAPI router is not shipped yet",
     }
     logger = logging.getLogger("xstate_statemachine")
@@ -537,43 +585,50 @@ def run(quick: bool = False) -> Dict[str, Any]:
     was_enabled = gc.isenabled()
     gc.disable()
     try:
-        results["import_clean"] = benchmark_import_clean()
-        results["import_with_extras"] = benchmark_import_with_extras()
+        results["import_clean"] = _clean(benchmark_import_clean)
+        results["import_with_extras"] = _clean(benchmark_import_with_extras)
         if results["import_with_extras"] is None:
             notes["import_with_extras"] = "install [redis,pydantic] to measure"
-        results["hooks_empty_sync"] = benchmark_hooks_empty_sync(events)
-        results["hooks_empty_async"] = benchmark_hooks_empty_async(events)
+        results["hooks_empty_sync"] = _clean(
+            benchmark_hooks_empty_sync, events
+        )
+        results["hooks_empty_async"] = _clean(
+            benchmark_hooks_empty_async, events
+        )
         for name, benchmark in (
             ("persisted_memory_sync", benchmark_persisted_memory_sync),
             ("persisted_memory_async", benchmark_persisted_memory_async),
             ("persisted_sqlite_sync", benchmark_persisted_sqlite_sync),
             ("persisted_sqlite_async", benchmark_persisted_sqlite_async),
         ):
-            results[name] = benchmark()
+            results[name] = _clean(benchmark)
             engine = "async" if name.endswith("_async") else "sync"
             bare = results[f"hooks_empty_{engine}"]["p50_us"]
             results[name]["over_bare_us"] = round(
                 results[name]["p50_us"] - bare, 3
             )
-        results["plugins_sync"] = benchmark_plugins_sync(events)
-        results["plugins_async"] = benchmark_plugins_async(events)
+        results["plugins_sync"] = _clean(benchmark_plugins_sync, events)
+        results["plugins_async"] = _clean(benchmark_plugins_async, events)
         if importlib.util.find_spec("pydantic") is None:
             results["validator_sync"] = None
             results["validator_async"] = None
             notes["validator_sync"] = "install [pydantic] to measure"
             notes["validator_async"] = "install [pydantic] to measure"
         else:
-            results["validator_sync"] = benchmark_validator_sync(events)
-            results["validator_async"] = benchmark_validator_async(events)
-        results["snapshot_get_sync"] = benchmark_snapshot_get_sync(snapshots)
-        results["snapshot_restore_sync"] = benchmark_snapshot_restore_sync(
-            snapshots
-        )
-        results["snapshot_get_async"] = benchmark_snapshot_get_async(snapshots)
-        results["snapshot_restore_async"] = benchmark_snapshot_restore_async(
-            snapshots
-        )
-        results["shortest_paths"] = benchmark_shortest_paths()
+            results["validator_sync"] = _clean(
+                benchmark_validator_sync, events
+            )
+            results["validator_async"] = _clean(
+                benchmark_validator_async, events
+            )
+        for name, snap in (
+            ("snapshot_get_sync", benchmark_snapshot_get_sync),
+            ("snapshot_restore_sync", benchmark_snapshot_restore_sync),
+            ("snapshot_get_async", benchmark_snapshot_get_async),
+            ("snapshot_restore_async", benchmark_snapshot_restore_async),
+        ):
+            results[name] = _clean(snap, snapshots)
+        results["shortest_paths"] = _clean(benchmark_shortest_paths)
         results["fastapi_router"] = benchmark_fastapi_router()
     finally:
         logger.setLevel(previous_level)
