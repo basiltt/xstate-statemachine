@@ -180,11 +180,21 @@ def verdicts(
 
 
 def failure_message(row: str, verdict: Mapping[str, Any], cpu: str) -> str:
-    """One line naming row, measured, budget and CPU."""
+    """One line naming row, measured, budget and CPU.
+
+    When the row was re-measured to confirm (see the gate test), both
+    readings are shown so a borderline row is diagnosable from the log.
+    """
     budget = verdict["expected_us"] * verdict["tolerance"]
+    confirm = (
+        f" [confirmed: first reading {verdict['first_measured_us']:.3f} us "
+        f"= {verdict['first_relative']:.2f}x, re-measured alone]"
+        if verdict.get("remeasured")
+        else ""
+    )
     return (
         f"{row}: measured p50 {verdict['measured_us']:.3f} us is "
         f"{verdict['relative']:.2f}x the hardware-adjusted reference "
         f"{verdict['expected_us']:.3f} us (budget {budget:.3f} us = "
-        f"x{verdict['tolerance']}) on {cpu}"
+        f"x{verdict['tolerance']}) on {cpu}{confirm}"
     )

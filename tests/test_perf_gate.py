@@ -116,6 +116,62 @@ def test_failure_message_names_row_measured_budget_and_cpu() -> None:
     assert message.endswith(f"on {cpu}")
 
 
+def test_blind_spot_boundary_is_half_the_core_rows() -> None:
+    """📝 Documented limit (independent review): the median absorbs a
+    regression that hits ≥ 7 of the 14 core rows at 1.5x -- and already
+    dilutes one that hits 5-6 (some of them pass). Pin both so a change
+    to the row set or the statistic is noticed. Measured on all three
+    recorded CPUs: k=7 catches 0; k=5-6 catches 3-6 of them."""
+    from benchmarks.perf_gate import speed_rows
+
+    core = speed_rows(REFERENCE)
+    assert len(core) == 14
+    for cpu, profile in PROFILES.items():
+        order = sorted(core, key=lambda r: profile[r] / REFERENCE[r])  # type: ignore[operator]
+
+        def caught(k: int) -> int:
+            regressed = dict(profile)
+            for row in order[:k]:
+                regressed[row] *= 1.5  # type: ignore[operator]
+            rows = verdicts(regressed, REFERENCE)["rows"]
+            return sum(rows[r]["status"] == "fail" for r in order[:k])
+
+        # One lone row is always caught (the common case).
+        assert caught(1) == 1, cpu
+        # Half the rows together: the median moves with them, none caught.
+        assert caught(7) == 0, cpu
+        # In between the gate is partial, never silent.
+        assert 1 <= caught(5) <= 5, cpu
+
+
+def test_first_dispatch_profile_fails_one_row_then_confirms_pass() -> None:
+    """🎯 The real first dispatch (run 36929316771, EPYC 9V74): speed factor
+    0.984, `persisted_sqlite_async` 422.0 us -> relative 1.269, all other
+    rows 0.9-1.15x. The gate must flag that row and nothing else; the
+    confirm step (`tests/test_perf_budgets.py::_remeasure`) then clears
+    it if a second reading is inside tolerance."""
+    from benchmarks.perf_gate import hardware_scale
+
+    cpu = "AMD EPYC 9V74 80-Core Processor"
+    first = {r: v * 0.984 for r, v in PROFILES[cpu].items() if v}
+    first["persisted_sqlite_async"] = 422.006
+    result = verdicts(first, REFERENCE)
+    rows = result["rows"]
+    assert result["speed_factor"] == pytest.approx(0.984, abs=0.01)
+    assert rows["persisted_sqlite_async"]["status"] == "fail"
+    assert rows["persisted_sqlite_async"]["relative"] == pytest.approx(
+        1.269, abs=0.02
+    )
+    others = [v for r, v in rows.items() if r != "persisted_sqlite_async"]
+    assert all(v["status"] != "fail" for v in others)
+    # A second reading at the historical 9V74 value is inside tolerance.
+    second = PROFILES[cpu]["persisted_sqlite_async"]
+    expected = REFERENCE["persisted_sqlite_async"] * hardware_scale(  # type: ignore[operator]
+        "persisted_sqlite_async", result["speed_factor"]
+    )
+    assert second / expected < 1.25  # type: ignore[operator]
+
+
 def test_rows_without_reference_are_reported_not_gated() -> None:
     # Act
     result = verdicts(PROFILES[sorted(PROFILES)[0]], REFERENCE)
@@ -186,9 +242,15 @@ def _previous_budgets() -> Dict[str, Any]:
 
 
 def _increase_is_justified(row: str) -> bool:
-    """An increase must carry a note naming the perf run it came from."""
+    """An increase must carry a note naming the perf run it came from.
+
+    📝 Review L: "perf run on 3.13" used to count. A GitHub Actions run
+    id is an 8+-digit number; require exactly that.
+    """
+    import re
+
     note = str(BUDGETS["notes"].get(row, ""))
-    return "perf run" in note and any(ch.isdigit() for ch in note)
+    return re.search(r"perf run \d{8,}", note) is not None
 
 
 def test_baselines_only_go_down_unless_a_note_names_a_perf_run() -> None:

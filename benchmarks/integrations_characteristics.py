@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -642,6 +642,56 @@ def run(quick: bool = False) -> Dict[str, Any]:
         "results": {row: results[row] for row in ROWS},
         "notes": notes,
     }
+
+
+def measure_row(row: str, quick: bool = False) -> Dict[str, Any]:
+    """One row, exactly as `run()` measures it (same args, GC off, clean heap).
+
+    🎯 Used by the gate to CONFIRM a failing row before going red: a
+    genuine regression reproduces on a second reading, an I/O burst on a
+    shared runner does not. Single-row only; the `over_bare_us` /
+    `overhead_pct` cross-row fields are not recomputed.
+    """
+    events = 1_000 if quick else EVENTS
+    snapshots = 100 if quick else SNAPSHOTS
+    dispatch: Dict[str, Tuple[Callable[..., Any], Tuple[Any, ...]]] = {
+        "import_clean": (benchmark_import_clean, ()),
+        "import_with_extras": (benchmark_import_with_extras, ()),
+        "hooks_empty_sync": (benchmark_hooks_empty_sync, (events,)),
+        "hooks_empty_async": (benchmark_hooks_empty_async, (events,)),
+        "persisted_memory_sync": (benchmark_persisted_memory_sync, ()),
+        "persisted_memory_async": (benchmark_persisted_memory_async, ()),
+        "persisted_sqlite_sync": (benchmark_persisted_sqlite_sync, ()),
+        "persisted_sqlite_async": (benchmark_persisted_sqlite_async, ()),
+        "plugins_sync": (benchmark_plugins_sync, (events,)),
+        "plugins_async": (benchmark_plugins_async, (events,)),
+        "validator_sync": (benchmark_validator_sync, (events,)),
+        "validator_async": (benchmark_validator_async, (events,)),
+        "snapshot_get_sync": (benchmark_snapshot_get_sync, (snapshots,)),
+        "snapshot_restore_sync": (
+            benchmark_snapshot_restore_sync,
+            (snapshots,),
+        ),
+        "snapshot_get_async": (benchmark_snapshot_get_async, (snapshots,)),
+        "snapshot_restore_async": (
+            benchmark_snapshot_restore_async,
+            (snapshots,),
+        ),
+        "shortest_paths": (benchmark_shortest_paths, ()),
+    }
+    if row not in dispatch:
+        raise KeyError(f"{row!r} is not a re-measurable row")
+    fn, args = dispatch[row]
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        result = _clean(fn, *args)
+    finally:
+        if was_enabled:
+            gc.enable()
+    if result is None:
+        raise RuntimeError(f"{row}: not measurable in this environment")
+    return result
 
 
 def record_baseline(report: Dict[str, Any]) -> Dict[str, Any]:

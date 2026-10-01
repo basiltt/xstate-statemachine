@@ -234,16 +234,26 @@ Windows a cold import is heavier relative to a send), so those rows skip with a
 reason. The absolute ×1.25 table above is still checked, as a secondary report,
 when the runner *is* the 9V74.
 
-> **The one blind spot, stated plainly.** A regression that slows *every* row by
-> the same factor — something in the shared `send()` path that every integration
-> goes through — is indistinguishable from a slower CPU and the relative gate
-> absorbs it into the speed factor. That is why the absolute table is kept and
-> still enforced whenever the nightly lands on the 9V74 (roughly one night in
-> three), and why `last_run.json` is uploaded every night: the speed factor
-> itself is in it, and a speed factor that drifts upward across runs on the
-> *same* CPU model is the signal a uniform regression leaves. Row-local
-> regressions — the common kind, one integration's hot path — are caught every
-> night on every CPU.
+> **The blind spot, stated plainly.** The speed factor is a median over 14 core
+> rows, so a regression that hits **7 or more of them** at once (1.5×, or 8+ at
+> 2×) moves the median with it and is absorbed — indistinguishable from a slower
+> CPU. A regression in **one** row is caught on every recorded CPU; 5–6 rows
+> together are caught partially (3–6 of them). `tests/test_perf_gate.py::
+> test_blind_spot_boundary_is_half_the_core_rows` pins those numbers. Something
+> in the shared `send()` path that every integration goes through is exactly the
+> kind of change that could hit half the rows, which is why the absolute table is
+> kept and still enforced whenever the nightly lands on the 9V74 (roughly one
+> night in three), and why `last_run.json` is uploaded every night with the speed
+> factor in it: a speed factor that drifts upward across runs on the *same* CPU
+> model is the signal a broad regression leaves.
+>
+> **Noise, handled by confirming.** The very first dispatch of this gate landed
+> on the 9V74 and read one row (`persisted_sqlite_async`) at 1.27× with every
+> other row at 0.9–1.15× — an I/O burst on a shared runner, not a regression (the
+> same row sits at 0.94–1.07× on all three recorded CPUs). A genuine regression
+> reproduces; noise does not. So a failing row is **re-measured once**, alone, at
+> the speed factor the full run already established, and the nightly goes red
+> only if the second reading is over budget too. Both readings are in the message.
 
 Two alternatives were rejected:
 

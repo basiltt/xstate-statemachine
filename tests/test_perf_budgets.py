@@ -37,6 +37,7 @@ from benchmarks.integrations_characteristics import (  # noqa: E402
 )
 from benchmarks.perf_gate import (  # noqa: E402
     IMPORT_SPEED_EXPONENT,
+    hardware_scale,
     RELATIVE_TOLERANCE,
     failure_message,
     verdicts,
@@ -128,9 +129,46 @@ def test_relative_budget(
     if verdict["status"] == "not_measured":
         _require_extras(row)
         pytest.fail(f"{row}: not measured although it has a reference")
+    if verdict["status"] == "fail":
+        # 🎯 Confirm before going red (independent review, finding M1).
+        #    The very first dispatch of this gate landed on the reference
+        #    CPU and read ONE row (`persisted_sqlite_async`) at 1.27x with
+        #    every other row at 0.9-1.15x -- an I/O burst on a shared
+        #    runner, not a regression (the same row sat at 0.94-1.07x on
+        #    all three recorded CPUs). A genuine regression reproduces;
+        #    noise does not. So re-measure JUST that row, at the speed
+        #    factor already established by the full run, and fail only if
+        #    the re-measurement is over budget too. Both readings go in
+        #    the message so a borderline row is visible even when green.
+        verdict = _remeasure(row, measured, budgets)
+        measured["gate"]["rows"][row] = verdict
     assert verdict["status"] == "pass", failure_message(
         row, verdict, measured["runner"]["cpu"]
     )
+
+
+def _remeasure(
+    row: str, measured: Dict[str, Any], budgets: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Second reading of one row against the run's own speed factor."""
+    from benchmarks.integrations_characteristics import measure_row
+
+    first = measured["gate"]["rows"][row]
+    second_p50 = measure_row(row)["p50_us"]
+    factor = measured["gate"]["speed_factor"]
+    reference = budgets["gate"]["reference_us"][row]
+    expected = reference * hardware_scale(row, factor)
+    relative = second_p50 / expected
+    confirmed = relative > RELATIVE_TOLERANCE
+    return {
+        **first,
+        "status": "fail" if confirmed else "pass",
+        "first_measured_us": first["measured_us"],
+        "first_relative": first["relative"],
+        "measured_us": round(second_p50, 3),
+        "relative": round(relative, 3),
+        "remeasured": True,
+    }
 
 
 @pytest.mark.parametrize("row", ROWS)
