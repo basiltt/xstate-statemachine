@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import gc
-import importlib
 import logging
+import pathlib
 import subprocess
 import sys
 import threading
@@ -319,6 +319,43 @@ class TestMailboxBattle(_QuietLogs):
         self.assertEqual(rec.dropped, ["not_running"])
         self.assertEqual(len(i._mailbox), 0)
 
+    def test_finishing_action_posting_to_own_mailbox_is_reported_at_once(
+        self,
+    ) -> None:
+        # 🐛 DEFECT (review M1, fixed): an action on the transition INTO a
+        #    final state that calls `send_threadsafe` on its own interpreter
+        #    enqueued (status was still "running"); `stop()` then skipped
+        #    the purge for a done machine, so the event was never reported
+        #    unless someone later called send()/tick() on the dead machine.
+        # Arrange
+        rec = Recorder()
+        cfg = {
+            "id": "fin3",
+            "initial": "a",
+            "states": {
+                "a": {"on": {"F": {"target": "z", "actions": "post"}}},
+                "z": {"type": "final"},
+            },
+        }
+
+        def post(i: Any, c: Any, e: Any, a: Any) -> None:
+            i.send_threadsafe("LATE")
+
+        i = SyncInterpreter(
+            create_machine(cfg, logic=MachineLogic(actions={"post": post}))
+        ).use(rec)
+        i.start()
+
+        # Act: finishing the machine is enough -- no stop() needed
+        i.send("F")
+
+        # Assert
+        self.assertEqual(i.status, "done")
+        self.assertEqual(rec.dropped, ["not_running"])
+        self.assertEqual(len(i._mailbox), 0)
+        i.stop()  # idempotent; nothing more to report
+        self.assertEqual(rec.dropped, ["not_running"])
+
     def test_send_threadsafe_before_start_delivered_on_first_pump(
         self,
     ) -> None:
@@ -521,6 +558,9 @@ class TestGlobalRegistryBattle(_QuietLogs):
                 unregister_global(p)
 
     def test_import_does_not_populate_registry(self) -> None:
+        # 📝 Review M2: pin cwd to the repo root so `src.` resolves no
+        #    matter where pytest was launched from.
+        root = pathlib.Path(__file__).resolve().parents[1]
         code = (
             "import src.xstate_statemachine as x;"
             "print(x.global_plugins() == [])"
@@ -530,9 +570,9 @@ class TestGlobalRegistryBattle(_QuietLogs):
             capture_output=True,
             text=True,
             timeout=60,
+            cwd=str(root),
         )
         self.assertEqual(out.stdout.strip(), "True", out.stderr)
-        importlib.import_module("src.xstate_statemachine.plugins")
 
     def test_concurrent_register_and_construct_snapshots(self) -> None:
         # Arrange

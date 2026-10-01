@@ -567,11 +567,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    reported as dropped) or sees "stopped" -- never neither.
         with self._mailbox_lock:
             self.status = "stopped"
-            orphaned = list(self._mailbox)
-            self._mailbox.clear()
-        for ev in orphaned:
-            for plugin in self._plugins:
-                plugin.on_event_dropped(self, ev, "stopped")
+        self._purge_mailbox("stopped")
         self._teardown()
 
         # 4️⃣ Notify plugins about the stop event
@@ -960,7 +956,30 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     def _schedule_teardown(self) -> None:
         # 🧵 Sync engine: no loop to defer to, and `_complete()` runs at the
         #    end of a macrostep, so tearing down inline is safe.
+        # 🔔 Battle #305 (review M1): `status` is already "done"/"error"
+        #    here, so a racing `send_threadsafe()` is refused from now on;
+        #    anything that landed BEFORE the flip (a producer that read
+        #    "running", or the finishing action itself posting to its own
+        #    mailbox) is reported now instead of waiting for a `stop()`
+        #    that may never come.
+        self._purge_mailbox("not_running")
         self._teardown()
+
+    def _purge_mailbox(self, reason: str) -> None:
+        """Report and discard every mailbox event; never run them.
+
+        The one place the mailbox is emptied without processing, so the
+        "a producer's event is always either run or reported" rule has a
+        single implementation. Takes the lock so a `send_threadsafe()`
+        racing the terminal transition either lands before the purge and
+        is reported, or sees the non-running status and is refused.
+        """
+        with self._mailbox_lock:
+            orphaned = list(self._mailbox)
+            self._mailbox.clear()
+        for ev in orphaned:
+            for plugin in self._plugins:
+                plugin.on_event_dropped(self, ev, reason)
 
     def _teardown(self) -> None:
         """Release everything except `status` / `output` / `error` / `context`.
