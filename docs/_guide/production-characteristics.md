@@ -144,12 +144,8 @@ package import *inside* a fresh subprocess, excluding Python startup.
 > CPython 3.13.15, `AMD EPYC 9V74 80-Core Processor`, 4 logical CPUs — the nightly
 > `perf` job's runner, recorded from its own `last_run.json` (run
 > [36429782133](https://github.com/basiltt/xstate-statemachine/actions/runs/36429782133)).
-> Hosted runners are not pinned to one CPU model: a run on the same label a few
-> minutes earlier landed on different silicon and measured the bare sync send at
-> 26.9 µs instead of 15.9 µs. A budget is only meaningful on the hardware it was
-> recorded on, so the nightly **skips** every row when the runner's CPU model
-> differs from the reference (the skip reason names both) and asserts only on a
-> matching model — a red nightly is therefore always a same-hardware regression.
+> These absolute numbers are a *report*; what the nightly gates on is described
+> under [How the budgets gate](#how-the-budgets-gate) below.
 
 | Measurement | Baseline p50 | Budget (×1.25) | What it includes |
 |:--|--:|--:|:--|
@@ -169,7 +165,7 @@ package import *inside* a fresh subprocess, excluding Python startup.
 | Snapshot v4 `from_snapshot()` (sync) | 23.285 µs | 29.106 µs | 50-state machine |
 | Snapshot v4 `get_snapshot()` (async) | 12.450 µs | 15.562 µs | 50-state machine |
 | Snapshot v4 `from_snapshot()` (async) | 24.365 µs | 30.456 µs | 50-state machine |
-| `shortest_paths` (largest corpus chart) | — | `null` | Helper not shipped yet |
+| `shortest_paths` (`savage.json`) | — | `null` | Shipped in #269; measured nightly, budget recorded from its first artifact |
 | FastAPI `POST /send` | — | `null` | Router not shipped yet |
 
 Against the aspirational figures in #307: `persisted()` on `MemoryStore` costs
@@ -197,14 +193,109 @@ explains most of the difference — the overhead ratio against the bare keyed
 send (538 % / 312 %) is essentially unchanged from the original recording. The
 other rows were deliberately **not** re-baselined here.
 
-The nightly-only `perf` job runs `XSM_PERF=1` on the reference runner and
-compares each p50 against [`benchmarks/budgets.json`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/budgets.json).
-The budget is the recorded baseline × 1.25; a change to a budget requires a
-reviewed edit to that file **and** a changelog note. The default test job
-never asserts wall time: its import-time guard checks only that core imports
-no contrib or third-party modules. Nightly raw measurements are uploaded as
-`benchmarks/last_run.json`; rows with a `null` budget are skipped until the
-owning integration ships.
+### How the budgets gate
+
+Hosted `ubuntu-24.04` runners are not pinned to one CPU model. Three consecutive
+nightlies on identical code landed on three different ones:
+
+| Nightly | CPU | Bare sync send | `persisted()` + `MemoryStore` | Rows the old gate checked |
+|:--|:--|--:|--:|--:|
+| 2026-09-29 | AMD EPYC 9V74 | 15.9 µs | 87.1 µs | 17 of 18 |
+| 2026-09-30 ([36698492040](https://github.com/basiltt/xstate-statemachine/actions/runs/36698492040)) | AMD EPYC 7763 | 32.4 µs | 158.3 µs | **0** (all skipped) |
+| 2026-10-01 ([36848036167](https://github.com/basiltt/xstate-statemachine/actions/runs/36848036167)) | AMD EPYC 9V45 | 13.2 µs | 74.9 µs | **0** (all skipped) |
+
+That is a 2.4× spread from hardware alone. The old gate compared absolute
+microseconds and skipped every row on a CPU other than the one the baseline was
+recorded on, so it was enforced one night in three.
+
+The gate is now **relative**. Each nightly computes its own *speed factor*: the
+median, over the 14 non-import rows, of `measured / reference`. A machine that is
+uniformly twice as slow has a speed factor of exactly 2. Each row is then compared
+with `reference × speed factor` and fails above **×1.25**. A regression in one row
+barely moves the median, so it shows up almost in full in that row. Cold
+`import_*` rows (filesystem and unmarshalling more than bytecode) track CPU
+speed only as its square root (fitted exponent 0.46–0.48 across the three
+models), so they are compared with `reference × speed factor ** 0.5`.
+
+The `gate.reference_us` table in `budgets.json` is fitted from all three nightly
+profiles (also stored there as `cpu_baselines`) and expressed in microseconds on
+the 9V74. On that data:
+
+- each of the three CPUs is within 1.14× of its prediction on every row;
+- a uniform 0.5×–2.4× hardware shift never fails a row;
+- a 1.5× regression in any single row fails on every one of the three profiles,
+  even on a 2× slower machine.
+
+`tests/test_perf_gate.py` pins all three properties in the default (untimed) job.
+A failure names the row, the measured p50, the hardware-adjusted budget and the
+CPU. The relative reference applies to the nightly's platform (Linux, CPython
+3.13). On another OS or Python minor, the shape of the profile differs (on
+Windows a cold import is heavier relative to a send), so those rows skip with a
+reason. The absolute ×1.25 table above is still checked, as a secondary report,
+when the runner *is* the 9V74.
+
+> **The blind spot, stated plainly.** The speed factor is a median over 14 core
+> rows, so a regression that hits **7 or more of them** at once (1.5×, or 8+ at
+> 2×) moves the median with it and is absorbed — indistinguishable from a slower
+> CPU. A regression in **one** row is caught on every recorded CPU; 5–6 rows
+> together are caught partially (3–6 of them). `tests/test_perf_gate.py::
+> test_blind_spot_boundary_is_half_the_core_rows` pins those numbers. Something
+> in the shared `send()` path that every integration goes through is exactly the
+> kind of change that could hit half the rows, which is why the absolute table is
+> kept and still enforced whenever the nightly lands on the 9V74 (roughly one
+> night in three), and why `last_run.json` is uploaded every night with the speed
+> factor in it: a speed factor that drifts upward across runs on the *same* CPU
+> model is the signal a broad regression leaves.
+>
+> **Noise, handled by confirming.** The very first dispatch of this gate landed
+> on the 9V74 and read one row (`persisted_sqlite_async`) at 1.27× with every
+> other row at 0.9–1.15× — an I/O burst on a shared runner, not a regression (the
+> same row sits at 0.94–1.07× on all three recorded CPUs). A genuine regression
+> reproduces; noise does not. So a failing row is **re-measured once**, alone, at
+> the speed factor the full run already established, and the nightly goes red
+> only if the second reading is over budget too. Both readings are in the message.
+
+Two alternatives were rejected:
+
+- A **ratio to one reference row** (every row ÷ bare send) still spread 1.5–1.7×
+  across the three CPUs, and one noisy denominator moves every verdict.
+- A **per-CPU baseline table** cannot gate a CPU until someone commits its first
+  run. The same 9V74 also once measured every row 25–30 % over its own baseline.
+
+A **calibration probe** (a fixed pure-Python loop) was also rejected: it does
+not exercise the allocation, asyncio and SQLite mix the rows depend on.
+
+A budget change is a reviewed edit to `budgets.json` with a changelog note.
+`tests/test_perf_gate.py` fails if a baseline or reference goes **up** relative
+to the previous commit unless that row's `notes` entry names the perf run it was
+re-recorded from, and it requires a note for every row without a budget. The
+default test job never asserts wall time. Its import-time guard checks only that
+core imports no contrib or third-party modules.
+
+The nightly also runs `benchmarks/scaling.py`, a set of report-only big-O sweeps.
+They assert only the *shape* of each curve, never microseconds. Both
+`last_run.json` and `scaling.json` are uploaded as the `integration-perf`
+artifact. On the development laptop (best of 5, µs per operation):
+
+| Sweep | Sizes | Cost | Check |
+|:--|:--|:--|:--|
+| `send` vs total states | 1 / 50 / 500 | 7.2 / 12.7 / 12.8 | flat (500 ÷ 1 < 3) |
+| `send` vs nesting depth | 1 / 5 / 20 | 12.7 / 17.2 / 28.5 | sub-linear in depth |
+| `send` vs parallel regions | 1 / 4 / 16 | 14.3 / 24.3 / 53.9 | sub-linear in regions |
+| `send` vs context keys | 1 / 100 / 10 000 | 12.4 / 12.4 / 12.8 | flat |
+| `get_snapshot` vs context keys | 1 / 100 / 10 000 | 11.9 / 36.7 / 2 869 | linear (10 000 ÷ 100 = 78) |
+| `from_snapshot` vs context keys | 1 / 100 / 10 000 | 29.3 / 66.7 / 4 219 | linear (63) |
+| `get_snapshot` vs states | 1 / 50 / 500 | 12.4 / 12.5 / 12.5 | flat |
+| `from_snapshot` vs states | 1 / 50 / 500 | 33.3 / 33.2 / 47.0 | flat-ish (1.4) |
+| `persisted()` vs instances in `MemoryStore` | 1 / 100 / 10 000 | 99.8 / 94.0 / 98.6 | flat |
+
+One super-linear finding: `shortest_paths` replays each path prefix from a fresh
+interpreter for every candidate step. Its cost per configuration therefore grows
+with path length: on the corpus's `addressFields.json` (8 parallel regions),
+2.3 → 3.3 → 4.8 → 6.5 ms per configuration at depth 3 → 6, and ~54 s for the full
+3,456-configuration exploration. The `shortest_paths` budget row uses
+`savage.json` (largest loadable chart, ~24 ms), and the explosive chart is
+tracked in the sweep.
 
 ---
 

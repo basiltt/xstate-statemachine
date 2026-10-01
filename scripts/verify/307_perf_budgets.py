@@ -31,10 +31,12 @@ def main() -> int:
         REPETITIONS,
         ROWS,
     )
+    from benchmarks.perf_gate import verdicts
 
     assert report["quick"] and set(report["results"]) == set(ROWS)
-    assert report["results"]["shortest_paths"] is None
     assert report["results"]["fastapi_router"] is None
+    shortest = report["results"]["shortest_paths"]
+    assert shortest is not None and shortest["configurations"] > 0
     for row, value in report["results"].items():
         if value is not None:
             assert value["n"] == REPETITIONS and value["p50_us"] > 0, row
@@ -49,12 +51,37 @@ def main() -> int:
             expected = round(value["baseline_p50_us"] * MULTIPLIER, 3)
             assert value["budget_p50_us"] == expected, row
 
+    # 📝 The relative gate must produce a verdict for this (quick, local)
+    #    run -- a broken speed factor would raise here.
+    gate = verdicts(
+        {
+            r: (v["p50_us"] if v else None)
+            for r, v in report["results"].items()
+        },
+        budgets["gate"]["reference_us"],
+    )
+    assert gate["speed_factor"] > 0
+    print(
+        f"relative gate speed factor on this machine: {gate['speed_factor']}"
+    )
+
+    scaling = subprocess.run(
+        [sys.executable, str(ROOT / "benchmarks" / "scaling.py"), "--quick"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    print(scaling.stdout)
+    assert scaling.returncode == 0, scaling.stdout + scaling.stderr
+
     subprocess.run(
         [
             sys.executable,
             "-m",
             "pytest",
             "tests/test_import_surface.py",
+            "tests/test_perf_gate.py",
             "tests/test_perf_budgets.py",
             "-q",
             "-p",

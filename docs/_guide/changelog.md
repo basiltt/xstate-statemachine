@@ -1086,6 +1086,27 @@ _No unreleased changes yet._
 
 ### Changed
 
+- **Performance budgets now gate on every nightly, whatever the CPU
+  (battle-test #307).** Three consecutive nightlies landed on three CPU
+  models (AMD EPYC 9V74 / 7763 / 9V45, up to 2.4x apart on identical
+  code) and the absolute-microsecond gate skipped every row on two of
+  them -- it was enforced one night in three. Each row is now compared
+  with a cross-CPU reference scaled by the run's own *speed factor* (the
+  median of measured/reference over the core rows) and fails above x1.25;
+  cold `import_*` rows scale as the square root of that factor. The
+  absolute table stays as a same-CPU report (and as the only catch for a
+  regression that slows *every* row equally -- stated on the Production
+  Characteristics page). `tests/test_perf_gate.py` pins, untimed, that
+  every recorded CPU passes, a uniform 0.5-2.4x shift passes and a 1.5x
+  single-row regression fails. New report-only `benchmarks/scaling.py`
+  big-O sweeps run nightly and upload `scaling.json`; finding:
+  `shortest_paths` cost per configuration grows with path depth
+  (2.3 -> 6.5 ms from depth 3 to 6 on an 8-region chart). Harness noise
+  fixed: `persisted_*` rows had a CV up to 47 % (GC debt between rows,
+  SQLite rows too short); now under 7 %. The Coverage job fetches depth 2
+  so the budget ratchet (baselines only go down unless a note names a perf
+  run) is enforced on every PR.
+
 - **Idempotency inbox scopes are escaped (battle-test #303).** Scope parts
   (`principal`, `machine.id`, `instance_key`) now escape `%` and `/` so the
   join is injective. Parts without either character are byte-identical to
@@ -1127,6 +1148,17 @@ _No unreleased changes yet._
   `requires-python` and CI have been 3.9 since 0.9).
 
 ### Fixed
+
+- **Competitor benchmark numbers were not like-for-like (battle-test
+  #307).** Our parallel-regions adapter sent one event per iteration where
+  every other adapter sent two, inflating the published "7.5x" over
+  `transitions` to exactly double its true value -- it is **3.8x**.
+  python-statemachine's nested adapter sent three events per iteration
+  where the others send two, understating it by 1.5x -- our "10.3x" is
+  **7.0x**. Construction and 1 000-instance rows, published as 1.19x and
+  1.10x wins, are a **tie** within +/-3 % over six interleaved runs on
+  0.11.0. README, landing page, `benchmarks/competitors/README.md` and
+  `results.json` carry the corrected numbers.
 
 - **Security (battle-test #303, X0 baseline).** An adversarial pass over
   every X0 row, both engines, with the attacks pinned as tests in

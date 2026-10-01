@@ -1154,23 +1154,23 @@ you assemble yourself.
 ### Speed
 
 Same machine shape, each library through its own idiomatic API, all measured in one session
-on 0.9.0 (Python 3.14, median of 7 runs, GC disabled, setup excluded). Events per second;
+on 0.11.0 (2026-10-02, Python 3.14, median of 7 runs, GC disabled, setup excluded). Events per second;
 **bold** is fastest in the row.
 
 | Scenario | **xstate-statemachine** (sync) | transitions 0.9.3 | python-statemachine 3.2.1 | sismic 1.6.11 |
 |:--|--:|--:|--:|--:|
-| Flat toggle | 82,562 | **173,287** | 11,850 | 16,155 |
-| 3-level nested | **34,023** | 10,485 | 3,302 | 6,248 |
-| Parallel regions | **56,239** | 7,468 | 4,751 | 5,930 |
-| Delayed transitions (timers/s) | **11,609** | 72 | 4,664 | 6,805 |
-| Construction (machines/s) | **12,442** | 10,475 | 1,813 | 362 |
-| 1,000 instances (inst/s) | **51,923** | 47,326 | 4,852 | 9,307 |
+| Flat toggle | 77,354 | **165,649** | 11,413 | 15,630 |
+| 3-level nested | **31,762** | 10,107 | 4,554 | 6,048 |
+| Parallel regions | **26,960** | 7,166 | 4,602 | 5,692 |
+| Delayed transitions (timers/s) | **9,151** | 71 | 4,735 | 6,654 |
+| Construction (machines/s) | **9,600** | **9,850** | 1,802 | 349 |
+| 1,000 instances (inst/s) | **43,836** | **44,658** | 4,730 | 9,096 |
 
 `transitions` is a transition table, not a statechart engine, and wins the *flat* scenario
 by ~2.1×. The moment states nest or run in parallel it has to emulate the SCXML algorithm and
-this library is 3.2–7.5× faster than everything else. It is also the fastest of the four to
-construct (1.19× `transitions`) and to fan out to 1,000 instances (1.10×), while still running
-the full build-time validator on every `create_machine()`. Full table, method and caveats:
+this library is 3.1–3.8× faster than the next library. Construction and fanning out to
+1,000 instances are a **tie** with `transitions` (within ±3 % across six interleaved runs) —
+while still running the full build-time validator on every `create_machine()`. Full table, method and caveats:
 [`benchmarks/competitors/`](benchmarks/competitors/README.md). The production numbers (throughput budget, `after` lateness under load) come from [`benchmarks/production_characteristics.py`](benchmarks/production_characteristics.py); run it with `--json` on your own hardware to gate CI on your figures.
 
 ### When *not* to use this
