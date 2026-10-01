@@ -141,6 +141,41 @@ def _scope_part(part: str) -> str:
     return part.replace("%", "%25").replace("/", "%2F")
 
 
+def validate_principal(principal: Any) -> str:
+    """The one rule for "who is this caller" (X0.1 / X0.2, battle #303).
+
+    🔐 A principal must be a non-empty ``str``. ``None``, ``""``, bytes,
+    ints and -- the review finding -- the *string* ``"None"`` that a
+    careless ``str(None)`` produces are all refused, because every one
+    of them would pool unauthenticated callers into a single shared
+    idempotency scope and let them replay each other's receipts. Every
+    web adapter routes its principal through here BEFORE building the
+    plugin, so the rule is enforced once, not re-derived per framework.
+
+    Raises:
+        ValueError: when the value cannot identify one caller.
+    """
+    if not isinstance(principal, str) or not principal:
+        raise ValueError(
+            "principal must be a non-empty str identifying the "
+            "authenticated caller; got "
+            f"{type(principal).__name__}"
+        )
+    if principal in _NOT_A_PRINCIPAL:
+        raise ValueError(
+            f"principal {principal!r} is a placeholder, not an identity; "
+            "refuse unauthenticated callers before they reach the inbox"
+        )
+    return principal
+
+
+#: Strings that are *renderings of nothing*, never an identity. Matched
+#: exactly -- `str(None)`, a JSON `null` and the DRF "anonymous" sentinel.
+#: A real user literally named "None" is a price worth paying to make a
+#: careless `str(principal)` harmless.
+_NOT_A_PRINCIPAL = frozenset({"None", "null", "anonymous"})
+
+
 def _default_instance_key(interpreter: Any) -> str:
     """The store key when `persisted()` / `load_interpreter()` set one,
     else the interpreter id (an in-memory machine)."""
@@ -497,12 +532,12 @@ class IdempotencyPlugin(PluginBase[Any]):
 
     # -- scope --------------------------------------------------------------------
     def scope_for(self, interpreter: Any, event: Any) -> str:
-        principal = self.principal(event)
         # 🔐 #303 battle (X0.1/X0.2): closed by default. A principal of
-        #    None / "" used to become the shared scope "None" / "" -- every
+        #    None / "" / "None" used to become a shared scope -- every
         #    unauthenticated caller pooled into one tenant's receipts.
-        if not isinstance(principal, str) or not principal:
-            raise ValueError("principal must be a non-empty str")
+        #    `validate_principal` is the single rule; the web adapters
+        #    call it too, before this plugin is even built.
+        principal = validate_principal(self.principal(event))
         # 🔐 Escape each part so the join is injective: unescaped,
         #    principal "a/m" + key "k" equalled principal "a" + key "m/k".
         #    Parts without '%' or '/' are unchanged (existing rows keep

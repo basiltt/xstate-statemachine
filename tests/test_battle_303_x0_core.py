@@ -16,6 +16,7 @@ import errno
 import json
 import os
 import pathlib
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -102,11 +103,11 @@ class _TmpDir(unittest.TestCase):
     def setUp(self) -> None:
         # 🪟 Per-thread SQLite connections from worker threads can outlive
         #    `close()` on Windows; a locked temp file is not a test failure.
-        self._td = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
-        self.tmp = pathlib.Path(self._td.name)
+        #    (`ignore_cleanup_errors=` is 3.10+; the library supports 3.9.)
+        self.tmp = pathlib.Path(tempfile.mkdtemp())
 
     def tearDown(self) -> None:
-        self._td.cleanup()
+        shutil.rmtree(self.tmp, ignore_errors=True)
 
 
 # =============================================================================
@@ -127,7 +128,8 @@ class TestX01Principal(unittest.TestCase):
 
     def test_none_and_empty_principal_are_refused(self) -> None:
         # REGRESSION: None / "" became the shared scopes "None" / "".
-        for bad in (None, "", 0, b"alice"):
+        # Review H1: the literal renderings of nothing are refused too.
+        for bad in (None, "", 0, b"alice", "None", "null", "anonymous"):
             with self.subTest(principal=bad):
                 r, credits = self._send(bad)
                 self.assertIsInstance(r.error, ValueError)
@@ -460,6 +462,17 @@ class TestX05Redaction(unittest.TestCase):
         # 📝 Key denylist only: secrets INSIDE string values pass through.
         self.assertEqual(out["note"], "my password is hunter2")
         self.assertEqual(v["Authorization"], "Bearer x")  # pure
+
+    def test_user_denylist_spelled_with_hyphen_still_matches(self) -> None:
+        # 🐛 Review M1 (fixed): normalising only the data-side key broke a
+        #    user `redact_keys=("x-custom-token",)` -- both sides now agree.
+        out = redact(
+            {"X-Custom-Token": "s", "x_custom_token": "t", "other": "u"},
+            keys=("x-custom-token",),
+        )
+        self.assertEqual(out["X-Custom-Token"], "***")
+        self.assertEqual(out["x_custom_token"], "***")
+        self.assertEqual(out["other"], "u")
 
 
 class TestX05Store(_TmpDir):

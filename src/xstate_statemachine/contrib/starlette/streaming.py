@@ -178,8 +178,10 @@ def websocket_endpoint(
                 return
             etype = data["type"]
             try:
-                refuse_reserved_send_keys(data.get("payload", {}))
                 await registry.authorize(websocket, name, self._key, etype)
+                # 🔐 After authorize (review L1): an unauthorised client
+                #    must see 1008, not a 422 that confirms the route.
+                refuse_reserved_send_keys(data.get("payload", {}))
                 principal = registry._principal_of(websocket)
                 async with registry.act(
                     name, self._key, principal=principal

@@ -567,6 +567,44 @@ class TestX07Starlette(unittest.TestCase):
         n = json.loads(reg.store.load("payment.1").snapshot)["context"]["n"]
         self.assertEqual(n, 3)
 
+    def test_anonymous_principal_is_401_never_a_pooled_scope(self) -> None:
+        """🐛 Review H1 (fixed): the adapters did `str(principal)`, so a
+        header lookup returning None became the string "None" -- every
+        anonymous caller shared one idempotency scope and could replay
+        each other's receipts. Now: 401, and nothing is processed."""
+        from starlette.testclient import TestClient
+
+        reg = _starlette_reg(
+            inbox=MemoryInbox(),
+            principal=lambda conn: conn.headers.get("x-user"),  # None
+        )
+        with TestClient(_starlette_app(reg)) as c:
+            anon = {**JSON, "Idempotency-Key": "abc"}
+            r1 = c.post("/m/1/events/INC", headers=anon, content=b"{}")
+            r2 = c.post("/m/1/events/INC", headers=anon, content=b"{}")
+            # the literal string a careless str(None) would produce
+            r3 = c.post(
+                "/m/1/events/INC",
+                headers={**anon, "x-user": "None"},
+                content=b"{}",
+            )
+        for r in (r1, r2, r3):
+            self.assertEqual(r.status_code, 401, r.text)
+            self.assertEqual(r.json()["error"], "UnauthenticatedError")
+            self.assertNotIn("duplicate", r.json())
+        self.assertIsNone(reg.store.load("payment.1"))
+
+    def test_act_with_none_principal_raises_not_pools(self) -> None:
+        reg = _starlette_reg(inbox=MemoryInbox(), principal=lambda c: "x")
+
+        async def go() -> None:
+            for bad in (None, "", "None", b"alice", 7):
+                with self.assertRaises(ValueError):
+                    async with reg.act("payment", "1", principal=bad):
+                        pass
+
+        asyncio.run(go())
+
 
 @requires("starlette", "httpx")
 class TestX07StarletteStreams(unittest.TestCase):

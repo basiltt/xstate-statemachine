@@ -35,6 +35,7 @@ from ...persistence.helpers import KeyNotFoundError
 from ...persistence.idempotency import (
     IdempotencyInFlightError,
     IdempotencyMismatchError,
+    validate_principal,
 )
 from ...persistence.store import DEFAULT_MAX_SNAPSHOT_BYTES
 from ...receipts import receipt_to_status as core_receipt_to_status
@@ -48,9 +49,11 @@ __all__ = [
     "RESERVED_SEND_KEYS",
     "ReservedKeyError",
     "ReceiptResponse",
+    "UnauthenticatedError",
     "UnsupportedMediaTypeError",
     "idempotency_key_from",
     "json_body",
+    "principal_or_401",
     "problem",
     "problem_for_exception",
     "receipt_body",
@@ -90,6 +93,28 @@ class ForbiddenError(HTTPProblemError):
 
     status = 403
     title = "Forbidden"
+
+
+class UnauthenticatedError(HTTPProblemError):
+    """The `principal=` callable did not identify a caller (X0.1/X0.2).
+
+    🔐 Battle #303 review H1: the adapters used to `str()` the principal,
+    so an unauthenticated request (`None`) became the string ``"None"``
+    and every anonymous caller shared one idempotency scope. The core
+    rule is `persistence.idempotency.validate_principal`; a failure
+    there is the client's problem (401), never a pooled scope.
+    """
+
+    status = 401
+    title = "Unauthenticated"
+
+
+def principal_or_401(value: Any) -> str:
+    """Run the core principal rule; map a refusal to a 401 problem."""
+    try:
+        return validate_principal(value)
+    except ValueError as exc:
+        raise UnauthenticatedError(str(exc)) from exc
 
 
 class PayloadTooLargeError(HTTPProblemError):

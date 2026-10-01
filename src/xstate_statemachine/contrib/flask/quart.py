@@ -50,6 +50,7 @@ from ._http import (  # noqa: E402
     declared_events,
     is_idempotency_refusal,
     parse_json_body,
+    principal_or_401,
     problem_body,
     problem_for_exception,
     receipt_body,
@@ -246,7 +247,7 @@ def create_quart_statechart_blueprint(  # noqa: C901 -- one route table
         r = xsm.registry()
         if r.inbox is None or r.principal is None:
             return None
-        return str(r.principal(quart_request))
+        return principal_or_401(r.principal(quart_request))
 
     async def send(key: str, etype: str, payload: Dict[str, Any]) -> Any:
         await guard(key, etype)

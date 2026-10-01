@@ -29,7 +29,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from ...factory import create_machine
 from ...models import MachineNode
-from ...persistence.idempotency import IdempotencyPlugin
+from ...persistence.idempotency import IdempotencyPlugin, validate_principal
 from ...persistence.store import DEFAULT_MAX_SNAPSHOT_BYTES, validate_key
 from ._http import ForbiddenError
 
@@ -299,7 +299,9 @@ class AppRegistry:
                     "act(principal=) is required when the app has an "
                     "idempotency inbox (X0.2)."
                 )
-            who = str(principal)
+            # 🔐 Battle #303 review H1: validate, never str() -- None
+            #    became "None" and pooled every anonymous caller.
+            who = validate_principal(principal)
             plugins.append(
                 IdempotencyPlugin(self.inbox, principal=lambda e: who)
             )

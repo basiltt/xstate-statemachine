@@ -240,10 +240,17 @@ class StatechartViewSetMixin:
         self.xsm_event = event
         return self.get_object()  # type: ignore[attr-defined]
 
-    def _xsm_principal(self, request: Any) -> str:
+    def _xsm_principal(self, request: Any) -> Optional[str]:
+        """``user:<pk>`` for an authenticated user, else ``None``.
+
+        🔐 Battle #303 review H1: this used to return the constant
+        ``"anonymous"``, which pooled every unauthenticated caller into
+        one idempotency scope. ``None`` means "nobody" and the send
+        route answers 401 to an ``Idempotency-Key`` from nobody.
+        """
         user = request.user
         pk = getattr(user, "pk", None)
-        return f"user:{pk}" if pk is not None else "anonymous"
+        return f"user:{pk}" if pk is not None else None
 
     def _xsm_inbox(self, obj: Any = None) -> Any:
         inbox = self.xsm_inbox
@@ -316,6 +323,14 @@ class StatechartViewSetMixin:
             from ...persistence.idempotency import IdempotencyPlugin
 
             who = self._xsm_principal(request)
+            if who is None:
+                # 🔐 An idempotency key from nobody cannot be scoped to
+                #    anyone; refusing beats pooling (X0.1 / X0.2).
+                return problem_response(
+                    401,
+                    "Unauthenticated",
+                    error="UnauthenticatedError",
+                )
             payload["idempotency_key"] = idem
             plugins.append(IdempotencyPlugin(inbox, principal=lambda e: who))
         try:

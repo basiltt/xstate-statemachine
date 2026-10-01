@@ -32,6 +32,7 @@ from ...persistence.helpers import KeyNotFoundError
 from ...persistence.idempotency import (
     IdempotencyInFlightError,
     IdempotencyMismatchError,
+    validate_principal,
 )
 
 __all__ = [
@@ -44,11 +45,13 @@ __all__ = [
     "PayloadTooLargeError",
     "RESERVED_SEND_KEYS",
     "ReservedKeyError",
+    "UnauthenticatedError",
     "UnprocessableBodyError",
     "UnsupportedMediaTypeError",
     "available_events",
     "declared_events",
     "parse_json_body",
+    "principal_or_401",
     "problem_body",
     "problem_for_exception",
     "receipt_body",
@@ -83,6 +86,27 @@ class ForbiddenError(HTTPProblemError):
 
     status = 403
     title = "Forbidden"
+
+
+class UnauthenticatedError(HTTPProblemError):
+    """The `principal=` callable did not identify a caller (X0.1/X0.2).
+
+    🔐 Battle #303 review H1: `str(principal)` turned `None` into the
+    string `"None"` and pooled every anonymous caller into one
+    idempotency scope. The core rule is `validate_principal`; a
+    failure is the client's problem (401), never a shared scope.
+    """
+
+    status = 401
+    title = "Unauthenticated"
+
+
+def principal_or_401(value: Any) -> str:
+    """Run the core principal rule; map a refusal to a 401 problem."""
+    try:
+        return validate_principal(value)
+    except ValueError as exc:
+        raise UnauthenticatedError(str(exc)) from exc
 
 
 class MethodNotAllowedError(HTTPProblemError):

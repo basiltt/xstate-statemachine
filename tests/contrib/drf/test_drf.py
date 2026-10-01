@@ -242,6 +242,54 @@ class TestIdempotency:
         )
         assert r4.status_code == 200 and r4.json()["duplicate"] is False
 
+    def test_anonymous_user_has_no_principal(self, db: Any) -> None:
+        """🐛 Battle #303 review H1 (fixed): `_xsm_principal` returned the
+        constant "anonymous" for every unauthenticated user, so under an
+        `[AllowAny]` policy all of them shared one idempotency scope."""
+        from django.contrib.auth.models import AnonymousUser
+        from rest_framework.test import APIRequestFactory
+
+        from xstate_statemachine.contrib.drf import StatechartViewSetMixin
+
+        req = APIRequestFactory().post("/x", {}, format="json")
+        req.user = AnonymousUser()
+        mixin = StatechartViewSetMixin()
+        assert mixin._xsm_principal(req) is None
+        req.user = _user("carol")
+        assert mixin._xsm_principal(req) == f"user:{req.user.pk}"
+
+    def test_idempotency_key_from_anonymous_is_401_not_pooled(
+        self, order: Any
+    ) -> None:
+        """Defence in depth: `has_event_permission` already answers 403 to
+        an anonymous user, so this branch is reached only if a subclass
+        overrides that check -- and then it must still refuse (401), never
+        scope the key to a shared "anonymous"."""
+        from unittest import mock
+
+        from django.contrib.auth.models import AnonymousUser
+        from rest_framework.test import APIRequestFactory
+
+        from shop.api import OrderViewSet
+
+        req = APIRequestFactory().post(
+            "/x", {}, format="json", HTTP_IDEMPOTENCY_KEY="k-anon"
+        )
+        req.user = AnonymousUser()
+        view = OrderViewSet()
+        view.request = req
+        view.format_kwarg = None
+        view.kwargs = {"pk": order.pk}
+        with mock.patch(
+            "xstate_statemachine.contrib.drf.viewsets.has_event_permission",
+            return_value=True,
+        ):
+            resp = view.xsm_send(req, "INC", {})
+        assert resp.status_code == 401, resp.data
+        assert resp.data["error"] == "UnauthenticatedError"
+        order.refresh_from_db()
+        assert order.machine.context["count"] == 0
+
 
 class TestConfiguration:
     def test_closed_by_default_without_permission_classes(self) -> None:

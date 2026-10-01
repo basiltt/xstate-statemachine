@@ -1086,6 +1086,28 @@ _No unreleased changes yet._
 
 ### Changed
 
+- **Idempotency inbox scopes are escaped (battle-test #303).** Scope parts
+  (`principal`, `machine.id`, `instance_key`) now escape `%` and `/` so the
+  join is injective. Parts without either character are byte-identical to
+  before, so existing rows keep their scope. **If a principal, machine id
+  or instance key in your deployment contains `%` or `/`**, inbox rows
+  written before the upgrade resolve to a *different* scope afterwards:
+  their cached receipts are unreachable, a retry inside the TTL
+  re-executes once, and `inbox.forget(old_scope)` no longer matches. Let
+  the TTL window elapse before relying on deduplication for such keys, or
+  purge the inbox at deploy time.
+- **A principal must identify a caller.** `IdempotencyPlugin.scope_for`
+  and every web adapter (`StatechartRegistry.act`, the Starlette / FastAPI
+  / Litestar / Flask / Quart HTTP helpers, DRF) route the principal through
+  `validate_principal`: a value that is not a non-empty `str`, or is one
+  of the literal placeholders `"None"` / `"null"` / `"anonymous"`, is
+  refused -- `ValueError` from a direct `act()` call, **401
+  `UnauthenticatedError`** from the HTTP helpers, 401 from DRF when an
+  `Idempotency-Key` arrives from an unauthenticated user. Previously the
+  adapters `str()`-coerced the value, so `None` became `"None"` and every
+  anonymous caller shared one scope. Code that relied on an anonymous
+  caller being deduplicated must authenticate it first.
+
 - **Plugin hook dispatch is ~2x cheaper (battle-test #304).** `_SafePlugin`
   built a fresh `functools.wraps` closure on every hook lookup -- four per
   event -- which cProfile put at ~30 % of a plugin-equipped `send()`. The
@@ -1115,7 +1137,9 @@ _No unreleased changes yet._
     A `principal=` callable returning `None` or `""` became the shared
     scope `"None"` / `""`, so every such caller could replay every other's
     receipt. The principal must now be a non-empty `str`; anything else is
-    refused with a receipt, never pooled.
+    refused with a receipt, never pooled. The independent review found the
+    web adapters `str()`-coerced the principal first (`None` -> `"None"`),
+    so the rule is enforced at the adapters too -- see Changed.
   - **Idempotency scope join was not injective (HIGH, X0.2).** Principal
     `alice/c` + machine `c` collided with principal `alice` + machine
     `c/c`. Each scope part now escapes `%` and `/`; parts without them are
