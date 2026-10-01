@@ -701,7 +701,10 @@ def redact(value: Any, keys: Tuple[str, ...] = DEFAULT_REDACT_KEYS) -> Any:
     if isinstance(value, dict):
         out: Dict[Any, Any] = {}
         for k, v in value.items():
-            ks = str(k).lower()
+            # 🔐 #303 battle: header spellings (`x-api-key`, `Api-Key`)
+            #    use '-' where the denylist uses '_'; the docstring
+            #    promised them and they leaked.
+            ks = str(k).lower().replace("-", "_")
             out[k] = "***" if any(s in ks for s in keys) else redact(v, keys)
         return out
     if isinstance(value, (list, tuple)):

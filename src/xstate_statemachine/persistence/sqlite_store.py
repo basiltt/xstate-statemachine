@@ -44,7 +44,12 @@ from typing import (
     Tuple,
 )
 
-from ..exceptions import ConflictError, LockTimeoutError, StoreError
+from ..exceptions import (
+    ConflictError,
+    LockTimeoutError,
+    SnapshotCorruptError,
+    StoreError,
+)
 from .deadline import Deadline
 from .store import BaseStore
 
@@ -266,6 +271,14 @@ class SQLiteStore(BaseStore):
         ).fetchone()
         if row is None:
             return None
+        if not isinstance(row[0], str):
+            # 🛡️ #303 battle: a row another writer stored as a BLOB (or
+            #    non-UTF-8 bytes) is corruption, not an AttributeError deep
+            #    in the codec.
+            raise SnapshotCorruptError(
+                f"SQLiteStore row for {key!r} is not text "
+                f"({type(row[0]).__name__})."
+            )
         deadlines = [
             Deadline(
                 state_id=r[0],
@@ -370,7 +383,21 @@ class SQLiteStore(BaseStore):
             s = conn.execute(
                 "DELETE FROM statecharts WHERE key = ?", (key,)
             ).rowcount
-        return {"snapshots": s, "deadlines": d}
+            # 🔐 X0.5 (#303 battle): a `SQLiteLog` sharing this file keys
+            #    its rows by the store key; `forget` left them behind
+            #    (`SQLAlchemyStore.forget` already erased them).
+            has_log = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='transitions'"
+            ).fetchone()
+            t = (
+                conn.execute(
+                    "DELETE FROM transitions WHERE machine_id = ?", (key,)
+                ).rowcount
+                if has_log
+                else 0
+            )
+        return {"snapshots": s, "deadlines": d, "log_entries": t}
 
     def _list_keys_raw(self, prefix: str, limit: int) -> List[str]:
         conn = self._conn()
