@@ -1002,30 +1002,12 @@ class TestX07DjangoTemplates(unittest.TestCase):
                 self.assertNotIn("mark_safe(", text, f)
                 self.assertNotIn("SafeString(", text, f)
 
-    @requires("django", "pytest_django")
-    def test_reserved_payload_keys_cover_every_send_option(self) -> None:
-        import inspect
-
-        from tests.contrib.django import bootstrap
-
-        bootstrap.ensure()
-        from src.xstate_statemachine.base_interpreter import BaseInterpreter
-        from src.xstate_statemachine.contrib.django.mixin import (
-            RESERVED_PAYLOAD_KEYS,
-        )
-        from src.xstate_statemachine.sync_interpreter import SyncInterpreter
-
-        self.assertTrue(
-            set(BaseInterpreter._RESERVED_SEND_KWARGS) <= RESERVED_PAYLOAD_KEYS
-        )
-        kwonly = {
-            n
-            for n, p in inspect.signature(
-                SyncInterpreter.send
-            ).parameters.items()
-            if p.kind is inspect.Parameter.KEYWORD_ONLY
-        }
-        self.assertTrue(kwonly <= RESERVED_PAYLOAD_KEYS, kwonly)
+    # 📝 `test_reserved_payload_keys_cover_every_send_option` (Django's
+    #    RESERVED_PAYLOAD_KEYS vs the engine's kw-only send options) lives
+    #    in tests/contrib/django/test_battle_303_reserved_keys.py: calling
+    #    `bootstrap.ensure()` from a root-level file configures Django
+    #    mid-session and pytest-django's autouse mailbox fixture then
+    #    errors every later test in this file on 3.9.
 
     def test_web_reserved_send_keys_track_the_engine(self) -> None:
         import inspect
@@ -1147,7 +1129,12 @@ class TestX08Poison(unittest.TestCase):
         recs = dlq.list()
         self.assertEqual([r.reason for r in recs], ["corrupt"] * 3)
         self.assertNotIn(SECRET, repr(recs))
-        self.assertEqual(recs[2].event["payload"]["bytes"], len(huge))
+        # 📝 `list()` order is not part of the store contract (differs by
+        #    Python version); assert on the SET of recorded sizes.
+        sizes = sorted(r.event["payload"]["bytes"] for r in recs)
+        self.assertEqual(
+            sizes, sorted([len(f"not json {SECRET}"), len(no_id), len(huge)])
+        )
         self.assertEqual(len(t.dropped), 3)
 
     def test_max_attempts_dead_letters_acks_and_never_redelivers(self) -> None:
