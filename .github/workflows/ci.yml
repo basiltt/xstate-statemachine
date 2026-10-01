@@ -348,12 +348,17 @@ jobs:
         #    are OUR problem to surface. `--strict` fails on any finding;
         #    `--ignore-vuln` with a justification comment is the only
         #    accepted way past a finding that does not apply.
-        # 📝 `--skip-editable`: the package under test is installed
-        #    editable and, on a release-candidate branch, carries a version
-        #    PyPI has not seen yet -- `--strict` then fails with "not found
-        #    on PyPI" before any dependency is checked. The dependencies
-        #    are the audit's subject; the project itself is this repo.
-        run: python -m pip_audit --strict --skip-editable --progress-spinner off
+        # 📝 Audit the resolved DEPENDENCIES, not the project itself: on a
+        #    release-candidate branch the project carries a version PyPI
+        #    has not seen yet and `--strict` fails with "not found on
+        #    PyPI" (or "marked as editable") before a single dependency
+        #    is checked. `pip freeze --exclude-editable` is exactly the
+        #    set [all] pulled in; `--no-deps` audits it as pinned.
+        run: |
+          python -m pip freeze --exclude-editable > /tmp/resolved.txt
+          grep -v -i '^xstate[-_]statemachine' /tmp/resolved.txt > /tmp/audit.txt || true
+          wc -l /tmp/audit.txt
+          python -m pip_audit --strict --no-deps --progress-spinner off -r /tmp/audit.txt
 
   # ---------------------------------------------------------------------------
   # 🧪 Test Matrix
