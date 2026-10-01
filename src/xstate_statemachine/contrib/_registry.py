@@ -46,7 +46,7 @@ EXTRAS: Dict[str, Extra] = {
     "fastapi": Extra("fastapi", ("fastapi", "pydantic", "starlette"), 276),
     "flask": Extra("flask", ("flask",), 285),
     "kafka": Extra("brokers.kafka", ("aiokafka",), 294),
-    "litestar": Extra("litestar", ("litestar",), 278),
+    "litestar": Extra("litestar", ("litestar", "starlette"), 278),
     "nats": Extra("brokers.nats", ("nats",), 294),
     "observability": Extra(
         "observability", ("opentelemetry", "prometheus_client"), 273

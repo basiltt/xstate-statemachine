@@ -62,7 +62,7 @@ classifiers = [
 #        pip install "xstate-statemachine[format]"
 [project.optional-dependencies]
 format = [
-    "black>=24.0",
+    "black>=24.1.0",
     "isort>=5.13",
 ]
 
@@ -101,7 +101,15 @@ sqs           = ["boto3>=1.28"]  # #294
 cloudevents   = ["cloudevents>=1.10"]  # #293 (SDK interop; the envelope itself is core)
 agents        = ["pydantic>=2.5"]  # #287/#290; provider SDKs (openai, anthropic) are soft imports, never pinned
 # umbrella extras -- filled when their members are
-web           = []  # [fastapi,django,drf,flask,sqlalchemy]
+web           = [  # [fastapi,django,drf,flask,sqlalchemy]
+    "fastapi>=0.100",
+    "pydantic>=2.5",
+    "starlette>=0.27",
+    "django>=4.2",
+    "djangorestframework>=3.14",
+    "flask>=2.3",
+    "sqlalchemy[asyncio]>=2.0",
+]
 eda           = [  # [celery,redis,kafka,rabbitmq,cloudevents,observability] (#294, #292)
     "celery>=5.3",
     "redis>=5",
