@@ -237,7 +237,7 @@ class _SafePlugin:
         _plugin: The wrapped plugin instance.
     """
 
-    __slots__ = ("_plugin",)
+    __slots__ = ("_plugin", "_guards")
 
     def __init__(self, plugin: Any) -> None:
         """Stores the plugin being wrapped.
@@ -246,6 +246,12 @@ class _SafePlugin:
             plugin (Any): Any object exposing the plugin hooks.
         """
         object.__setattr__(self, "_plugin", plugin)
+        # ⚡ Per-hook cache of guarded wrappers (battle #304): building a
+        #    `functools.wraps` closure on EVERY dispatch was ~30 % of a
+        #    plugin-equipped `send()` under cProfile (4 lookups per event).
+        #    Keyed on the underlying function so a hook rebound on a live
+        #    plugin instance is still picked up on the next call.
+        object.__setattr__(self, "_guards", {})
 
     @property
     def wrapped(self) -> Any:
@@ -271,6 +277,14 @@ class _SafePlugin:
             return lambda *_a, **_k: None
         if not callable(attribute):
             return attribute
+        # 📝 Bound methods are fresh objects on every access, so identity
+        #    is taken on `__func__` (falls back to the callable itself for
+        #    plain functions / callable instances).
+        key = getattr(attribute, "__func__", attribute)
+        guards = object.__getattribute__(self, "_guards")
+        cached = guards.get(name)
+        if cached is not None and cached[0] is key:
+            return cached[1]
 
         @functools.wraps(attribute)
         def _guarded(*args: Any, **kwargs: Any) -> Any:
@@ -314,6 +328,7 @@ class _SafePlugin:
                 return None
             return result
 
+        guards[name] = (key, _guarded)
         return _guarded
 
     @staticmethod

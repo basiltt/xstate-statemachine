@@ -357,6 +357,38 @@ class TestPerfReport:
         # Assert
         assert one / base < 10
 
+    def test_guard_cache_is_invalidated_when_a_hook_is_rebound(self) -> None:
+        """⚡ `_SafePlugin` caches its guarded wrapper per hook (battle
+        #304 profiling). The cache is keyed on the underlying function,
+        so rebinding a hook on a live plugin must take effect at once."""
+        # Arrange
+        seen: List[str] = []
+        plugin = Counter()
+        plugin.on_event_processed = lambda i, e, r: seen.append("first")
+        interp = SyncInterpreter(
+            create_machine(LEAK_CFG, logic=_leak_logic())
+        ).use(plugin)
+        interp.start()
+        interp.send("GO")
+
+        # Act: swap the hook on the same instance
+        plugin.on_event_processed = lambda i, e, r: seen.append("second")
+        interp.send("GO")
+        interp.stop()
+
+        # Assert
+        assert seen == ["first", "second"]
+
+    def test_guard_cache_returns_the_same_wrapper_object(self) -> None:
+        # Arrange
+        from src.xstate_statemachine.base_interpreter import _SafePlugin
+
+        safe = _SafePlugin(NoopBoth())
+
+        # Act / Assert: repeated lookups hit the cache (no fresh closure)
+        assert safe.on_before_send is safe.on_before_send
+        assert safe.on_event_processed is safe.on_event_processed
+
 
 # -------------------------------------------------------------------------
 # 🧩 3. Complex scenarios

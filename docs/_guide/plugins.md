@@ -328,6 +328,9 @@ Two things worth knowing before you build on it:
 
 - **Sending from the hook.** A `send()` made from `on_event_processed` on `SyncInterpreter` runs *at once*, inside the hook dispatch, so plugins registered after yours see the follow-up event's `on_event_processed` before the event that caused it. Register observers that care about order **before** plugins that send. On the async engine the follow-up is queued and reported in order.
 - **Timer events have no payload.** Events the engine mints for `after` timers carry `type` but no `payload` attribute; read it defensively with `getattr(event, "payload", None)` if your hook handles both kinds.
+- **What a failing guard or action looks like.** A guard that raises is treated as `False`, so the receipt arrives with `denied=True` and `error=None`. An action that raises mid-list delivers one receipt with `error` set, after the remaining actions in that list were skipped — the hook still fires exactly once.
+- **`Receipt` has six fields.** It is a `NamedTuple` and `duplicate` was appended in 0.11.0; unpacking it into five names raises `ValueError: too many values to unpack`. Use attribute access (`receipt.changed`, `receipt.duplicate`) so the next field addition cannot break you.
+- **Your receipt is yours.** When `on_before_send` returns a `Receipt`, the engine hands it to the caller as-is — `state_ids` is not coerced or validated. Build it with `frozenset(interpreter.current_state_ids)` as in the example above.
 
 #### `on_transition(interpreter, from_states, to_states, transition)`
 
