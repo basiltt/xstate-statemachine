@@ -1100,6 +1100,32 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **A context that cannot be deep-copied no longer kills the run loop
+  (battle-test #305).** Receipts, `on_event_processed` and the
+  `context_validator` dirty check all took a raw `copy.deepcopy(context)`
+  before-image. A context holding a lock, socket or client made the async
+  `send(wait=True)` hang forever (the exception killed the loop, status
+  went `"stopped"`, the receipt never resolved), made the sync
+  `send(wait=True)` raise `TypeError`, and made *every* action raise once
+  any `context_validator` was configured. Both engines now go through
+  `_context_before_image()` / `_context_changed()`: an uncopyable context
+  is treated as "changed", so receipts resolve and the validator runs.
+  `actionErrorPolicy: "rollback"` / `"fail"` still need the copy and still
+  raise -- documented on the Context page.
+- **`SyncInterpreter.send_threadsafe()` can no longer lose an event
+  silently (battle-test #305).** Three cases were silent: an event posted
+  after `stop()` sat in the mailbox forever; events still queued when
+  `stop()` ran were discarded; events queued *behind* one that drove the
+  machine to `final` in the same drain were thrown away by the finished
+  machine. Each now fires `on_event_dropped` (`"not_running"` /
+  `"stopped"`) and logs a warning. A producer's event is always either
+  run or reported.
+- **A snapshot whose `version` is `Infinity` raised a bare `OverflowError`
+  (battle-test #305).** `json.loads` accepts `Infinity`/`NaN`; `int(inf)`
+  overflows. `check_version` now maps it to `SnapshotCorruptError`, closing
+  the last gap found by flipping, truncating and inserting every byte of a
+  v4 blob on both engines.
+
 - **`stub_logic()` missed composite guards written in `children` form
   (battle-test #304).** `{"type": "and", "children": ["c1", ...]}` is
   accepted by the engine, but the stub read names from the raw dict with

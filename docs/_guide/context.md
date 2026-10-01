@@ -358,6 +358,12 @@ class SharedContextLogic(MachineLogic):
 
 5. **Name keys consistently** — use `camelCase` to match JSON convention, or `snake_case` to match Python convention. Pick one and stick with it.
 
+6. **Keep it deep-copyable.** The engine takes a before-image of `context` (via `copy.deepcopy`) whenever something needs to know *whether an action changed it*: a `send(wait=True)` receipt, the `on_event_processed` hook, and the `context_validator` seam. A context holding a lock, a socket or a database client cannot be copied; since 0.11.0 the engine treats such a context as **"always changed"** instead of failing — the receipt still resolves and the validator still runs after every action — but `actionErrorPolicy: "rollback"` / `"fail"` genuinely need the copy and will raise on an uncopyable context. Keep live handles on the logic object (class-based logic, `MachineLogic` closures) and keep `context` to data.
+
+### `context_validator` — what the engine guarantees **[0.11.0]**
+
+`create_machine(..., context_validator=fn)` stores `fn` on the `MachineNode`; both engines call `fn(context)` from the shared action runner **after any action that changed `context`** — including the built-in `assign` — and never when an action left it untouched (10 000 no-op sends → 0 validator calls). A raise is an **action error**: with `actionErrorPolicy: "rollback"` the previous context is restored, with `"continue"` the mutation is kept and `receipt.error` is set. Two things it does *not* do: it is **not** called on the initial context at `start()` (validate your config before building the machine), and it does **not** see the parent's validator from a spawned child — each machine validates with its own. Mutations the validator itself makes (coercions, defaults) are kept; the `[pydantic]` extra's `context_model(write_back=True)` relies on exactly that.
+
 ## 🛒 Complete Example: Shopping Cart
 
 A full shopping cart machine demonstrating context usage across multiple states and transitions:

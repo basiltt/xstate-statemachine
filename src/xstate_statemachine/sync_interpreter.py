@@ -674,6 +674,8 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             #    done / errored machine is a DROP and fires the hook, so an
             #    audit trail built from plugin hooks sees it on both engines.
             logger.warning("🚫 Cannot send event. Interpreter is not running.")
+            if not self._is_processing:
+                self._drain_mailbox()  # 🔔 report stranded producer events
             try:
                 dropped = self._prepare_event(event_or_type, **payload)
             except Exception:  # noqa: BLE001 -- malformed AND misdirected
@@ -857,6 +859,23 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             batch = list(self._mailbox)
             self._mailbox.clear()
         for event_obj in batch:
+            if self.status != "running":
+                # 🔔 Battle #305: a producer's event for a machine that is
+                #    stopped / done -- or that FINISHED earlier in this same
+                #    batch -- used to sit in the mailbox forever (or be
+                #    silently discarded by the finished machine's `send`
+                #    path). Parity with `send()` on a non-running machine:
+                #    the drop is observable via `on_event_dropped`.
+                for plugin in self._plugins:
+                    plugin.on_event_dropped(self, event_obj, "not_running")
+                logger.warning(
+                    "🚫 send_threadsafe() event '%s' dropped: interpreter "
+                    "'%s' is %s.",
+                    getattr(event_obj, "type", event_obj),
+                    self.id,
+                    self.status,
+                )
+                continue
             try:
                 self._warn_reserved_payload_keys(event_obj)
                 self._check_strict(event_obj)
@@ -1973,6 +1992,8 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         thread. It is also the seam a `SimulatedClock` drives.
         """
         if self.status != "running" or self._is_processing:
+            if not self._is_processing:
+                self._drain_mailbox()  # 🔔 report stranded producer events
             return
         # 🔁 #122: a deadline delivered by this tick may take a transition
         #    into a state whose OWN deadline is already due -- or is armed

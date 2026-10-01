@@ -1058,7 +1058,22 @@ It routes the enqueue through the interpreter's owning event loop and returns a 
 > **Changed in 0.8.0 — the manual idiom no longer works.** In 0.7.x the correct way to send across threads was
 > `asyncio.run_coroutine_threadsafe(interp.send("E"), loop).result()`. That pattern **raises `WrongThreadError` on 0.8.0+**, because the thread check runs eagerly inside `send()` on the calling thread, before the coroutine is ever handed to the loop. It is not possible to accept that form while still rejecting the bare `interp.send()` that silently lost events. Replace it with `send_threadsafe()`; the two are otherwise equivalent.
 
-> **Note:** `SyncInterpreter` has no owning event loop and is unaffected by this restriction.
+> **Note:** `SyncInterpreter` has no owning event loop and does not raise `WrongThreadError` — but `send()` is **not thread-safe** there either (the step mutates `context` unlocked). The only legal cross-thread entry on the sync engine is its own `send_threadsafe()` **[0.11.0]**:
+
+### `SyncInterpreter.send_threadsafe()` — the mailbox **[0.11.0]**
+
+```python
+interp.send_threadsafe("TICK", n=1)   # from any thread; returns None
+```
+
+The event is normalised on the *calling* thread (so a malformed event or a raising `__xstate_event__` adapter fails right there, where the traceback is useful) and placed in a locked mailbox. The thread that **owns** the machine drains the mailbox at the top of its next `send()` or `tick()`, running each event as its own macrostep — admission checks (`strict`, `event_schemas`, `on_before_send`) run on the owner's thread at drain time. There is no receipt: nothing runs on the calling thread and there is no loop to await on. Rules, each pinned by `tests/test_battle_305_mailbox_plugins_validator.py` (16 producers × 2 000 events against a concurrently sending owner):
+
+- **FIFO per producer, nothing lost, nothing duplicated.** The mailbox is unbounded; bound your producers, not the engine.
+- **Posted before `start()`** → kept, delivered by the first `send()`/`tick()` *after* start, not by `start()` itself.
+- **Posted while the owner is inside an action** → not run mid-step; delivered before the owner's next event.
+- **Posted to a stopped / done / errored machine** → dropped with `on_event_dropped(…, "not_running")` and a warning. Events still in the mailbox when `stop()` runs are reported with reason `"stopped"`; events queued *behind* one that drives the machine to `final` in the same drain are reported `"not_running"`. A producer's event is therefore always either run or reported — never silently lost.
+- **Payloads are aliased, not copied.** An object the producer mutates after `send_threadsafe()` is seen mutated when the event runs. Pass immutable values or copy before sending.
+- **A `strict` refusal** of a mailbox event cannot raise on the producer (it is gone); it lands on the owner as `last_transition_ok = False` plus `on_event_dropped(…, "invalid")`.
 
 > **Note:** If a foreign thread just sent events you don't want lost on shutdown, prefer `stop(drain=True)` over a plain `stop()` — see [Snapshots — The Inbox: pending events](snapshots/#the-inbox-pending-events).
 

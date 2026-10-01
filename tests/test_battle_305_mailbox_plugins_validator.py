@@ -253,6 +253,72 @@ class TestMailboxBattle(_QuietLogs):
         self.assertEqual(rec.dropped, ["stopped", "stopped"])
         self.assertEqual(len(i._mailbox), 0)
 
+    def test_batch_events_after_machine_finishes_mid_drain_are_reported(
+        self,
+    ) -> None:
+        # 🐛 DEFECT (fixed): a mailbox batch whose middle event drove the
+        #    machine to `final` kept running the trailing events through
+        #    the finished machine, which discarded them with no hook.
+        # Arrange
+        cfg = {
+            "id": "fin",
+            "initial": "a",
+            "context": {"n": 0},
+            "states": {
+                "a": {"on": {"INC": {"actions": "inc"}, "DIE": "done"}},
+                "done": {"type": "final"},
+            },
+        }
+
+        def inc(i: Any, c: Any, e: Any, a: Any) -> None:
+            c["n"] += 1
+
+        rec = Recorder()
+        i = SyncInterpreter(
+            create_machine(cfg, logic=MachineLogic(actions={"inc": inc}))
+        ).use(rec)
+        i.start()
+        for _ in range(3):
+            i.send_threadsafe("INC")
+        i.send_threadsafe("DIE")
+        for _ in range(5):
+            i.send_threadsafe("INC")
+
+        # Act
+        i.tick()
+
+        # Assert: 3 ran, the machine finished, 5 reported -- none lost
+        self.assertEqual(i.status, "done")
+        self.assertEqual(i.context["n"], 3)
+        self.assertEqual(rec.dropped, ["not_running"] * 5)
+        self.assertEqual(len(i._mailbox), 0)
+
+    def test_tick_on_finished_machine_drains_stranded_mailbox(self) -> None:
+        # Arrange: machine finishes via its own send(), THEN a producer posts
+        rec = Recorder()
+        cfg = {
+            "id": "fin2",
+            "initial": "a",
+            "states": {
+                "a": {"on": {"DIE": "done"}},
+                "done": {"type": "final"},
+            },
+        }
+        i = SyncInterpreter(create_machine(cfg)).use(rec).start()
+        i.send("DIE")
+        self.assertEqual(i.status, "done")
+        # 📝 bypass send_threadsafe's own status gate to model the race
+        #    where the producer enqueued just before the machine finished
+        with i._mailbox_lock:
+            i._mailbox.append(i._prepare_event("X"))
+
+        # Act
+        i.tick()
+
+        # Assert
+        self.assertEqual(rec.dropped, ["not_running"])
+        self.assertEqual(len(i._mailbox), 0)
+
     def test_send_threadsafe_before_start_delivered_on_first_pump(
         self,
     ) -> None:

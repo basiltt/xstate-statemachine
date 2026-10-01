@@ -58,6 +58,7 @@ The table above is what the library does unprompted. These are the switches you 
 - **`principal=` on `IdempotencyPlugin`.** Derive it from your authenticated identity, never from the payload — an attacker who controls it can replay another tenant's receipt.
 - **`codec=` on any store** if `context` holds anything you would not put in a log line. Redaction protects sinks; it does not encrypt the snapshot.
 - **`redact_keys=`** to extend the denylist with your own field names (`card_number`, `ssn`, …).
+- **Exception messages in receipts.** `receipt_to_json()` copies the exception's class name and `str(error)` verbatim into `error.message` — it does **not** redact. The idempotency inbox caches that JSON and the web adapters' RFC 9457 problem bodies deliberately carry the class name only (X0.7); if you serialise a receipt yourself (your own cache, your own response body), scrub `message` first, or raise exceptions whose `str()` never contains a secret. Pinned by `tests/test_battle_305_snapshots_clock_codec.py::test_secret_in_error_message_is_not_redacted_by_codec`.
 - **`prefix=`** per application on Redis, and credentials/TLS on the connection.
 - **`purge_older_than` / `ttl_s` / `maxlen`** so an unbounded key space is a decision, not an accident.
 
