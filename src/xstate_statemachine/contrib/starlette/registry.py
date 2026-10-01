@@ -70,6 +70,7 @@ from ._http import (
     problem_for_exception,
     receipt_body,
     receipt_to_status,
+    refuse_reserved_send_keys,
     state_body,
 )
 
@@ -428,6 +429,7 @@ class StatechartRegistry:
                     request, max_body_bytes=self.max_body_bytes
                 )
             payload = dict(payload)
+            refuse_reserved_send_keys(payload)
             idem = idempotency_key_from(request)
             if idem is not None:
                 payload["idempotency_key"] = idem

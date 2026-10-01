@@ -26,7 +26,13 @@ from starlette.responses import Response, StreamingResponse
 from starlette.websockets import WebSocket
 
 from ._fanout import CLOSED
-from ._http import ForbiddenError, problem, problem_for_exception, receipt_body
+from ._http import (
+    ForbiddenError,
+    problem,
+    problem_for_exception,
+    receipt_body,
+    refuse_reserved_send_keys,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +178,7 @@ def websocket_endpoint(
                 return
             etype = data["type"]
             try:
+                refuse_reserved_send_keys(data.get("payload", {}))
                 await registry.authorize(websocket, name, self._key, etype)
                 principal = registry._principal_of(websocket)
                 async with registry.act(

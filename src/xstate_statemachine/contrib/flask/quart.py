@@ -53,6 +53,7 @@ from ._http import (  # noqa: E402
     problem_body,
     problem_for_exception,
     receipt_body,
+    refuse_reserved_send_keys,
     state_body,
 )
 from .blueprint import sse  # noqa: E402
@@ -251,6 +252,7 @@ def create_quart_statechart_blueprint(  # noqa: C901 -- one route table
         await guard(key, etype)
         payload = dict(payload)
         payload.pop("type", None)
+        refuse_reserved_send_keys(payload)
         idem = quart_request.headers.get(IDEMPOTENCY_HEADER)
         if idem:
             payload["idempotency_key"] = idem

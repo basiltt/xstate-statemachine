@@ -45,6 +45,7 @@ from ._http import (
     parse_json_body,
     problem_body,
     receipt_body,
+    refuse_reserved_send_keys,
 )
 from .extension import XState, problem_response, receipt_response
 
@@ -117,6 +118,7 @@ def create_statechart_blueprint(
         guard(key, etype)
         payload = dict(payload)
         payload.pop("type", None)
+        refuse_reserved_send_keys(payload)
         idem = flask_request.headers.get(IDEMPOTENCY_HEADER)
         if idem:
             payload["idempotency_key"] = idem
