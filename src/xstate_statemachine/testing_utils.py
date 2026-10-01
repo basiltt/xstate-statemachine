@@ -118,6 +118,25 @@ def stub_logic(
         >>> i = SyncInterpreter(m).start(); i.send("GO"); ran
         ['log']
     """
+    # 🏛️ Names are read from the PARSED machine, not the raw dict. The raw
+    #    extractor only understands the `params.guards` composite shape, so
+    #    `{"type": "and", "children": [...]}` (which the engine accepts)
+    #    left its leaves unstubbed -> ImplementationMissingError at runtime.
+    #    Building also makes an invalid config raise exactly what
+    #    `create_machine` raises, instead of a misleading `TypeError`/
+    #    `ValueError` from `dict(...)` or a silent empty stub.
+    if not isinstance(config_or_machine, MachineNode):
+        from .exceptions import ImplementationMissingError
+        from .factory import create_machine
+
+        try:
+            config_or_machine = create_machine(config_or_machine)  # type: ignore[arg-type]  # noqa: E501
+        except ImplementationMissingError:
+            # 📝 Expected: the config is VALID but declares names we are
+            #    about to stub. Every other error is the caller's, verbatim.
+            config_or_machine = MachineNode(
+                dict(config_or_machine), MachineLogic()  # type: ignore[arg-type]
+            )
     action_names, guard_names, service_names = logic_names(config_or_machine)
     record: List[str] = ran if ran is not None else []
     # 📝 Keep the caller's mapping BY REFERENCE (no copy) so flipping a
