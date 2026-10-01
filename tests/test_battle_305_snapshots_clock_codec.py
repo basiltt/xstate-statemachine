@@ -17,6 +17,7 @@ import math
 import random
 import time
 import tracemalloc
+import gc
 import unittest
 from typing import Any, Callable, Dict, List
 from unittest import mock
@@ -596,20 +597,31 @@ class TestLeaks(unittest.TestCase):
         asyncio.run(go())
 
     def _growth(self, fn: Callable[[int], None], n: int) -> float:
+        # 📝 An interpreter is a reference cycle (plugins ↔ interpreter,
+        #    actor system ↔ children), so it is reclaimed by the cyclic GC,
+        #    not by refcount. Without `gc.collect()` before each reading
+        #    this measured "garbage not yet collected" and flaked at
+        #    ~600 B/cycle depending on what the previous 5 000 tests left
+        #    in the allocator; with it the true growth is 0 B/cycle.
         fn(50)  # warm caches
+        gc.collect()
         tracemalloc.start()
         fn(n // 2)
+        gc.collect()
         half = tracemalloc.get_traced_memory()[0]
         fn(n)
+        gc.collect()
         full = tracemalloc.get_traced_memory()[0]
         tracemalloc.stop()
         return float(full - half)
 
     def test_sync_roundtrip_does_not_grow(self) -> None:
-        self.assertLess(self._growth(self._cycle_sync, 1500), 400_000)
+        # 📊 Measured 0 B/cycle after GC (3 000 cycles); 64 KB is ~40 B/cycle
+        #    of slack for interned strings / allocator arenas.
+        self.assertLess(self._growth(self._cycle_sync, 1500), 64_000)
 
     def test_async_roundtrip_does_not_grow(self) -> None:
-        self.assertLess(self._growth(self._cycle_async, 600), 400_000)
+        self.assertLess(self._growth(self._cycle_async, 600), 64_000)
 
 
 class TestPerf(unittest.TestCase):
