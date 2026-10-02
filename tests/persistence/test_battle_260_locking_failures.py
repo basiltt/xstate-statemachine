@@ -976,6 +976,13 @@ def _leak_ceiling() -> int:
         hasattr(sys, "monitoring")
         and sys.monitoring.get_tool(sys.monitoring.COVERAGE_ID) is not None
     )
+    # 📝 Post-mortem (#262 integration): the 0.8-3.3 MB readings that led to
+    #    this ceiling were NOT all tracer cost. Litestar's default
+    #    LoggingConfig left a QueueHandler on the root logger that retained
+    #    every library log record for the rest of the session -- one
+    #    `from_snapshot` record per cycle here. tests/conftest.py now fails
+    #    the session on any root-handler leak. Expect readings well under
+    #    1 MB even with the tracer; tighten when CI has shown it.
     return 6_000_000 if tracer else 256 * 1024
 
 
