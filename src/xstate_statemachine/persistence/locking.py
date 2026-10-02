@@ -110,38 +110,91 @@ def after_commit(fn: Callable[[], Any]) -> None:
     For non-transactional side effects (a direct broker publish) that must
     not happen for a state a rollback discards. Outside any block, *fn*
     runs immediately. Dropped if the block raises.
+
+    Callbacks run in registration order once the OUTERMOST block (a nested
+    `persisted()` on another key included) has saved and released its
+    lock. Every callback runs even if an earlier one raises; the first
+    error is then re-raised -- the save is already durable, so do NOT
+    retry the block on it. Inside `apersisted` a callback may return an
+    awaitable (an ``async def``); it is awaited. Under the sync
+    `persisted()` an awaitable result is a `TypeError` (never silently
+    dropped).
     """
     pending = _post_commit.get()
     if pending is None:
-        fn()
+        _run_callbacks([fn], allow_async=False)
     else:
         pending.append(fn)
 
 
+def _run_callbacks(
+    pending: List[Callable[[], Any]], *, allow_async: bool
+) -> List[Any]:
+    """Run every callback; collect awaitables (async scope) or refuse them
+    (sync scope); re-raise the first error after all have run."""
+    first: Optional[BaseException] = None
+    awaitables: List[Any] = []
+    for fn in pending:
+        try:
+            result = fn()
+            if inspect.isawaitable(result):
+                if allow_async:
+                    awaitables.append(result)
+                else:
+                    close = getattr(result, "close", None)
+                    if callable(close):
+                        close()
+                    raise TypeError(
+                        "after_commit callback returned an awaitable; "
+                        "async callbacks are only awaited inside "
+                        "apersisted() -- use a sync callback here"
+                    )
+        except BaseException as exc:  # noqa: BLE001 - re-raised below
+            if first is None:
+                first = exc
+    if first is not None:
+        for aw in awaitables:
+            close = getattr(aw, "close", None)
+            if callable(close):
+                close()
+        raise first
+    return awaitables
+
+
 @contextlib.contextmanager
-def _commit_scope() -> Iterator[None]:
+def _commit_scope(allow_async: bool = False) -> Iterator[List[Any]]:
     """Collect `after_commit` callbacks; run them on clean exit only.
-    Nested scopes defer to the outermost."""
+    Nested scopes defer to the outermost. Yields a list that receives the
+    awaitables the async twin must await."""
+    out: List[Any] = []
     if _post_commit.get() is not None:
-        yield
+        yield out
         return
     pending: List[Callable[[], Any]] = []
     token = _post_commit.set(pending)
     try:
-        yield
+        yield out
     except BaseException:
         _post_commit.reset(token)
         raise
     _post_commit.reset(token)
-    for fn in pending:
-        fn()
+    out.extend(_run_callbacks(pending, allow_async=allow_async))
 
 
 @contextlib.asynccontextmanager
 async def _commit_scope_async() -> AsyncIterator[None]:
-    """`_commit_scope` for ``async with`` (the lock context is async)."""
-    with _commit_scope():
+    """`_commit_scope` for ``async with``; awaits coroutine callbacks."""
+    with _commit_scope(allow_async=True) as awaitables:
         yield
+    first: Optional[BaseException] = None
+    for aw in awaitables:
+        try:
+            await aw
+        except BaseException as exc:  # noqa: BLE001 - re-raised below
+            if first is None:
+                first = exc
+    if first is not None:
+        raise first
 
 
 @contextlib.contextmanager
@@ -434,6 +487,21 @@ class NoLock:
 _DEFAULT_LOCK = OptimisticLock()
 
 
+def _strategy(lock: Any) -> Any:
+    """Resolve *lock*; anything that is not a strategy fails loudly here
+    instead of as an ``AttributeError`` deep inside the block."""
+    if lock is None:
+        return _DEFAULT_LOCK
+    if all(
+        callable(getattr(lock, n, None)) for n in ("run", "acquire", "fence")
+    ):
+        return lock
+    raise ValueError(
+        f"lock must be a LockStrategy instance -- OptimisticLock(), "
+        f"PessimisticLock() or NoLock() -- not {lock!r}"
+    )
+
+
 def _mark_plugins(plugins: Iterable[Any]) -> List[Any]:
     """Plugins that buffer post-save writes (`IdempotencyPlugin` #261,
     `OutboxPlugin` #293), ordered by ``flush_priority`` (lower first) so
@@ -515,7 +583,7 @@ def persisted(
     """
     from ..sync_interpreter import SyncInterpreter
 
-    strategy = lock if lock is not None else _DEFAULT_LOCK
+    strategy = _strategy(lock)
     with _commit_scope(), strategy.acquire(store, key):
         interp, version = _build(
             store,
@@ -571,7 +639,7 @@ async def apersisted(
     from ..interpreter import Interpreter
     from .async_store import as_async
 
-    strategy = lock if lock is not None else _DEFAULT_LOCK
+    strategy = _strategy(lock)
     astore = store if _is_async_store(store) else as_async(store)
 
     async def _hold() -> Any:
@@ -661,5 +729,5 @@ def persisted_retry(
     The retrying form: *fn* receives a started interpreter and may be
     invoked up to ``retries + 1`` times under `OptimisticLock`.
     """
-    strategy = lock if lock is not None else _DEFAULT_LOCK
+    strategy = _strategy(lock)
     return strategy.run(store, key, machine, fn, **kw)
