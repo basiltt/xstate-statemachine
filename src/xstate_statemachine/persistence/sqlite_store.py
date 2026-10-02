@@ -203,36 +203,52 @@ class SQLiteStore(BaseStore):
 
     def _ensure_schema(self) -> None:
         with self._init_lock:
-            conn = self._conn()
-            with self._tx(conn, immediate=True):
-                for stmt in _CREATE_V1:
-                    conn.execute(stmt)
-                row = conn.execute("SELECT version FROM xsm_schema").fetchone()
-                if row is None:
-                    conn.execute(
-                        "INSERT INTO xsm_schema(version) VALUES (?)",
-                        (SCHEMA_VERSION,),
-                    )
-                    current = SCHEMA_VERSION
-                else:
-                    current = int(row[0])
-                if current > SCHEMA_VERSION:
-                    raise StoreError(
-                        f"SQLiteStore schema is version {current}, newer "
-                        f"than this library supports ({SCHEMA_VERSION}). "
-                        f"Upgrade xstate-statemachine."
-                    )
-                while current < SCHEMA_VERSION:
-                    for stmt in _UPGRADES[current]:
-                        conn.execute(stmt)
-                    current += 1
-                    conn.execute(
-                        "UPDATE xsm_schema SET version = ?", (current,)
-                    )
+            try:
+                conn = self._conn()
+                self._ensure_schema_locked(conn)
+            except sqlite3.DatabaseError as exc:
+                # 🛡️ Battle #259 (X0.4): a file that is not a SQLite
+                #    database -- or one another program wrote -- surfaced
+                #    as a bare `sqlite3.DatabaseError` from the
+                #    constructor (from the first PRAGMA in `_connect`, or
+                #    from the schema statements). The caller asked for a
+                #    store; the answer must be the store's own exception.
+                if isinstance(exc, sqlite3.OperationalError) and (
+                    _is_locked_error(exc)
+                ):
+                    raise LockTimeoutError("<db>", self.busy_timeout) from exc
+                raise StoreError(
+                    f"SQLiteStore cannot open {self.path!r}: {exc}"
+                ) from exc
             if not self._memory and os.name == "posix":
                 for suffix in ("", "-wal", "-shm"):
                     with contextlib.suppress(OSError):
                         os.chmod(self.path + suffix, 0o600)
+
+    def _ensure_schema_locked(self, conn: sqlite3.Connection) -> None:
+        with self._tx(conn, immediate=True):
+            for stmt in _CREATE_V1:
+                conn.execute(stmt)
+            row = conn.execute("SELECT version FROM xsm_schema").fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO xsm_schema(version) VALUES (?)",
+                    (SCHEMA_VERSION,),
+                )
+                current = SCHEMA_VERSION
+            else:
+                current = int(row[0])
+            if current > SCHEMA_VERSION:
+                raise StoreError(
+                    f"SQLiteStore schema is version {current}, newer "
+                    f"than this library supports ({SCHEMA_VERSION}). "
+                    f"Upgrade xstate-statemachine."
+                )
+            while current < SCHEMA_VERSION:
+                for stmt in _UPGRADES[current]:
+                    conn.execute(stmt)
+                current += 1
+                conn.execute("UPDATE xsm_schema SET version = ?", (current,))
 
     @contextlib.contextmanager
     def _tx(

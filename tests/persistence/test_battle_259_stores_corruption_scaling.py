@@ -329,14 +329,27 @@ class TestSQLiteCorruption(_Base):
             self.assertIsNotNone(s.load(k))
 
     def test_garbage_file_is_typed_at_open_or_health(self) -> None:
+        # 🐛 DEFECT (fixed at integration): a file that is not a SQLite
+        #    database raised a bare `sqlite3.DatabaseError` from the
+        #    constructor. X0.4: the store's own exception, always.
         p = self.tmp / "garbage.db"
         p.write_bytes(b"this is not a database" * 100)
-        try:
+        with self.assertRaises(StoreError) as cm:
             SQLiteStore(p)
-        except (StoreError, sqlite3.DatabaseError) as exc:
-            _report("sqlite garbage file at open", exc=type(exc).__name__)
-        # Open-time failure type is recorded in the report; load() on an
-        # opened store is covered above.
+        self.assertNotIsInstance(cm.exception, sqlite3.DatabaseError)
+        self.assertIn("cannot open", str(cm.exception))
+        self.assertIn("not a database", str(cm.exception))
+        # a DB another program owns (valid SQLite, foreign schema) opens
+        # and upgrades or refuses -- never a raw sqlite3 error either
+        q = self.tmp / "foreign.db"
+        conn = sqlite3.connect(q)
+        conn.execute("CREATE TABLE xsm_schema(version INTEGER)")
+        conn.execute("INSERT INTO xsm_schema VALUES (999)")
+        conn.commit()
+        conn.close()
+        with self.assertRaises(StoreError) as cm2:
+            SQLiteStore(q)
+        self.assertIn("newer", str(cm2.exception))
 
 
 # =========================================================================
