@@ -789,6 +789,7 @@ class TestReservedSendKeys(unittest.TestCase):
         app = Litestar(
             route_handlers=[create_statechart_controller(reg, "payment")],
             plugins=[XStatePlugin(reg)],
+            logging_config=None,  # see tests/contrib/litestar/test_litestar.py
         )
         with TestClient(app) as c:
             r = c.post(

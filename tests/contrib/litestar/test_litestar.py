@@ -74,9 +74,18 @@ def make(machine=None, name="order", store=None, authorize=allow_all, **kw):
 
 def app_for(reg, name="order", handlers=(), plugin_kw=None, **ctl_kw):
     ctl = create_statechart_controller(reg, name, **ctl_kw)
+    # 📝 `logging_config=None`: Litestar's default `LoggingConfig` installs a
+    #    `QueueHandler` on the ROOT logger at app construction and never
+    #    removes it, so every `logger.info` in the rest of the pytest
+    #    session was retained in its queue -- the tracemalloc leak tests
+    #    in tests/persistence read ~800 KB of "library growth" (one
+    #    `from_snapshot` log record per cycle) whenever this file ran
+    #    first. Found by the #262 battle integration; a test-isolation
+    #    defect of THIS suite, not of the library.
     return Litestar(
         route_handlers=[ctl, *handlers],
         plugins=[XStatePlugin(reg, **(plugin_kw or {}))],
+        logging_config=None,
     )
 
 
