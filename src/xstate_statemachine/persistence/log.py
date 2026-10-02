@@ -40,6 +40,8 @@ from __future__ import annotations
 import contextvars
 import copy
 import json
+import math
+import os
 import sqlite3
 import threading
 import time
@@ -62,12 +64,13 @@ except ImportError:  # pragma: no cover
     from typing_extensions import Protocol, runtime_checkable  # type: ignore
 
 from ..events import AfterEvent, DoneEvent, ErrorEvent, event_kind
-from ..exceptions import XStateMachineError
+from ..exceptions import StoreError, XStateMachineError
 from ..plugins import DEFAULT_REDACT_KEYS, PluginBase, redact
 
 __all__ = [
     "AuditPlugin",
     "JSONLinesLog",
+    "LogCorruptError",
     "MemoryLog",
     "ReplayDivergenceError",
     "SQLiteLog",
@@ -83,6 +86,50 @@ __all__ = [
 correlation_id_var: contextvars.ContextVar[Optional[str]] = (
     contextvars.ContextVar("xsm_correlation_id", default=None)
 )
+
+
+class LogCorruptError(StoreError):
+    """A transition-log record (a JSONL line, a SQLite row) is unreadable
+    or not a record. Raised by ``read()`` / ``next_seq()`` / ``purge`` --
+    never skipped, because a replay over a log with a hole would "succeed"
+    to a wrong state. Inspect the named location and repair or truncate."""
+
+
+def _check_cutoff(cutoff_ts: Any) -> float:
+    """🛡️ #262 battle: a NaN cutoff made every ``ts >= cutoff`` False, so
+    ``purge_older_than(nan)`` silently erased the whole log."""
+    if isinstance(cutoff_ts, bool) or not isinstance(cutoff_ts, (int, float)):
+        raise ValueError(f"cutoff_ts must be a number, got {cutoff_ts!r}")
+    if math.isnan(cutoff_ts) or cutoff_ts == -math.inf:
+        raise ValueError(f"cutoff_ts must not be NaN / -inf: {cutoff_ts!r}")
+    return float(cutoff_ts)
+
+
+def _check_read(after_seq: Any, limit: Any) -> None:
+    # 🛡️ #262 battle: `limit=-1` sliced `rows[:-1]` (MemoryLog) / meant
+    #    "no limit" (SQLite) -- three backends, three answers.
+    for name, v in (("after_seq", after_seq), ("limit", limit)):
+        if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+            raise ValueError(f"{name} must be an int >= 0, got {v!r}")
+
+
+def _check_append(rec: Any) -> None:
+    if not isinstance(rec, TransitionRecord):
+        raise TypeError(
+            f"append() takes a TransitionRecord, got {type(rec).__name__}"
+        )
+    if (
+        isinstance(rec.seq, bool)
+        or not isinstance(rec.seq, int)
+        or rec.seq < 1
+    ):
+        raise ValueError(f"seq must be an int >= 1, got {rec.seq!r}")
+    if (
+        isinstance(rec.ts, bool)
+        or not isinstance(rec.ts, (int, float))
+        or not math.isfinite(rec.ts)
+    ):
+        raise ValueError(f"ts must be a finite number, got {rec.ts!r}")
 
 
 @dataclass(frozen=True)
@@ -132,23 +179,51 @@ class TransitionRecord:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "TransitionRecord":
-        return cls(
-            machine_id=str(d["machine_id"]),
-            seq=int(d["seq"]),
-            ts=float(d["ts"]),
-            event_type=str(d["event_type"]),
-            event_payload=dict(d.get("event_payload") or {}),
-            from_states=tuple(d.get("from_states") or ()),
-            to_states=tuple(d.get("to_states") or ()),
-            actions=tuple(d.get("actions") or ()),
-            disposition=str(d.get("disposition", "transition")),
-            actor=d.get("actor"),
-            reason=d.get("reason"),
-            correlation_id=d.get("correlation_id"),
-            machine_version=str(d.get("machine_version") or ""),
-            engine=bool(d.get("engine", False)),
-            error=d.get("error"),
-        )
+        """Strict inverse of `to_dict`; anything else is `LogCorruptError`."""
+        try:
+            if not isinstance(d, dict):
+                raise TypeError(f"record is {type(d).__name__}, not object")
+            seq, ts = d["seq"], d["ts"]
+            if isinstance(seq, bool) or not isinstance(seq, int) or seq < 1:
+                raise ValueError(f"seq {seq!r}")
+            if (
+                isinstance(ts, bool)
+                or not isinstance(ts, (int, float))
+                or not math.isfinite(ts)
+            ):
+                raise ValueError(f"ts {ts!r}")
+            for name in ("from_states", "to_states", "actions"):
+                v = d.get(name)
+                if v is not None and not isinstance(v, (list, tuple)):
+                    raise TypeError(f"{name} is not a list")
+            payload = d.get("event_payload")
+            if payload is not None and not isinstance(payload, dict):
+                raise TypeError("event_payload is not an object")
+            if not isinstance(d["machine_id"], str) or not isinstance(
+                d["event_type"], str
+            ):
+                raise TypeError("machine_id / event_type not strings")
+            return cls(
+                machine_id=d["machine_id"],
+                seq=seq,
+                ts=float(ts),
+                event_type=d["event_type"],
+                event_payload=dict(payload or {}),
+                from_states=tuple(d.get("from_states") or ()),
+                to_states=tuple(d.get("to_states") or ()),
+                actions=tuple(d.get("actions") or ()),
+                disposition=str(d.get("disposition", "transition")),
+                actor=d.get("actor"),
+                reason=d.get("reason"),
+                correlation_id=d.get("correlation_id"),
+                machine_version=str(d.get("machine_version") or ""),
+                engine=bool(d.get("engine", False)),
+                error=d.get("error"),
+            )
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise LogCorruptError(
+                f"not a TransitionRecord ({type(exc).__name__}: {exc})"
+            ) from exc
 
 
 @runtime_checkable
@@ -189,6 +264,7 @@ class MemoryLog:
         self._lock = threading.Lock()
 
     def append(self, rec: TransitionRecord, *, connection: Any = None) -> None:
+        _check_append(rec)
         with self._lock:
             self._rows.setdefault(rec.machine_id, []).append(rec)
 
@@ -200,6 +276,7 @@ class MemoryLog:
     def read(
         self, machine_id: str, *, after_seq: int = 0, limit: int = 1000
     ) -> List[TransitionRecord]:
+        _check_read(after_seq, limit)
         with self._lock:
             rows = [
                 r for r in self._rows.get(machine_id, []) if r.seq > after_seq
@@ -207,6 +284,7 @@ class MemoryLog:
         return rows[:limit]
 
     def purge_older_than(self, cutoff_ts: float) -> int:
+        cutoff_ts = _check_cutoff(cutoff_ts)
         n = 0
         with self._lock:
             for k, rows in list(self._rows.items()):
@@ -238,21 +316,57 @@ class JSONLinesLog:
         self._lock = threading.Lock()
 
     def _iter(self) -> Iterable[TransitionRecord]:
+        # 📝 #262 battle: `utf-8-sig` tolerates a BOM (a Windows editor
+        #    saved the file); text mode folds CRLF. Anything else that is
+        #    not a record -- a torn last line (writer killed mid-write),
+        #    garbage, non-UTF-8 bytes -- is a typed `LogCorruptError`
+        #    naming the line; it is never skipped (a replay over a hole
+        #    would "succeed" to the wrong state).
         try:
-            with open(self.path, "r", encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if line:
-                        yield TransitionRecord.from_dict(json.loads(line))
+            fh = open(self.path, "r", encoding="utf-8-sig")
         except FileNotFoundError:
             return
+        except OSError as exc:
+            raise StoreError(f"JSONLinesLog({self.path}): {exc}") from exc
+        with fh:
+            n = 0
+            try:
+                for n, line in enumerate(fh, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except ValueError as exc:
+                        raise LogCorruptError(
+                            f"{self.path}:{n}: not JSON ({exc}); a writer "
+                            f"killed mid-append leaves a torn last line -- "
+                            f"truncate it to repair"
+                        ) from exc
+                    try:
+                        rec = TransitionRecord.from_dict(obj)
+                    except LogCorruptError as exc:
+                        raise LogCorruptError(
+                            f"{self.path}:{n}: {exc}"
+                        ) from exc
+                    yield rec
+            except UnicodeDecodeError as exc:
+                raise LogCorruptError(
+                    f"{self.path}:{n + 1}: not UTF-8 ({exc})"
+                ) from exc
+            except OSError as exc:
+                raise StoreError(f"JSONLinesLog({self.path}): {exc}") from exc
 
     def append(self, rec: TransitionRecord, *, connection: Any = None) -> None:
+        _check_append(rec)
         line = json.dumps(rec.to_dict(), sort_keys=True, default=str) + "\n"
         with self._lock:
-            with open(self.path, "a", encoding="utf-8") as fh:
-                fh.write(line)
-                fh.flush()
+            try:
+                with open(self.path, "a", encoding="utf-8") as fh:
+                    fh.write(line)
+                    fh.flush()
+            except OSError as exc:
+                raise StoreError(f"JSONLinesLog({self.path}): {exc}") from exc
 
     def next_seq(self, machine_id: str) -> int:
         with self._lock:
@@ -265,6 +379,7 @@ class JSONLinesLog:
     def read(
         self, machine_id: str, *, after_seq: int = 0, limit: int = 1000
     ) -> List[TransitionRecord]:
+        _check_read(after_seq, limit)
         with self._lock:
             rows = [
                 r
@@ -279,16 +394,31 @@ class JSONLinesLog:
             rows = list(self._iter())
             kept = [r for r in rows if keep(r)]
             tmp = self.path.with_suffix(".jsonl.tmp")
-            with open(tmp, "w", encoding="utf-8") as fh:
-                for r in kept:
-                    fh.write(
-                        json.dumps(r.to_dict(), sort_keys=True, default=str)
-                        + "\n"
-                    )
-            tmp.replace(self.path)
+            try:
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    for r in kept:
+                        fh.write(
+                            json.dumps(
+                                r.to_dict(), sort_keys=True, default=str
+                            )
+                            + "\n"
+                        )
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                tmp.replace(self.path)
+            except BaseException:
+                # 🛡️ #262: a failed rewrite leaves the OLD file intact
+                #    (replace is the only step that touches it); do not
+                #    strand the temp copy.
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+                raise
         return len(rows) - len(kept)
 
     def purge_older_than(self, cutoff_ts: float) -> int:
+        cutoff_ts = _check_cutoff(cutoff_ts)
         return self._rewrite(lambda r: r.ts >= cutoff_ts)
 
     def forget(self, machine_id: str) -> int:
@@ -326,15 +456,34 @@ class SQLiteLog:
         else:
             self._own = SQLiteStore(store_or_path)
             self._store = self._own
-        conn = self._conn()
-        with self._store._tx(conn, immediate=True):
-            conn.execute(_CREATE_LOG)
-            conn.execute(_CREATE_LOG_IDX)
+        try:
+            conn = self._conn()
+            with self._store._tx(conn, immediate=True):
+                conn.execute(_CREATE_LOG)
+                cols = {
+                    str(r[1])
+                    for r in conn.execute("PRAGMA table_info(transitions)")
+                }
+                if not {"machine_id", "seq", "ts", "record"} <= cols:
+                    # 🛡️ #262 battle: a foreign `transitions` table made
+                    #    CREATE IF NOT EXISTS a no-op and the first append
+                    #    died with a bare `no such column`.
+                    raise StoreError(
+                        f"SQLiteLog: table 'transitions' exists with "
+                        f"columns {sorted(cols)}, not the "
+                        f"xstate-statemachine schema. Use another file."
+                    )
+                conn.execute(_CREATE_LOG_IDX)
+        except sqlite3.Error as exc:
+            raise StoreError(
+                f"SQLiteLog: {type(exc).__name__}: {exc}"
+            ) from exc
 
     def _conn(self) -> sqlite3.Connection:
         return self._store._conn()
 
     def append(self, rec: TransitionRecord, *, connection: Any = None) -> None:
+        _check_append(rec)
         conn = (
             connection
             if isinstance(connection, sqlite3.Connection)
@@ -365,18 +514,53 @@ class SQLiteLog:
     def read(
         self, machine_id: str, *, after_seq: int = 0, limit: int = 1000
     ) -> List[TransitionRecord]:
-        rows = (
-            self._conn()
-            .execute(
-                "SELECT record FROM transitions WHERE machine_id = ? AND seq > ? "
-                "ORDER BY seq LIMIT ?",
-                (machine_id, after_seq, limit),
+        _check_read(after_seq, limit)
+        try:
+            rows = (
+                self._conn()
+                .execute(
+                    "SELECT seq, record FROM transitions "
+                    "WHERE machine_id = ? AND seq > ? ORDER BY seq LIMIT ?",
+                    (machine_id, after_seq, limit),
+                )
+                .fetchall()
             )
-            .fetchall()
-        )
-        return [TransitionRecord.from_dict(json.loads(r[0])) for r in rows]
+        except sqlite3.Error as exc:
+            raise StoreError(
+                f"SQLiteLog: {type(exc).__name__}: {exc}"
+            ) from exc
+        if (
+            after_seq == 0
+            and self._conn()
+            .execute(
+                "SELECT 1 FROM transitions WHERE machine_id = ? AND seq < 1 "
+                "LIMIT 1",
+                (machine_id,),
+            )
+            .fetchone()
+        ):
+            # 🛡️ #262 battle: `seq > 0` never surfaces a row with a
+            #    non-positive seq, so it was a silent hole in the replay.
+            raise LogCorruptError(
+                f"transitions({machine_id!r}): row with seq < 1"
+            )
+        out: List[TransitionRecord] = []
+        for seq, raw in rows:
+            where = f"transitions({machine_id!r}, seq={seq!r})"
+            try:
+                rec = TransitionRecord.from_dict(json.loads(raw))
+            except (ValueError, TypeError) as exc:  # LogCorruptError is one
+                raise LogCorruptError(f"{where}: {exc}") from exc
+            if rec.seq != seq or rec.machine_id != machine_id:
+                raise LogCorruptError(
+                    f"{where}: row key disagrees with its record "
+                    f"({rec.machine_id!r}, {rec.seq})"
+                )
+            out.append(rec)
+        return out
 
     def purge_older_than(self, cutoff_ts: float) -> int:
+        cutoff_ts = _check_cutoff(cutoff_ts)
         conn = self._conn()
         with self._store._tx(conn, immediate=True):
             return conn.execute(
