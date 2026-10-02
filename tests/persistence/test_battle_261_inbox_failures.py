@@ -190,7 +190,7 @@ class TestBackendFailures(_Base):
         for exc in self.EXCS:
             with self.subTest(exc=type(exc).__name__):
                 fb = FaultyInbox(MemoryInbox())
-                it, col = self.run_one(fb)
+                it, col = self.run_one(fb, on_inbox_error="admit")
                 it.send("CREDIT", wait=True, idempotency_key="k", amount=1)
                 fb.fail_always["get"] = exc
                 r = it.send("CREDIT", wait=True, idempotency_key="k", amount=1)
@@ -269,7 +269,7 @@ class TestBackendFailures(_Base):
         for exc in self.EXCS:
             with self.subTest(exc=type(exc).__name__):
                 fb = FaultyInbox(MemoryInbox())
-                it, col = self.run_one(fb)
+                it, col = self.run_one(fb, on_inbox_error="admit")
                 fb.fail_next["claim"] = exc
                 r = it.send("CREDIT", wait=True, idempotency_key="k", amount=1)
                 self.assertFalse(r.duplicate)
@@ -389,7 +389,9 @@ class TestBackendFailures(_Base):
         it = SyncInterpreter(machine()).use(pl).start()
         for k in ("a", "b", "c"):
             it.send("CREDIT", wait=True, idempotency_key=k, amount=1)
-        self.assertEqual(len(pl._buffered), 3)
+        # 📝 buffers are per `persisted()` session (#261 A fix); outside
+        #    any block the session token is None -- one bucket of 3
+        self.assertEqual(sum(len(v) for v in pl._buffered.values()), 3)
         scope = pl.scope_for(it, Event("X"))
         real_mark = base.mark
         n = {"i": 0}

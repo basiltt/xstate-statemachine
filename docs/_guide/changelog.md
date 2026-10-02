@@ -237,6 +237,15 @@ _No unreleased changes yet._
 
 ### Added
 
+- **`IdempotencyPlugin(on_inbox_error="refuse" | "admit")` and
+  `InboxUnavailableError` (HTTP 503) (battle-test #261).** What a keyed
+  event gets when the inbox *backend* fails. `"refuse"` is the default --
+  the receipt carries the typed, retryable error and the action never
+  runs; `"admit"` opts into availability (the event runs undeduplicated
+  and `on_plugin_error` fires) for webhooks whose sender retries anyway.
+  `receipt_to_status` maps the new error to **503**; `STATUS_UNAVAILABLE`
+  exported from `receipts`.
+
 - **Observability & live inspector (Phase B) -- `[observability]` extra
   (#273).** `OpenTelemetryPlugin` opens one `statechart.transition` span per
   processed event and closes it in `on_event_processed` with the outcome
@@ -1148,6 +1157,38 @@ _No unreleased changes yet._
   `requires-python` and CI have been 3.9 since 0.9).
 
 ### Fixed
+
+- **The idempotency inbox's exactly-once claim did not hold under crash and
+  concurrency (battle-test #261; four of these broke a stated guarantee).**
+  - Mark buffers were ONE list shared by every `persisted()` block using
+    the plugin: block A sent `ka` and crashed before saving while block B
+    exited cleanly in between -- B's flush wrote A's mark, and every
+    redelivery of `ka` got "duplicate" for an effect that was never saved.
+    Buffers and the `buffer_marks` switch are now per session (thread AND
+    asyncio task).
+  - With `MemoryInbox`, a kill after the save left the restart with an
+    empty inbox; the redelivery ran the action a second time on a
+    committed save. The snapshot now carries, for each key in its ring,
+    *when* it was processed and with which fingerprint; within `ttl_s`
+    that answers the same payload as a duplicate and a different one as
+    422, and repairs the inbox. Old snapshots keep the old behaviour.
+  - `on_before_send` was fail-open: an un-fingerprintable payload, a
+    hand-edited cached receipt, an inbox that raised, or a SQLite lock
+    timeout (always the case for `apersisted` + `PessimisticLock` + a
+    shared `SQLiteInbox`) ADMITTED the event with no claim, so every
+    redelivery ran again. Each now refuses with a typed receipt; a
+    malformed cached receipt becomes a conservative duplicate with a
+    warning.
+  - A TTL purge between claim and mark made SQLite's mark an `UPDATE`
+    that matched nothing (redelivery ran again) and `MemoryInbox` write
+    a row with an empty fingerprint (bogus 422). The mark re-claims with
+    the real fingerprint.
+  - `on_interpreter_stop` released EVERY pending claim on the plugin,
+    other interpreters' live claims included. Claims are tagged with
+    their interpreter.
+  - `ttl_s=-1`, `nan`, `"7"` and `True` were accepted silently (negative /
+    NaN made every key expire instantly -- dedup off with no error).
+    `ValueError` at construction.
 
 - **`persisted()` / `apersisted()` could not restore a compatibly-drifted
   snapshot (battle-test #260).** The docs listed `verify_machine_hash` and

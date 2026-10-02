@@ -686,8 +686,13 @@ class TestConcurrency(_Base):
 
         rs = asyncio.run(go())
         for r in rs:
-            self.assertEqual(type(r.error).__name__, "LockTimeoutError")
-            self.assertEqual(receipt_to_status(r), 500)
+            # 📝 Integration: a lock timeout IS an inbox-backend failure, so
+            #    under the default on_inbox_error="refuse" it is wrapped as
+            #    a RETRYABLE `InboxUnavailableError` (503) with the cause
+            #    kept -- the right answer for the client (not a 500).
+            self.assertEqual(type(r.error).__name__, "InboxUnavailableError")
+            self.assertEqual(type(r.error.cause).__name__, "LockTimeoutError")
+            self.assertEqual(receipt_to_status(r), 503)
         self.assertEqual(effects, [])
         self.assertEqual(committed_credits(store), 0)
 
@@ -999,8 +1004,14 @@ class TestReplayFidelity(_Base):
         i.start()
         r = i.send("CREDIT", wait=True, idempotency_key="k", amount=1)
         i.stop()
-        self.assertIsInstance(r.error, OSError)
-        self.assertEqual(receipt_to_status(r), 500)
+        # 📝 Integration: an inbox-backend failure is wrapped as the typed
+        #    `InboxUnavailableError` (503, "retry later") under the default
+        #    on_inbox_error="refuse"; the cause is kept.
+        from src.xstate_statemachine.persistence import InboxUnavailableError
+
+        self.assertIsInstance(r.error, InboxUnavailableError)
+        self.assertIsInstance(r.error.cause, OSError)
+        self.assertEqual(receipt_to_status(r), 503)
         self.assertEqual(effects, [])
 
 

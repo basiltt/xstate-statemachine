@@ -660,8 +660,18 @@ class IdempotencyPlugin(PluginBase[Any]):
 
     @staticmethod
     def _wall(interpreter: Any) -> float:
-        wall = getattr(interpreter, "wall_now", None)
-        return float(wall()) if callable(wall) else time.time()
+        """Epoch seconds for the ring evidence.
+
+        📝 The inbox stores and the evidence must agree on ONE clock or a
+        key can be "expired" in one and "fresh" in the other. The stores
+        use `time.time()`; so does this -- unless the interpreter runs on
+        a `SimulatedClock` with a `wall_start`, where virtual wall time is
+        the only honest answer (tests that say "restarted an hour later").
+        """
+        clock = getattr(interpreter, "clock", None)
+        if clock is not None and type(clock).__name__ == "SimulatedClock":
+            return float(clock.wall_now())
+        return time.time()
 
     def _store_evidence(
         self, interpreter: Any, ring: Deque[str], rid: str, fp: str
