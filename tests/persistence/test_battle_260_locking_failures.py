@@ -249,6 +249,67 @@ class TestLoadFailures(_Base):
             i.send("T")
         self.assertEqual(self.ver(st), 2)
 
+    def test_every_strategy_run_forwards_the_hash_arguments(self) -> None:
+        # 🐛 Review H1 (fixed): OptimisticLock.run -- the DEFAULT -- accepted
+        #    verify_machine_hash / expected_machine_hash and silently
+        #    dropped them, so `persisted_retry(..., verify_machine_hash=
+        #    False)` still raised SnapshotDriftError. Every strategy, and
+        #    the default (lock=None), must forward both.
+        changed = create_machine(
+            {
+                "id": "c",
+                "initial": "s",
+                "context": {"n": 0},
+                "states": {
+                    "s": {"on": {"T": {"actions": "inc"}, "U": "t"}},
+                    "t": {},
+                },
+            },
+            logic=MachineLogic(actions={"inc": _inc}),
+        )
+        for lock in (None, OptimisticLock(), PessimisticLock(), NoLock()):
+            with self.subTest(lock=type(lock).__name__):
+                st = MemoryStore()
+                self.seed(st)
+                with self.assertRaises(SnapshotDriftError):
+                    persisted_retry(
+                        st, "k", changed, lambda i: i.send("T"), lock=lock
+                    )
+                persisted_retry(
+                    st,
+                    "k",
+                    changed,
+                    lambda i: i.send("T"),
+                    lock=lock,
+                    verify_machine_hash=False,
+                )
+                self.assertEqual(self.ver(st), 2)
+                # expected_machine_hash: a wrong pin is refused, the right
+                # one (the CHANGED machine's) accepted
+                from src.xstate_statemachine.persistence.snapshot import (
+                    structure_hash,
+                )
+
+                with self.assertRaises(SnapshotDriftError):
+                    persisted_retry(
+                        st,
+                        "k",
+                        changed,
+                        lambda i: None,
+                        lock=lock,
+                        verify_machine_hash=False,
+                        expected_machine_hash="not-the-hash",
+                    )
+                persisted_retry(
+                    st,
+                    "k",
+                    changed,
+                    lambda i: None,
+                    lock=lock,
+                    verify_machine_hash=False,
+                    expected_machine_hash=structure_hash(changed),
+                )
+
     def test_unknown_kwarg_is_typeerror_at_call(self) -> None:
         st = MemoryStore()
         with self.assertRaises(TypeError):
@@ -871,6 +932,12 @@ class TestAsyncFailures(unittest.IsolatedAsyncioTestCase):
 
     async def test_adapter_for_sync_store_closed_after_failures(self) -> None:
         st = MemoryStore()
+        # 📝 `_owned_adapter` closes the adapter via the loop's DEFAULT
+        #    executor (review M1: a sync `shutdown(wait=True)` stalled the
+        #    loop). That executor keeps one idle thread for the loop's
+        #    life -- asyncio's, not ours. Warm it before the baseline so
+        #    the assertion measures adapter threads only.
+        await asyncio.get_running_loop().run_in_executor(None, lambda: None)
         base = threading.active_count()
         for n in range(30):
             try:
@@ -982,6 +1049,10 @@ class TestLeaks(_Base):
     def test_async_sync_store_adapters_do_not_grow_threads(self) -> None:
         async def main() -> int:
             st = MemoryStore()
+            # warm the loop's default executor (see the sibling test above)
+            await asyncio.get_running_loop().run_in_executor(
+                None, lambda: None
+            )
             base = threading.active_count()
             for _ in range(1000):
                 async with apersisted(st, "a", _machine()):
@@ -990,6 +1061,38 @@ class TestLeaks(_Base):
             return threading.active_count() - base
 
         self.assertLessEqual(asyncio.run(main()), 0)
+
+    def test_closing_the_owned_adapter_does_not_block_the_loop(self) -> None:
+        # 🐛 Review M1 (fixed): `astore.close()` is a blocking executor
+        #    join; called synchronously from the async `finally` it stalled
+        #    the loop while a slow store call finished. A heartbeat task
+        #    must keep ticking during the exit.
+        class Slow(MemoryStore):
+            def save(self, *a: Any, **kw: Any) -> int:
+                time.sleep(0.4)
+                return super().save(*a, **kw)
+
+        async def main() -> int:
+            ticks = 0
+            stop = asyncio.Event()
+
+            async def heartbeat() -> None:
+                nonlocal ticks
+                while not stop.is_set():
+                    ticks += 1
+                    await asyncio.sleep(0.02)
+
+            hb = asyncio.create_task(heartbeat())
+            st = Slow()
+            async with apersisted(st, "k", _machine()) as i:
+                await i.send("T", wait=True)
+            stop.set()
+            await hb
+            return ticks
+
+        # the exit (save ~0.4 s + close) must have let the heartbeat run
+        # many times; a blocked loop would yield ~1-2 ticks
+        self.assertGreater(asyncio.run(main()), 8)
 
 
 # =============================================================================

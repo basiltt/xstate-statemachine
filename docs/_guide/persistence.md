@@ -186,7 +186,7 @@ Every row is asserted by `tests/persistence/test_battle_260_locking_semantics.py
 | A plugin's mark fails | the snapshot is **already saved**; the other plugins still mark; the error propagates; callbacks dropped — this is the documented crash window between save and mark (a conservative duplicate, never a loss) |
 | An `after_commit` callback raises | the save is already durable; **every** remaining callback still runs; the first error is re-raised. Do not retry the block |
 | `async def` callback | awaited inside `apersisted()`; `TypeError` under `persisted()` (it was silently never run) |
-| Nested `persisted()` on another key | the inner block saves at its own exit; its callbacks wait for the **outermost** commit and are dropped if the outer block fails |
+| Nested `persisted()` on **another** key | its own commit: saves at its own exit **and runs its own `after_commit` callbacks then**, whatever the outer block does later (a committed save never loses its publish). A nested scope on the **same** key shares the outer commit and defers to it |
 | Callbacks across threads / asyncio tasks | isolated per block (a `ContextVar`) — no cross-talk |
 | `create_if_missing=False`, key missing | `KeyNotFoundError` before the body runs |
 | The interpreter you receive | started; `store_key` set; `wall_now()` from the injected `clock`; `plugins=` attached before `start()` |

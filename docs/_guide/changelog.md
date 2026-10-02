@@ -1161,11 +1161,19 @@ _No unreleased changes yet._
   never ran. Every callback now runs; the first error is re-raised; the
   save is already durable. `async def` callbacks are awaited inside
   `apersisted()` and refused with `TypeError` under `persisted()` -- before,
-  they were created and never awaited.
+  they were created and never awaited. A nested `persisted()` on a
+  **different** key now runs its callbacks at its own exit (its save is
+  its own commit); they used to wait for the outermost block and were
+  dropped if that block later failed -- a committed state change with no
+  published event (independent review M2).
 - **`apersisted()` leaked a worker thread per call on a sync store
   (battle-test #260).** The `as_async` adapter it created was never
   closed; each cycle left an `xsm-store` thread alive until GC. Closed on
-  exit, success or error.
+  exit, success or error -- off the loop, since `close()` is a blocking
+  executor join that would otherwise stall every other task (review M1).
+  The default `OptimisticLock.run` also forwarded only three of the five
+  restore arguments, dropping `verify_machine_hash` /
+  `expected_machine_hash` it had just accepted (review H1) -- fixed.
 - **`lock=` validation (battle-test #260).** A non-strategy (`"none"`,
   `5`) failed mid-block with `AttributeError: 'str' object has no
   attribute 'acquire'`; now `ValueError` naming `OptimisticLock` /

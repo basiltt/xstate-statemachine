@@ -239,28 +239,62 @@ class TestAfterCommit(_Tmp):
         after_commit(lambda: ran.append(1))
         self.assertEqual(ran, [1])
 
-    def test_nested_different_keys_defer_to_outermost(self) -> None:
+    def test_nested_different_key_runs_its_own_callbacks_at_its_exit(
+        self,
+    ) -> None:
+        # 🐛 Review M2 (fixed): a nested block on ANOTHER key deferred its
+        #    callbacks to the outermost commit -- its save was already
+        #    durable, so a committed state change could end with no
+        #    published event. A different key is its own commit.
         store = MemoryStore()
         log: List[str] = []
         with persisted(store, "outer", MACHINE):
             with persisted(store, "inner", MACHINE) as j:
                 j.send("T")
                 after_commit(lambda: log.append("inner-cb"))
-            # inner is saved, but its callback waits for the OUTER commit
             self.assertEqual(_count(store, "inner"), 1)
+            self.assertEqual(log, ["inner-cb"])  # ran at the INNER exit
             log.append("inner-exited")
-        self.assertEqual(log, ["inner-exited", "inner-cb"])
+            after_commit(lambda: log.append("outer-cb"))
+        self.assertEqual(log, ["inner-cb", "inner-exited", "outer-cb"])
 
-    def test_nested_outer_failure_drops_inner_callbacks(self) -> None:
+    def test_nested_different_key_callbacks_survive_outer_failure(
+        self,
+    ) -> None:
+        # 🐛 Review M2 (fixed): the inner save committed, so its callback
+        #    MUST have run even though the outer block then failed.
         store = MemoryStore()
         log: List[str] = []
         with self.assertRaises(RuntimeError):
             with persisted(store, "outer", MACHINE):
                 with persisted(store, "inner", MACHINE):
                     after_commit(lambda: log.append("inner-cb"))
+                after_commit(lambda: log.append("outer-cb"))
                 raise RuntimeError("outer")
-        self.assertEqual(log, [])
-        self.assertEqual(store.load("inner").version, 1)  # inner did commit
+        self.assertEqual(log, ["inner-cb"])  # inner ran, outer dropped
+        self.assertEqual(store.load("inner").version, 1)
+        self.assertIsNone(store.load("outer"))
+
+    def test_nested_same_key_shares_the_outer_commit(self) -> None:
+        # 📝 The deferral IS right when the nested scope is the SAME key:
+        #    a `lock.run` re-entering its own key is one commit, so its
+        #    callbacks wait for that commit. Model it with the scope
+        #    primitive directly -- a real nested write to the same key
+        #    under OptimisticLock would (correctly) conflict.
+        from src.xstate_statemachine.persistence.locking import (
+            _commit_scope,
+        )
+
+        log: List[str] = []
+        with _commit_scope(key="k"):
+            after_commit(lambda: log.append("outer-cb"))
+            with _commit_scope(key="k"):
+                after_commit(lambda: log.append("inner-cb"))
+            self.assertEqual(log, [])  # same key: deferred to the outer
+            with _commit_scope(key="other"):
+                after_commit(lambda: log.append("other-cb"))
+            self.assertEqual(log, ["other-cb"])  # other key: its own
+        self.assertEqual(log, ["other-cb", "outer-cb", "inner-cb"])
 
     def test_sync_block_refuses_coroutine_callback(self) -> None:
         async def co() -> None:  # pragma: no cover - never awaited
