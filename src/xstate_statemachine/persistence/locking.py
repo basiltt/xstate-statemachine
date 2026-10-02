@@ -35,6 +35,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import contextvars
 import inspect
@@ -99,7 +100,7 @@ current_session: "contextvars.ContextVar[Optional[object]]" = (
 )
 #: Callbacks to run once the OUTERMOST persisted() scope -- including the
 #: `PessimisticLock` transaction -- has exited cleanly (see `after_commit`).
-_post_commit: "contextvars.ContextVar[Optional[List[Callable[[], Any]]]]" = (
+_post_commit: "contextvars.ContextVar[Optional[_Pending]]" = (
     contextvars.ContextVar("xsm_post_commit", default=None)
 )
 
@@ -110,38 +111,122 @@ def after_commit(fn: Callable[[], Any]) -> None:
     For non-transactional side effects (a direct broker publish) that must
     not happen for a state a rollback discards. Outside any block, *fn*
     runs immediately. Dropped if the block raises.
+
+    Callbacks run in registration order once the enclosing block has saved
+    and released its lock. A nested `persisted()` on a DIFFERENT key is its
+    own commit and runs its own callbacks at its own exit; a nested block
+    on the SAME key shares the outer commit and defers to it. Every callback runs even if an earlier one raises; the first
+    error is then re-raised -- the save is already durable, so do NOT
+    retry the block on it. Inside `apersisted` a callback may return an
+    awaitable (an ``async def``); it is awaited. Under the sync
+    `persisted()` an awaitable result is a `TypeError` (never silently
+    dropped).
     """
     pending = _post_commit.get()
     if pending is None:
-        fn()
+        _run_callbacks([fn], allow_async=False)
     else:
         pending.append(fn)
 
 
+def _run_callbacks(
+    pending: List[Callable[[], Any]], *, allow_async: bool
+) -> List[Any]:
+    """Run every callback; collect awaitables (async scope) or refuse them
+    (sync scope); re-raise the first error after all have run."""
+    first: Optional[BaseException] = None
+    awaitables: List[Any] = []
+    for fn in pending:
+        try:
+            result = fn()
+            if inspect.isawaitable(result):
+                if allow_async:
+                    awaitables.append(result)
+                else:
+                    close = getattr(result, "close", None)
+                    if callable(close):
+                        close()
+                    raise TypeError(
+                        "after_commit callback returned an awaitable; "
+                        "async callbacks are only awaited inside "
+                        "apersisted() -- use a sync callback here"
+                    )
+        except BaseException as exc:  # noqa: BLE001 - re-raised below
+            if first is None:
+                first = exc
+    if first is not None:
+        for aw in awaitables:
+            close = getattr(aw, "close", None)
+            if callable(close):
+                close()
+        raise first
+    return awaitables
+
+
 @contextlib.contextmanager
-def _commit_scope() -> Iterator[None]:
+def _commit_scope(
+    allow_async: bool = False, *, key: Optional[str] = None
+) -> Iterator[List[Any]]:
     """Collect `after_commit` callbacks; run them on clean exit only.
-    Nested scopes defer to the outermost."""
-    if _post_commit.get() is not None:
-        yield
+
+    Yields a list that receives the awaitables the async twin must await.
+
+    🏛️ Review M2 (#260 battle): a nested `persisted()` used to defer its
+    callbacks to the OUTERMOST scope unconditionally -- so a nested block
+    on a *different key* whose save had already committed lost its
+    callbacks when the outer block later raised: a committed state change
+    with no published event. The deferral is only correct when the nested
+    block shares the outer block's commit, i.e. the SAME key (a
+    `PessimisticLock` body re-entering its own key is one transaction).
+    A different key is its own commit and gets its own scope.
+    """
+    out: List[Any] = []
+    outer = _post_commit.get()
+    if outer is not None and (key is None or outer.key == key):
+        yield out
         return
-    pending: List[Callable[[], Any]] = []
+    pending = _Pending(key)
     token = _post_commit.set(pending)
     try:
-        yield
+        yield out
     except BaseException:
         _post_commit.reset(token)
         raise
     _post_commit.reset(token)
-    for fn in pending:
-        fn()
+    out.extend(_run_callbacks(pending.callbacks, allow_async=allow_async))
+
+
+class _Pending:
+    """One commit scope's queued `after_commit` callbacks, tagged with the
+    store key whose save releases them (``None`` = unkeyed, e.g. a bare
+    `lock.run`)."""
+
+    __slots__ = ("key", "callbacks")
+
+    def __init__(self, key: Optional[str]) -> None:
+        self.key = key
+        self.callbacks: List[Callable[[], Any]] = []
+
+    def append(self, fn: Callable[[], Any]) -> None:
+        self.callbacks.append(fn)
 
 
 @contextlib.asynccontextmanager
-async def _commit_scope_async() -> AsyncIterator[None]:
-    """`_commit_scope` for ``async with`` (the lock context is async)."""
-    with _commit_scope():
+async def _commit_scope_async(
+    *, key: Optional[str] = None
+) -> AsyncIterator[None]:
+    """`_commit_scope` for ``async with``; awaits coroutine callbacks."""
+    with _commit_scope(allow_async=True, key=key) as awaitables:
         yield
+    first: Optional[BaseException] = None
+    for aw in awaitables:
+        try:
+            await aw
+        except BaseException as exc:  # noqa: BLE001 - re-raised below
+            if first is None:
+                first = exc
+    if first is not None:
+        raise first
 
 
 @contextlib.contextmanager
@@ -179,6 +264,8 @@ class LockStrategy(Protocol):
         migrator: Optional[Any] = None,
         on_version_mismatch: Optional[str] = None,
         restart_timers: Any = DEFAULT_RESTART_TIMERS,
+        verify_machine_hash: bool = True,
+        expected_machine_hash: Optional[str] = None,
     ) -> T:
         """load → ``fn(interp)`` → save → discard, under this strategy.
         May call *fn* more than once (optimistic retry)."""
@@ -201,9 +288,15 @@ def _restore_kwargs(
     migrator: Optional[Any],
     on_version_mismatch: Optional[str],
     restart_timers: Any = DEFAULT_RESTART_TIMERS,
+    verify_machine_hash: bool = True,
+    expected_machine_hash: Optional[str] = None,
 ) -> Dict[str, Any]:
     """The `from_snapshot` kwargs `persisted()` forwards (#263, #264)."""
     kw: Dict[str, Any] = {"restart_timers": restart_timers}
+    if not verify_machine_hash:
+        kw["verify_machine_hash"] = False
+    if expected_machine_hash is not None:
+        kw["expected_machine_hash"] = expected_machine_hash
     if migrator is not None:
         kw["migrator"] = migrator
     if on_version_mismatch is not None:
@@ -273,8 +366,12 @@ class OptimisticLock:
         backoff: Optional[RetryPolicy] = None,
         rng: Optional[Callable[[], float]] = None,
     ) -> None:
+        if isinstance(retries, bool) or not isinstance(retries, int):
+            raise TypeError("retries must be an int")
         if retries < 0:
             raise ValueError("retries must be >= 0")
+        if backoff is not None and not isinstance(backoff, RetryPolicy):
+            raise TypeError("backoff must be a RetryPolicy")
         self.retries = int(retries)
         self.backoff = backoff or DEFAULT_BACKOFF
         self._rng = rng
@@ -312,12 +409,14 @@ class OptimisticLock:
         migrator: Optional[Any] = None,
         on_version_mismatch: Optional[str] = None,
         restart_timers: Any = DEFAULT_RESTART_TIMERS,
+        verify_machine_hash: bool = True,
+        expected_machine_hash: Optional[str] = None,
     ) -> T:
         attempt = 0
         while True:
             attempt += 1
             try:
-                with _commit_scope():
+                with _commit_scope(key=key):
                     return _cycle(
                         store,
                         key,
@@ -327,8 +426,16 @@ class OptimisticLock:
                         clock,
                         plugins,
                         create_if_missing,
+                        # 🐛 Review H1 (#260): the DEFAULT strategy dropped
+                        #    the two hash arguments it had just accepted --
+                        #    "accepted and silently ignored", the AGENTS.md
+                        #    bug. Same five as the other two strategies.
                         _restore_kwargs(
-                            migrator, on_version_mismatch, restart_timers
+                            migrator,
+                            on_version_mismatch,
+                            restart_timers,
+                            verify_machine_hash,
+                            expected_machine_hash,
                         ),
                     )
             except ConflictError as exc:
@@ -373,8 +480,10 @@ class PessimisticLock:
         migrator: Optional[Any] = None,
         on_version_mismatch: Optional[str] = None,
         restart_timers: Any = DEFAULT_RESTART_TIMERS,
+        verify_machine_hash: bool = True,
+        expected_machine_hash: Optional[str] = None,
     ) -> T:
-        with _commit_scope(), self.acquire(store, key):
+        with _commit_scope(key=key), self.acquire(store, key):
             return _cycle(
                 store,
                 key,
@@ -384,7 +493,13 @@ class PessimisticLock:
                 clock,
                 plugins,
                 create_if_missing,
-                _restore_kwargs(migrator, on_version_mismatch, restart_timers),
+                _restore_kwargs(
+                    migrator,
+                    on_version_mismatch,
+                    restart_timers,
+                    verify_machine_hash,
+                    expected_machine_hash,
+                ),
             )
 
 
@@ -416,8 +531,10 @@ class NoLock:
         migrator: Optional[Any] = None,
         on_version_mismatch: Optional[str] = None,
         restart_timers: Any = DEFAULT_RESTART_TIMERS,
+        verify_machine_hash: bool = True,
+        expected_machine_hash: Optional[str] = None,
     ) -> T:
-        with _commit_scope():
+        with _commit_scope(key=key):
             return _cycle(
                 store,
                 key,
@@ -427,11 +544,32 @@ class NoLock:
                 clock,
                 plugins,
                 create_if_missing,
-                _restore_kwargs(migrator, on_version_mismatch, restart_timers),
+                _restore_kwargs(
+                    migrator,
+                    on_version_mismatch,
+                    restart_timers,
+                    verify_machine_hash,
+                    expected_machine_hash,
+                ),
             )
 
 
 _DEFAULT_LOCK = OptimisticLock()
+
+
+def _strategy(lock: Any) -> Any:
+    """Resolve *lock*; anything that is not a strategy fails loudly here
+    instead of as an ``AttributeError`` deep inside the block."""
+    if lock is None:
+        return _DEFAULT_LOCK
+    if all(
+        callable(getattr(lock, n, None)) for n in ("run", "acquire", "fence")
+    ):
+        return lock
+    raise ValueError(
+        f"lock must be a LockStrategy instance -- OptimisticLock(), "
+        f"PessimisticLock() or NoLock() -- not {lock!r}"
+    )
 
 
 def _mark_plugins(plugins: Iterable[Any]) -> List[Any]:
@@ -497,6 +635,8 @@ def persisted(
     migrator: Optional[Any] = None,
     on_version_mismatch: Optional[str] = None,
     restart_timers: Any = DEFAULT_RESTART_TIMERS,
+    verify_machine_hash: bool = True,
+    expected_machine_hash: Optional[str] = None,
 ) -> Iterator[Any]:
     """create → act → persist → discard as a ``with`` block (sync engine).
 
@@ -515,8 +655,8 @@ def persisted(
     """
     from ..sync_interpreter import SyncInterpreter
 
-    strategy = lock if lock is not None else _DEFAULT_LOCK
-    with _commit_scope(), strategy.acquire(store, key):
+    strategy = _strategy(lock)
+    with _commit_scope(key=key), strategy.acquire(store, key):
         interp, version = _build(
             store,
             key,
@@ -526,7 +666,13 @@ def persisted(
             plugins,
             create_if_missing,
             True,
-            _restore_kwargs(migrator, on_version_mismatch, restart_timers),
+            _restore_kwargs(
+                migrator,
+                on_version_mismatch,
+                restart_timers,
+                verify_machine_hash,
+                expected_machine_hash,
+            ),
         )
         markers = _mark_plugins(plugins)
         interp.store_key = key  # #261
@@ -560,6 +706,8 @@ async def apersisted(
     migrator: Optional[Any] = None,
     on_version_mismatch: Optional[str] = None,
     restart_timers: Any = DEFAULT_RESTART_TIMERS,
+    verify_machine_hash: bool = True,
+    expected_machine_hash: Optional[str] = None,
 ) -> AsyncIterator[Any]:
     """Async twin of `persisted()`: yields a started `Interpreter`.
 
@@ -571,8 +719,9 @@ async def apersisted(
     from ..interpreter import Interpreter
     from .async_store import as_async
 
-    strategy = lock if lock is not None else _DEFAULT_LOCK
-    astore = store if _is_async_store(store) else as_async(store)
+    strategy = _strategy(lock)
+    owned = not _is_async_store(store)
+    astore = as_async(store) if owned else store
 
     async def _hold() -> Any:
         if isinstance(strategy, PessimisticLock):
@@ -580,7 +729,8 @@ async def apersisted(
         return contextlib.nullcontext()
 
     lock_cm = await _hold()
-    async with _commit_scope_async(), _maybe_async(lock_cm):
+    guards = _owned_adapter(astore, owned)
+    async with guards, _commit_scope_async(key=key), _maybe_async(lock_cm):
         record = await astore.load(key)
         if record is None:
             if not create_if_missing:
@@ -598,7 +748,11 @@ async def apersisted(
                 clock=clock,
                 plugins=list(plugins),
                 **_restore_kwargs(
-                    migrator, on_version_mismatch, restart_timers
+                    migrator,
+                    on_version_mismatch,
+                    restart_timers,
+                    verify_machine_hash,
+                    expected_machine_hash,
                 ),
             )
             version = record.version
@@ -633,6 +787,26 @@ async def apersisted(
                 await interp.stop()
 
 
+@contextlib.asynccontextmanager
+async def _owned_adapter(astore: Any, owned: bool) -> AsyncIterator[None]:
+    """Close the `as_async` adapter `apersisted` created for a sync store
+    (its worker thread would otherwise live until GC). An adapter the
+    caller passed in is theirs and is never closed.
+
+    ⚠️ Review M1 (#260): `close()` is `ThreadPoolExecutor.shutdown(
+    wait=True)` -- a blocking join. Called synchronously from an async
+    `finally`, a store call still in flight (the body was cancelled while
+    `await astore.save` ran) stalled the whole event loop. Join it off
+    the loop instead.
+    """
+    try:
+        yield
+    finally:
+        if owned:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, astore.close)
+
+
 def _is_async_store(store: Any) -> bool:
     return inspect.iscoroutinefunction(getattr(store, "load", None))
 
@@ -661,5 +835,5 @@ def persisted_retry(
     The retrying form: *fn* receives a started interpreter and may be
     invoked up to ``retries + 1`` times under `OptimisticLock`.
     """
-    strategy = lock if lock is not None else _DEFAULT_LOCK
+    strategy = _strategy(lock)
     return strategy.run(store, key, machine, fn, **kw)

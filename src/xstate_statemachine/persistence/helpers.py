@@ -60,6 +60,10 @@ def _build(
     # ⏰ #264: durable timers resume with their remaining wall time unless
     #    the caller chose otherwise.
     from_snapshot_kwargs.setdefault("restart_timers", "resume")
+    # 📝 `persisted()` forwards the verify switch inside the kwargs bag.
+    verify_machine_hash = from_snapshot_kwargs.pop(
+        "verify_machine_hash", verify_machine_hash
+    )
     interp = interpreter_cls.from_snapshot(
         record.snapshot,
         machine,

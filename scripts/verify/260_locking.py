@@ -95,6 +95,31 @@ def main() -> int:
         assert i.context["n"] == 2  # create-send(1) + sneak(1); block lost
     store.close()
 
+    print(
+        "\n== battle tests (post-RC programme): semantics / after_commit / "
+        "failure injection / leaks + mojibake scan"
+    )
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[2]
+    for cmd in (
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/persistence/test_battle_260_locking_semantics.py",
+            "tests/persistence/test_battle_260_locking_failures.py",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:asyncio",
+        ],
+        [sys.executable, "scripts/verify/_mojibake_scan.py"],
+    ):
+        subprocess.run(cmd, cwd=root, check=True)
+
     print("\nALL OK")
     return 0
 
