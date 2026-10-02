@@ -331,10 +331,10 @@ class JSONLinesLog:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        #: ⚡ last seq per machine id, valid while the file is `_cache_size`
-        #: bytes (see `next_seq`); -1 = never scanned.
+        #: ⚡ last seq per machine id, valid while the file's (size,
+        #: mtime_ns) equals `_cache_sig` (see `_last`); None = never scanned.
         self._last_seq: Dict[str, int] = {}
-        self._cache_size: int = -1
+        self._cache_sig: Optional[Tuple[int, int]] = None
 
     def _iter(self) -> Iterable[TransitionRecord]:
         # 📝 #262 battle: `utf-8-sig` tolerates a BOM (a Windows editor
@@ -389,12 +389,12 @@ class JSONLinesLog:
                 # ⚡ Keep the seq cache coherent with what WE wrote, and
                 #    remember the file size that write produced, so the
                 #    next `next_seq` is O(1) instead of a full scan.
-                size = self.path.stat().st_size
+                sig = self._sig()
             except OSError as exc:
                 raise StoreError(f"JSONLinesLog({self.path}): {exc}") from exc
             cached = self._last_seq.get(rec.machine_id, 0)
             self._last_seq[rec.machine_id] = max(cached, rec.seq)
-            self._cache_size = size
+            self._cache_sig = sig
 
     def append_next(
         self, rec: TransitionRecord, *, connection: Any = None
@@ -411,11 +411,11 @@ class JSONLinesLog:
                 with open(self.path, "a", encoding="utf-8") as fh:
                     fh.write(line + "\n")
                     fh.flush()
-                size = self.path.stat().st_size
+                sig = self._sig()
             except OSError as exc:
                 raise StoreError(f"JSONLinesLog({self.path}): {exc}") from exc
             self._last_seq[out.machine_id] = out.seq
-            self._cache_size = size
+            self._cache_sig = sig
         return out
 
     def _last(self, machine_id: str) -> int:
@@ -429,18 +429,28 @@ class JSONLinesLog:
         cache miss and a full, correct scan.
         """
         try:
-            size = self.path.stat().st_size
-        except FileNotFoundError:
-            size = 0
+            sig = self._sig()
         except OSError as exc:
             raise StoreError(f"JSONLinesLog({self.path}): {exc}") from exc
-        if size != self._cache_size:
+        if sig != self._cache_sig:
             self._last_seq = {}
             for r in self._iter():
                 if r.seq > self._last_seq.get(r.machine_id, 0):
                     self._last_seq[r.machine_id] = r.seq
-            self._cache_size = size
+            self._cache_sig = sig
         return self._last_seq.get(machine_id, 0)
+
+    def _sig(self) -> Tuple[int, int]:
+        """(size, mtime_ns) of the file; (0, 0) when absent.
+
+        📝 Review L1 (#262): size alone could not tell a same-size
+        replacement (a backup restore) from no change; mtime makes
+        that a cache miss too."""
+        try:
+            st = self.path.stat()
+        except FileNotFoundError:
+            return (0, 0)
+        return (st.st_size, st.st_mtime_ns)
 
     def next_seq(self, machine_id: str) -> int:
         with self._lock:
@@ -486,7 +496,7 @@ class JSONLinesLog:
                     pass
                 raise
             # the file changed under our own hands: force a rescan
-            self._cache_size = -1
+            self._cache_sig = None
         return len(rows) - len(kept)
 
     def purge_older_than(self, cutoff_ts: float) -> int:
@@ -1301,15 +1311,16 @@ def replay(
         for _ in range(10_000):
             if len(tracer.seen) > n:
                 return
-            nxt = clock._heap.next_due()
+            nxt = clock.next_due()
             if nxt is None:
                 return
             # 🐛 Battle #262: `clock.set()` returns an awaitable when an
             #    event loop is running in this thread, so `replay()` called
             #    from async code (a request handler, an async test) never
             #    fired a timer and diverged at the first `after` record.
-            #    The replay interpreter is a SyncInterpreter: drain sync.
-            clock._drain_sync(max(nxt, clock.now()))
+            #    The replay interpreter is a SyncInterpreter: drain sync,
+            #    through the clock's PUBLIC `fire_until` (review #262 M2).
+            clock.fire_until(max(nxt, clock.now()))
 
     stubbed = logic is None
     for n, r in enumerate(steps):

@@ -471,6 +471,46 @@ class TestScaling(_Tmp):
         # per-machine: another machine id is independent
         self.assertEqual(lg.next_seq("other"), 1)
 
+    def test_jsonl_cache_notices_a_same_size_replacement(self) -> None:
+        # 📝 Review L1: a backup restore can swap the file for one of the
+        #    SAME size with different content. mtime is in the cache key.
+        import pathlib
+
+        lg = self.mk("jsonl", "swap")
+        lg.append(rec(1))
+        lg.append(rec(2))
+        self.assertEqual(lg.next_seq("m"), 3)
+        path = pathlib.Path(lg.path)
+        original = path.read_bytes()
+        # a file of identical length whose last record is seq 7
+        alt = original.replace(b'"seq": 2', b'"seq": 7')
+        self.assertEqual(len(alt), len(original))
+        path.write_bytes(alt)
+        # make sure mtime actually differs even on coarse filesystems
+        st = path.stat()
+        os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+        self.assertEqual(lg.next_seq("m"), 8)
+
+    def test_simulated_clock_public_replay_api(self) -> None:
+        # 📝 Review M2: replay() used `clock._heap` / `clock._drain_sync`.
+        #    Pin the public pair it now uses.
+        from src.xstate_statemachine import SimulatedClock
+
+        clk = SimulatedClock()
+        fired: List[str] = []
+        self.assertIsNone(clk.next_due())
+        clk.set_timeout(lambda: fired.append("a"), 0.5)
+        clk.set_timeout(lambda: fired.append("b"), 1.5)
+        self.assertEqual(clk.next_due(), 0.5)
+        clk.fire_until(1.0)
+        self.assertEqual(fired, ["a"])
+        self.assertEqual(clk.next_due(), 1.5)
+        with self.assertRaises(ValueError):
+            clk.fire_until(0.9)  # backwards
+        clk.fire_until(2.0)
+        self.assertEqual(fired, ["a", "b"])
+        self.assertIsNone(clk.next_due())
+
     def test_append_and_next_seq_shape(self) -> None:
         out: Dict[str, Dict[int, Any]] = {}
         for kind in KINDS:

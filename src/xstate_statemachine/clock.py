@@ -332,6 +332,31 @@ class SimulatedClock:
         """Number of live (uncancelled) timers."""
         return len(self._heap)
 
+    def next_due(self) -> Optional[float]:
+        """Virtual time (seconds) of the earliest live timer, or ``None``.
+
+        📝 Public so `persistence.replay()` can walk recorded `after` steps
+        one timer at a time without reaching into the heap (review #262).
+        """
+        return self._heap.next_due()
+
+    def fire_until(self, target: float) -> None:
+        """Advance to *target* (virtual seconds), firing due timers in order
+        and settling attached SYNC interpreters -- never awaiting.
+
+        ⚠️ For callers that know they hold no running loop, or that run
+        the sync engine from inside async code (`replay()` does): the
+        `increment()` / `set()` API detects a running loop and returns an
+        awaitable instead, which `replay()` cannot use. Raises
+        ``ValueError`` on a backwards target.
+        """
+        if target < self._now:
+            raise ValueError(
+                f"SimulatedClock.fire_until({target}) would move backwards "
+                f"from {self._now}"
+            )
+        self._drain_sync(target)
+
     def increment(self, ms: float) -> Union[None, Awaitable[None]]:
         """Advance virtual time by *ms* and fire what became due, in order.
 
