@@ -64,6 +64,7 @@ from typing import (
     Iterator,
     List,
     Optional,
+    Set,
     Tuple,
 )
 from collections import deque
@@ -103,6 +104,9 @@ MAX_KEY_LEN = 255
 #: How many processed keys each instance remembers inside its snapshot.
 PROCESSED_RING_SIZE = 64
 IN_FLIGHT = "__in_flight__"
+#: Context key holding ``{ring id: [wall time processed, fingerprint]}``
+#: for the ids in the ring (battle #261) -- see `_ring_evidence`.
+PROCESSED_AT_KEY = "__xsm_processed_at__"
 
 
 class IdempotencyMismatchError(StoreError, ValueError):
@@ -293,6 +297,13 @@ class InboxStore(Protocol):
 
 def _expiry(ttl_s: Optional[float], now: float) -> Optional[float]:
     return None if ttl_s is None else now + float(ttl_s)
+
+
+def _session_token() -> Any:
+    """The `persisted()` block the caller is in (``None`` outside one)."""
+    from .locking import current_session  # lazy: locking imports helpers
+
+    return current_session.get()
 
 
 # -----------------------------------------------------------------------------
@@ -541,7 +552,7 @@ class IdempotencyPlugin(PluginBase[Any]):
         instance_key: Optional[Callable[[Any], str]] = None,
         ttl_s: Optional[float] = DEFAULT_TTL_S,
         key_fields: Tuple[str, ...] = ("idempotency_key", "id"),
-        on_inbox_error: str = "admit",
+        on_inbox_error: str = "refuse",
     ) -> None:
         # 🔥 #261 battle: a negative / NaN / non-numeric ttl silently made
         #    every key expire instantly (dedup off) or raised deep inside a
@@ -567,20 +578,47 @@ class IdempotencyPlugin(PluginBase[Any]):
         self.ttl_s = ttl_s
         self.key_fields = key_fields
         #: 🏛️ Battle #261: what a keyed event gets when the inbox backend
-        #: itself fails. "admit" (default) -- availability: the event runs
-        #: WITHOUT dedup and `on_plugin_error` fires (the sender retries
-        #: anyway; a duplicate is the lesser evil for a webhook). "refuse"
-        #: -- the receipt carries `InboxUnavailableError` (HTTP 503), the
-        #: action never ran (a payment handler wants this).
+        #: itself fails. "refuse" (default) -- the receipt carries
+        #: `InboxUnavailableError` (HTTP 503), the action never ran; the
+        #: whole point of the plugin is to not run twice, so a dead inbox
+        #: must not quietly turn dedup off. "admit" -- availability: the
+        #: event runs WITHOUT dedup and `on_plugin_error` fires (for a
+        #: webhook whose sender retries anyway and tolerates a duplicate).
         self.on_inbox_error = on_inbox_error
-        #: Claims awaiting their receipt: id(event) -> (scope, key).
-        self._pending: Dict[int, Tuple[str, str]] = {}
+        #: Claims awaiting their receipt:
+        #: id(event) -> (id(interpreter), scope, key, fingerprint).
+        self._pending: Dict[int, Tuple[int, str, str, str]] = {}
         #: Marks buffered for a shared-transaction commit (see
-        #: `flush_marks`); drained by `persisted()` inside the store lock
-        #: when the inbox shares the store's backend.
-        self._buffered: List[Tuple[str, str, str]] = []
-        self.buffer_marks: bool = False
+        #: `flush_marks`), keyed by the `persisted()` SESSION that
+        #: produced them (`locking.current_session`: per thread AND per
+        #: asyncio task). 🐛 Battle #261: this used to be ONE list shared
+        #: by every block using the plugin, so block B's post-save flush
+        #: wrote block A's mark while A had not saved yet -- A then
+        #: crashed, and the inbox answered every redelivery as a
+        #: duplicate of an event whose effect was never persisted.
+        self._buffered: Dict[Any, List[Tuple[str, str, str, str]]] = {}
+        #: Sessions in which marks are buffered (see `buffer_marks`).
+        self._buffering: Set[Any] = set()
         self._lock = threading.Lock()
+
+    # -- per-session buffering switch ---------------------------------------------
+    @property
+    def buffer_marks(self) -> bool:
+        """``True`` when marks produced in the CURRENT `persisted()`
+        session are held for `flush_marks`. `persisted()` sets it on
+        entry and restores it on exit; the switch is per session, so a
+        concurrent block (or a plain interpreter on another thread) never
+        sees another block's setting."""
+        return _session_token() in self._buffering
+
+    @buffer_marks.setter
+    def buffer_marks(self, value: bool) -> None:
+        token = _session_token()
+        with self._lock:
+            if value:
+                self._buffering.add(token)
+            else:
+                self._buffering.discard(token)
 
     # -- scope --------------------------------------------------------------------
     def scope_for(self, interpreter: Any, event: Any) -> str:
@@ -620,6 +658,45 @@ class IdempotencyPlugin(PluginBase[Any]):
         if isinstance(ctx, dict):
             ctx["__xsm_processed_ids__"] = list(ring)
 
+    @staticmethod
+    def _wall(interpreter: Any) -> float:
+        wall = getattr(interpreter, "wall_now", None)
+        return float(wall()) if callable(wall) else time.time()
+
+    def _store_evidence(
+        self, interpreter: Any, ring: Deque[str], rid: str, fp: str
+    ) -> None:
+        """Record when *rid* was processed and with which fingerprint,
+        for the ids still in the ring only (bounded like the ring)."""
+        ctx = interpreter.context
+        if not isinstance(ctx, dict):
+            return
+        old = ctx.get(PROCESSED_AT_KEY)
+        old = old if isinstance(old, dict) else {}
+        at = {r: old[r] for r in ring if r in old}
+        at[rid] = [self._wall(interpreter), fp]
+        ctx[PROCESSED_AT_KEY] = at
+
+    def _ring_evidence(self, interpreter: Any, rid: str) -> Optional[str]:
+        """The fingerprint *rid* was processed with, if the snapshot says
+        it was processed within the TTL; else ``None``."""
+        ctx = interpreter.context
+        if not isinstance(ctx, dict) or rid not in self._ring(interpreter):
+            return None
+        at = ctx.get(PROCESSED_AT_KEY)
+        rec = at.get(rid) if isinstance(at, dict) else None
+        if not isinstance(rec, (list, tuple)) or len(rec) != 2:
+            return None  # a pre-evidence snapshot: old behaviour
+        try:
+            when = float(rec[0])
+        except (TypeError, ValueError):
+            return None
+        if self.ttl_s is not None and when + self.ttl_s <= self._wall(
+            interpreter
+        ):
+            return None  # a genuine TTL expiry: re-admit
+        return str(rec[1])
+
     # -- hooks --------------------------------------------------------------------
     @staticmethod
     def _refuse(interpreter: Any, error: Exception) -> Receipt:
@@ -643,44 +720,69 @@ class IdempotencyPlugin(PluginBase[Any]):
             scope = self.scope_for(interpreter, event)
         except ValueError as exc:
             return self._refuse(interpreter, exc)
-        fp = fingerprint(event, key_fields=self.key_fields)
-        if self.on_inbox_error == "admit":
-            return self._decide(interpreter, scope, key, fp, event)
-        # 🛡️ "refuse": an inbox backend failure is the CLIENT's 503, never a
-        #    silently undeduplicated run. Only infrastructure errors are
-        #    caught -- the plugin's own refusals (mismatch, in flight) and
-        #    the fail-open contract for genuine plugin bugs are untouched.
+        # 🐛 Battle #261: everything below used to be able to RAISE -- a
+        #    payload json cannot canonicalise (``{1: .., "a": ..}``), a
+        #    hand-edited / truncated cached receipt, an inbox that cannot
+        #    take its lock. Hooks are fail-open, so each of those ADMITTED
+        #    the event with no claim: a redelivery ran the actions again.
+        #    For this hook fail-open is the wrong default -- the whole
+        #    point is to not run twice -- so an internal failure refuses.
+        #
+        # 🏛️ `on_inbox_error` then decides HOW an inbox-backend failure is
+        #    reported: "refuse" (default) -> a typed `InboxUnavailableError`
+        #    (HTTP 503, "retry later"); "admit" -> the event runs WITHOUT
+        #    dedup and `on_plugin_error` fires -- availability for a
+        #    webhook endpoint whose sender retries anyway. The plugin's own
+        #    refusals (mismatch 422, in flight 409) and non-infrastructure
+        #    failures (a bad payload) refuse in both modes.
         try:
-            return self._decide(interpreter, scope, key, fp, event)
+            return self._admit(interpreter, event, scope, key)
         except (StoreError, OSError, sqlite3.Error) as exc:
             if isinstance(
                 exc, (IdempotencyMismatchError, IdempotencyInFlightError)
             ):
-                raise
-            logger.error(
-                "🔥 Idempotency inbox unavailable for key %r (%s); refusing "
-                "the event (on_inbox_error='refuse').",
-                key,
-                type(exc).__name__,
-            )
+                return self._refuse(interpreter, exc)
+            if self.on_inbox_error == "admit":
+                logger.error(
+                    "🔥 Idempotency inbox unavailable for key %r (%s); "
+                    "ADMITTING the event without deduplication "
+                    "(on_inbox_error='admit').",
+                    key,
+                    type(exc).__name__,
+                )
+                interpreter.last_plugin_error = (
+                    type(self).__name__,
+                    "on_before_send",
+                    exc,
+                )
+                for other in getattr(interpreter, "_plugins", ()):
+                    inner = getattr(other, "wrapped", other)
+                    if inner is not self:
+                        other.on_plugin_error(
+                            interpreter, self, "on_before_send", exc
+                        )
+                return None
             return self._refuse(interpreter, InboxUnavailableError(key, exc))
+        except Exception as exc:  # noqa: BLE001 - refused, never admitted
+            return self._refuse(interpreter, exc)
 
-    def _decide(
-        self,
-        interpreter: Any,
-        scope: str,
-        key: str,
-        fp: str,
-        event: Any,
+    def _admit(
+        self, interpreter: Any, event: Any, scope: str, key: str
     ) -> Optional[Receipt]:
-        """The inbox lookup / claim; ``None`` admits the event."""
+        try:
+            fp = fingerprint(event, key_fields=self.key_fields)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"payload of event {getattr(event, 'type', event)!r} "
+                f"cannot be fingerprinted (canonical JSON failed: {exc}); "
+                "use str keys and JSON-compatible values"
+            ) from exc
         entry = self.inbox.get(scope, key)
         if entry is not None:
             if entry.fingerprint != fp:
                 return self._refuse(interpreter, IdempotencyMismatchError(key))
             if entry.receipt_json is not None:
-                cached = receipt_from_json(json.loads(entry.receipt_json))
-                return cached._replace(duplicate=True)
+                return self._cached(interpreter, entry.receipt_json)
             # 🔁 Mechanism 2: the inbox says IN FLIGHT but the snapshot
             #    says PROCESSED -- that is exactly the crash window between
             #    the snapshot save and the mark. The snapshot is the truth
@@ -703,22 +805,72 @@ class IdempotencyPlugin(PluginBase[Any]):
                     )
                 return receipt
             return self._refuse(interpreter, IdempotencyInFlightError(key))
-        # 📝 No inbox entry: the key is unseen OR its TTL expired. The ring
-        #    deliberately does NOT override this -- it is a crash-window
-        #    net (above), not a second inbox without a TTL.
+        # 📝 No inbox entry: the key is unseen, its TTL expired -- or the
+        #    inbox LOST it (a `MemoryInbox` in a process that was killed
+        #    after the save). 🐛 Battle #261: the last case re-ran the
+        #    actions on top of a committed snapshot. The ring's evidence
+        #    carries the processing time, so an entry younger than the TTL
+        #    is a lost inbox (answer a duplicate) and an older one is a
+        #    genuine expiry (re-admit, as before).
+        evidence = self._ring_evidence(interpreter, f"{scope}|{key}")
+        if evidence is not None:
+            if evidence != fp:
+                return self._refuse(interpreter, IdempotencyMismatchError(key))
+            receipt = Receipt(
+                frozenset(interpreter.current_state_ids),
+                False,
+                None,
+                duplicate=True,
+            )
+            with contextlib.suppress(Exception):
+                if self.inbox.claim(scope, key, fp, ttl_s=self.ttl_s):
+                    self.inbox.mark(
+                        scope,
+                        key,
+                        json.dumps(receipt_to_json(receipt)),
+                        ttl_s=self.ttl_s,
+                    )
+            return receipt
         if not self.inbox.claim(scope, key, fp, ttl_s=self.ttl_s):
             # Lost the race to another worker between get and claim.
             entry = self.inbox.get(scope, key)
             if entry is not None and entry.fingerprint != fp:
                 return self._refuse(interpreter, IdempotencyMismatchError(key))
             if entry is not None and entry.receipt_json is not None:
-                return receipt_from_json(
-                    json.loads(entry.receipt_json)
-                )._replace(duplicate=True)
+                return self._cached(interpreter, entry.receipt_json)
             return self._refuse(interpreter, IdempotencyInFlightError(key))
         with self._lock:
-            self._pending[id(event)] = (scope, key)
+            self._pending[id(event)] = (id(interpreter), scope, key, fp)
         return None
+
+    @staticmethod
+    def _cached(interpreter: Any, receipt_json: str) -> Receipt:
+        """The stored receipt, ``duplicate=True``. A record that does not
+        decode (hand-edited, truncated) still PROVES the key was
+        processed: answer a conservative duplicate, never re-admit."""
+        try:
+            cached = receipt_from_json(json.loads(receipt_json))
+        except ValueError:  # json.JSONDecodeError is a ValueError
+            logger.warning(
+                "⚠️ Cached idempotency receipt is malformed; answering a "
+                "conservative duplicate (the key WAS processed)."
+            )
+            return Receipt(
+                frozenset(interpreter.current_state_ids),
+                False,
+                None,
+                duplicate=True,
+            )
+        return cached._replace(duplicate=True)
+
+    def _mark(self, scope: str, key: str, fp: str, payload: str) -> None:
+        """Mark *key* processed. 🐛 Battle #261: if its in-flight claim is
+        gone (a TTL purge while the event ran), ``UPDATE``
+        backends silently wrote nothing and the next delivery ran the
+        actions again; re-claim with the real fingerprint first."""
+        if self.inbox.get(scope, key) is None:
+            self.inbox.claim(scope, key, fp, ttl_s=self.ttl_s)
+        self.inbox.mark(scope, key, payload, ttl_s=self.ttl_s)
 
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Receipt
@@ -727,26 +879,36 @@ class IdempotencyPlugin(PluginBase[Any]):
             claim = self._pending.pop(id(event), None)
         if claim is None:
             return
-        scope, key = claim
+        scope, key, fp = claim[1:]
         if receipt.error is not None and not receipt.changed:
             # The delivery did not take effect; let a retry try again.
             self.inbox.release(scope, key)
             return
         ring = self._ring(interpreter)
-        ring.append(f"{scope}|{key}")
+        rid = f"{scope}|{key}"
+        ring.append(rid)
         self._store_ring(interpreter, ring)
+        self._store_evidence(interpreter, ring, rid, fp)
         payload = json.dumps(receipt_to_json(receipt))
-        if self.buffer_marks:
-            with self._lock:
-                self._buffered.append((scope, key, payload))
-        else:
-            self.inbox.mark(scope, key, payload, ttl_s=self.ttl_s)
+        token = _session_token()
+        with self._lock:
+            if token in self._buffering:
+                self._buffered.setdefault(token, []).append(
+                    (scope, key, fp, payload)
+                )
+                return
+        self._mark(scope, key, fp, payload)
 
     def on_interpreter_stop(self, interpreter: Any) -> None:
         # Claims whose event never finished (stopped mid-flight): release.
+        # 🐛 Battle #261: only THIS interpreter's -- the plugin may be
+        #    shared by concurrent blocks, and stopping one used to release
+        #    another's live claim (a redelivery then ran a second time).
+        me = id(interpreter)
         with self._lock:
-            pending, self._pending = self._pending, {}
-        for scope, key in pending.values():
+            mine = [k for k, v in self._pending.items() if v[0] == me]
+            pending = [self._pending.pop(k) for k in mine]
+        for _owner, scope, key, _fp in pending:
             with contextlib.suppress(Exception):
                 self.inbox.release(scope, key)
 
@@ -756,16 +918,17 @@ class IdempotencyPlugin(PluginBase[Any]):
         store's lock/transaction right after the snapshot save when the
         inbox shares the store's backend."""
         with self._lock:
-            batch, self._buffered = self._buffered, []
-        for scope, key, payload in batch:
-            self.inbox.mark(scope, key, payload, ttl_s=self.ttl_s)
+            batch = self._buffered.pop(_session_token(), [])
+        for scope, key, fp, payload in batch:
+            self._mark(scope, key, fp, payload)
         return len(batch)
 
     def discard_marks(self) -> int:
-        """Drop buffered marks and release their claims (the save failed)."""
+        """Drop buffered marks and release their claims (the save failed).
+        Only THIS session's marks: a concurrent block's are not touched."""
         with self._lock:
-            batch, self._buffered = self._buffered, []
-        for scope, key, _payload in batch:
+            batch = self._buffered.pop(_session_token(), [])
+        for scope, key, _fp, _payload in batch:
             with contextlib.suppress(Exception):
                 self.inbox.release(scope, key)
         return len(batch)
