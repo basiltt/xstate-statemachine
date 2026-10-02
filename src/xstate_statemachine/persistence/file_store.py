@@ -48,9 +48,10 @@ from ..exceptions import (
     LockTimeoutError,
     SnapshotCorruptError,
     SnapshotTooLargeError,
+    StoreError,
 )
 from .deadline import Deadline, check_deadline_record
-from .store import BaseStore
+from .store import BaseStore, check_record_fields
 
 __all__ = ["FORMAT_VERSION", "FileStore", "encode_key", "decode_key"]
 
@@ -257,10 +258,24 @@ class FileStore(BaseStore):
                 break
             except FileNotFoundError:
                 return None
-            except PermissionError:
+            except PermissionError as exc:
+                # A DIRECTORY where the record should be reads as
+                # PermissionError on Windows; retrying cannot help.
+                if path.is_dir():
+                    raise SnapshotCorruptError(
+                        f"FileStore record {path.name} is a directory."
+                    ) from exc
                 if attempt == _WRITE_RETRIES - 1:
-                    raise
+                    raise StoreError(
+                        f"FileStore record {path.name} is unreadable: {exc}"
+                    ) from exc
                 time.sleep(_WRITE_RETRY_SLEEP)
+            except OSError as exc:
+                # IsADirectoryError, ELOOP (symlink loop), EIO, ... are a
+                # damaged store, not a bare OSError.
+                raise SnapshotCorruptError(
+                    f"FileStore record {path.name} cannot be read: {exc}"
+                ) from exc
         assert raw is not None
         if limit is not None and len(raw) > limit:
             raise SnapshotTooLargeError(path.name, len(raw), limit)
@@ -274,8 +289,12 @@ class FileStore(BaseStore):
             raise SnapshotCorruptError(
                 f"FileStore record {path.name} is not valid JSON: {exc}"
             ) from exc
-        if not isinstance(rec, dict) or not isinstance(
-            rec.get("version"), int
+        ver = rec.get("version") if isinstance(rec, dict) else None
+        if (
+            not isinstance(rec, dict)
+            or isinstance(ver, bool)
+            or not isinstance(ver, int)
+            or ver < 1
         ):
             raise SnapshotCorruptError(
                 f"FileStore record {path.name} is malformed."
@@ -287,9 +306,9 @@ class FileStore(BaseStore):
         """X0.10: bring an older-format record up to `FORMAT_VERSION`;
         refuse a newer one."""
         fmt = rec.get("format", 1)  # records before the field are format 1
-        if not isinstance(fmt, int):
+        if isinstance(fmt, bool) or not isinstance(fmt, int) or fmt < 1:
             raise SnapshotCorruptError(
-                f"FileStore record {name} has a non-integer 'format'."
+                f"FileStore record {name} has an invalid 'format' {fmt!r}."
             )
         if fmt > FORMAT_VERSION:
             raise SnapshotCorruptError(
@@ -337,17 +356,23 @@ class FileStore(BaseStore):
         rec = self._read(self._path(key), self._record_limit())
         if rec is None:
             return None
+        where = f"FileStore record {self._path(key).name}"
+        snap = rec.get("snapshot", "")
+        mv = rec.get("machine_version", "")
+        upd = rec.get("updated_at", 0.0)
+        check_record_fields(where, snap, rec["version"], mv, upd)
+        raw_dl = rec.get("deadlines") or []
+        if not isinstance(raw_dl, list):
+            raise SnapshotCorruptError(f"{where}: 'deadlines' is not a list.")
         deadlines = []
-        for d in rec.get("deadlines") or []:
-            if check_deadline_record(d) is None:
-                deadlines.append(Deadline.from_dict(d))
-        return (
-            str(rec.get("snapshot", "")),
-            int(rec["version"]),
-            str(rec.get("machine_version", "")),
-            float(rec.get("updated_at", 0.0)),
-            deadlines,
-        )
+        for d in raw_dl:
+            problem = check_deadline_record(d)
+            if problem is not None:
+                raise SnapshotCorruptError(
+                    f"{where}: bad deadline entry: {problem}."
+                )
+            deadlines.append(Deadline.from_dict(d))
+        return (snap, int(rec["version"]), mv, float(upd), deadlines)
 
     def _save_raw(
         self,

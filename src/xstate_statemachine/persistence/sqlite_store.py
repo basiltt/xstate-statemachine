@@ -50,8 +50,8 @@ from ..exceptions import (
     SnapshotCorruptError,
     StoreError,
 )
-from .deadline import Deadline
-from .store import BaseStore
+from .deadline import Deadline, check_deadline_record
+from .store import BaseStore, check_record_fields
 
 __all__ = ["SQLiteStore", "SCHEMA_VERSION"]
 
@@ -271,28 +271,37 @@ class SQLiteStore(BaseStore):
         ).fetchone()
         if row is None:
             return None
-        if not isinstance(row[0], str):
-            # 🛡️ #303 battle: a row another writer stored as a BLOB (or
-            #    non-UTF-8 bytes) is corruption, not an AttributeError deep
-            #    in the codec.
-            raise SnapshotCorruptError(
-                f"SQLiteStore row for {key!r} is not text "
-                f"({type(row[0]).__name__})."
+        # 🛡️ #303/#259 battle: a row another writer damaged (BLOB or
+        #    non-UTF-8 snapshot, non-numeric version, NULL / text in a typed
+        #    column -- SQLite's type affinity lets all of these in) is
+        #    corruption, not a bare ValueError / AttributeError.
+        check_record_fields(
+            f"SQLiteStore row for {key!r}", row[0], row[1], row[2], row[3]
+        )
+        deadlines = []
+        for r in conn.execute(
+            "SELECT state_id, entry_seq, due_at_wall, delay_ms, event_type "
+            "FROM deadlines WHERE key = ? ORDER BY due_at_wall",
+            (key,),
+        ):
+            rec = dict(
+                zip(
+                    (
+                        "state_id",
+                        "entry_seq",
+                        "due_at_wall",
+                        "delay_ms",
+                        "event_type",
+                    ),
+                    r,
+                )
             )
-        deadlines = [
-            Deadline(
-                state_id=r[0],
-                entry_seq=int(r[1]),
-                due_at_wall=float(r[2]),
-                delay_ms=int(r[3]),
-                event_type=r[4],
-            )
-            for r in conn.execute(
-                "SELECT state_id, entry_seq, due_at_wall, delay_ms, event_type "
-                "FROM deadlines WHERE key = ? ORDER BY due_at_wall",
-                (key,),
-            )
-        ]
+            problem = check_deadline_record(rec)
+            if problem is not None:
+                raise SnapshotCorruptError(
+                    f"SQLiteStore deadline row for {key!r}: {problem}."
+                )
+            deadlines.append(Deadline.from_dict(rec))
         return (row[0], int(row[1]), row[2], float(row[3]), deadlines)
 
     def _save_raw(

@@ -40,11 +40,15 @@ try:  # pragma: no cover - 3.8+ has Protocol; kept defensive like clock.py
 except ImportError:  # pragma: no cover
     from typing_extensions import Protocol, runtime_checkable  # type: ignore
 
+import math
+
 from ..exceptions import (
     ConflictError,
     InvalidKeyError,
     LockTimeoutError,
+    SnapshotCorruptError,
     SnapshotTooLargeError,
+    StoreError,
 )
 from .deadline import Deadline
 
@@ -56,6 +60,8 @@ __all__ = [
     "SnapshotCodec",
     "StateStore",
     "StoredSnapshot",
+    "check_record_fields",
+    "check_save_args",
     "validate_key",
 ]
 
@@ -86,7 +92,75 @@ def validate_key(key: str) -> str:
         )
     if "\x00" in key:
         raise InvalidKeyError("Store key must not contain NUL.")
+    try:
+        key.encode("utf-8")
+    except UnicodeEncodeError:
+        raise InvalidKeyError(
+            "Store key must be valid Unicode (no lone surrogates)."
+        ) from None
     return key
+
+
+def check_record_fields(
+    where: str,
+    snapshot: Any,
+    version: Any,
+    machine_version: Any,
+    updated_at: Any,
+) -> None:
+    """Refuse a stored record whose scalar fields have the wrong type.
+
+    Shared by every backend that reads rows/files another writer could have
+    damaged: each failure is a `SnapshotCorruptError`, never a bare
+    ``ValueError`` / ``TypeError`` from a later ``int()`` / ``float()``.
+    """
+
+    def bad(what: str) -> SnapshotCorruptError:
+        return SnapshotCorruptError(f"{where}: {what}.")
+
+    if not isinstance(snapshot, str):
+        raise bad(f"'snapshot' is {type(snapshot).__name__}, not text")
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or version < 1
+    ):
+        raise bad(f"'version' {version!r} is not a positive integer")
+    if not isinstance(machine_version, str):
+        raise bad("'machine_version' is not text")
+    if (
+        isinstance(updated_at, bool)
+        or not isinstance(updated_at, (int, float))
+        or not math.isfinite(updated_at)
+    ):
+        raise bad(f"'updated_at' {updated_at!r} is not a finite number")
+
+
+def check_save_args(
+    expected_version: Any, machine_version: Any, deadlines: Any
+) -> Tuple[Optional[int], str, Tuple[Deadline, ...]]:
+    """Caller-side argument checks: ``TypeError`` / ``ValueError`` at the
+    call site, identically on every backend."""
+    if expected_version is not None and (
+        isinstance(expected_version, bool)
+        or not isinstance(expected_version, int)
+    ):
+        raise TypeError(
+            "expected_version must be an int or None, got "
+            f"{type(expected_version).__name__}"
+        )
+    if machine_version is not None and not isinstance(machine_version, str):
+        raise TypeError(
+            "machine_version must be str, got "
+            f"{type(machine_version).__name__}"
+        )
+    dls = tuple(deadlines)
+    for d in dls:
+        if not isinstance(d, Deadline):
+            raise TypeError(
+                f"deadlines must be Deadline objects, got {type(d).__name__}"
+            )
+    return expected_version, machine_version or "", dls
 
 
 @dataclass(frozen=True)
@@ -215,9 +289,48 @@ class BaseStore:
 
     # -- policy -----------------------------------------------------------------
     def _check_size(self, key: str, data: str) -> None:
-        size = len(data.encode("utf-8"))
+        try:
+            size = len(data.encode("utf-8"))
+        except UnicodeEncodeError as exc:
+            raise SnapshotCorruptError(
+                f"Snapshot for '{key}' is not valid Unicode text: {exc}"
+            ) from exc
         if size > self.max_snapshot_bytes:
             raise SnapshotTooLargeError(key, size, self.max_snapshot_bytes)
+
+    def _decode(self, key: str, data: str) -> str:
+        # 🛡️ #259 battle: a codec is user code. Its failure on a stored
+        #    blob (bad ciphertext, truncated gzip) is a damaged record --
+        #    typed, with the cause chained -- and a non-str result would
+        #    otherwise surface later as a TypeError inside json.loads.
+        try:
+            out = self.codec.decode(data)
+        except Exception as exc:
+            raise SnapshotCorruptError(
+                f"Snapshot for '{key}' could not be decoded by the codec: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+        if not isinstance(out, str):
+            raise SnapshotCorruptError(
+                f"Codec.decode returned {type(out).__name__} for '{key}'; "
+                "it must return str."
+            )
+        return out
+
+    def _encode(self, key: str, snapshot: str) -> str:
+        try:
+            out = self.codec.encode(snapshot)
+        except Exception as exc:
+            raise StoreError(
+                f"Codec.encode failed for '{key}': "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+        if not isinstance(out, str):
+            raise StoreError(
+                f"Codec.encode returned {type(out).__name__} for '{key}'; "
+                "it must return str."
+            )
+        return out
 
     # -- public surface -----------------------------------------------------
     def load(self, key: str) -> Optional[StoredSnapshot]:
@@ -231,7 +344,7 @@ class BaseStore:
         self._check_size(key, data)
         return StoredSnapshot(
             key=key,
-            snapshot=self.codec.decode(data),
+            snapshot=self._decode(key, data),
             version=version,
             machine_version=machine_version,
             updated_at=updated_at,
@@ -253,16 +366,19 @@ class BaseStore:
                 "snapshot must be the JSON str from get_snapshot(), got "
                 f"{type(snapshot).__name__}"
             )
+        expected_version, machine_version, dls = check_save_args(
+            expected_version, machine_version, deadlines
+        )
         if expected_version is not None and expected_version < 0:
             raise ValueError("expected_version must be >= 0 or None")
-        data = self.codec.encode(snapshot)
+        data = self._encode(key, snapshot)
         self._check_size(key, data)
         return self._save_raw(
             key,
             data,
             expected_version,
-            machine_version or "",
-            tuple(deadlines),
+            machine_version,
+            dls,
         )
 
     def delete(self, key: str) -> bool:
@@ -276,7 +392,19 @@ class BaseStore:
     def list_keys(self, *, prefix: str = "", limit: int = 1000) -> List[str]:
         if limit < 0:
             raise ValueError("limit must be >= 0")
-        return self._list_keys_raw(prefix, limit)
+        # 🛡️ #259 battle: a row/file another writer planted under a key
+        #    `load()` would refuse (empty, NUL, over-long) must not be
+        #    advertised -- "list_keys never returns a key load rejects".
+        out: List[str] = []
+        if limit == 0:
+            return out
+        for k in self._list_keys_raw(prefix, limit):
+            try:
+                validate_key(k)
+            except InvalidKeyError:
+                continue
+            out.append(k)
+        return out
 
     def lock(self, key: str, *, timeout: float = 10.0) -> ContextManager[None]:
         validate_key(key)
