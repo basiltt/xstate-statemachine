@@ -483,7 +483,7 @@ rebuilt = replay(machine, log.read("expense"))   # re-run from context₀ on a S
 assert rebuilt.current_state_ids == expense.current_state_ids
 ```
 
-Each `TransitionRecord` carries: `machine_id` (the store key under `persisted()`, else the interpreter id), a **gap-free `seq`**, `ts` (`interpreter.wall_now()`), `event_type` and a **redacted** `event_payload`, `from_states` / `to_states` (leaves), the `actions` that ran, a `disposition` (`transition` · `denied` · `unhandled` · `deferred` · `error` · `duplicate`), `actor` / `reason` / `correlation_id`, `machine_version`, and `engine=True` for timer and service-completion events. Records are plain JSON and round-trip through `JSONLinesLog`.
+Each `TransitionRecord` carries: `machine_id` (the store key under `persisted()`, else the interpreter id), a **gap-free `seq`**, `ts` (`interpreter.wall_now()`), `event_type` and a **redacted** `event_payload`, `from_states` / `to_states` (leaves), the `actions` that ran, a `disposition` (`transition` · `denied` · `unhandled` · `deferred` · `error` · `duplicate`), `actor` / `reason` / `correlation_id`, `machine_version`, `engine=True` for timer and service-completion events, and `origin` (`"external"` for a caller's `send()`, `"internal"` for a `raise`, a self-`send()` from an action, or a re-released deferred event — `replay()` re-sends only external records). Records are plain JSON and round-trip through `JSONLinesLog`.
 
 `actor` and `reason` come from the event payload (`actor_key=` / `reason_key=` configurable); `correlation_id` from the payload or, failing that, from the `correlation_id_var` contextvar — set it in your request middleware and every record in that request carries it.
 
@@ -497,14 +497,49 @@ All three: `read(machine_id, after_seq=, limit=)`, `purge_older_than(cutoff_ts)`
 
 ### What `replay()` is — and is not
 
-`replay(machine, records, *, upto=None, logic=None, verify=True)` returns a started `SyncInterpreter` positioned after the last record:
+`replay(machine, records, *, upto=None, logic=None, verify=True, key=None, snapshot=None)` returns a started `SyncInterpreter` positioned after the last record. The #262 battle test recorded a chart exercising every outcome kind — denied, deferred, errored under `continue` and `rollback`, a 3-deep `raise` chain, an `always` chain, two `after` rungs, `invoke` with `onDone` and `onError`, nested + parallel + deep history, `final` — on both engines and all three log stores, and asserted the replay lands on the identical configuration:
 
-- **User events are re-sent** with their recorded (redacted) payload.
-- **Engine events are not re-sent** through `send()` — the engine's provenance gates would rightly refuse them. An `after` step advances a `SimulatedClock` until the timer fires; a `done.invoke` / `error.platform` step is produced by a **stub service** that returns the recorded data or raises the recorded error.
-- **Unless you pass `logic=`, actions and services are stubs while your real guards are kept** (guards are pure predicates; a stub guard saying *yes* where yours said *no* would make an honest log diverge). Replay reproduces *state*, never side effects. Pass your real logic only if its actions are idempotent and you also want `context` rebuilt (the test suite does).
-- After each record (or each user event + its engine follow-ups, which the sync engine drains in one step) the reached leaves must equal `to_states`, or `ReplayDivergenceError(seq, expected, actual)` names the first mismatch — a tampered log, an out-of-order log, or a machine that changed since.
+| | Without `logic=` (default) | With `logic=` |
+|:--|:--|:--|
+| Active states and `status` | **identical** | **identical** |
+| `context` | initial context + built-in `assign` only | identical |
+| Action side effects | **none** — stubs | **repeat** (pass real logic only if your actions are idempotent) |
+| Services | replayed from the recorded `done` / `error` — never called again | same |
+| Re-sent through `send()` | **external** records only | external records only |
+| Engine events (`after.*`, `done.invoke.*`, `error.platform.*`) | **never** `send()`'d — timers via the `SimulatedClock`, completions via stub services (a spy on `send()` proves it) | same |
+| Divergence check (`verify=True`) | **every record**: event type, `from_states`/`to_states`, `actions`, `disposition`, plus `machine_version` → `ReplayDivergenceError(seq, expected, actual)` with `.field` naming what differed | same |
+| A `seq` gap, a purged head, mixed instance keys | **error** — never a silent early stop (a replay over a hole would "succeed" to a wrong state); pass `key=` to filter one instance, `snapshot=` to start from a snapshot and replay the tail | same |
+| Logs written before 0.11.0 (no `origin` field) | read as external, so a `raise` chain in them still double-runs — re-record, or replay with `logic=` | same |
 
 This is **event sourcing lite**: the log is a faithful record and a replayable one, but the *snapshot* stays the source of truth for the current state. There is no projection framework, no upcasting of old events, and no guarantee about actions' external effects — those belong to services and an outbox.
+
+### The log and the snapshot after a crash
+
+Records are written **only for committed steps**. Inside a `persisted()` block they are buffered and released at the snapshot save — inside the *same* `BEGIN IMMEDIATE` transaction when `SQLiteLog` shares the `SQLiteStore` under `PessimisticLock`, via `after_commit` otherwise — so a lost optimistic attempt, a block that raised, or a writer killed before the save leaves **no** audit rows. (Before the battle test, records were appended as each event settled, so the log could run ahead of the state.) Child processes killed with `os._exit(9)` after the save and after the append, step 1 committed, step 2 in flight:
+
+| Setup | killed after save | killed after append |
+|:--|:--|:--|
+| `SQLiteLog(store)` + `PessimisticLock`, sync **and** `apersisted` | snapshot 1 / log 1 | 1 / 1 |
+| `JSONLinesLog` + `PessimisticLock` | 1 / 1 | — |
+| `OptimisticLock` (either log) | snapshot **2** / log 1 — the snapshot may be one step *ahead*, never behind | 2 / 2 |
+
+`seq` is assigned **atomically by the store** (`append_next`: `MAX(seq)+1` and the insert in one statement on SQLite; under the process lock on Memory/JSONL) — 16 threads × 100 under `OptimisticLock`, `PessimisticLock` and `NoLock`, and 2 processes on one `SQLiteLog` key, are all gap-free. The `NoLock` + audit "unique `seq` constraint" limitation listed in the handover is fixed, not documented. `JSONLinesLog.append_next` is atomic within one process only; use `SQLiteLog` for multi-process writers.
+
+### Backend contract, as measured
+
+| | `MemoryLog` | `JSONLinesLog` | `SQLiteLog` |
+|:--|:--|:--|:--|
+| Corrupt / foreign record on read | n/a (typed at `append`) | **`LogCorruptError`** naming `path:line` — a torn last line, a non-record line, non-UTF-8, every byte of a 3-record file flipped/truncated/inserted (2 100 mutants); **never skipped** | `LogCorruptError`; a foreign `transitions` table or a non-SQLite file → `StoreError` at construction |
+| BOM / CRLF / blank lines | n/a | tolerated (a Windows editor saved the file) | n/a |
+| `append` | O(1) | O(1): open-append-close per record, flush, no fsync | O(1), one transaction |
+| `next_seq` | O(1) | **O(1)** in steady state — cached per machine while the file size is unchanged; a foreign append, a purge or an external edit forces a rescan (it used to scan the whole file on **every send**: 79 ms at 10 000 records, a quadratic run) | index probe |
+| `read(key)` | O(records for that key) | **O(all records in the file)** — use `SQLiteLog` beyond a few thousand records | index probe on `(machine_id, seq)` (`EXPLAIN QUERY PLAN`: SEARCH, no SCAN) |
+| Pagination | `after_seq` cursor; `limit` truncates silently (no "more" flag) | same | same |
+| `purge_older_than(ts)` | in place | **atomic** temp + fsync + replace; a kill mid-rewrite leaves old or new, never torn, no `.tmp` stranded | one `DELETE` |
+| Bad arguments | `read(limit=-1)` / non-int `after_seq` → `ValueError`; `purge_older_than(NaN / -inf / str)` → `ValueError` **and deletes nothing** (NaN used to erase the whole log — every `ts >= NaN` is false); `append` of a non-record / `seq < 1` / non-finite `ts` → `TypeError`/`ValueError` at the call site | same | same |
+| Redaction | both plugins redact `event_payload` with `DEFAULT_REDACT_KEYS` by default (nested, list-of-dict, hyphenated keys); the raw file / DB bytes never contain the secret; `redact_keys=()` is the explicit opt-out; `error.message` is free text and **not** redacted; `actor` / `reason` are kept | same | same |
+
+`replay()` loads and sorts the supplied records (O(n) memory, ~9 s and ~8 MB per 100 000 records). Plugin memory is flat over 10 000 sends with a durable store; `MemoryLog` grows by exactly the records and `purge_older_than()` reclaims.
 
 ## Versioning in-flight instances
 
