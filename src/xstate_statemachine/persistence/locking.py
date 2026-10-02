@@ -232,6 +232,8 @@ class LockStrategy(Protocol):
         migrator: Optional[Any] = None,
         on_version_mismatch: Optional[str] = None,
         restart_timers: Any = DEFAULT_RESTART_TIMERS,
+        verify_machine_hash: bool = True,
+        expected_machine_hash: Optional[str] = None,
     ) -> T:
         """load → ``fn(interp)`` → save → discard, under this strategy.
         May call *fn* more than once (optimistic retry)."""
@@ -254,9 +256,15 @@ def _restore_kwargs(
     migrator: Optional[Any],
     on_version_mismatch: Optional[str],
     restart_timers: Any = DEFAULT_RESTART_TIMERS,
+    verify_machine_hash: bool = True,
+    expected_machine_hash: Optional[str] = None,
 ) -> Dict[str, Any]:
     """The `from_snapshot` kwargs `persisted()` forwards (#263, #264)."""
     kw: Dict[str, Any] = {"restart_timers": restart_timers}
+    if not verify_machine_hash:
+        kw["verify_machine_hash"] = False
+    if expected_machine_hash is not None:
+        kw["expected_machine_hash"] = expected_machine_hash
     if migrator is not None:
         kw["migrator"] = migrator
     if on_version_mismatch is not None:
@@ -326,8 +334,12 @@ class OptimisticLock:
         backoff: Optional[RetryPolicy] = None,
         rng: Optional[Callable[[], float]] = None,
     ) -> None:
+        if isinstance(retries, bool) or not isinstance(retries, int):
+            raise TypeError("retries must be an int")
         if retries < 0:
             raise ValueError("retries must be >= 0")
+        if backoff is not None and not isinstance(backoff, RetryPolicy):
+            raise TypeError("backoff must be a RetryPolicy")
         self.retries = int(retries)
         self.backoff = backoff or DEFAULT_BACKOFF
         self._rng = rng
@@ -365,6 +377,8 @@ class OptimisticLock:
         migrator: Optional[Any] = None,
         on_version_mismatch: Optional[str] = None,
         restart_timers: Any = DEFAULT_RESTART_TIMERS,
+        verify_machine_hash: bool = True,
+        expected_machine_hash: Optional[str] = None,
     ) -> T:
         attempt = 0
         while True:
@@ -426,6 +440,8 @@ class PessimisticLock:
         migrator: Optional[Any] = None,
         on_version_mismatch: Optional[str] = None,
         restart_timers: Any = DEFAULT_RESTART_TIMERS,
+        verify_machine_hash: bool = True,
+        expected_machine_hash: Optional[str] = None,
     ) -> T:
         with _commit_scope(), self.acquire(store, key):
             return _cycle(
@@ -437,7 +453,13 @@ class PessimisticLock:
                 clock,
                 plugins,
                 create_if_missing,
-                _restore_kwargs(migrator, on_version_mismatch, restart_timers),
+                _restore_kwargs(
+                    migrator,
+                    on_version_mismatch,
+                    restart_timers,
+                    verify_machine_hash,
+                    expected_machine_hash,
+                ),
             )
 
 
@@ -469,6 +491,8 @@ class NoLock:
         migrator: Optional[Any] = None,
         on_version_mismatch: Optional[str] = None,
         restart_timers: Any = DEFAULT_RESTART_TIMERS,
+        verify_machine_hash: bool = True,
+        expected_machine_hash: Optional[str] = None,
     ) -> T:
         with _commit_scope():
             return _cycle(
@@ -480,7 +504,13 @@ class NoLock:
                 clock,
                 plugins,
                 create_if_missing,
-                _restore_kwargs(migrator, on_version_mismatch, restart_timers),
+                _restore_kwargs(
+                    migrator,
+                    on_version_mismatch,
+                    restart_timers,
+                    verify_machine_hash,
+                    expected_machine_hash,
+                ),
             )
 
 
@@ -565,6 +595,8 @@ def persisted(
     migrator: Optional[Any] = None,
     on_version_mismatch: Optional[str] = None,
     restart_timers: Any = DEFAULT_RESTART_TIMERS,
+    verify_machine_hash: bool = True,
+    expected_machine_hash: Optional[str] = None,
 ) -> Iterator[Any]:
     """create → act → persist → discard as a ``with`` block (sync engine).
 
@@ -594,7 +626,13 @@ def persisted(
             plugins,
             create_if_missing,
             True,
-            _restore_kwargs(migrator, on_version_mismatch, restart_timers),
+            _restore_kwargs(
+                migrator,
+                on_version_mismatch,
+                restart_timers,
+                verify_machine_hash,
+                expected_machine_hash,
+            ),
         )
         markers = _mark_plugins(plugins)
         interp.store_key = key  # #261
@@ -628,6 +666,8 @@ async def apersisted(
     migrator: Optional[Any] = None,
     on_version_mismatch: Optional[str] = None,
     restart_timers: Any = DEFAULT_RESTART_TIMERS,
+    verify_machine_hash: bool = True,
+    expected_machine_hash: Optional[str] = None,
 ) -> AsyncIterator[Any]:
     """Async twin of `persisted()`: yields a started `Interpreter`.
 
@@ -640,7 +680,8 @@ async def apersisted(
     from .async_store import as_async
 
     strategy = _strategy(lock)
-    astore = store if _is_async_store(store) else as_async(store)
+    owned = not _is_async_store(store)
+    astore = as_async(store) if owned else store
 
     async def _hold() -> Any:
         if isinstance(strategy, PessimisticLock):
@@ -648,7 +689,8 @@ async def apersisted(
         return contextlib.nullcontext()
 
     lock_cm = await _hold()
-    async with _commit_scope_async(), _maybe_async(lock_cm):
+    guards = _owned_adapter(astore, owned)
+    async with guards, _commit_scope_async(), _maybe_async(lock_cm):
         record = await astore.load(key)
         if record is None:
             if not create_if_missing:
@@ -666,7 +708,11 @@ async def apersisted(
                 clock=clock,
                 plugins=list(plugins),
                 **_restore_kwargs(
-                    migrator, on_version_mismatch, restart_timers
+                    migrator,
+                    on_version_mismatch,
+                    restart_timers,
+                    verify_machine_hash,
+                    expected_machine_hash,
                 ),
             )
             version = record.version
@@ -699,6 +745,17 @@ async def apersisted(
                 _flush_all(markers)
             finally:
                 await interp.stop()
+
+
+@contextlib.asynccontextmanager
+async def _owned_adapter(astore: Any, owned: bool) -> AsyncIterator[None]:
+    """Close the s_async adapter persisted created for a sync store
+    (its worker thread would otherwise live until GC)."""
+    try:
+        yield
+    finally:
+        if owned:
+            astore.close()
 
 
 def _is_async_store(store: Any) -> bool:
