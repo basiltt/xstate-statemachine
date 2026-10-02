@@ -33,7 +33,7 @@ import tempfile
 import threading
 import time
 import unittest
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, Tuple
 from unittest import mock
 
 from src.xstate_statemachine import (
@@ -981,6 +981,101 @@ class TestAsyncAdapter(_TmpDir):
         self.assertEqual(asyncio.run(go())[1], 1)
         self.assertEqual(store.load("b").version, 1)
         a.close()
+
+    def test_fan_out_inside_lock_does_not_deadlock(self) -> None:
+        # 🐛 Review H1 (fixed): holder identity was `current_task()`, so a
+        #    `gather` / `create_task` / TaskGroup child spawned INSIDE the
+        #    lock counted as a stranger and queued behind the gate its own
+        #    parent held -- forever. The holder token is a ContextVar now,
+        #    inherited by the whole subtree.
+        for mk in (MemoryStore, lambda: SQLiteStore(self.tmp / "f.db")):
+            a = as_async(mk())
+
+            async def go() -> Any:
+                await a.save("k", "{}")
+                async with a.lock("k", timeout=1):
+                    gathered = await asyncio.wait_for(
+                        asyncio.gather(a.load("k"), a.load("k")), 5
+                    )
+
+                    async def child() -> Any:
+                        return await a.load("k")
+
+                    spawned = await asyncio.wait_for(
+                        asyncio.create_task(child()), 5
+                    )
+                return gathered, spawned
+
+            gathered, spawned = asyncio.run(go())
+            self.assertTrue(all(r is not None for r in gathered))
+            self.assertIsNotNone(spawned)
+            a.close()
+
+    def test_stranger_wait_behind_a_lock_is_bounded(self) -> None:
+        # 🐛 Review H1 (fixed): the non-holder gate wait had no timeout.
+        a = as_async(MemoryStore())
+        a.gate_timeout = 0.2
+
+        async def go() -> str:
+            started = asyncio.Event()
+            release = asyncio.Event()
+
+            async def holder() -> None:
+                async with a.lock("k", timeout=5):
+                    started.set()
+                    await release.wait()
+
+            # 📝 the stranger is created OUTSIDE the holder's context, so it
+            #    does not inherit the token
+            h = asyncio.create_task(holder())
+            await started.wait()
+            t0 = time.perf_counter()
+            try:
+                await a.load("k")
+                outcome = "ran"
+            except LockTimeoutError:
+                outcome = f"timed out after {time.perf_counter() - t0:.2f}s"
+            release.set()
+            await h
+            return outcome
+
+        outcome = asyncio.run(go())
+        self.assertTrue(outcome.startswith("timed out"), outcome)
+        self.assertLess(float(outcome.split()[-1][:-1]), 1.0)
+        a.close()
+
+    def test_nested_lock_on_one_adapter_is_refused_at_once(self) -> None:
+        # 🐛 Review M1 (fixed): a nested `adapter.lock()` waited out the
+        #    FULL timeout then raised. One lock per adapter is the rule
+        #    (one worker thread, one transaction); refuse immediately and
+        #    say why.
+        a = as_async(MemoryStore())
+
+        async def go() -> Tuple[float, str]:
+            t0 = time.perf_counter()
+            async with a.lock("k1", timeout=5):
+                try:
+                    async with a.lock("k2", timeout=5):
+                        pass
+                except LockTimeoutError as exc:
+                    return time.perf_counter() - t0, str(exc)
+            return time.perf_counter() - t0, "no error"
+
+        elapsed, msg = asyncio.run(go())
+        self.assertLess(elapsed, 0.5)
+        self.assertIn("nested", msg)
+        self.assertIn("second as_async", msg)
+        a.close()
+
+    def test_call_after_close_is_store_error(self) -> None:
+        # 🐛 Review M2 (fixed): used to be a bare RuntimeError from the
+        #    shut-down executor.
+        a = as_async(MemoryStore())
+        asyncio.run(a.save("k", "{}"))
+        a.close()
+        with self.assertRaises(StoreError):
+            asyncio.run(a.load("k"))
+        a.close()  # idempotent
 
     def test_lock_wait_on_adapter_respects_timeout(self) -> None:
         a = as_async(MemoryStore())
