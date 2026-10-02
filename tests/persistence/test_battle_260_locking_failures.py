@@ -989,10 +989,27 @@ def _cycle_store(store: Any, key: str, n: int) -> None:
 
 
 class TestLeaks(_Base):
+    @staticmethod
+    def _settled_thread_count() -> int:
+        """Thread count after giving threads from EARLIER tests a moment to
+        exit. In the full suite this class can run right after a file whose
+        daemon workers (SQLite pool, timer threads) are still winding down;
+        counting them as "ours" failed the memory subtest once on the
+        coverage job while every byte reading was 0."""
+        deadline = time.monotonic() + 2.0
+        last = threading.active_count()
+        while time.monotonic() < deadline:
+            time.sleep(0.05)
+            now = threading.active_count()
+            if now >= last:
+                return now
+            last = now
+        return last
+
     def _measure(self, store: Any, n: int) -> Dict[str, Any]:
         _cycle_store(store, "warm", 50)
         gc.collect()
-        tasks0 = threading.active_count()
+        tasks0 = self._settled_thread_count()
         tracemalloc.start()
         try:
             _cycle_store(store, "leak", n // 2)
@@ -1006,7 +1023,7 @@ class TestLeaks(_Base):
         return {
             "half": a,
             "full": b,
-            "threads": threading.active_count() - tasks0,
+            "threads": self._settled_thread_count() - tasks0,
         }
 
     def test_sync_cycles_do_not_leak(self) -> None:
@@ -1020,7 +1037,9 @@ class TestLeaks(_Base):
                 )
                 # second half must not grow the library's footprint
                 self.assertLess(r["full"] - r["half"], _leak_ceiling())
-                self.assertEqual(r["threads"], 0)
+                # no thread created by the cycles survives them (a thread
+                # from an earlier test EXITING meanwhile is not a leak)
+                self.assertLessEqual(r["threads"], 0)
 
     def test_async_cycles_do_not_leak_tasks_or_threads(self) -> None:
         async def main() -> Dict[str, Any]:
