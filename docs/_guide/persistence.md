@@ -217,6 +217,31 @@ for lock in (OptimisticLock(retries=100), PessimisticLock(timeout=30)):
 - **Schema versioning.** `SQLiteStore` keeps an `xsm_schema(version)` table with explicit upgrade steps; a database written by a newer library is refused, never guessed at.
 - **`health()`** on every store — a cheap liveness probe for your readiness endpoint.
 
+### What every backend agrees on
+
+The battle test for the stores (`tests/persistence/test_battle_259_stores_corruption_scaling.py`) drives the same contract matrix through `MemoryStore`, `FileStore`, `SQLiteStore` and the `as_async` view of each, and asserts identical answers. This is the contract you can code against without knowing which backend is configured:
+
+| Call | Every backend |
+|:--|:--|
+| `load(missing)` | `None` — never raises |
+| `delete(missing)` / `forget(missing)` | `False` / zero counts — never raises |
+| `save(key, snap, expected_version=0)` on a missing key | creates it; returns `1` |
+| `save(..., expected_version=None)` | unconditional write |
+| wrong `expected_version` | `ConflictError` with `.expected` and `.actual` (`None` when the key is missing) |
+| `version` | starts at 1, +1 per save, restarts at 1 after `delete` |
+| `updated_at` | epoch seconds (`time.time()`), non-decreasing |
+| `list_keys()` order | sorted by code point (upper-case before lower-case) |
+| `list_keys(limit=0 / -1 / 10**9)` | `[]` / `ValueError` / every key |
+| `list_keys(prefix=...)` | `%` and `_` are literal (no SQL-LIKE semantics leak); never lists a key `load()` would refuse |
+| **pagination** | **none** — `limit` truncates silently; page by narrowing `prefix` |
+| a damaged record on `load()` | `SnapshotCorruptError` — never a bare `ValueError` / `TypeError` / `OSError` / `sqlite3.*` (every byte of a record flipped, truncated and inserted; every envelope field given a wrong type) |
+| a file that is not a SQLite database | `StoreError` from the `SQLiteStore` constructor |
+| a codec that raises or returns non-`str` | `SnapshotCorruptError` on load, `StoreError` on save |
+| bad `save()` arguments (non-`str` snapshot, non-int `expected_version`, non-`str` `machine_version`, non-`Deadline` deadlines, a lone surrogate anywhere) | the same `TypeError` / `InvalidKeyError` / `SnapshotCorruptError` on every backend, at the call site |
+| unknown envelope keys | ignored on load; **not** preserved on the next save |
+
+Two costs differ and are worth knowing before you pick a backend. **`list_keys` is O(total keys) on `MemoryStore` and `FileStore`** however small `limit` is (Memory sorts every key; File lists and decodes the whole directory — 1 ms at 100 keys, 24 ms at 2 000, 14 s to *fill* 10 000) and flat on `SQLiteStore` (16 µs). And **`FileStore.save` is milliseconds** (2.8 ms, `fsync` off; an atomic temp-write-replace) where SQLite is tens of microseconds (24 µs) and Memory is one. `save` / `load` / `delete` are O(1) in store size on all three. Memory does not grow over 10 000 save→load→delete cycles on any backend (0 B attributed to the library); SQLite keeps one connection per thread and `close()` really closes it; file handles are stable.
+
 ## asyncio
 
 The stdlib stores are synchronous (file and SQLite I/O block). `as_async(store)` runs each call in the default executor and exposes the same surface with `await`; `lock()` becomes an `async with`, acquired and released on one dedicated worker thread because file and SQLite locks are thread-affine.
