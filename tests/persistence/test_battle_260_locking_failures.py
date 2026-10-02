@@ -13,6 +13,7 @@ import gc
 import json
 import shutil
 import tempfile
+import sys
 import threading
 import time
 import tracemalloc
@@ -962,6 +963,22 @@ def _lib_bytes(snap: "tracemalloc.Snapshot") -> int:
     )
 
 
+def _leak_ceiling() -> int:
+    """📏 Bytes of library-attributed growth allowed between the N/2 and N
+    readings. Under `pytest --cov` on CPython <= 3.13 the C tracer's own
+    per-line bookkeeping is attributed to the *library frame executing*,
+    so the reading drifts with how much library code the previous ~6 000
+    tests exercised (the #305 lesson: 0.4-0.9 MB on the CI coverage job,
+    sub-linear). A real leak is per-cycle and linear (>= 1 KB x cycles
+    here = >= 3 MB). Strict without a tracer; "far below a real leak"
+    with one."""
+    tracer = sys.gettrace() is not None or (
+        hasattr(sys, "monitoring")
+        and sys.monitoring.get_tool(sys.monitoring.COVERAGE_ID) is not None
+    )
+    return 1_500_000 if tracer else 256 * 1024
+
+
 def _cycle_store(store: Any, key: str, n: int) -> None:
     m = _machine()
     for _ in range(n):
@@ -1002,7 +1019,7 @@ class TestLeaks(_Base):
                     % (kind, counts[kind], r["half"], r["full"], r["threads"])
                 )
                 # second half must not grow the library's footprint
-                self.assertLess(r["full"] - r["half"], 256 * 1024)
+                self.assertLess(r["full"] - r["half"], _leak_ceiling())
                 self.assertEqual(r["threads"], 0)
 
     def test_async_cycles_do_not_leak_tasks_or_threads(self) -> None:
@@ -1017,6 +1034,11 @@ class TestLeaks(_Base):
                             await i.send("T", wait=True)
 
             await run(20)
+            # warm the loop's default executor (adapter close goes through
+            # it; its one idle thread is asyncio's for the loop's life)
+            await asyncio.get_running_loop().run_in_executor(
+                None, lambda: None
+            )
             gc.collect()
             t0 = threading.active_count()
             tasks0 = len(asyncio.all_tasks())
@@ -1042,7 +1064,7 @@ class TestLeaks(_Base):
             "LEAK async n=2000 half=%(half)d full=%(full)d "
             "threads=+%(threads)d tasks=+%(tasks)d" % r
         )
-        self.assertLess(r["full"] - r["half"], 256 * 1024)
+        self.assertLess(r["full"] - r["half"], _leak_ceiling())
         self.assertEqual(r["threads"], 0)
         self.assertEqual(r["tasks"], 0)
 
