@@ -515,6 +515,18 @@ class IdempotencyPlugin(PluginBase[Any]):
         ttl_s: Optional[float] = DEFAULT_TTL_S,
         key_fields: Tuple[str, ...] = ("idempotency_key", "id"),
     ) -> None:
+        # 🔥 #261 battle: a negative / NaN / non-numeric ttl silently made
+        #    every key expire instantly (dedup off) or raised deep inside a
+        #    contained hook. Fail loudly at construction.
+        if ttl_s is not None and (
+            isinstance(ttl_s, bool)
+            or not isinstance(ttl_s, (int, float))
+            or ttl_s != ttl_s
+            or ttl_s < 0
+        ):
+            raise ValueError(
+                f"ttl_s must be None or a number >= 0, got {ttl_s!r}"
+            )
         self.inbox = inbox
         self.principal = principal
         self.key_fn = key
