@@ -698,12 +698,28 @@ class TestKeyEncoding(_Base):
 # 📈 Scaling (shape only) and 🧯 leaks
 # =========================================================================
 def _timeit(fn: Callable[[], Any], n: int) -> float:
-    best = float("inf")
-    for _ in range(3):
+    """Best-of-5 mean over at least `n` calls, with the inner loop sized so
+    each sample is >= ~2 ms. 📝 A MemoryStore op is ~1-2 us; 10 calls is
+    20 us, inside perf_counter jitter on a loaded runner (macOS CI read a
+    3.16x ratio on 'save+delete' for a flat op). Scale the loop up until
+    one sample is long enough for the ratio to mean something."""
+    reps = n
+    t0 = time.perf_counter()
+    for _ in range(reps):
+        fn()
+    elapsed = time.perf_counter() - t0
+    while elapsed < 0.002 and reps < 20_000:
+        reps *= 4
         t0 = time.perf_counter()
-        for _ in range(n):
+        for _ in range(reps):
             fn()
-        best = min(best, (time.perf_counter() - t0) / n)
+        elapsed = time.perf_counter() - t0
+    best = elapsed / reps
+    for _ in range(4):
+        t0 = time.perf_counter()
+        for _ in range(reps):
+            fn()
+        best = min(best, (time.perf_counter() - t0) / reps)
     return best
 
 
