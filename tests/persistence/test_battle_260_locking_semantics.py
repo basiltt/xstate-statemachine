@@ -889,7 +889,7 @@ class TestThreadSmoke(_Tmp):
                         continue
                     self.assertEqual(errs, [])
                     self.assertEqual(n, total)
-                        self.assertEqual(store.load(key).version, total)
+                    self.assertEqual(store.load(key).version, total)
 
 
 if __name__ == "__main__":  # pragma: no cover
