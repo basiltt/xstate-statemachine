@@ -968,15 +968,15 @@ def _leak_ceiling() -> int:
     readings. Under `pytest --cov` on CPython <= 3.13 the C tracer's own
     per-line bookkeeping is attributed to the *library frame executing*,
     so the reading drifts with how much library code the previous ~6 000
-    tests exercised (the #305 lesson: 0.4-0.9 MB on the CI coverage job,
-    sub-linear). A real leak is per-cycle and linear (>= 1 KB x cycles
-    here = >= 3 MB). Strict without a tracer; "far below a real leak"
-    with one."""
+    tests exercised (the #305 lesson; the full coverage job read 3.35 MB
+    here with every byte reading 0 in isolation and on 3.14). A real leak
+    is per-cycle and LINEAR: 10 000 cycles x even 1 KB = 10 MB. Strict
+    without a tracer; "far below a real leak" with one."""
     tracer = sys.gettrace() is not None or (
         hasattr(sys, "monitoring")
         and sys.monitoring.get_tool(sys.monitoring.COVERAGE_ID) is not None
     )
-    return 1_500_000 if tracer else 256 * 1024
+    return 6_000_000 if tracer else 256 * 1024
 
 
 def _cycle_store(store: Any, key: str, n: int) -> None:

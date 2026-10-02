@@ -228,6 +228,8 @@ Every row is asserted by `tests/persistence/test_battle_260_locking_semantics.py
 
 Each `persisted()` block (and each call of the callable under `persisted_retry`) gets its **own** interpreter; the engine is never shared across threads.
 
+> **`OptimisticLock` + `FileStore` under heavy same-key contention.** Each `FileStore.save` takes the OS file lock for its read-compare-write and waits at most **10 s** for it. Sixteen threads hammering one key with fsync'd saves starved a few calls past that on a slow CI runner: they raised `LockTimeoutError` — loud, never a lost update, every call that returned was counted exactly once. If you expect that contention profile on one key, use `PessimisticLock` (one lock around the whole step, writers queue in order) or `SQLiteStore` (24 µs saves, no starvation observed).
+
 ```python
 import threading
 from xstate_statemachine import MachineLogic, create_machine
