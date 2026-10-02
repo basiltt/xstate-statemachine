@@ -36,6 +36,7 @@ __all__ = [
     "STATUS_CONFLICT",
     "STATUS_ERROR",
     "STATUS_UNPROCESSABLE",
+    "STATUS_UNAVAILABLE",
 ]
 
 #: HTTP statuses `receipt_to_status` returns. Named so adapters and tests
@@ -46,12 +47,16 @@ STATUS_ACCEPTED = 202  # deferred by `onUnhandled: "defer"` -- held, not run
 STATUS_CONFLICT = 409  # a guard refused it: the request conflicts with state
 STATUS_ERROR = 500  # an action / target / chain error while processing
 STATUS_UNPROCESSABLE = 422  # idempotency key reused with a different payload
+STATUS_UNAVAILABLE = 503  # the idempotency inbox itself failed (refuse mode)
 #: `error` class names that are the CLIENT's fault, not processing
 #: failures (#261). Matched by name so this module stays free of a
 #: `persistence` import; the receipt codec preserves the name.
 _CLIENT_ERROR_STATUS = {
     "IdempotencyMismatchError": STATUS_UNPROCESSABLE,
     "IdempotencyInFlightError": STATUS_CONFLICT,
+    # 🛡️ Battle #261: `on_inbox_error="refuse"` -- the dedup store is
+    #    down, the action did NOT run; the client should retry later.
+    "InboxUnavailableError": STATUS_UNAVAILABLE,
     # 🏁 An event for an instance that already finished (or was stopped):
     #    the transition can no longer happen. Refused like a guard, not a
     #    server fault. Both engines report it on the receipt (#123 parity;
@@ -88,6 +93,7 @@ def receipt_to_status(receipt: Receipt) -> int:
     |:------------------------------|:------:|:---------------------------|
     | ``error`` is a key mismatch   |  422   | idempotency key reused     |
     | ``error`` is key in flight    |  409   | first delivery still running |
+    | ``error`` is inbox unavailable|  503   | dedup store down (refuse mode) |
     | ``error`` is instance stopped |  409   | already finished / stopped |
     | ``error is not None`` (other) |  500   | processing failed          |
     | ``deferred``                  |  202   | held for a later state     |

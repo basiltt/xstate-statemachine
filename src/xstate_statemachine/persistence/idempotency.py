@@ -51,6 +51,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -77,12 +78,15 @@ from ..exceptions import StoreError
 from ..plugins import PluginBase
 from ..receipts import receipt_from_json, receipt_to_json
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "DEFAULT_TTL_S",
     "IdempotencyInFlightError",
     "IdempotencyMismatchError",
     "IdempotencyPlugin",
     "InboxEntry",
+    "InboxUnavailableError",
     "InboxStore",
     "MemoryInbox",
     "SQLiteInbox",
@@ -121,6 +125,29 @@ class IdempotencyInFlightError(StoreError):
         self.key = key
         super().__init__(
             f"Idempotency key {key!r} is being processed; retry shortly."
+        )
+
+
+class InboxUnavailableError(StoreError):
+    """The inbox backend failed while deciding whether a keyed event is a
+    duplicate, and the plugin was configured ``on_inbox_error="refuse"``.
+
+    🏛️ Battle #261: by `_SafePlugin` design a raising hook admits the
+    event -- so a dead inbox meant keyed events were processed with NO
+    deduplication and nothing on the receipt said so (only
+    `on_plugin_error`). Availability over dedup is a legitimate default
+    for a webhook endpoint (the sender will retry anyway), but a payment
+    handler wants the opposite. This error is the "refuse" answer: the
+    client gets a retryable 503, the action never ran. Adapters map it
+    to HTTP 503.
+    """
+
+    def __init__(self, key: str, cause: BaseException) -> None:
+        self.key = key
+        self.cause = cause
+        super().__init__(
+            f"Idempotency inbox unavailable while checking key {key!r}: "
+            f"{type(cause).__name__}; retry later."
         )
 
 
@@ -514,6 +541,7 @@ class IdempotencyPlugin(PluginBase[Any]):
         instance_key: Optional[Callable[[Any], str]] = None,
         ttl_s: Optional[float] = DEFAULT_TTL_S,
         key_fields: Tuple[str, ...] = ("idempotency_key", "id"),
+        on_inbox_error: str = "admit",
     ) -> None:
         # 🔥 #261 battle: a negative / NaN / non-numeric ttl silently made
         #    every key expire instantly (dedup off) or raised deep inside a
@@ -527,12 +555,24 @@ class IdempotencyPlugin(PluginBase[Any]):
             raise ValueError(
                 f"ttl_s must be None or a number >= 0, got {ttl_s!r}"
             )
+        if on_inbox_error not in ("admit", "refuse"):
+            raise ValueError(
+                'on_inbox_error must be "admit" or "refuse", '
+                f"got {on_inbox_error!r}"
+            )
         self.inbox = inbox
         self.principal = principal
         self.key_fn = key
         self.instance_key = instance_key or _default_instance_key
         self.ttl_s = ttl_s
         self.key_fields = key_fields
+        #: 🏛️ Battle #261: what a keyed event gets when the inbox backend
+        #: itself fails. "admit" (default) -- availability: the event runs
+        #: WITHOUT dedup and `on_plugin_error` fires (the sender retries
+        #: anyway; a duplicate is the lesser evil for a webhook). "refuse"
+        #: -- the receipt carries `InboxUnavailableError` (HTTP 503), the
+        #: action never ran (a payment handler wants this).
+        self.on_inbox_error = on_inbox_error
         #: Claims awaiting their receipt: id(event) -> (scope, key).
         self._pending: Dict[int, Tuple[str, str]] = {}
         #: Marks buffered for a shared-transaction commit (see
@@ -604,6 +644,36 @@ class IdempotencyPlugin(PluginBase[Any]):
         except ValueError as exc:
             return self._refuse(interpreter, exc)
         fp = fingerprint(event, key_fields=self.key_fields)
+        if self.on_inbox_error == "admit":
+            return self._decide(interpreter, scope, key, fp, event)
+        # 🛡️ "refuse": an inbox backend failure is the CLIENT's 503, never a
+        #    silently undeduplicated run. Only infrastructure errors are
+        #    caught -- the plugin's own refusals (mismatch, in flight) and
+        #    the fail-open contract for genuine plugin bugs are untouched.
+        try:
+            return self._decide(interpreter, scope, key, fp, event)
+        except (StoreError, OSError, sqlite3.Error) as exc:
+            if isinstance(
+                exc, (IdempotencyMismatchError, IdempotencyInFlightError)
+            ):
+                raise
+            logger.error(
+                "🔥 Idempotency inbox unavailable for key %r (%s); refusing "
+                "the event (on_inbox_error='refuse').",
+                key,
+                type(exc).__name__,
+            )
+            return self._refuse(interpreter, InboxUnavailableError(key, exc))
+
+    def _decide(
+        self,
+        interpreter: Any,
+        scope: str,
+        key: str,
+        fp: str,
+        event: Any,
+    ) -> Optional[Receipt]:
+        """The inbox lookup / claim; ``None`` admits the event."""
         entry = self.inbox.get(scope, key)
         if entry is not None:
             if entry.fingerprint != fp:

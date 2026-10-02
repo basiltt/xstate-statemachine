@@ -7,6 +7,7 @@ unittest only (no pytest-asyncio).
 
 from __future__ import annotations
 
+import asyncio
 import gc
 import os
 import random
@@ -183,7 +184,9 @@ class TestBackendFailures(_Base):
     ]
 
     def test_get_raises_admits_event_fail_open(self) -> None:
-        """A DEAD inbox admits the event (duplicates run) -- fail-open."""
+        """A DEAD inbox admits the event (duplicates run) -- fail-open.
+        This is the DEFAULT (`on_inbox_error="admit"`): availability over
+        dedup, documented in persistence.md and security.md X0.2."""
         for exc in self.EXCS:
             with self.subTest(exc=type(exc).__name__):
                 fb = FaultyInbox(MemoryInbox())
@@ -196,6 +199,71 @@ class TestBackendFailures(_Base):
                 self.assertTrue(r.changed)
                 self.assertEqual(it.context["credits"], 2)
                 self.assertTrue(col.errors)  # but reported
+
+    def test_refuse_mode_never_runs_the_action_on_a_dead_inbox(self) -> None:
+        """🛡️ Battle #261 (integration): `on_inbox_error="refuse"` -- the
+        receipt carries `InboxUnavailableError` (HTTP 503), the action did
+        NOT run, nothing is claimed. Both `get` and `claim` failing; every
+        infrastructure error class."""
+        from src.xstate_statemachine.persistence import (
+            InboxUnavailableError,
+        )
+        from src.xstate_statemachine.receipts import receipt_to_status
+
+        for site in ("get", "claim"):
+            for exc in self.EXCS:
+                with self.subTest(site=site, exc=type(exc).__name__):
+                    fb = FaultyInbox(MemoryInbox())
+                    it, col = self.run_one(fb, on_inbox_error="refuse")
+                    fb.fail_always[site] = exc
+                    r = it.send(
+                        "CREDIT", wait=True, idempotency_key="k", amount=1
+                    )
+                    self.assertIsInstance(r.error, InboxUnavailableError)
+                    self.assertEqual(r.error.key, "k")
+                    self.assertIs(r.error.cause, exc)
+                    self.assertTrue(r.duplicate)  # "did not run" shape
+                    self.assertFalse(r.changed)
+                    self.assertEqual(receipt_to_status(r), 503)
+                    self.assertEqual(it.context["credits"], 0)
+                    # the plugin's OWN refusals are not masked by refuse mode
+                    fb.fail_always.pop(site)
+                    it.send("CREDIT", wait=True, idempotency_key="k", amount=1)
+                    r2 = it.send(
+                        "CREDIT", wait=True, idempotency_key="k", amount=2
+                    )
+                    self.assertEqual(
+                        type(r2.error).__name__, "IdempotencyMismatchError"
+                    )
+
+    def test_refuse_mode_async_parity(self) -> None:
+        from src.xstate_statemachine import Interpreter
+        from src.xstate_statemachine.persistence import (
+            InboxUnavailableError,
+        )
+
+        async def go() -> Any:
+            fb = FaultyInbox(MemoryInbox())
+            fb.fail_always["get"] = StoreError("dead")
+            it = await (
+                Interpreter(machine())
+                .use(_plugin(fb, on_inbox_error="refuse"))
+                .start()
+            )
+            r = await it.send(
+                "CREDIT", wait=True, idempotency_key="k", amount=1
+            )
+            credits = it.context["credits"]
+            await it.stop()
+            return r, credits
+
+        r, credits = asyncio.run(go())
+        self.assertIsInstance(r.error, InboxUnavailableError)
+        self.assertEqual(credits, 0)
+
+    def test_on_inbox_error_is_validated(self) -> None:
+        with self.assertRaises(ValueError):
+            _plugin(MemoryInbox(), on_inbox_error="ignore")
 
     def test_claim_raises_admits_event_without_protection(self) -> None:
         for exc in self.EXCS:
@@ -519,8 +587,8 @@ class TestTTL(_Base):
         self.assertEqual(ib.purge_expired(now=2.0), 10_000)
         full = time.perf_counter() - t0
         print(
-            f"\n[261B] sqlite purge: 0 expired {empty*1e3:.2f} ms; "
-            f"10k expired {full*1e3:.1f} ms"
+            f"\n[261B] sqlite purge: 0 expired {empty * 1e3:.2f} ms; "
+            f"10k expired {full * 1e3:.1f} ms"
         )
         self.assertLess(empty, 0.25)
         self.assertLess(full, 10.0)
@@ -792,8 +860,8 @@ class TestLeaksPerf(_Base):
             ib.claim("s", f"r{i}", "fp", ttl_s=60)
         refilled = path.stat().st_size
         print(
-            f"\n[261B] sqlite inbox 10k rows: {grown/1e6:.2f} MB; after "
-            f"purge+refill {refilled/1e6:.2f} MB"
+            f"\n[261B] sqlite inbox 10k rows: {grown / 1e6:.2f} MB; after "
+            f"purge+refill {refilled / 1e6:.2f} MB"
         )
         self.assertLess(refilled, grown * 1.3)
 
@@ -839,9 +907,9 @@ class TestLeaksPerf(_Base):
                 it.send("CREDIT", idempotency_key=f"p{i}", amount=1)
             res[name] = (time.perf_counter() - t0) / n
         print(
-            f"\n[261B] per-send: bare {t_bare*1e6:.0f} us; plugin+memory "
-            f"{res['memory']*1e6:.0f} us; plugin+sqlite "
-            f"{res['sqlite']*1e6:.0f} us"
+            f"\n[261B] per-send: bare {t_bare * 1e6:.0f} us; plugin+memory "
+            f"{res['memory'] * 1e6:.0f} us; plugin+sqlite "
+            f"{res['sqlite'] * 1e6:.0f} us"
         )
         self.assertLess(res["memory"], 0.01)
 

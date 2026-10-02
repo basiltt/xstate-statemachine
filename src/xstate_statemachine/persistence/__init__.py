@@ -95,6 +95,7 @@ _LAZY = {
     "SQLiteInbox": ".idempotency",
     "IdempotencyMismatchError": ".idempotency",
     "IdempotencyInFlightError": ".idempotency",
+    "InboxUnavailableError": ".idempotency",
     "default_key": ".idempotency",
     "fingerprint": ".idempotency",
     "DEFAULT_TTL_S": ".idempotency",
@@ -127,6 +128,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from .idempotency import (  # noqa: F401
         DEFAULT_TTL_S,
         IdempotencyInFlightError,
+        InboxUnavailableError,
         IdempotencyMismatchError,
         IdempotencyPlugin,
         InboxEntry,
@@ -216,6 +218,7 @@ __all__ = [
     "SQLiteInbox",
     "IdempotencyMismatchError",
     "IdempotencyInFlightError",
+    "InboxUnavailableError",
     "default_key",
     "fingerprint",
     "DEFAULT_TTL_S",
