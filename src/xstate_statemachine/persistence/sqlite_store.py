@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import os
 import sqlite3
 import threading
@@ -35,6 +36,7 @@ import warnings
 from pathlib import Path
 from typing import (
     Any,
+    Callable,
     ContextManager,
     Dict,
     Iterator,
@@ -42,6 +44,8 @@ from typing import (
     Optional,
     Sequence,
     Tuple,
+    TypeVar,
+    cast,
 )
 
 from ..exceptions import (
@@ -50,8 +54,8 @@ from ..exceptions import (
     SnapshotCorruptError,
     StoreError,
 )
-from .deadline import Deadline
-from .store import BaseStore
+from .deadline import Deadline, check_deadline_record
+from .store import BaseStore, check_record_fields
 
 __all__ = ["SQLiteStore", "SCHEMA_VERSION"]
 
@@ -91,6 +95,13 @@ _CREATE_V1 = (
 #: schema_version -> statements that bring it to schema_version + 1.
 _UPGRADES: Dict[int, Tuple[str, ...]] = {}
 
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+#: Columns `_CREATE_V1` gives `statecharts`; anything else is not ours.
+_STATECHARTS_COLUMNS = frozenset(
+    {"key", "snapshot", "version", "machine_version", "updated_at"}
+)
+
 
 def _is_locked_error(exc: sqlite3.OperationalError) -> bool:
     msg = str(exc).lower()
@@ -100,6 +111,48 @@ def _is_locked_error(exc: sqlite3.OperationalError) -> bool:
 def _looks_like_network_path(path: Path) -> bool:
     s = str(path)
     return s.startswith("\\\\") or s.startswith("//")
+
+
+def _commit_or_rollback(conn: sqlite3.Connection) -> None:
+    """``COMMIT``; if that fails, ``ROLLBACK`` and re-raise.
+
+    🛡️ #259 battle: a failed ``COMMIT`` (``database or disk is full``,
+    ``database is locked``) leaves the connection ``in_transaction``. Every
+    later `_tx` on this thread then "joined" that dead transaction and
+    never committed -- saves returned a version and were silently lost.
+    """
+    try:
+        conn.execute("COMMIT")
+    except BaseException:
+        with contextlib.suppress(sqlite3.Error):
+            conn.execute("ROLLBACK")
+        raise
+
+
+def _typed(exc: sqlite3.Error, key: str, timeout: float) -> StoreError:
+    """Map a raw `sqlite3.Error` onto the documented store exceptions.
+
+    🛡️ #259 battle: a non-SQLite file at *path* (``file is not a
+    database``), a foreign ``statecharts`` table (``no such column``), a
+    full disk at ``COMMIT`` (``database or disk is full``) or a read-only
+    directory all escaped as bare `sqlite3.DatabaseError` /
+    `OperationalError`, past ``except StoreError``.
+    """
+    if isinstance(exc, sqlite3.OperationalError) and _is_locked_error(exc):
+        return LockTimeoutError(key, timeout)
+    return StoreError(f"SQLiteStore: {type(exc).__name__}: {exc}")
+
+
+def _sqlite_errors_typed(fn: _F) -> _F:
+    @functools.wraps(fn)
+    def wrapper(self: "SQLiteStore", *a: Any, **kw: Any) -> Any:
+        try:
+            return fn(self, *a, **kw)
+        except sqlite3.Error as exc:
+            key = a[0] if a and isinstance(a[0], str) else "<db>"
+            raise _typed(exc, key, self.busy_timeout) from exc
+
+    return cast(_F, wrapper)
 
 
 class SQLiteStore(BaseStore):
@@ -201,12 +254,26 @@ class SQLiteStore(BaseStore):
             self._local.conn = conn
         return conn
 
+    @_sqlite_errors_typed
     def _ensure_schema(self) -> None:
         with self._init_lock:
             conn = self._conn()
             with self._tx(conn, immediate=True):
                 for stmt in _CREATE_V1:
                     conn.execute(stmt)
+                cols = {
+                    str(r[1])
+                    for r in conn.execute("PRAGMA table_info(statecharts)")
+                }
+                if not _STATECHARTS_COLUMNS <= cols:
+                    # 🛡️ #259 battle: a pre-existing, foreign `statecharts`
+                    #    table made `CREATE ... IF NOT EXISTS` a no-op and
+                    #    the first `load` died with `no such column`.
+                    raise StoreError(
+                        f"SQLiteStore({self.path}): table 'statecharts' "
+                        f"exists with columns {sorted(cols)}, not the "
+                        f"xstate-statemachine schema. Use another file."
+                    )
                 row = conn.execute("SELECT version FROM xsm_schema").fetchone()
                 if row is None:
                     conn.execute(
@@ -257,9 +324,10 @@ class SQLiteStore(BaseStore):
                 conn.execute("ROLLBACK")
             raise
         else:
-            conn.execute("COMMIT")
+            _commit_or_rollback(conn)
 
     # -- primitives ---------------------------------------------------------------------
+    @_sqlite_errors_typed
     def _load_raw(
         self, key: str
     ) -> Optional[Tuple[str, int, str, float, Sequence[Deadline]]]:
@@ -271,30 +339,40 @@ class SQLiteStore(BaseStore):
         ).fetchone()
         if row is None:
             return None
-        if not isinstance(row[0], str):
-            # 🛡️ #303 battle: a row another writer stored as a BLOB (or
-            #    non-UTF-8 bytes) is corruption, not an AttributeError deep
-            #    in the codec.
-            raise SnapshotCorruptError(
-                f"SQLiteStore row for {key!r} is not text "
-                f"({type(row[0]).__name__})."
+        # 🛡️ #303/#259 battle: a row another writer damaged (BLOB or
+        #    non-UTF-8 snapshot, non-numeric version, NULL / text in a typed
+        #    column -- SQLite's type affinity lets all of these in) is
+        #    corruption, not a bare ValueError / AttributeError.
+        check_record_fields(
+            f"SQLiteStore row for {key!r}", row[0], row[1], row[2], row[3]
+        )
+        deadlines = []
+        for r in conn.execute(
+            "SELECT state_id, entry_seq, due_at_wall, delay_ms, event_type "
+            "FROM deadlines WHERE key = ? ORDER BY due_at_wall",
+            (key,),
+        ):
+            rec = dict(
+                zip(
+                    (
+                        "state_id",
+                        "entry_seq",
+                        "due_at_wall",
+                        "delay_ms",
+                        "event_type",
+                    ),
+                    r,
+                )
             )
-        deadlines = [
-            Deadline(
-                state_id=r[0],
-                entry_seq=int(r[1]),
-                due_at_wall=float(r[2]),
-                delay_ms=int(r[3]),
-                event_type=r[4],
-            )
-            for r in conn.execute(
-                "SELECT state_id, entry_seq, due_at_wall, delay_ms, event_type "
-                "FROM deadlines WHERE key = ? ORDER BY due_at_wall",
-                (key,),
-            )
-        ]
+            problem = check_deadline_record(rec)
+            if problem is not None:
+                raise SnapshotCorruptError(
+                    f"SQLiteStore deadline row for {key!r}: {problem}."
+                )
+            deadlines.append(Deadline.from_dict(rec))
         return (row[0], int(row[1]), row[2], float(row[3]), deadlines)
 
+    @_sqlite_errors_typed
     def _save_raw(
         self,
         key: str,
@@ -368,12 +446,14 @@ class SQLiteStore(BaseStore):
                 raise LockTimeoutError(key, self.busy_timeout) from exc
             raise
 
+    @_sqlite_errors_typed
     def _delete_raw(self, key: str) -> bool:
         conn = self._conn()
         with self._tx(conn, immediate=True):
             cur = conn.execute("DELETE FROM statecharts WHERE key = ?", (key,))
             return cur.rowcount > 0
 
+    @_sqlite_errors_typed
     def _forget_raw(self, key: str) -> Dict[str, int]:
         conn = self._conn()
         with self._tx(conn, immediate=True):
@@ -399,6 +479,7 @@ class SQLiteStore(BaseStore):
             )
         return {"snapshots": s, "deadlines": d, "log_entries": t}
 
+    @_sqlite_errors_typed
     def _list_keys_raw(self, prefix: str, limit: int) -> List[str]:
         conn = self._conn()
         rows = conn.execute(
@@ -442,10 +523,8 @@ class SQLiteStore(BaseStore):
         try:
             try:
                 conn.execute("BEGIN IMMEDIATE")
-            except sqlite3.OperationalError as exc:
-                if _is_locked_error(exc):
-                    raise LockTimeoutError(key, timeout) from exc
-                raise
+            except sqlite3.Error as exc:
+                raise _typed(exc, key, timeout) from exc
             try:
                 yield
             except BaseException:
@@ -453,7 +532,10 @@ class SQLiteStore(BaseStore):
                     conn.execute("ROLLBACK")
                 raise
             else:
-                conn.execute("COMMIT")
+                try:
+                    _commit_or_rollback(conn)
+                except sqlite3.Error as exc:
+                    raise _typed(exc, key, timeout) from exc
         finally:
             conn.execute(
                 f"PRAGMA busy_timeout = {int(self.busy_timeout * 1000)}"

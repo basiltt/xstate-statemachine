@@ -1143,6 +1143,45 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Two stores could report a successful save that was lost (battle-test
+  #259; both break the "never a lost update" guarantee).**
+  `SQLiteStore`: a failed `COMMIT` (disk full, `database is locked`) left
+  the connection mid-transaction, so every *later* save on that thread
+  joined the dead transaction, returned a version, and was never
+  committed. `as_async`: a task calling `save()` while another task held
+  the adapter's pessimistic lock ran *inside* the holder's transaction and
+  was rolled back with it -- `save` returned 1, `load` returned `None`.
+  Fixes: `_commit_or_rollback` with typed errors; calls from other tasks
+  wait while a lock is held on that adapter. Regression tests inject the
+  failed commit and the interleaving.
+- **`as_async` pessimistic locks did not exclude** (battle-test #259):
+  five concurrent `apersisted(..., PessimisticLock)` tasks on Memory/File
+  got four `LockTimeoutError`s and an 8 s stall; on SQLite no exclusion at
+  all. Lock holders now queue on the loop, one per adapter, bounded by
+  `timeout`.
+- **`FileStore` lock waits could spin forever** (battle-test #259): a live
+  holder slower than `stale_lock_after` skipped the deadline check, so
+  waiters ran at 100 % CPU and ignored `timeout`. Deadline first.
+- **A legal 200-character key crashed `FileStore`** (battle-test #259):
+  CJK or `"A"*200` percent-encodes to 600-1 800 characters -> raw
+  `OSError`. Encoded names over 200 chars now use `~<sha256>`; `list_keys`
+  recovers the key from the record.
+- **`FileStore` readers blocked writers on Windows** (battle-test #259):
+  the store's own `open()` held a share lock, so a reader in a loop
+  exhausted the writer's retry budget -> `PermissionError`. Readers use
+  `FILE_SHARE_DELETE`; a refused rename falls back to POSIX-semantics
+  rename.
+- **Damaged store records raised bare exceptions** (battle-test #259): a
+  text or negative `version`, NaN `updated_at`, malformed deadline row, a
+  BLOB snapshot, a directory where the record file should be, a non-SQLite
+  file, a foreign `statecharts` table -- `ValueError` / `TypeError` /
+  `OSError` / `sqlite3.DatabaseError`, all escaping `except StoreError`.
+  Every one is now `SnapshotCorruptError` or `StoreError` (the SQLite
+  constructor included). Codec failures, lone-surrogate keys/snapshots and
+  bad `save()` arguments are typed identically on all three backends;
+  `list_keys` skips keys `load` would refuse; a crashed writer's `.tmp-*`
+  files are swept at construction.
+
 - **The `[web]` extra was empty (battle-test #258).** `pip install
   "xstate-statemachine[web]"` installed nothing, although every member it
   was documented to bundle (FastAPI, Django, DRF, Flask, SQLAlchemy) had

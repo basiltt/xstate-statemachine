@@ -217,6 +217,47 @@ for lock in (OptimisticLock(retries=100), PessimisticLock(timeout=30)):
 - **Schema versioning.** `SQLiteStore` keeps an `xsm_schema(version)` table with explicit upgrade steps; a database written by a newer library is refused, never guessed at.
 - **`health()`** on every store — a cheap liveness probe for your readiness endpoint.
 
+### What every backend agrees on
+
+The battle test for the stores (`tests/persistence/test_battle_259_stores_corruption_scaling.py`) drives the same contract matrix through `MemoryStore`, `FileStore`, `SQLiteStore` and the `as_async` view of each, and asserts identical answers. This is the contract you can code against without knowing which backend is configured:
+
+| Call | Every backend |
+|:--|:--|
+| `load(missing)` | `None` — never raises |
+| `delete(missing)` / `forget(missing)` | `False` / zero counts — never raises |
+| `save(key, snap, expected_version=0)` on a missing key | creates it; returns `1` |
+| `save(..., expected_version=None)` | unconditional write |
+| wrong `expected_version` | `ConflictError` with `.expected` and `.actual` (`None` when the key is missing) |
+| `version` | starts at 1, +1 per save, restarts at 1 after `delete` |
+| `updated_at` | epoch seconds (`time.time()`), non-decreasing |
+| `list_keys()` order | sorted by code point (upper-case before lower-case) |
+| `list_keys(limit=0 / -1 / 10**9)` | `[]` / `ValueError` / every key |
+| `list_keys(prefix=...)` | `%` and `_` are literal (no SQL-LIKE semantics leak); never lists a key `load()` would refuse |
+| **pagination** | **none** — `limit` truncates silently; page by narrowing `prefix` |
+| a damaged record on `load()` | `SnapshotCorruptError` — never a bare `ValueError` / `TypeError` / `OSError` / `sqlite3.*` (every byte of a record flipped, truncated and inserted; every envelope field given a wrong type) |
+| a file that is not a SQLite database | `StoreError` from the `SQLiteStore` constructor |
+| a codec that raises or returns non-`str` | `SnapshotCorruptError` on load, `StoreError` on save |
+| bad `save()` arguments (non-`str` snapshot, non-int `expected_version`, non-`str` `machine_version`, non-`Deadline` deadlines, a lone surrogate anywhere) | the same `TypeError` / `InvalidKeyError` / `SnapshotCorruptError` on every backend, at the call site |
+| unknown envelope keys | ignored on load; **not** preserved on the next save |
+
+Two costs differ and are worth knowing before you pick a backend. **`list_keys` is O(total keys) on `MemoryStore` and `FileStore`** however small `limit` is (Memory sorts every key; File lists and decodes the whole directory — 1 ms at 100 keys, 24 ms at 2 000, 14 s to *fill* 10 000) and flat on `SQLiteStore` (16 µs). And **`FileStore.save` is milliseconds** (2.8 ms, `fsync` off; an atomic temp-write-replace) where SQLite is tens of microseconds (24 µs) and Memory is one. `save` / `load` / `delete` are O(1) in store size on all three *in code*; FileStore.save renames into a directory of *n* entries, which is flat on NTFS and ext4 but read ~8× slower at 2 000 keys than at 100 on APFS (macOS CI) — a filesystem property worth knowing before putting tens of thousands of instances in one FileStore directory. Memory does not grow over 10 000 save→load→delete cycles on any backend (0 B attributed to the library); SQLite keeps one connection per thread and `close()` really closes it; file handles are stable.
+
+### Operations: what the failures look like
+
+Every row below was *injected* by `tests/persistence/test_battle_259_stores_crash_concurrency.py` — real `kill -9` of a writer child at every step of `FileStore.save`, `ENOSPC` at every syscall, Windows sharing violations, two processes on one lock — and the behaviour described is what the test asserts.
+
+| Failure | What you see | What to do |
+|:--|:--|:--|
+| **Writer killed mid-save** (any step: temp created, written, fsynced, renamed, lock written, unlocked) | On restart `load()` is the old record **or** the new one, never torn; `version` only ever goes up; `list_keys` never lists a temp file; the next writer proceeds in under 2 s (the OS lock dies with the process). SQLite: every committed save survives a kill mid-WAL-checkpoint, and deleting `-wal`/`-shm` between clean runs loses nothing. | Nothing. Temp files a killed writer left are swept by the next `FileStore(...)` once older than `stale_lock_after`. |
+| **Disk full** (`ENOSPC` at write / fsync / rename, or at SQLite `COMMIT`) | `FileStore` raises `OSError`; `SQLiteStore` raises `StoreError` (`database or disk is full`). The previous record is intact; no temp file is left; **the same store object keeps working** once space returns. | Free space, retry. |
+| **Windows sharing violation** on `os.replace` | The store's own readers never block a writer (they open with `FILE_SHARE_DELETE`; a refused rename falls back to POSIX-semantics rename, and readers keep the old bytes). A *foreign* process holding the file (backup tool, antivirus, an editor) is retried ~0.5 s (20 × 25 ms), then `PermissionError` with the old record intact. | Exclude the store directory from real-time scanning. |
+| **Lock held by a crashed process** | Reclaimed immediately — the next writer proceeds in under 1 s. | Nothing. |
+| **Lock held by a slow, live process** | Never stolen. Waiters get `LockTimeoutError` at the documented `timeout`, naming the holder's `pid` and timestamp. | Tune `timeout`, or find the slow holder. |
+| **Pointed at the wrong file** (not SQLite, a foreign `statecharts` table, a newer `xsm_schema`) | `StoreError` **from the constructor**, naming the file. | Use the store's own file. |
+| **Read-only database / `EACCES` directory** | `StoreError` / `OSError` at construction or first save, with the old record intact. | Fix permissions. |
+| **Long keys** | Keys up to 200 characters always work; an encoded name over 200 chars (CJK, a 200-char ASCII key) is stored under `~<sha256>.xsm.json` and `list_keys` recovers the key from the record body. 201+ → `InvalidKeyError`. Keys differing only by case are always separate records, on every filesystem. | Nothing. |
+| **`as_async` + `PessimisticLock`** | **One lock per adapter at a time** — the single worker thread can be inside one transaction / one held key. Inside `async with adapter.lock(...)`: work you fan out with `gather` / `create_task` / a `TaskGroup` is still "the holder" (the token is a `ContextVar`, inherited by the subtree) and runs at once; calls from *unrelated* tasks on that adapter wait, bounded by `adapter.gate_timeout` (10 s → `LockTimeoutError`); a *nested* `adapter.lock()` is refused immediately with a message naming the fix. Separate adapters are independent. 1 000 concurrent callers queue; `close()` waits for in-flight work; a call after `close()` is `StoreError`. | One `as_async(store)` per concurrently-locked key, or `OptimisticLock` (which never takes the adapter lock). |
+
 ## asyncio
 
 The stdlib stores are synchronous (file and SQLite I/O block). `as_async(store)` runs each call in the default executor and exposes the same surface with `await`; `lock()` becomes an `async with`, acquired and released on one dedicated worker thread because file and SQLite locks are thread-affine.

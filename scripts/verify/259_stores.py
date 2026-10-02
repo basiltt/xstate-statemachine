@@ -8,6 +8,8 @@ x 200 optimistic retry loop on SQLiteStore (n == 1600, no lost updates).
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -138,6 +140,31 @@ def main() -> int:
     assert interp.context["n"] == 1600 and ver == 1600
     interp.stop()
     store.close()
+
+    print(
+        "\n== battle tests (post-RC programme): crash / concurrency / "
+        "corruption / contracts + mojibake scan"
+    )
+    # 🛡️ Real kill -9 of a writer child at every save step, ENOSPC at
+    #    every syscall, two processes on one lock, every byte of a record
+    #    mutated, the backend contract matrix across all three stores.
+    root = Path(__file__).resolve().parents[2]
+    for cmd in (
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/persistence/test_battle_259_stores_crash_concurrency.py",
+            "tests/persistence/test_battle_259_stores_corruption_scaling.py",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:asyncio",
+        ],
+        [sys.executable, "scripts/verify/_mojibake_scan.py"],
+    ):
+        subprocess.run(cmd, cwd=root, check=True)
 
     print("\nALL OK")
     return 0
