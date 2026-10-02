@@ -397,6 +397,32 @@ Crash consistency (X0.3) — the mark must be visible *iff* the snapshot contain
 
 Three fault-injection tests pin this: crash before save (no mark, retry is a first delivery), crash between save and mark (caught by the ring), crash after mark (plain duplicate).
 
+### When the inbox itself is down — `on_inbox_error`
+
+> **The trade-off, stated plainly.** Plugin hooks are fail-open by design (a raising hook admits the event). Before this battle test, that meant an inbox *backend* failure — `get` or `claim` raising `StoreError` / `OSError` / `sqlite3.Error`, or a SQLite lock timeout — let **the keyed event run with no deduplication**, with a perfectly normal receipt (`changed=True, duplicate=False`) and `on_plugin_error` as the only trace. The #261 battle test drove a dead inbox and watched the action run twice for one key with nothing on either receipt; it also found that `apersisted` + `PessimisticLock` + a shared `SQLiteInbox` hit that path on *every* send.
+>
+> The default is now **`on_inbox_error="refuse"`**: the receipt carries **`InboxUnavailableError`** (`receipt_to_status` → **503**, "retry later"), the action never runs, nothing is claimed. The whole point of the plugin is to not run twice, so a dead inbox must not quietly switch dedup off. `IdempotencyPlugin(..., on_inbox_error="admit")` opts back into availability for a webhook endpoint whose sender retries anyway and tolerates a duplicate — **alert on `on_plugin_error`** there, it is the only signal. The plugin's own refusals — mismatch (422), in-flight (409), an un-fingerprintable payload — are the same in both modes.
+
+| `on_inbox_error` | inbox `get`/`claim` raises (or the lock times out) → | receipt | action |
+|:--|:--|:--|:--|
+| `"refuse"` **(default)** | event refused | `error=InboxUnavailableError(key, cause)`, `duplicate=True`, HTTP 503 | never runs |
+| `"admit"` | event admitted, `on_plugin_error` fires | normal (`duplicate=False`) | **runs** — possibly a duplicate |
+
+**Crash windows, as measured.** A child process is killed (`os._exit(9)`) at each step of claim → action → save → mark, the parent restarts on the same database and redelivers the same payload, then a different payload on a copy. In every cell the committed effect is exactly one or zero; **the action never runs twice on top of a committed save**, sync and `apersisted` alike:
+
+| Killed … | `SQLiteInbox(store)` + `OptimisticLock` | `SQLiteInbox(store)` + `PessimisticLock` | `MemoryInbox` |
+|:--|:--|:--|:--|
+| after claim | **409** in flight until `ttl_s` / 422 | admitted / admitted (claim rolled back with the transaction) | admitted / admitted |
+| after action, before save | 409 / 422 | admitted / admitted | admitted / admitted |
+| after save, before mark | duplicate / 422 (the in-snapshot ring) | admitted / admitted (one transaction, rolled back) | duplicate / 422 — the snapshot now carries *when* each ring key was processed and with which fingerprint, so a non-durable inbox lost after the save is still caught within `ttl_s` |
+| after mark | duplicate / 422 | admitted / admitted | duplicate / 422 |
+
+(same payload / different payload). Two things the table makes visible: a kill right after the claim leaves that key **409 for the full `ttl_s`** (7 days by default — there is no shorter lease on in-flight claims; purge or `forget` it, or set a shorter `ttl_s`), and a `PessimisticLock` body on a shared SQLite inbox is one transaction, so every kill before the commit is a clean redelivery.
+
+**TTL semantics** (`ttl_s`, default 24 h): both the in-flight claim and the final mark expire after `ttl_s`; after that the key is *new* — so `ttl_s` bounds the dedup window **and** the "same original receipt" promise. `None` never expires (a crashed worker then blocks that key until you `purge()` or `forget()` it). `0` makes every send fresh. Negative, NaN or non-numeric → `ValueError` at construction (they used to silently disable dedup). A wall clock jumping *backwards* never purges early; forwards past `ttl_s` purges. **Keys** are at most 255 printable ASCII characters, case-sensitive and byte-exact; non-ASCII and control characters are refused with a typed receipt. **Scope** footgun: two in-memory interpreters of one machine that share an id or `instance_key` share an inbox scope — pass `instance_key=` per instance (a `persisted()` block uses its store key automatically).
+
+**Cost** (Windows, 3.14): bare send 14 µs; with the plugin on `MemoryInbox` 64 µs; on `SQLiteInbox` 178 µs. `MemoryInbox` ≈ 377 B per entry and `purge_expired()` reclaims it; a 10 000-row `SQLiteInbox` is 2.8 MB, `purge` of 10 000 expired rows 6.8 ms (indexed), 0 expired rows 0.03 ms.
+
 ```python
 from xstate_statemachine import MachineLogic, create_machine
 from xstate_statemachine.persistence import IdempotencyPlugin, SQLiteInbox, SQLiteStore, persisted

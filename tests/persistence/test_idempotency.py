@@ -292,7 +292,7 @@ class TestPluginSync:
         # A claim whose event never finished must not wedge the key.
         p = plugin(inbox)
         i = SyncInterpreter(machine()).use(p).start()
-        p._pending[123] = ("acct_1/wallet/wallet", "orphan")
+        p._pending[123] = (id(i), "acct_1/wallet/wallet", "orphan", "fp")
         inbox.claim("acct_1/wallet/wallet", "orphan", "fp", ttl_s=None)
         i.stop()
         assert inbox.get("acct_1/wallet/wallet", "orphan") is None

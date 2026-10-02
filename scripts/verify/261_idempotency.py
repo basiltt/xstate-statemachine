@@ -114,6 +114,31 @@ def main() -> int:
         assert w.context["credits"] == 500
     store.close()
 
+    print(
+        "\n== battle tests (post-RC programme): exactly-once under kill / "
+        "concurrency, backend failures, TTL, keys, leaks + mojibake scan"
+    )
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[2]
+    for cmd in (
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/persistence/test_battle_261_inbox_exactly_once.py",
+            "tests/persistence/test_battle_261_inbox_failures.py",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:asyncio",
+        ],
+        [sys.executable, "scripts/verify/_mojibake_scan.py"],
+    ):
+        subprocess.run(cmd, cwd=root, check=True)
+
     print("\nALL OK")
     return 0
 

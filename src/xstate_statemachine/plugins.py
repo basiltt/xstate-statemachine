@@ -206,6 +206,27 @@ class PluginBase(Generic[TInterpreter]):
         """
         pass  # pragma: no cover
 
+    def on_event_refused(
+        self, interpreter: TInterpreter, event: "AnyEvent", receipt: "Receipt"
+    ) -> None:
+        """**[0.11.0]** A plugin registered AFTER this one short-circuited
+        the event in ``on_before_send`` (battle-test #261).
+
+        Fires only on the plugins that had already said "proceed" for this
+        event, with the refusing plugin's receipt. The machine never saw the
+        event, so this is NOT the machine's answer -- it is the signal to
+        undo anything you did in ``on_before_send`` on the assumption the
+        event would run. The idempotency inbox releases its claim here;
+        without it a rate limiter saying "not now" left the key in flight
+        (409) for the whole TTL.
+
+        Args:
+            interpreter: The interpreter the event was sent to.
+            event: The event that was refused.
+            receipt: The refusing plugin's receipt (what the caller gets).
+        """
+        pass  # pragma: no cover
+
     def on_event_sent(
         self, interpreter: TInterpreter, target_id: str, event: "AnyEvent"
     ) -> None:
