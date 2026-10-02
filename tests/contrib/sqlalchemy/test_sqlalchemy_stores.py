@@ -160,16 +160,29 @@ class TestSharedTransaction:
         assert [r.event_type for r in log.read("k")] == ["GO"]
 
     def test_lease_expires_and_is_reclaimed(self, tmp_path: Any) -> None:
-        s = make_store(tmp_path, lock_ttl_s=0.05)
+        # 📝 A 50 ms lease raced the next statement on a slow Windows CI
+        #    runner (the engine's first connection checkout alone can take
+        #    longer) and the lock was already free -> "DID NOT RAISE". Hold
+        #    a lease long enough that the *contended* assertion cannot
+        #    expire underneath it, then expire it explicitly for the
+        #    reclaim assertion.
+        s = make_store(tmp_path, lock_ttl_s=2.0)
         with s._fresh() as conn:
             from src.xstate_statemachine.contrib.sqlalchemy import _ops
 
             assert _ops.try_lock(conn, s.tables, s.tables.snapshots.name,
-                                 "k", "dead", 0.05)  # fmt: skip
+                                 "k", "dead", 2.0)  # fmt: skip
         with pytest.raises(LockTimeoutError):
             with s.lock("k", timeout=0):
                 pass
-        time.sleep(0.1)
+        # expire the dead holder's lease without sleeping 2 s
+        with s._fresh() as conn:
+            lk = s.tables.locks
+            conn.execute(
+                lk.update()
+                .where(lk.c.source == s.tables.snapshots.name, lk.c.key == "k")
+                .values(expires_at=time.time() - 1)
+            )
         with s.lock("k", timeout=1):
             with s.lock("k", timeout=1):  # re-entrant on this thread
                 pass
