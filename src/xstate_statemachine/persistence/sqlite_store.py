@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import os
 import sqlite3
 import threading
@@ -35,6 +36,7 @@ import warnings
 from pathlib import Path
 from typing import (
     Any,
+    Callable,
     ContextManager,
     Dict,
     Iterator,
@@ -42,6 +44,8 @@ from typing import (
     Optional,
     Sequence,
     Tuple,
+    TypeVar,
+    cast,
 )
 
 from ..exceptions import (
@@ -91,6 +95,13 @@ _CREATE_V1 = (
 #: schema_version -> statements that bring it to schema_version + 1.
 _UPGRADES: Dict[int, Tuple[str, ...]] = {}
 
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+#: Columns `_CREATE_V1` gives `statecharts`; anything else is not ours.
+_STATECHARTS_COLUMNS = frozenset(
+    {"key", "snapshot", "version", "machine_version", "updated_at"}
+)
+
 
 def _is_locked_error(exc: sqlite3.OperationalError) -> bool:
     msg = str(exc).lower()
@@ -100,6 +111,48 @@ def _is_locked_error(exc: sqlite3.OperationalError) -> bool:
 def _looks_like_network_path(path: Path) -> bool:
     s = str(path)
     return s.startswith("\\\\") or s.startswith("//")
+
+
+def _commit_or_rollback(conn: sqlite3.Connection) -> None:
+    """``COMMIT``; if that fails, ``ROLLBACK`` and re-raise.
+
+    🛡️ #259 battle: a failed ``COMMIT`` (``database or disk is full``,
+    ``database is locked``) leaves the connection ``in_transaction``. Every
+    later `_tx` on this thread then "joined" that dead transaction and
+    never committed -- saves returned a version and were silently lost.
+    """
+    try:
+        conn.execute("COMMIT")
+    except BaseException:
+        with contextlib.suppress(sqlite3.Error):
+            conn.execute("ROLLBACK")
+        raise
+
+
+def _typed(exc: sqlite3.Error, key: str, timeout: float) -> StoreError:
+    """Map a raw `sqlite3.Error` onto the documented store exceptions.
+
+    🛡️ #259 battle: a non-SQLite file at *path* (``file is not a
+    database``), a foreign ``statecharts`` table (``no such column``), a
+    full disk at ``COMMIT`` (``database or disk is full``) or a read-only
+    directory all escaped as bare `sqlite3.DatabaseError` /
+    `OperationalError`, past ``except StoreError``.
+    """
+    if isinstance(exc, sqlite3.OperationalError) and _is_locked_error(exc):
+        return LockTimeoutError(key, timeout)
+    return StoreError(f"SQLiteStore: {type(exc).__name__}: {exc}")
+
+
+def _sqlite_errors_typed(fn: _F) -> _F:
+    @functools.wraps(fn)
+    def wrapper(self: "SQLiteStore", *a: Any, **kw: Any) -> Any:
+        try:
+            return fn(self, *a, **kw)
+        except sqlite3.Error as exc:
+            key = a[0] if a and isinstance(a[0], str) else "<db>"
+            raise _typed(exc, key, self.busy_timeout) from exc
+
+    return cast(_F, wrapper)
 
 
 class SQLiteStore(BaseStore):
@@ -201,54 +254,52 @@ class SQLiteStore(BaseStore):
             self._local.conn = conn
         return conn
 
+    @_sqlite_errors_typed
     def _ensure_schema(self) -> None:
         with self._init_lock:
-            try:
-                conn = self._conn()
-                self._ensure_schema_locked(conn)
-            except sqlite3.DatabaseError as exc:
-                # 🛡️ Battle #259 (X0.4): a file that is not a SQLite
-                #    database -- or one another program wrote -- surfaced
-                #    as a bare `sqlite3.DatabaseError` from the
-                #    constructor (from the first PRAGMA in `_connect`, or
-                #    from the schema statements). The caller asked for a
-                #    store; the answer must be the store's own exception.
-                if isinstance(exc, sqlite3.OperationalError) and (
-                    _is_locked_error(exc)
-                ):
-                    raise LockTimeoutError("<db>", self.busy_timeout) from exc
-                raise StoreError(
-                    f"SQLiteStore cannot open {self.path!r}: {exc}"
-                ) from exc
+            conn = self._conn()
+            with self._tx(conn, immediate=True):
+                for stmt in _CREATE_V1:
+                    conn.execute(stmt)
+                cols = {
+                    str(r[1])
+                    for r in conn.execute("PRAGMA table_info(statecharts)")
+                }
+                if not _STATECHARTS_COLUMNS <= cols:
+                    # 🛡️ #259 battle: a pre-existing, foreign `statecharts`
+                    #    table made `CREATE ... IF NOT EXISTS` a no-op and
+                    #    the first `load` died with `no such column`.
+                    raise StoreError(
+                        f"SQLiteStore({self.path}): table 'statecharts' "
+                        f"exists with columns {sorted(cols)}, not the "
+                        f"xstate-statemachine schema. Use another file."
+                    )
+                row = conn.execute("SELECT version FROM xsm_schema").fetchone()
+                if row is None:
+                    conn.execute(
+                        "INSERT INTO xsm_schema(version) VALUES (?)",
+                        (SCHEMA_VERSION,),
+                    )
+                    current = SCHEMA_VERSION
+                else:
+                    current = int(row[0])
+                if current > SCHEMA_VERSION:
+                    raise StoreError(
+                        f"SQLiteStore schema is version {current}, newer "
+                        f"than this library supports ({SCHEMA_VERSION}). "
+                        f"Upgrade xstate-statemachine."
+                    )
+                while current < SCHEMA_VERSION:
+                    for stmt in _UPGRADES[current]:
+                        conn.execute(stmt)
+                    current += 1
+                    conn.execute(
+                        "UPDATE xsm_schema SET version = ?", (current,)
+                    )
             if not self._memory and os.name == "posix":
                 for suffix in ("", "-wal", "-shm"):
                     with contextlib.suppress(OSError):
                         os.chmod(self.path + suffix, 0o600)
-
-    def _ensure_schema_locked(self, conn: sqlite3.Connection) -> None:
-        with self._tx(conn, immediate=True):
-            for stmt in _CREATE_V1:
-                conn.execute(stmt)
-            row = conn.execute("SELECT version FROM xsm_schema").fetchone()
-            if row is None:
-                conn.execute(
-                    "INSERT INTO xsm_schema(version) VALUES (?)",
-                    (SCHEMA_VERSION,),
-                )
-                current = SCHEMA_VERSION
-            else:
-                current = int(row[0])
-            if current > SCHEMA_VERSION:
-                raise StoreError(
-                    f"SQLiteStore schema is version {current}, newer "
-                    f"than this library supports ({SCHEMA_VERSION}). "
-                    f"Upgrade xstate-statemachine."
-                )
-            while current < SCHEMA_VERSION:
-                for stmt in _UPGRADES[current]:
-                    conn.execute(stmt)
-                current += 1
-                conn.execute("UPDATE xsm_schema SET version = ?", (current,))
 
     @contextlib.contextmanager
     def _tx(
@@ -273,9 +324,10 @@ class SQLiteStore(BaseStore):
                 conn.execute("ROLLBACK")
             raise
         else:
-            conn.execute("COMMIT")
+            _commit_or_rollback(conn)
 
     # -- primitives ---------------------------------------------------------------------
+    @_sqlite_errors_typed
     def _load_raw(
         self, key: str
     ) -> Optional[Tuple[str, int, str, float, Sequence[Deadline]]]:
@@ -320,6 +372,7 @@ class SQLiteStore(BaseStore):
             deadlines.append(Deadline.from_dict(rec))
         return (row[0], int(row[1]), row[2], float(row[3]), deadlines)
 
+    @_sqlite_errors_typed
     def _save_raw(
         self,
         key: str,
@@ -393,12 +446,14 @@ class SQLiteStore(BaseStore):
                 raise LockTimeoutError(key, self.busy_timeout) from exc
             raise
 
+    @_sqlite_errors_typed
     def _delete_raw(self, key: str) -> bool:
         conn = self._conn()
         with self._tx(conn, immediate=True):
             cur = conn.execute("DELETE FROM statecharts WHERE key = ?", (key,))
             return cur.rowcount > 0
 
+    @_sqlite_errors_typed
     def _forget_raw(self, key: str) -> Dict[str, int]:
         conn = self._conn()
         with self._tx(conn, immediate=True):
@@ -424,6 +479,7 @@ class SQLiteStore(BaseStore):
             )
         return {"snapshots": s, "deadlines": d, "log_entries": t}
 
+    @_sqlite_errors_typed
     def _list_keys_raw(self, prefix: str, limit: int) -> List[str]:
         conn = self._conn()
         rows = conn.execute(
@@ -467,10 +523,8 @@ class SQLiteStore(BaseStore):
         try:
             try:
                 conn.execute("BEGIN IMMEDIATE")
-            except sqlite3.OperationalError as exc:
-                if _is_locked_error(exc):
-                    raise LockTimeoutError(key, timeout) from exc
-                raise
+            except sqlite3.Error as exc:
+                raise _typed(exc, key, timeout) from exc
             try:
                 yield
             except BaseException:
@@ -478,7 +532,10 @@ class SQLiteStore(BaseStore):
                     conn.execute("ROLLBACK")
                 raise
             else:
-                conn.execute("COMMIT")
+                try:
+                    _commit_or_rollback(conn)
+                except sqlite3.Error as exc:
+                    raise _typed(exc, key, timeout) from exc
         finally:
             conn.execute(
                 f"PRAGMA busy_timeout = {int(self.busy_timeout * 1000)}"

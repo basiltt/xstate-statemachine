@@ -23,6 +23,8 @@
 from __future__ import annotations
 
 import contextlib
+import errno
+import hashlib
 import json
 import os
 import re
@@ -72,6 +74,10 @@ _WRITE_RETRIES = 20
 _WRITE_RETRY_SLEEP = 0.025
 #: Envelope + deadlines allowance on top of the escaped snapshot (X0.4).
 _RECORD_HEADROOM = 1024 * 1024
+#: Longest encoded stem used verbatim; + ``.xsm.json`` stays far below the
+#: 255-unit component limit of NTFS / ext4 / APFS.
+_MAX_STEM = 200
+_HASHED_PREFIX = "~"
 
 
 def encode_key(key: str) -> str:
@@ -111,6 +117,24 @@ def decode_key(name: str) -> str:
     return buf.decode("utf-8")
 
 
+def _file_stem(key: str) -> str:
+    """The on-disk stem for *key*: `encode_key` when that fits, else a
+    ``~`` + SHA-256 name.
+
+    🛡️ #259 battle: percent-encoding triples every non-``[a-z0-9_-]`` byte,
+    so a legal 200-char key (``"A" * 200``, or CJK text) became a 600+-char
+    file name and `save` died with ``OSError: [Errno 22]`` (Windows) /
+    ``ENAMETOOLONG`` (POSIX) -- every filesystem caps a component at 255.
+    ``~`` is never produced by `encode_key`, so the two namespaces cannot
+    collide; the hash is of the exact UTF-8 key, so ``Order`` / ``order``
+    stay distinct. `list_keys` recovers the key from the record body.
+    """
+    enc = encode_key(key)
+    if len(enc) <= _MAX_STEM:
+        return enc
+    return _HASHED_PREFIX + hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
 def _validate_file_key(key: str) -> None:
     """FileStore's extra rules on top of `validate_key` (X0.9)."""
     if key in (".", "..") or "/" in key or "\\" in key:
@@ -124,7 +148,120 @@ def _validate_file_key(key: str) -> None:
 
 # -- locking primitives -------------------------------------------------------
 if sys.platform == "win32":  # pragma: no cover - exercised on Windows CI
+    import ctypes
     import msvcrt
+    from ctypes import wintypes
+
+    _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _CreateFileW = _k32.CreateFileW
+    _CreateFileW.restype = wintypes.HANDLE
+    _CreateFileW.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    _INVALID_HANDLE = wintypes.HANDLE(-1).value
+
+    def _open_for_read(path: Path) -> Any:
+        """Open *path* for reading WITH ``FILE_SHARE_DELETE``.
+
+        🛡️ #259 battle: Python's `open()` omits ``FILE_SHARE_DELETE``, so
+        on Windows every open reader made the writer's `os.replace` fail
+        with a sharing violation. A reader polling in a loop starved the
+        writer's whole retry budget and `save` raised `PermissionError`.
+        With share-delete the rename succeeds while the reader finishes
+        reading the OLD record from its handle -- POSIX semantics.
+        """
+        handle = _CreateFileW(
+            str(path),
+            0x80000000,  # GENERIC_READ
+            0x7,  # FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+            None,
+            3,  # OPEN_EXISTING
+            0x80,  # FILE_ATTRIBUTE_NORMAL
+            None,
+        )
+        if handle is None or handle == _INVALID_HANDLE:
+            err = ctypes.get_last_error()
+            if err in (2, 3):  # FILE_NOT_FOUND / PATH_NOT_FOUND
+                raise FileNotFoundError(errno.ENOENT, "not found", str(path))
+            if err in (5, 32):  # ACCESS_DENIED / SHARING_VIOLATION
+                raise PermissionError(errno.EACCES, "access denied", str(path))
+            raise ctypes.WinError(err)
+        try:
+            fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)
+        except BaseException:
+            _k32.CloseHandle(handle)
+            raise
+        return os.fdopen(fd, "rb")
+
+    class _RenameInfo(ctypes.Structure):
+        _fields_ = (
+            ("Flags", wintypes.DWORD),
+            ("RootDirectory", wintypes.HANDLE),
+            ("FileNameLength", wintypes.DWORD),
+            ("FileName", wintypes.WCHAR * 1),
+        )
+
+    _SetFileInformationByHandle = _k32.SetFileInformationByHandle
+    _SetFileInformationByHandle.restype = wintypes.BOOL
+    _SetFileInformationByHandle.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    )
+
+    def _replace(src: str, dst: Path) -> None:
+        """`os.replace`, falling back to a POSIX-semantics rename.
+
+        `MoveFileEx` (what `os.replace` calls) refuses to replace a file
+        any process has open. ``FileRenameInfoEx`` with
+        ``FILE_RENAME_FLAG_POSIX_SEMANTICS`` (Windows 10 1709+, NTFS)
+        replaces it anyway as long as the opener shared delete -- which
+        `_open_for_read` does -- and the reader keeps reading the old
+        bytes. If that is unsupported too, the original error stands and
+        the caller's retry loop takes over.
+        """
+        try:
+            os.replace(src, dst)
+        except PermissionError:
+            if not _posix_rename(src, dst):
+                raise
+
+    def _posix_rename(src: str, dst: Path) -> bool:
+        target = os.path.abspath(str(dst))
+        handle = _CreateFileW(
+            src,
+            0x00010000 | 0x80000000,  # DELETE | GENERIC_READ
+            0x7,
+            None,
+            3,  # OPEN_EXISTING
+            0x80,
+            None,
+        )
+        if handle is None or handle == _INVALID_HANDLE:
+            return False
+        try:
+            name = ctypes.create_unicode_buffer(target)
+            size = ctypes.sizeof(_RenameInfo) + 2 * len(target)
+            buf = ctypes.create_string_buffer(size)
+            info = _RenameInfo.from_buffer(buf)
+            info.Flags = 0x1 | 0x2  # REPLACE_IF_EXISTS | POSIX_SEMANTICS
+            info.RootDirectory = None
+            info.FileNameLength = 2 * len(target)
+            ctypes.memmove(
+                ctypes.addressof(buf) + _RenameInfo.FileName.offset,
+                name,
+                2 * len(target),
+            )
+            return bool(_SetFileInformationByHandle(handle, 22, buf, size))
+        finally:
+            _k32.CloseHandle(handle)
 
     def _try_lock(fd: int) -> bool:
         try:
@@ -142,6 +279,12 @@ if sys.platform == "win32":  # pragma: no cover - exercised on Windows CI
 
 else:  # pragma: no cover - exercised on POSIX CI
     import fcntl
+
+    def _open_for_read(path: Path) -> Any:
+        return open(path, "rb")
+
+    def _replace(src: str, dst: Path) -> None:
+        os.replace(src, dst)
 
     def _try_lock(fd: int) -> bool:
         try:
@@ -223,14 +366,34 @@ class FileStore(BaseStore):
         #: the previous record is intact (the review's "fault hook, not a
         #: real process kill").
         self._before_replace_hook: Optional[Any] = None
+        self._sweep_orphan_temps()
+
+    def _sweep_orphan_temps(self) -> None:
+        """Remove ``.tmp-*`` files a killed writer left behind.
+
+        🛡️ #259 battle: the exception path unlinks its temp file, but a
+        process killed (SIGKILL, power loss, TerminateProcess) between
+        ``mkstemp`` and ``os.replace`` cannot -- the guarantee's "no temp
+        litter" only held for in-process failures. Only temps older than
+        ``stale_lock_after`` go, so a live writer in another process (whose
+        temp lives for milliseconds) is never raced.
+        """
+        cutoff = time.time() - self.stale_lock_after
+        with contextlib.suppress(OSError):
+            for p in self.directory.iterdir():
+                if not p.name.startswith(".tmp-"):
+                    continue
+                with contextlib.suppress(OSError):
+                    if p.stat().st_mtime < cutoff:
+                        p.unlink()
 
     # -- paths --------------------------------------------------------------------
     def _path(self, key: str) -> Path:
         _validate_file_key(key)
-        return self.directory / (encode_key(key) + _SUFFIX)
+        return self.directory / (_file_stem(key) + _SUFFIX)
 
     def _lock_path(self, key: str) -> Path:
-        return self.directory / (encode_key(key) + _LOCK_SUFFIX)
+        return self.directory / (_file_stem(key) + _LOCK_SUFFIX)
 
     def _record_limit(self) -> int:
         """Largest legitimate record file: the snapshot JSON-escaped
@@ -250,7 +413,7 @@ class FileStore(BaseStore):
         raw: Optional[bytes] = None
         for attempt in range(_WRITE_RETRIES):
             try:
-                with open(path, "rb") as fh:
+                with _open_for_read(path) as fh:
                     # 🛡️ X0.4 (#303 battle): bound the read BEFORE parsing;
                     #    `_check_size` only ran after the whole record had
                     #    been read and `json.loads`-ed.
@@ -338,7 +501,7 @@ class FileStore(BaseStore):
             #    `os.replace` raise PermissionError; retry briefly.
             for attempt in range(_WRITE_RETRIES):
                 try:
-                    os.replace(tmp, path)
+                    _replace(tmp, path)
                     break
                 except PermissionError:
                     if attempt == _WRITE_RETRIES - 1:
@@ -430,14 +593,33 @@ class FileStore(BaseStore):
             name = p.name
             if not name.endswith(_SUFFIX) or name.startswith(".tmp-"):
                 continue
-            try:
-                key = decode_key(name[: -len(_SUFFIX)])
-            except (ValueError, UnicodeDecodeError):
-                continue  # not ours
+            stem = name[: -len(_SUFFIX)]
+            if stem.startswith(_HASHED_PREFIX):
+                hashed = self._hashed_key(p, stem)
+                if hashed is None:
+                    continue
+                key = hashed
+            else:
+                try:
+                    key = decode_key(stem)
+                except (ValueError, UnicodeDecodeError):
+                    continue  # not ours
             if key.startswith(prefix):
                 keys.append(key)
         keys.sort()
         return keys[:limit]
+
+    def _hashed_key(self, path: Path, stem: str) -> Optional[str]:
+        """The key stored inside a hashed-name record, if it really hashes
+        to *stem* (anything else is not ours, or is corrupt)."""
+        try:
+            rec = self._read(path, self._record_limit())
+        except (OSError, SnapshotCorruptError, SnapshotTooLargeError):
+            return None
+        key = rec.get("key") if rec else None
+        if not isinstance(key, str) or _file_stem(key) != stem:
+            return None
+        return key
 
     def _lock_raw(self, key: str, timeout: float) -> ContextManager[None]:
         return self._file_lock(self._lock_path(key), key, timeout)
@@ -463,13 +645,19 @@ class FileStore(BaseStore):
             while True:
                 if _try_lock(fd):
                     break
-                if self._reclaim_stale(lock_path):
-                    continue
+                # 🛡️ #259 battle: a "stale" verdict (holder info older than
+                #    `stale_lock_after`, or a recycled pid) used to
+                #    `continue` straight past the deadline check -- a LIVE
+                #    holder slower than `stale_lock_after` made every waiter
+                #    spin forever at 100 % CPU, ignoring `timeout`. The OS
+                #    lock is the truth (it dies with its owner's fd); stale
+                #    info only earns one immediate retry, never an unbounded
+                #    one.
                 if time.monotonic() >= deadline:
                     raise LockTimeoutError(
                         key, timeout, holder=self._holder_info(lock_path)
                     )
-                time.sleep(0.01)
+                time.sleep(0.001 if self._reclaim_stale(lock_path) else 0.01)
             held = getattr(self._held, "keys", None)
             if held is None:
                 held = self._held.keys = set()

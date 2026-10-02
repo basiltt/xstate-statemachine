@@ -18,6 +18,7 @@ import asyncio
 import concurrent.futures
 import contextlib
 import functools
+import weakref
 from typing import (
     Any,
     AsyncContextManager,
@@ -33,6 +34,7 @@ try:  # pragma: no cover
 except ImportError:  # pragma: no cover
     from typing_extensions import Protocol, runtime_checkable  # type: ignore
 
+from ..exceptions import LockTimeoutError
 from .deadline import Deadline
 from .store import StateStore, StoredSnapshot
 
@@ -93,6 +95,11 @@ class AsyncStoreAdapter:
     def __init__(self, store: StateStore) -> None:
         self.sync_store = store
         self._pool: Optional[concurrent.futures.ThreadPoolExecutor] = None
+        self._gates: "weakref.WeakKeyDictionary[Any, asyncio.Lock]" = (
+            weakref.WeakKeyDictionary()
+        )
+        #: The task currently inside `lock()`; other tasks' calls wait.
+        self._holder: Optional[Any] = None
 
     def _executor(self) -> concurrent.futures.ThreadPoolExecutor:
         if self._pool is None:
@@ -103,6 +110,17 @@ class AsyncStoreAdapter:
 
     async def _run(self, fn: Any, *a: Any, **kw: Any) -> Any:
         loop = asyncio.get_running_loop()
+        holder = self._holder
+        if holder is not None and holder is not asyncio.current_task():
+            # 🛡️ #259 battle: the worker thread is "inside" another task's
+            #    lock. A call from here would run on that thread and join
+            #    the holder's state -- on SQLite its open transaction (a
+            #    `save` that returned a version and was then rolled back
+            #    with the holder), on FileStore its held-key set (a `save`
+            #    that skipped the lock). Wait until the holder is done.
+            gate = self._gate()
+            async with gate:
+                pass
         return await loop.run_in_executor(
             self._executor(), functools.partial(fn, *a, **kw)
         )
@@ -148,15 +166,41 @@ class AsyncStoreAdapter:
 
     @contextlib.asynccontextmanager
     async def _alock(self, key: str, timeout: float) -> AsyncIterator[None]:
-        cm = self.sync_store.lock(key, timeout=timeout)
-        await self._run(cm.__enter__)
+        # 🛡️ #259 battle: every call runs on ONE worker thread, so two
+        #    coroutines both inside `lock()` were the SAME thread to the
+        #    sync store. Memory/File: the second acquire blocked the only
+        #    worker, so the holder's own save queued behind it (waiters
+        #    timed out, the holder stalled for their whole timeout).
+        #    SQLite: the second "re-entered" the first's transaction -- no
+        #    exclusion at all. Holders now queue here, on the loop, first.
+        gate = self._gate()
         try:
-            yield
-        except BaseException as exc:
-            await self._run(cm.__exit__, type(exc), exc, exc.__traceback__)
-            raise
-        else:
-            await self._run(cm.__exit__, None, None, None)
+            await asyncio.wait_for(gate.acquire(), timeout)
+        except asyncio.TimeoutError:
+            raise LockTimeoutError(key, timeout) from None
+        self._holder = asyncio.current_task()
+        try:
+            cm = self.sync_store.lock(key, timeout=timeout)
+            await self._run(cm.__enter__)
+            try:
+                yield
+            except BaseException as exc:
+                await self._run(cm.__exit__, type(exc), exc, exc.__traceback__)
+                raise
+            else:
+                await self._run(cm.__exit__, None, None, None)
+        finally:
+            self._holder = None
+            gate.release()
+
+    def _gate(self) -> asyncio.Lock:
+        # Created lazily, per loop: an `asyncio.Lock` made outside a running
+        # loop binds the wrong loop on 3.9.
+        loop = asyncio.get_running_loop()
+        gate = self._gates.get(loop)
+        if gate is None:
+            gate = self._gates[loop] = asyncio.Lock()
+        return gate
 
     async def health(self) -> Dict[str, Any]:
         return await self._run(self.sync_store.health)
