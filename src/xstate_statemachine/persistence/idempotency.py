@@ -760,17 +760,16 @@ class IdempotencyPlugin(PluginBase[Any]):
                     key,
                     type(exc).__name__,
                 )
-                interpreter.last_plugin_error = (
-                    type(self).__name__,
-                    "on_before_send",
-                    exc,
+                # 📝 Review M1: report through the SAME path a raising hook
+                #    takes (`last_plugin_error` + `on_plugin_error` on every
+                #    OTHER plugin, each contained), instead of a hand-rolled
+                #    loop that let a peer's raising `on_plugin_error` escape
+                #    this hook and skip the remaining peers.
+                from ..base_interpreter import _SafePlugin
+
+                _SafePlugin._report(
+                    self, "on_before_send", exc, (interpreter, event)
                 )
-                for other in getattr(interpreter, "_plugins", ()):
-                    inner = getattr(other, "wrapped", other)
-                    if inner is not self:
-                        other.on_plugin_error(
-                            interpreter, self, "on_before_send", exc
-                        )
                 return None
             return self._refuse(interpreter, InboxUnavailableError(key, exc))
         except Exception as exc:  # noqa: BLE001 - refused, never admitted
@@ -882,6 +881,24 @@ class IdempotencyPlugin(PluginBase[Any]):
             self.inbox.claim(scope, key, fp, ttl_s=self.ttl_s)
         self.inbox.mark(scope, key, payload, ttl_s=self.ttl_s)
 
+    def on_event_refused(
+        self, interpreter: Any, event: Any, receipt: Receipt
+    ) -> None:
+        """A plugin AFTER this one refused the event in `on_before_send`.
+
+        🐛 Review H1 (#261): a rate limiter / maintenance-mode plugin
+        registered after the inbox returned a receipt; the machine never
+        saw the event, `on_event_processed` never fired, and the claim
+        this plugin had taken stayed in flight -- 409 for the whole TTL
+        (7 days by default). The refusal is not the machine's answer, so
+        the claim is released and a retry is a first delivery.
+        """
+        with self._lock:
+            claim = self._pending.pop(id(event), None)
+        if claim is not None:
+            scope, key, _fp = claim[1:]
+            self.inbox.release(scope, key)
+
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Receipt
     ) -> None:
@@ -892,6 +909,9 @@ class IdempotencyPlugin(PluginBase[Any]):
         scope, key, fp = claim[1:]
         if receipt.error is not None and not receipt.changed:
             # The delivery did not take effect; let a retry try again.
+            # (A guard DENIAL is different: that IS this payload's answer in
+            # this state, and replays correctly get the same 409 -- so it
+            # is marked below, like any settled receipt.)
             self.inbox.release(scope, key)
             return
         ring = self._ring(interpreter)

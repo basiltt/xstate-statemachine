@@ -35,8 +35,11 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.xstate_statemachine import (
+    Event,
     Interpreter,
     MachineLogic,
+    PluginBase,
+    Receipt,
     SyncInterpreter,
     create_machine,
     receipt_to_status,
@@ -1013,6 +1016,82 @@ class TestReplayFidelity(_Base):
         self.assertIsInstance(r.error.cause, OSError)
         self.assertEqual(receipt_to_status(r), 503)
         self.assertEqual(effects, [])
+
+
+# =============================================================================
+# 🚦 A later plugin refuses the event (review H1)
+# =============================================================================
+class TestLaterPluginRefuses(_Base):
+    """🐛 Review H1 (fixed): a plugin AFTER the inbox returned a receipt
+    from `on_before_send` (rate limiter, maintenance mode). The inbox had
+    already CLAIMED the key; `on_event_processed` never fires for an event
+    that never entered the machine; the claim stayed in flight -- 409 for
+    the whole TTL (7 days). Now `on_event_refused` releases it."""
+
+    class Busy(PluginBase):
+        enabled = True
+
+        def on_before_send(self, i: Any, e: Any) -> Any:
+            if not self.enabled:
+                return None
+            return Receipt(
+                frozenset(i.current_state_ids), False, None, denied=True
+            )
+
+    def test_sync_claim_released_when_a_later_plugin_refuses(self) -> None:
+        effects: List[int] = []
+        inbox = MemoryInbox()
+        p = plugin(inbox)
+        busy = self.Busy()
+        i = SyncInterpreter(make_machine(effects)).use(p).use(busy).start()
+        r1 = i.send("CREDIT", wait=True, idempotency_key="k", amount=1)
+        self.assertTrue(r1.denied)
+        self.assertEqual(effects, [])
+        self.assertEqual(p._pending, {})  # claim released, not orphaned
+        busy.enabled = False
+        r2 = i.send("CREDIT", wait=True, idempotency_key="k", amount=1)
+        self.assertIsNone(r2.error, r2)  # NOT IdempotencyInFlightError
+        self.assertTrue(r2.changed)
+        self.assertEqual(effects, [1])
+        r3 = i.send("CREDIT", wait=True, idempotency_key="k", amount=1)
+        self.assertTrue(r3.duplicate)
+        self.assertEqual(effects, [1])
+        i.stop()
+
+    def test_async_claim_released_when_a_later_plugin_refuses(self) -> None:
+        effects: List[int] = []
+        p = plugin(MemoryInbox())
+        busy = self.Busy()
+
+        async def go() -> Any:
+            i = await (
+                Interpreter(make_machine(effects)).use(p).use(busy).start()
+            )
+            r1 = await i.send(
+                "CREDIT", wait=True, idempotency_key="k", amount=1
+            )
+            busy.enabled = False
+            r2 = await i.send(
+                "CREDIT", wait=True, idempotency_key="k", amount=1
+            )
+            await i.stop()
+            return r1, r2
+
+        r1, r2 = asyncio.run(go())
+        self.assertTrue(r1.denied)
+        self.assertIsNone(r2.error, r2)
+        self.assertEqual(effects, [1])
+
+    def test_refusal_is_not_recorded_as_the_machines_answer(self) -> None:
+        # the refused event must not be marked processed (a later retry
+        # must run), and the inbox must have no entry at all for it
+        inbox = MemoryInbox()
+        p = plugin(inbox)
+        i = SyncInterpreter(make_machine([])).use(p).use(self.Busy()).start()
+        i.send("CREDIT", wait=True, idempotency_key="k", amount=1)
+        scope = p.scope_for(i, Event("CREDIT"))
+        self.assertIsNone(inbox.get(scope, "k"))
+        i.stop()
 
 
 # =============================================================================

@@ -1180,6 +1180,12 @@ _No unreleased changes yet._
   - `on_interpreter_stop` released EVERY pending claim on the plugin,
     other interpreters' live claims included. Claims are tagged with
     their interpreter.
+  - A plugin registered AFTER the inbox that refused the event in
+    `on_before_send` (a rate limiter, maintenance mode) left the inbox's
+    claim in flight -- **409 for the whole TTL** (7 days) for an event
+    the machine never saw (independent review H1). New `PluginBase.
+    on_event_refused(interpreter, event, receipt)` fires on the plugins
+    that had already said "proceed"; the inbox releases its claim there.
   - `ttl_s=-1`, `nan`, `"7"` and `True` were accepted silently (negative /
     NaN made every key expire instantly -- dedup off with no error).
     `ValueError` at construction.

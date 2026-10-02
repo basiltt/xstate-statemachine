@@ -2877,6 +2877,7 @@ class BaseInterpreter(Generic[TContext]):
             The first non-``None`` `Receipt` a plugin returned, else
             ``None`` (proceed).
         """
+        seen: List[Any] = []
         for plugin in self._plugins:
             receipt = plugin.on_before_send(self, event)
             if receipt is not None:
@@ -2899,7 +2900,19 @@ class BaseInterpreter(Generic[TContext]):
                     self.id,
                     type(getattr(plugin, "wrapped", plugin)).__name__,
                 )
+                # 🐛 Battle #261 (review H1): the plugins BEFORE this one
+                #    already admitted the event -- the idempotency inbox
+                #    had CLAIMED its key. With no `on_event_processed` for
+                #    an event that never entered the machine, that claim
+                #    was never released: 409 for the whole TTL (7 days),
+                #    from a rate limiter saying "not now". Tell the earlier
+                #    plugins -- via a dedicated hook, since this refusal is
+                #    NOT the machine's answer and must not be mistaken for
+                #    one by an audit log or the inbox's mark path.
+                for earlier in seen:
+                    earlier.on_event_refused(self, event, receipt)
                 return receipt
+            seen.append(plugin)
         return None
 
     def _notify_event_sent(self, target: Any, event: Any) -> None:
