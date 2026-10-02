@@ -242,6 +242,22 @@ The battle test for the stores (`tests/persistence/test_battle_259_stores_corrup
 
 Two costs differ and are worth knowing before you pick a backend. **`list_keys` is O(total keys) on `MemoryStore` and `FileStore`** however small `limit` is (Memory sorts every key; File lists and decodes the whole directory — 1 ms at 100 keys, 24 ms at 2 000, 14 s to *fill* 10 000) and flat on `SQLiteStore` (16 µs). And **`FileStore.save` is milliseconds** (2.8 ms, `fsync` off; an atomic temp-write-replace) where SQLite is tens of microseconds (24 µs) and Memory is one. `save` / `load` / `delete` are O(1) in store size on all three. Memory does not grow over 10 000 save→load→delete cycles on any backend (0 B attributed to the library); SQLite keeps one connection per thread and `close()` really closes it; file handles are stable.
 
+### Operations: what the failures look like
+
+Every row below was *injected* by `tests/persistence/test_battle_259_stores_crash_concurrency.py` — real `kill -9` of a writer child at every step of `FileStore.save`, `ENOSPC` at every syscall, Windows sharing violations, two processes on one lock — and the behaviour described is what the test asserts.
+
+| Failure | What you see | What to do |
+|:--|:--|:--|
+| **Writer killed mid-save** (any step: temp created, written, fsynced, renamed, lock written, unlocked) | On restart `load()` is the old record **or** the new one, never torn; `version` only ever goes up; `list_keys` never lists a temp file; the next writer proceeds in under 2 s (the OS lock dies with the process). SQLite: every committed save survives a kill mid-WAL-checkpoint, and deleting `-wal`/`-shm` between clean runs loses nothing. | Nothing. Temp files a killed writer left are swept by the next `FileStore(...)` once older than `stale_lock_after`. |
+| **Disk full** (`ENOSPC` at write / fsync / rename, or at SQLite `COMMIT`) | `FileStore` raises `OSError`; `SQLiteStore` raises `StoreError` (`database or disk is full`). The previous record is intact; no temp file is left; **the same store object keeps working** once space returns. | Free space, retry. |
+| **Windows sharing violation** on `os.replace` | The store's own readers never block a writer (they open with `FILE_SHARE_DELETE`; a refused rename falls back to POSIX-semantics rename, and readers keep the old bytes). A *foreign* process holding the file (backup tool, antivirus, an editor) is retried ~0.5 s (20 × 25 ms), then `PermissionError` with the old record intact. | Exclude the store directory from real-time scanning. |
+| **Lock held by a crashed process** | Reclaimed immediately — the next writer proceeds in under 1 s. | Nothing. |
+| **Lock held by a slow, live process** | Never stolen. Waiters get `LockTimeoutError` at the documented `timeout`, naming the holder's `pid` and timestamp. | Tune `timeout`, or find the slow holder. |
+| **Pointed at the wrong file** (not SQLite, a foreign `statecharts` table, a newer `xsm_schema`) | `StoreError` **from the constructor**, naming the file. | Use the store's own file. |
+| **Read-only database / `EACCES` directory** | `StoreError` / `OSError` at construction or first save, with the old record intact. | Fix permissions. |
+| **Long keys** | Keys up to 200 characters always work; an encoded name over 200 chars (CJK, a 200-char ASCII key) is stored under `~<sha256>.xsm.json` and `list_keys` recovers the key from the record body. 201+ → `InvalidKeyError`. Keys differing only by case are always separate records, on every filesystem. | Nothing. |
+| **`as_async` + `PessimisticLock`** | Inside `async with adapter.lock(...)`, other tasks' calls on *that adapter* wait until the block exits (they used to run inside the holder's transaction and get rolled back with it). Separate adapters are independent. 1 000 concurrent callers queue; nothing raises; `close()` waits for in-flight work. | Size the number of adapters to your contention, not the number of tasks. |
+
 ## asyncio
 
 The stdlib stores are synchronous (file and SQLite I/O block). `as_async(store)` runs each call in the default executor and exposes the same surface with `await`; `lock()` becomes an `async with`, acquired and released on one dedicated worker thread because file and SQLite locks are thread-affine.

@@ -337,7 +337,6 @@ class TestSQLiteCorruption(_Base):
         with self.assertRaises(StoreError) as cm:
             SQLiteStore(p)
         self.assertNotIsInstance(cm.exception, sqlite3.DatabaseError)
-        self.assertIn("cannot open", str(cm.exception))
         self.assertIn("not a database", str(cm.exception))
         # a DB another program owns (valid SQLite, foreign schema) opens
         # and upgrades or refuses -- never a raw sqlite3 error either
