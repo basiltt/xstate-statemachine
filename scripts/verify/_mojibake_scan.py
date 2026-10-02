@@ -10,6 +10,10 @@ import sys
 
 PAT = re.compile(
     "\u00f0\u0178|\u00e2\u20ac|\u00e2\u2020\u2019|\u00c3\u00a9|\u00c2\u00b7|\u00e2\u0161|\u00c3\u00a2"
+    # \ud83d\udcdd Variation selector U+FE0F and combining keycap U+20E3 (the "1\ufe0f\u20e3"
+    #    family) double-encode to these; the keycap one was missed once
+    #    and reached CI (battle #258).
+    "|\u00ef\u00b8\u008f|\u00e2\u0192\u00a3"
 )
 EXT = (".py", ".md", ".html", ".json", ".yml", ".yaml", ".toml", ".txt")
 

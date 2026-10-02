@@ -164,7 +164,7 @@ def _count_tests(folder: pathlib.Path) -> int:
 
 
 # -----------------------------------------------------------------------------
-# 1ï¸âƒ£ zero-dependency guard is not vacuous
+# 1. zero-dependency guard is not vacuous
 # -----------------------------------------------------------------------------
 class TestZeroDepGuardBites(unittest.TestCase):
     def _guard_on(self, src: pathlib.Path) -> dict:
@@ -281,7 +281,7 @@ class TestZeroDepGuardBites(unittest.TestCase):
 
 
 # -----------------------------------------------------------------------------
-# 1ï¸âƒ£/5ï¸âƒ£ bare interpreter: import surface
+# 1./5. bare interpreter: import surface
 # -----------------------------------------------------------------------------
 BARE_SURFACE = r"""
 import json, sys, time
@@ -290,9 +290,13 @@ t = time.perf_counter()
 import xstate_statemachine as x
 ms = (time.perf_counter() - t) * 1000
 std = set(getattr(sys, "stdlib_module_names", ()))
+# 📝 Loaded by site-packages `.pth` hooks at interpreter start on some
+#    runners (setuptools' distutils shim on 3.10/3.11 CI cells), never by
+#    the library. Not stdlib, not ours, not a leak.
+PTH = {"_distutils_hack", "_virtualenv", "sitecustomize", "usercustomize"}
 tops = sorted({m.split(".")[0] for m in sys.modules})
 third = [t for t in tops if std and t not in std
-         and t not in ("xstate_statemachine", "__main__")]
+         and t not in ("xstate_statemachine", "__main__") and t not in PTH]
 bad_all = []
 contrib_syms = []
 for n in x.__all__:
@@ -313,7 +317,8 @@ for s in ("persistence", "patterns", "eda", "graph", "receipts",
 import xstate_statemachine.exceptions as ex
 after = sorted({m.split(".")[0] for m in sys.modules})
 third_after = [t for t in after if std and t not in std
-               and t not in ("xstate_statemachine", "__main__")]
+               and t not in ("xstate_statemachine", "__main__")
+               and t not in PTH]
 print(json.dumps({"ms": ms, "third": third, "third_after": third_after,
   "pytest": "pytest" in sys.modules, "bad_all": bad_all,
   "contrib_syms": contrib_syms, "subs": subs,
@@ -371,7 +376,7 @@ class TestBareInterpreterSurface(unittest.TestCase):
 
 
 # -----------------------------------------------------------------------------
-# 2ï¸âƒ£ MissingExtraError at every lazy site
+# 2. MissingExtraError at every lazy site
 # -----------------------------------------------------------------------------
 PROBE_CONTRIB = r"""
 import importlib, json, sys
@@ -645,7 +650,7 @@ class TestMissingExtraTransitiveAndLazy(unittest.TestCase):
 
 
 # -----------------------------------------------------------------------------
-# 3ï¸âƒ£ extras resolve
+# 3. extras resolve
 # -----------------------------------------------------------------------------
 class TestExtrasDeclaration(unittest.TestCase):
     def setUp(self) -> None:
@@ -773,7 +778,7 @@ class TestExtrasResolveOnPyPI(unittest.TestCase):
 
 
 # -----------------------------------------------------------------------------
-# 4ï¸âƒ£ CI matrix honesty
+# 4. CI matrix honesty
 # -----------------------------------------------------------------------------
 #: test-import name -> pip distribution
 IMPORT_TO_DIST = {
@@ -873,7 +878,7 @@ class TestCIMatrix(unittest.TestCase):
 
 
 # -----------------------------------------------------------------------------
-# 6ï¸âƒ£ docs
+# 6. docs
 # -----------------------------------------------------------------------------
 class TestDocs(unittest.TestCase):
     def test_extras_page_table_lists_every_extra(self) -> None:
