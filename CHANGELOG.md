@@ -1143,6 +1143,23 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **The `[web]` extra was empty (battle-test #258).** `pip install
+  "xstate-statemachine[web]"` installed nothing, although every member it
+  was documented to bundle (FastAPI, Django, DRF, Flask, SQLAlchemy) had
+  shipped. It now equals that union; a test pins `[web]`, `[eda]` and
+  `[all]` to the unions their comments name. Also from the same pass:
+  the `[format]` floor said `black>=24.0`, a version PyPI never published
+  (Black 24 starts at 24.1.0); the `contrib` registry listed only
+  `litestar` for the Litestar extra although the package also requires
+  `starlette`, so the extras-matrix blocking test never blocked it;
+  `xstate_statemachine.exceptions` had no `__all__`; the Integrations
+  pages still called the shipped broker adapters "planned" and never said
+  *when* `MissingExtraError` is raised (at import for subpackages; on
+  first use for the structlog / loguru / Sentry / LangChain plugins and
+  the Hypothesis helpers). Every extra's floor is now checked against PyPI
+  for existence and a 3.9-compatible file, and `[all]` is dry-run
+  installed as one set.
+
 - **Competitor benchmark numbers were not like-for-like (battle-test
   #307).** Our parallel-regions adapter sent one event per iteration where
   every other adapter sent two, inflating the published "7.5x" over

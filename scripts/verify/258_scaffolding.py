@@ -106,6 +106,33 @@ def main() -> int:
         check=True,
     )
     subprocess.run([sys.executable, "-m", "mypy"], cwd=ROOT, check=True)
+
+    step("7. battle tests (post-RC programme) + mojibake scan")
+    # 🛡️ The battle file runs its environment-sensitive checks in a bare
+    #    child interpreter (`.venvmin` or XSM_BARE_PYTHON) when available,
+    #    and skips network checks under --disable-socket.
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_battle_258_scaffolding.py",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:asyncio",
+        ],
+        cwd=ROOT,
+        check=True,
+    )
+    # 📝 Agents work in worktrees whose scan only sees THEIR tracked files;
+    #    a cherry-pick can carry mojibake across. Scan at integration.
+    subprocess.run(
+        [sys.executable, "scripts/verify/_mojibake_scan.py"],
+        cwd=ROOT,
+        check=True,
+    )
     print("\nALL OK")
     return 0
 

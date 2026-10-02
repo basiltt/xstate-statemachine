@@ -43,7 +43,7 @@ flowchart LR
     Q4{Events in?}
     Q4 -->|HTTP| HT["Idempotency-Key + inbox<br/>read: Security"]
     Q4 -->|timers| TM["DueTimerScanner<br/>read: Persistence"]
-    Q4 -->|broker| PL4["planned #294<br/>read: Integration extras"]
+    Q4 -->|broker| PL4["[kafka] / [rabbitmq] / [nats] / [sqs] / [redis]<br/>read: Brokers"]
 ```
 
 | Leaf | Install | Read, in order |
@@ -61,7 +61,7 @@ flowchart LR
 | Celery workers | `[celery]` | [Celery](../integration-celery/) |
 | HTTP | — | [Security](../security/) (principal, `Idempotency-Key`) |
 | Timers | core | [Persistence](../persistence/) (`DueTimerScanner`) → [Delayed transitions](../delayed-transitions/) |
-| Broker | core `eda` + `[cloudevents]` | envelope, consumer loop, outbox, DLQ, sagas: [Event-driven](../integration-eda/); broker adapters planned, [#294](https://github.com/basiltt/xstate-statemachine/issues/294) |
+| Broker | core `eda` + `[cloudevents]` | envelope, consumer loop, outbox, DLQ, sagas: [Event-driven](../integration-eda/); broker adapters `[kafka]` / `[rabbitmq]` / `[nats]` / `[sqs]` (Redis Streams in `[redis]`): [Brokers](../integration-brokers/) |
 | LLM agents | `[agents]` | [LLM agents](../integration-agents/) → [Security](../security/) (X0.13) |
 | Testing | `[testing]` | [pytest](../integration-testing/) — `xstate_machine` marker and `xsm_*` fixtures |
 | Observability | `[observability]` | [Observability](../integration-observability/) ([#273](https://github.com/basiltt/xstate-statemachine/issues/273)) → [Live inspector](../integration-inspector/) (core, [#274](https://github.com/basiltt/xstate-statemachine/issues/274)) |

@@ -329,6 +329,7 @@ class TestCSRF:
         )
 
     def test_x_csrftoken_header_works(self) -> None:
+        pytest.importorskip("flask_wtf")  # before _app, which skips too
         from flask import session
         from flask_wtf.csrf import generate_csrf
 

@@ -1,6 +1,6 @@
 ---
 title: "Integration extras"
-description: "Every optional pip extra — pydantic, redis, starlette, fastapi, litestar, flask, sqlalchemy, django, drf, channels, agents, observability, cloudevents, celery, the brokers (redis streams, kafka, rabbitmq, nats, sqs), and the planned django, flask, sqlalchemy and testing — with its status and issue."
+description: "Every optional pip extra — pydantic, redis, starlette, fastapi, litestar, flask, sqlalchemy, django, drf, channels, agents, observability, cloudevents, celery, the brokers (redis streams, kafka, rabbitmq, nats, sqs) and testing — with its status, issue and the point at which a missing dependency is reported."
 ---
 
 # Integration extras
@@ -27,7 +27,7 @@ except MissingExtraError as exc:
     assert isinstance(exc, ImportError)  # existing `except ImportError` fallbacks keep working
 ```
 
-> **Status.** The integration programme is being built in phases (tracking issue [#257](https://github.com/basiltt/xstate-statemachine/issues/257)). Extras below marked *planned* already resolve in `pip install` so you can pin them today; the code arrives with the linked issue and its page appears here.
+> **When the error is raised.** Importing an integration subpackage checks its pinned dependencies **at import time** (`import xstate_statemachine.contrib.fastapi`). Three things are checked later, **on first use**, because they are optional soft dependencies that no extra pins: `StructlogPlugin()` / `LoguruPlugin()` (`structlog` / `loguru`), `SentryPlugin()` (`sentry-sdk`), `LangChainCallbackPlugin()` (`langchain-core` — its module still needs `langgraph` at import, from `[agents]`), and `[testing]`'s Hypothesis helpers (`model_test`, `events_strategy`, `payload_strategy`). `xstate_statemachine.contrib.brokers` itself imports with no extra; each adapter module (`brokers.kafka`, …) checks its own. The Quart shim (`contrib.quart`) needs `pip install quart` on top of `[flask]` — the error says so.
 
 ## The extras
 
@@ -49,7 +49,7 @@ except MissingExtraError as exc:
 | `cloudevents` | CloudEvents SDK objects and HTTP binary / structured interop for the core `Envelope` (the envelope, dispatcher, outbox, dead letters, sagas and AsyncAPI are core and need no extra) | **shipped** — [guide](../integration-eda/) · [#293](https://github.com/basiltt/xstate-statemachine/issues/293) |
 | `kafka` · `rabbitmq` · `nats` · `sqs` | Broker adapters (plus Redis Streams in `[redis]`): consume envelopes into machines, publish tagged transitions | ✅ shipped — [Brokers](../integration-brokers/) ([#294](https://github.com/basiltt/xstate-statemachine/issues/294)) |
 | `agents` | `TOOL_LOOP` chart, tool registry with per-state allow-lists enforced in `run_tool`, budgets, timeouts, durable human-in-the-loop, structured output, OpenAI/Anthropic adapters (soft imports), `spawn_agent` + `BudgetPlugin` multi-agent recipes | **shipped** — [guide](../integration-agents/) · [#287](https://github.com/basiltt/xstate-statemachine/issues/287) · [#290](https://github.com/basiltt/xstate-statemachine/issues/290) |
-| `web` · `eda` · `all` | Umbrella extras | — |
+| `web` · `eda` · `all` | Umbrella extras: `web` = fastapi + django + drf + flask + sqlalchemy; `eda` = celery + redis + kafka + rabbitmq + cloudevents + observability; `all` = every extra above | — |
 
 The framework versions each shipped extra is tested against (oldest and newest, one CI cell each) are on the [Compatibility](../compatibility/) page. All `contrib` APIs are **provisional** under the [Deprecation Policy](../deprecation-policy/).
 

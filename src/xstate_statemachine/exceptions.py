@@ -44,6 +44,41 @@ Example:
 # -----------------------------------------------------------------------------
 from typing import Iterable, Optional
 
+# 📝 #258 battle: the public exception surface, pinned by a test so a new
+#    class cannot be added without being exported here.
+__all__ = [
+    "XStateMachineError",
+    "InvalidConfigError",
+    "StateNotFoundError",
+    "ImplementationMissingError",
+    "ActorSpawningError",
+    "NotSupportedError",
+    "RestoredError",
+    "UnhandledEventError",
+    "TransitionFailedError",
+    "SnapshotVersionError",
+    "SnapshotDriftError",
+    "QueueOverflowError",
+    "InterpreterStoppedError",
+    "UnknownEventError",
+    "InvalidEventPayloadError",
+    "WrongThreadError",
+    "ReentrantWaitError",
+    "RunawayChainError",
+    "RestoredChainError",
+    "SnapshotMidStepError",
+    "InvalidEventError",
+    "RootTargetError",
+    "SnapshotSerializationError",
+    "SnapshotCorruptError",
+    "MissingExtraError",
+    "StoreError",
+    "ConflictError",
+    "LockTimeoutError",
+    "SnapshotTooLargeError",
+    "InvalidKeyError",
+]
+
 # -----------------------------------------------------------------------------
 # 💥 Core Exception Classes
 # -----------------------------------------------------------------------------
