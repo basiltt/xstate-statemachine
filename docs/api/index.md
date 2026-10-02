@@ -984,6 +984,8 @@ fires every timer that became due, in due order.
 | `.increment(ms)` | `(float) -> Union[None, Awaitable[None]]` | `None` or an awaitable | Advances virtual time by `ms` milliseconds and fires what became due, one timer at a time (so an `after` chain scheduled inside the same window fires in order). Returns an **awaitable** when called inside a running event loop (`await clock.increment(ms)`) and `None` otherwise; a forgotten `await` inside a loop raises a `RuntimeWarning` at garbage-collection time instead of silently racing. |
 | `.set(ms)` | `(float) -> Union[None, Awaitable[None]]` | Same as `.increment()` | Jumps to absolute virtual time `ms`; raises `ValueError` if that would move backwards. |
 | `.pending` | `int` | -- | Property: number of live (uncancelled) timers. |
+| `.next_due()` | `() -> Optional[float]` | virtual seconds or `None` | **[0.11.0]** The earliest live timer's due time. `persistence.replay()` walks recorded `after` steps one timer at a time with it. |
+| `.fire_until(target)` | `(float) -> None` | -- | **[0.11.0]** Advance to `target` (virtual **seconds**) firing due timers in order and settling attached *sync* interpreters — never returns an awaitable, even inside a running loop (which is why `replay()` uses it from async code). `ValueError` on a backwards target. |
 | `.wall_now()` | `() -> float` | `float` | `wall_start + elapsed virtual seconds` (#305). `wall_start` defaults to the real epoch instant the clock was built; pass an explicit one to express *"the process restarted an hour later"*: `SimulatedClock(wall_start=1_000_000.0)` then `.increment(3_600_000)` → `.wall_now() == 1_003_600.0` while `.now()` is still `3600.0`. |
 
 ```python
