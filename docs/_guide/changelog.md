@@ -1149,6 +1149,31 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **`persisted()` / `apersisted()` could not restore a compatibly-drifted
+  snapshot (battle-test #260).** The docs listed `verify_machine_hash` and
+  `expected_machine_hash` as pass-through to `from_snapshot`, but neither
+  was in the signatures -- `persisted(..., verify_machine_hash=False)`
+  raised `TypeError`. Both are now accepted by `persisted`, `apersisted`,
+  every `LockStrategy.run()` and forwarded. A different *machine id* is
+  still always refused (identity, not hash).
+- **`after_commit` dropped later callbacks when one raised (battle-test
+  #260).** An outbox publish registered after a raising callback silently
+  never ran. Every callback now runs; the first error is re-raised; the
+  save is already durable. `async def` callbacks are awaited inside
+  `apersisted()` and refused with `TypeError` under `persisted()` -- before,
+  they were created and never awaited.
+- **`apersisted()` leaked a worker thread per call on a sync store
+  (battle-test #260).** The `as_async` adapter it created was never
+  closed; each cycle left an `xsm-store` thread alive until GC. Closed on
+  exit, success or error.
+- **`lock=` validation (battle-test #260).** A non-strategy (`"none"`,
+  `5`) failed mid-block with `AttributeError: 'str' object has no
+  attribute 'acquire'`; now `ValueError` naming `OptimisticLock` /
+  `PessimisticLock` / `NoLock` before anything runs. `OptimisticLock`
+  rejects a non-int `retries` (bool included) and a non-`RetryPolicy`
+  `backoff` with `TypeError`, and a negative `retries` with `ValueError`
+  (`1.5` used to be silently truncated to `1`).
+
 - **Two stores could report a successful save that was lost (battle-test
   #259; both break the "never a lost update" guarantee).**
   `SQLiteStore`: a failed `COMMIT` (disk full, `database is locked`) left

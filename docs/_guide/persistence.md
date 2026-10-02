@@ -199,6 +199,24 @@ Every row is asserted by `tests/persistence/test_battle_260_locking_semantics.py
 
 **Cost.** `persisted()` is 1.00–1.09× a hand-rolled `load → from_snapshot → send → save(expected_version)` on `MemoryStore` and `SQLiteStore`; `PessimisticLock` on SQLite is *faster* (0.89×) because `BEGIN IMMEDIATE` makes the load and the save one transaction.
 
+**When something fails inside the block** — each row injected by `tests/persistence/test_battle_260_locking_failures.py` on every store, sync and async:
+
+| Where it fails | You see | On disk | Lock |
+|:--|:--|:--|:--|
+| `load` (`StoreError`, `SnapshotCorruptError`, `SnapshotTooLargeError`, `OSError`) | that exception, unwrapped; body never runs | unchanged | released |
+| snapshot is for a **different machine id** | `SnapshotDriftError`; body never runs; `verify_machine_hash=False` does **not** bypass this (identity, not hash) | unchanged | released |
+| snapshot has a **changed structure** | `SnapshotDriftError` unless `verify_machine_hash=False` (now forwarded, with `expected_machine_hash`) | unchanged | released |
+| `save` (`ConflictError`, `StoreError`, `OSError`) | that exception; **the body's side effects already happened**; `after_commit` dropped | unchanged, version not bumped | released |
+| `lock.__enter__` → `LockTimeoutError` | body never runs | unchanged | never taken |
+| `lock.__exit__` raises | that exception, **after** the save (the save happens inside the lock — no lost-update window) | new version committed | released |
+| body raises (anything, incl. `KeyboardInterrupt` / `CancelledError` / `SystemExit`) | the exception | nothing written | released |
+| `start()` under `actionErrorPolicy: "fail"` | body sees a stopped interpreter | stopped state persisted; the next block raises `InvalidConfigError` | released |
+| plugin raises in `on_interpreter_start` | nothing — contained | normal | normal |
+| migrator step raises / no step for the version | the step's error / `MachineVersionMismatchError` | unchanged, still the old version | released |
+| `ConflictError` raised **by the body** | retried by `lock.run()` / `persisted_retry()`, bounded by `retries`; propagates from a `with` block | — | released |
+
+`load_interpreter(create_if_missing=True)` returns a *started* interpreter at version 0 and does not save until you do. `OptimisticLock(retries=…, backoff=…)` raises `TypeError` for a non-int `retries` (bool included) or a non-`RetryPolicy` `backoff`, and `ValueError` for a negative `retries`. `apersisted()` on a sync store closes the `as_async` adapter it created, on success and on error (1 000 cycles: thread count flat).
+
 ## Concurrency: choosing a lock
 
 | Strategy | What it does | Choose it when | Cost of a race |

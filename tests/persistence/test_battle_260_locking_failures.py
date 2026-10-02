@@ -1008,7 +1008,7 @@ class TestDeadlinePersistence(_Base):
             with self.subTest(kind=kind):
                 st = self.make(kind)
                 cl = SimulatedClock()
-                with persisted(st, "t", m, clock=cl) as i:
+                with persisted(st, "t", m, clock=cl):
                     self.assertEqual(cl.pending, 1)
                 rec = st.load("t")
                 self.assertEqual(len(rec.deadlines), 1)
