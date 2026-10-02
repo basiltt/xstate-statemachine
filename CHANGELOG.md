@@ -1096,6 +1096,15 @@ _No unreleased changes yet._
   external edit forces a rescan (0.012 ms at 10 000). `read()` still scans
   the file; use `SQLiteLog` beyond a few thousand records.
 
+- **`SQLiteStore` schema v2: index on `deadlines(key)` (battle-test #259,
+  found on CI by the #262 integration).** Schema v1 had no index on
+  `deadlines(key)`, so every `load`, `save` and `delete` (the FK cascade)
+  did a full scan of `deadlines` -- O(n) in the store's deadline count:
+  save+delete read 114 µs → 308 µs → 1.1 ms at 100 / 2 000 / 10 000 keys
+  with one deadline each. A database written by 0.11.0 is upgraded in
+  place on open (one `CREATE INDEX IF NOT EXISTS`); the scaling test now
+  saves snapshots WITH deadlines so it exercises that table.
+
 
 - **Performance budgets now gate on every nightly, whatever the CPU
   (battle-test #307).** Three consecutive nightlies landed on three CPU

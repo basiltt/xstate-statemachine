@@ -261,7 +261,7 @@ for lock in (OptimisticLock(retries=100), PessimisticLock(timeout=30)):
 - **Codec seam.** `codec=` takes any `encode(str) -> str` / `decode(str) -> str` pair, so compression or encryption at rest is a constructor argument, not a backend fork.
 - **Atomic writes.** `FileStore` writes to a temp file in the same directory, fsyncs, then `os.replace`s — a reader sees the old record or the new one, never a torn one. A fault hook in the tests simulates a crash between fsync and rename and asserts the previous record is intact.
 - **Permissions.** `FileStore` directory `0700`, files `0600`; `SQLiteStore` creates the database (and its `-wal` / `-shm` siblings) `0600`.
-- **Schema versioning.** `SQLiteStore` keeps an `xsm_schema(version)` table with explicit upgrade steps; a database written by a newer library is refused, never guessed at.
+- **Schema versioning.** `SQLiteStore` keeps an `xsm_schema(version)` table with explicit upgrade steps; a database written by a newer library is refused, never guessed at. Current schema is **v2** (adds the `deadlines(key)` index); a v1 file from 0.11.0 is upgraded in place on open.
 - **`health()`** on every store — a cheap liveness probe for your readiness endpoint.
 
 ### What every backend agrees on

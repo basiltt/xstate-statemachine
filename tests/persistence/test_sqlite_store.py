@@ -100,6 +100,39 @@ class TestSchema:
         with pytest.raises(StoreError, match="newer"):
             SQLiteStore(tmp_path / "s.db")
 
+    def test_v1_database_upgrades_to_indexed_deadlines(
+        self, tmp_path: Any
+    ) -> None:
+        """A database written by 0.11.0 (schema 1) has no index on
+        `deadlines(key)`; opening it runs the v1 -> v2 step, the data is
+        intact, and lookups by key no longer SCAN the table (#259 battle:
+        save+delete was O(n) in the deadline count on CI)."""
+        path = tmp_path / "s.db"
+        SQLiteStore(path).save("k", SNAP)
+        conn = sqlite3.connect(str(path))
+        conn.execute("DROP INDEX deadlines_key")
+        conn.execute("UPDATE xsm_schema SET version = 1")
+        conn.commit()
+        conn.close()
+
+        store = SQLiteStore(path)
+        assert store.load("k").version == 1
+        assert store.health()["schema_version"] == SCHEMA_VERSION
+        conn = sqlite3.connect(str(path))
+        assert conn.execute("SELECT version FROM xsm_schema").fetchone() == (
+            SCHEMA_VERSION,
+        )
+        plan = " ".join(
+            str(r[3])
+            for r in conn.execute(
+                "EXPLAIN QUERY PLAN SELECT * FROM deadlines WHERE key = ?",
+                ("k",),
+            )
+        )
+        assert "deadlines_key" in plan and "SCAN" not in plan, plan
+        conn.close()
+        store.close()
+
     @pytest.mark.skipif(os.name != "posix", reason="POSIX modes")
     def test_db_file_mode_0600(self, tmp_path: Any) -> None:
         store = SQLiteStore(tmp_path / "s.db")

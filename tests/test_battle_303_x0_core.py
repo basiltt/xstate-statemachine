@@ -713,4 +713,9 @@ class TestX010Schema(_TmpDir):
         c = sqlite3.connect(str(db))
         rows = c.execute("SELECT version FROM xsm_schema").fetchall()
         c.close()
-        self.assertEqual(rows, [(1,)])
+        # one row, at the current version (not a row per open)
+        from src.xstate_statemachine.persistence.sqlite_store import (
+            SCHEMA_VERSION,
+        )
+
+        self.assertEqual(rows, [(SCHEMA_VERSION,)])

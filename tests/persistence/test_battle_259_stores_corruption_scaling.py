@@ -725,8 +725,13 @@ def _timeit(fn: Callable[[], Any], n: int) -> float:
 
 class TestScaling(_Base):
     def _fill(self, s: Any, n: int, start: int = 0) -> None:
+        # 📝 One deadline per key: `deadlines` is the table that grows with
+        #    the store, and every save/load/delete touches it by key. With
+        #    no index on `deadlines(key)` (schema v1) that was a full SCAN
+        #    -- O(n) -- which a py3.12 CI runner read as 4.1x and this
+        #    probe, saving snapshots WITHOUT deadlines, never saw.
         for i in range(start, n):
-            s.save(f"key-{i:06d}", SNAP)
+            s.save(f"key-{i:06d}", SNAP, deadlines=[DL])
 
     def test_ops_are_o1_in_store_size(self) -> None:
         sizes = (1, 100, 2000)  # 10 000 is measured, not asserted (below)
@@ -741,7 +746,7 @@ class TestScaling(_Base):
                 cnt = [0]
 
                 def save() -> None:
-                    s.save(probe, SNAP)
+                    s.save(probe, SNAP, deadlines=[DL])
 
                 def load() -> None:
                     s.load(probe)
@@ -752,7 +757,7 @@ class TestScaling(_Base):
                 def dele() -> None:
                     cnt[0] += 1
                     k = f"tmp-{cnt[0]}"
-                    s.save(k, SNAP)
+                    s.save(k, SNAP, deadlines=[DL])
                     s.delete(k)
 
                 per[n] = {
