@@ -397,6 +397,21 @@ Crash consistency (X0.3) — the mark must be visible *iff* the snapshot contain
 
 Three fault-injection tests pin this: crash before save (no mark, retry is a first delivery), crash between save and mark (caught by the ring), crash after mark (plain duplicate).
 
+### When the inbox itself is down — `on_inbox_error`
+
+> **The trade-off, stated plainly.** Plugin hooks are fail-open by design (a raising hook admits the event). So if the inbox *backend* fails — `get` or `claim` raising `StoreError` / `OSError` / `sqlite3.Error` — the default is that **the keyed event runs with no deduplication**, the receipt looks perfectly normal (`changed=True, duplicate=False`), and the only trace is `on_plugin_error`. The battle test for #261 drove a dead inbox and watched the action run twice for one key with nothing on either receipt. That default is right for a webhook endpoint (availability; the sender retries anyway, and a duplicate is the lesser evil). It is wrong for a payment handler.
+>
+> `IdempotencyPlugin(..., on_inbox_error="refuse")` flips it: the receipt carries **`InboxUnavailableError`** (`receipt_to_status` → **503**), the action never runs, nothing is claimed; the client retries later. The plugin's own refusals — mismatch (422) and in-flight (409) — are the same in both modes. **Alert on `on_plugin_error` either way**: in `"admit"` mode it is the only signal that dedup is off.
+
+| `on_inbox_error` | inbox `get`/`claim` raises → | receipt | action |
+|:--|:--|:--|:--|
+| `"admit"` **(default)** | event admitted, `on_plugin_error` fires | normal (`duplicate=False`) | **runs** — possibly a duplicate |
+| `"refuse"` | event refused | `error=InboxUnavailableError`, `duplicate=True`, HTTP 503 | never runs |
+
+**TTL semantics** (`ttl_s`, default 24 h): both the in-flight claim and the final mark expire after `ttl_s`; after that the key is *new* — so `ttl_s` bounds the dedup window **and** the "same original receipt" promise. `None` never expires (a crashed worker then blocks that key until you `purge()` or `forget()` it). `0` makes every send fresh. Negative, NaN or non-numeric → `ValueError` at construction (they used to silently disable dedup). A wall clock jumping *backwards* never purges early; forwards past `ttl_s` purges. **Keys** are at most 255 printable ASCII characters, case-sensitive and byte-exact; non-ASCII and control characters are refused with a typed receipt. **Scope** footgun: two in-memory interpreters of one machine that share an id or `instance_key` share an inbox scope — pass `instance_key=` per instance (a `persisted()` block uses its store key automatically).
+
+**Cost** (Windows, 3.14): bare send 14 µs; with the plugin on `MemoryInbox` 64 µs; on `SQLiteInbox` 178 µs. `MemoryInbox` ≈ 377 B per entry and `purge_expired()` reclaims it; a 10 000-row `SQLiteInbox` is 2.8 MB, `purge` of 10 000 expired rows 6.8 ms (indexed), 0 expired rows 0.03 ms.
+
 ```python
 from xstate_statemachine import MachineLogic, create_machine
 from xstate_statemachine.persistence import IdempotencyPlugin, SQLiteInbox, SQLiteStore, persisted
