@@ -314,6 +314,10 @@ class JSONLinesLog:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+        #: ⚡ last seq per machine id, valid while the file is `_cache_size`
+        #: bytes (see `next_seq`); -1 = never scanned.
+        self._last_seq: Dict[str, int] = {}
+        self._cache_size: int = -1
 
     def _iter(self) -> Iterable[TransitionRecord]:
         # 📝 #262 battle: `utf-8-sig` tolerates a BOM (a Windows editor
@@ -365,16 +369,37 @@ class JSONLinesLog:
                 with open(self.path, "a", encoding="utf-8") as fh:
                     fh.write(line)
                     fh.flush()
+                # ⚡ Keep the seq cache coherent with what WE wrote, and
+                #    remember the file size that write produced, so the
+                #    next `next_seq` is O(1) instead of a full scan.
+                size = self.path.stat().st_size
             except OSError as exc:
                 raise StoreError(f"JSONLinesLog({self.path}): {exc}") from exc
+            cached = self._last_seq.get(rec.machine_id, 0)
+            self._last_seq[rec.machine_id] = max(cached, rec.seq)
+            self._cache_size = size
 
     def next_seq(self, machine_id: str) -> int:
+        # ⚡ #262 battle (B): this scanned the WHOLE file on every send, so a
+        #    run with a JSONL log was O(n^2) -- 79 ms per send at 10 000
+        #    records. Cache the last seq per machine and trust it while the
+        #    file is exactly the size our last write left it; any change
+        #    (another process appended, a purge rewrote it, an editor) is
+        #    a cache miss and a full, correct scan.
         with self._lock:
-            last = 0
-            for r in self._iter():
-                if r.machine_id == machine_id and r.seq > last:
-                    last = r.seq
-        return last + 1
+            try:
+                size = self.path.stat().st_size
+            except FileNotFoundError:
+                size = 0
+            except OSError as exc:
+                raise StoreError(f"JSONLinesLog({self.path}): {exc}") from exc
+            if size != self._cache_size:
+                self._last_seq = {}
+                for r in self._iter():
+                    if r.seq > self._last_seq.get(r.machine_id, 0):
+                        self._last_seq[r.machine_id] = r.seq
+                self._cache_size = size
+            return self._last_seq.get(machine_id, 0) + 1
 
     def read(
         self, machine_id: str, *, after_seq: int = 0, limit: int = 1000
@@ -415,6 +440,8 @@ class JSONLinesLog:
                 except OSError:
                     pass
                 raise
+            # the file changed under our own hands: force a rescan
+            self._cache_size = -1
         return len(rows) - len(kept)
 
     def purge_older_than(self, cutoff_ts: float) -> int:

@@ -434,6 +434,43 @@ class TestScaling(_Tmp):
         for i in range(start, start + n):
             lg.append(rec(i))
 
+    def test_jsonl_next_seq_is_cached_and_invalidated_correctly(self) -> None:
+        """⚡ Integration fix (#262 B finding): `next_seq` scanned the whole
+        file on every send -> a run with a JSONL log was O(n^2). The last
+        seq per machine is cached while the file size is unchanged; a
+        foreign append, a purge, or an external edit forces a rescan."""
+        import pathlib
+        from unittest import mock
+
+        lg = self.mk("jsonl", "cache")
+        self._fill(lg, 2_000)
+        # warm, then count how many times the file is parsed
+        self.assertEqual(lg.next_seq("m"), 2_001)
+        with mock.patch.object(lg, "_iter", wraps=lg._iter) as spy:
+            for _ in range(50):
+                lg.append(rec(lg.next_seq("m")))
+            self.assertEqual(spy.call_count, 0)  # no rescans in steady state
+        self.assertEqual(lg.next_seq("m"), 2_051)
+        # a SECOND writer (another process) appends: the cache must notice
+        other = type(lg)(lg.path)
+        other.append(rec(2_051))
+        self.assertEqual(lg.next_seq("m"), 2_052)
+        # an external edit that changes the size: rescan
+        pathlib.Path(lg.path).write_text(
+            pathlib.Path(lg.path).read_text(encoding="utf-8")
+            + json.dumps(rec(2_052).to_dict(), sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(lg.next_seq("m"), 2_053)
+        # a purge rewrites the file: rescan (and the survivors keep seq)
+        lg.purge_older_than(float("inf"))
+        self.assertEqual(lg.next_seq("m"), 1)
+        lg.append(rec(1))
+        self.assertEqual(lg.next_seq("m"), 2)
+        # per-machine: another machine id is independent
+        self.assertEqual(lg.next_seq("other"), 1)
+
     def test_append_and_next_seq_shape(self) -> None:
         out: Dict[str, Dict[int, Any]] = {}
         for kind in KINDS:
@@ -463,8 +500,11 @@ class TestScaling(_Tmp):
         # memory: O(1) append; sqlite: next_seq is an index probe (flat)
         self.assertLess(out["memory"][10000][0], 0.005)
         self.assertLess(out["sqlite"][10000][1], 0.05)
-        # jsonl: next_seq scans the file -> grows with n (documented O(n))
-        self.assertGreater(out["jsonl"][10000][1], out["jsonl"][1000][1] * 2)
+        # jsonl: next_seq used to scan the file (79 ms at 10k -> a run was
+        # O(n^2)); now cached per machine while the file size is unchanged
+        # -> flat. The READ path still scans (documented).
+        self.assertLess(out["jsonl"][10000][1], 0.002)
+        self.assertGreater(out["jsonl"][10000][2], out["jsonl"][1000][2] * 2)
 
     def test_sqlite_listing_uses_the_primary_key_index(self) -> None:
         lg = self.mk("sqlite")
