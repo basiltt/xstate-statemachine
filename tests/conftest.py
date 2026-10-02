@@ -28,7 +28,7 @@ def _fresh_deprecation_sites():
 @pytest.fixture(scope="session", autouse=True)
 def _no_root_logging_handler_leak():
     """Fail the session if a test left a non-pytest handler on the ROOT
-    logger.
+    logger, or changed its level.
 
     🏛️ Battle #262 integration: Litestar's default `LoggingConfig` put a
     `QueueHandler` on the root logger at app construction and never
@@ -36,11 +36,15 @@ def _no_root_logging_handler_leak():
     the session was then retained in that queue, and the tracemalloc
     leak tests in tests/persistence read ~800 KB of "library growth" --
     one `from_snapshot` record per cycle -- whenever the Litestar file ran
-    first. That is the kind of cross-test contamination that turns an
-    honest leak test into a flake; make it loud at the source.
+    first. Celery's test worker did the level variant: it hijacked the
+    root logger (StreamHandler + level ERROR), after which `caplog` tests
+    asserting a WARNING read nothing. That is the kind of cross-test
+    contamination that turns an honest test into a flake; make it loud
+    at the source.
     """
     root = logging.getLogger()
     before = {id(h) for h in root.handlers}
+    level_before = root.level
     yield
     added = [
         h
@@ -53,4 +57,9 @@ def _no_root_logging_handler_leak():
         f"record for the rest of the session): {added!r}. Remove them in "
         "the fixture's teardown, or construct the framework app with its "
         "logging disabled (Litestar: logging_config=None)."
+    )
+    assert root.level == level_before, (
+        f"a test changed the ROOT logger level {level_before} -> "
+        f"{root.level} and left it (caplog tests downstream then miss "
+        "records). Celery: app.conf.worker_hijack_root_logger = False."
     )
