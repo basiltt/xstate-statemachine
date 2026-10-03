@@ -32,6 +32,7 @@ and invoked services.
 import copy
 import inspect
 import logging
+import threading
 from enum import Enum
 from typing import (
     cast,
@@ -803,10 +804,36 @@ def _PARSE_DEBUG() -> bool:
 #: 🛡️ #136: ids of the config dicts on the CURRENT construction descent.
 #: Module-level (not per-instance) because `StateNode.__init__` recurses
 #: before the parent exists; cleared on every unwind, so it is empty
-#: between `create_machine()` calls. Not thread-safe across concurrent
-#: machine builds, which is acceptable: a false positive here would be a
-#: typed error naming the state, never a wrong machine.
-_config_stack: Set[int] = set()
+#: between `create_machine()` calls.
+#: 🐛 #264 battle: it was ONE set for every thread, so two threads
+#:    building machines from the SAME config dict (a scanner pool's
+#:    ``machine_for_key = lambda k: create_machine(CFG)``) saw each
+#:    other's ids and raised a false "aliased cycle" -- 1 035 failures in
+#:    2 400 builds over 8 threads. Per-thread now.
+_config_stack_local = threading.local()
+
+
+class _ConfigStack:
+    """The calling thread's descent set (`set`-like: in / add / discard)."""
+
+    @staticmethod
+    def _set() -> Set[int]:
+        s = getattr(_config_stack_local, "s", None)
+        if s is None:
+            s = _config_stack_local.s = set()
+        return s
+
+    def __contains__(self, item: int) -> bool:
+        return item in self._set()
+
+    def add(self, item: int) -> None:
+        self._set().add(item)
+
+    def discard(self, item: int) -> None:
+        self._set().discard(item)
+
+
+_config_stack = _ConfigStack()
 
 
 class StateNode(Generic[TContext]):

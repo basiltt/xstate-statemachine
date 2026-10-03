@@ -693,9 +693,16 @@ def persisted(
                 interp.stop()
                 raise
             try:
-                _save_with_marks(
-                    store, key, interp, strategy.fence(version), markers
-                )
+                # 📝 #264 battle: a fence may refuse (the scanner's stale
+                #    check raises `ConflictError`); release buffered inbox
+                #    claims exactly as a refused save would.
+                try:
+                    expected = strategy.fence(version)
+                except BaseException:
+                    for m in markers:
+                        m.discard_marks()
+                    raise
+                _save_with_marks(store, key, interp, expected, markers)
             finally:
                 interp.stop()
 

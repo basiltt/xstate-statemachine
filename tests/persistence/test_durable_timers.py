@@ -410,14 +410,12 @@ class TestScanner:
         assert sc_skew.run_once(now=4.0) == 2  # within tolerance
         assert sc_skew.run_once(now=4.0) == 0
         assert store.load("b-1").deadlines  # prefix excluded it
-        # limit batches the keys INSPECTED per pass (sorted key order):
-        # with limit=1 only a-1 is looked at, and it was already fired.
+        # limit batches the EARLIEST due keys (#264 battle: it used to
+        # inspect the first `limit` keys by NAME, starving b-1 here).
         sc_lim = DueTimerScanner(store, lambda k: m, limit=1)
-        assert sc_lim.run_once(now=10.0) == 0
+        assert sc_lim.run_once(now=10.0) == 1  # b-1, the only one left
         assert sc_lim.last_result.scanned == 1
-        assert (
-            DueTimerScanner(store, lambda k: m).run_once(now=10.0) == 1
-        )  # b-1
+        assert DueTimerScanner(store, lambda k: m).run_once(now=10.0) == 0
         store.close()
 
     def test_stale_under_lock_is_skipped(self, tmp_path: Any) -> None:
