@@ -15,6 +15,7 @@ import gc
 import inspect
 import json
 import math
+import os
 import subprocess
 import sys
 import threading
@@ -683,18 +684,25 @@ class TestObservability(unittest.TestCase):
     def _cli(self, *args: str, tmp: Path) -> str:
         p = tmp / "cb.json"
         p.write_text(json.dumps(CIRCUIT_BREAKER_CONFIG), encoding="utf-8")
+        # 📝 Force UTF-8 in the CHILD: without it the CLI writes its table
+        #    in the console code page (cp1252 on Windows -- a "·" is 0xb7),
+        #    the parent's utf-8 reader thread dies on it and `r.stdout`
+        #    comes back None (handover §1; it passed only when an earlier
+        #    test had leaked PYTHONIOENCODING into os.environ).
+        env = {
+            **os.environ,
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+            "PYTHONPATH": str(ROOT / "src"),
+        }
         r = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "src.xstate_statemachine.cli",
-                *args,
-                str(p),
-            ],
+            [sys.executable, "-m", "xstate_statemachine", *args, str(p)],
             cwd=ROOT,
             capture_output=True,
             text=True,
             encoding="utf-8",
+            errors="replace",
+            env=env,
             timeout=25,
         )
         self.assertEqual(r.returncode, 0, r.stderr)

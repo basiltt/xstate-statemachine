@@ -33,6 +33,7 @@ from .circuit_breaker import (
 )
 from .dead_letter import (
     DEAD_LETTER_TAG,
+    ERRORS_CONTEXT_KEY,
     DeadLetter,
     DeadLetterPlugin,
     DeadLetterStore,
@@ -62,6 +63,7 @@ __all__ = [
     "circuit_breaker",
     "circuit_breaker_logic",
     "DEAD_LETTER_TAG",
+    "ERRORS_CONTEXT_KEY",
     "DeadLetter",
     "DeadLetterPlugin",
     "DeadLetterStore",

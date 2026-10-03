@@ -26,6 +26,9 @@ from ..django._events import declared_events
 from ..django._problems import problem_for_exception, receipt_fields
 from ..django.mixin import reserved_keys
 from ..django.permissions import has_event_permission, permitted_events
+from ...context_keys import (
+    public_context as _public_context,
+)  # 🔑 #265: no `_xsm_*` keys in API bodies
 
 __all__ = ["StatechartConsumer", "WS_POLICY_VIOLATION", "live_consumers"]
 
@@ -235,7 +238,9 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
             "machine_version": interp.machine.version or None,
         }
         if self.context_serializer is not None:
-            body["context"] = self.context_serializer(interp.context)
+            body["context"] = self.context_serializer(
+                _public_context(interp.context)
+            )
         return body
 
     # -- group messages ------------------------------------------------------------

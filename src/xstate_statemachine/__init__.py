@@ -104,6 +104,11 @@ from .models import ActionDefinition, MachineNode, OverflowPolicy
 # -----------------------------------------------------------------------------
 # 🔌 Extensibility & Plugins
 # -----------------------------------------------------------------------------
+from .context_keys import (  # 🔑 #265
+    PRIVATE_CONTEXT_PREFIX,
+    is_private_context_key,
+    public_context,
+)
 from .plugins import (
     LoggingInspector,
     PluginBase,
@@ -282,6 +287,9 @@ __all__ = [
     "ActionDefinition",
     # 🔌 Extensibility & Plugins
     "PluginBase",
+    "PRIVATE_CONTEXT_PREFIX",
+    "is_private_context_key",
+    "public_context",
     "LoggingInspector",
     "register_global",
     "unregister_global",

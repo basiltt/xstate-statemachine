@@ -47,6 +47,7 @@ __all__ = [
     "DeadLetterStore",
     "MemoryDeadLetterStore",
     "DEAD_LETTER_TAG",
+    "ERRORS_CONTEXT_KEY",
 ]
 
 #: The state tag that marks a dead-letter terminal state in the chart.

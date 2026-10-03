@@ -48,6 +48,7 @@ from src.xstate_statemachine import (
     wait_for,
 )
 from src.xstate_statemachine.patterns import (
+    ERRORS_CONTEXT_KEY,
     DeadLetter,
     DeadLetterPlugin,
     DeadLetterStore,
@@ -641,4 +642,93 @@ def test_stately_corpus(path: pathlib.Path) -> None:
     for r in store.all():
         assert DeadLetter.from_dict(json.loads(r.to_json())).id == r.id
     if i.status == "running":
+        i.stop()
+
+
+# =============================================================================
+# Review CRITICAL: the `_xsm_errors` key vs a strict context model
+# =============================================================================
+class TestPrivateContextKeyAndValidators:
+    CFG = {
+        "id": "m",
+        "initial": "a",
+        "context": {"n": 0},
+        "states": {
+            "a": {
+                "on": {
+                    "GO": {"target": "b", "actions": "boom"},
+                    "BUMP": {"actions": "bump"},
+                }
+            },
+            "b": {"on": {"BUMP": {"actions": "bump"}, "DL": "dl"}},
+            "dl": {"tags": ["dead-letter"]},
+        },
+    }
+
+    @staticmethod
+    def _logic() -> MachineLogic:
+        def boom(i: Any, c: Any, e: Any, a: Any) -> None:
+            raise RuntimeError("x")
+
+        def bump(i: Any, c: Any, e: Any, a: Any) -> None:
+            c["n"] += 1
+
+        return MachineLogic(actions={"boom": boom, "bump": bump})
+
+    def test_strict_pydantic_model_ignores_the_private_key(self) -> None:
+        """A `context_model(extra="forbid")` must not reject the context
+        because the plugin wrote `_xsm_errors` into it. Before the fix
+        every later action's validation failed ("Extra inputs are not
+        permitted at _xsm_errors") and under `rollback` the machine could
+        never move again."""
+        pydantic = pytest.importorskip("pydantic")
+        from src.xstate_statemachine.contrib.pydantic import context_model
+
+        class Ctx(pydantic.BaseModel):
+            model_config = pydantic.ConfigDict(extra="forbid")
+            n: int = 0
+
+        m = create_machine(
+            self.CFG,
+            logic=self._logic(),
+            context_validator=context_model(Ctx, write_back=False),
+        )
+        i = SyncInterpreter(m).use(DeadLetterPlugin(DeadLetterStore())).start()
+        r1 = i.send("GO", wait=True)
+        assert isinstance(r1.error, RuntimeError)
+        assert ERRORS_CONTEXT_KEY in i.context  # the chain is there
+        r2 = i.send("BUMP", wait=True)
+        assert r2.error is None and i.context["n"] == 1
+        i.stop()
+
+    def test_public_context_strips_private_keys(self) -> None:
+        from src.xstate_statemachine import (
+            PRIVATE_CONTEXT_PREFIX,
+            is_private_context_key,
+            public_context,
+        )
+
+        assert ERRORS_CONTEXT_KEY.startswith(PRIVATE_CONTEXT_PREFIX)
+        assert is_private_context_key(ERRORS_CONTEXT_KEY)
+        assert not is_private_context_key("errors") and not (
+            is_private_context_key(7)
+        )
+        assert public_context({"a": 1, ERRORS_CONTEXT_KEY: [{}]}) == {"a": 1}
+
+    def test_web_body_never_shows_the_chain(self) -> None:
+        """The generic Starlette `state_body` hands the serializer the
+        PUBLIC view, so a pass-through serializer cannot leak `_xsm_errors`
+        (the chain holds error messages -- operator data, not API data)."""
+        pytest.importorskip("starlette")
+        from src.xstate_statemachine.contrib.starlette._http import (
+            state_body,
+        )
+
+        m = create_machine(self.CFG, logic=self._logic())
+        i = SyncInterpreter(m).use(DeadLetterPlugin(DeadLetterStore())).start()
+        i.send("GO")
+        assert ERRORS_CONTEXT_KEY in i.context
+        body = state_body(i, lambda c: dict(c))
+        assert ERRORS_CONTEXT_KEY not in body["context"]
+        assert body["context"] == {"n": 0}
         i.stop()
