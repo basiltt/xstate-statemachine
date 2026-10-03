@@ -2716,7 +2716,7 @@ class BaseInterpreter(Generic[TContext]):
             #    resolve by the NEWEST `entry_seq` (a lower seq is a stale
             #    record from a prior visit and must never fire, #305), then
             #    the EARLIEST due time -- order-independent, never late.
-            newest: Dict[Tuple[str, str], Tuple[int, float]] = {}
+            newest: Dict[Tuple[str, str], Tuple[int, float, int]] = {}
             for d in parked:
                 left = (d.due_at_wall - now) * 1000.0
                 key = (d.state_id, d.event_type)
@@ -2725,14 +2725,33 @@ class BaseInterpreter(Generic[TContext]):
                     seen[0],
                     -seen[1],
                 ):
-                    newest[key] = (d.entry_seq, left)
-            for (sid, etype), (_, left) in newest.items():
-                by_state.setdefault(sid, {})[etype] = left
+                    newest[key] = (d.entry_seq, left, d.delay_ms)
+            raw_left: Dict[str, float] = {}
+            for (sid, etype), (_, left, armed_ms) in newest.items():
+                # 🛡️ #264 review H2: clamp the remainder to the delay the
+                #    deadline was ARMED with (persisted `delay_ms`), not
+                #    today's declared value. A chart redeployed with a
+                #    shorter `after` (24 h -> 1 h) must not fire a 23 h
+                #    remainder in 1 h -- "no earlier than due" is the
+                #    guarantee. The clamp exists for a stepped-back wall
+                #    clock / a far-future `due_at_wall`, where the armed
+                #    delay is exactly the right ceiling.
+                by_state.setdefault(sid, {})[etype] = min(
+                    max(0.0, left), float(armed_ms)
+                )
+                # 📝 Ordering uses the UNclamped remainder: five matured
+                #    deadlines all clamp to 0 ms, but must still arm (and
+                #    so fire) most-overdue first.
+                raw_left[sid] = min(raw_left.get(sid, float("inf")), left)
         # ⏰ #264: arm in DEADLINE order. Every matured deadline is re-armed
         #    at 0 ms, and the clock heap breaks ties by arm order -- so the
         #    most overdue timer must be armed first for `fire_due` to fire
         #    them in the order they would have fired had the process lived.
-        earliest = {sid: min(v.values()) for sid, v in by_state.items() if v}
+        earliest = (
+            raw_left
+            if mode in ("resume", "fire_due")
+            else {sid: min(v.values()) for sid, v in by_state.items() if v}
+        )
         states = sorted(
             self._active_state_nodes,
             key=lambda st: (earliest.get(st.id, float("inf")), st.id),
@@ -5981,16 +6000,14 @@ class BaseInterpreter(Generic[TContext]):
                 seen_events.add(t_def.event)
                 effective_ms = float(resolved_ms)
                 if remaining is not None and t_def.event in remaining:
-                    # 📝 #264 battle: clamp to [0, declared]. A wall clock
-                    #    stepped BACK (NTP) or a far-future `due_at_wall`
-                    #    made the remainder exceed the declared delay -- the
-                    #    timer fired hours late and the re-emitted record
-                    #    carried `due_at_wall=inf`, which `check_shape` then
-                    #    refused on the next load (a poisoned key). A timer
-                    #    never waits longer than its chart declares.
-                    effective_ms = min(
-                        max(0.0, remaining[t_def.event]), effective_ms
-                    )
+                    # 📝 #264 battle: `remaining` arrives already clamped to
+                    #    [0, the delay the deadline was armed with] by
+                    #    `_rearm_dormant_timers` (review H2) -- a stepped-
+                    #    back wall clock or a far-future `due_at_wall` can
+                    #    never make a timer wait longer than it was armed
+                    #    for, and a redeployed shorter delay can never make
+                    #    it fire early. Non-negative here, belt and braces.
+                    effective_ms = max(0.0, remaining[t_def.event])
                 delay_sec = effective_ms / 1000.0
                 # 📏 #48: record the deadline so the fired event can report
                 #    its own lateness.

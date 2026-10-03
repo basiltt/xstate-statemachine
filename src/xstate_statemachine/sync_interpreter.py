@@ -1971,12 +1971,24 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         silently died. Only restored children are touched; a stopped one
         is left alone (starting it would raise).
         """
+        started = 0
         for actor in list(self._actors.values()):
             if not getattr(actor, "_restored_from_snapshot", False):
                 continue
-            if getattr(actor, "status", None) == "stopped":
+            # 📝 Review M5: a child restored as done / error / stopped is
+            #    finished; "starting" it would only fire a spurious
+            #    `on_interpreter_start` into audit / metrics plugins.
+            if getattr(actor, "status", None) in _TERMINAL_STATUSES:
                 continue
             actor.start()
+            started += 1
+        # 📬 Review M6: a resumed child's matured `after` may `sendParent`;
+        #    that event is in OUR queue now. Drain once more so it runs as
+        #    part of this start(), not behind the next unrelated send() --
+        #    and so a `persisted()` block does not snapshot it as inbox.
+        if started and self.status == "running":
+            self._process_event_queue()
+            self._process_transient_transitions()
 
     def _pump_timers(self) -> int:
         """Fire every due clock deadline onto the queue (the timer pump).

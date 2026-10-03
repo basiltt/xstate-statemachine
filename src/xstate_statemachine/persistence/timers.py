@@ -87,7 +87,10 @@ class ScanResult:
         due: Keys with at least one matured deadline.
         woken: Machines actually loaded and fired.
         skipped_stale: Due keys skipped because the deadline changed under
-            the lock (another worker won, or the machine moved on).
+            the lock (another worker won, or the machine moved on), the
+            fenced save lost an optimistic race (`ConflictError`), or the
+            key's lock could not be taken (`LockTimeoutError`; also
+            counted in `locked`).
         errors: ``(key, exception)`` for keys whose wake raised.
         max_lag_s: Worst (now - due_at) among fired deadlines -- the
             "how late are we" metric (X0.12).
@@ -99,6 +102,13 @@ class ScanResult:
     skipped_stale: int = 0
     errors: List[Tuple[str, BaseException]] = field(default_factory=list)
     max_lag_s: float = 0.0
+    #: #264 battle (review M2): how many of `skipped_stale` were a
+    #: `LockTimeoutError` (the key's lock could not be taken within the
+    #: strategy's timeout). A subset of `skipped_stale`, kept separately so
+    #: a permanently stuck holder is visible: `locked` climbing every tick
+    #: while `due` does not fall is the alert; a one-off is the normal
+    #: scanner-vs-request race.
+    locked: int = 0
 
 
 class DueTimerScanner:
@@ -221,8 +231,8 @@ class DueTimerScanner:
                 #    then re-read and confirm a matured deadline is STILL
                 #    there. A machine another worker advanced between our
                 #    scan and now has no such deadline and is skipped, never
-                #    double-fired (X0.9). `persisted()` re-acquires the same
-                #    lock re-entrantly on the same thread.
+                #    double-fired (X0.9). The inner `persisted()` is handed
+                #    `_Held`, which keeps the fence and skips the take.
                 strategy = self.lock if self.lock is not None else _DEFAULT
                 with strategy.acquire(self.store, key):
                     rec = self.store.load(key)
@@ -271,6 +281,11 @@ class DueTimerScanner:
                 #    `max_lag_s` / `due` count, not as one error per tick.
                 logger.debug("⏰ DueTimerScanner: '%s' is locked", key)
                 result.skipped_stale += 1
+                # 📊 Review M2: counted separately too, so "lost a normal
+                #    race" and "could not take the lock" are told apart --
+                #    `locked` rising tick after tick for the same `due`
+                #    count is a stuck holder; alert on that.
+                result.locked += 1
             except (
                 Exception
             ) as exc:  # noqa: BLE001 -- one key must not stop the scan

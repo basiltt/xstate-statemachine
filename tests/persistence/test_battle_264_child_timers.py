@@ -172,3 +172,211 @@ def test_false_keeps_children_static() -> None:
         ("kid", {"kid.w"}, ["kid.w"]),
     ]
     r.stop()
+
+
+# ---------------------------------------------------------------------------
+# Review M5 / M6 / H1: finished children, sendParent on resume, invokes
+# ---------------------------------------------------------------------------
+class Starts:
+    """Count `on_interpreter_start` per machine id."""
+
+    def __init__(self) -> None:
+        self.ids: List[str] = []
+
+    def on_interpreter_start(self, interp: Any) -> None:
+        self.ids.append(interp.machine.id)
+
+    def __getattr__(self, name: str) -> Any:  # every other hook: no-op
+        if name.startswith("on_"):
+            return lambda *a, **k: None
+        raise AttributeError(name)
+
+
+NOTIFIER_KID = {
+    "id": "kid",
+    "initial": "w",
+    "states": {
+        "w": {
+            "after": {"5000": {"target": "d", "actions": "tell"}},
+        },
+        "d": {"type": "final"},
+    },
+}
+NOTIFIER_PARENT = {
+    "id": "par",
+    "initial": "a",
+    "context": {"told": 0},
+    "states": {
+        "a": {"entry": "spawn_kid", "on": {"TOLD": {"actions": "bump"}}}
+    },
+}
+
+
+def _notifier_parent() -> Any:
+    def tell(i: Any, c: Any, e: Any, a: Any) -> None:
+        i.parent.send("TOLD")
+
+    def bump(i: Any, c: Any, e: Any, a: Any) -> None:
+        c["told"] += 1
+
+    kid = create_machine(
+        NOTIFIER_KID, logic=MachineLogic(actions={"tell": tell})
+    )
+    return create_machine(
+        NOTIFIER_PARENT,
+        logic=MachineLogic(services={"kid": kid}, actions={"bump": bump}),
+    )
+
+
+@pytest.mark.parametrize("eng", ["sync", "async"])
+def test_finished_child_is_not_restarted_on_resume(eng: str) -> None:
+    """Review M5: a child restored as `done` is finished -- no spurious
+    `on_interpreter_start` for it on either engine."""
+    clk0 = SimulatedClock(wall_start=1)
+    i = SyncInterpreter(_notifier_parent(), clock=clk0).start()
+    clk0.increment(2000)
+    b_dict = json.loads(i.get_snapshot())
+    i.stop()
+    # 📝 A child that reaches `done` is REAPED from the parent (#57), so a
+    #    snapshot taken afterwards carries no such child. The M5 case is a
+    #    blob written mid-flight whose child record says `done` -- which
+    #    is what a child-first save ordering, or a hand-edited blob, can
+    #    produce. Build it.
+    (kid_rec,) = b_dict["actors"].values()
+    kid_rec["snapshot"]["status"] = "done"
+    kid_rec["snapshot"]["state_ids"] = ["kid.d"]
+    kid_rec["snapshot"]["configuration"] = ["kid", "kid.d"]
+    kid_rec["snapshot"]["deadlines"] = []
+    b = json.dumps(b_dict)
+
+    starts = Starts()
+    if eng == "sync":
+        r = SyncInterpreter.from_snapshot(
+            b,
+            _notifier_parent(),
+            clock=SimulatedClock(wall_start=100),
+            restart_timers="fire_due",
+            plugins=[starts],
+        ).start()
+        r.stop()
+    else:
+
+        async def run() -> None:
+            r = Interpreter.from_snapshot(
+                b,
+                _notifier_parent(),
+                clock=SimulatedClock(wall_start=100),
+                restart_timers="fire_due",
+                plugins=[starts],
+            )
+            await r.start()
+            await r.stop()
+
+        asyncio.run(run())
+    assert starts.ids == ["par"]  # the kid (done) was not started
+
+
+def test_sync_resumed_child_sendparent_lands_in_this_start() -> None:
+    """Review M6: a child's matured `after` that `sendParent`s during the
+    parent's `start()` must be processed by THAT start -- not sit in the
+    parent's inbox until an unrelated send() (and be snapshotted as
+    pending by a `persisted()` block in between)."""
+    clk0 = SimulatedClock(wall_start=1)
+    i = SyncInterpreter(_notifier_parent(), clock=clk0).start()
+    clk0.increment(2000)  # kid timer: 3 s remain
+    b = i.get_snapshot()
+    i.stop()
+
+    r = SyncInterpreter.from_snapshot(
+        b,
+        _notifier_parent(),
+        clock=SimulatedClock(wall_start=100),  # 99 s later: matured
+        restart_timers="fire_due",
+    ).start()
+    assert r.context["told"] == 1, "TOLD was left in the parent's inbox"
+    assert json.loads(r.get_snapshot())["pending_events"] == []
+    r.stop()
+
+
+INVOKING_KID = {
+    "id": "kid",
+    "initial": "w",
+    "states": {
+        "w": {
+            "invoke": {"id": "job", "src": "job", "onDone": "ok"},
+            "after": {"5000": "late"},
+        },
+        "ok": {"type": "final"},
+        "late": {"type": "final"},
+    },
+}
+
+
+@pytest.mark.parametrize("restart_services", [False, True])
+def test_child_with_invoke_and_after_restart_services_flag(
+    restart_services: bool,
+) -> None:
+    """Review H1, pinned: `restart_services` is forwarded to child
+    restores too. With False the child's dormant invoke stays dormant
+    (its `after` still fires -- a timer is not a service); with True the
+    service re-runs and wins the race against the 5 s timer."""
+    calls: List[int] = []
+
+    def job(i: Any, c: Any, e: Any) -> int:
+        calls.append(1)
+        import time
+
+        time.sleep(0.05)
+        return 1
+
+    def parent() -> Any:
+        kid = create_machine(
+            INVOKING_KID, logic=MachineLogic(services={"job": job})
+        )
+        return create_machine(
+            PARENT, logic=MachineLogic(services={"kid": kid})
+        )
+
+    # A kid caught mid-invoke: use the TIMER-ONLY kid from `_parent()` to
+    # get a live child record, then rewrite it into the invoking kid's
+    # shape (state `w` with a 5 s deadline armed at wall 1) -- what a
+    # worker that died during the invoke leaves behind.
+    i = SyncInterpreter(_parent(), clock=SimulatedClock(wall_start=1)).start()
+    b = json.loads(i.get_snapshot())
+    i.stop()
+    kid_rec = next(
+        rec
+        for rec in b["actors"].values()
+        if rec["snapshot"]["machine_id"] == "kid"
+    )
+    kid_rec["snapshot"].pop("machine_hash", None)  # a different kid chart
+    kid_rec["snapshot"]["actors"] = {}  # drop the grandkid
+    kid_rec["snapshot"]["system"] = {}
+    kid_rec["snapshot"]["state_ids"] = ["kid.w"]
+    kid_rec["snapshot"]["configuration"] = ["kid", "kid.w"]
+    kid_rec["snapshot"]["status"] = "running"
+    kid_rec["snapshot"]["deadlines"] = [
+        {
+            "state_id": "kid.w",
+            "entry_seq": 1,
+            "due_at_wall": 6.0,
+            "delay_ms": 5000,
+            "event_type": "after.5000.kid.w",
+        }
+    ]
+    calls.clear()
+    r = SyncInterpreter.from_snapshot(
+        json.dumps(b),
+        parent(),
+        clock=SimulatedClock(wall_start=3),  # 3 s remain on the timer
+        restart_timers="resume",
+        restart_services=restart_services,
+        verify_machine_hash=False,  # the kid chart is the invoking one
+    ).start()
+    (kid2,) = r._actors.values()
+    if restart_services:
+        assert len(calls) == 1 and kid2.current_state_ids == {"kid.ok"}
+    else:
+        assert calls == [] and kid2.has_dormant_invocations
+        assert kid2.current_state_ids == {"kid.w"}
+    r.stop()

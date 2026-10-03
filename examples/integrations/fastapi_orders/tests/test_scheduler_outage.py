@@ -107,20 +107,34 @@ def afternoon(tmp_path: Any) -> Dict[str, Any]:
                 )
     # 📝 Re-anchor every deadline to a staggered checkout time so the
     #    backlog has a real ORDER to it: order i checked out at
-    #    14:00 + i * 27 s. (The requests above all ran "now"; the store
-    #    is rewritten the way the afternoon would have left it.)
-    import sqlite3
-
-    con = sqlite3.connect(db)
+    #    14:00 + i * 27 s. (The requests above all ran "now".) Rewrite
+    #    through the STORE so the record's JSON `deadlines` and the index
+    #    agree -- the scanner reads the index, the woken machine reads the
+    #    blob (review M1: a SQL-only shift left the two inconsistent).
     for i in range(N_ORDERS):
         key = f"order.o{i:04d}"
         shift = i * 27.0
-        con.execute(
-            "UPDATE deadlines SET due_at_wall = due_at_wall + ? WHERE key = ?",
-            (shift, key),
+        rec = store.load(key)
+        blob = json.loads(rec.snapshot)
+        shifted = [
+            d.__class__(
+                state_id=d.state_id,
+                entry_seq=d.entry_seq,
+                due_at_wall=d.due_at_wall + shift,
+                delay_ms=d.delay_ms,
+                event_type=d.event_type,
+            )
+            for d in rec.deadlines
+        ]
+        for rd in blob.get("deadlines") or []:
+            rd["due_at_wall"] = rd["due_at_wall"] + shift
+        store.save(
+            key,
+            json.dumps(blob),
+            expected_version=rec.version,
+            machine_version=rec.machine_version,
+            deadlines=shifted,
         )
-    con.commit()
-    con.close()
     return {"db": db, "store": store, "reg": reg, "app": app, "t_down": t_down}
 
 

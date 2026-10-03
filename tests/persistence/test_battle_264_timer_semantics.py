@@ -435,6 +435,56 @@ class TestCorruption:
         assert r.current_state_ids == {"r.d"}
         r.stop()
 
+    def test_redeployed_shorter_delay_does_not_fire_early(self) -> None:
+        """Review H2: the clamp bounds the remainder by the delay the
+        deadline was ARMED with (persisted `delay_ms`), not today's
+        declared value. Armed with 24 h, chart redeployed with 1 h (same
+        state id, same event type), restored 1 h in: 23 h remain -- the
+        first cut clamped that to 1 h and fired 22 h EARLY, breaking "no
+        earlier than due". Now the full remainder is honoured."""
+        day = {**CFG, "states": {**CFG["states"]}}
+        day["states"]["w"] = {**CFG["states"]["w"], "after": {"86400000": "d"}}
+        b = _blob(_m(day))  # armed with 24 h at T0
+        (d,) = b["deadlines"]
+        assert d["delay_ms"] == 86_400_000
+        hour = {**CFG, "states": {**CFG["states"]}}
+        hour["states"]["w"] = {**CFG["states"]["w"], "after": {"3600000": "d"}}
+        # the event type is keyed by the delay, so rename it the way a
+        # SnapshotMigrator step would when the chart's `after` key changed
+        b["deadlines"][0]["event_type"] = "after.3600000.r.w"
+        # (the structure changed by design: the redeploy is "known
+        # compatible", exactly the documented `verify_machine_hash=False`
+        # case; a real deploy would do this through a migrator step)
+        clk = SimulatedClock(wall_start=T0 + 3600)
+        r = SyncInterpreter.from_snapshot(
+            json.dumps(b),
+            _m(hour),
+            clock=clk,
+            restart_timers="resume",
+            verify_machine_hash=False,
+        )
+        r.start()
+        (pending,) = r.pending_deadlines()
+        assert pending.due_at_wall == pytest.approx(T0 + 86_400)  # unchanged
+        clk.increment(3600 * 1000)  # 1 h later: the OLD rule would fire here
+        assert r.current_state_ids == {"r.w"}
+        clk.increment((86_400 - 7200) * 1000)  # the real remainder
+        assert r.current_state_ids == {"r.d"}
+        r.stop()
+
+    def test_clock_stepped_back_clamps_to_armed_delay(self) -> None:
+        """The clamp's reason to exist: a wall clock stepped BACK 2 h makes
+        the remainder 2 h 5 s on a 5 s timer -- clamped to the 5 s it was
+        armed with."""
+        b = _blob(_m())
+        r, clk = _sync_restore(b, _m(), T0 - 7200, "resume")
+        r.start()
+        clk.increment(4999)
+        assert r.current_state_ids == {"r.w"}
+        clk.increment(1)
+        assert r.current_state_ids == {"r.d"}
+        r.stop()
+
     def test_duplicate_records_newest_seq_beats_earlier_stale(self) -> None:
         b = _blob(_m())
         fresh = dict(b["deadlines"][0], entry_seq=5)

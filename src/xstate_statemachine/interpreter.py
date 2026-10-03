@@ -647,7 +647,17 @@ class Interpreter(BaseInterpreter[TContext]):
                             await self._settle_for_clock()
             # 👶 Resume restored child actors too, so a whole hierarchy comes
             #    back alive rather than just its root.
+            # 📝 #264 review M5 (parity with the sync engine): a child
+            #    restored as done / error / stopped is finished -- do not
+            #    "start" it (a spurious `on_interpreter_start`; a stopped
+            #    one would raise).
             for actor in list(self._actors.values()):
+                if getattr(actor, "status", None) in (
+                    "stopped",
+                    "done",
+                    "error",
+                ):
+                    continue
                 resumed = actor.start()
                 if inspect.isawaitable(resumed):
                     await resumed
