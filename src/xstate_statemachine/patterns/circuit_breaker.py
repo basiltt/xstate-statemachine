@@ -30,6 +30,7 @@ import asyncio
 import copy
 import functools
 import inspect
+import math
 import threading
 from typing import (
     Any,
@@ -38,11 +39,12 @@ from typing import (
     Iterable,
     Literal,
     Optional,
+    Tuple,
     TypeVar,
 )
 
 from ..clock import Clock
-from ..exceptions import XStateMachineError
+from ..exceptions import InterpreterStoppedError, XStateMachineError
 from ..factory import create_machine
 from ..machine_logic import MachineLogic
 from ..sync_interpreter import SyncInterpreter
@@ -202,6 +204,12 @@ class CircuitBreaker:
             raise ValueError(
                 "failure_threshold and half_open_max_calls must be >= 1"
             )
+        # 📝 #265 battle: a negative cooldown half-opened instantly, NaN
+        #    and inf left the circuit open forever (the `after` was
+        #    silently skipped). Silent acceptance is a bug -- fail loudly.
+        cooldown = float(cooldown_ms)
+        if not math.isfinite(cooldown) or cooldown < 0:
+            raise ValueError("cooldown_ms must be a finite number >= 0")
         cfg = copy.deepcopy(CIRCUIT_BREAKER_CONFIG)
         cfg["context"]["failure_threshold"] = int(failure_threshold)
         cfg["context"]["half_open_max_calls"] = int(half_open_max_calls)
@@ -210,6 +218,8 @@ class CircuitBreaker:
         self.name = cfg["id"]
         self.exceptions = exceptions
         self._lock = threading.RLock()
+        # 🏛️ #265 battle: bumped by `reset()`; part of the admission token.
+        self._generation = 0
         machine = create_machine(cfg, logic=circuit_breaker_logic(cooldown_ms))
         self._interp: SyncInterpreter[Any] = SyncInterpreter(
             machine, clock=clock
@@ -249,28 +259,57 @@ class CircuitBreaker:
         return self._interp
 
     # -- admission ----------------------------------------------------------------
-    def _admit(self) -> None:
-        """Decide, under the lock, whether one call may proceed."""
+    def _window(self, state: str) -> Tuple[int, int, str]:
+        return (
+            self._generation,
+            int(self._interp.context["opened_count"]),
+            state,
+        )
+
+    def _admit(self) -> Tuple[int, int, str]:
+        """Decide, under the lock, whether one call may proceed.
+
+        Returns the admission *window* the outcome must be recorded in.
+        """
         with self._lock:
+            # 📝 #265 battle: after `close()` the interpreter is stopped
+            #    and every `send` is dropped -- `call()` used to run the
+            #    target with no protection at all. Fail loudly instead.
+            if self._interp.status != "running":
+                raise InterpreterStoppedError(
+                    f"Circuit '{self.name}' is closed (stopped); "
+                    f"call rejected without invoking the target."
+                )
             self._interp.tick()
             state = self._leaf()
             if state == "closed":
-                return
+                return self._window(state)
             if state == "half_open":
                 rcp = self._interp.send("PROBE", wait=True)
                 if rcp is not None and rcp.changed:
-                    return  # probe slot taken by THIS caller
+                    # probe slot taken by THIS caller
+                    return self._window(state)
             raise CircuitOpenError(self.name, state)
 
-    def _record(self, ok: bool) -> None:
+    def _record(self, ok: bool, window: Tuple[int, int, str]) -> None:
         with self._lock:
+            # 🏛️ #265 battle: an outcome only counts in the window that
+            #    admitted it. A slow call admitted while `closed` whose
+            #    SUCCESS landed after the breaker had opened and
+            #    half-opened used to CLOSE the circuit without any probe
+            #    (and a late FAILURE re-opened it). Late results from an
+            #    earlier window -- or from before `reset()` -- are ignored.
+            if window != self._window(self._leaf()):
+                return
             self._interp.send("SUCCESS" if ok else "FAILURE")
 
     def reset(self) -> None:
         """Force the circuit closed (operator override)."""
         with self._lock:
+            self._generation += 1  # in-flight outcomes become stale
             # A SUCCESS closes half_open; from open we must re-start.
             if self._leaf() == "open":
+                opened = int(self._interp.context["opened_count"])
                 self._interp.stop()
                 machine = self._interp.machine
                 clock = self._interp.clock
@@ -279,19 +318,22 @@ class CircuitBreaker:
                 for p in plugins:
                     self._interp.use(p)
                 self._interp.start()
+                # 📝 #265 battle: `opened_count` is a lifetime trip
+                #    counter; the rebuild must not zero it.
+                self._interp.context["opened_count"] = opened
             else:
                 self._interp.send("SUCCESS")
 
     # -- calling ---------------------------------------------------------------------
     def call(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         """Run *fn* through the breaker (sync target)."""
-        self._admit()
+        window = self._admit()
         try:
             result = fn(*args, **kwargs)
         except self.exceptions:
-            self._record(False)
+            self._record(False, window)
             raise
-        self._record(True)
+        self._record(True, window)
         return result
 
     async def acall(
@@ -305,7 +347,7 @@ class CircuitBreaker:
         The breaker's own bookkeeping is synchronous and lock-guarded, so
         one `CircuitBreaker` may be shared by async tasks and threads.
         """
-        self._admit()
+        window = self._admit()
         try:
             result = fn(*args, **kwargs)
             if inspect.isawaitable(result):
@@ -313,9 +355,9 @@ class CircuitBreaker:
         except asyncio.CancelledError:
             raise
         except self.exceptions:
-            self._record(False)
+            self._record(False, window)
             raise
-        self._record(True)
+        self._record(True, window)
         return result
 
     def close(self) -> None:
@@ -339,8 +381,19 @@ def circuit_breaker(
     """
 
     def deco(fn: Callable[..., Any]) -> Callable[..., Any]:
-        kwargs.setdefault("name", getattr(fn, "__name__", "circuitBreaker"))
-        breaker = CircuitBreaker(**kwargs)
+        # 📝 #265 battle: a generator's body runs AFTER the wrapper has
+        #    returned, so the breaker would record SUCCESS before any work
+        #    happened and never see the failures. Refuse loudly.
+        if inspect.isgeneratorfunction(fn) or inspect.isasyncgenfunction(fn):
+            raise TypeError(
+                "circuit_breaker() cannot wrap a generator function: its "
+                "outcome is unknown when the call returns"
+            )
+        # 📝 #265 battle: copy -- `setdefault` on the shared kwargs made a
+        #    reused decorator name every later breaker after the first fn.
+        opts = dict(kwargs)
+        opts.setdefault("name", getattr(fn, "__name__", "circuitBreaker"))
+        breaker = CircuitBreaker(**opts)
         if inspect.iscoroutinefunction(fn):
 
             @functools.wraps(fn)
