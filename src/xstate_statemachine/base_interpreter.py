@@ -30,6 +30,7 @@ import copy
 import inspect
 import json
 import logging
+import math
 import threading
 import time
 import warnings
@@ -2395,6 +2396,13 @@ class BaseInterpreter(Generic[TContext]):
                 child_machine,
                 verify_machine_hash=verify_machine_hash,
                 restart_services=restart_services,
+                # 📝 #264 battle: forward the timer policy and the clock.
+                #    Without them a child's persisted `after` deadline was
+                #    parked forever (its SLA silently died) and a restored
+                #    child ran on a RealClock while its parent was on the
+                #    injected one -- the same split #117 fixed for roots.
+                restart_timers=restart_timers,
+                clock=clock,
                 on_version_mismatch=on_version_mismatch,
                 migrator=migrator,  # #263: children follow the same policy
             )
@@ -2695,10 +2703,22 @@ class BaseInterpreter(Generic[TContext]):
         by_state: Dict[str, Dict[str, float]] = {}
         if mode in ("resume", "fire_due"):
             now = self.wall_now()
+            # 📝 #264 battle: duplicate records for one (state, event)
+            #    resolve by the NEWEST `entry_seq` (a lower seq is a stale
+            #    record from a prior visit and must never fire, #305), then
+            #    the EARLIEST due time -- order-independent, never late.
+            newest: Dict[Tuple[str, str], Tuple[int, float]] = {}
             for d in parked:
-                by_state.setdefault(d.state_id, {})[d.event_type] = (
-                    d.due_at_wall - now
-                ) * 1000.0
+                left = (d.due_at_wall - now) * 1000.0
+                key = (d.state_id, d.event_type)
+                seen = newest.get(key)
+                if seen is None or (d.entry_seq, -left) > (
+                    seen[0],
+                    -seen[1],
+                ):
+                    newest[key] = (d.entry_seq, left)
+            for (sid, etype), (_, left) in newest.items():
+                by_state.setdefault(sid, {})[etype] = left
         # ⏰ #264: arm in DEADLINE order. Every matured deadline is re-armed
         #    at 0 ms, and the clock heap breaks ties by arm order -- so the
         #    most overdue timer must be armed first for `fire_due` to fire
@@ -5919,6 +5939,15 @@ class BaseInterpreter(Generic[TContext]):
         for delay_ms, transitions in state.after.items():
             # 🏷️ Symbolic delays resolve through MachineLogic.delays.
             resolved_ms = self._resolve_delay(delay_ms, None)
+            # 📝 #264 battle: a delay of NaN / inf crashed `int(round())`
+            #    below with a bare ValueError during entry; a negative one
+            #    was persisted as `delay_ms < 0`, which `check_shape` then
+            #    refused on the next load. Non-finite == unresolvable;
+            #    negative == "now" (what the clock already did with it).
+            if resolved_ms is not None and not math.isfinite(resolved_ms):
+                resolved_ms = None
+            elif resolved_ms is not None and resolved_ms < 0:
+                resolved_ms = 0.0
             if resolved_ms is None:
                 logger.warning(
                     "⚠️ Skipping 'after' transition on '%s': delay %r could "
@@ -5943,7 +5972,16 @@ class BaseInterpreter(Generic[TContext]):
                 seen_events.add(t_def.event)
                 effective_ms = float(resolved_ms)
                 if remaining is not None and t_def.event in remaining:
-                    effective_ms = max(0.0, remaining[t_def.event])
+                    # 📝 #264 battle: clamp to [0, declared]. A wall clock
+                    #    stepped BACK (NTP) or a far-future `due_at_wall`
+                    #    made the remainder exceed the declared delay -- the
+                    #    timer fired hours late and the re-emitted record
+                    #    carried `due_at_wall=inf`, which `check_shape` then
+                    #    refused on the next load (a poisoned key). A timer
+                    #    never waits longer than its chart declares.
+                    effective_ms = min(
+                        max(0.0, remaining[t_def.event]), effective_ms
+                    )
                 delay_sec = effective_ms / 1000.0
                 # 📏 #48: record the deadline so the fired event can report
                 #    its own lateness.
