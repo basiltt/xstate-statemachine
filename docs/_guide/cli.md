@@ -428,8 +428,10 @@ xsm [-h] [-v] [--plain] [--no-color] [--no-anim] [--verbose]
 | `update` | — | Check PyPI and upgrade to the latest release with the installer that installed you (`--check`, `--yes`) |
 | `setup` | — | Windows: swap pip's blocked `xsm.exe` launcher for a batch shim (`--check`, `--undo`) |
 | `new` | — | Scaffold a project from an example app ([`--template fastapi`](#new-project), `--list`) |
+| `snapshots` | — | Ops view of a persistence store: keys, labels, status, age; [`--stale`](#snapshots) is the drain list for a deploy, `--fail-if-stale` the gate |
+| `dlq` | — | List / show / replay / purge dead-lettered messages (see [Event-driven architecture](../integration-eda/#dead-letters)) |
 
-Every command that reports facts also has a `--json` switch (`validate`, `inspect`, `paths`, `simulate`, `list-templates`, `info`) so the same information can be consumed by scripts.
+Every command that reports facts also has a `--json` switch (`validate`, `inspect`, `paths`, `simulate`, `list-templates`, `info`, `snapshots`, `dlq`) so the same information can be consumed by scripts.
 
 ## 🧭 Interactive Launcher
 
@@ -943,6 +945,21 @@ repos:
 ```
 
 Both hooks are `language: python`, so pre-commit installs the library into its own environment; nothing is needed on your `PATH`.
+
+## Snapshots
+
+```bash
+xsm snapshots --store sqlite:///orders.db                               # every key: label, status, age, deadlines
+xsm snapshots --store sqlite:///orders.db machine.json --stale          # keys whose label differs from the chart's
+xsm snapshots --store sqlite:///orders.db machine.json --fail-if-stale  # exit 1 while any remain -- a deploy gate
+xsm snapshots --store file:///var/lib/app/state --prefix order. --limit 50 --json
+```
+
+What is in a store, and what a new chart revision still has to migrate. `--store` takes `sqlite:///relative.db`, `sqlite:////absolute.db` (SQLAlchemy's rule; `sqlite:///C:/...` works on Windows) or `file:///dir`; a path that does not exist is refused with exit **2** rather than silently created empty, and `memory://` is refused as meaningless. With a machine JSON the chart's `"version"` is the reference; `--stale` lists the keys whose stored `machine_version` differs. Two rules agree with restore: an **unlabelled** record (written before the chart had a `"version"`, or by 0.10.x) is **not** stale — a restore warns, it does not refuse — and a chart with **no** `"version"` has nothing stale.
+
+Cheap at scale: the label index is read for every key (`list_versions` — one `SELECT` on SQLite, a header read on `FileStore`), never the snapshot blobs, and `--limit` caps the *output*, not the scan — 10 000 keys with 100 stale take 0.1 s on SQLite. `--json` carries `total` and `truncated` when the limit cut the list; the table title says "N of M". Keys are shown with control characters escaped so a key containing a newline cannot fake a row (`--json` keeps them verbatim). `--json` never includes `context` (X0.1). Exit codes: **0** listed (stale or not), **1** `--fail-if-stale` and stale keys exist, **2** bad input — not a machine, a missing or unreadable store, a machine file over 16 MiB or nested past the parser.
+
+Pair it with the migrator: deploy readers that carry the `SnapshotMigrator`, let traffic migrate each instance on its first write, and run `--fail-if-stale` before retiring the old workers. See [Versioning in-flight instances](../persistence/#versioning-in-flight-instances) and the [`fastapi_orders` rolling upgrade](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders#rolling-upgrade-chart-v2-while-v1-orders-are-mid-flight). Django models have the same view as `manage.py xsm_snapshots app.Model [--stale] [--json]`.
 
 ## New project
 
