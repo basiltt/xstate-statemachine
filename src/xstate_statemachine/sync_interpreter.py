@@ -406,6 +406,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                     self._pump_timers()
             self._process_event_queue()
             self._process_transient_transitions()
+            self._resume_restored_children()
             return self
         if self.status == "running" and (
             self._event_queue or self._restored_self_sends  # #213
@@ -423,6 +424,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             self._rearm_restored_self_sends()  # #213
             self._process_event_queue()
             self._process_transient_transitions()
+            self._resume_restored_children()
             return self
         if self.status != "uninitialized":
             if self._restored_from_snapshot and not self._start_notified:
@@ -435,6 +437,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 self._start_notified = True
                 self._notify_interpreter_start()
                 self._attach_clock()
+                self._resume_restored_children()
                 return self
             logger.info(
                 "🚧 Interpreter '%s' already running. Skipping start.",
@@ -1958,6 +1961,22 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         return any(
             src == invocation.src for src in self._actor_sources.values()
         )
+
+    def _resume_restored_children(self) -> None:
+        """Start every restored child actor (#264 battle, engine parity).
+
+        📝 The async engine resumes restored children in `start()`; the sync
+        engine never did, so a child's restored `after` deadline (and its
+        `restart_timers` policy) was parked forever -- a child-only SLA
+        silently died. Only restored children are touched; a stopped one
+        is left alone (starting it would raise).
+        """
+        for actor in list(self._actors.values()):
+            if not getattr(actor, "_restored_from_snapshot", False):
+                continue
+            if getattr(actor, "status", None) == "stopped":
+                continue
+            actor.start()
 
     def _pump_timers(self) -> int:
         """Fire every due clock deadline onto the queue (the timer pump).

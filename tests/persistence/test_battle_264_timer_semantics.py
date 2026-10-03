@@ -657,13 +657,19 @@ class TestInterplay:
 
         m = _m(cfg, actions={"note": note})
         b = _blob(m)
-        if not b.get("scheduled_sends"):
-            pytest.skip("raise(delay) spelling not persisted by this build")
+        # 📝 Both are persisted side by side: the deadline in `deadlines`,
+        #    the delayed self-send in `scheduled_sends` (#213).
+        assert b["scheduled_sends"][0]["type"] == "PONG"
+        assert b["deadlines"][0]["event_type"] == "after.3000.rd.w"
         r, clk = _sync_restore(b, m, T0 + 60, "fire_due")
         r.start()
         clk.increment(0)
         clk.increment(10_000)
-        assert sorted(r.context["log"]) == ["PONG", "after.3000.rd.w"]
+        # 📝 DOCUMENTED: #213 self-sends persist RELATIVE remaining time
+        #    (not wall-anchored), so after a 60 s outage PONG still waits
+        #    its 1 s while the matured `after` fires inside start(). Each
+        #    fires exactly once.
+        assert r.context["log"] == ["after.3000.rd.w", "PONG"]
         r.stop()
 
     def test_restored_inbox_drains_before_fire_due(self) -> None:
@@ -756,6 +762,8 @@ class TestLeaks:
     def test_restore_cycle_memory_flat(self) -> None:
         m = _m()
         b = json.dumps(_blob(m))
+        running: set = set()
+        stopped: set = set()
 
         def cycle() -> None:
             r = SyncInterpreter.from_snapshot(
@@ -764,10 +772,11 @@ class TestLeaks:
                 clock=SimulatedClock(wall_start=T0),
                 restart_timers="resume",
             ).start()
-            assert len(r._armed_after) == 1 and not r._restored_deadlines
+            running.add(len(r._armed_after) + len(r._restored_deadlines))
             r.stop()
+            stopped.add(len(r._armed_after) + len(r._restored_deadlines))
 
-        n = 4000
+        n = 10_000
         for _ in range(200):
             cycle()
         gc.collect()
@@ -783,17 +792,22 @@ class TestLeaks:
         tracemalloc.stop()
         growth = sum(s.size_diff for s in end.compare_to(mid, "filename"))
         assert growth < 64 * 1024
+        # Flat across the WHOLE run: 1 armed while running, 0 after stop.
+        assert running == {1} and stopped == {0}
 
     def test_no_thread_leak_real_clock(self) -> None:
         m = _m()
         b = json.dumps(_blob(m, wall=time.time()))
         base = threading.active_count()
-        for _ in range(300):
+        peak = base
+        for _ in range(1000):
             SyncInterpreter.from_snapshot(
                 b, m, restart_timers="resume"
             ).start().stop()
+            peak = max(peak, threading.active_count())
         time.sleep(0.2)
         assert threading.active_count() <= base + 2
+        assert peak <= base + 4
 
     def test_pending_deadlines_linear(self) -> None:
         def build(n: int) -> Any:

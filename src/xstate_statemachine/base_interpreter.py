@@ -2396,6 +2396,13 @@ class BaseInterpreter(Generic[TContext]):
                 child_machine,
                 verify_machine_hash=verify_machine_hash,
                 restart_services=restart_services,
+                # 📝 #264 battle: forward the timer policy and the clock.
+                #    Without them a child's persisted `after` deadline was
+                #    parked forever (its SLA silently died) and a restored
+                #    child ran on a RealClock while its parent was on the
+                #    injected one -- the same split #117 fixed for roots.
+                restart_timers=restart_timers,
+                clock=clock,
                 on_version_mismatch=on_version_mismatch,
                 migrator=migrator,  # #263: children follow the same policy
             )
