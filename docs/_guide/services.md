@@ -902,7 +902,7 @@ cfg = {"id": "chat", "initial": "streaming", "context": {"text": ""},
        "states": {"streaming": {"invoke": {"src": "llm", "onDone": {"target": "done", "actions": "finish"}},
                                 "on": {"STREAM": {"actions": "append"}}},
                   "done": {"type": "final"}}}
-logic = MachineLogic(actions={"append": lambda i, ctx, e, a: ctx.__setitem__("text", ctx["text"] + e.payload["data"]),
+logic = MachineLogic(actions={"append": lambda i, ctx, e, a: ctx.__setitem__("text", ctx["text"] + e.data),
                               "finish": lambda i, ctx, e, a: ctx.__setitem__("last", e.data)},
                      services={"llm": from_async_iterator(llm_stream)})
 
@@ -915,7 +915,18 @@ async def main():
 asyncio.run(main())
 ```
 
-Each yielded item is sent as `Event("STREAM", {"data": item})` (`event_type=` to rename it) and the machine applies it before the next item is pulled, so stream order and completion order agree. Exhaustion is `onDone` with the last item; an exception is `onError`; leaving the state cancels the task and `aclose()`s the generator, so a `finally:` in it runs. `from_iterator` is the sync twin — the iterator is consumed on a daemon thread and items arrive through the mailbox.
+Each yielded item is sent as a `StreamEvent("STREAM", {"data": item})` (`event_type=` to rename it): **`e.data` is the item itself**, as it is for `DoneEvent`, and `e.payload["data"]` is the same value for code that works with plain dicts. The machine applies it before the next item is pulled, so stream order and completion order agree. Exhaustion is `onDone` with the last item; an exception is `onError`; leaving the state cancels the task and `aclose()`s the generator, so a `finally:` in it runs. `from_iterator` is the sync twin — the iterator is consumed on a daemon thread and items arrive through the mailbox.
+
+#### What the #267 battle pinned
+
+A market-data feed that flaps for an hour (`tests/recipes/test_battle_267_feed_soak.py`: 20 000 ticks pushed from the socket's own thread across 50 drop/reconnect cycles, both engines) and the adversary suites found these, all fixed in 0.11.0:
+
+* **A producer that outlives its state is ignored.** A WebSocket thread does not know the machine left `connected`; its late `send_back` used to land in whatever state came next (and on the *next* socket's counter). Now a `send_back` whose invocation has been cleaned up is dropped with a debug log — SCXML's rule for a cancelled invocation.
+* **`send_back` payload keys that are `send()` controls are refused.** `send_back("TICK", internal=True)` reached the async engine's `send_threadsafe(internal=…)` as a control and the sync engine's as payload. Both now raise `TypeError` for `internal` / `wait` / `priority`; send a dict event to carry such a key.
+* **`stop()` cannot hang on an `async def` cleanup.** `drain_pending_cleanups(timeout=30.0)` cancels and logs a cleanup still running after the timeout, and drains only the current loop's cleanups — a task left behind by a closed `asyncio.run()` loop no longer breaks the next one with `ValueError("different loop")`.
+* **A delayed `sendTo` whose target invocation has exited is dropped**, reported through `on_event_dropped(reason="unresolved_target")`, never delivered to torn-down logic.
+* **`from_iterator` cannot interrupt a blocked `next()`.** A sync iterator stuck in a blocking read stops at its *next* item; the engine logs a warning naming the invocation when a cleanup finds the thread still alive. Give blocking iterators a timeout, or use `from_callback` and let the client's own thread push.
+* **The stream item is `e.data`.** The issue's own example read a token as `e.data` and got `{"data": token}` — the `StreamEvent` shape above.
 
 ## See Also
 

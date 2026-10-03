@@ -469,3 +469,56 @@ class TestReceive(unittest.TestCase):
         i.send("T1")
         self.assertEqual(got, {"one": ["X"], "two": ["X", "X"]})
         i.stop()
+
+
+# -----------------------------------------------------------------------------
+# 11. B's flags: reserved payload keys; a cleanup that never returns
+# -----------------------------------------------------------------------------
+class TestSendBackReservedKwargs(unittest.TestCase):
+    def test_control_kwargs_are_refused_on_both_engines(self) -> None:
+        for engine in ("sync", "async"):
+            cnt = Counting()
+            m = create_machine(CFG, logic=logic(cnt))
+            if engine == "sync":
+                i: Any = SyncInterpreter(m).start()
+            else:
+
+                async def go() -> Any:
+                    return await Interpreter(m).start()
+
+                loop = asyncio.new_event_loop()
+                i = loop.run_until_complete(go())
+            sb = cnt.sb[0]
+            for key in ("internal", "wait", "priority"):
+                with self.assertRaises(TypeError, msg=(engine, key)):
+                    sb("PING", **{key: True})
+            # a dict event carries the same key as PAYLOAD, unharmed
+            if engine == "sync":
+                sb({"type": "PING", "v": "ok", "wait": 1})
+                i.tick()
+                self.assertEqual(i.context["seen"], ["ok"])
+                i.stop()
+            else:
+                loop.run_until_complete(i.stop())
+                loop.close()
+
+
+class TestCleanupDrainTimeout(unittest.TestCase):
+    def test_hung_async_cleanup_does_not_hang_stop(self) -> None:
+        async def never() -> None:
+            await asyncio.sleep(3600)
+
+        async def main() -> float:
+            i = await Interpreter(
+                create_machine(CFG, logic=logic(lambda *a: never))
+            ).start()
+            await apump(lambda: bool(i._running_logic))
+            await i.send("GO", wait=True)  # cleanup scheduled, hangs
+            t0 = time.perf_counter()
+            with self.assertLogs("xstate_statemachine", "WARNING"):
+                await drain_pending_cleanups(timeout=0.05)
+            await i.stop()
+            return time.perf_counter() - t0
+
+        self.assertLess(asyncio.run(main()), 5.0)
+        self.assertFalse([t for t in _PENDING_CLEANUPS if not t.done()])

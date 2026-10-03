@@ -263,14 +263,16 @@ def test_async_summary_stream_order_done_and_aclose() -> None:
     )
 
     flags: Dict[str, Any] = {"closed": 0, "yielded": 0}
-    gate = asyncio.Event()
+    # 📝 created inside the running loop: on 3.9 `asyncio.Event()` binds to
+    #    `get_event_loop()`, which raises after another test unset it.
+    gates: Dict[str, Any] = {}
 
     async def summarise(i: Any, ctx: Any, e: Any) -> Any:
         try:
             for w in ["The ", "market ", "rose ", "2%."]:
                 flags["yielded"] += 1
                 if flags["yielded"] == 3:
-                    await gate.wait()  # hold the stream mid-way
+                    await gates["g"].wait()  # hold the stream mid-way
                 yield w
         finally:
             flags["closed"] += 1
@@ -295,7 +297,8 @@ def test_async_summary_stream_order_done_and_aclose() -> None:
     )
 
     async def full() -> Dict[str, Any]:
-        gate.set()
+        gates["g"] = asyncio.Event()
+        gates["g"].set()
         i = await Interpreter(m).start()
         await i.send("SUMMARISE", wait=True)
         await i.await_settled(5)
@@ -312,9 +315,9 @@ def test_async_summary_stream_order_done_and_aclose() -> None:
 
     # leave the state mid-stream -> the generator is aclose()d
     flags.update(closed=0, yielded=0)
-    gate.clear()
 
     async def cancelled() -> Dict[str, Any]:
+        gates["g"] = asyncio.Event()
         i = await Interpreter(m).start()
         await i.send("SUMMARISE", wait=True)
         for _ in range(50):

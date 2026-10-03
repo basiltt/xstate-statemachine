@@ -95,6 +95,7 @@ from .events import (
     ErrorEvent,
     Event,
     Receipt,
+    StreamEvent,
     is_system_event,
     re_mint,
     system_event,
@@ -284,6 +285,7 @@ __all__ = [
     "re_mint",
     "system_event",
     "ErrorEvent",
+    "StreamEvent",
     "ActionDefinition",
     # 🔌 Extensibility & Plugins
     "PluginBase",

@@ -85,12 +85,25 @@ class TestAsyncStreams(unittest.TestCase):
             for k in range(10_000):
                 yield k
 
+        # 📝 Order is checked OUTSIDE the context: every item is applied
+        #    with `wait=True`, whose receipt deep-copies the context (#305
+        #    before-image). A 10 000-item list in context makes that O(n²)
+        #    in the TEST, which the slow 3.9 `copy.deepcopy` turns into a
+        #    timeout. Context keeps a count + the last item (O(1) copies).
+        seen: List[Any] = []
+
+        def item(i: Any, c: Any, e: Any, a: Any) -> None:
+            seen.append(e.data)
+            c["last"] = e.data
+
         t0 = time.perf_counter()
         i = self._run(
-            from_async_iterator(gen), lambda i: "s.done" in i.current_state_ids
+            from_async_iterator(gen),
+            lambda i: "s.done" in i.current_state_ids,
+            item,
         )
         rate = 10_000 / (time.perf_counter() - t0)
-        self.assertEqual(i.context["items"], list(range(10_000)))
+        self.assertEqual(seen, list(range(10_000)))
         self.assertEqual(i.context["last"], 9_999)
         self.assertGreater(rate, 500)  # receipts cost, not quadratic
 

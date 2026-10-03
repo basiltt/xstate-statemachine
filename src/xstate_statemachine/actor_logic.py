@@ -46,7 +46,7 @@ from typing import (
     TypeVar,
 )
 
-from .events import Event, StreamEvent
+from .events import StreamEvent
 from .logger import logger
 
 __all__ = [
@@ -170,8 +170,21 @@ def _schedule_awaitable(aw: Awaitable[Any]) -> None:
     task.add_done_callback(_PENDING_CLEANUPS.discard)
 
 
-async def drain_pending_cleanups() -> None:
-    """Await every scheduled `async def` cleanup (engine teardown hook)."""
+#: How long `stop()` waits for `async def` cleanups before giving up on
+#: them (they are cancelled and logged, never awaited forever).
+DEFAULT_CLEANUP_TIMEOUT = 30.0
+
+
+async def drain_pending_cleanups(
+    timeout: Optional[float] = DEFAULT_CLEANUP_TIMEOUT,
+) -> None:
+    """Await every scheduled `async def` cleanup (engine teardown hook).
+
+    Args:
+        timeout: Seconds to wait for the cleanups of the current loop.
+            A cleanup still running afterwards is cancelled and logged
+            (``None`` waits without bound).
+    """
     # 📝 #267 battle: the registry is module-global and every
     #    `asyncio.run` makes a new loop; a task left by a closed / foreign
     #    loop made `gather` raise ValueError ("different loop"). Drain only
@@ -185,12 +198,29 @@ async def drain_pending_cleanups() -> None:
         for t in list(_PENDING_CLEANUPS)
         if not t.done() and t.get_loop() is loop
     ]
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
+    if not pending:
+        return
+    # 📝 #267 battle (B): a cleanup that never returns (a socket close
+    #    waiting on a dead peer) used to hang `stop()` forever. Bound it.
+    _done, still = await asyncio.wait(pending, timeout=timeout)
+    for t in still:
+        t.cancel()
+        _PENDING_CLEANUPS.discard(t)
+    if still:
+        logger.warning(
+            "🎭 %d async cleanup(s) still running after %ss; cancelled.",
+            len(still),
+            timeout,
+        )
 
 
 async def _await(aw: Awaitable[Any]) -> None:
     await aw
+
+
+#: Keyword names `send()` / `send_threadsafe()` treat as controls on at
+#: least one engine; `send_back` refuses them as payload (#267 battle).
+_RESERVED_SEND_KWARGS = frozenset({"internal", "wait", "priority"})
 
 
 def _send_back_for(
@@ -204,6 +234,17 @@ def _send_back_for(
     """
 
     def send_back(event_or_type: Any, **payload: Any) -> None:
+        # 📝 #267 battle (B): `send_back("X", internal=True)` would reach
+        #    the async engine's `send_threadsafe(internal=...)` as a
+        #    CONTROL argument, not payload -- and silently differ per
+        #    engine. Payload keys that collide with send() controls are a
+        #    caller error on both engines.
+        reserved = _RESERVED_SEND_KWARGS.intersection(payload)
+        if reserved:
+            raise TypeError(
+                "send_back(): payload key(s) %s are reserved; send a dict "
+                "event {'type': ..., ...} to carry them" % sorted(reserved)
+            )
         # 📝 #267 battle: a producer of an EXITED invocation kept feeding
         #    the machine -- its events landed in whatever state came next
         #    (SCXML 6.4.2: events from a cancelled invocation are ignored).
