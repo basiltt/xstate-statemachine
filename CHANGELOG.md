@@ -1148,14 +1148,19 @@ _No unreleased changes yet._
   - A lost optimistic race (`ConflictError` on the fire-save) and a
     `LockTimeoutError` (another scanner or request holds the key) count
     as `skipped_stale`, not `errors`. An operator alerting on `errors`
-    was paged every time two schedulers overlapped. A permanently stuck
-    lock now shows as growing `due` / `max_lag_s`.
+    was paged every time two schedulers overlapped. New
+    `ScanResult.locked` counts the lock-timeout subset separately, so a
+    permanently stuck holder is visible (`locked` climbing while `due`
+    does not fall).
   - `skew_tolerance_s < 0` or `limit < 1` raise `ValueError` (both were
     silently accepted).
   - On `"resume"` / `"fire_due"` the remaining time is clamped to
-    `[0, declared delay]`: a wall clock stepped back between arm and
-    restore made a 5 s timer wait 2 h 5 s; a `due_at_wall` of 1e308
-    re-persisted as `inf` and the next load refused the blob.
+    `[0, the delay the deadline was armed with]` (the persisted
+    `delay_ms`): a wall clock stepped back between arm and restore made
+    a 5 s timer wait 2 h 5 s; a `due_at_wall` of 1e308 re-persisted as
+    `inf` and the next load refused the blob. The bound is the ARMED
+    delay, not today's declared one, so a chart redeployed with a shorter
+    `after` cannot fire an old deadline early (review H2).
   - Duplicate deadline records for one `(state, event)` resolve to the
     **newest `entry_seq`** (earliest due breaks ties). The last record in
     the list used to win, and a stale record from an earlier visit could
@@ -1171,9 +1176,13 @@ _No unreleased changes yet._
     `"fire_due"`; a restored inbox drains before them. A delayed
     `raise(delay=)` self-send keeps *relative* remaining time (#213) and
     does not shift with the outage the way an `after` does.
-  - Child actors: `restart_timers` and `clock` are forwarded to child
-    restores, and the sync engine's `start()` starts restored children as
-    the async one did. The root's deadlines are the only ones the store
+  - Child actors: `restart_timers`, `clock` and `restart_services` are
+    forwarded to child restores, and the sync engine's `start()` starts
+    restored children as the async one did -- so with
+    `restart_services=True` a restored child's dormant invoke re-runs
+    too. A child restored as done / error / stopped is left alone on
+    both engines; a resumed child's `sendParent` is processed by the
+    same `start()`. The root's deadlines are the only ones the store
     indexes: a child-only timer cannot wake its parent.
 
 - **Versioning, as battle-tested (#263) -- behaviour changes a 0.10.x
