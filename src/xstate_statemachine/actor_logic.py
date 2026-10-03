@@ -46,7 +46,7 @@ from typing import (
     TypeVar,
 )
 
-from .events import Event
+from .events import Event, StreamEvent
 from .logger import logger
 
 __all__ = [
@@ -172,7 +172,19 @@ def _schedule_awaitable(aw: Awaitable[Any]) -> None:
 
 async def drain_pending_cleanups() -> None:
     """Await every scheduled `async def` cleanup (engine teardown hook)."""
-    pending = [t for t in _PENDING_CLEANUPS if not t.done()]
+    # 📝 #267 battle: the registry is module-global and every
+    #    `asyncio.run` makes a new loop; a task left by a closed / foreign
+    #    loop made `gather` raise ValueError ("different loop"). Drain only
+    #    THIS loop's tasks; forget the ones whose loop is closed.
+    loop = asyncio.get_running_loop()
+    for t in list(_PENDING_CLEANUPS):
+        if t.get_loop() is not loop and t.get_loop().is_closed():
+            _PENDING_CLEANUPS.discard(t)
+    pending = [
+        t
+        for t in list(_PENDING_CLEANUPS)
+        if not t.done() and t.get_loop() is loop
+    ]
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
 
@@ -181,13 +193,39 @@ async def _await(aw: Awaitable[Any]) -> None:
     await aw
 
 
-def _send_back_for(interp: Any) -> SendBack:
-    """A thread-safe `send_back(event_or_type, **payload)` for *interp*."""
+def _send_back_for(
+    interp: Any, handle: Optional[RunningLogic] = None
+) -> SendBack:
+    """A thread-safe `send_back(event_or_type, **payload)` for *interp*.
+
+    Dropped (debug log, never an exception in the producer) once *handle*
+    was cleaned up or the interpreter is no longer running. A malformed
+    event still raises `InvalidEventError` on the calling thread.
+    """
 
     def send_back(event_or_type: Any, **payload: Any) -> None:
+        # 📝 #267 battle: a producer of an EXITED invocation kept feeding
+        #    the machine -- its events landed in whatever state came next
+        #    (SCXML 6.4.2: events from a cancelled invocation are ignored).
+        if handle is not None and handle.finished:
+            logger.debug("🎭 send_back after cleanup dropped")
+            return
         if interp.status != "running":
             return
-        interp.send_threadsafe(event_or_type, **payload)
+        try:
+            interp.send_threadsafe(event_or_type, **payload)
+        except RuntimeError:
+            # 📝 #267 battle: status->send TOCTOU on the async engine (it
+            #    stopped, or its loop was closed, between the check and the
+            #    call). Not the producer's problem: drop, loudly enough.
+            loop = getattr(interp, "_loop", None)
+            closed = loop is not None and loop.is_closed()
+            if interp.status == "running" and not closed:
+                raise
+            logger.warning(
+                "🎭 send_back to '%s' dropped: interpreter is gone.",
+                getattr(interp, "id", "?"),
+            )
 
     return send_back
 
@@ -246,7 +284,9 @@ def from_callback(
         handle = RunningLogic(
             interp, _invocation_of(interp, event), None, completes=False
         )
-        cleanup = setup(_send_back_for(interp), handle.subscribe, ctx, event)
+        cleanup = setup(
+            _send_back_for(interp, handle), handle.subscribe, ctx, event
+        )
         if cleanup is not None and not callable(cleanup):
             raise TypeError(
                 "from_callback setup must return a cleanup callable or None"
@@ -269,7 +309,8 @@ def from_async_iterator(
 
     ``factory(interp, ctx, event)`` returns an async iterator (an
     ``async def`` generator). Each yielded item is sent to the parent as
-    ``Event(event_type, {"data": item})`` -- read it as ``event.data``.
+    ``StreamEvent(event_type, {"data": item})`` -- ``event.data`` is the
+    item (``event.payload["data"]`` too).
     Exhaustion is ``onDone`` with ``data`` = the last item; an exception is
     ``onError``; exiting the state cancels the task and ``aclose()``s the
     generator (a ``finally`` in it runs).
@@ -291,7 +332,9 @@ def from_async_iterator(
                 #    stream order and completion order the same.
                 if interp.status != "running":
                     break
-                await interp.send(Event(event_type, {"data": item}), wait=True)
+                await interp.send(
+                    StreamEvent(event_type, {"data": item}), wait=True
+                )
             return last
         finally:
             if callable(aclose):
@@ -305,12 +348,16 @@ def from_async_iterator(
     return _service
 
 
+#: How long `from_iterator`'s cleanup waits for its worker to notice stop.
+_ITERATOR_STOP_GRACE_S = 0.1
+
+
 def from_iterator(
     factory: Callable[..., Iterator[Any]], *, event_type: str = "STREAM"
 ) -> Callable[..., RunningLogic]:
     """Stream actor logic for the SYNC engine: ``factory(interp, ctx,
     event)`` returns an iterator that is consumed on a daemon thread. Each
-    item is `send_threadsafe`'d to the parent as ``Event(event_type,
+    item is `send_threadsafe`'d to the parent as ``StreamEvent(event_type,
     {"data": item})`` and lands on the owner's next ``send()`` / ``tick()``;
     exhaustion delivers ``onDone`` (``data`` = last item), an exception
     ``onError``. Exiting the state stops the thread at the next item and
@@ -325,8 +372,8 @@ def from_iterator(
         stop = threading.Event()
         gen = factory(interp, ctx, event)
         close = getattr(gen, "close", None)
-        send_back = _send_back_for(interp)
         handle = RunningLogic(interp, invocation, None, completes=True)
+        send_back = _send_back_for(interp, handle)
 
         def run() -> None:
             last: Any = None
@@ -335,7 +382,7 @@ def from_iterator(
                     if stop.is_set():
                         return
                     last = item
-                    send_back(Event(event_type, {"data": item}))
+                    send_back(StreamEvent(event_type, {"data": item}))
                 if not stop.is_set():
                     interp._complete_logic(invocation, last)
             except Exception as exc:  # noqa: BLE001 -- user iterator
@@ -354,6 +401,19 @@ def from_iterator(
 
         def cleanup() -> None:
             stop.set()
+            # 📝 #267 battle: `stop` is seen only BETWEEN items; an iterator
+            #    blocked inside `next()` (a socket read) kept the thread
+            #    alive while cleanup claimed success. Contract: the iterator
+            #    must return / raise promptly. Short grace, then say so.
+            if thread is threading.current_thread() or not thread.is_alive():
+                return
+            thread.join(_ITERATOR_STOP_GRACE_S)
+            if thread.is_alive():
+                logger.warning(
+                    "🌊 from_iterator '%s' is blocked inside next(); its "
+                    "thread lingers until the iterator returns.",
+                    invocation.id,
+                )
 
         handle._cleanup = cleanup
         thread.start()
