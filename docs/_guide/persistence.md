@@ -652,13 +652,55 @@ Each persisted `Deadline` carries `state_id`, `entry_seq` (the state-entry gener
 
 On the sync engine timers fire from `send()` / `tick()`, so `"fire_due"` pumps once inside `start()`; on the async engine the loop runs the zero-delay callbacks and settles before `start()` returns. A deadline whose state no longer exists after a migration fails **loudly** (`StateNotFoundError`) rather than being dropped.
 
+**What a restore does with the record — as battle-tested (#264).** Asserted by `tests/persistence/test_battle_264_timer_semantics.py` and `_child_timers.py` on both engines:
+
+| Situation | What happens |
+|:--|:--|
+| 5 s timer, snapshot at 2 s, restore `"resume"`, advance 2 999 ms | not fired; +1 ms → fired |
+| Restored an hour late with `"resume"` | armed at 0 ms, fires on the next pump; `"fire_due"` fires it inside `start()` |
+| Five matured deadlines across nested + parallel regions | fire in **due-time order**; equal due times fire in a fixed order (by state id) |
+| The wall clock stepped **back** 2 h between arm and restore | the remaining time is clamped to the **declared delay** — a timer never waits longer than declared; a `due_at_wall` of 1e308 never re-persists as `inf` |
+| The chart changed the delay for the same state (1 000 → 5 000 ms) | `"resume"` arms the **new** declared delay from zero (the persisted `delay_ms` is informational) |
+| Duplicate records for one `(state, event)` | the **newest `entry_seq`** wins; earliest due breaks ties — a stale record from an earlier visit cannot fire the current visit early |
+| A state is exited while its deadline was **parked** (`restart_timers=False`) | the parked record is dropped with the armed one — it used to be re-persisted as an orphan the scanner tripped on every tick |
+| A guarded `after` whose guards all refuse | consumed; the state's timer is re-armed from zero on the next hydration (no hot loop) |
+| A restored **inbox** event and a matured timer | the inbox drains **first** (it was accepted before the snapshot, while the timer was still pending); if it exits the state the timer is cancelled |
+| `after` + `raise(delay=)` both matured | both fire exactly once, the `after` first; a delayed self-send keeps **relative** remaining time (#213), so after a 60 s outage it still waits its full delay — unlike `after`, which is a wall-clock deadline |
+| A **child actor's** `after` | lives in `actors[<id>].snapshot.deadlines`; `restart_timers` and `clock` are forwarded to the child restore and the sync engine starts restored children (both were holes: a child's SLA silently died, and ran on the real clock under a simulated parent). **Limitation:** the parent's `pending_deadlines()` lists only its own, so `save(deadlines=)` indexes only the root's — the scanner cannot wake a machine whose only due timer is in a child. Keep SLA timers on the root, or give the child its own store key. |
+| A delay resolver returns NaN / ±inf / a string / raises | "unresolvable": logged, that timer skipped; a negative delay arms at 0 |
+| `entry_seq` / `delay_ms` ≥ 2**63, or any field of the wrong type | `SnapshotCorruptError`, never a bare error; 100 000 records in one blob restore in bounded time |
+| `"restart"` with a deadline for an unknown state | the record is dropped and timers re-arm from the chart; `False` keeps it and writes it back unchanged; `"resume"` / `"fire_due"` refuse (`StateNotFoundError`) |
+| Snapshot on one engine, restore on the other | identical for `"resume"` and `"fire_due"` in both directions |
+
 ### The scanner
 
 `DueTimerScanner(store, machine_for_key, *, lock=OptimisticLock(), plugins=(), now=time.time, skew_tolerance_s=0, prefix="", limit=1000)` is the zero-dependency driver: `run_once(now)` reads the store's deadline index, and for every key with a matured deadline opens `persisted(..., restart_timers="fire_due")` under the lock strategy — the transition fires, the snapshot is saved, remaining deadlines are re-indexed. `scan()` returns a `ScanResult` (`scanned`, `due`, `woken`, `skipped_stale`, `errors`, `max_lag_s` — the "how late are we" metric); `run_forever(interval_s)` / `stop()` for a dedicated process. Celery Beat, APScheduler or cron adapters just call `run_once()`.
 
-Under the lock the scanner **re-reads** the record and wakes only if a matured deadline is still there — a machine another worker already advanced is skipped (`skipped_stale`), never double-fired. `skew_tolerance_s` absorbs clock skew between the writing host and the scanning one; one key's failure is recorded in `errors` and does not stop the pass.
+Under the lock the scanner **re-reads** the record and wakes only if a matured deadline is still there — a machine another worker already advanced is skipped (`skipped_stale`), never double-fired — and the save is **fenced on the version that re-read saw**, so a writer that slips in between the re-read and the save produces a `ConflictError` the scanner also counts as `skipped_stale`. `skew_tolerance_s` absorbs clock skew between the writing host and the scanning one; one key's failure is recorded in `errors` and does not stop the pass.
 
-> **Guarantees.** A timer fires **no earlier than its deadline and no later than the next scanner tick after it**. A crash between the fire and the snapshot save re-fires on the next tick (**at-least-once**): make the timer's transition idempotent, or pair it with the [idempotency inbox](#idempotency-the-inbox). A guarded `after` whose guard refuses is consumed like any denied event; the state's timer is re-armed from zero on the next hydration, so the guard is asked again one delay later.
+**`limit` caps machines woken per tick, earliest deadline first.** Before the #264 battle it capped the keys *scanned* in name order, so a scheduler that came back to a backlog larger than the limit woke the same first N keys every tick and the rest never fired. A tick now reads the whole deadline index (one query on SQLite / SQLAlchemy / Redis / Django, a dict walk on Memory — `due_keys(until_wall, limit=)`), takes the `limit` earliest, and repeated ticks drain the backlog oldest-first. `ScanResult.scanned` is what was inspected (all of it); `woken ≤ limit`; `max_lag_s` on the first tick after an outage is the whole outage — that is your alert. **`FileStore` has no deadline index**: a tick reads every record (~2.4 ms each, ≈ 4 min per tick at 100 000 records). Use SQLite, SQLAlchemy or Redis for a scanned store beyond a few thousand records.
+
+**Two schedulers by accident, concurrency, crashes — as measured** (`tests/persistence/test_battle_264_scanner_concurrency.py`, `_stores_crash.py`, and the [`fastapi_orders` scheduler-outage scenario](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders#the-scheduler-is-down-for-three-hours)):
+
+| Attack | Outcome |
+|:--|:--|
+| 8 scanner threads on 10 000 (Memory) / 3 000 (SQLite) / 200 (File) matured keys, `OptimisticLock` and `PessimisticLock` | every key **committed exactly once** (`version == 2`: one arm-save, one fire-save), `errors == []` |
+| 4 processes on SQLite (1 000 keys) and FileStore (100), both locks | exactly once, no errors |
+| `NoLock`, 8 scanners, 2 000 keys | 2 048 fires — 48 double-fires. The documented hazard. |
+| A web request advances the key between `due_keys` and the lock | `skipped_stale`; nothing fires |
+| Another scanner fires the key between the re-check and `persisted()`'s own load | the fenced save refuses it: `skipped_stale`, no phantom `woken`, no version bump |
+| `PessimisticLock` on Memory / File / Django / SQLAlchemy | fixed: the inner `persisted()` **timed out on the scanner's own lock** for every key, every tick |
+| kill -9 **before** the save | the next tick re-fires: the side effect ran twice, the commit once (at-least-once) |
+| kill -9 **after** the save, before unlock | SQLite rolls the transaction back and re-fires; FileStore's write is durable and fires once; no torn record anywhere |
+| Disk full during the fire-save | the old record stands, still due; fires on the next tick |
+| A lock that is never released | `PessimisticLock(timeout=)` honoured; the key is `skipped_stale` within the bound |
+| `machine_for_key` raises / returns the wrong chart | that key in `errors`; the scan continues. **No back-off**: a poison key is retried and reported every tick — alert on a key in `errors` on consecutive ticks |
+| Two Starlette apps with `run_timers=True` on one store | 200 keys, each fired once. "Run exactly one scheduler" saves wasted work; it is not needed for correctness |
+| 100 000 records / 100 due, SQLite | 3.5 s and 100 000 loads → **0.023 s and 0 loads** with the index |
+
+**Side effects are at-least-once under `OptimisticLock`.** A scanner that loses the race has already run the transition — actions included — before its save is refused: the 8-thread runs counted 61 309 uncommitted in-memory runs on Memory, 562 on SQLite, 782 on File, and **0** under `PessimisticLock`. Make timer actions idempotent, or use the pessimistic strategy. The [idempotency inbox](#idempotency-the-inbox) does **not** dedupe a re-fired `after` — an `after` event has no payload, so there is no key to derive; it protects the keyed events your timer *action* sends onward. Redis `ttl_s`: when the hashes expire the zset entry stays, and the scanner skips that key every tick without firing it.
+
+> **Guarantees.** A timer fires **no earlier than its deadline (minus `skew_tolerance_s`) and no later than the next scanner tick after it**; a restore never arms it for longer than its declared delay. Each deadline is **committed exactly once** under `OptimisticLock` or `PessimisticLock`, however many scanners and workers race; under `OptimisticLock` the losers may have run the transition in memory first (side effects at-least-once — see above); under `NoLock` there is no exactly-once. A crash between the fire and the snapshot save re-fires on the next tick (**at-least-once**): make the timer's transition idempotent, or use `PessimisticLock`. A guarded `after` whose guard refuses is consumed like any denied event; the state's timer is re-armed from zero on the next hydration, so the guard is asked again one delay later. Only the **root** machine's deadlines are indexed — a child actor's timer fires when its parent is woken, but cannot itself wake the parent.
 
 `xsm simulate` runs on a `SimulatedClock` and shows `after` timers firing as you advance it; persisted deadlines are a runtime concern and are not part of the simulator.
 
