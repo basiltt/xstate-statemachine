@@ -71,6 +71,9 @@ DEFAULT_MAX_SNAPSHOT_BYTES = 1 * 1024 * 1024
 #: Keys are identifiers, not documents. 200 leaves room for a FileStore
 #: encoding to stay under filesystem limits (255) with a suffix.
 MAX_KEY_LENGTH = 200
+#: The width of the `machine_version` column in the SQLAlchemy and Django
+#: schemas -- the narrowest backend sets the rule for all (#263 battle).
+MAX_MACHINE_VERSION_LENGTH = 255
 
 
 def validate_key(key: str) -> str:
@@ -154,6 +157,18 @@ def check_save_args(
             "machine_version must be str, got "
             f"{type(machine_version).__name__}"
         )
+    if machine_version:
+        # 🛡️ #263 battle: one rule on every backend. SQLAlchemy/Django keep
+        #    the label in a VARCHAR(255) (Postgres raised a driver
+        #    DataError, SQLite silently kept 10 kB) and Postgres rejects
+        #    NUL in text; Memory/File/SQLite accepted both.
+        if len(machine_version) > MAX_MACHINE_VERSION_LENGTH:
+            raise ValueError(
+                f"machine_version is {len(machine_version)} chars; the "
+                f"limit is {MAX_MACHINE_VERSION_LENGTH}."
+            )
+        if "\x00" in machine_version:
+            raise ValueError("machine_version must not contain NUL.")
     dls = tuple(deadlines)
     for d in dls:
         if not isinstance(d, Deadline):
@@ -406,6 +421,39 @@ class BaseStore:
             out.append(k)
         return out
 
+    def list_versions(
+        self, *, prefix: str = "", limit: int = 1000
+    ) -> List[Tuple[str, str]]:
+        """``[(key, machine_version)]`` for keys starting with ``prefix``,
+        sorted, at most ``limit`` -- without decoding snapshot blobs.
+
+        ``machine_version`` is ``""`` for an unlabelled record. Keys whose
+        record vanished between listing and reading are skipped.
+        """
+        # 🏛️ #263 battle: `xsm snapshots --stale` only needs the label the
+        #    store already keeps beside the blob; loading and decoding every
+        #    full snapshot to read it made the drain list O(total bytes).
+        out: List[Tuple[str, str]] = []
+        for key, mv in self._list_versions_raw(prefix, limit):
+            try:
+                validate_key(key)
+            except InvalidKeyError:
+                continue
+            out.append((key, mv))
+        return out
+
+    def _list_versions_raw(
+        self, prefix: str, limit: int
+    ) -> List[Tuple[str, str]]:
+        # 📝 Generic fallback: one `_load_raw` per key (no decode, no size
+        #    re-check). Backends with an indexed label column override it.
+        out: List[Tuple[str, str]] = []
+        for key in self.list_keys(prefix=prefix, limit=limit):
+            raw = self._load_raw(key)
+            if raw is not None:
+                out.append((key, raw[2]))
+        return out
+
     def lock(self, key: str, *, timeout: float = 10.0) -> ContextManager[None]:
         validate_key(key)
         if timeout < 0:
@@ -543,6 +591,17 @@ class MemoryStore(BaseStore):
         with self._guard:
             keys = sorted(k for k in self._records if k.startswith(prefix))
         return keys[:limit]
+
+    def _list_versions_raw(
+        self, prefix: str, limit: int
+    ) -> List[Tuple[str, str]]:
+        with self._guard:
+            pairs = sorted(
+                (k, r.machine_version)
+                for k, r in self._records.items()
+                if k.startswith(prefix)
+            )
+        return pairs[:limit]
 
     def _lock_raw(self, key: str, timeout: float) -> ContextManager[None]:
         with self._guard:

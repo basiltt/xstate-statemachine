@@ -52,6 +52,7 @@ from ...persistence.store import (
     BaseStore,
     SnapshotCodec,
     StoredSnapshot,
+    check_save_args,
     _IdentityCodec,
     validate_key,
 )
@@ -384,6 +385,10 @@ class AsyncSQLAlchemyStore:
         deadlines: Sequence[Deadline] = (),
     ) -> int:
         validate_key(key)
+        # 📝 #263 battle: the sync stores ran these checks; async did not.
+        expected_version, machine_version, deadlines = check_save_args(
+            expected_version, machine_version, deadlines
+        )
         if not isinstance(snapshot, str):
             raise TypeError(
                 "snapshot must be the JSON str from get_snapshot()"

@@ -75,6 +75,7 @@ ROWS = (
     "snapshot_restore_sync",
     "snapshot_get_async",
     "snapshot_restore_async",
+    "snapshot_restore_migrated_sync",
     "shortest_paths",
     "fastapi_router",
 )
@@ -493,6 +494,45 @@ def benchmark_snapshot_restore_sync(count: int) -> Dict[str, Any]:
     return _snapshot_sync("restore", count)
 
 
+def _fifty_states_v(version: str) -> Any:
+    return create_machine(
+        {
+            "id": "fifty",
+            "version": version,
+            "initial": "s0",
+            "states": {
+                f"s{index}": {"on": {"T": f"s{(index + 1) % 50}"}}
+                for index in range(50)
+            },
+        }
+    )
+
+
+def benchmark_snapshot_restore_migrated_sync(count: int) -> Dict[str, Any]:
+    """#263 battle: restore a 50-state blob through a 1-hop migration.
+
+    Compare with `snapshot_restore_sync`; the extra is one deep copy of
+    the decoded blob plus the (trivial) step.
+    """
+    from xstate_statemachine.persistence import SnapshotMigrator
+
+    old, new = _fifty_states_v("1.0"), _fifty_states_v("2.0")
+    interp = SyncInterpreter(old).start()
+    try:
+        snapshot = interp.get_snapshot()
+    finally:
+        interp.stop()
+    migrator = SnapshotMigrator()
+    migrator.add("1.0", "2.0", lambda blob: blob)
+    samples = []
+    for _ in range(REPETITIONS):
+        start = time.perf_counter_ns()
+        for _ in range(count):
+            SyncInterpreter.from_snapshot(snapshot, new, migrator=migrator)
+        samples.append((time.perf_counter_ns() - start) / (1000 * count))
+    return _metric(samples, operations_per_rep=count)
+
+
 def benchmark_snapshot_get_async(count: int) -> Dict[str, Any]:
     return _snapshot_async("get", count)
 
@@ -575,6 +615,7 @@ def run(quick: bool = False) -> Dict[str, Any]:
         "snapshot_restore_sync": "v4; historical v3 runtime not present",
         "snapshot_get_async": "v4; historical v3 runtime not present",
         "snapshot_restore_async": "v4; historical v3 runtime not present",
+        "snapshot_restore_migrated_sync": "#263 battle: 1-hop SnapshotMigrator; no budget until the reference runner records one",
         "shortest_paths": "savage.json (largest loadable corpus chart); no budget until a nightly records one",
         "fastapi_router": "FastAPI router is not shipped yet",
     }
@@ -626,6 +667,10 @@ def run(quick: bool = False) -> Dict[str, Any]:
             ("snapshot_restore_sync", benchmark_snapshot_restore_sync),
             ("snapshot_get_async", benchmark_snapshot_get_async),
             ("snapshot_restore_async", benchmark_snapshot_restore_async),
+            (
+                "snapshot_restore_migrated_sync",
+                benchmark_snapshot_restore_migrated_sync,
+            ),
         ):
             results[name] = _clean(snap, snapshots)
         results["shortest_paths"] = _clean(benchmark_shortest_paths)
@@ -675,6 +720,10 @@ def measure_row(row: str, quick: bool = False) -> Dict[str, Any]:
         "snapshot_get_async": (benchmark_snapshot_get_async, (snapshots,)),
         "snapshot_restore_async": (
             benchmark_snapshot_restore_async,
+            (snapshots,),
+        ),
+        "snapshot_restore_migrated_sync": (
+            benchmark_snapshot_restore_migrated_sync,
             (snapshots,),
         ),
         "shortest_paths": (benchmark_shortest_paths, ()),
