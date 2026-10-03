@@ -221,6 +221,15 @@ class _LogicTarget:
     def send(self, event: Any, **payload: Any) -> None:
         if isinstance(event, str):
             event = Event(type=event, payload=payload)
+        if self._handle.finished:
+            # 📝 #267 battle: a DELAYED `sendTo` resolved this target while
+            #    the invocation was live, but its state exited (cleanup ran)
+            #    before the timer fired. Delivering would call `receive`
+            #    handlers of torn-down logic (a closed socket). Drop it and
+            #    say so -- never a silent drop.
+            owner = self._handle._interp
+            owner._report_unresolved_target("sendTo", self.id, event)
+            return
         self._handle.receive(event)
 
     def send_threadsafe(self, event: Any, **payload: Any) -> None:
