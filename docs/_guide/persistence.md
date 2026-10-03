@@ -172,6 +172,8 @@ with persisted(store, "k", machine) as i:
 
 For the async engine use `async with apersisted(store, key, machine) as interp:` — *store* may be a sync store (calls go through the executor) or an `as_async()` adapter.
 
+**The async block settles before it saves (#263 battle).** `await interp.send("PAY", wait=True)` resolves at the end of *that event's* macrostep. When the step entered a state with a plain `def` service, the service's completion is the *next* macrostep — per SCXML — and the run loop starts it at once; if that step enters a second `def` invoke (authorise → capture), the machine is mid-step exactly when your block exits. The sync engine's `send()` drains the whole chain before returning, so `persisted()` never had this problem; `apersisted()` now closes the gap by `await`ing `interp.await_settled(settle_timeout)` before the snapshot (default `DEFAULT_SETTLE_TIMEOUT`, 30 s — it only ever waits while a service is genuinely running). The same settle runs inside the Starlette / FastAPI / Litestar / Quart registries before the receipt body is built, so the `200` a caller reads is what the store holds. `settle_timeout=0` opts out: a mid-step machine is then refused with `SnapshotMidStepError`, as before — loud, never torn. A fired or armed `after` is *not* owed work (a machine sitting on a live SLA timer is settled), so a block on a timer-heavy chart does not wait out the timer.
+
 ### What `persisted()` promises
 
 Every row is asserted by `tests/persistence/test_battle_260_locking_semantics.py` on `MemoryStore`, `FileStore` and `SQLiteStore`, sync and async:

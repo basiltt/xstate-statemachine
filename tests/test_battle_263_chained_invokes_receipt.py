@@ -50,6 +50,9 @@ def chain(n: int, service: Any = _svc) -> Any:
 
 
 def test_sync_engine_settles_the_whole_chain_inside_send() -> None:
+    """The sync engine drains the chain before `send()` returns: the
+    MACHINE is settled when the caller gets control back (whatever the
+    receipt says -- receipts are per event on both engines, #304)."""
     i = SyncInterpreter(chain(3)).start()
     i.send("GO")
     assert i.current_state_ids == {"m.done"} and i.status == "done"

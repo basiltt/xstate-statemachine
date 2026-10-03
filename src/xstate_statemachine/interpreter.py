@@ -2954,15 +2954,17 @@ class Interpreter(BaseInterpreter[TContext]):
 
         🏛️ #263 battle (found by the `fastapi_orders` rolling-upgrade
         scenario): ``await send(..., wait=True)`` resolves when the
-        EVENT's macrostep ends -- a service completion is the next
-        macrostep, per SCXML. The run loop starts it at once, and when
-        that step enters another plain-``def`` invoke it awaits the
-        executor with the step open. `apersisted()`'s exit then found the
-        machine mid-step and refused the snapshot
+        EVENT's macrostep ends. Every event the machine then generates --
+        a self-`raise`, a service's `done.invoke` -- is its own macrostep
+        (receipts are per event on both engines, #304), which the run
+        loop starts at once; when such a step enters a plain-``def``
+        invoke it awaits the executor with the step open. `apersisted()`'s
+        exit then found the machine mid-step and refused the snapshot
         (`SnapshotMidStepError`) for any chart with two ``def`` invokes
-        in a row -- while the sync engine's `send()` drains the whole
-        chain and `persisted()` never saw it. This is the async side of
-        that parity: create → act → **settle** → persist → discard.
+        in a row -- while `SyncInterpreter.send()` drains the whole chain
+        before returning, so `persisted()` never saw it. This is the
+        async side of that parity: create → act → **settle** → persist →
+        discard.
 
         Returns ``False`` on timeout; the caller decides (a snapshot taken
         then is refused loudly if the step is still open, as before).
