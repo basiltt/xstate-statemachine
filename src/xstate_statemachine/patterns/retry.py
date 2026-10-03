@@ -20,11 +20,13 @@
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Literal, Optional
 
 from ..machine_logic import MachineLogic
+from .dead_letter import ERRORS_CONTEXT_KEY as _ERRORS_CONTEXT_KEY
 
 __all__ = ["RetryPolicy", "JitterMode"]
 
@@ -69,13 +71,38 @@ class RetryPolicy:
             raise ValueError("factor must be >= 1.0")
         if self.jitter not in _MODES:
             raise ValueError(f"jitter must be one of {_MODES}")
+        # 📝 #265 battle: NaN slipped through every `< 0` check above and
+        #    produced NaN delays; inf produced an unfireable timer.
+        if not all(
+            math.isfinite(v) for v in (self.base_ms, self.max_ms, self.factor)
+        ):
+            raise ValueError("base_ms, max_ms and factor must be finite")
 
     # -- delay computation ------------------------------------------------
     def exponential_ms(self, attempt: int) -> float:
         """The un-jittered, capped delay after *attempt* (1-based)."""
         if attempt < 1:
             raise ValueError("attempt is 1-based")
-        return min(self.max_ms, self.base_ms * (self.factor ** (attempt - 1)))
+        try:
+            raw = self.base_ms * (self.factor ** (attempt - 1))
+        except OverflowError:
+            # 📝 #265 battle: `factor ** attempt` overflows a float long
+            #    before the cap matters (factor=1e6, attempt=60); the
+            #    capped answer is unambiguous, so return it.
+            return self.max_ms
+        return min(self.max_ms, raw)
+
+    def _draw(self) -> float:
+        """One rng sample, checked: ``[0, 1]`` or a loud ``ValueError``.
+
+        📝 #265 battle: an injected rng returning NaN / 1.5 / -0.2 used to
+        flow straight into the delay (NaN delay, negative delay, delay
+        above the cap). Silent acceptance is a bug -- fail loudly.
+        """
+        r = float(self.rng())
+        if not 0.0 <= r <= 1.0:  # also False for NaN
+            raise ValueError(f"rng() must return a float in [0, 1), got {r}")
+        return r
 
     def delay_ms(
         self, attempt: int, *, previous_ms: Optional[float] = None
@@ -91,14 +118,17 @@ class RetryPolicy:
         if self.jitter == "none":
             return exp
         if self.jitter == "full":
-            return self.rng() * exp
+            return self._draw() * exp
         if self.jitter == "equal":
             half = exp / 2.0
-            return half + self.rng() * half
+            return half + self._draw() * half
         # decorrelated: sleep = min(cap, random_between(base, sleep * 3))
-        prev = self.base_ms if previous_ms is None else previous_ms
-        lo, hi = self.base_ms, max(self.base_ms, prev * 3.0)
-        return min(self.max_ms, lo + self.rng() * (hi - lo))
+        prev = self.base_ms if previous_ms is None else float(previous_ms)
+        if not prev >= 0.0:  # 📝 #265 battle: NaN / negative from context
+            prev = self.base_ms
+        lo = self.base_ms
+        hi = max(lo, min(prev * 3.0, max(self.max_ms, lo)))
+        return min(self.max_ms, lo + self._draw() * (hi - lo))
 
     # -- machine logic ----------------------------------------------------
     def as_delay(
@@ -159,6 +189,10 @@ class RetryPolicy:
         def _reset(i: Any, context: Dict[str, Any], e: Any, a: Any) -> None:
             context[attempt_key] = 0
             context.pop(prev_key, None)
+            # 📝 #265 battle: also end `DeadLetterPlugin`'s context-held
+            #    error chain -- a success means the next failure path
+            #    starts fresh (attempts and chain stay consistent).
+            context.pop(_ERRORS_CONTEXT_KEY, None)
 
         _reset.__name__ = f"retry_reset_{attempt_key}"
         return _reset
