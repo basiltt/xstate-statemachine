@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 from typing import Any, Dict
 
 from xstate_statemachine import MachineLogic
@@ -42,10 +43,22 @@ class GatewayDown(GatewayError):
 
 
 class _Gateway:
-    """Process-wide switch for the outage drill (tests flip it)."""
+    """Process-wide switch for the outage drill (tests flip it).
 
-    up: bool = True
-    calls: int = 0  # how many times the real gateway was actually hit
+    📝 Shared module state, on purpose: it models the PROVIDER, which is
+    one thing for every worker. The example's test fixtures reset it on
+    setup and teardown; `hit()` counts under a lock so a 32-thread drill
+    counts every call.
+    """
+
+    def __init__(self) -> None:
+        self.up: bool = True
+        self.calls: int = 0  # how many times the real gateway was hit
+        self._lock = threading.Lock()
+
+    def hit(self) -> None:
+        with self._lock:
+            self.calls += 1
 
 
 GATEWAY = _Gateway()
@@ -133,7 +146,7 @@ def charge_card(
     attempt = int(ctx.get("attempt", 0))
 
     def hit_gateway() -> Dict[str, Any]:
-        GATEWAY.calls += 1
+        GATEWAY.hit()
         if not GATEWAY.up or token == OUTAGE_TOKEN:
             raise GatewayDown("gateway unreachable")
         if token == DECLINED_TOKEN:

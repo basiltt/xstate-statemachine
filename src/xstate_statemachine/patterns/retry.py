@@ -73,10 +73,13 @@ class RetryPolicy:
             raise ValueError(f"jitter must be one of {_MODES}")
         # 📝 #265 battle: NaN slipped through every `< 0` check above and
         #    produced NaN delays; inf produced an unfireable timer.
-        if not all(
-            math.isfinite(v) for v in (self.base_ms, self.max_ms, self.factor)
-        ):
-            raise ValueError("base_ms, max_ms and factor must be finite")
+        # 📝 #265 battle: `max_ms=inf` is a legitimate "no cap" (and was
+        #    accepted before); NaN is not. `base_ms` and `factor` must be
+        #    finite -- `inf * 0` is NaN and a NaN delay is a hung timer.
+        if not (math.isfinite(self.base_ms) and math.isfinite(self.factor)):
+            raise ValueError("base_ms and factor must be finite")
+        if math.isnan(self.max_ms):
+            raise ValueError("max_ms must not be NaN (use inf for no cap)")
 
     # -- delay computation ------------------------------------------------
     def exponential_ms(self, attempt: int) -> float:
@@ -101,7 +104,7 @@ class RetryPolicy:
         """
         r = float(self.rng())
         if not 0.0 <= r <= 1.0:  # also False for NaN
-            raise ValueError(f"rng() must return a float in [0, 1), got {r}")
+            raise ValueError(f"rng() must return a float in [0, 1], got {r}")
         return r
 
     def delay_ms(

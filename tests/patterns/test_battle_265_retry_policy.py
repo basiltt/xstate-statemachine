@@ -198,13 +198,25 @@ class TestJitterProperties:
         "kw",
         [
             {"base_ms": float("nan")},
-            {"max_ms": float("inf")},
+            {"base_ms": float("inf")},
+            {"max_ms": float("nan")},
             {"factor": float("nan")},
+            {"factor": float("inf")},
         ],
     )
     def test_non_finite_params_rejected(self, kw: Dict[str, float]) -> None:
         with pytest.raises(ValueError):
             RetryPolicy(**kw)  # type: ignore[arg-type]
+
+    def test_max_ms_inf_means_no_cap(self) -> None:
+        """Review M: `max_ms=inf` was accepted on 0.10.x as "no cap" and
+        must stay so; only NaN is refused. The exponent still grows and
+        the overflow guard returns inf rather than raising."""
+        p = RetryPolicy(
+            base_ms=100, factor=2.0, max_ms=float("inf"), jitter="none"
+        )
+        assert p.delay_ms(1) == 100 and p.delay_ms(11) == 102_400
+        assert p.delay_ms(10**6) == float("inf")
 
     def test_decorrelated_nan_previous_from_context(self) -> None:
         p = RetryPolicy(jitter="decorrelated", rng=lambda: 0.5)

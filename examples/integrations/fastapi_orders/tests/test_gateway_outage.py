@@ -321,6 +321,11 @@ def test_breaker_fails_fast_without_hanging_the_worker_pool(
         t.join(30)
     assert all(not t.is_alive() for t in ts)
     assert results.count("ok") == 0
-    assert 3 <= logic.GATEWAY.calls <= 32  # racers before the trip
-    assert results.count("open") >= 32 - logic.GATEWAY.calls - 1
+    # 🔒 A broken breaker (never opens) would let all 32 reach the gateway.
+    #    Admission is decided under the breaker's lock but the target runs
+    #    OUTSIDE it, so a few racers can be admitted while the 3rd failure
+    #    is still in flight: bound the slack, do not accept "any number".
+    assert 3 <= logic.GATEWAY.calls <= 3 + 5, logic.GATEWAY.calls
+    assert results.count("down") == logic.GATEWAY.calls
+    assert results.count("open") == 32 - logic.GATEWAY.calls
     assert breaker.state == "open"
