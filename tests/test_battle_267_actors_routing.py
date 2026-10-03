@@ -121,6 +121,42 @@ class TestSendToInvocationAsync(unittest.IsolatedAsyncioTestCase):
         self.assertIn(("LATE", "unresolved_target"), drops.dropped)
         await i.stop()
 
+    async def test_delayed_sendto_after_reentry_reaches_new_invocation(
+        self,
+    ) -> None:
+        # 📝 reviewer LOW-1: the delay captured the OLD handle; after OFF/ON
+        #    a live invocation with the same id exists -- it is the
+        #    addressee, not a drop.
+        machine, got, _, cleanups = _routing_fixture()
+        drops = _Drops()
+        i = await Interpreter(machine).use(drops).start()
+        await i.send("LATE")
+        await i.send("OFF")
+        await i.send("ON", wait=True)
+        await asyncio.sleep(0.2)
+        self.assertEqual(cleanups["a"], 1)
+        self.assertEqual(got["a"], ["LATE"])
+        self.assertEqual(drops.dropped, [])
+        await i.stop()
+
+    async def test_between_steps_drop_does_not_taint_next_receipt(
+        self,
+    ) -> None:
+        # 📝 reviewer LOW-2: the timer fires between steps; its drop must
+        #    not surface as the NEXT unrelated event's soft error.
+        machine, _, _, _ = _routing_fixture()
+        drops = _Drops()
+        i = await Interpreter(machine).use(drops).start()
+        await i.send("LATE")
+        await i.send("OFF", wait=True)
+        await asyncio.sleep(0.2)
+        self.assertIn(("LATE", "unresolved_target"), drops.dropped)
+        r = await i.send("ON", wait=True)
+        self.assertIsNotNone(r)
+        self.assertIsNone(r.error)
+        self.assertTrue(i.last_transition_ok)
+        await i.stop()
+
     async def test_forged_done_ignored(self) -> None:
         machine, _, send_backs, _ = _routing_fixture()
         i = await Interpreter(machine).start()

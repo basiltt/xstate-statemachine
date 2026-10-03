@@ -2564,7 +2564,7 @@ Returns a **new** `MachineLogic` combining the receiver with `others` (later win
 
 ## Actor Logic Helpers **[0.11.0]**
 
-`xstate_statemachine.actor_logic` (also top-level) — XState v5 `fromPromise` / `fromCallback` / `fromObservable` / `fromActor` parity (#267). Each returns an ordinary service for `MachineLogic(services=…)`. Guide: [Actor logic helpers](../guide/services/#actor-logic-helpers).
+`xstate_statemachine.actor_logic` (also top-level, including `StreamEvent`, `RunningLogic`, `drain_pending_cleanups`, `DEFAULT_CLEANUP_TIMEOUT`) — XState v5 `fromPromise` / `fromCallback` / `fromObservable` / `fromActor` parity (#267). Each returns an ordinary service for `MachineLogic(services=…)`. Guide: [Actor logic helpers](../guide/services/#actor-logic-helpers).
 
 | Function | Engine | Description |
 |----------|--------|-------------|
@@ -2577,7 +2577,7 @@ Returns a **new** `MachineLogic` combining the receiver with `others` (later win
 | `RunningLogic` | — | The handle a callback / iterator service returns to the engine: `cleanup()` (idempotent), `subscribe(handler)`, `receive(event)`, `finished`. `sendTo(<invocation id>)` resolves to it while it runs. |
 | `StreamEvent(type, payload)` | both | **[0.11.0]** The `Event` subclass a stream actor delivers (#267 battle): `.data` is the item (`payload["data"]`), `.payload` is `{"data": item}`. Round-trips through `persist_event` / `restore_event` (a `"stream": true` flag in the record; a record without it -- e.g. one written by 0.11.0 before this change -- restores as a plain `Event`, so `e.data` is `{"data": item}` for that one event; a non-boolean flag is `SnapshotCorruptError` in `check_shape`; the snapshot layout is unchanged, no `SNAPSHOT_VERSION` bump). Exported from the top-level package. |
 | `await drain_pending_cleanups(timeout=DEFAULT_CLEANUP_TIMEOUT)` | async | **[0.11.0]** Await the `async def` cleanups scheduled on the *current* loop (the async `stop()` calls it). A cleanup still running after `timeout` seconds (default `30.0`; `None` = unbounded) is cancelled and logged, so `stop()` cannot hang on a socket close that never returns; tasks left by a closed loop are forgotten instead of raising `ValueError("different loop")` (#267 battle). |
-| `on_event_dropped(..., reason="unresolved_target")` | both | **[0.11.0]** A delayed `sendTo` whose target invocation exited before the delay elapsed is dropped and reported with this reason, never delivered to torn-down logic (#267 battle). |
+| `on_event_dropped(..., reason="unresolved_target")` | both | **[0.11.0]** A delayed `sendTo` whose target invocation exited before the delay elapsed is dropped and reported with this reason, never delivered to torn-down logic; if the state was re-entered and a live invocation with the same id exists, it receives the event instead. The drop fires between steps and is not attached to the next event's `Receipt` (#267 battle). |
 
 ## Receipt Codec **[0.11.0]**
 

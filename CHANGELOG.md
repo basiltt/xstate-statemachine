@@ -243,7 +243,8 @@ _No unreleased changes yet._
   `drain_pending_cleanups(timeout=30.0)` bounds how long the async
   `stop()` waits for `async def` cleanups: a cleanup still running after
   the timeout is cancelled and logged (`None` waits without bound).
-  Exported from the top-level package.
+  `StreamEvent`, `RunningLogic`, `drain_pending_cleanups` and
+  `DEFAULT_CLEANUP_TIMEOUT` are exported from the top-level package.
 
 - **`PRIVATE_CONTEXT_PREFIX` (`"_xsm_"`), `is_private_context_key()`,
   `public_context()` (battle-test #265).** A reserved prefix for library
@@ -1196,12 +1197,17 @@ _No unreleased changes yet._
   - **A delayed `sendTo` whose target invocation exited** before the
     delay elapsed is dropped and reported via
     `on_event_dropped(reason="unresolved_target")`, not delivered to
-    torn-down logic (both engines).
+    torn-down logic (both engines). If the state was re-entered and a
+    new invocation runs under the same id, that live one receives it.
+    The drop happens between steps, so it is reported but never
+    attached as the *next* unrelated event's receipt error.
   - **`from_iterator` is honest about a blocked `next()`.** A sync
     iterator stuck in a blocking read cannot be interrupted; it stops at
     its next item, and the cleanup logs a warning naming the invocation
-    when its thread is still alive. Give blocking iterators a timeout, or
-    use `from_callback` and let the client's own thread push.
+    when its thread is still alive (the 100 ms grace wait is skipped on
+    an asyncio loop thread, so N blocked iterators cannot stall the
+    loop). Give blocking iterators a timeout, or use `from_callback` and
+    let the client's own thread push.
   - `tests/recipes` `Driver.close()` is idempotent (a scenario may stop
     the machine itself before the fixture does).
 

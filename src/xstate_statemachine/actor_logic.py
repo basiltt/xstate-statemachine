@@ -50,6 +50,7 @@ from .events import StreamEvent
 from .logger import logger
 
 __all__ = [
+    "DEFAULT_CLEANUP_TIMEOUT",
     "RunningLogic",
     "drain_pending_cleanups",
     "SendBack",
@@ -448,7 +449,14 @@ def from_iterator(
             #    must return / raise promptly. Short grace, then say so.
             if thread is threading.current_thread() or not thread.is_alive():
                 return
-            thread.join(_ITERATOR_STOP_GRACE_S)
+            # 📝 Never block an asyncio loop thread for the grace period: a
+            #    parallel state with N blocked iterators would stall it for
+            #    N x grace. Off-loop (the sync owner) the wait is the
+            #    caller's own thread.
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                thread.join(_ITERATOR_STOP_GRACE_S)
             if thread.is_alive():
                 logger.warning(
                     "🌊 from_iterator '%s' is blocked inside next(); its "

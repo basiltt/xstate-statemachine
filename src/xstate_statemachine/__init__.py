@@ -237,6 +237,9 @@ from .graph import (
 # 🎭 Actor logic helpers (#267) -- fromCallback / fromObservable parity
 # -------------------------------------------------------------------------
 from .actor_logic import (
+    DEFAULT_CLEANUP_TIMEOUT,
+    RunningLogic,
+    drain_pending_cleanups,
     from_async_iterator,
     from_callable,
     from_callback,
@@ -385,6 +388,9 @@ __all__ = [
     "from_callback",
     "from_async_iterator",
     "from_iterator",
+    "RunningLogic",
+    "drain_pending_cleanups",
+    "DEFAULT_CLEANUP_TIMEOUT",
     "from_coroutine",
     "from_callable",
     "from_interpreter",
