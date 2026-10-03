@@ -488,6 +488,33 @@ class SQLiteStore(BaseStore):
         return {"snapshots": s, "deadlines": d, "log_entries": t}
 
     @_sqlite_errors_typed
+    def due_keys(
+        self, until_wall: float, *, limit: int = 1000
+    ) -> List[Tuple[str, float]]:
+        """``(key, earliest due_at)`` for keys with a deadline at or before
+        *until_wall*, earliest first, at most *limit* -- one query on the
+        ``deadlines_due`` index instead of loading every record.
+
+        🏛️ #264 battle (public-API widening, flagged): `DueTimerScanner`
+        fell back to ``list_keys`` + one full ``load`` per record --
+        100 000 records = 100 000 loads per tick, and only the first
+        ``limit`` in KEY order were ever inspected.
+        """
+        if limit < 1:
+            return []
+        rows = (
+            self._conn()
+            .execute(
+                "SELECT key, MIN(due_at_wall) AS first FROM deadlines "
+                "WHERE due_at_wall <= ? GROUP BY key "
+                "ORDER BY first, key LIMIT ?",
+                (float(until_wall), int(limit)),
+            )
+            .fetchall()
+        )
+        return [(str(r[0]), float(r[1])) for r in rows]
+
+    @_sqlite_errors_typed
     def _list_keys_raw(self, prefix: str, limit: int) -> List[str]:
         conn = self._conn()
         rows = conn.execute(

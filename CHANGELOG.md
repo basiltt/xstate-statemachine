@@ -231,6 +231,21 @@ _No unreleased changes yet._
 
 ### Added
 
+- **`SQLiteStore.due_keys(until_wall, *, limit=1000)` and
+  `MemoryStore.due_keys(...)` (battle-test #264).** `(key, earliest
+  due_at_wall)` for keys with a matured deadline, earliest first -- one
+  query on the `deadlines_due` index (SQLite) or a dict walk (Memory),
+  the shape the `[sqlalchemy]`, `[redis]` and `[django]` stores already
+  had. `DueTimerScanner` uses it when present: 100 000 records / 100 due
+  went from 3.5 s and 100 000 record loads to 0.023 s and none.
+- **`examples/integrations/fastapi_orders` scheduler-outage scenario** --
+  400 orders arm timeouts and retry backoffs over an afternoon; the one
+  scheduler is down for three hours. The backlog drains oldest-first in
+  `limit=100` batches, `max_lag_s` reports the outage, live timers are
+  left alone, two schedulers started by accident still commit each
+  deadline once (both locks), and a crash between fire and save re-fires
+  without a torn record. `build_scanner()` accepts overrides.
+
 - **`Interpreter.await_settled(timeout)`, `apersisted(settle_timeout=)`,
   `DEFAULT_SETTLE_TIMEOUT` (battle-test #263).** `await send(..., wait=True)`
   resolves at the end of the *event's* macrostep; a service completion is
@@ -1120,6 +1135,56 @@ _No unreleased changes yet._
 
 ### Changed
 
+- **Durable timers, as battle-tested (#264) -- behaviour changes a
+  0.11.0-RC user can hit:**
+  - `DueTimerScanner(limit=)` caps machines **woken per tick, earliest
+    deadline first**. It capped the keys *scanned* in name order, so a
+    scheduler that came back to a backlog larger than the limit woke the
+    same first N keys every tick and the rest never fired.
+    `ScanResult.scanned` now means keys inspected (all of them on an
+    indexed store). `FileStore` has no index: a tick reads every record
+    (~2.4 ms each) -- use SQLite / SQLAlchemy / Redis beyond a few
+    thousand records.
+  - A lost optimistic race (`ConflictError` on the fire-save) and a
+    `LockTimeoutError` (another scanner or request holds the key) count
+    as `skipped_stale`, not `errors`. An operator alerting on `errors`
+    was paged every time two schedulers overlapped. New
+    `ScanResult.locked` counts the lock-timeout subset separately, so a
+    permanently stuck holder is visible (`locked` climbing while `due`
+    does not fall).
+  - `skew_tolerance_s < 0` or `limit < 1` raise `ValueError` (both were
+    silently accepted).
+  - On `"resume"` / `"fire_due"` the remaining time is clamped to
+    `[0, the delay the deadline was armed with]` (the persisted
+    `delay_ms`): a wall clock stepped back between arm and restore made
+    a 5 s timer wait 2 h 5 s; a `due_at_wall` of 1e308 re-persisted as
+    `inf` and the next load refused the blob. The bound is the ARMED
+    delay, not today's declared one, so a chart redeployed with a shorter
+    `after` cannot fire an old deadline early (review H2).
+  - Duplicate deadline records for one `(state, event)` resolve to the
+    **newest `entry_seq`** (earliest due breaks ties). The last record in
+    the list used to win, and a stale record from an earlier visit could
+    fire the current visit early.
+  - A delay resolver returning NaN / ±inf is "unresolvable" (logged, that
+    timer skipped) instead of a bare `ValueError` on state entry; a
+    negative delay arms at 0 instead of persisting `delay_ms < 0` that
+    the next load refused.
+  - `entry_seq` or `delay_ms` of 2**63 or more in a blob is
+    `SnapshotCorruptError` (a 200-digit seq used to be adopted as the
+    machine's counter).
+  - Both engines fire matured deadlines **inside `start()`** under
+    `"fire_due"`; a restored inbox drains before them. A delayed
+    `raise(delay=)` self-send keeps *relative* remaining time (#213) and
+    does not shift with the outage the way an `after` does.
+  - Child actors: `restart_timers`, `clock` and `restart_services` are
+    forwarded to child restores, and the sync engine's `start()` starts
+    restored children as the async one did -- so with
+    `restart_services=True` a restored child's dormant invoke re-runs
+    too. A child restored as done / error / stopped is left alone on
+    both engines; a resumed child's `sendParent` is processed by the
+    same `start()`. The root's deadlines are the only ones the store
+    indexes: a child-only timer cannot wake its parent.
+
 - **Versioning, as battle-tested (#263) -- behaviour changes a 0.10.x
   user can hit on upgrade:**
   - `save(..., machine_version=)` longer than **255 characters** or
@@ -1243,6 +1308,37 @@ _No unreleased changes yet._
   `requires-python` and CI have been 3.9 since 0.9).
 
 ### Fixed
+
+- **`PessimisticLock` + `DueTimerScanner` timed out on its own lock
+  (battle-test #264).** The scanner takes the strategy's lock, then
+  `persisted()` inside the wake tried to take it again -- on Memory,
+  File, Django and SQLAlchemy stores (whose locks are not re-entrant)
+  every key, every tick, was a `LockTimeoutError`. The inner block now
+  reuses the held lock.
+- **A scanner could count a phantom wake (battle-test #264).** Under
+  `OptimisticLock` another scanner could fire the key *after* our re-check
+  but *before* `persisted()`'s own load; we then loaded a record with
+  nothing due, saved a no-op `version + 1` and reported `woken`. The save
+  is now fenced on the version the re-check saw: `ConflictError` ->
+  `skipped_stale`. Exactly-once per deadline is asserted under 8 threads
+  and 4 processes on every store, both locks.
+- **`restart_timers=False` left an orphan deadline (battle-test #264).** A
+  parked deadline whose state was then exited stayed in
+  `pending_deadlines()`, was re-persisted, and every scanner tick on that
+  key raised `StateNotFoundError`. Exiting a state drops its parked
+  record too.
+- **Child actors lost their persisted timers (battle-test #264).** Child
+  restores received `restart_services` only: a child's `after` never
+  re-armed, and a restored child ran on the real clock under a parent on
+  a `SimulatedClock`. The sync engine never started restored children at
+  all.
+- **Building machines from one config in several threads raised a false
+  `InvalidConfigError` (battle-test #264).** The #136 "aliased cycle"
+  guard was one module-level set shared across threads; 1 035 of 2 400
+  parallel `create_machine` calls tripped it. The guard is per build.
+- **`DjangoModelStore.save` maps "database is locked" to
+  `LockTimeoutError`** as `DjangoStore` already did; a raising fence in
+  `persisted()` now releases the idempotency-inbox claims it was holding.
 
 - **The web registries' READ paths ignored the migrator (battle-test
   #263).** `StatechartRegistry.peek()` (GET, SSE connect, WebSocket

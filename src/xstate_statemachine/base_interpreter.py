@@ -30,6 +30,7 @@ import copy
 import inspect
 import json
 import logging
+import math
 import threading
 import time
 import warnings
@@ -1381,6 +1382,15 @@ class BaseInterpreter(Generic[TContext]):
             return
         for key in [k for k in self._armed_after if k[0] == state_id]:
             del self._armed_after[key]
+        # 🛡️ #264 battle (agent B, xfail handed to the engine): a deadline a
+        #    restore PARKED (`restart_timers=False`) for this state must go
+        #    too -- the state is exited, nothing could ever fire it. Left
+        #    in place it was re-persisted as an orphan, and every scanner
+        #    tick then failed on that key with `StateNotFoundError`.
+        if self._restored_deadlines:
+            self._restored_deadlines = [
+                d for d in self._restored_deadlines if d.state_id != state_id
+            ]
 
     def pending_deadlines(self) -> List["persistence.Deadline"]:
         """Public view of `_persist_deadlines()` (#264): the `after`
@@ -2395,6 +2405,13 @@ class BaseInterpreter(Generic[TContext]):
                 child_machine,
                 verify_machine_hash=verify_machine_hash,
                 restart_services=restart_services,
+                # 📝 #264 battle: forward the timer policy and the clock.
+                #    Without them a child's persisted `after` deadline was
+                #    parked forever (its SLA silently died) and a restored
+                #    child ran on a RealClock while its parent was on the
+                #    injected one -- the same split #117 fixed for roots.
+                restart_timers=restart_timers,
+                clock=clock,
                 on_version_mismatch=on_version_mismatch,
                 migrator=migrator,  # #263: children follow the same policy
             )
@@ -2695,15 +2712,46 @@ class BaseInterpreter(Generic[TContext]):
         by_state: Dict[str, Dict[str, float]] = {}
         if mode in ("resume", "fire_due"):
             now = self.wall_now()
+            # 📝 #264 battle: duplicate records for one (state, event)
+            #    resolve by the NEWEST `entry_seq` (a lower seq is a stale
+            #    record from a prior visit and must never fire, #305), then
+            #    the EARLIEST due time -- order-independent, never late.
+            newest: Dict[Tuple[str, str], Tuple[int, float, int]] = {}
             for d in parked:
-                by_state.setdefault(d.state_id, {})[d.event_type] = (
-                    d.due_at_wall - now
-                ) * 1000.0
+                left = (d.due_at_wall - now) * 1000.0
+                key = (d.state_id, d.event_type)
+                seen = newest.get(key)
+                if seen is None or (d.entry_seq, -left) > (
+                    seen[0],
+                    -seen[1],
+                ):
+                    newest[key] = (d.entry_seq, left, d.delay_ms)
+            raw_left: Dict[str, float] = {}
+            for (sid, etype), (_, left, armed_ms) in newest.items():
+                # 🛡️ #264 review H2: clamp the remainder to the delay the
+                #    deadline was ARMED with (persisted `delay_ms`), not
+                #    today's declared value. A chart redeployed with a
+                #    shorter `after` (24 h -> 1 h) must not fire a 23 h
+                #    remainder in 1 h -- "no earlier than due" is the
+                #    guarantee. The clamp exists for a stepped-back wall
+                #    clock / a far-future `due_at_wall`, where the armed
+                #    delay is exactly the right ceiling.
+                by_state.setdefault(sid, {})[etype] = min(
+                    max(0.0, left), float(armed_ms)
+                )
+                # 📝 Ordering uses the UNclamped remainder: five matured
+                #    deadlines all clamp to 0 ms, but must still arm (and
+                #    so fire) most-overdue first.
+                raw_left[sid] = min(raw_left.get(sid, float("inf")), left)
         # ⏰ #264: arm in DEADLINE order. Every matured deadline is re-armed
         #    at 0 ms, and the clock heap breaks ties by arm order -- so the
         #    most overdue timer must be armed first for `fire_due` to fire
         #    them in the order they would have fired had the process lived.
-        earliest = {sid: min(v.values()) for sid, v in by_state.items() if v}
+        earliest = (
+            raw_left
+            if mode in ("resume", "fire_due")
+            else {sid: min(v.values()) for sid, v in by_state.items() if v}
+        )
         states = sorted(
             self._active_state_nodes,
             key=lambda st: (earliest.get(st.id, float("inf")), st.id),
@@ -5919,6 +5967,15 @@ class BaseInterpreter(Generic[TContext]):
         for delay_ms, transitions in state.after.items():
             # 🏷️ Symbolic delays resolve through MachineLogic.delays.
             resolved_ms = self._resolve_delay(delay_ms, None)
+            # 📝 #264 battle: a delay of NaN / inf crashed `int(round())`
+            #    below with a bare ValueError during entry; a negative one
+            #    was persisted as `delay_ms < 0`, which `check_shape` then
+            #    refused on the next load. Non-finite == unresolvable;
+            #    negative == "now" (what the clock already did with it).
+            if resolved_ms is not None and not math.isfinite(resolved_ms):
+                resolved_ms = None
+            elif resolved_ms is not None and resolved_ms < 0:
+                resolved_ms = 0.0
             if resolved_ms is None:
                 logger.warning(
                     "⚠️ Skipping 'after' transition on '%s': delay %r could "
@@ -5943,6 +6000,13 @@ class BaseInterpreter(Generic[TContext]):
                 seen_events.add(t_def.event)
                 effective_ms = float(resolved_ms)
                 if remaining is not None and t_def.event in remaining:
+                    # 📝 #264 battle: `remaining` arrives already clamped to
+                    #    [0, the delay the deadline was armed with] by
+                    #    `_rearm_dormant_timers` (review H2) -- a stepped-
+                    #    back wall clock or a far-future `due_at_wall` can
+                    #    never make a timer wait longer than it was armed
+                    #    for, and a redeployed shorter delay can never make
+                    #    it fire early. Non-negative here, belt and braces.
                     effective_ms = max(0.0, remaining[t_def.event])
                 delay_sec = effective_ms / 1000.0
                 # 📏 #48: record the deadline so the fired event can report
