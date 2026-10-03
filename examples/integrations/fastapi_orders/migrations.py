@@ -50,13 +50,11 @@ def v1_to_v2(blob: Dict[str, Any]) -> Dict[str, Any]:
     blob["state_ids"] = [
         V2_AUTHORISING if s == V1_PAYING else s for s in blob["state_ids"]
     ]
-    # 📝 `configuration` lists leaves AND ancestors and must agree with
-    #    `state_ids` (the restore refuses a contradiction). Rewrite it the
-    #    same way and add the new ancestor.
-    if V1_PAYING in (blob.get("configuration") or []):
-        blob["configuration"] = [
-            s for s in blob["configuration"] if s != V1_PAYING
-        ] + ["order.payment", V2_AUTHORISING]
+    # 📝 `configuration` (leaves + ancestors) is rebuilt by the restore
+    #    from `state_ids` against the v2 chart when a step leaves it
+    #    untouched (#263 battle) -- so rewriting the leaves is enough.
+    #    Rewrite it too if you prefer to be explicit; a step that sets
+    #    the two fields to DISAGREE is refused with `SnapshotCorruptError`.
     blob.setdefault("context", {}).setdefault("currency", "USD")
     return blob
 
