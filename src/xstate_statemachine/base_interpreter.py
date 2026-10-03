@@ -2703,13 +2703,22 @@ class BaseInterpreter(Generic[TContext]):
         by_state: Dict[str, Dict[str, float]] = {}
         if mode in ("resume", "fire_due"):
             now = self.wall_now()
+            # 📝 #264 battle: duplicate records for one (state, event)
+            #    resolve by the NEWEST `entry_seq` (a lower seq is a stale
+            #    record from a prior visit and must never fire, #305), then
+            #    the EARLIEST due time -- order-independent, never late.
+            newest: Dict[Tuple[str, str], Tuple[int, float]] = {}
             for d in parked:
-                # 📝 #264 battle: duplicate records for one (state, event)
-                #    resolve to the EARLIEST deadline, not "last in the
-                #    list wins" -- order-independent and never late.
                 left = (d.due_at_wall - now) * 1000.0
-                slot = by_state.setdefault(d.state_id, {})
-                slot[d.event_type] = min(slot.get(d.event_type, left), left)
+                key = (d.state_id, d.event_type)
+                seen = newest.get(key)
+                if seen is None or (d.entry_seq, -left) > (
+                    seen[0],
+                    -seen[1],
+                ):
+                    newest[key] = (d.entry_seq, left)
+            for (sid, etype), (_, left) in newest.items():
+                by_state.setdefault(sid, {})[etype] = left
         # ⏰ #264: arm in DEADLINE order. Every matured deadline is re-armed
         #    at 0 ms, and the clock heap breaks ties by arm order -- so the
         #    most overdue timer must be armed first for `fire_due` to fire

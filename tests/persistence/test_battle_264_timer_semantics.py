@@ -435,6 +435,17 @@ class TestCorruption:
         assert r.current_state_ids == {"r.d"}
         r.stop()
 
+    def test_duplicate_records_newest_seq_beats_earlier_stale(self) -> None:
+        b = _blob(_m())
+        fresh = dict(b["deadlines"][0], entry_seq=5)
+        stale = dict(fresh, entry_seq=4, due_at_wall=T0 - 100)
+        b["deadlines"] = [fresh, stale]  # stale listed LAST
+        r, clk = _sync_restore(b, _m(), T0, "fire_due")
+        r.start()
+        clk.increment(0)
+        assert r.current_state_ids == {"r.w"}
+        r.stop()
+
     def test_100k_records_bounded_time(self) -> None:
         b = _blob(_m())
         b["deadlines"] = b["deadlines"] * 100_000
