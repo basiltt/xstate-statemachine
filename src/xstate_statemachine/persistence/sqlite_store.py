@@ -497,6 +497,29 @@ class SQLiteStore(BaseStore):
         ).fetchall()
         return [r[0] for r in rows]
 
+    @_sqlite_errors_typed
+    def _list_versions_raw(
+        self, prefix: str, limit: int
+    ) -> List[Tuple[str, str]]:
+        # 📝 #263 battle: one SELECT over the label column; the snapshot
+        #    blob is never read. A non-str label is corruption, as in load.
+        rows = (
+            self._conn()
+            .execute(
+                "SELECT key, machine_version FROM statecharts "
+                "WHERE substr(key, 1, ?) = ? ORDER BY key LIMIT ?",
+                (len(prefix), prefix, limit),
+            )
+            .fetchall()
+        )
+        for k, mv in rows:
+            if not isinstance(mv, str):
+                raise SnapshotCorruptError(
+                    f"SQLiteStore row {k!r}: machine_version is "
+                    f"{type(mv).__name__}, not str."
+                )
+        return [(r[0], r[1]) for r in rows]
+
     def _lock_raw(self, key: str, timeout: float) -> ContextManager[None]:
         return self._db_lock(key, timeout)
 

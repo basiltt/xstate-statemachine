@@ -272,6 +272,9 @@ python_functions = "test_*"
 #    sessions against the `[testing]` plugin. Built-in, stdlib-only, inert
 #    unless a test requests the fixture.
 addopts = "-v --tb=short -p pytester"
+markers = [
+    "stress: long-running opt-in load test (set XSM_STRESS=1)",
+]
 
 [tool.coverage.run]
 source = ["src/xstate_statemachine"]

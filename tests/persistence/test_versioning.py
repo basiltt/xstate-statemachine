@@ -392,6 +392,9 @@ class TestSnapshotsCli:
         assert out.returncode != 0 and "needs the machine JSON" in out.stderr
 
     def test_file_store_url_and_empty(self, tmp_path: Any) -> None:
+        # 📝 #263 battle: the CLI refuses a MISSING store dir; an existing
+        #    empty one is "store is empty".
+        (tmp_path / "fs").mkdir()
         url = "file:///" + str(tmp_path / "fs").replace("\\", "/")
         out = self._run("--store", url)
         assert out.returncode == 0 and "store is empty" in out.stdout

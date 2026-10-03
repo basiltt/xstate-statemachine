@@ -1223,6 +1223,7 @@ def _dispatch() -> None:
             prefix=args.prefix,
             limit=args.limit,
             as_json=bool(getattr(args, "json", False)),
+            fail_if_stale=bool(getattr(args, "fail_if_stale", False)),
         )
         return
 
