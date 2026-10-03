@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional
 
@@ -97,4 +98,9 @@ def check_deadline_record(rec: Any) -> Optional[str]:
     due = rec["due_at_wall"]
     if isinstance(due, bool) or not isinstance(due, (int, float)):
         return "'due_at_wall' must be a number (seconds since the epoch)"
+    # 🛡️ #263 battle: `json.loads` accepts `NaN` / `Infinity`; a migration
+    #    step can inject them too. `remaining_ms` then raised a bare
+    #    ValueError / OverflowError from `round()` at `start()`.
+    if not math.isfinite(due):
+        return "'due_at_wall' must be a finite number"
     return None

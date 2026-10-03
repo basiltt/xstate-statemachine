@@ -118,6 +118,9 @@ class TestMismatchPolicy:
             )
 
     def test_unlabelled_blob_restores_with_warning(self, caplog: Any) -> None:
+        from src.xstate_statemachine import base_interpreter as bi
+
+        bi._UNLABELLED_WARNED.clear()  # #263 battle: once per process
         raw = json.loads(blob_v1())
         del raw["machine_version"]  # a 0.10.x writer
         i = SyncInterpreter.from_snapshot(json.dumps(raw), create_machine(V1))
