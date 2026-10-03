@@ -358,6 +358,24 @@ class DjangoModelStore(BaseStore):
         deadlines: Tuple[Deadline, ...],
     ) -> int:
         snap = json.loads(data)
+        # 🐛 #264 battle: `DjangoStore` mapped a busy database to the typed
+        #    `LockTimeoutError`; this twin leaked Django's bare
+        #    `OperationalError('database is locked')` -- 4 `xsm_deadlines`
+        #    workers on SQLite filed 12 of 20 rows under `errors`.
+        try:
+            return self._save_row(key, snap, expected_version, deadlines)
+        except OperationalError as exc:
+            if _locked(exc):
+                raise LockTimeoutError(key, 0.0) from exc
+            raise
+
+    def _save_row(
+        self,
+        key: str,
+        snap: Any,
+        expected_version: Optional[int],
+        deadlines: Tuple[Deadline, ...],
+    ) -> int:
         with transaction.atomic(using=self.using):
             cur = (
                 self._mgr()

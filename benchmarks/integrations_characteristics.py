@@ -78,6 +78,7 @@ ROWS = (
     "snapshot_restore_migrated_sync",
     "shortest_paths",
     "fastapi_router",
+    "timer_scan_sqlite_100k",
 )
 
 
@@ -344,6 +345,60 @@ def _persisted_async(store: Any) -> Dict[str, Any]:
 
 def benchmark_persisted_memory_sync() -> Dict[str, Any]:
     return _persisted_sync(MemoryStore())
+
+
+TIMER_KEYS = 100_000
+TIMER_DUE = 100
+
+
+def benchmark_timer_scan_sqlite_100k() -> Dict[str, Any]:
+    """`DueTimerScanner.due_keys` + ONE fire over 100 000 SQLite records
+    of which 100 are due (#264 battle).
+
+    📝 Before the indexed `SQLiteStore.due_keys` the scanner loaded every
+    record per tick. Each repetition fires a DIFFERENT one of the 100 due
+    keys (``limit=1``), so all seven measure a 93-100-due index.
+    """
+    from xstate_statemachine import SimulatedClock, SyncInterpreter
+    from xstate_statemachine.persistence import DueTimerScanner
+
+    machine = create_machine(
+        {
+            "id": "t",
+            "initial": "w",
+            "states": {"w": {"after": {"1000": "d"}}, "d": {}},
+        }
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteStore(Path(directory) / "timers.sqlite")
+        try:
+            interp = SyncInterpreter(
+                machine, clock=SimulatedClock(wall_start=0)
+            ).start()
+            blob, (dl,) = interp.get_snapshot(), interp.pending_deadlines()
+            interp.stop()
+            late = type(dl)(dl.state_id, 1, 1e12, dl.delay_ms, dl.event_type)
+            conn = store._conn()
+            conn.execute("BEGIN")
+            for i in range(TIMER_KEYS):
+                store.save(
+                    f"t{i:06d}",
+                    blob,
+                    deadlines=(dl if i < TIMER_DUE else late,),
+                )
+            conn.execute("COMMIT")
+            scanner = DueTimerScanner(store, lambda k: machine, limit=1)
+            samples = []
+            for _ in range(REPETITIONS):
+                start = time.perf_counter_ns()
+                due = scanner.due_keys(10.0)
+                woken = scanner.run_once(now=10.0)
+                samples.append((time.perf_counter_ns() - start) / 1000)
+                if len(due) != 1 or woken != 1:
+                    raise RuntimeError("timer scan did not fire one key")
+            return _metric(samples, keys=TIMER_KEYS, due=TIMER_DUE)
+        finally:
+            store.close()
 
 
 def benchmark_persisted_memory_async() -> Dict[str, Any]:
@@ -674,6 +729,9 @@ def run(quick: bool = False) -> Dict[str, Any]:
         ):
             results[name] = _clean(snap, snapshots)
         results["shortest_paths"] = _clean(benchmark_shortest_paths)
+        results["timer_scan_sqlite_100k"] = _clean(
+            benchmark_timer_scan_sqlite_100k
+        )
         results["fastapi_router"] = benchmark_fastapi_router()
     finally:
         logger.setLevel(previous_level)
@@ -727,6 +785,7 @@ def measure_row(row: str, quick: bool = False) -> Dict[str, Any]:
             (snapshots,),
         ),
         "shortest_paths": (benchmark_shortest_paths, ()),
+        "timer_scan_sqlite_100k": (benchmark_timer_scan_sqlite_100k, ()),
     }
     if row not in dispatch:
         raise KeyError(f"{row!r} is not a re-measurable row")

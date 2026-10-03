@@ -592,6 +592,28 @@ class MemoryStore(BaseStore):
             keys = sorted(k for k in self._records if k.startswith(prefix))
         return keys[:limit]
 
+    def due_keys(
+        self, until_wall: float, *, limit: int = 1000
+    ) -> List[Tuple[str, float]]:
+        """``(key, earliest due_at)`` with a deadline at or before
+        *until_wall*, earliest first, at most *limit*.
+
+        📝 #264 battle (public-API widening, flagged): lets
+        `DueTimerScanner` skip decoding every record, and returns the
+        EARLIEST *limit* rather than the first *limit* keys by name.
+        """
+        with self._guard:
+            rows = [
+                (k, min(d.due_at_wall for d in r.deadlines))
+                for k, r in self._records.items()
+                if r.deadlines
+            ]
+        due = sorted(
+            ((k, d) for k, d in rows if d <= until_wall),
+            key=lambda kv: (kv[1], kv[0]),
+        )
+        return due[: max(int(limit), 0)]
+
     def _list_versions_raw(
         self, prefix: str, limit: int
     ) -> List[Tuple[str, str]]:

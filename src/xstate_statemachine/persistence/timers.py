@@ -26,16 +26,56 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Iterable, Iterator, List, Optional, Tuple
 
+from ..exceptions import ConflictError, LockTimeoutError
 from ..logger import logger
 from .store import StateStore
 
 __all__ = ["DueTimerScanner", "ScanResult"]
+
+#: The fallback scan must see every key to pick the earliest ``limit``.
+_ALL_KEYS = 2**62
+
+
+class _Held:
+    """The scanner's strategy with `acquire` turned into a no-op.
+
+    📝 #264 battle: the scanner takes ``strategy.acquire`` itself (to
+    re-check the deadline under the lock), then calls `persisted()`.
+    Handing `persisted()` the raw strategy re-acquired a NON-re-entrant
+    store lock (Memory, File, Django, SQLAlchemy lease) and timed out.
+    This wrapper keeps the strategy's ``fence`` (the versioned save) and
+    skips the second take.
+    """
+
+    def __init__(self, inner: Any, seen_version: int) -> None:
+        self._inner = inner
+        self._seen = int(seen_version)
+
+    def fence(self, version: int) -> Optional[int]:
+        # 🐛 #264 battle: under `OptimisticLock` the record could move
+        #    between the scanner's deadline re-check and `persisted()`'s
+        #    own load (another scanner fired it). The woken machine then
+        #    had nothing due, saved a no-op v+1 and was COUNTED as woken
+        #    (8 scanners x 10 000 keys: woken=10 006). The version the
+        #    re-check saw is the fence: anything newer is stale.
+        if version != self._seen:
+            raise ConflictError("<scanner>", self._seen, version)
+        fenced: Optional[int] = self._inner.fence(version)
+        return fenced
+
+    @contextlib.contextmanager
+    def acquire(self, store: Any, key: str) -> Iterator[None]:
+        yield
+
+    def run(self, *a: Any, **kw: Any) -> Any:  # pragma: no cover - unused
+        raise NotImplementedError("_Held is only for persisted()")
 
 
 @dataclass
@@ -100,39 +140,60 @@ class DueTimerScanner:
         self.lock = lock
         self.plugins = list(plugins)
         self.now = now or time.time
+        # 🛡️ #264 battle: a negative tolerance silently made the scanner
+        #    fire LATE (never earlier than deadline + |t|) and a limit < 1
+        #    made it a no-op -- both accepted without a word.
+        if float(skew_tolerance_s) < 0:
+            raise ValueError("skew_tolerance_s must be >= 0")
+        if int(limit) < 1:
+            raise ValueError("limit must be >= 1")
         self.skew_tolerance_s = float(skew_tolerance_s)
         self.prefix = prefix
         self.limit = int(limit)
         self.migrator = migrator
         self.on_version_mismatch = on_version_mismatch
         self._stop = threading.Event()
+        self._last_scanned = 0
 
     # -- one pass -------------------------------------------------------------------
     def due_keys(self, now: Optional[float] = None) -> List[Tuple[str, float]]:
         """``(key, earliest due_at)`` for records with a matured deadline,
-        soonest first. Reads only the store's deadline index."""
+        soonest first, at most ``limit`` -- the EARLIEST ``limit``."""
         at = (self.now() if now is None else now) + self.skew_tolerance_s
-        # ⚡ A store with a deadline INDEX (Redis zset, #306) answers this
-        #    directly; the stdlib stores are scanned record by record.
+        # ⚡ A store with a deadline INDEX (SQLite / Memory / SQLAlchemy /
+        #    Redis / Django) answers this directly; others (FileStore) are
+        #    scanned record by record -- O(records) loads per tick.
         indexed = getattr(self.store, "due_keys", None)
         if callable(indexed):
+            # 📝 #264 battle: the index has no prefix filter, so with a
+            #    prefix the store's ``limit`` would be spent on OTHER
+            #    prefixes' keys; fetch all due rows, filter, then cap.
+            cap = _ALL_KEYS if self.prefix else self.limit
             rows = [
                 (k, d)
-                for k, d in indexed(at, limit=self.limit)
+                for k, d in indexed(at, limit=cap)
                 if k.startswith(self.prefix)
             ]
-            rows.sort(key=lambda kv: kv[1])
+            rows.sort(key=lambda kv: (kv[1], kv[0]))
+            rows = rows[: self.limit]
+            self._last_scanned = len(rows)
             return rows
+        # 🐛 #264 battle: the fallback inspected only the first ``limit``
+        #    keys in KEY order, so with more keys than ``limit`` a due key
+        #    sorting late was never woken (starvation, not batching). It
+        #    now inspects every key and keeps the EARLIEST ``limit``.
         out: List[Tuple[str, float]] = []
-        for key in self.store.list_keys(prefix=self.prefix, limit=self.limit):
+        keys = self.store.list_keys(prefix=self.prefix, limit=_ALL_KEYS)
+        for key in keys:
             rec = self.store.load(key)
             if rec is None or not rec.deadlines:
                 continue
             earliest = min(d.due_at_wall for d in rec.deadlines)
             if earliest <= at:
                 out.append((key, earliest))
-        out.sort(key=lambda kv: kv[1])
-        return out
+        out.sort(key=lambda kv: (kv[1], kv[0]))
+        self._last_scanned = len(keys)
+        return out[: self.limit]
 
     def run_once(self, now: Optional[float] = None) -> int:
         """Scan once; wake every machine with a matured deadline. Returns
@@ -144,10 +205,13 @@ class DueTimerScanner:
 
         at = self.now() if now is None else now
         result = ScanResult()
-        result.scanned = len(
-            self.store.list_keys(prefix=self.prefix, limit=self.limit)
-        )
-        for key, earliest in self.due_keys(at):
+        # 📝 #264 battle: `scanned` used to be a SECOND `list_keys` per tick
+        #    (a directory walk on FileStore) capped at ``limit``; it is now
+        #    what `due_keys` actually inspected (records loaded by the
+        #    fallback, index rows for an indexed store).
+        due = self.due_keys(at)
+        result.scanned = self._last_scanned
+        for key, earliest in due:
             result.due += 1
             try:
                 machine = self.machine_for_key(key)
@@ -172,7 +236,13 @@ class DueTimerScanner:
                         self.store,
                         key,
                         machine,
-                        lock=self.lock,
+                        # 🐛 #264 battle: passing `self.lock` made
+                        #    `persisted()` take the store lock a SECOND
+                        #    time; only SQLite's lock is re-entrant, so
+                        #    `PessimisticLock` on Memory/File stores timed
+                        #    out on itself for EVERY key, every tick. We
+                        #    already hold it: keep the fence, skip the take.
+                        lock=_Held(strategy, rec.version),
                         plugins=self.plugins,
                         create_if_missing=False,
                         restart_timers="fire_due",
@@ -186,6 +256,21 @@ class DueTimerScanner:
                         pass  # fire_due ran in start(); exit saves
                 result.woken += 1
                 result.max_lag_s = max(result.max_lag_s, at - earliest)
+            except ConflictError:
+                # 🏛️ #264 battle: under `OptimisticLock` two scanners (or a
+                #    scanner and a web request) racing one key is the
+                #    NORMAL case; the loser's versioned save is refused and
+                #    nothing it did was committed. That is a stale skip,
+                #    not an error an operator should be paged for.
+                result.skipped_stale += 1
+            except LockTimeoutError:
+                # 🏛️ #264 battle (decided): under `PessimisticLock` a key
+                #    whose lock another scanner / request holds is the
+                #    same normal race -- skipped, retried next tick. A lock
+                #    that is stuck for good shows up as a growing
+                #    `max_lag_s` / `due` count, not as one error per tick.
+                logger.debug("⏰ DueTimerScanner: '%s' is locked", key)
+                result.skipped_stale += 1
             except (
                 Exception
             ) as exc:  # noqa: BLE001 -- one key must not stop the scan
