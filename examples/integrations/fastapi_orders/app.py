@@ -37,6 +37,7 @@ from xstate_statemachine.contrib.fastapi import (
 )
 from xstate_statemachine.contrib.pydantic import context_model
 from xstate_statemachine.contrib.starlette import mount_inspector
+from xstate_statemachine.patterns import DeadLetterPlugin
 from xstate_statemachine.persistence import DueTimerScanner, SQLiteInbox
 
 from logic import build_logic
@@ -99,6 +100,21 @@ def build_store() -> Tuple[Any, Any]:
     return store, SQLiteInbox(store)
 
 
+def build_dead_letter_store(store: Any) -> Any:
+    """Dead letters live next to the snapshots: in the same SQLite file
+    (one `xsm dlq` target), or in memory for Redis deployments (use
+    `BrokerDeadLetterSink` / your queue there)."""
+    from xstate_statemachine.persistence import SQLiteStore
+
+    if isinstance(store, SQLiteStore):
+        from xstate_statemachine.eda import SQLiteDeadLetterStore
+
+        return SQLiteDeadLetterStore(store)
+    from xstate_statemachine.patterns import MemoryDeadLetterStore
+
+    return MemoryDeadLetterStore()
+
+
 def customer_of(conn: Any) -> str:
     """The caller's identity: ``X-Customer`` header, else the ``customer``
     cookie (an `EventSource` cannot set headers). Replace with your real
@@ -139,9 +155,24 @@ def build_registry(
     #    order lazily the first time a v2 process touches it. Harmless on
     #    a v1 deployment: a v1 blob into the v1 chart never mismatches.
     kw.setdefault("migrator", build_migrator())
+    # 💀 #265: a `DeadLetterPlugin` on the registry writes ONE record --
+    #    machine, last event, attempt count, the chain of gateway errors,
+    #    a redacted snapshot -- when an order enters `paymentFailed` (tagged
+    #    `dead-letter` in the chart). The store shares the orders database
+    #    so `xsm dlq --dlq sqlite:///orders.db list` is the triage view,
+    #    and `replay` re-drives the order once the gateway is back. Both
+    #    the request path and the scheduler carry it (the retry loop is
+    #    usually exhausted BY the scheduler's wake).
+    dlq = kw.pop("dead_letters", None)
+    if dlq is None:
+        dlq = build_dead_letter_store(store)
+    plugins = list(kw.pop("plugins", ()))
+    if dlq is not None:
+        plugins.append(DeadLetterPlugin(dlq))
     registry = StatechartRegistry(
-        store, inbox=inbox, principal=customer_of, **kw
+        store, inbox=inbox, principal=customer_of, plugins=plugins, **kw
     )
+    registry.dead_letters = dlq  # type: ignore[attr-defined]
     registry.register(
         MACHINE_NAME,
         build_machine(chart),
