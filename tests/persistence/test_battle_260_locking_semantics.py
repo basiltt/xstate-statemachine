@@ -853,14 +853,34 @@ class TestThreadSmoke(_Tmp):
             ):
                 key = type(lock).__name__
                 with self.subTest(store=type(store).__name__, lock=key):
+                    # 📝 Per-CALL outcomes. A thread that hits one
+                    #    LockTimeoutError must keep going, or the thread's
+                    #    REMAINING calls are silently lost and `total -
+                    #    len(errs)` undercounts (Windows 3.9 CI: 1 error,
+                    #    756 of 800 counted -- the error cost that thread
+                    #    its other 44 calls, #263 battle).
+                    attempted = [0]
+                    ok = [0]
+                    errs: List[BaseException] = []
+                    lk = threading.Lock()
 
                     def work(_n: int) -> None:
                         for _ in range(self.EACH):
-                            lock.run(
-                                store, key, MACHINE, lambda i: i.send("T")
-                            )
+                            with lk:
+                                attempted[0] += 1
+                            try:
+                                lock.run(
+                                    store, key, MACHINE, lambda i: i.send("T")
+                                )
+                            except LockTimeoutError as exc:
+                                with lk:
+                                    errs.append(exc)
+                            else:
+                                with lk:
+                                    ok[0] += 1
 
-                    errs = _threads(work, self.THREADS)
+                    self.assertEqual(_threads(work, self.THREADS), [])
+                    self.assertEqual(attempted[0], total)
                     n = _count(store, key)
                     if isinstance(lock, NoLock):
                         # documented hazard: no errors, possibly fewer
@@ -881,11 +901,8 @@ class TestThreadSmoke(_Tmp):
                         #    returned was counted exactly once. Assert
                         #    THAT; the exact-800 claim is proved on Memory
                         #    and SQLite and on FileStore under Pessimistic.
-                        self.assertTrue(
-                            all(isinstance(e, LockTimeoutError) for e in errs),
-                            errs,
-                        )
-                        self.assertEqual(n, total - len(errs))
+                        self.assertEqual(n, ok[0])
+                        self.assertEqual(ok[0] + len(errs), total)
                         continue
                     self.assertEqual(errs, [])
                     self.assertEqual(n, total)
