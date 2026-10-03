@@ -25,6 +25,8 @@ from typing import Any, Dict, Optional
 
 __all__ = ["Deadline", "check_deadline_record"]
 
+_INT64_LIMIT = 2**63
+
 
 @dataclass(frozen=True)
 class Deadline:
@@ -95,6 +97,11 @@ def check_deadline_record(rec: Any) -> Optional[str]:
         val = rec[key]
         if isinstance(val, bool) or not isinstance(val, int) or val < 0:
             return f"'{key}' must be a non-negative integer"
+        # 📝 #264 battle: bound to int64. An unbounded `entry_seq` was
+        #    adopted as the interpreter's counter (a 200-digit seq round-
+        #    tripped forever) and stores with an INTEGER column overflow.
+        if val >= _INT64_LIMIT:
+            return f"'{key}' must be below 2**63"
     due = rec["due_at_wall"]
     if isinstance(due, bool) or not isinstance(due, (int, float)):
         return "'due_at_wall' must be a number (seconds since the epoch)"

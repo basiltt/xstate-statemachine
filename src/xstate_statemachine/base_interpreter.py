@@ -30,6 +30,7 @@ import copy
 import inspect
 import json
 import logging
+import math
 import threading
 import time
 import warnings
@@ -2696,9 +2697,12 @@ class BaseInterpreter(Generic[TContext]):
         if mode in ("resume", "fire_due"):
             now = self.wall_now()
             for d in parked:
-                by_state.setdefault(d.state_id, {})[d.event_type] = (
-                    d.due_at_wall - now
-                ) * 1000.0
+                # 📝 #264 battle: duplicate records for one (state, event)
+                #    resolve to the EARLIEST deadline, not "last in the
+                #    list wins" -- order-independent and never late.
+                left = (d.due_at_wall - now) * 1000.0
+                slot = by_state.setdefault(d.state_id, {})
+                slot[d.event_type] = min(slot.get(d.event_type, left), left)
         # ⏰ #264: arm in DEADLINE order. Every matured deadline is re-armed
         #    at 0 ms, and the clock heap breaks ties by arm order -- so the
         #    most overdue timer must be armed first for `fire_due` to fire
@@ -5919,6 +5923,15 @@ class BaseInterpreter(Generic[TContext]):
         for delay_ms, transitions in state.after.items():
             # 🏷️ Symbolic delays resolve through MachineLogic.delays.
             resolved_ms = self._resolve_delay(delay_ms, None)
+            # 📝 #264 battle: a delay of NaN / inf crashed `int(round())`
+            #    below with a bare ValueError during entry; a negative one
+            #    was persisted as `delay_ms < 0`, which `check_shape` then
+            #    refused on the next load. Non-finite == unresolvable;
+            #    negative == "now" (what the clock already did with it).
+            if resolved_ms is not None and not math.isfinite(resolved_ms):
+                resolved_ms = None
+            elif resolved_ms is not None and resolved_ms < 0:
+                resolved_ms = 0.0
             if resolved_ms is None:
                 logger.warning(
                     "⚠️ Skipping 'after' transition on '%s': delay %r could "
@@ -5943,7 +5956,16 @@ class BaseInterpreter(Generic[TContext]):
                 seen_events.add(t_def.event)
                 effective_ms = float(resolved_ms)
                 if remaining is not None and t_def.event in remaining:
-                    effective_ms = max(0.0, remaining[t_def.event])
+                    # 📝 #264 battle: clamp to [0, declared]. A wall clock
+                    #    stepped BACK (NTP) or a far-future `due_at_wall`
+                    #    made the remainder exceed the declared delay -- the
+                    #    timer fired hours late and the re-emitted record
+                    #    carried `due_at_wall=inf`, which `check_shape` then
+                    #    refused on the next load (a poisoned key). A timer
+                    #    never waits longer than its chart declares.
+                    effective_ms = min(
+                        max(0.0, remaining[t_def.event]), effective_ms
+                    )
                 delay_sec = effective_ms / 1000.0
                 # 📏 #48: record the deadline so the fired event can report
                 #    its own lateness.
