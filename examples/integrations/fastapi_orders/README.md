@@ -234,6 +234,42 @@ block now settles first), and the registries' read paths (`peek`) ignored
 the migrator, so a v2 deployment answered `409` to every `GET` on a v1
 order until something wrote to it.
 
+## The scheduler is down for three hours
+
+The second battle scenario (`tests/test_scheduler_outage.py`). Four hundred
+orders check out over an afternoon, each arming a 15-minute payment
+timeout; forty pay with a flaky card and arm a retry backoff. The one
+scheduler process dies at 14:00 and comes back at 17:00 with a backlog of
+hundreds of overdue deadlines. What it must do, and what the test pins:
+
+* **drain oldest-first, in batches** — `limit=100` means four ticks; each
+  tick wakes the 100 *earliest* matured deadlines (the retry backoffs,
+  seconds old at 14:00, go before any timeout), never the first 100 keys
+  by name, and the drain converges;
+* **report the lag** — `ScanResult.max_lag_s` on the first tick is the
+  whole outage (≈ 3 h): that number is your alert;
+* **leave live timers alone** — an order that checked out at 16:50 is
+  still `awaitingPayment` at 17:00;
+* **exactly once per deadline** — `on_transition` counted per key, every
+  count is 1, and a second drain at the same instant is a no-op;
+* **two schedulers by accident** — an operator starts a second one against
+  the same store; under `OptimisticLock` the loser's save is a
+  `ConflictError` the scanner counts as `skipped_stale`, under
+  `PessimisticLock` the re-read under the lock finds the deadline gone.
+  No double fire, no `errors` noise — "run exactly one" is operational
+  advice, not a correctness requirement;
+* **at-least-once across a crash** — the save after a fire fails once
+  (the process "died"); the record is untouched and still due; the next
+  tick fires again and commits. The transition fired twice in memory and
+  once on disk — make timer transitions idempotent or pair them with the
+  inbox.
+
+Two scanner defects this scenario found: `limit=` capped the keys
+*scanned* (always the same first N by key order), so with a backlog
+larger than the limit the rest never fired; and the lost side of an
+optimistic race was filed under `errors` (an ERROR log per overlap)
+instead of `skipped_stale`.
+
 ## Tests
 
 ```bash

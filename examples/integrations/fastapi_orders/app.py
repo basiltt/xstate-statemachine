@@ -24,7 +24,7 @@ import os
 import signal
 import threading
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import BackgroundTasks, Body, FastAPI, Request
 from fastapi.responses import FileResponse, Response
@@ -152,10 +152,12 @@ def build_registry(
 
 
 def build_scanner(registry: StatechartRegistry, **kw: Any) -> DueTimerScanner:
-    """The ONE process that wakes persisted `after` deadlines."""
-    return DueTimerScanner(
-        registry.store,
-        registry.machine_for_store_key,
+    """The ONE process that wakes persisted `after` deadlines.
+
+    Keyword arguments override the registry-derived defaults (tests pass
+    extra `plugins=`, a `limit=`, a `prefix=`).
+    """
+    defaults: Dict[str, Any] = dict(
         lock=registry.lock,
         plugins=registry.plugins,
         prefix=f"{MACHINE_NAME}.",
@@ -165,7 +167,10 @@ def build_scanner(registry: StatechartRegistry, **kw: Any) -> DueTimerScanner:
         #    retry that never fires, a 15-minute timeout that never
         #    expires -- while the web workers (which had it) were fine.
         migrator=registry.migrator,
-        **kw,
+    )
+    defaults.update(kw)
+    return DueTimerScanner(
+        registry.store, registry.machine_for_store_key, **defaults
     )
 
 
