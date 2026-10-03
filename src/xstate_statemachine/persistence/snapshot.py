@@ -307,6 +307,16 @@ def check_shape(snapshot: Dict[str, Any], *, version: int = 0) -> None:
                 f"'{key}' must be a list of event records whose 'type' is "
                 f"a non-empty string"
             )
+        # 🛡️ #267 battle: the optional `stream` flag (a `StreamEvent`, whose
+        #    `.data` is the item) must be a bool -- `restore_event` tests
+        #    `is True`, so a corrupt `"yes"` would silently restore the
+        #    record as a plain `Event` with the other `.data` meaning.
+        for r in val or ():
+            if "stream" in r and not isinstance(r["stream"], bool):
+                fail(
+                    f"'{key}' record 'stream' is "
+                    f"{type(r['stream']).__name__}, expected a boolean"
+                )
     # 🛡️ #146: every remaining top-level key `from_snapshot` reads. Each
     #    is optional, but when present it must have the shape the reader
     #    assumes, or the reader's own `.items()` / indexing leaks a bare

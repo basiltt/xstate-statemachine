@@ -405,6 +405,29 @@ class TestStreamEventShape(unittest.TestCase):
         self.assertEqual((back.data, back.payload), ([1, 2], {"data": [1, 2]}))
         self.assertEqual(back, ev)
 
+    def test_corrupt_stream_flag_is_snapshot_corrupt_error(self) -> None:
+        # a non-bool flag would silently restore as a plain Event (whose
+        # `.data` means something else): refuse it like any bad shape
+        from src.xstate_statemachine import SnapshotCorruptError
+        from src.xstate_statemachine.persistence.snapshot import check_shape
+
+        async def main() -> Any:
+            lg = slogic(None)
+            lg.services["st"] = from_callback(lambda *a: None)
+            i = await Interpreter(create_machine(SCFG, logic=lg)).start()
+            snap = i.get_persisted_snapshot()
+            await i.stop()
+            return snap
+
+        snap = asyncio.run(main())
+        snap["pending_events"] = [
+            {"type": "STREAM", "payload": {"data": 1}, "stream": "yes"}
+        ]
+        with self.assertRaises(SnapshotCorruptError):
+            check_shape(snap, version=snap.get("version", 0))
+        snap["pending_events"][0]["stream"] = True
+        check_shape(snap, version=snap.get("version", 0))
+
     def test_pending_stream_event_survives_snapshot(self) -> None:
         from src.xstate_statemachine.events import StreamEvent
 
