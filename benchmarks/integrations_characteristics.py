@@ -79,6 +79,7 @@ ROWS = (
     "shortest_paths",
     "fastapi_router",
     "timer_scan_sqlite_100k",
+    "circuit_breaker_call_closed",
 )
 
 
@@ -633,6 +634,41 @@ def benchmark_fastapi_router() -> None:
     return None
 
 
+def benchmark_circuit_breaker_call_closed(
+    calls: int = 10_000,
+) -> Dict[str, Any]:
+    """Per-call p50 of ``cb.call(f)`` on a closed breaker (#265 battle).
+
+    📝 Each sample is the mean of *calls* calls (µs); ``bare_us`` is the
+    same loop calling ``f`` directly, so ``over_bare_us`` is the breaker's
+    own cost (lock + tick + SUCCESS send).
+    """
+    from xstate_statemachine.patterns import CircuitBreaker
+
+    cb = CircuitBreaker()
+
+    def f() -> int:
+        return 1
+
+    def loop(through: bool) -> float:
+        start = time.perf_counter_ns()
+        if through:
+            for _ in range(calls):
+                cb.call(f)
+        else:
+            for _ in range(calls):
+                f()
+        return (time.perf_counter_ns() - start) / 1000 / calls
+
+    loop(True)  # warm
+    samples = [loop(True) for _ in range(REPETITIONS)]
+    bare = statistics.median(loop(False) for _ in range(REPETITIONS))
+    cb.close()
+    metric = _metric(samples, calls=calls)
+    metric["over_bare_us"] = round(metric["p50_us"] - bare, 3)
+    return metric
+
+
 PLUGINS_NOTE = "IdempotencyPlugin + AuditPlugin + PrometheusPlugin (#273)"
 NO_PROMETHEUS_NOTE = (
     "IdempotencyPlugin + AuditPlugin; install [observability] to include "
@@ -673,6 +709,7 @@ def run(quick: bool = False) -> Dict[str, Any]:
         "snapshot_restore_migrated_sync": "#263 battle: 1-hop SnapshotMigrator; no budget until the reference runner records one",
         "shortest_paths": "savage.json (largest loadable corpus chart); no budget until a nightly records one",
         "fastapi_router": "FastAPI router is not shipped yet",
+        "circuit_breaker_call_closed": "#265 battle: per-call cb.call(f) on a closed breaker; no budget until the reference runner records one",
     }
     logger = logging.getLogger("xstate_statemachine")
     previous_level = logger.level
@@ -733,6 +770,9 @@ def run(quick: bool = False) -> Dict[str, Any]:
             benchmark_timer_scan_sqlite_100k
         )
         results["fastapi_router"] = benchmark_fastapi_router()
+        results["circuit_breaker_call_closed"] = _clean(
+            benchmark_circuit_breaker_call_closed
+        )
     finally:
         logger.setLevel(previous_level)
         if was_enabled:
