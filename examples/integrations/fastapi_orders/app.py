@@ -40,7 +40,7 @@ from xstate_statemachine.contrib.starlette import mount_inspector
 from xstate_statemachine.patterns import DeadLetterPlugin
 from xstate_statemachine.persistence import DueTimerScanner, SQLiteInbox
 
-from logic import build_logic
+from logic import build_logic, gateway_breaker
 from migrations import build_migrator
 from models import EVENT_MODELS, EVENT_SCHEMAS, OrderContext, Pay
 from models import public_context
@@ -66,11 +66,13 @@ def chart_path(version: Optional[str] = None) -> Path:
     return HERE / ("machine_v2.json" if str(v) == "2" else "machine.json")
 
 
-def build_machine(version: Optional[str] = None) -> Any:
+def build_machine(
+    version: Optional[str] = None, *, breaker: Any = None
+) -> Any:
     config = json.loads(chart_path(version).read_text("utf-8"))
     return create_machine(
         config,
-        logic=build_logic(),
+        logic=build_logic(breaker),
         event_schemas=EVENT_SCHEMAS,
         # 📝 write_back=False: the context stays plain JSON (the snapshot
         #    is stored as JSON); the model only VALIDATES it.
@@ -173,9 +175,14 @@ def build_registry(
         store, inbox=inbox, principal=customer_of, plugins=plugins, **kw
     )
     registry.dead_letters = dlq  # type: ignore[attr-defined]
+    # ⚡ #265: one CircuitBreaker per registry (= per process) in front of
+    #    the gateway, on the registry's clock so a SimulatedClock in tests
+    #    drives the cooldown. `registry.breaker` for dashboards / tests.
+    breaker = gateway_breaker(clock=kw.get("clock"))
+    registry.breaker = breaker  # type: ignore[attr-defined]
     registry.register(
         MACHINE_NAME,
-        build_machine(chart),
+        build_machine(chart, breaker=breaker),
         authorize=authorize,
         context_serializer=public_context,
     )

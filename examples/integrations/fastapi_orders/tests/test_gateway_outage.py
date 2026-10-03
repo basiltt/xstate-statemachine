@@ -86,12 +86,12 @@ def _quiet_expected_service_errors() -> Any:
 def world(tmp_path: Any, monkeypatch: Any) -> Dict[str, Any]:
     monkeypatch.setenv("XSM_ORDERS_RETRY_BASE_MS", "1000")  # 1 s, 2 s backoff
     clock = SimulatedClock(wall_start=T0)
-    breaker = logic.reset_gateway_breaker(clock=clock)
     logic.GATEWAY.up = True
     logic.GATEWAY.calls = 0
     db = str(tmp_path / "orders.db")
     store = SQLiteStore(db)
     reg = orders.build_registry(store, SQLiteInbox(store), clock=clock)
+    breaker = reg.breaker
     app = orders.create_app(reg, email=lambda *a: None, debug=False)
     scanner = orders.build_scanner(reg, now=clock.wall_now)
     yield {
@@ -276,7 +276,7 @@ def test_failed_order_recovers_by_paying_again(world: Dict[str, Any]) -> None:
         assert state(c, o) == "paymentFailed"
         assert len(dlq.list()) == 1
         logic.GATEWAY.up = True
-        logic.reset_gateway_breaker(clock=clock)
+        world["breaker"].reset()
         # the chart's own recovery: the customer pays again
         r = post(c, o, "PAY", {"card_token": "tok_ok"})
         assert r.json()["state"] == "paid"
@@ -299,9 +299,11 @@ def test_breaker_fails_fast_without_hanging_the_worker_pool(
     def worker() -> None:
         gate.wait(10)
         try:
-            # `charge_card` goes through `logic.GATEWAY_BREAKER` itself
             logic.charge_card(
-                None, {"card_token": "tok_ok", "total_cents": 1}, None
+                None,
+                {"card_token": "tok_ok", "total_cents": 1},
+                None,
+                breaker=breaker,
             )
         except CircuitOpenError:
             kind = "open"

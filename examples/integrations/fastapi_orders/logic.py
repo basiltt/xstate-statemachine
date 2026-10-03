@@ -57,39 +57,30 @@ def retry_policy() -> RetryPolicy:
     return RetryPolicy(max_attempts=3, base_ms=base_ms, jitter="none")
 
 
-def _breaker_factory() -> CircuitBreaker:
-    # 🏛️ #265: ONE breaker per process in front of the gateway. When the
-    #    provider is down, every order's charge fails fast with
-    #    `CircuitOpenError` instead of each burning a slow network timeout
-    #    -- and the chart's `onError` → `retrying` path still runs, so the
-    #    order backs off and (after the cooldown lets a probe through and
-    #    the gateway answers) recovers on its own. Thresholds are small so
-    #    the drill is readable; tune for your provider's SLA.
+def gateway_breaker(clock: Any = None) -> CircuitBreaker:
+    """ONE breaker per process in front of the gateway (#265).
+
+    🏛️ When the provider is down, every order's charge fails fast with
+    `CircuitOpenError` instead of each burning a slow network timeout --
+    and the chart's `onError` → `retrying` path still runs, so the order
+    backs off and (after the cooldown lets a probe through and the
+    gateway answers) recovers on its own. Only `GatewayDown` counts: a
+    DECLINE is the customer's problem, not the provider's. Thresholds
+    are small so the drill is readable; tune for your provider's SLA.
+
+    📝 Built by `build_registry()` and bound into the `chargeCard`
+    closure, not a module global: a breaker is process state that tests
+    (and hot-reloads) must be able to replace. It runs on the registry's
+    clock, so a `SimulatedClock` drives the cooldown too.
+    """
     return CircuitBreaker(
         failure_threshold=int(os.environ.get("XSM_ORDERS_CB_THRESHOLD", "3")),
         cooldown_ms=float(os.environ.get("XSM_ORDERS_CB_COOLDOWN_MS", "5000")),
         half_open_max_calls=1,
         name="paymentGateway",
-        exceptions=(GatewayDown,),  # a DECLINE is not a provider failure
-    )
-
-
-GATEWAY_BREAKER: CircuitBreaker = _breaker_factory()
-
-
-def reset_gateway_breaker(clock: Any = None) -> CircuitBreaker:
-    """Tests: a fresh breaker (optionally on a `SimulatedClock`)."""
-    global GATEWAY_BREAKER
-    GATEWAY_BREAKER.close()
-    GATEWAY_BREAKER = CircuitBreaker(
-        failure_threshold=3,
-        cooldown_ms=5000,
-        half_open_max_calls=1,
-        name="paymentGateway",
         exceptions=(GatewayDown,),
         clock=clock,
     )
-    return GATEWAY_BREAKER
 
 
 # -----------------------------------------------------------------------------
@@ -127,7 +118,9 @@ def has_items(ctx: Dict[str, Any], e: Any) -> bool:
 # -----------------------------------------------------------------------------
 # 💳 Service -- the fake payment gateway
 # -----------------------------------------------------------------------------
-def charge_card(i: Any, ctx: Dict[str, Any], e: Any) -> Dict[str, Any]:
+def charge_card(
+    i: Any, ctx: Dict[str, Any], e: Any, *, breaker: Any = None
+) -> Dict[str, Any]:
     """Charge ``ctx["card_token"]``; deterministic by token.
 
     ``tok_declined`` always raises (→ ``onError`` → retry → after the
@@ -160,7 +153,10 @@ def charge_card(i: Any, ctx: Dict[str, Any], e: Any) -> Dict[str, Any]:
     #    touched, and the order still takes the retry path. The error
     #    propagates as-is, so a dead letter's chain shows "circuit open"
     #    distinctly from "declined".
-    return GATEWAY_BREAKER.call(hit_gateway)
+    #    No breaker (a direct call in tests): plain.
+    if breaker is None:
+        return hit_gateway()
+    return breaker.call(hit_gateway)
 
 
 def capture_charge(i: Any, ctx: Dict[str, Any], e: Any) -> Dict[str, Any]:
@@ -171,7 +167,14 @@ def capture_charge(i: Any, ctx: Dict[str, Any], e: Any) -> Dict[str, Any]:
     return {"captured": ctx["charge_id"]}
 
 
-def build_logic() -> MachineLogic:
+def build_logic(breaker: Any = None) -> MachineLogic:
+    """The chart's logic. *breaker* (see `gateway_breaker`) guards the
+    gateway; ``None`` calls it directly."""
+
+    def charge(i: Any, ctx: Dict[str, Any], e: Any) -> Dict[str, Any]:
+        return charge_card(i, ctx, e, breaker=breaker)
+
+    charge.__name__ = "charge_card"
     own = MachineLogic(
         actions={
             "addItem": add_item,
@@ -182,7 +185,7 @@ def build_logic() -> MachineLogic:
         guards={"hasItems": has_items},
         # 📝 `captureCharge` is only referenced by machine_v2.json; an
         #    unused service is fine, a missing one is a config error.
-        services={"chargeCard": charge_card, "captureCharge": capture_charge},
+        services={"chargeCard": charge, "captureCharge": capture_charge},
     )
     # 🔁 `retryDelay` / `retryCanRetry` / `retryBump` / `retryReset`.
     return retry_policy().logic().merge(own)
