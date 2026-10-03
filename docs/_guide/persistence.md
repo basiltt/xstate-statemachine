@@ -172,6 +172,8 @@ with persisted(store, "k", machine) as i:
 
 For the async engine use `async with apersisted(store, key, machine) as interp:` — *store* may be a sync store (calls go through the executor) or an `as_async()` adapter.
 
+**The async block settles before it saves (#263 battle).** `await interp.send("PAY", wait=True)` resolves at the end of *that event's* macrostep. When the step entered a state with a plain `def` service, the service's completion is the *next* macrostep — per SCXML — and the run loop starts it at once; if that step enters a second `def` invoke (authorise → capture), the machine is mid-step exactly when your block exits. The sync engine's `send()` drains the whole chain before returning, so `persisted()` never had this problem; `apersisted()` now closes the gap by `await`ing `interp.await_settled(settle_timeout)` before the snapshot (default `DEFAULT_SETTLE_TIMEOUT`, 30 s — it only ever waits while a service is genuinely running). The same settle runs inside the Starlette / FastAPI / Litestar / Quart registries before the receipt body is built, so the `200` a caller reads is what the store holds. `settle_timeout=0` opts out: a mid-step machine is then refused with `SnapshotMidStepError`, as before — loud, never torn. A fired or armed `after` is *not* owed work (a machine sitting on a live SLA timer is settled), so a block on a timer-heavy chart does not wait out the timer.
+
 ### What `persisted()` promises
 
 Every row is asserted by `tests/persistence/test_battle_260_locking_semantics.py` on `MemoryStore`, `FileStore` and `SQLiteStore`, sync and async:
@@ -570,14 +572,32 @@ migrator = SnapshotMigrator()
 @migrator.register("1.0", "2.0")
 def rename_paying(blob: dict) -> dict:
     blob["state_ids"] = ["order.payment.card" if s == "order.paying" else s for s in blob["state_ids"]]
-    blob["configuration"] = ["order", "order.payment", "order.payment.card"]
-    return blob
+    return blob                       # `configuration` is rebuilt from the leaves against v2
 
 order = SyncInterpreter.from_snapshot(blob, create_machine(v2), migrator=migrator)
 assert order.current_state_ids == {"order.payment.card"}
 ```
 
 What happens on restore, in order: the **label** is compared (`on_version_mismatch`: `"error"` default · `"warn"` restores as-is · `"migrate"`, the default when a `migrator=` is given); a migration applies the shortest chain of registered steps (`1.0 → 2.0 → 3.0`) to a *copy* of the blob, rewrites `machine_version` and drops `machine_hash` — the structure changed by definition; then the **structural hash** is checked (unless migrated), the layout is upcast, and the blob is validated against *this* machine exactly like any other: every state id must exist (`StateNotFoundError`, never a silent skip), the configuration must be legal, `strict` and event schemas still apply to restored events. A missing hop is `NoMigrationPathError`. Child actors are restored with the same migrator and policy — steps can be scoped with `machine_id="kid"`.
+
+**What a step may and may not do — as battle-tested (#263).** Every row is asserted by `tests/persistence/test_battle_263_migration_semantics.py` and `_runtime.py`:
+
+| Your step… | Outcome |
+|:--|:--|
+| rewrites `state_ids` only (the issue's own recipe) | restores: `configuration` (leaves + ancestors) is re-derived from the **new** machine when the step leaves it untouched or sets it to `None` |
+| rewrites both and they disagree | `SnapshotCorruptError` naming the hop (`1.0 → 2.0`) — never a guess at which field wins |
+| names a state the new machine lacks | `StateNotFoundError` naming it (X0.4) — never dropped |
+| raises | `SnapshotCorruptError` naming the hop, the original as `__cause__`; a library error raised inside the step passes through unchanged; nothing half-built leaks |
+| returns a non-dict, or a dict missing `status` / `context` / `state_ids`, or `context: [...]`, NaN in a deadline, NUL in an id, 200 000 ids, a leafless compound, reserved kwargs in a pending event | a typed library error in every case (`SnapshotCorruptError` / `StateNotFoundError` / `InvalidConfigError` family), never a bare `KeyError` / `TypeError` / `RecursionError` |
+| mutates the blob it was given | fine — it is a deep copy; the caller's dict (nested `context` included) is untouched |
+| is registered twice for one hop | the last registration wins |
+| is scoped (`machine_id="order"`) and another is not | the scoped step wins for that machine; a scoped `1→2` chains with an unscoped `2→3` |
+| forms a diamond (`1→2→4`, `1→3→4`) | the shortest route; ties go to the earliest-registered step |
+| is one of 1 000 hops | planned in under 50 ms |
+
+Labels compare as **strings**: a chart `"version": 1` and a blob `"machine_version": "1"` are one label; `1.0` becomes `"1.0"`, a *different* label; `""` is a mismatch. A blob with `"machine_version": null` is **unlabelled** — the library itself writes `null` for a chart with no `"version"` — and restores like an absent key. The "carries no `machine_version`" warning is logged once per (machine id, expected label) per process, not once per restore. Child actors: a child with no path fails the **whole** restore, naming the child; the parent's step may rewrite `actors[*].src`; a migrated grandchild re-saves under its own new label.
+
+Under `persisted()` / `apersisted()` with `OptimisticLock`, N workers opening one stale key all run the step in memory but **exactly one** commits (the record's version counter advances by one, the label is the new one); under `PessimisticLock` the step runs once. A step that raises leaves the stored record byte-identical. The `DueTimerScanner` on a stale instance: without a migrator each scan records one `MachineVersionMismatchError` in `ScanResult.errors` and the deadline stays (no hot loop); with one, the timer fires and the record re-saves at the new label. Cost: a 1-hop migration of a 50-state blob is 1.65× a plain restore (the deep copy), 62 µs vs 38 µs.
 
 Blobs written before labels existed (0.10.x) restore with a warning — they cannot be checked; a chart that declares no `"version"` never mismatches.
 
@@ -586,7 +606,7 @@ Blobs written before labels existed (0.10.x) restore with a warning — they can
 - **Additive changes first.** A new state, a new event, a new context key with a default: the hash changes but no snapshot needs rewriting — pass `verify_machine_hash=False` for that deploy and bump the label with `on_version_mismatch="warn"`, or register a no-op step so the label is rewritten on the next save.
 - **Renames and moves need a step.** Write the upcaster against the *blob* (state ids, `configuration`, `context`), register it for the exact hop, and let `persisted(..., migrator=migrator)` re-save each instance at the new label the first time it is touched.
 - **Dual-read window.** Deploy readers that carry the migrator before writers that emit the new label; old readers refuse new blobs loudly rather than half-restoring them (see the [snapshots guide](../snapshots/#rolling-deploys-a-v4-blob-does-not-load-on-010x) for the layout-level version of the same rule).
-- **Find what is still stale.** `xsm snapshots --store sqlite:///app.db machine.json --stale` lists the keys whose `machine_version` differs from the chart's (`--json` for scripts) — the drain list for a deploy.
+- **Find what is still stale.** `xsm snapshots --store sqlite:///app.db machine.json --stale` lists the keys whose `machine_version` differs from the chart's (`--json` for scripts) — the drain list for a deploy; `--fail-if-stale` exits 1 while any remain, the gate before retiring the old workers. It reads the label index, never the blobs (10 000 keys in 0.1 s on SQLite). An unlabelled record is **not** stale and a chart with no `"version"` has nothing stale — the same rules restore applies. See [the CLI page](../cli/#snapshots).
 
 > **Guarantees.** A snapshot is refused, never silently mis-restored, when its label or structure does not match — unless *you* said how to bridge the gap. Migration steps are your code; the library validates their output but cannot know your domain. Child-actor migration is best effort (each child is checked with its own machine; a child with no path fails the whole restore).
 

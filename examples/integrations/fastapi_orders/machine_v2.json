@@ -1,0 +1,102 @@
+{
+  "id": "order",
+  "version": "2",
+  "initial": "cart",
+  "context": {
+    "items": [],
+    "total_cents": 0,
+    "currency": "USD",
+    "card_token": null,
+    "attempt": 0,
+    "charge_id": null,
+    "cancel_reason": null
+  },
+  "states": {
+    "cart": {
+      "description": "Collecting items.",
+      "on": {
+        "ADD_ITEM": { "actions": "addItem" },
+        "CHECKOUT": { "target": "awaitingPayment", "guard": "hasItems" },
+        "CANCEL": { "target": "cancelled", "actions": "recordCancel" }
+      }
+    },
+    "awaitingPayment": {
+      "description": "Checked out; the customer has 15 minutes to pay.",
+      "after": {
+        "900000": { "target": "expired" }
+      },
+      "on": {
+        "PAY": { "target": "payment", "actions": "storeCard" },
+        "CANCEL": { "target": "cancelled", "actions": "recordCancel" }
+      }
+    },
+    "payment": {
+      "description": "v2: authorise first, then capture -- two gateway calls where v1 had one.",
+      "initial": "authorising",
+      "states": {
+        "authorising": {
+          "invoke": {
+            "id": "gateway",
+            "src": "chargeCard",
+            "onDone": {
+              "target": "capturing",
+              "actions": ["retryReset", "recordCharge"]
+            },
+            "onError": { "target": "#order.retrying", "actions": "retryBump" }
+          }
+        },
+        "capturing": {
+          "invoke": {
+            "id": "capture",
+            "src": "captureCharge",
+            "onDone": { "target": "#order.paid" },
+            "onError": { "target": "#order.retrying", "actions": "retryBump" }
+          }
+        }
+      }
+    },
+    "retrying": {
+      "description": "The gateway failed; back off, then try again.",
+      "after": {
+        "retryDelay": [
+          { "target": "payment", "guard": "retryCanRetry" },
+          { "target": "paymentFailed" }
+        ]
+      }
+    },
+    "paymentFailed": {
+      "description": "Retries exhausted; the customer may pay with another card.",
+      "on": {
+        "PAY": { "target": "payment", "actions": ["retryReset", "storeCard"] },
+        "CANCEL": { "target": "cancelled", "actions": "recordCancel" }
+      }
+    },
+    "paid": {
+      "tags": ["billable"],
+      "on": { "FULFIL": "fulfilment" }
+    },
+    "fulfilment": {
+      "type": "parallel",
+      "states": {
+        "packing": {
+          "initial": "inProgress",
+          "states": {
+            "inProgress": { "on": { "PACKED": "done" } },
+            "done": { "type": "final" }
+          }
+        },
+        "labelling": {
+          "initial": "inProgress",
+          "states": {
+            "inProgress": { "on": { "LABEL_PRINTED": "done" } },
+            "done": { "type": "final" }
+          }
+        }
+      },
+      "onDone": { "target": "shipped" }
+    },
+    "shipped": { "type": "final", "tags": ["billable"] },
+    "cancelled": { "type": "final" },
+    "expired": { "type": "final" }
+  }
+}

@@ -95,6 +95,14 @@ def charge_card(i: Any, ctx: Dict[str, Any], e: Any) -> Dict[str, Any]:
     return {"charge_id": f"ch_{digest}", "amount_cents": ctx["total_cents"]}
 
 
+def capture_charge(i: Any, ctx: Dict[str, Any], e: Any) -> Dict[str, Any]:
+    """v2 chart only: capture the authorised charge. Deterministic:
+    succeeds whenever an authorisation exists."""
+    if not ctx.get("charge_id"):
+        raise GatewayError("nothing to capture")
+    return {"captured": ctx["charge_id"]}
+
+
 def build_logic() -> MachineLogic:
     own = MachineLogic(
         actions={
@@ -104,7 +112,9 @@ def build_logic() -> MachineLogic:
             "recordCancel": record_cancel,
         },
         guards={"hasItems": has_items},
-        services={"chargeCard": charge_card},
+        # 📝 `captureCharge` is only referenced by machine_v2.json; an
+        #    unused service is fine, a missing one is a config error.
+        services={"chargeCard": charge_card, "captureCharge": capture_charge},
     )
     # 🔁 `retryDelay` / `retryCanRetry` / `retryBump` / `retryReset`.
     return retry_policy().logic().merge(own)

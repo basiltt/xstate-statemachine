@@ -28,6 +28,7 @@ from ...persistence.store import (
     BaseStore,
     SnapshotCodec,
     StoredSnapshot,
+    check_save_args,
     validate_key,
 )
 from ._keys import SCHEMA_VERSION, Keys
@@ -423,6 +424,10 @@ class AsyncRedisStore:
         deadlines: Sequence[Deadline] = (),
     ) -> int:
         validate_key(key)
+        # 📝 #263 battle: the sync stores ran these checks; async did not.
+        expected_version, machine_version, deadlines = check_save_args(
+            expected_version, machine_version, deadlines
+        )
         data = self._policy.codec.encode(snapshot)
         self._policy._check_size(key, data)
         res = await self._save(

@@ -32,7 +32,7 @@ from flask import Flask, Response, current_app, g, has_request_context
 from flask import request as flask_request
 
 from ...events import Receipt
-from ...persistence.locking import persisted
+from ...persistence.locking import _restore_kwargs, persisted
 from ...persistence.log import TransitionLogPlugin
 from ...plugins import PluginBase
 from ...receipts import receipt_to_status
@@ -360,7 +360,12 @@ class XState:
                 return state_body(interp, reg.context_serializer)
             finally:
                 interp.stop()
+        # 🧬 #263 battle: a read of a stale instance migrates like a write
+        #    does (read-only; the next `act()` re-saves at the new label).
         interp = SyncInterpreter.from_snapshot(
-            rec.snapshot, reg.machine, clock=r.clock
+            rec.snapshot,
+            reg.machine,
+            clock=r.clock,
+            **_restore_kwargs(r.migrator, None),
         )
         return state_body(interp, reg.context_serializer)

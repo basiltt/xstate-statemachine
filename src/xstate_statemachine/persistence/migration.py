@@ -20,8 +20,8 @@
 #    `machine_version` and drops `machine_hash` (the structure changed by
 #    definition -- the restore re-derives it from the new machine after
 #    validating every state id exists, X0.4). Child actor blobs under
-#    `actors` are migrated recursively with the same migrator, keyed by
-#    their own `machine_id` -- best effort, and documented as such.
+#    `actors` are migrated by `from_snapshot`'s per-child recursion, with
+#    the same migrator and the child's own machine.
 # -----------------------------------------------------------------------------
 """`SnapshotMigrator`, `MachineVersionMismatchError`, `NoMigrationPathError`."""
 
@@ -31,7 +31,11 @@ import copy
 from collections import deque
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..exceptions import SnapshotDriftError, XStateMachineError
+from ..exceptions import (
+    SnapshotCorruptError,
+    SnapshotDriftError,
+    XStateMachineError,
+)
 
 __all__ = [
     "MachineVersionMismatchError",
@@ -126,8 +130,15 @@ class SnapshotMigrator:
         *,
         machine_id: Optional[str] = None,
     ) -> Callable[[MigrationStep], MigrationStep]:
-        """Decorator: register *fn* as the ``from → to`` step."""
-        if from_version == to_version:
+        """Decorator: register *fn* as the ``from → to`` step.
+
+        Labels are compared as strings (``1`` and ``"1"`` are the same
+        label, matching `MachineNode.version`). Registering the same hop
+        twice replaces the earlier step (last wins).
+        """
+        # 📝 #263 battle: compare the STORED (str) form -- `register(1,
+        #    "1")` used to pass the check and silently register nothing.
+        if str(from_version) == str(to_version):
             raise ValueError("a migration step must change the version")
 
         def deco(fn: MigrationStep) -> MigrationStep:
@@ -165,7 +176,13 @@ class SnapshotMigrator:
         self, machine_id: str, found: Optional[str], target: Optional[str]
     ) -> List[Tuple[str, str]]:
         """Shortest chain of ``(from, to)`` hops, or `NoMigrationPathError`.
-        Empty when ``found == target``."""
+        Empty when ``found == target``. Labels are compared as strings;
+        among equally short routes the one through the EARLIEST-registered
+        step wins (deterministic)."""
+        # 📝 #263 battle: `can_migrate("o", 1, 2)` never matched the str
+        #    keys `register` stores.
+        found = None if found is None else str(found)
+        target = None if target is None else str(target)
         if found == target:
             return []
         if found is None or target is None:
@@ -213,12 +230,18 @@ class SnapshotMigrator:
     ) -> Dict[str, Any]:
         """Return a migrated COPY of *blob* at version *target*.
 
-        Applies the shortest chain of steps, rewrites ``machine_version``,
-        drops ``machine_hash`` (the structure changed by definition; the
-        restore re-derives and validates against the new machine) and
-        recurses into ``actors`` -- each child blob is migrated to the
-        target its own `machine_id` resolves to, best effort: a child with
-        no registered path is left as-is and the restore decides.
+        Applies the shortest chain of steps, rewrites ``machine_version``
+        and drops ``machine_hash`` (the structure changed by definition;
+        the restore re-derives and validates against the new machine).
+        Child blobs under ``actors`` are left as-is: `from_snapshot`
+        applies the same migrator to each child against the child's own
+        machine. A step that leaves ``configuration`` untouched gets it
+        set to ``None`` (re-derived from ``state_ids`` on restore).
+
+        Raises:
+            NoMigrationPathError: No chain of steps reaches *target*.
+            SnapshotCorruptError: A step raised, returned a non-dict, or
+                left ``state_ids`` and ``configuration`` disagreeing.
         """
         mid = str(machine_id or blob.get("machine_id") or "")
         found = blob.get("machine_version")
@@ -227,20 +250,70 @@ class SnapshotMigrator:
         hops = self.path(mid, found, target)
         steps = self.steps_for(mid)
         for f, t in hops:
-            out = steps[(f, t)](out)
-            if not isinstance(out, dict):
-                raise TypeError(
-                    f"migration step {f!r}->{t!r} for '{mid}' must return "
-                    f"a dict, got {type(out).__name__}"
-                )
+            out = _run_step(steps[(f, t)], out, mid, f, t)
             out["machine_version"] = t
         if hops:
             out.pop("machine_hash", None)
-        # 👶 Children: migrate each to whatever version its own steps lead
-        #    to (we do not know the child machine's target label here;
-        #    `from_snapshot` re-runs the policy per child with the real
-        #    child machine). Only mark that a migrator was in play.
+        # 👶 Children are NOT migrated here: this method cannot know a
+        #    child machine's target label. `from_snapshot` re-runs the
+        #    version policy per child, with the real child machine and the
+        #    same migrator (#263 battle: the docstring used to claim
+        #    recursion the code never did).
         return out
+
+
+class _StepResultError(SnapshotCorruptError, TypeError):
+    """A step returned a non-dict. 📝 #263 battle: was a bare `TypeError`;
+    now a `SnapshotCorruptError` that is STILL a `TypeError`, so existing
+    ``except TypeError`` handlers keep working."""
+
+
+def _run_step(
+    fn: MigrationStep, blob: Dict[str, Any], mid: str, f: str, t: str
+) -> Dict[str, Any]:
+    """Apply one user step and normalise its result.
+
+    📝 #263 battle: a step is USER code; whatever it does wrong must come
+    out as a typed `SnapshotCorruptError` naming the hop, never a bare
+    builtin from deep inside the restore.
+
+    🏛️ #263 battle (the issue's own recipe): a step that rewrites
+    ``state_ids`` but leaves ``configuration`` alone used to be refused by
+    `check_shape` ("the two fields contradict each other"). An untouched
+    (or ``None``) ``configuration`` is now dropped, and `from_snapshot`
+    derives it from ``state_ids`` against the NEW machine. A step that
+    rewrote both fields inconsistently is refused here, naming the hop.
+    """
+    hop = f"migration step {f!r}->{t!r} for '{mid}'"
+    before_ids = blob.get("state_ids")
+    before_conf = copy.deepcopy(blob.get("configuration"))
+    try:
+        out = fn(blob)
+    except XStateMachineError:
+        raise
+    except Exception as exc:  # noqa: BLE001 -- user code, re-typed
+        raise SnapshotCorruptError(f"{hop} raised {exc!r}") from exc
+    if not isinstance(out, dict):
+        raise _StepResultError(
+            f"{hop} must return a dict, got {type(out).__name__}"
+        )
+    ids = out.get("state_ids")
+    conf = out.get("configuration")
+    if not isinstance(ids, list) or not isinstance(conf, (list, type(None))):
+        return out  # 📝 `check_shape` reports the malformed field itself
+    if conf is None or (conf == before_conf and ids != before_ids):
+        out["configuration"] = None  # derived later from the new machine
+        return out
+    try:
+        missing = set(ids) - set(conf)
+    except TypeError:
+        return out  # unhashable entries: `check_shape` reports them
+    if missing:
+        raise SnapshotCorruptError(
+            f"{hop} left 'state_ids' naming {sorted(map(str, missing))} "
+            f"which its 'configuration' does not contain"
+        )
+    return out
 
 
 def resolve_policy(policy: Optional[str], migrator: Any) -> str:

@@ -189,6 +189,8 @@ def websocket_endpoint(
                     receipt = await interp.send(
                         etype, wait=True, **data.get("payload", {})
                     )
+                    if not receipt.duplicate:  # ⏳ #263 battle, see `act`
+                        await interp.await_settled(registry.settle_timeout)
                     body = receipt_body(
                         interp,
                         receipt,

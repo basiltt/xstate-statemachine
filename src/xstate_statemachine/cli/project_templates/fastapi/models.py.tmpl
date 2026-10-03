@@ -80,6 +80,8 @@ class OrderContext(BaseModel):
 
     items: List[LineItem] = []
     total_cents: int = Field(default=0, ge=0)
+    #: v2 chart; a v1 blob restored into v2 gets the default (#263).
+    currency: str = Field(default="USD", min_length=3, max_length=3)
     card_token: Optional[str] = None
     attempt: int = Field(default=0, ge=0)
     charge_id: Optional[str] = None

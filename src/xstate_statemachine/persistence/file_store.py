@@ -58,6 +58,10 @@ from .store import BaseStore, check_record_fields
 __all__ = ["FORMAT_VERSION", "FileStore", "encode_key", "decode_key"]
 
 _SUFFIX = ".xsm.json"
+#: #263 battle: bytes `list_versions` reads per record. Covers the header
+#: (`format`, a 200-char key and a 255-char label, each up to 12 bytes
+#: per char once `ensure_ascii` escapes it) with room to spare.
+_HEADER_BYTES = 8192
 _LOCK_SUFFIX = ".lock"
 #: 🔐 X0.10: the record FORMAT version (distinct from the per-key record
 #: `version`, the optimistic-locking counter). Bump with an upgrade step
@@ -320,6 +324,38 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+class _StoreWriteError(StoreError, OSError):
+    """A failed record write (ENOSPC, EIO, EACCES, ...): a StoreError for
+    the documented `except XStateMachineError`, still an OSError (with
+    `errno`) for callers that caught the bare error (#263 battle).
+
+    📝 `_store_write_error(exc)` builds the instance as a subclass of the
+    ORIGINAL exception's class too, so `except PermissionError` /
+    `except FileNotFoundError` keep matching (the #259 Windows retry-budget
+    test caught the first cut narrowing `PermissionError` to `OSError`).
+    """
+
+
+_WRITE_ERROR_CLASSES: Dict[type, type] = {}
+
+
+def _store_write_error(exc: OSError, message: str) -> "_StoreWriteError":
+    """`_StoreWriteError` that is ALSO an instance of ``type(exc)``."""
+    base = type(exc)
+    cls = _WRITE_ERROR_CLASSES.get(base)
+    if cls is None:
+        if base is OSError or not issubclass(base, OSError):
+            cls = _StoreWriteError
+        else:
+            cls = type(
+                f"_StoreWriteError[{base.__name__}]",
+                (_StoreWriteError, base),
+                {"__module__": __name__},
+            )
+        _WRITE_ERROR_CLASSES[base] = cls
+    return cls(exc.errno or 0, message)  # type: ignore[no-any-return]
+
+
 class FileStore(BaseStore):
     """One ``<encoded-key>.xsm.json`` file per key under *directory*.
 
@@ -507,9 +543,16 @@ class FileStore(BaseStore):
                     if attempt == _WRITE_RETRIES - 1:
                         raise
                     time.sleep(_WRITE_RETRY_SLEEP)
-        except BaseException:
+        except BaseException as exc:
             with contextlib.suppress(OSError):
                 os.unlink(tmp)
+            if isinstance(exc, OSError):
+                # 🛡️ #263 battle: ENOSPC / EIO / a stuck rename escaped as
+                #    a bare OSError, outside `except XStateMachineError`.
+                #    The target was never replaced: the old record stands.
+                raise _store_write_error(
+                    exc, f"FileStore could not write {path.name}: {exc}"
+                ) from exc
             raise
 
     # -- primitives ----------------------------------------------------------------------
@@ -563,9 +606,11 @@ class FileStore(BaseStore):
                 {
                     "format": FORMAT_VERSION,
                     "key": key,
+                    # 📝 #263 battle: the label precedes the blob so
+                    #    `list_versions` reads a few hundred bytes per file.
+                    "machine_version": machine_version,
                     "snapshot": data,
                     "version": new_version,
-                    "machine_version": machine_version,
                     "updated_at": time.time(),
                     "deadlines": [d.to_dict() for d in deadlines],
                 },
@@ -608,6 +653,52 @@ class FileStore(BaseStore):
                 keys.append(key)
         keys.sort()
         return keys[:limit]
+
+    def _list_versions_raw(
+        self, prefix: str, limit: int
+    ) -> List[Tuple[str, str]]:
+        out: List[Tuple[str, str]] = []
+        for key in self.list_keys(prefix=prefix, limit=limit):
+            mv = self._header_label(self._path(key))
+            if mv is None:
+                # Older record (label after the blob) or odd layout: the
+                # full, validating read decides.
+                raw = self._load_raw(key)
+                if raw is None:
+                    continue
+                mv = raw[2]
+            out.append((key, mv))
+        return out
+
+    @staticmethod
+    def _header_label(path: Path) -> Optional[str]:
+        """The ``machine_version`` from the first `_HEADER_BYTES` of a
+        record written label-first; ``None`` when it is not there."""
+        try:
+            with _open_for_read(path) as fh:
+                head = fh.read(_HEADER_BYTES).decode("utf-8", "ignore")
+        except OSError:
+            return None
+        # 🏛️ Walk the top-level members with the real JSON decoder (never
+        #    a substring search: a key may contain `"machine_version":`).
+        dec = json.JSONDecoder()
+        pos = 1 if head.startswith("{") else -1
+        while 0 < pos < len(head):
+            try:
+                name, pos = dec.raw_decode(head, pos)
+                if head[pos : pos + 1] != ":":
+                    return None
+                value, pos = dec.raw_decode(head, pos + 1)
+            except (ValueError, RecursionError):
+                return None
+            if name == "snapshot" or not isinstance(name, str):
+                return None
+            if name == "machine_version":
+                return value if isinstance(value, str) else None
+            if head[pos : pos + 1] != ",":
+                return None
+            pos += 1
+        return None
 
     def _hashed_key(self, path: Path, stem: str) -> Optional[str]:
         """The key stored inside a hashed-name record, if it really hashes

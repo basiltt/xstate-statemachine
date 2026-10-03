@@ -115,6 +115,7 @@ _LAZY = {
     "DueTimerScanner": ".timers",
     "ScanResult": ".timers",
     "DEFAULT_RESTART_TIMERS": ".locking",
+    "DEFAULT_SETTLE_TIMEOUT": ".locking",  # ⏳ #263 battle
     # 🧬 #310: adopt an existing record
     "from_state_ids": ".adopt",
 }
@@ -156,6 +157,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from .timers import DueTimerScanner, ScanResult  # noqa: F401
     from .locking import (  # noqa: F401
         DEFAULT_RESTART_TIMERS,
+        DEFAULT_SETTLE_TIMEOUT,
         DEFAULT_BACKOFF,
         LockStrategy,
         NoLock,
@@ -240,6 +242,7 @@ __all__ = [
     "DueTimerScanner",
     "ScanResult",
     "DEFAULT_RESTART_TIMERS",
+    "DEFAULT_SETTLE_TIMEOUT",  # #263 battle
     "from_state_ids",  # #310
     # 🧬 versioning (#263)
     "SnapshotMigrator",

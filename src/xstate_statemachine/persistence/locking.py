@@ -74,6 +74,7 @@ __all__ = [
     "persisted_retry",
     "DEFAULT_BACKOFF",
     "DEFAULT_RESTART_TIMERS",
+    "DEFAULT_SETTLE_TIMEOUT",
 ]
 
 T = TypeVar("T")
@@ -81,6 +82,12 @@ T = TypeVar("T")
 #: ⏰ #264: `persisted()` re-arms persisted `after` deadlines with their
 #: REMAINING wall time by default -- the whole point of durable timers.
 DEFAULT_RESTART_TIMERS: Any = "resume"
+
+#: ⏳ #263 battle: how long `apersisted()` waits, before snapshotting, for
+#: the engine completions the block's last event set in motion (a chain of
+#: plain `def` invokes). Generous because it only ever waits while a
+#: service is genuinely running; an idle machine settles in microseconds.
+DEFAULT_SETTLE_TIMEOUT: float = 30.0
 
 #: Retry backoff for `OptimisticLock`: short, jittered -- a conflict means
 #: another writer JUST finished, so a few ms of decorrelated wait is enough
@@ -708,6 +715,7 @@ async def apersisted(
     restart_timers: Any = DEFAULT_RESTART_TIMERS,
     verify_machine_hash: bool = True,
     expected_machine_hash: Optional[str] = None,
+    settle_timeout: float = DEFAULT_SETTLE_TIMEOUT,
 ) -> AsyncIterator[Any]:
     """Async twin of `persisted()`: yields a started `Interpreter`.
 
@@ -715,6 +723,23 @@ async def apersisted(
     `as_async()`); sync stores are called via the executor so the loop is
     never blocked. `PessimisticLock` holds the store's lock via the async
     adapter's ``async with``.
+
+    Args:
+        settle_timeout: #263 battle -- before the snapshot, wait up to this
+            many seconds for engine completions the block's last event
+            set in motion (a chain of plain ``def`` invokes: ``authorise``
+            → ``capture``) to be processed, so the saved state is the
+            settled one. ``await send(..., wait=True)`` alone resolves at
+            the END OF THE EVENT'S MACROSTEP; a service completion is the
+            NEXT macrostep. On timeout the snapshot is attempted anyway
+            and refused loudly if the machine is still mid-step
+            (`SnapshotMidStepError`), exactly as before. ``0`` opts out.
+            ⚠️ Under `PessimisticLock` the settle happens while the lock
+            is held; on a store whose lock can EXPIRE (Redis) a service
+            slower than the lease lets a second writer in -- the save is
+            still fenced by ``expected_version``, so the outcome is a
+            `ConflictError`, never a lost update. Size the lease (or this
+            timeout) to the slowest service the chart invokes.
     """
     from ..interpreter import Interpreter
     from .async_store import as_async
@@ -768,6 +793,14 @@ async def apersisted(
                 await interp.stop()
                 raise
             try:
+                # ⏳ #263 battle: let engine completions the block set in
+                #    motion land before the snapshot (see `settle_timeout`).
+                #    `wait=True` resolves per macrostep; a chain of plain
+                #    `def` invokes is several. Bounded; a timeout falls
+                #    through to the snapshot, which refuses a mid-step
+                #    machine loudly rather than persisting a torn one.
+                if settle_timeout > 0:
+                    await interp.await_settled(settle_timeout)
                 snapshot = interp.get_snapshot()
                 for m in markers:  # #262: what this snapshot contains
                     seal = getattr(m, "seal_marks", None)

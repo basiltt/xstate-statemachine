@@ -562,6 +562,13 @@ examples:
     snapshots_parser.add_argument(
         "--json", action="store_true", help="Emit as JSON."
     )
+    # 📝 #263 battle: a deploy gate wants a non-zero exit while stale keys
+    #    remain; plain `--stale` keeps exit 0 (it is a listing).
+    snapshots_parser.add_argument(
+        "--fail-if-stale",
+        action="store_true",
+        help="Exit 1 when any stale key exists (implies --stale).",
+    )
 
     # 🪟 setup subcommand -- make `xsm` work where pip's launcher is blocked
     _add_eda_parsers(subparsers, presentation)

@@ -131,6 +131,14 @@ TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter")
 # logging that can be configured by the end-user's application.
 logger = logging.getLogger(__name__)
 
+#: 📝 #263 battle: `(machine id, expected label)` pairs already warned
+#: about restoring an UNLABELLED blob -- once per pair per process,
+#: bounded like `deprecations._SEEN`. Keyed on the label too (review M4):
+#: v1 and v2 of a chart share an id, and the v2 deploy deserves its own
+#: warning.
+_UNLABELLED_WARNED: Set[Tuple[str, str]] = set()
+_UNLABELLED_WARNED_MAX = 4096
+
 #: Every event kind the core algorithm can be asked to process.
 AnyEvent = Union[Event, DoneEvent, AfterEvent, ErrorEvent]
 
@@ -1904,6 +1912,38 @@ class BaseInterpreter(Generic[TContext]):
         return None
 
     @staticmethod
+    def _derive_migrated_configuration(
+        snapshot: Dict[str, Any], machine: MachineNode[Any]
+    ) -> Dict[str, Any]:
+        """#263 battle: rebuild ``configuration`` from ``state_ids`` when a
+        migration step left it to the library (`SnapshotMigrator` sets it
+        to ``None`` when the step did not rewrite it).
+
+        🏛️ Ancestor walk against the NEW machine, exactly what the restore
+        loop does. An id the new machine lacks is kept verbatim so the
+        restore loop raises `StateNotFoundError` naming it; a malformed
+        ``state_ids`` is left for `check_shape` to report.
+        """
+        ids = snapshot.get("state_ids")
+        if snapshot.get("configuration") is not None or not (
+            isinstance(ids, list) and all(isinstance(s, str) for s in ids)
+        ):
+            return snapshot
+        full: List[str] = []
+        seen: Set[str] = set()
+        for sid in ids:
+            node = machine.get_state_by_id(sid)
+            chain = [sid]
+            while node is not None and node.parent is not None:
+                node = node.parent
+                chain.append(node.id)
+            for cid in chain:
+                if cid not in seen:
+                    seen.add(cid)
+                    full.append(cid)
+        return {**snapshot, "configuration": full}
+
+    @staticmethod
     def _apply_version_policy(
         snapshot: Dict[str, Any],
         machine: MachineNode[Any],
@@ -1925,8 +1965,18 @@ class BaseInterpreter(Generic[TContext]):
         #    declares none. An unlabelled blob for a labelled chart is
         #    worth a warning -- it cannot be checked -- but not a refusal
         #    (every 0.10.x blob is unlabelled).
-        if "machine_version" not in snapshot or expected is None:
-            if expected is not None:
+        # 📝 #263 battle: `"machine_version": null` is what the library
+        #    writes for an UNLABELLED chart, so it means the same as an
+        #    absent key (adding a label to a chart for the first time must
+        #    not refuse every stored blob; the structural hash still
+        #    guards). The warning is once per machine id per process --
+        #    10 000 restores of 0.10.x blobs used to log 10 000 WARNINGs.
+        if found is None or expected is None:
+            warn_key = (machine.id, str(expected))
+            if expected is not None and warn_key not in _UNLABELLED_WARNED:
+                if len(_UNLABELLED_WARNED) >= _UNLABELLED_WARNED_MAX:
+                    _UNLABELLED_WARNED.clear()
+                _UNLABELLED_WARNED.add(warn_key)
                 logger.warning(
                     "⚠️ Snapshot of '%s' carries no machine_version; the "
                     "running machine is version %r. Cannot verify the "
@@ -2162,6 +2212,8 @@ class BaseInterpreter(Generic[TContext]):
             expected_hash=None if migrated else expected_machine_hash,
         )
         snapshot = persistence.upcast(snapshot, version)
+        if migrated:
+            snapshot = cls._derive_migrated_configuration(snapshot, machine)
 
         # 🛡️ #110: validate the payload SHAPE before touching it, so a
         #    corrupted blob is a typed `SnapshotCorruptError` rather than a

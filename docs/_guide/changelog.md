@@ -237,6 +237,37 @@ _No unreleased changes yet._
 
 ### Added
 
+- **`Interpreter.await_settled(timeout)`, `apersisted(settle_timeout=)`,
+  `DEFAULT_SETTLE_TIMEOUT` (battle-test #263).** `await send(..., wait=True)`
+  resolves at the end of the *event's* macrostep; a service completion is
+  the *next* macrostep, which the run loop starts at once. On a chart with
+  two plain `def` invokes in a row (authorise → capture) the machine was
+  therefore mid-step exactly when an `apersisted()` block exited, and the
+  snapshot was refused (`SnapshotMidStepError` → HTTP 500) -- while the
+  sync engine's `send()` drains the chain and `persisted()` never saw it.
+  `await_settled` waits, bounded, until no step is in flight and no engine
+  completion is queued or owed (plain `def` futures *and* `async def`
+  tasks); a live `after` timer is not owed work. `apersisted()` and the
+  Starlette / FastAPI / Litestar / Quart registries settle before the
+  snapshot and before the receipt body, so the `200` a caller reads is
+  what the store holds. `settle_timeout=0` restores the old loud refusal.
+- **`BaseStore.list_versions(prefix=, limit=)` and
+  `MAX_MACHINE_VERSION_LENGTH` (255) (battle-test #263).** `(key, label)`
+  pairs without loading the blobs: one `SELECT` on SQLite, a header read
+  on `FileStore`, a dict walk on `MemoryStore`; third-party stores fall
+  back to `list_keys` + `load`. What `xsm snapshots --stale` uses.
+- **`xsm snapshots --fail-if-stale`** -- exit **1** when stale keys exist
+  (implies `--stale`): the deploy gate between "v2 rolled out" and "v1
+  workers retired". Exit **2** for bad input (not a machine, missing or
+  unreadable store, a nesting bomb). `--json` reports `total` and
+  `truncated` when `--limit` cut the list; the table title says "N of M".
+- **`examples/integrations/fastapi_orders` rolling-upgrade scenario** --
+  `machine_v2.json` (authorise → capture, a `currency` key) and
+  `migrations.py` (one scoped `SnapshotMigrator` step); v1 orders at every
+  interesting point are migrated lazily, once, by v2 workers *and* the v2
+  scheduler; 50 concurrent `PAY`s on one stale order commit exactly one
+  migration; `xsm snapshots --stale` is the drain list before and after.
+
 - **`IdempotencyPlugin(on_inbox_error="refuse" | "admit")` and
   `InboxUnavailableError` (HTTP 503) (battle-test #261).** What a keyed
   event gets when the inbox *backend* fails. `"refuse"` is the default --
@@ -1095,6 +1126,50 @@ _No unreleased changes yet._
 
 ### Changed
 
+- **Versioning, as battle-tested (#263) -- behaviour changes a 0.10.x
+  user can hit on upgrade:**
+  - `save(..., machine_version=)` longer than **255 characters** or
+    containing **NUL** raises `ValueError` on every store. Memory / File /
+    SQLite accepted both; the SQLAlchemy and Django columns are
+    `VARCHAR(255)` and Postgres rejects NUL, so the rule is now the same
+    everywhere and fails at the call site, not in a driver.
+  - `"machine_version": null` in a blob is treated as **unlabelled** (like
+    an absent key): restores with the once-per-process warning. It was a
+    mismatch (`"None" != "1.0"`) even though the library itself writes
+    `null` for a chart with no `"version"`, so adding a label to a chart
+    refused every blob it had already written.
+  - `xsm snapshots --stale` and `manage.py xsm_snapshots --stale` agree
+    with restore: an **unlabelled record is not stale** (restore warns, it
+    does not refuse) and a chart with **no `"version"` has nothing stale**.
+    Both counted them before, so the drain list over-reported.
+  - `sqlite:///relative.db` in `xsm snapshots` **and `xsm dlq`** is now
+    **relative to the working directory** (SQLAlchemy's rule); four slashes
+    is absolute, `sqlite:///C:/...` still works. `/x.db` at the filesystem
+    root was never what the guide's own example meant. A missing SQLite
+    file or `FileStore` directory is **refused** (exit 2) instead of being
+    silently created empty and reported as "store is empty"; `memory://`
+    is refused as meaningless.
+  - `FileStore` writes `machine_version` **before** `snapshot` in the
+    record so `list_versions` reads 8 KB per file instead of the blob;
+    older records are read in full and still load. A write failure
+    (ENOSPC, EACCES) raises a `StoreError` that is **also** an `OSError`
+    with `errno`, so `except OSError` keeps working; the old record stays
+    and no temp file is left.
+  - The "carries no machine_version" warning is logged **once per
+    (machine id, expected label) per process**, not once per restore
+    (10 000 stale orders used to log 10 000 lines per deploy).
+  - A migration step that **rewrites `state_ids` only** now restores: the
+    `configuration` (leaves + ancestors) is re-derived from the new
+    machine when the step leaves it untouched or `None`. The issue's own
+    recipe was refused ("the two fields contradict each other"). A step
+    that sets the two to disagree is `SnapshotCorruptError` naming the hop.
+  - A step that **raises** surfaces as `SnapshotCorruptError` (the
+    original chained as `__cause__`) naming the hop; one that returns a
+    non-dict is a `SnapshotCorruptError` that is also a `TypeError`.
+    Library errors raised inside a step pass through unchanged.
+  - Requests on charts with chained `def` invokes take as long as the
+    chain (they used to fail): see `apersisted(settle_timeout=)` above.
+
 - **`JSONLinesLog.next_seq` is O(1) in steady state (battle-test #262).**
   It scanned the whole file on EVERY send (79 ms at 10 000 records -- a
   run with a JSONL log was quadratic). The last seq per machine is cached
@@ -1174,6 +1249,38 @@ _No unreleased changes yet._
   `requires-python` and CI have been 3.9 since 0.9).
 
 ### Fixed
+
+- **The web registries' READ paths ignored the migrator (battle-test
+  #263).** `StatechartRegistry.peek()` (GET, SSE connect, WebSocket
+  snapshot) and both Flask / Quart `peek`s restored without
+  `migrator=`, so a v2 deployment that carried the migrator still
+  answered **409** to every read of a v1 instance until something *wrote*
+  to it. Reads now migrate like writes and stay read-only (the next write
+  re-saves at the new label). Found by the `fastapi_orders` rolling
+  upgrade on its first run.
+- **`apersisted()` saved a torn state -- or refused to save -- on charts
+  with chained services (battle-test #263).** See `await_settled` under
+  Added: two plain `def` invokes in a row were `SnapshotMidStepError`; an
+  `async def` invoke armed by the block's last event was *saved with the
+  task in flight* and restored dormant (review H1).
+- **`xsm snapshots --stale` was wrong and O(n · blob) (battle-test
+  #263).** `--limit` capped the keys *scanned*, so stale keys past the
+  first 1 000 were silently missing from the drain list; every key's full
+  snapshot was loaded to read a label the store has as a column. Now:
+  the label index is scanned for every key and the limit caps output;
+  10 000 keys with 100 stale on SQLite take 0.10 s (was 1 000 loads and
+  wrong). A key containing a newline no longer splits a table row (control
+  characters are escaped; `--json` keeps them verbatim); a non-machine
+  JSON, an unreadable store or a 200 000-deep `[[[[` are a one-line error
+  and exit 2, not a traceback; `--json` never includes `context`.
+- **Typed errors on the versioned restore path (battle-test #263).** An
+  `actors` record without `snapshot` was a bare `KeyError`; a `deadlines`
+  record with a NaN / ±inf `due_at_wall` escaped as `ValueError` /
+  `OverflowError`; both are `SnapshotCorruptError`. `register(1, "1")`
+  stored a self-loop that matched nothing and int labels never matched
+  (`can_migrate("o", 1, 2)` was `False`): labels compare as strings.
+  `AsyncSQLAlchemyStore` and `AsyncRedisStore` skipped the label type
+  checks the sync stores apply.
 
 - **Audit records could land for steps that never committed (battle-test
   #262; a crash-consistency guarantee).** Records were appended as each

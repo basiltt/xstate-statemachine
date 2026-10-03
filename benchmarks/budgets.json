@@ -54,6 +54,7 @@
       "baseline_p50_us": 24.365,
       "budget_p50_us": 30.456
     },
+    "snapshot_restore_migrated_sync": null,
     "snapshot_restore_sync": {
       "baseline_p50_us": 23.285,
       "budget_p50_us": 29.106
@@ -85,6 +86,7 @@
         "snapshot_get_async": 17.421,
         "snapshot_get_sync": 16.342,
         "snapshot_restore_async": 44.228,
+        "snapshot_restore_migrated_sync": null,
         "snapshot_restore_sync": 41.261,
         "validator_async": 106.959,
         "validator_sync": 77.162
@@ -109,6 +111,7 @@
         "snapshot_get_async": 8.736,
         "snapshot_get_sync": 8.225,
         "snapshot_restore_async": 18.44,
+        "snapshot_restore_migrated_sync": null,
         "snapshot_restore_sync": 17.144,
         "validator_async": 51.101,
         "validator_sync": 37.391
@@ -133,6 +136,7 @@
         "snapshot_get_async": 12.45,
         "snapshot_get_sync": 12.105,
         "snapshot_restore_async": 24.365,
+        "snapshot_restore_migrated_sync": null,
         "snapshot_restore_sync": 23.285,
         "validator_async": 56.582,
         "validator_sync": 46.031
@@ -170,6 +174,7 @@
       "snapshot_get_async": 11.171,
       "snapshot_get_sync": 10.618,
       "snapshot_restore_async": 24.452,
+      "snapshot_restore_migrated_sync": null,
       "snapshot_restore_sync": 22.97,
       "validator_async": 61.05,
       "validator_sync": 46.059
@@ -187,6 +192,7 @@
     "snapshot_get_async": "v4; historical v3 runtime not present",
     "snapshot_get_sync": "v4; historical v3 runtime not present",
     "snapshot_restore_async": "v4; historical v3 runtime not present",
+    "snapshot_restore_migrated_sync": "#263 battle: 1-hop SnapshotMigrator restore of the 50-state blob; reference to be recorded on the reference runner",
     "snapshot_restore_sync": "v4; historical v3 runtime not present"
   },
   "runner": {

@@ -37,6 +37,21 @@ class Command(BaseCommand):
                 f"{name}_machine_version",
             )
         )
+        mv_col = f"{name}_machine_version"
+        if options["stale"]:
+            # 📝 #263 battle: filter BEFORE `--limit` (it used to cap the
+            #    rows scanned, hiding stale rows past the first 1000), and
+            #    agree with restore + `xsm snapshots`: a chart with no
+            #    version never mismatches; an unlabelled row cannot be
+            #    checked, so it is not listed as stale.
+            if current is None:
+                qs = qs.none()
+            else:
+                qs = (
+                    qs.exclude(**{f"{mv_col}__isnull": True})
+                    .exclude(**{mv_col: ""})
+                    .exclude(**{mv_col: current})
+                )
         rows = [
             {
                 "key": str(pk),
@@ -46,8 +61,6 @@ class Command(BaseCommand):
             }
             for pk, state, ver, mv in qs[: options["limit"]]
         ]
-        if options["stale"]:
-            rows = [r for r in rows if r["machine_version"] != current]
         if options["as_json"]:
             self.stdout.write(
                 json.dumps(

@@ -1091,7 +1091,13 @@ class TestLeaks(_Base):
             "threads=+%(threads)d tasks=+%(tasks)d" % r
         )
         self.assertLess(r["full"] - r["half"], _leak_ceiling())
-        self.assertEqual(r["threads"], 0)
+        # 📝 2 000 cycles each create and `shutdown(wait=True)` an adapter
+        #    pool, so a per-cycle leak would be hundreds of threads. The
+        #    loop's DEFAULT executor (where the join itself runs) may add
+        #    a worker of its own under load -- Python 3.9 on the Windows
+        #    runner read +1 once (#263 CI) -- and that is asyncio's thread
+        #    for the loop's life, not ours. Bound, do not pin to zero.
+        self.assertLessEqual(r["threads"], 1)
         self.assertEqual(r["tasks"], 0)
 
     def test_async_sync_store_adapters_do_not_grow_threads(self) -> None:

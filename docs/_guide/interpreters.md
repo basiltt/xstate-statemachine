@@ -400,7 +400,7 @@ await asyncio.sleep(0.05)  # let the run loop drain the raised "GO"
 print(interp.current_state_ids)  # {'order.b'}
 ```
 
-The same guarantee applies mid-run: `await interp.send("START", wait=True)` does not resolve until every event `START` transitively raised on itself has also been processed, so the `Receipt` (see below) reflects the machine's *final* settled state for that macrostep, not an intermediate one.
+The same ordering applies mid-run: everything `START` transitively raised on itself is processed before the next external event is taken. Each raised event is nonetheless its *own* macrostep with its own `Receipt` (see below) — `await interp.send("START", wait=True)` resolves when `START`'s step ends, and the raised events follow immediately in the internal queue. To wait for the whole chain, use `await_settled()`.
 
 **What changed vs. 0.7**: prior releases queued a self-raised event onto the same inbox as external `send()` calls, so a `raise`d event could be interleaved with (or delayed behind) events sent concurrently from elsewhere. As of #36 the interpreter keeps a dedicated internal queue for self-raised events (`_internal_queue` on both engines), which is drained FIFO — internal events among themselves, in the order raised — ahead of the next external event. This makes ordering match the SCXML processing model and removes a class of races where an external event could be processed *between* two microsteps of the same macrostep.
 
@@ -499,6 +499,8 @@ print(receipt.state_ids)  # the leaf state IDs active when the macrostep settled
 print(receipt.changed)    # True if this event caused a transition or context change
 print(receipt.error)      # the exception raised while processing THIS event, or None
 ```
+
+**Where the macrostep ends.** A `raise`d event is processed in the same drain but is its *own* macrostep with its own receipt (`on_event_processed` fires per event, #304): the receipt for `GO` describes the step `GO` took, on both engines. A *service completion* is likewise the next macrostep. The engines differ in *when you get control back*: `SyncInterpreter.send()` drains the whole chain — raises, `done.invoke`s, further invokes — before it returns, so the machine is settled when you read it; `await interp.send(..., wait=True)` resolves when `GO`'s step ends, while the run loop is already starting the next one — and if that step enters a plain `def` invoke, the machine is mid-step when your `await` returns. To wait for the chain on the async engine use `await interp.await_settled(timeout)` (0.11.0, #263 battle) — `True` when nothing is in flight — before snapshotting; `apersisted()` and the web registries do this for you. A live `after` timer does not count as unsettled.
 
 `Receipt` is a `NamedTuple` with five fields (three before 0.9.0 — a positional destructure written as `state_ids, changed, error = receipt` now raises `ValueError`; read fields by attribute):
 

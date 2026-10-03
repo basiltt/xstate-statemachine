@@ -40,6 +40,7 @@ from xstate_statemachine.contrib.starlette import mount_inspector
 from xstate_statemachine.persistence import DueTimerScanner, SQLiteInbox
 
 from logic import build_logic
+from migrations import build_migrator
 from models import EVENT_MODELS, EVENT_SCHEMAS, OrderContext, Pay
 from models import public_context
 
@@ -57,8 +58,15 @@ EmailSender = Callable[[str, Optional[str], str], None]
 # -----------------------------------------------------------------------------
 # 🏗️ Machine, store, identity
 # -----------------------------------------------------------------------------
-def build_machine() -> Any:
-    config = json.loads((HERE / "machine.json").read_text("utf-8"))
+def chart_path(version: Optional[str] = None) -> Path:
+    """``machine.json`` (v1) or ``machine_v2.json``; ``XSM_ORDERS_CHART``
+    selects the one a deployment runs (``1`` default, ``2``)."""
+    v = version or os.environ.get("XSM_ORDERS_CHART", "1")
+    return HERE / ("machine_v2.json" if str(v) == "2" else "machine.json")
+
+
+def build_machine(version: Optional[str] = None) -> Any:
+    config = json.loads(chart_path(version).read_text("utf-8"))
     return create_machine(
         config,
         logic=build_logic(),
@@ -118,16 +126,25 @@ def log_email(order_id: str, charge_id: Optional[str], customer: str) -> None:
 
 
 def build_registry(
-    store: Any = None, inbox: Any = None, **kw: Any
+    store: Any = None,
+    inbox: Any = None,
+    *,
+    chart: Optional[str] = None,
+    **kw: Any,
 ) -> StatechartRegistry:
     if store is None:
         store, inbox = build_store()
+    # 🧬 #263: the migrator rides on the registry, so BOTH the request path
+    #    (`apersisted`) and the scheduler (`DueTimerScanner`) migrate a v1
+    #    order lazily the first time a v2 process touches it. Harmless on
+    #    a v1 deployment: a v1 blob into the v1 chart never mismatches.
+    kw.setdefault("migrator", build_migrator())
     registry = StatechartRegistry(
         store, inbox=inbox, principal=customer_of, **kw
     )
     registry.register(
         MACHINE_NAME,
-        build_machine(),
+        build_machine(chart),
         authorize=authorize,
         context_serializer=public_context,
     )
@@ -142,6 +159,12 @@ def build_scanner(registry: StatechartRegistry, **kw: Any) -> DueTimerScanner:
         lock=registry.lock,
         plugins=registry.plugins,
         prefix=f"{MACHINE_NAME}.",
+        # 🧬 #263 battle: the scheduler restores snapshots too. Without the
+        #    registry's migrator every matured timer on a v1 order failed
+        #    with MachineVersionMismatchError after the v2 deploy -- a
+        #    retry that never fires, a 15-minute timeout that never
+        #    expires -- while the web workers (which had it) were fine.
+        migrator=registry.migrator,
         **kw,
     )
 

@@ -16,6 +16,7 @@ cart ──CHECKOUT──▶ awaitingPayment ──PAY──▶ paying ──don
 | File | What it is |
 |:--|:--|
 | `machine.json` | The chart (Stately-export shape). Passes `xsm validate --plain`. |
+| `machine_v2.json`, `migrations.py` | The next chart revision and the `SnapshotMigrator` step that brings v1 orders into it (see "Rolling upgrade"). |
 | `models.py` | One Pydantic `EventModel` per event plus the `OrderContext` model (`context_model`). |
 | `logic.py` | Actions, guards and a fake payment gateway (`invoke` + `onError`, retried by `RetryPolicy`). |
 | `app.py` | The FastAPI app: `StatechartRegistry`, `StatechartRouter`, `instrument_app`, `Idempotency-Key`, the `BackgroundTasks` email bridge, SSE, `mount_inspector` and the `--role scheduler` / `--role init` modes. |
@@ -177,6 +178,62 @@ the winner is still charging the card see `in flight`.
 a worker that fails to share the listening socket. The supervisor restarts
 it and the test still passes. This is a uvicorn issue on Windows.
 
+## Rolling upgrade: chart v2 while v1 orders are mid-flight
+
+`machine_v2.json` is the next release of the chart: `paying` (one gateway
+call) becomes `payment.authorising` → `payment.capturing` (authorise, then
+capture, a second `captureCharge` service) and `context` gains `currency`.
+Thousands of v1 orders are persisted when v2 ships — in the cart, checked
+out with a live 15-minute timeout, in `retrying` with a live backoff
+deadline, paid, shipped, and one whose worker died mid-charge. Nothing is
+rewritten in bulk.
+
+`migrations.py` registers **one `SnapshotMigrator` step** (`"1"` → `"2"`,
+scoped to `machine_id="order"`) that rewrites the state ids and
+`configuration` and sets the new context default. `build_registry()` puts
+it on the registry, so the request path (`apersisted`) *and* the scheduler
+(`DueTimerScanner`) migrate a v1 order lazily the first time a v2 process
+touches it, inside the same optimistic save — two workers racing on one
+stale order still produce exactly one migrated record, the other gets `409`.
+
+```bash
+XSM_ORDERS_CHART=1 uvicorn app:app --port 8000        # the v1 fleet (default)
+xsm snapshots --store sqlite:///orders.db machine_v2.json --stale   # the drain list
+XSM_ORDERS_CHART=2 uvicorn app:app --port 8000        # v2 workers + v2 scheduler
+# ... serve traffic; each stale order migrates on its first write ...
+xsm snapshots --store sqlite:///orders.db machine_v2.json --stale   # empty when done
+```
+
+What the scenario pins (`tests/test_rolling_upgrade.py`):
+
+* a v2 worker **without** the migrator refuses a v1 order loudly
+  (`MachineVersionMismatchError`, no card token in the body) and leaves the
+  record untouched — the default policy;
+* a **read** (`GET`, SSE connect) shows the migrated view but writes
+  nothing; the first **write** re-saves at label `"2"`;
+* the live retry and 15-minute timeout deadlines survive the migration and
+  fire from the v2 scheduler, which re-saves at `"2"`;
+* 50 concurrent `PAY`s on one stale order → one migration commits, one
+  charge, the rest `409`;
+* the order that crashed mid-charge lands in `payment.authorising` with its
+  invoke dormant and is driven to `paid` with `restart_services=True` — the
+  idempotent charge id means a real gateway would recognise the replay;
+* a v2 blob into the **old** chart is refused: deploy the migrator on the
+  readers before the writers emit the new label (the dual-read window).
+
+What is faked: the gateway (`logic.py`) and time (the scanner is driven
+with an injected `now`). Going live: the same `migrations.py`, a real
+gateway behind `chargeCard` / `captureCharge`, and `xsm snapshots --stale`
+in your deploy pipeline as the gate between "v2 deployed" and "v1 workers
+retired".
+
+Two library defects this scenario found on its first run, both fixed in
+0.11.0: `apersisted()` snapshotted a machine still mid-step on any chart
+with two plain `def` invokes in a row (`SnapshotMidStepError` → `500`; the
+block now settles first), and the registries' read paths (`peek`) ignored
+the migrator, so a v2 deployment answered `409` to every `GET` on a v1
+order until something wrote to it.
+
 ## Tests
 
 ```bash
@@ -188,9 +245,9 @@ paid, retries exhausted → `paymentFailed`, the `after` timeout through the
 scanner with an injected `now`, `Idempotency-Key` duplicates and mismatches,
 200 concurrent PAYs in-process with one winner (with and without a key), one
 SSE `transition` per change, an email only on success, probes, OpenAPI, the
-inspector gate and `stub_logic` parity. The repository's
-`tests/test_examples_integrations.py` runs this suite in CI (in the
-`[fastapi]` cell).
+inspector gate, `stub_logic` parity, and the rolling upgrade above. The
+repository's `tests/test_examples_integrations.py` runs this suite in CI
+(in the `[fastapi]` cell).
 
 See the [FastAPI guide](../../../docs/_guide/integration-fastapi.md) for the
 design discussion.

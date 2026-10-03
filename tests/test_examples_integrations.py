@@ -24,7 +24,9 @@ from src.xstate_statemachine import create_machine, stub_logic
 
 ROOT = Path(__file__).resolve().parents[1]
 INTEGRATIONS = ROOT / "examples" / "integrations"
-MACHINES = sorted(INTEGRATIONS.glob("*/machine.json"))
+# 📝 #263: `machine_v2.json` (fastapi_orders' next chart revision) is
+#    validated and stub-built like the primary chart.
+MACHINES = sorted(INTEGRATIONS.glob("*/machine*.json"))
 SUITES = sorted(p.parent for p in INTEGRATIONS.glob("*/tests"))
 #: #286: the importable modules each example suite needs; anything not
 #: listed needs the web stack (the original #277 rule).
@@ -89,7 +91,13 @@ def test_sqlalchemy_orders_ships_its_alembic_migration():
     assert "#293" in readme  # the outbox is not faked
 
 
-@pytest.mark.parametrize("path", MACHINES, ids=lambda p: p.parent.name)
+def _chart_id(p: Path) -> str:
+    return (
+        f"{p.parent.name}/{p.stem}" if p.stem != "machine" else p.parent.name
+    )
+
+
+@pytest.mark.parametrize("path", MACHINES, ids=_chart_id)
 def test_machine_validates_plain(path):
     proc = subprocess.run(
         [
@@ -108,7 +116,7 @@ def test_machine_validates_plain(path):
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
-@pytest.mark.parametrize("path", MACHINES, ids=lambda p: p.parent.name)
+@pytest.mark.parametrize("path", MACHINES, ids=_chart_id)
 def test_machine_builds_with_stub_logic(path):
     cfg = json.loads(path.read_text("utf-8"))
     machine = create_machine(cfg, logic=stub_logic(cfg), strict_config=True)
