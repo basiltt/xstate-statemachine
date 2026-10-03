@@ -289,6 +289,43 @@ class TestDiskFull:
         assert s.load("k").machine_version == "1.0"
         assert not list((tmp_path / "f").glob(".tmp-*"))
 
+    def test_write_error_keeps_the_original_oserror_subclass(
+        self, tmp_path: Path
+    ) -> None:
+        # 🛡️ The typed write error must still match the SPECIFIC OSError a
+        #    caller caught before: `except PermissionError` (the #259
+        #    Windows retry-budget test) and `except FileNotFoundError`.
+        #    The first cut raised a plain `_StoreWriteError(StoreError,
+        #    OSError)` and narrowed PermissionError to OSError.
+        s = _saved("file", tmp_path)
+        from src.xstate_statemachine.persistence import file_store as fs
+
+        def denied(*_a: Any) -> None:
+            raise PermissionError(errno.EACCES, "Access is denied")
+
+        with (
+            mock.patch.object(fs, "_WRITE_RETRIES", 2),
+            mock.patch.object(fs, "_WRITE_RETRY_SLEEP", 0.0),
+            mock.patch.object(fs, "_replace", denied),
+        ):
+            with pytest.raises(PermissionError) as info:
+                s.save("k", BLOB, expected_version=1)
+        assert isinstance(info.value, StoreError)
+        assert info.value.errno == errno.EACCES
+        assert s.load("k").version == 1
+
+        def gone(*_a: Any) -> None:
+            raise FileNotFoundError(errno.ENOENT, "gone")
+
+        with mock.patch.object(fs, "_replace", gone):
+            with pytest.raises(FileNotFoundError) as info2:
+                s.save("k", BLOB, expected_version=1)
+        assert isinstance(info2.value, StoreError)
+        # the dynamic subclass is cached per base class
+        assert type(info2.value) is type(
+            fs._store_write_error(FileNotFoundError(2, "x"), "m")
+        )
+
     def test_sqlite_disk_full_is_store_error(self, tmp_path: Path) -> None:
         s = _saved("sqlite", tmp_path)
         real = s._conn

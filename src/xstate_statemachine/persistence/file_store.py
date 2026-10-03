@@ -325,9 +325,35 @@ def _pid_alive(pid: int) -> bool:
 
 
 class _StoreWriteError(StoreError, OSError):
-    """A failed record write (ENOSPC, EIO, ...): a StoreError for the
-    documented `except XStateMachineError`, still an OSError (with
-    `errno`) for callers that caught the bare error (#263 battle)."""
+    """A failed record write (ENOSPC, EIO, EACCES, ...): a StoreError for
+    the documented `except XStateMachineError`, still an OSError (with
+    `errno`) for callers that caught the bare error (#263 battle).
+
+    📝 `_store_write_error(exc)` builds the instance as a subclass of the
+    ORIGINAL exception's class too, so `except PermissionError` /
+    `except FileNotFoundError` keep matching (the #259 Windows retry-budget
+    test caught the first cut narrowing `PermissionError` to `OSError`).
+    """
+
+
+_WRITE_ERROR_CLASSES: Dict[type, type] = {}
+
+
+def _store_write_error(exc: OSError, message: str) -> "_StoreWriteError":
+    """`_StoreWriteError` that is ALSO an instance of ``type(exc)``."""
+    base = type(exc)
+    cls = _WRITE_ERROR_CLASSES.get(base)
+    if cls is None:
+        if base is OSError or not issubclass(base, OSError):
+            cls = _StoreWriteError
+        else:
+            cls = type(
+                f"_StoreWriteError[{base.__name__}]",
+                (_StoreWriteError, base),
+                {"__module__": __name__},
+            )
+        _WRITE_ERROR_CLASSES[base] = cls
+    return cls(exc.errno or 0, message)  # type: ignore[no-any-return]
 
 
 class FileStore(BaseStore):
@@ -524,9 +550,8 @@ class FileStore(BaseStore):
                 # 🛡️ #263 battle: ENOSPC / EIO / a stuck rename escaped as
                 #    a bare OSError, outside `except XStateMachineError`.
                 #    The target was never replaced: the old record stands.
-                raise _StoreWriteError(
-                    exc.errno or 0,
-                    f"FileStore could not write {path.name}: {exc}",
+                raise _store_write_error(
+                    exc, f"FileStore could not write {path.name}: {exc}"
                 ) from exc
             raise
 
