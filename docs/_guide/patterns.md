@@ -153,11 +153,53 @@ What the record guarantees:
 - **Both engines.** The plugin uses engine-agnostic hooks and writes the record from `on_event_processed`, after the step has settled, so the snapshot is legal on either engine.
 - **Retention.** `DeadLetterStore.purge_older_than(cutoff_wall)` drops old records; `taken_at` is `interpreter.wall_now()` (epoch seconds).
 
-Options: `state_ids=["job.poison"]` to name the terminal states explicitly instead of tagging; `include_snapshot=False` for smaller records; `attempt_key=` to match a custom counter. Broker sinks and the `xsm dlq` CLI arrive with the EDA phase.
+Options: `state_ids=["job.poison"]` to name the terminal states explicitly instead of tagging; `include_snapshot=False` for smaller records; `attempt_key=` to match a custom counter; `max_errors=20` caps the chain. Broker sinks and the `xsm dlq` CLI arrive with the EDA phase.
+
+### Where the error chain lives — and why (battle-test #265)
+
+In production the interpreter is **discarded after every request** (create → act → persist → discard): the first attempt runs in a web request, the retries in the `DueTimerScanner`'s wakes, each in a fresh interpreter. A chain kept in the plugin's memory died with each of them — the record arrived with `attempts=3, errors=[]`, and the operator could not see *why*. The chain therefore lives **in the snapshot**, under `context["_xsm_errors"]` (`ERRORS_CONTEXT_KEY`), where it survives the block boundary and travels with the record between processes.
+
+That key is **library-private**: the `_xsm_` prefix (`PRIVATE_CONTEXT_PREFIX`) is reserved. `context_model(...)` validates your keys only, so a model with `extra="forbid"` is unaffected; the Starlette / FastAPI / Litestar / Flask / Channels state bodies hand your `context_serializer` the **public** view (`public_context(ctx)`), so a pass-through serializer cannot leak it; `redact()` masks any secret value from context inside the stored messages, which are cut at 1 000 characters. It is cleared on a clean `on_service_done`, by the retry policy's `retryReset`, and after a record is captured — so a machine that dead-letters, recovers, and fails again starts a fresh chain (while `attempts` resets only via `retryReset`: `attempts=3` with a one-entry chain is possible and means "the counter was not reset between episodes").
+
+What was pinned by `tests/patterns/test_battle_265_dead_letter.py` and the [`fastapi_orders` gateway-outage scenario](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders#the-payment-provider-is-down-for-ten-minutes):
+
+| Situation | What happens |
+|:--|:--|
+| 3 failures across 3 `persisted()` blocks (request, scanner wake, scanner wake), then the 4th lands in the dead-letter state | one record, `attempts=3`, three errors oldest-first with their types, messages redacted, no exception objects |
+| One plugin shared by many machines with the same id (`order`), 16 threads × 200 cycles | each record carries only its own key's errors — context is per instance, so the #261 shared-plugin collision cannot happen |
+| A `context_model` with `extra="forbid"` | unaffected (private keys are filtered before `model_validate`) |
+| The dead-letter state is the **initial** state | **no record** — start-up is not an event step |
+| Two dead-letter states; re-entering one | one record per entry |
+| A child actor's dead-letter state | children do not inherit the parent's plugins; attach it to the child (or `plugins.register_global`), and `machine_id` is the actor id |
+| A sink that raises | logged at ERROR with the record id, then re-raised so `on_plugin_error` fires; the machine is unaffected |
+| A sink that is neither callable nor has `put()` | `TypeError` at construction, not at the first dead letter |
+| A sink that blocks | blocks the machine's step — `send()` returns after the sink does |
+| The chain inside a parallel region | per **machine**, not per region: region A's errors appear in region B's record |
+| `DeadLetterStore.purge_older_than(NaN)` / `list(limit=-1)` | `ValueError` (NaN used to erase the whole store); `put` is O(1), 100 000 records bounded |
+| 10 000 retry cycles | growth N/2 → N under 64 KB, no thread growth; 10 000 never-stopped interpreters leak nothing (weakly keyed fallback) |
 
 ## ⚡ Circuit breaker — as a statechart
 
 The breaker **is** a three-state chart run on a `SyncInterpreter` behind one lock. That is not a gimmick: because the chart owns the state, the half-open race — two callers both believing they are *the* probe — is solved where it belongs, as a guarded transition taken inside the lock. Exactly `half_open_max_calls` probes get through per half-open window, however many threads hammer it.
+
+**As battle-tested (#265)** — `tests/patterns/test_battle_265_circuit_breaker.py` and the gateway-outage scenario:
+
+| Attack | Outcome |
+|:--|:--|
+| 32 / 128 / 512 threads released by a barrier the instant the circuit half-opens, `half_open_max_calls` 1 / 2 / 7, probes held in flight | exactly N targets run; every other caller gets `CircuitOpenError(state="half_open")`; all probes succeeding → closed, one failing → open |
+| A late SUCCESS from a probe arriving after the circuit re-opened; a call admitted while **closed** reporting after the circuit opened and half-opened | **fixed**: every admission carries a window token; an outcome from an earlier window is dropped (it used to close the circuit with no probe, or re-open it from a stale failure) |
+| 500 `acall` tasks on one loop; 64 threads + 64 tasks on one breaker | one admission rule for both |
+| `state` read from a thread that never called `call()` after the cooldown elapsed | never stale (`state` ticks first) |
+| A plugin reading `breaker.state` inside `on_transition`; a target that calls the same breaker | no deadlock (re-entrant lock); the nested call is admitted independently — the target runs **outside** the lock, so 8 × 0.2 s calls finish in ~0.2 s |
+| `cooldown_ms` NaN / ±inf / negative | **fixed** → `ValueError` (NaN and inf left the circuit open for ever; negative half-opened instantly) |
+| `reset()` from open / half-open with probes in flight; 1 000 resets | in-flight outcomes ignored; `opened_count` is a **lifetime** counter and survives (changed); no pending timers, flat threads |
+| `call()` / `acall()` after `close()` | **fixed** → `InterpreterStoppedError` (it silently ran the target unprotected) |
+| Decorator on a generator / async-generator function | **fixed** → `TypeError` at decoration (the outcome was recorded before the body ran); one decorator object on two functions no longer shares a name |
+| Decorator on a method | one breaker per **class**, shared by every instance — document or wrap per instance |
+| `exceptions=(ValueError,)` and a `KeyError`; `KeyboardInterrupt` / `SystemExit` / `CancelledError` | propagate, never counted |
+| 100 000 closed calls | ~20 µs overhead per call; growth N/2 → N under 64 KB |
+
+Two things the breaker does **not** do, by design: there is no probe **timeout** — a probe that never returns holds the half-open slot until it returns or `reset()`; and probing is **demand-driven** — a breaker left `open` with no traffic half-opens on the next `state` or `call()`, not on a timer thread (the `fastapi_orders` drill shows a breaker sitting half-open after every order gave up). There is no `CircuitBreaker.from_snapshot`: a breaker is per-process state; share the *decision* across workers through your store if you need a fleet-wide one.
 
 ```mermaid
 stateDiagram-v2
@@ -256,6 +298,10 @@ async def main():
 
 asyncio.run(main())
 ```
+
+### Retry formulas, as properties (battle-test #265)
+
+10 000 seeded draws per mode and Hypothesis over the parameter space: every delay is in `[0, max_ms]`; `"none"` is exactly `min(cap, base·factor^(n−1))`; `"full"` ∈ `[0, exp]`; `"equal"` ∈ `[exp/2, exp]`; `"decorrelated"` ∈ `[base, min(cap, 3·prev)]` and is **not** monotone (by design). Fixed: `factor=1e6` / `attempt=10⁶` overflowed with `OverflowError` (now the cap); an rng returning NaN, 1.5 or −0.1 produced a NaN / negative / over-cap delay silently (now `ValueError`; exactly `1.0` is accepted and capped); NaN `base_ms` / `max_ms` / `factor` are refused. `max_ms=inf` is still "no cap". `max_ms < base_ms` with decorrelated jitter returns `max_ms`. A `DueTimerScanner` re-fire after a crashed save does **not** double-bump the attempt counter (the bump was in the step whose save failed).
 
 ## Putting them together
 
