@@ -356,6 +356,15 @@ def check_shape(snapshot: Dict[str, Any], *, version: int = 0) -> None:
         isinstance(k, str) and isinstance(v, dict) for k, v in actors.items()
     ):
         fail("'actors' must map actor ids to persisted actor records")
+    # 🛡️ #263 battle: a record without a `snapshot` object (a migration
+    #    step that rewrote `actors` carelessly) escaped the child restore
+    #    as a bare KeyError.
+    for actor_id, rec in actors.items():
+        if not isinstance(rec.get("snapshot"), dict):
+            fail(
+                f"actor record '{actor_id}' has no 'snapshot' object "
+                f"(got {type(rec.get('snapshot')).__name__})"
+            )
     system = snapshot.get("system") or {}
     if not all(
         isinstance(k, str) and isinstance(v, str) for k, v in system.items()
