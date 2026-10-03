@@ -157,8 +157,16 @@ class TestRecordContents:
         )
         for ev in ("X", "BACK", "Y", "BACK", "Z", "BACK", "X"):
             i.send(ev)
-        # tag ignored when state_ids given; re-entry = one record per entry
-        assert [r.state_id for r in store.list()] == ["m.p1", "m.p2", "m.p1"]
+        # tag ignored when state_ids given; re-entry = one record per entry.
+        # 📝 `all()` is insertion order; `list()` sorts by (taken_at, id)
+        #    and three records within one clock tick share `taken_at`, so
+        #    their relative order there is the random uuid's (seen on 3.9).
+        assert [r.state_id for r in store.all()] == ["m.p1", "m.p2", "m.p1"]
+        assert sorted(r.state_id for r in store.list()) == [
+            "m.p1",
+            "m.p1",
+            "m.p2",
+        ]
         assert len({r.id for r in store.all()}) == 3
         i.stop()
 
@@ -424,15 +432,21 @@ class TestSinks:
         i.stop()
 
     def test_blocking_sink_blocks_the_step(self) -> None:
-        # DOCUMENTED: the sink runs synchronously in the step.
+        # DOCUMENTED: the sink runs synchronously in the step -- `send()`
+        # does not return until the sink has. Asserted on ORDER, not on a
+        # wall-clock `>= 0.3` (Windows `time.sleep` can wake a tick early
+        # on 3.9 and the comparison flaked).
+        order: List[str] = []
+
         def sink(r: DeadLetter) -> None:
-            time.sleep(0.3)
+            time.sleep(0.05)
+            order.append("sink done")
 
         i = SyncInterpreter(create_machine(DL_CFG)).use(DeadLetterPlugin(sink))
         i.start()
-        t0 = time.perf_counter()
         i.send("X")
-        assert time.perf_counter() - t0 >= 0.3
+        order.append("send returned")
+        assert order == ["sink done", "send returned"]
         i.stop()
 
     def test_put_object_and_bad_sink(self) -> None:

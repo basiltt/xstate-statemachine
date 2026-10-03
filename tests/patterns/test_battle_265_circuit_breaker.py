@@ -82,7 +82,13 @@ class _Counter:
 # 1. Half-open probe race
 # -----------------------------------------------------------------------------
 class TestProbeRace(unittest.TestCase):
-    def _hammer(self, threads: int, max_calls: int, fn: Any) -> List[Any]:
+    def _hammer(
+        self,
+        threads: int,
+        max_calls: int,
+        fn: Any,
+        on_reject: Any = None,
+    ) -> List[Any]:
         cb, _ = _half_open(max_calls)
         self.assertEqual(cb.state, "half_open")
         barrier = threading.Barrier(threads)
@@ -95,6 +101,8 @@ class TestProbeRace(unittest.TestCase):
                 r: Any = cb.call(fn)
             except CircuitOpenError as e:
                 r = e
+                if on_reject is not None:
+                    on_reject()
             except ValueError as e:
                 r = e
             with olock:
@@ -114,16 +122,30 @@ class TestProbeRace(unittest.TestCase):
                 with self.subTest(threads=threads, max_calls=max_calls):
                     hits = _Counter()
                     gate = threading.Event()
+                    # 📝 Release the probes only once EVERY other caller has
+                    #    been refused -- a fixed 0.3 s timer let a slow
+                    #    512-thread start on Python 3.9 open the gate before
+                    #    all callers had reached the breaker, so a late
+                    #    caller found a CLOSED circuit and was counted as a
+                    #    hit (real-3.9 run).
+                    decided = threading.Semaphore(0)
 
                     def fn() -> str:
                         hits.bump()
-                        gate.wait(5)  # hold probes in flight
+                        gate.wait(10)  # hold probes in flight
                         return "ok"
 
-                    t = threading.Timer(0.3, gate.set)
+                    def release_when_all_decided() -> None:
+                        for _ in range(threads - max_calls):
+                            decided.acquire(timeout=10)
+                        gate.set()
+
+                    t = threading.Thread(target=release_when_all_decided)
                     t.start()
-                    cb, outs = self._hammer(threads, max_calls, fn)
-                    t.join()
+                    cb, outs = self._hammer(
+                        threads, max_calls, fn, on_reject=decided.release
+                    )
+                    t.join(15)
                     rejected = [o for o in outs if isinstance(o, Exception)]
                     self.assertEqual(hits.n, max_calls)
                     self.assertEqual(len(rejected), threads - max_calls)
