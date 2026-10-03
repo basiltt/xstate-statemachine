@@ -39,6 +39,12 @@ from xstate_statemachine.persistence import SnapshotMigrator
 V1_PAYING = "order.paying"
 V2_AUTHORISING = "order.payment.authorising"
 
+#: How many times the step ran in this process -- an operational counter
+#: (export it as a metric: "migrations still happening" means v1 orders
+#: are still being touched). The tests read it instead of patching the
+#: migrator's internals.
+STEP_CALLS = [0]
+
 
 def v1_to_v2(blob: Dict[str, Any]) -> Dict[str, Any]:
     """Rewrite a v1 order snapshot into v2 shape.
@@ -47,6 +53,7 @@ def v1_to_v2(blob: Dict[str, Any]) -> Dict[str, Any]:
     must exist, the configuration must be legal, the context model still
     applies) -- a mistake here is refused loudly, never half-restored.
     """
+    STEP_CALLS[0] += 1
     blob["state_ids"] = [
         V2_AUTHORISING if s == V1_PAYING else s for s in blob["state_ids"]
     ]

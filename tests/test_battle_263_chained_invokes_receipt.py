@@ -161,3 +161,40 @@ def test_await_settled_on_a_stopped_machine_returns_at_once() -> None:
         return await i.await_settled(5.0)
 
     assert asyncio.run(go()) is True
+
+
+def test_await_settled_waits_for_an_async_def_service_too() -> None:
+    """Review H1: an `async def` service the step armed is a debt in
+    `_chain_owed_tasks` until its completion lands (#179). The first cut
+    only counted plain-`def` futures, so `apersisted()` saved the invoking
+    state with the task in flight and the restore came back DORMANT."""
+
+    async def slow_async(i: Any, ctx: Any, e: Any) -> Dict[str, Any]:
+        await asyncio.sleep(0.05)
+        return {}
+
+    cfg = {
+        "id": "m",
+        "initial": "a",
+        "states": {
+            "a": {"on": {"GO": "b"}},
+            "b": {"invoke": {"id": "s", "src": "svc", "onDone": "c"}},
+            "c": {"invoke": {"id": "s2", "src": "svc", "onDone": "done"}},
+            "done": {"type": "final"},
+        },
+    }
+    m = create_machine(cfg, logic=MachineLogic(services={"svc": slow_async}))
+    store = MemoryStore()
+
+    async def go() -> None:
+        i = await Interpreter(m).start()
+        await i.send("GO", wait=True)
+        assert i.current_state_ids == {"m.b"}  # the task is in flight
+        assert await i.await_settled(5.0) is True
+        assert i.current_state_ids == {"m.done"}
+        await i.stop()
+        async with apersisted(store, "k", m) as j:
+            await j.send("GO", wait=True)
+
+    asyncio.run(go())
+    assert json.loads(store.load("k").snapshot)["state_ids"] == ["m.done"]

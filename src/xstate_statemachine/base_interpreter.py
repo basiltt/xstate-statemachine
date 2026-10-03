@@ -131,10 +131,12 @@ TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter")
 # logging that can be configured by the end-user's application.
 logger = logging.getLogger(__name__)
 
-#: 📝 #263 battle: machine ids already warned about restoring an
-#: UNLABELLED blob -- once per id per process, bounded like
-#: `deprecations._SEEN`.
-_UNLABELLED_WARNED: Set[str] = set()
+#: 📝 #263 battle: `(machine id, expected label)` pairs already warned
+#: about restoring an UNLABELLED blob -- once per pair per process,
+#: bounded like `deprecations._SEEN`. Keyed on the label too (review M4):
+#: v1 and v2 of a chart share an id, and the v2 deploy deserves its own
+#: warning.
+_UNLABELLED_WARNED: Set[Tuple[str, str]] = set()
 _UNLABELLED_WARNED_MAX = 4096
 
 #: Every event kind the core algorithm can be asked to process.
@@ -1970,10 +1972,11 @@ class BaseInterpreter(Generic[TContext]):
         #    guards). The warning is once per machine id per process --
         #    10 000 restores of 0.10.x blobs used to log 10 000 WARNINGs.
         if found is None or expected is None:
-            if expected is not None and machine.id not in _UNLABELLED_WARNED:
+            warn_key = (machine.id, str(expected))
+            if expected is not None and warn_key not in _UNLABELLED_WARNED:
                 if len(_UNLABELLED_WARNED) >= _UNLABELLED_WARNED_MAX:
                     _UNLABELLED_WARNED.clear()
-                _UNLABELLED_WARNED.add(machine.id)
+                _UNLABELLED_WARNED.add(warn_key)
                 logger.warning(
                     "⚠️ Snapshot of '%s' carries no machine_version; the "
                     "running machine is version %r. Cannot verify the "

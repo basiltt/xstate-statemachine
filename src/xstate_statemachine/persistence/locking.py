@@ -733,7 +733,13 @@ async def apersisted(
             the END OF THE EVENT'S MACROSTEP; a service completion is the
             NEXT macrostep. On timeout the snapshot is attempted anyway
             and refused loudly if the machine is still mid-step
-            (`SnapshotMidStepError`), exactly as before.
+            (`SnapshotMidStepError`), exactly as before. ``0`` opts out.
+            ⚠️ Under `PessimisticLock` the settle happens while the lock
+            is held; on a store whose lock can EXPIRE (Redis) a service
+            slower than the lease lets a second writer in -- the save is
+            still fenced by ``expected_version``, so the outcome is a
+            `ConflictError`, never a lost update. Size the lease (or this
+            timeout) to the slowest service the chart invokes.
     """
     from ..interpreter import Interpreter
     from .async_store import as_async

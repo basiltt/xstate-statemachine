@@ -27,6 +27,7 @@ httpx = pytest.importorskip("httpx")
 from fastapi.testclient import TestClient  # noqa: E402
 
 import app as orders  # noqa: E402
+import migrations  # noqa: E402
 from migrations import V1_PAYING, V2_AUTHORISING  # noqa: E402
 from xstate_statemachine import SyncInterpreter  # noqa: E402
 from xstate_statemachine.persistence import (  # noqa: E402
@@ -207,9 +208,13 @@ def test_rolling_upgrade_migrates_lazily_once_per_order(
         #    stale order to race on. Make a FRESH v1 record for the race.
         _write_v1_checked_out(store, "order.hot", orders.build_machine("1"))
         assert labels(store)["hot"] == "1"
-        # 🔥 50 concurrent PAYs on a STALE order: one migration commits,
+        # 🔥 50 concurrent PAYs on a STALE order: one migration COMMITS,
         #    one charge, the rest 409 -- same contract as on a fresh order.
-        step_calls = _count_step_calls(reg2)
+        #    "Exactly one commit" is the record's version counter (+1),
+        #    not the count of step invocations: under OptimisticLock many
+        #    requests may migrate in memory and lose the save (review M1).
+        version_before = store.load("order.hot").version
+        calls_before = migrations.STEP_CALLS[0]
         results = asyncio.run(_race(app2, "hot", 50))
         changed = [
             r for r in results if r.status_code == 200 and r.json()["changed"]
@@ -219,7 +224,10 @@ def test_rolling_upgrade_migrates_lazily_once_per_order(
         )[:3]
         assert {r.status_code for r in results} <= {200, 409}
         assert state(c, "hot")["state"] == "paid"
-        assert 1 <= step_calls() <= 50
+        hot = store.load("order.hot")
+        assert hot.version == version_before + 1  # exactly one committed save
+        assert hot.machine_version == "2"
+        assert 1 <= migrations.STEP_CALLS[0] - calls_before <= 50
         # 🧹 drain the rest with a no-op write each (what an ops script
         #    does with the --stale list)
         for key in xsm_stale(db, v2_chart):
@@ -263,21 +271,6 @@ def _write_v1_checked_out(store: Any, key: str, machine_v1: Any) -> None:
         i.send("ADD_ITEM", sku="tea", qty=2)
         i.send("CHECKOUT")
     assert store.load(key).machine_version == "1"
-
-
-def _count_step_calls(registry: Any) -> Any:
-    """Wrap the registered 1->2 step to count invocations."""
-    mig = registry.migrator
-    key = ("order", "1", "2")
-    original = mig._steps[key]
-    calls = [0]
-
-    def counting(blob: Dict[str, Any]) -> Dict[str, Any]:
-        calls[0] += 1
-        return original(blob)
-
-    mig._steps[key] = counting
-    return lambda: calls[0]
 
 
 async def _race(app: Any, order: str, n: int) -> List[Any]:

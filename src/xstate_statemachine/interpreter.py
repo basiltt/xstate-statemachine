@@ -2931,17 +2931,26 @@ class Interpreter(BaseInterpreter[TContext]):
     def _has_unsettled_engine_work(self) -> bool:
         """``True`` while a macrostep is in flight or an ENGINE completion
         (`done.invoke` / `error.platform` / a child's terminal event / a
-        self-`raise`) is queued but not yet processed.
+        self-`raise`) is queued or still owed by a running service.
 
         A fired ``after`` in the priority lane does NOT count: a periodic
         timer is a clock-driven process, not work the machine owes the
         step that armed it (#212), and a snapshot persists it as a
-        pending event (#107). Inbox events never count -- an accepted,
-        unprocessed `send()` is persisted as pending by design.
+        pending event (#107). Nor does an armed delayed self-send
+        (`_chain_owed_sends`, the same timer rule). Inbox events never
+        count -- an accepted, unprocessed `send()` is persisted as
+        pending by design.
         """
         if self._processing or self._internal_queue:
             return True
         if self._inline_service_futures or self._actor_bringups:
+            return True
+        # 🔗 #263 review H1: an `async def` service the step armed is a
+        #    debt in `_chain_owed_tasks` until its completion lands (#179).
+        #    Without this, `apersisted()` saved `b` with the invoke in
+        #    flight and the restore came back DORMANT -- the exact shape
+        #    `await_settled` exists to prevent, for the other service kind.
+        if any(not t.done() for t in self._chain_owed_tasks):
             return True
         return any(
             not str(getattr(ev, "type", "")).startswith("after.")
@@ -2976,12 +2985,18 @@ class Interpreter(BaseInterpreter[TContext]):
             remaining = deadline - loop.time()
             if remaining <= 0:
                 return False
-            if self._inline_service_futures:
-                # ⚡ A plain service is on the executor: wait on IT, not on
-                #    a poll, so a 50 ms gateway call costs 50 ms, not 50 ms
-                #    of sleep(0) spinning.
+            # ⚡ A service is running (plain `def` on the executor, or an
+            #    `async def` task): wait on IT, not on a poll, so a 50 ms
+            #    gateway call costs 50 ms, not 50 ms of sleep(0) spinning.
+            waitable = [
+                *self._inline_service_futures,
+                *(t for t in self._chain_owed_tasks if not t.done()),
+            ]
+            if waitable:
                 await asyncio.wait(
-                    list(self._inline_service_futures), timeout=remaining
+                    waitable,
+                    timeout=remaining,
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
             else:
                 # The loop needs turns to drain the lane; back off a little
