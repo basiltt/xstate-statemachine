@@ -59,7 +59,11 @@ from ...persistence.idempotency import (
     IdempotencyPlugin,
     validate_principal,
 )
-from ...persistence.locking import _restore_kwargs, apersisted
+from ...persistence.locking import (
+    DEFAULT_SETTLE_TIMEOUT,
+    _restore_kwargs,
+    apersisted,
+)
 from ...persistence.store import validate_key
 from ...plugins import PluginBase
 from ._fanout import _Subscribers
@@ -175,6 +179,10 @@ class StatechartRegistry:
         allowed_origins: Extra ``Origin`` values accepted on SSE/WS besides
             same-origin (X0.7).
         max_body_bytes: `json_body` cap for `send_event`.
+        settle_timeout: #263 battle -- how long a request waits, after
+            its event's receipt, for engine completions still in flight
+            (a chain of plain ``def`` invokes) before responding and
+            saving; see `apersisted(settle_timeout=)`.
     """
 
     def __init__(
@@ -197,6 +205,7 @@ class StatechartRegistry:
         heartbeat_s: float = 15.0,
         allowed_origins: Iterable[str] = (),
         max_body_bytes: Optional[int] = None,
+        settle_timeout: float = DEFAULT_SETTLE_TIMEOUT,
     ) -> None:
         if max_residents < 1:
             raise ValueError("max_residents must be >= 1")
@@ -210,6 +219,7 @@ class StatechartRegistry:
         self.clock = clock
         self.plugins = list(plugins)
         self.migrator = migrator
+        self.settle_timeout = float(settle_timeout)
         self.inbox = inbox
         self.principal = principal
         self.max_residents = int(max_residents)
@@ -365,11 +375,18 @@ class StatechartRegistry:
             clock=self.clock,
             plugins=plugins,
             migrator=self.migrator,
+            settle_timeout=self.settle_timeout,
         ) as interp:
             if reg.strict is not None:
                 interp.strict = reg.strict
             interp._xsm_context_serializer = reg.context_serializer
             yield interp
+            # ⏳ #263 battle: the receipt resolved at the end of the EVENT's
+            #    macrostep; a plain-`def` invoke chain (authorise → capture)
+            #    continues as further macrosteps. Settle before building
+            #    the bodies, so what subscribers see is what the save
+            #    commits -- not an intermediate `payment.capturing`.
+            await interp.await_settled(self.settle_timeout)
             bodies = [
                 receipt_body(
                     interp, r, context_serializer=reg.context_serializer
@@ -394,8 +411,16 @@ class StatechartRegistry:
         rec = await self._astore.load(self.store_key(name, key))
         interp: Any
         if rec is not None:
+            # 🧬 #263 battle: a read of a stale instance must migrate like
+            #    a write does -- without this, a v2 deployment carrying the
+            #    migrator still answered 409 to every GET / SSE connect on
+            #    a v1 order until something WROTE to it. Read-only: the
+            #    migrated blob is not saved here; the next `act()` is.
             interp = Interpreter.from_snapshot(
-                rec.snapshot, reg.machine, clock=self.clock
+                rec.snapshot,
+                reg.machine,
+                clock=self.clock,
+                **_restore_kwargs(self.migrator, None),
             )
             body = state_body(interp, reg.context_serializer)
         else:
@@ -446,6 +471,11 @@ class StatechartRegistry:
                     receipt = await interp.send(
                         event_type, wait=True, **payload
                     )
+                    # ⏳ #263 battle: a plain-`def` invoke chain continues
+                    #    past the receipt's macrostep; settle so the body
+                    #    reflects what the save commits (see `act`).
+                    if not receipt.duplicate:
+                        await interp.await_settled(self.settle_timeout)
                     body = receipt_body(
                         interp,
                         receipt,

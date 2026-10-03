@@ -2928,6 +2928,67 @@ class Interpreter(BaseInterpreter[TContext]):
             await asyncio.sleep(0)
         # Something is looping; leave it to the runaway guard.
 
+    def _has_unsettled_engine_work(self) -> bool:
+        """``True`` while a macrostep is in flight or an ENGINE completion
+        (`done.invoke` / `error.platform` / a child's terminal event / a
+        self-`raise`) is queued but not yet processed.
+
+        A fired ``after`` in the priority lane does NOT count: a periodic
+        timer is a clock-driven process, not work the machine owes the
+        step that armed it (#212), and a snapshot persists it as a
+        pending event (#107). Inbox events never count -- an accepted,
+        unprocessed `send()` is persisted as pending by design.
+        """
+        if self._processing or self._internal_queue:
+            return True
+        if self._inline_service_futures or self._actor_bringups:
+            return True
+        return any(
+            not str(getattr(ev, "type", "")).startswith("after.")
+            for ev, _ in self._priority_queue
+        )
+
+    async def await_settled(self, timeout: float) -> bool:
+        """Wait, bounded by *timeout* seconds, until no macrostep is in
+        flight and no engine completion is queued; ``True`` when settled.
+
+        🏛️ #263 battle (found by the `fastapi_orders` rolling-upgrade
+        scenario): ``await send(..., wait=True)`` resolves when the
+        EVENT's macrostep ends -- a service completion is the next
+        macrostep, per SCXML. The run loop starts it at once, and when
+        that step enters another plain-``def`` invoke it awaits the
+        executor with the step open. `apersisted()`'s exit then found the
+        machine mid-step and refused the snapshot
+        (`SnapshotMidStepError`) for any chart with two ``def`` invokes
+        in a row -- while the sync engine's `send()` drains the whole
+        chain and `persisted()` never saw it. This is the async side of
+        that parity: create → act → **settle** → persist → discard.
+
+        Returns ``False`` on timeout; the caller decides (a snapshot taken
+        then is refused loudly if the step is still open, as before).
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, timeout)
+        spins = 0
+        while self.status == "running" and self._has_unsettled_engine_work():
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return False
+            if self._inline_service_futures:
+                # ⚡ A plain service is on the executor: wait on IT, not on
+                #    a poll, so a 50 ms gateway call costs 50 ms, not 50 ms
+                #    of sleep(0) spinning.
+                await asyncio.wait(
+                    list(self._inline_service_futures), timeout=remaining
+                )
+            else:
+                # The loop needs turns to drain the lane; back off a little
+                # once it is clearly awaiting something else (an `async def`
+                # action mid-network-call).
+                await asyncio.sleep(0 if spins < 10 else 0.001)
+            spins += 1
+        return True
+
     def _invocation_is_live(
         self, state: StateNode, invocation: InvokeDefinition
     ) -> bool:

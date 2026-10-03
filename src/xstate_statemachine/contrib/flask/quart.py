@@ -32,7 +32,11 @@ from quart import request as quart_request  # noqa: E402
 
 from ...events import Receipt  # noqa: E402
 from ...interpreter import Interpreter  # noqa: E402
-from ...persistence.locking import apersisted  # noqa: E402
+from ...persistence.locking import (  # noqa: E402
+    DEFAULT_SETTLE_TIMEOUT,
+    _restore_kwargs,
+    apersisted,
+)
 from ...persistence.log import AuditPlugin, TransitionLogPlugin  # noqa: E402
 from ...receipts import receipt_to_status  # noqa: E402
 from ._core import (  # noqa: E402
@@ -194,6 +198,9 @@ class QuartXState:
                     interp.strict = reg.strict
                 interp._xsm_context_serializer = reg.context_serializer
                 yield interp
+                # ⏳ #263 battle: settle a plain-`def` invoke chain before
+                #    the bodies are built (and `apersisted` saves).
+                await interp.await_settled(DEFAULT_SETTLE_TIMEOUT)
                 bodies = [
                     receipt_body(
                         interp, rc, context_serializer=reg.context_serializer
@@ -219,7 +226,13 @@ class QuartXState:
                 return state_body(interp, reg.context_serializer)
             finally:
                 await interp.stop()
-        restored: Any = Interpreter.from_snapshot(rec.snapshot, reg.machine)
+        # 🧬 #263 battle: a read of a stale instance migrates like a write
+        #    does (read-only; the next `act()` re-saves at the new label).
+        restored: Any = Interpreter.from_snapshot(
+            rec.snapshot,
+            reg.machine,
+            **_restore_kwargs(r.migrator, None),
+        )
         return state_body(restored, reg.context_serializer)
 
 
@@ -262,6 +275,8 @@ def create_quart_statechart_blueprint(  # noqa: C901 -- one route table
         async with xsm.act(name, key, principal=principal()) as interp:
             receipt = await interp.send(etype, wait=True, **payload)
             out["r"] = receipt
+            if not receipt.duplicate:  # ⏳ #263 battle, see `act`
+                await interp.await_settled(DEFAULT_SETTLE_TIMEOUT)
             out["b"] = receipt_body(interp, receipt, context_serializer=ser)
             if receipt.duplicate:
                 xsm.skip_save()
