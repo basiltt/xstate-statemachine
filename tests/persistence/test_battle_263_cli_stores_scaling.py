@@ -72,13 +72,15 @@ def _chart(tmp_path: Path, cfg: Dict[str, Any], name: str = "m.json") -> str:
     return str(p)
 
 
-def _run_cli(*args: str) -> subprocess.CompletedProcess:
+def _run_cli(
+    *args: str, cwd: Optional[Path] = None
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "xstate_statemachine", "snapshots", *args],
         capture_output=True,
         text=True,
         encoding="utf-8",
-        cwd=str(ROOT),
+        cwd=str(cwd or ROOT),
         timeout=120,
         env={
             **os.environ,
@@ -349,11 +351,16 @@ class TestCliContract:
 
     def test_store_url_forms(self, tmp_path: Path) -> None:
         url = self._store(tmp_path, {"k": "1.0"})
-        rel = os.path.relpath(tmp_path / "s.db", ROOT).replace("\\", "/")
 
         # 📝 SQLAlchemy convention: `///rel`, `////abs` (or `///C:/abs`).
+        #    The relative form is resolved against the CLI's cwd, so run it
+        #    FROM tmp_path: `os.path.relpath(tmp, ROOT)` has no answer when
+        #    the two are on different drives (GitHub's Windows runners put
+        #    the checkout on D: and TEMP on C:).
         absolute = _run_cli("--store", url, "--json")
-        relative = _run_cli("--store", f"sqlite:///{rel}", "--json")
+        relative = _run_cli(
+            "--store", "sqlite:///s.db", "--json", cwd=tmp_path
+        )
 
         assert json.loads(absolute.stdout)["count"] == 1
         assert json.loads(relative.stdout)["count"] == 1
