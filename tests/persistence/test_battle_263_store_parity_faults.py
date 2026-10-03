@@ -143,26 +143,33 @@ def test_async_stores_apply_the_same_label_rule(
     # 📝 The async SQLAlchemy/Redis stores skipped `check_save_args`.
     import asyncio
 
-    if kind == "sqlalchemy":
-        pytest.importorskip("aiosqlite")
-        from sqlalchemy.ext.asyncio import (
-            async_sessionmaker,
-            create_async_engine,
-        )
+    def build() -> Any:
+        # 📝 Built INSIDE the running loop: on Python 3.9 `FakeAsyncRedis()`
+        #    / `create_async_engine()` bind to `get_event_loop()` at
+        #    construction and raise "no current event loop" from a plain
+        #    `def` test (the real-3.9 cell caught this).
+        if kind == "sqlalchemy":
+            pytest.importorskip("aiosqlite")
+            from sqlalchemy.ext.asyncio import (
+                async_sessionmaker,
+                create_async_engine,
+            )
 
-        from src.xstate_statemachine.contrib.sqlalchemy import (
-            AsyncSQLAlchemyStore,
-        )
+            from src.xstate_statemachine.contrib.sqlalchemy import (
+                AsyncSQLAlchemyStore,
+            )
 
-        eng = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'a.db'}")
-        s: Any = AsyncSQLAlchemyStore(async_sessionmaker(eng))
-    else:
+            eng = create_async_engine(
+                f"sqlite+aiosqlite:///{tmp_path / 'a.db'}"
+            )
+            return AsyncSQLAlchemyStore(async_sessionmaker(eng))
         fakeredis = pytest.importorskip("fakeredis")
         from src.xstate_statemachine.contrib.redis import AsyncRedisStore
 
-        s = AsyncRedisStore(fakeredis.FakeAsyncRedis(), prefix="t")
+        return AsyncRedisStore(fakeredis.FakeAsyncRedis(), prefix="t")
 
     async def go() -> None:
+        s = build()
         with pytest.raises(ValueError):
             await s.save("k", BLOB, machine_version="x" * 300)
         with pytest.raises(TypeError):
