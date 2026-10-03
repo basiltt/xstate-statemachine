@@ -34,6 +34,9 @@ from ...persistence.idempotency import (
     IdempotencyMismatchError,
     validate_principal,
 )
+from ...context_keys import (
+    public_context as _public_context,
+)  # 🔑 #265: no `_xsm_*` keys in API bodies
 
 __all__ = [
     "BadRequestError",
@@ -264,7 +267,7 @@ def state_body(
         "available_events": available_events(interp),
     }
     if context_serializer is not None:
-        body["context"] = context_serializer(interp.context)
+        body["context"] = context_serializer(_public_context(interp.context))
     return body
 
 

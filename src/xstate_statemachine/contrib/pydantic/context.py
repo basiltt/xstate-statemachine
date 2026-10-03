@@ -8,6 +8,8 @@ from typing import Any, Callable, Dict, Type, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from ...context_keys import is_private_context_key
+
 from ...exceptions import XStateMachineError
 from ...plugins import PluginBase
 
@@ -61,8 +63,18 @@ def _validate_into(
             f"context must be a dict for {model.__name__}, got "
             f"{type(ctx).__name__}"
         )
+    # 🏛️ #265 battle (review CRITICAL): keys with the LIBRARY-PRIVATE
+    #    prefix (`_xsm_`, see `PRIVATE_CONTEXT_PREFIX`) are the library's
+    #    bookkeeping that rides in the snapshot -- the dead-letter error
+    #    chain is the first. They are not the user's domain and a model
+    #    with `extra="forbid"` must not reject the context because of
+    #    them: every later action's validation would fail and, under
+    #    `actionErrorPolicy: "rollback"`, the machine could never move
+    #    again. Validate the user's keys only; `write_back` never touches
+    #    private keys (the model does not declare them).
+    visible = {k: v for k, v in ctx.items() if not is_private_context_key(k)}
     try:
-        instance = model.model_validate(ctx)
+        instance = model.model_validate(visible)
     except ValidationError as exc:
         raise ContextValidationError(model, exc) from exc
     if write_back:

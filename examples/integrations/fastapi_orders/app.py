@@ -37,9 +37,10 @@ from xstate_statemachine.contrib.fastapi import (
 )
 from xstate_statemachine.contrib.pydantic import context_model
 from xstate_statemachine.contrib.starlette import mount_inspector
+from xstate_statemachine.patterns import DeadLetterPlugin
 from xstate_statemachine.persistence import DueTimerScanner, SQLiteInbox
 
-from logic import build_logic
+from logic import build_logic, gateway_breaker
 from migrations import build_migrator
 from models import EVENT_MODELS, EVENT_SCHEMAS, OrderContext, Pay
 from models import public_context
@@ -65,11 +66,13 @@ def chart_path(version: Optional[str] = None) -> Path:
     return HERE / ("machine_v2.json" if str(v) == "2" else "machine.json")
 
 
-def build_machine(version: Optional[str] = None) -> Any:
+def build_machine(
+    version: Optional[str] = None, *, breaker: Any = None
+) -> Any:
     config = json.loads(chart_path(version).read_text("utf-8"))
     return create_machine(
         config,
-        logic=build_logic(),
+        logic=build_logic(breaker),
         event_schemas=EVENT_SCHEMAS,
         # 📝 write_back=False: the context stays plain JSON (the snapshot
         #    is stored as JSON); the model only VALIDATES it.
@@ -97,6 +100,21 @@ def build_store() -> Tuple[Any, Any]:
 
     store = SQLiteStore(os.environ.get("XSM_ORDERS_DB", "orders.db"))
     return store, SQLiteInbox(store)
+
+
+def build_dead_letter_store(store: Any) -> Any:
+    """Dead letters live next to the snapshots: in the same SQLite file
+    (one `xsm dlq` target), or in memory for Redis deployments (use
+    `BrokerDeadLetterSink` / your queue there)."""
+    from xstate_statemachine.persistence import SQLiteStore
+
+    if isinstance(store, SQLiteStore):
+        from xstate_statemachine.eda import SQLiteDeadLetterStore
+
+        return SQLiteDeadLetterStore(store)
+    from xstate_statemachine.patterns import MemoryDeadLetterStore
+
+    return MemoryDeadLetterStore()
 
 
 def customer_of(conn: Any) -> str:
@@ -139,12 +157,32 @@ def build_registry(
     #    order lazily the first time a v2 process touches it. Harmless on
     #    a v1 deployment: a v1 blob into the v1 chart never mismatches.
     kw.setdefault("migrator", build_migrator())
+    # 💀 #265: a `DeadLetterPlugin` on the registry writes ONE record --
+    #    machine, last event, attempt count, the chain of gateway errors,
+    #    a redacted snapshot -- when an order enters `paymentFailed` (tagged
+    #    `dead-letter` in the chart). The store shares the orders database
+    #    so `xsm dlq --dlq sqlite:///orders.db list` is the triage view,
+    #    and `replay` re-drives the order once the gateway is back. Both
+    #    the request path and the scheduler carry it (the retry loop is
+    #    usually exhausted BY the scheduler's wake).
+    dlq = kw.pop("dead_letters", None)
+    if dlq is None:
+        dlq = build_dead_letter_store(store)
+    plugins = list(kw.pop("plugins", ()))
+    if dlq is not None:
+        plugins.append(DeadLetterPlugin(dlq))
     registry = StatechartRegistry(
-        store, inbox=inbox, principal=customer_of, **kw
+        store, inbox=inbox, principal=customer_of, plugins=plugins, **kw
     )
+    registry.dead_letters = dlq  # type: ignore[attr-defined]
+    # ⚡ #265: one CircuitBreaker per registry (= per process) in front of
+    #    the gateway, on the registry's clock so a SimulatedClock in tests
+    #    drives the cooldown. `registry.breaker` for dashboards / tests.
+    breaker = gateway_breaker(clock=kw.get("clock"))
+    registry.breaker = breaker  # type: ignore[attr-defined]
     registry.register(
         MACHINE_NAME,
-        build_machine(chart),
+        build_machine(chart, breaker=breaker),
         authorize=authorize,
         context_serializer=public_context,
     )

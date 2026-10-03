@@ -52,6 +52,7 @@
     },
     "paymentFailed": {
       "description": "Retries exhausted; the customer may pay with another card.",
+      "tags": ["dead-letter"],
       "on": {
         "PAY": { "target": "paying", "actions": ["retryReset", "storeCard"] },
         "CANCEL": { "target": "cancelled", "actions": "recordCancel" }

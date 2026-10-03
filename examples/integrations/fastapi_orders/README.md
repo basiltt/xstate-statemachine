@@ -270,6 +270,48 @@ larger than the limit the rest never fired; and the lost side of an
 optimistic race was filed under `errors` (an ERROR log per overlap)
 instead of `skipped_stale`.
 
+## The payment provider is down for ten minutes
+
+The third battle scenario (`tests/test_gateway_outage.py`). Black Friday,
+14:00: the card gateway starts timing out on every call. `logic.py` now
+puts **one `CircuitBreaker` per process** in front of the gateway
+(`GATEWAY_BREAKER`, `failure_threshold=3`, `cooldown_ms=5000`, counting
+only `GatewayDown` — a *decline* is not a provider failure), and
+`machine.json` tags `paymentFailed` as `dead-letter` so the registry's
+`DeadLetterPlugin` writes a record into the same SQLite file the snapshots
+live in (`build_dead_letter_store`). What the test pins:
+
+* **the breaker spares the provider** — 60 orders try to pay during the
+  outage; the gateway is hit exactly 3 times. Every further charge fails
+  in microseconds with `CircuitOpenError`, and each order still takes the
+  chart's `onError → retrying` path and backs off (the breaker and the
+  retry loop compose: the breaker protects the *provider*, the retry loop
+  protects the *order*);
+* **32 threads on a dark gateway** — only the threshold reaches it, the
+  rest are refused, none hang the worker pool;
+* **retries exhausted while open → `paymentFailed`** — the dead letter's
+  error chain names the outage (`GatewayDown`, then `CircuitOpenError`),
+  `attempts=3`, the card token is **redacted** in the snapshot and the
+  payload, and `xsm dlq --dlq sqlite:///orders.db list` shows it without
+  the secret;
+* **half-open admits one probe** — when the cooldown ends with the
+  provider still dark, the scheduler's next wake lets exactly one call
+  through; it fails and the circuit re-opens (no herd). When the provider
+  is back the probe succeeds, the circuit closes, and the scheduler drains
+  the retrying orders to `paid`;
+* **probing is demand-driven** — if all traffic has given up before the
+  cooldown ends, the breaker sits half-open until the next caller; no
+  timer thread probes on its own;
+* **recovery is the chart's own path** — a dead-lettered order pays again
+  with the customer's card: `paid`, `attempt` reset.
+
+What is faked: the gateway (`logic.GATEWAY.up`) and time (one
+`SimulatedClock` shared by the breaker, the registry and the scanner).
+Going live: the same wiring; tune `XSM_ORDERS_CB_THRESHOLD` /
+`XSM_ORDERS_CB_COOLDOWN_MS` to your provider's SLA, and for Redis
+deployments point `dead_letters=` at a `BrokerDeadLetterSink` or your
+queue instead of the in-memory default.
+
 ## Tests
 
 ```bash

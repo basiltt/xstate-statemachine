@@ -237,6 +237,28 @@ _No unreleased changes yet._
 
 ### Added
 
+- **`PRIVATE_CONTEXT_PREFIX` (`"_xsm_"`), `is_private_context_key()`,
+  `public_context()` (battle-test #265).** A reserved prefix for library
+  bookkeeping that must survive the process and therefore rides in the
+  snapshot's `context`. `context_model(...)` validates the user's keys
+  only (a model with `extra="forbid"` is unaffected); the Starlette /
+  FastAPI / Litestar / Flask / Channels state bodies hand the
+  `context_serializer` the public view. The first such key is the
+  dead-letter error chain, `patterns.ERRORS_CONTEXT_KEY` (`"_xsm_errors"`,
+  now exported).
+- **`DeadLetterPlugin(max_errors=20)`** -- the chain keeps the newest N
+  entries; messages are cut at 1 000 characters and secret context values
+  are masked inside them. **`ScanResult.locked`** (#264 follow-through)
+  and the `circuit_breaker_call_closed` benchmark row.
+- **`examples/integrations/fastapi_orders` gateway-outage scenario** -- one
+  `CircuitBreaker` per process in front of the payment gateway
+  (`registry.breaker`), `paymentFailed` tagged `dead-letter`, a
+  `DeadLetterPlugin` on the registry writing into the orders SQLite file
+  (`registry.dead_letters`, visible via `xsm dlq`). 60 orders during an
+  outage hit the gateway 3 times; 32 threads on a dark gateway are
+  refused, not hung; half-open admits exactly one probe; a dead-lettered
+  order recovers by paying again.
+
 - **`SQLiteStore.due_keys(until_wall, *, limit=1000)` and
   `MemoryStore.due_keys(...)` (battle-test #264).** `(key, earliest
   due_at_wall)` for keys with a matured deadline, earliest first -- one
@@ -1141,6 +1163,38 @@ _No unreleased changes yet._
 
 ### Changed
 
+- **Patterns, as battle-tested (#265) -- behaviour changes you can hit:**
+  - **The dead-letter error chain now lives in the snapshot** under
+    `context["_xsm_errors"]`. In production (create → act → persist →
+    discard: a request, then `DueTimerScanner` wakes, each in a fresh
+    interpreter) the plugin's in-memory chain died with every block, and
+    the record arrived with `attempts=3, errors=[]`. It is cleared on a
+    clean `on_service_done`, by `retryReset`, and after capture;
+    `on_interpreter_stop` no longer clears it. The chain is per
+    **instance** (so machines sharing an id no longer mix) and per
+    machine, not per parallel region. A start-time dead-letter state
+    writes no record; the sink runs inside the step; children do not
+    inherit the plugin.
+  - `DeadLetterPlugin(sink)` raises `TypeError` at construction for a
+    sink that is neither callable nor has `put()` (it used to fail at the
+    first dead letter, losing it). A raising sink is logged at ERROR with
+    the record id, then re-raised so `on_plugin_error` fires.
+  - `DeadLetterStore.purge_older_than(NaN)` and `list(limit<0)` raise
+    `ValueError` (NaN **erased the whole store**; a negative limit
+    silently dropped the newest record).
+  - `RetryPolicy`: an rng draw outside `[0, 1]` or NaN raises
+    `ValueError` (it produced NaN / negative / over-cap delays silently);
+    NaN parameters and non-finite `base_ms` / `factor` are refused;
+    `max_ms=inf` remains "no cap". `retryReset` also clears the error
+    chain.
+  - `CircuitBreaker`: `call()` / `acall()` after `close()` raise
+    `InterpreterStoppedError` (the target ran **unprotected**);
+    `cooldown_ms` must be finite and ≥ 0 (NaN / inf kept the circuit
+    open for ever, negative half-opened instantly); `reset()` keeps
+    `opened_count` as a lifetime counter; the `circuit_breaker` decorator
+    refuses generator / async-generator functions (`TypeError`) and no
+    longer leaks the first function's name onto later breakers.
+
 - **Durable timers, as battle-tested (#264) -- behaviour changes a
   0.11.0-RC user can hit:**
   - `DueTimerScanner(limit=)` caps machines **woken per tick, earliest
@@ -1314,6 +1368,20 @@ _No unreleased changes yet._
   `requires-python` and CI have been 3.9 since 0.9).
 
 ### Fixed
+
+- **A circuit breaker could close without a probe (battle-test #265).** A
+  call admitted while *closed* that reported SUCCESS after the circuit
+  had opened and half-opened closed it; a late FAILURE likewise re-opened
+  it. Every admission now carries a window token and an outcome from an
+  earlier window (or from before `reset()`) is dropped. Exactly
+  `half_open_max_calls` probes are admitted under 32 / 128 / 512 threads
+  and 500 async tasks.
+- **`RetryPolicy.exponential_ms` overflowed** with `OverflowError` for
+  `factor=1e6` or `attempt=10**6`; it returns the cap. Decorrelated jitter
+  with a NaN or negative previous delay is guarded.
+- **`DeadLetterStore.put` was O(n)** per insert; 100 000 records are now
+  bounded. One plugin shared by many never-stopped interpreters leaked
+  their chains; the in-memory fallback is weakly keyed.
 
 - **`PessimisticLock` + `DueTimerScanner` timed out on its own lock
   (battle-test #264).** The scanner takes the strategy's lock, then

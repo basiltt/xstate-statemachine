@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 from typing import Any, Dict
 
 from xstate_statemachine import MachineLogic
-from xstate_statemachine.patterns import RetryPolicy
+from xstate_statemachine.patterns import CircuitBreaker, RetryPolicy
 
 #: 💡 A tiny fixed catalogue: prices are the server's, never the client's.
 CATALOGUE: Dict[str, int] = {"tea": 450, "mug": 1200, "kettle": 3900}
@@ -28,16 +29,71 @@ DEFAULT_UNIT_CENTS = 999
 #: Card tokens the fake gateway treats specially (demo + tests).
 DECLINED_TOKEN = "tok_declined"  # every attempt fails → paymentFailed
 FLAKY_TOKEN = "tok_flaky"  # the first attempt fails, the retry succeeds
+#: 🔌 #265: the whole GATEWAY is down (not one card). Every charge raises
+#:    `GatewayDown` until `GATEWAY.up = True` again -- the outage drill.
+OUTAGE_TOKEN = "tok_outage"
 
 
 class GatewayError(Exception):
     """The fake gateway refused the charge."""
 
 
+class GatewayDown(GatewayError):
+    """The gateway is unreachable (an outage, not a decline)."""
+
+
+class _Gateway:
+    """Process-wide switch for the outage drill (tests flip it).
+
+    📝 Shared module state, on purpose: it models the PROVIDER, which is
+    one thing for every worker. The example's test fixtures reset it on
+    setup and teardown; `hit()` counts under a lock so a 32-thread drill
+    counts every call.
+    """
+
+    def __init__(self) -> None:
+        self.up: bool = True
+        self.calls: int = 0  # how many times the real gateway was hit
+        self._lock = threading.Lock()
+
+    def hit(self) -> None:
+        with self._lock:
+            self.calls += 1
+
+
+GATEWAY = _Gateway()
+
+
 def retry_policy() -> RetryPolicy:
     """3 attempts, exponential backoff without jitter (reproducible)."""
     base_ms = float(os.environ.get("XSM_ORDERS_RETRY_BASE_MS", "2000"))
     return RetryPolicy(max_attempts=3, base_ms=base_ms, jitter="none")
+
+
+def gateway_breaker(clock: Any = None) -> CircuitBreaker:
+    """ONE breaker per process in front of the gateway (#265).
+
+    🏛️ When the provider is down, every order's charge fails fast with
+    `CircuitOpenError` instead of each burning a slow network timeout --
+    and the chart's `onError` → `retrying` path still runs, so the order
+    backs off and (after the cooldown lets a probe through and the
+    gateway answers) recovers on its own. Only `GatewayDown` counts: a
+    DECLINE is the customer's problem, not the provider's. Thresholds
+    are small so the drill is readable; tune for your provider's SLA.
+
+    📝 Built by `build_registry()` and bound into the `chargeCard`
+    closure, not a module global: a breaker is process state that tests
+    (and hot-reloads) must be able to replace. It runs on the registry's
+    clock, so a `SimulatedClock` drives the cooldown too.
+    """
+    return CircuitBreaker(
+        failure_threshold=int(os.environ.get("XSM_ORDERS_CB_THRESHOLD", "3")),
+        cooldown_ms=float(os.environ.get("XSM_ORDERS_CB_COOLDOWN_MS", "5000")),
+        half_open_max_calls=1,
+        name="paymentGateway",
+        exceptions=(GatewayDown,),
+        clock=clock,
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -75,7 +131,9 @@ def has_items(ctx: Dict[str, Any], e: Any) -> bool:
 # -----------------------------------------------------------------------------
 # 💳 Service -- the fake payment gateway
 # -----------------------------------------------------------------------------
-def charge_card(i: Any, ctx: Dict[str, Any], e: Any) -> Dict[str, Any]:
+def charge_card(
+    i: Any, ctx: Dict[str, Any], e: Any, *, breaker: Any = None
+) -> Dict[str, Any]:
     """Charge ``ctx["card_token"]``; deterministic by token.
 
     ``tok_declined`` always raises (→ ``onError`` → retry → after the
@@ -86,13 +144,32 @@ def charge_card(i: Any, ctx: Dict[str, Any], e: Any) -> Dict[str, Any]:
     """
     token = str(ctx.get("card_token") or "")
     attempt = int(ctx.get("attempt", 0))
-    if token == DECLINED_TOKEN:
-        raise GatewayError("card declined")
-    if token == FLAKY_TOKEN and attempt == 0:
-        raise GatewayError("gateway timeout")
-    seed = f"{getattr(i, 'store_key', '')}:{ctx.get('total_cents')}"
-    digest = hashlib.sha256(seed.encode()).hexdigest()[:12]
-    return {"charge_id": f"ch_{digest}", "amount_cents": ctx["total_cents"]}
+
+    def hit_gateway() -> Dict[str, Any]:
+        GATEWAY.hit()
+        if not GATEWAY.up or token == OUTAGE_TOKEN:
+            raise GatewayDown("gateway unreachable")
+        if token == DECLINED_TOKEN:
+            raise GatewayError("card declined")
+        if token == FLAKY_TOKEN and attempt == 0:
+            raise GatewayError("gateway timeout")
+        seed = f"{getattr(i, 'store_key', '')}:{ctx.get('total_cents')}"
+        digest = hashlib.sha256(seed.encode()).hexdigest()[:12]
+        return {
+            "charge_id": f"ch_{digest}",
+            "amount_cents": ctx["total_cents"],
+        }
+
+    # ⚡ Through the breaker: while it is open the call is refused in
+    #    microseconds (`CircuitOpenError` -- the chart's `onError` catches
+    #    any exception, so no subclassing is needed), the gateway is never
+    #    touched, and the order still takes the retry path. The error
+    #    propagates as-is, so a dead letter's chain shows "circuit open"
+    #    distinctly from "declined".
+    #    No breaker (a direct call in tests): plain.
+    if breaker is None:
+        return hit_gateway()
+    return breaker.call(hit_gateway)
 
 
 def capture_charge(i: Any, ctx: Dict[str, Any], e: Any) -> Dict[str, Any]:
@@ -103,7 +180,14 @@ def capture_charge(i: Any, ctx: Dict[str, Any], e: Any) -> Dict[str, Any]:
     return {"captured": ctx["charge_id"]}
 
 
-def build_logic() -> MachineLogic:
+def build_logic(breaker: Any = None) -> MachineLogic:
+    """The chart's logic. *breaker* (see `gateway_breaker`) guards the
+    gateway; ``None`` calls it directly."""
+
+    def charge(i: Any, ctx: Dict[str, Any], e: Any) -> Dict[str, Any]:
+        return charge_card(i, ctx, e, breaker=breaker)
+
+    charge.__name__ = "charge_card"
     own = MachineLogic(
         actions={
             "addItem": add_item,
@@ -114,7 +198,7 @@ def build_logic() -> MachineLogic:
         guards={"hasItems": has_items},
         # 📝 `captureCharge` is only referenced by machine_v2.json; an
         #    unused service is fine, a missing one is a config error.
-        services={"chargeCard": charge_card, "captureCharge": capture_charge},
+        services={"chargeCard": charge, "captureCharge": capture_charge},
     )
     # 🔁 `retryDelay` / `retryCanRetry` / `retryBump` / `retryReset`.
     return retry_policy().logic().merge(own)
