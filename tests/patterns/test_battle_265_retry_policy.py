@@ -35,8 +35,18 @@ from typing import Any, Dict, List, Tuple
 # 📦 Third-Party Imports
 # -------------------------------------------------------------------------
 import pytest
-from hypothesis import given, settings
-from hypothesis import strategies as st
+
+# 📝 Hypothesis ships with the `[testing]` extra, not the core; the plain
+#    CI Test cells (no extras) must still collect this module. The 10 000
+#    seeded-draw test below covers the bounds everywhere; the property
+#    test over the parameter space runs where hypothesis is installed.
+try:
+    from hypothesis import given, settings
+    from hypothesis import strategies as st
+
+    HAS_HYPOTHESIS = True
+except ImportError:  # pragma: no cover - exercised by the core CI cells
+    HAS_HYPOTHESIS = False
 
 # -------------------------------------------------------------------------
 # 📥 Project-Specific Imports
@@ -128,15 +138,24 @@ class TestJitterProperties:
         assert max(seq) <= 1000
         assert seq != sorted(seq)  # the amendment: no monotonicity promise
 
-    @settings(max_examples=300, deadline=None)
-    @given(
-        mode=st.sampled_from(MODES),
-        base=st.floats(0, 1e6),
-        cap=st.floats(0, 1e7),
-        factor=st.floats(1.0, 1e6),
-        attempt=st.integers(1, 10**6),
-        r=st.floats(0, 1, exclude_max=True),
-        prev=st.one_of(st.none(), st.floats(0, 1e9)),
+    @pytest.mark.skipif(not HAS_HYPOTHESIS, reason="hypothesis ([testing])")
+    @(
+        settings(max_examples=300, deadline=None)
+        if HAS_HYPOTHESIS
+        else (lambda f: f)
+    )
+    @(
+        given(
+            mode=st.sampled_from(MODES),
+            base=st.floats(0, 1e6),
+            cap=st.floats(0, 1e7),
+            factor=st.floats(1.0, 1e6),
+            attempt=st.integers(1, 10**6),
+            r=st.floats(0, 1, exclude_max=True),
+            prev=st.one_of(st.none(), st.floats(0, 1e9)),
+        )
+        if HAS_HYPOTHESIS
+        else (lambda f: f)
     )
     def test_degenerate_params_finite_and_capped(
         self,
