@@ -882,25 +882,33 @@ class TestThreadSmoke(_Tmp):
                     self.assertEqual(_threads(work, self.THREADS), [])
                     self.assertEqual(attempted[0], total)
                     n = _count(store, key)
+                    # 📝 FileStore's per-save critical section waits a
+                    #    FIXED 10 s for the OS lock, whatever the STRATEGY
+                    #    is -- `NoLock` and `OptimisticLock` both go
+                    #    through it. 16 threads each polling
+                    #    `msvcrt.locking` every 10 ms through 800 fsync'd
+                    #    saves starved one past that on the Windows 3.9
+                    #    runner (3 of 800 under Optimistic; 1-2 of 800
+                    #    under NoLock, #264 CI). The starved calls raised
+                    #    LockTimeoutError -- loud, never a lost update --
+                    #    so count them as refused, not as errors.
+                    file_starved = isinstance(store, FileStore) and all(
+                        isinstance(e, LockTimeoutError) for e in errs
+                    )
                     if isinstance(lock, NoLock):
                         # documented hazard: no errors, possibly fewer
-                        self.assertEqual(errs, [])
+                        if not file_starved:
+                            self.assertEqual(errs, [])
                         self.assertLessEqual(n, total)
                         self.assertGreaterEqual(n, 1)
                         continue
                     if isinstance(store, FileStore) and isinstance(
                         lock, OptimisticLock
                     ):
-                        # 📝 FileStore's per-save critical section waits a
-                        #    FIXED 10 s for the OS lock. 16 threads each
-                        #    polling `msvcrt.locking` every 10 ms through
-                        #    800 fsync'd saves starved one past that on
-                        #    the Windows 3.9 runner (3 of 800 calls). The
-                        #    starved calls raised LockTimeoutError -- loud,
-                        #    never a lost update -- and every call that
-                        #    returned was counted exactly once. Assert
-                        #    THAT; the exact-800 claim is proved on Memory
-                        #    and SQLite and on FileStore under Pessimistic.
+                        # every call that returned was counted exactly
+                        # once; the exact-800 claim is proved on Memory and
+                        # SQLite and on FileStore under Pessimistic.
+                        self.assertTrue(file_starved, errs)
                         self.assertEqual(n, ok[0])
                         self.assertEqual(ok[0] + len(errs), total)
                         continue
