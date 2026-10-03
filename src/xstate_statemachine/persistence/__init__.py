@@ -104,6 +104,7 @@ _LAZY = {
     "TransitionLogStore": ".log",
     "MemoryLog": ".log",
     "JSONLinesLog": ".log",
+    "LogCorruptError": ".log",
     "SQLiteLog": ".log",
     "TransitionLogPlugin": ".log",
     "AuditPlugin": ".log",
@@ -141,6 +142,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from .log import (  # noqa: F401
         AuditPlugin,
         JSONLinesLog,
+        LogCorruptError,
         MemoryLog,
         ReplayDivergenceError,
         SQLiteLog,
@@ -227,6 +229,7 @@ __all__ = [
     "TransitionLogStore",
     "MemoryLog",
     "JSONLinesLog",
+    "LogCorruptError",
     "SQLiteLog",
     "TransitionLogPlugin",
     "AuditPlugin",

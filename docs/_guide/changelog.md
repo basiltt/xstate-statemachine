@@ -1095,6 +1095,23 @@ _No unreleased changes yet._
 
 ### Changed
 
+- **`JSONLinesLog.next_seq` is O(1) in steady state (battle-test #262).**
+  It scanned the whole file on EVERY send (79 ms at 10 000 records -- a
+  run with a JSONL log was quadratic). The last seq per machine is cached
+  while the file size is unchanged; a foreign append, a purge or an
+  external edit forces a rescan (0.012 ms at 10 000). `read()` still scans
+  the file; use `SQLiteLog` beyond a few thousand records.
+
+- **`SQLiteStore` schema v2: index on `deadlines(key)` (battle-test #259,
+  found on CI by the #262 integration).** Schema v1 had no index on
+  `deadlines(key)`, so every `load`, `save` and `delete` (the FK cascade)
+  did a full scan of `deadlines` -- O(n) in the store's deadline count:
+  save+delete read 114 µs → 308 µs → 1.1 ms at 100 / 2 000 / 10 000 keys
+  with one deadline each. A database written by 0.11.0 is upgraded in
+  place on open (one `CREATE INDEX IF NOT EXISTS`); the scaling test now
+  saves snapshots WITH deadlines so it exercises that table.
+
+
 - **Performance budgets now gate on every nightly, whatever the CPU
   (battle-test #307).** Three consecutive nightlies landed on three CPU
   models (AMD EPYC 9V74 / 7763 / 9V45, up to 2.4x apart on identical
@@ -1157,6 +1174,54 @@ _No unreleased changes yet._
   `requires-python` and CI have been 3.9 since 0.9).
 
 ### Fixed
+
+- **Audit records could land for steps that never committed (battle-test
+  #262; a crash-consistency guarantee).** Records were appended as each
+  event settled, BEFORE the snapshot save -- so a lost optimistic attempt,
+  a block that raised, or a writer killed before the save all left audit
+  rows the snapshot did not have. Records are now buffered per
+  `persisted()` block and released at the save: inside the same
+  transaction when `SQLiteLog` shares the store under `PessimisticLock`,
+  via `after_commit` otherwise. Killed-child tests pin that log and
+  snapshot agree (or the snapshot is one step ahead, never behind).
+  `apersisted` + `PessimisticLock` + a shared `SQLiteLog` wrote NO records
+  at all (the flush ran on the loop thread while the adapter's worker held
+  the transaction -> `LockTimeoutError`): the flush now runs on the
+  adapter's thread.
+- **`seq` is assigned atomically by the log store (battle-test #262).**
+  `NoLock` with 8 threads hit `UNIQUE constraint failed` and the plugin's
+  error handling swallowed it -- audit rows silently went missing (the
+  handover's listed limitation). New `TransitionLogStore.append_next()`
+  mints `MAX(seq)+1` and inserts in one statement; gap-free under every
+  lock and across two processes.
+- **`replay()` was not faithful (battle-test #262).** `raise` chains,
+  events an action sent to itself and re-released deferred events were
+  re-sent, so steps ran twice; a top-level `final` was never reached; seq
+  gaps, a purged head and mixed instance keys were accepted silently; a
+  `machine_version` mismatch was ignored; checks ran per group, not per
+  record; real services ran again under `logic=`; `after` timers never
+  fired when called from async code. New `TransitionRecord.origin`
+  (external / internal -- only external records are re-sent), per-record
+  verification with `ReplayDivergenceError.field`, `key=` and `snapshot=`
+  parameters, services always replayed from the record, timers drained
+  synchronously. An action raising under `actionErrorPolicy: "continue"`
+  is now recorded as `"error"`, not `"transition"`.
+- **Log stores raised bare exceptions on damaged records (battle-test
+  #262).** A torn last line (writer killed mid-write), a non-record line,
+  non-UTF-8 bytes, a string `seq` silently coerced, NaN `ts` accepted, a
+  `from_states` string split into characters -- `json.JSONDecodeError`,
+  `KeyError`, `TypeError`, `UnicodeDecodeError`, `sqlite3.*` escaping
+  `read()` and `replay()`. Every one is now `LogCorruptError` (a
+  `StoreError`) naming `path:line`, never a skip: a replay over a hole
+  would succeed to a wrong state.
+- **`purge_older_than(NaN)` erased the whole log (battle-test #262)** --
+  every `ts >= NaN` comparison is false. NaN / -inf / non-numbers / bools
+  now raise `ValueError` and delete nothing. `read(limit=-1)` dropped the
+  last row on Memory/JSONL and meant "unlimited" on SQLite -> uniform
+  `ValueError`. A failed JSONL purge rewrite stranded a `.tmp` and never
+  fsynced -> atomic, fsynced, cleaned up. `append()` rejects a non-record /
+  `seq < 1` / non-finite `ts` at the call site.
+
 
 - **The idempotency inbox's exactly-once claim did not hold under crash and
   concurrency (battle-test #261; four of these broke a stated guarantee).**

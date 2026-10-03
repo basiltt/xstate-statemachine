@@ -60,7 +60,7 @@ from .store import BaseStore, check_record_fields
 __all__ = ["SQLiteStore", "SCHEMA_VERSION"]
 
 #: Bump with an entry in `_UPGRADES`. Never edit an existing step.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _BUSY_TIMEOUT_S = 5.0
 
 _CREATE_V1 = (
@@ -90,10 +90,18 @@ _CREATE_V1 = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS deadlines_due ON deadlines(due_at_wall)",
+    # 📈 #259 battle (CI, py3.12): `deadlines(key)` had no index, so every
+    #    `load` (SELECT ... WHERE key), `save` (DELETE ... WHERE key) and
+    #    `delete` (the FK cascade) did a full SCAN of `deadlines` -- O(n) in
+    #    the store's deadline count: 114 us -> 308 us -> 1.1 ms per
+    #    save+delete at 100 / 2 000 / 10 000 keys with one deadline each.
+    "CREATE INDEX IF NOT EXISTS deadlines_key ON deadlines(key)",
 )
 
 #: schema_version -> statements that bring it to schema_version + 1.
-_UPGRADES: Dict[int, Tuple[str, ...]] = {}
+_UPGRADES: Dict[int, Tuple[str, ...]] = {
+    1: ("CREATE INDEX IF NOT EXISTS deadlines_key ON deadlines(key)",),
+}
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 

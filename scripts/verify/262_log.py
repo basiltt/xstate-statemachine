@@ -91,6 +91,30 @@ def main() -> int:
     print("  ", len(back), "records identical after JSON round-trip")
     i.stop()
 
+    print(
+        "\n== battle tests (post-RC programme): replay fidelity / log-vs-"
+        "snapshot kill windows / corruption / retention + mojibake scan"
+    )
+    import subprocess
+    import sys
+
+    for cmd in (
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/persistence/test_battle_262_log_replay.py",
+            "tests/persistence/test_battle_262_log_corruption_scaling.py",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:asyncio",
+        ],
+        [sys.executable, "scripts/verify/_mojibake_scan.py"],
+    ):
+        subprocess.run(cmd, cwd=ROOT, check=True)
+
     print("\nALL OK")
     return 0
 

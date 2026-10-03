@@ -14,7 +14,9 @@ scan + ``eta`` generation check + idempotent double fire on a
 
 from __future__ import annotations
 
+import contextlib
 import json
+import logging
 import os
 import threading
 import time
@@ -47,6 +49,32 @@ def _app(eager: bool = True) -> Any:
     app.conf.task_always_eager = eager
     app.conf.task_store_eager_result = True
     return app
+
+
+@contextlib.contextmanager
+def _worker(app: Any, **kw: Any) -> Any:
+    """`celery.contrib.testing.worker.start_worker`, with the ROOT logger
+    restored afterwards.
+
+    📝 `start_worker` calls `app.log.setup(loglevel="error")`, which sets
+       the root logger to ERROR (and may add a StreamHandler) for the rest
+       of the pytest session -- `worker_hijack_root_logger=False` does NOT
+       prevent the level change. Later `caplog` tests asserting a WARNING
+       (tests/persistence/test_versioning) then read nothing and failed on
+       CI's Coverage job whenever this file ran first. Found by the #262
+       battle integration; a test-isolation defect of THIS suite.
+       tests/conftest.py now fails the session on any root-logger change.
+    """
+    from celery.contrib.testing.worker import start_worker
+
+    root = logging.getLogger()
+    level, handlers = root.level, list(root.handlers)
+    try:
+        with start_worker(app, perform_ping_check=False, **kw) as w:
+            yield w
+    finally:
+        root.setLevel(level)
+        root.handlers[:] = handlers
 
 
 PAY = {
@@ -536,8 +564,6 @@ class TestRealWorkerThread(unittest.TestCase):
     reaches the persisted instance through the ``task_success`` signal."""
 
     def test_worker_signal_completion(self) -> None:
-        from celery.contrib.testing.worker import start_worker
-
         from src.xstate_statemachine.contrib.celery import (
             celery_service,
             connect_signals,
@@ -557,9 +583,7 @@ class TestRealWorkerThread(unittest.TestCase):
         store = MemoryStore()
         disconnect = connect_signals(store, m, app=app)
         try:
-            with start_worker(
-                app, perform_ping_check=False, shutdown_timeout=10
-            ):
+            with _worker(app, shutdown_timeout=10):
                 with persisted(store, "w1", m):
                     pass
 
@@ -805,8 +829,6 @@ class TestOutboxRelayTask(unittest.TestCase):
     reason="live Celery broker: CELERY_BROKER_URL",
 )
 def test_live_broker_round_trip() -> None:
-    from celery.contrib.testing.worker import start_worker
-
     from src.xstate_statemachine.contrib.celery import (
         celery_service,
         connect_signals,
@@ -826,7 +848,7 @@ def test_live_broker_round_trip() -> None:
     store = MemoryStore()
     disconnect = connect_signals(store, m, app=app)
     try:
-        with start_worker(app, perform_ping_check=False):
+        with _worker(app):
             with persisted(store, "l1", m):
                 pass
             end = time.monotonic() + 30

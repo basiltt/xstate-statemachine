@@ -769,6 +769,10 @@ async def apersisted(
                 raise
             try:
                 snapshot = interp.get_snapshot()
+                for m in markers:  # #262: what this snapshot contains
+                    seal = getattr(m, "seal_marks", None)
+                    if callable(seal):
+                        seal()
                 deadlines = tuple(interp._persist_deadlines())
                 try:
                     await astore.save(
@@ -782,9 +786,29 @@ async def apersisted(
                     for m in markers:
                         m.discard_marks()
                     raise
-                _flush_all(markers)
+                await _aflush_all(astore, markers)
             finally:
                 await interp.stop()
+
+
+async def _aflush_all(astore: Any, markers: List[Any]) -> None:
+    """`_flush_all` for `apersisted`, ON the store adapter's thread.
+
+    🐛 Battle #262: under `PessimisticLock` on a `SQLiteStore` the open
+    transaction belongs to the adapter's single worker thread. A marker
+    writing to the same file from the event-loop thread (`SQLiteLog`,
+    `SQLiteInbox` on the shared store) waited for the lock its own block
+    held: `LockTimeoutError` after the busy timeout and the records lost.
+    Run the flush where the transaction lives, with this task's context
+    (`current_session` keys every marker's buffer)."""
+    if not markers:
+        return
+    run = getattr(astore, "_run", None)
+    if run is None:  # a native async store: no thread affinity
+        _flush_all(markers)
+        return
+    ctx = contextvars.copy_context()
+    await run(ctx.run, _flush_all, markers)
 
 
 @contextlib.asynccontextmanager
