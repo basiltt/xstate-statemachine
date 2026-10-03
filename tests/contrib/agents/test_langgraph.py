@@ -289,7 +289,7 @@ class TestLangGraphService:
             stream=True,
         )
         asyncio.run(_run(_host(svc, rec), "ok"))
-        streamed = [d["data"]["n"] for t, d in rec if t == "STREAM"]
+        streamed = [d["n"] for t, d in rec if t == "STREAM"]  # #267
         assert streamed[-2:] == [2, 20]
         assert rec[-1][1] == {"n": 20}  # onDone = last chunk
 

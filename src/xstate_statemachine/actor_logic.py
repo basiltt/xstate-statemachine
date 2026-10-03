@@ -46,7 +46,7 @@ from typing import (
     TypeVar,
 )
 
-from .events import Event
+from .events import Event, StreamEvent
 from .logger import logger
 
 __all__ = [
@@ -309,7 +309,8 @@ def from_async_iterator(
 
     ``factory(interp, ctx, event)`` returns an async iterator (an
     ``async def`` generator). Each yielded item is sent to the parent as
-    ``Event(event_type, {"data": item})`` -- read it as ``event.data``.
+    ``StreamEvent(event_type, {"data": item})`` -- ``event.data`` is the
+    item (``event.payload["data"]`` too).
     Exhaustion is ``onDone`` with ``data`` = the last item; an exception is
     ``onError``; exiting the state cancels the task and ``aclose()``s the
     generator (a ``finally`` in it runs).
@@ -331,7 +332,9 @@ def from_async_iterator(
                 #    stream order and completion order the same.
                 if interp.status != "running":
                     break
-                await interp.send(Event(event_type, {"data": item}), wait=True)
+                await interp.send(
+                    StreamEvent(event_type, {"data": item}), wait=True
+                )
             return last
         finally:
             if callable(aclose):
@@ -354,7 +357,7 @@ def from_iterator(
 ) -> Callable[..., RunningLogic]:
     """Stream actor logic for the SYNC engine: ``factory(interp, ctx,
     event)`` returns an iterator that is consumed on a daemon thread. Each
-    item is `send_threadsafe`'d to the parent as ``Event(event_type,
+    item is `send_threadsafe`'d to the parent as ``StreamEvent(event_type,
     {"data": item})`` and lands on the owner's next ``send()`` / ``tick()``;
     exhaustion delivers ``onDone`` (``data`` = last item), an exception
     ``onError``. Exiting the state stops the thread at the next item and
@@ -379,7 +382,7 @@ def from_iterator(
                     if stop.is_set():
                         return
                     last = item
-                    send_back(Event(event_type, {"data": item}))
+                    send_back(StreamEvent(event_type, {"data": item}))
                 if not stop.is_set():
                     interp._complete_logic(invocation, last)
             except Exception as exc:  # noqa: BLE001 -- user iterator

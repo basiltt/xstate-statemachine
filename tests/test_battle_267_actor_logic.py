@@ -772,6 +772,104 @@ class _Quiet(PluginBase):
     pass
 
 
+class TestStreamEventShape(unittest.TestCase):
+    """Coordinator defect: a stream item's ``e.data`` was the payload dict."""
+
+    def test_issue_script_verbatim(self) -> None:
+        async def chunks(i: Any, c: Any, e: Any) -> Any:
+            for w in ["hel", "lo"]:
+                yield w
+
+        cfg = {
+            "id": "s",
+            "initial": "streaming",
+            "context": {"buf": ""},
+            "states": {
+                "streaming": {
+                    "invoke": {"src": "stream", "onDone": "done"},
+                    "on": {"STREAM": {"actions": "append"}},
+                },
+                "done": {"type": "final"},
+            },
+        }
+        lg = MachineLogic(
+            actions={
+                "append": lambda i, c, e, a: c.__setitem__(
+                    "buf", c["buf"] + e.data
+                )
+            },
+            services={"stream": from_async_iterator(chunks)},
+        )
+
+        async def main() -> None:
+            from src.xstate_statemachine import to_promise
+
+            i = await Interpreter(create_machine(cfg, logic=lg)).start()
+            await to_promise(i)
+            self.assertEqual(i.context["buf"], "hello")
+
+        asyncio.run(main())
+
+    def test_data_is_item_payload_is_dict_sync(self) -> None:
+        seen: List[Any] = []
+
+        def item(i: Any, c: Any, e: Any, a: Any) -> None:
+            seen.append((e.data, e.payload))
+
+        i = SyncInterpreter(
+            create_machine(
+                SCFG,
+                logic=slogic(from_iterator(lambda *a: iter(["x"])), item),
+            )
+        ).start()
+        pump(i, lambda: "s.done" in i.current_state_ids)
+        self.assertEqual(seen, [("x", {"data": "x"})])
+        i.stop()
+
+    def test_persist_round_trip_keeps_stream_shape(self) -> None:
+        from src.xstate_statemachine.events import (
+            StreamEvent,
+            persist_event,
+            restore_event,
+        )
+
+        ev = StreamEvent("STREAM", {"data": [1, 2]})
+        back = restore_event(json.loads(json.dumps(persist_event(ev))))
+        self.assertIsInstance(back, StreamEvent)
+        self.assertEqual((back.data, back.payload), ([1, 2], {"data": [1, 2]}))
+        self.assertEqual(back, ev)
+
+    def test_pending_stream_event_survives_snapshot(self) -> None:
+        from src.xstate_statemachine.events import StreamEvent
+
+        cfg = json.loads(json.dumps(SCFG))
+        cfg["states"]["a"]["invoke"]["src"] = "idle"
+        lg = slogic(None)
+        lg.services["idle"] = from_callback(lambda *a: None)
+        m = create_machine(cfg, logic=lg)
+
+        async def main() -> str:
+            i = Interpreter(m)
+            await i.start()
+            i._event_queue.put_nowait(StreamEvent("STREAM", {"data": "q"}))
+            snap = i.get_snapshot()
+            await i.stop()
+            return snap
+
+        snap = asyncio.run(main())
+        self.assertIn('"stream": true', snap)
+
+        async def restored() -> None:
+            r = await Interpreter.from_snapshot(snap, m).start()
+            await apump(lambda: r.context["items"] == ["q"])
+            await r.stop()
+
+        asyncio.run(restored())
+        i = SyncInterpreter.from_snapshot(snap, m).start()
+        pump(i, lambda: i.context["items"] == ["q"])
+        i.stop()
+
+
 class TestStatelyCorpus(unittest.TestCase):
     def test_corpus_cleanup_count_matches_setups(self) -> None:
         files = sorted(CORPUS.glob("*.json")) if CORPUS.exists() else []

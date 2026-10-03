@@ -142,6 +142,22 @@ class Event:
         return self.payload
 
 
+@dataclass(frozen=True)
+class StreamEvent(Event):
+    """One item from a stream actor (`from_async_iterator` /
+    `from_iterator`, #267).
+
+    📝 #267 battle: XState's ``fromObservable`` emits the ITEM, so
+    ``event.data`` is the item itself (the `DoneEvent.data` precedent);
+    ``payload`` stays ``{"data": item}`` so JSON / snapshots and
+    ``event.payload["data"]`` keep working.
+    """
+
+    @property
+    def data(self) -> Any:  # type: ignore[override]
+        return self.payload.get("data")
+
+
 class DoneEvent(NamedTuple):
     """Represents the completion of a background service or a final state.
 
@@ -341,6 +357,8 @@ def persist_event(event: Any, *, lane: Optional[str] = None) -> Dict[str, Any]:
         rec["lane"] = lane
     if kind in ("event", "system"):
         rec["payload"] = copy.deepcopy(event.payload)
+        if isinstance(event, StreamEvent):
+            rec["stream"] = True  # #267 battle: restores `.data` = item
     elif kind == "done":
         rec["data"] = copy.deepcopy(event.data)
         rec["src"] = event.src
@@ -460,6 +478,8 @@ def _restore(
         # `kind == "system"` IS the persisted provenance for a plain
         # `Event` (#86/#162); it needs no separate flag.
         return system_event(etype, **payload)
+    if record.get("stream") is True:
+        return StreamEvent(type=etype, payload=payload)  # #267 battle
     return Event(type=etype, payload=payload)
 
 
