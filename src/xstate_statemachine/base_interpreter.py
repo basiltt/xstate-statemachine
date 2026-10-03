@@ -1382,6 +1382,15 @@ class BaseInterpreter(Generic[TContext]):
             return
         for key in [k for k in self._armed_after if k[0] == state_id]:
             del self._armed_after[key]
+        # 🛡️ #264 battle (agent B, xfail handed to the engine): a deadline a
+        #    restore PARKED (`restart_timers=False`) for this state must go
+        #    too -- the state is exited, nothing could ever fire it. Left
+        #    in place it was re-persisted as an orphan, and every scanner
+        #    tick then failed on that key with `StateNotFoundError`.
+        if self._restored_deadlines:
+            self._restored_deadlines = [
+                d for d in self._restored_deadlines if d.state_id != state_id
+            ]
 
     def pending_deadlines(self) -> List["persistence.Deadline"]:
         """Public view of `_persist_deadlines()` (#264): the `after`

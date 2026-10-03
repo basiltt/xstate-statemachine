@@ -278,20 +278,39 @@ class TestExactlyOnceProcesses:
 # 1c. the X0.9 races, deterministic
 # -----------------------------------------------------------------------------
 class TestDeterministicRaces:
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#264 battle, ENGINE (agent A): restart_timers=False keeps a "
-        "dormant deadline after its state is exited; the saved record "
-        "carries an orphan deadline and the scanner's wake raises "
-        "StateNotFoundError every tick.",
-    )
-    def test_restart_false_exit_leaves_no_orphan_deadline(self) -> None:
+    @pytest.mark.parametrize("engine", ["sync", "async"])
+    def test_restart_false_exit_leaves_no_orphan_deadline(
+        self, engine: str
+    ) -> None:
+        """BUG fixed (`_forget_deadlines`): `restart_timers=False` PARKS the
+        restored deadline; exiting its state dropped the armed timer but
+        not the parked record, so the save carried an orphan and every
+        scanner tick on that key raised `StateNotFoundError`. Both engines
+        exit through the same `_forget_deadlines`."""
         store = MemoryStore()
         _seed(store, 1)
         m = _machine()
-        with persisted(store, "k00000", m, restart_timers=False) as i:
-            i.send("CANCEL")
-        assert store.load("k00000").deadlines == ()
+        if engine == "sync":
+            with persisted(store, "k00000", m, restart_timers=False) as i:
+                i.send("CANCEL")
+        else:
+            import asyncio
+
+            from src.xstate_statemachine.persistence import apersisted
+
+            async def go() -> None:
+                async with apersisted(
+                    store, "k00000", m, restart_timers=False
+                ) as i:
+                    await i.send("CANCEL", wait=True)
+
+            asyncio.run(go())
+        rec = store.load("k00000")
+        assert rec.deadlines == () and '"r.c"' in rec.snapshot
+        # and the scanner has nothing to trip over
+        sc = DueTimerScanner(store, lambda k: m)
+        r = sc.scan(SCAN_AT)
+        assert (r.due, r.woken, r.errors) == (0, 0, [])
 
     def test_web_request_advances_key_between_scan_and_lock(
         self, tmp_path: Path
