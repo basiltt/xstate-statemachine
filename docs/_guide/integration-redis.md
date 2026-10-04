@@ -56,18 +56,20 @@ with persisted(store, "order:42", machine) as order:
 
 ### `RedisStore(client_or_url, *, prefix, codec=None, max_snapshot_bytes=1 MiB, ttl_s=None, lock_ttl_ms=30_000)`
 
-Implements `StateStore`. `client_or_url` is a `redis.Redis` or a URL. Keys under `{prefix}:` — `snap:{key}` (hash), `dl:{key}` (deadline hash), `deadlines` (sorted set indexed by `due_at_wall`, read by `DueTimerScanner`), `keys` (set, for `list_keys`), `lock:{key}`, `schema`.
+Implements `StateStore`. `client_or_url` is a `redis.Redis` or a URL. A client built from a URL gets `socket_timeout` / `socket_connect_timeout` of `DEFAULT_SOCKET_TIMEOUT_S` / `DEFAULT_SOCKET_CONNECT_TIMEOUT_S` (5 s each), so a Redis that accepts TCP but never answers raises `StoreUnavailableError` instead of hanging; override in the URL (`?socket_timeout=30`) or pass your own client. `ttl_s` and `lock_ttl_ms` must be at least one millisecond (`ValueError` at construction). Keys under `{prefix}:` — `snap:{key}` (hash), `dl:{key}` (deadline hash), `deadlines` (sorted set indexed by `due_at_wall`, read by `DueTimerScanner`), `keys` (set, for `list_keys`), `lock:{key}`, `schema`.
 
 - `save(..., expected_version=)` is **one Lua script**: compare the stored version, write the hash, replace the deadline index — atomically. A mismatch is `ConflictError` with the actual version; nothing is written.
 - `lock(key, timeout=)` is `SET NX PX lock_ttl_ms` with a random token, released only by that token (Lua compare-and-delete). `LockTimeoutError` when not acquired in time.
 - `forget(key)` deletes snapshot + deadlines + lock **+ the instance's log stream** atomically and reports counts (X0.5: everything the namespace holds about one instance); inbox rows are per tenant scope — use `RedisInbox.forget(scope)`. `delete(key)` removes only the record and leaves a held lock alone.
 - `list_keys(prefix=)` escapes `*?[]\` so a user prefix matches literally.
-- `ttl_s` expires idle instances; `health()` pings.
-- `due_keys(until_wall, limit=)` reads the deadline index directly — the scanner uses it instead of loading every record.
+- `ttl_s` expires idle instances; `health()` pings and never raises.
+- A damaged record (missing `snapshot` field, non-integer `version`) is `SnapshotCorruptError`; an unreadable `{prefix}:schema` marker is `StoreError` at construction.
+- `due_keys(until_wall, limit=)` reads the deadline index directly — the scanner uses it instead of loading every record. Index members whose snapshot expired (`ttl_s`) are pruned as they are met, so they cannot starve live keys.
+- **Layout 2** (this release): deadline index members are JSON arrays `[key, state_id, entry_seq, event]`, so a key containing `|` is unambiguous. A namespace written by 0.11.0 (layout 1) is upgraded in place on construction and its old members are still read; **0.11.0 processes then refuse the namespace** (`StoreError: … newer`) — upgrade every worker sharing a prefix together.
 
 ### `AsyncRedisStore(...)`
 
-The same layout and scripts on `redis.asyncio` — `AsyncStateStore`, so `async with apersisted(astore, key, machine)` works natively. A sync and an async store may share one prefix.
+The same layout, scripts and argument checks on `redis.asyncio` (shared code, not a copy) — `AsyncStateStore`, plus `due_keys`; the schema marker is checked on the first call, so `async with apersisted(astore, key, machine)` works natively. A sync and an async store may share one prefix.
 
 ### `RedisInbox(client_or_url, *, prefix)`
 

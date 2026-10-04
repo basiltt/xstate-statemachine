@@ -37,10 +37,18 @@ require_extra("redis", "redis")
 
 from .inbox import RedisInbox  # noqa: E402
 from .log import RedisLog  # noqa: E402
-from .store import AsyncRedisStore, RedisStore, escape_glob  # noqa: E402
+from .store import (  # noqa: E402
+    DEFAULT_SOCKET_CONNECT_TIMEOUT_S,
+    DEFAULT_SOCKET_TIMEOUT_S,
+    AsyncRedisStore,
+    RedisStore,
+    escape_glob,
+)
 
 __all__ = [
     "AsyncRedisStore",
+    "DEFAULT_SOCKET_CONNECT_TIMEOUT_S",
+    "DEFAULT_SOCKET_TIMEOUT_S",
     "RedisInbox",
     "RedisLog",
     "RedisStore",
