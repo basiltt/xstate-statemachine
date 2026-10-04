@@ -69,6 +69,10 @@ logger = logging.getLogger(__name__)
 #: known statically. Large enough to exceed any realistic delay.
 UNKNOWN_DELAY_MS = 10**9
 
+#: ⚡ Upper bound on cached prefix snapshots (each is a small JSON blob);
+#: beyond it the explorer falls back to replaying the prefix.
+_CACHE_MAX = 50_000
+
 _GUARD_MODES = ("true", "false", "both")
 _WEIGHTS = ("steps", "time")
 
@@ -116,8 +120,16 @@ class Path:
         """
         if interp.status == "uninitialized":
             interp.start()
+        # 🔇 #269 battle: a `service:<name>=error` assumption is the path's
+        #    intent, not an incident -- the engine logs each forced failure
+        #    at ERROR with a traceback (one per generated test under
+        #    `xsm_path`). Quiet the library logger for forced steps only.
         for step in self.steps:
-            _apply_step(interp, clock, step)
+            if any(a.startswith("service:") for a in step.assumptions):
+                with _quiet():
+                    _apply_step(interp, clock, step)
+            else:
+                _apply_step(interp, clock, step)
 
     def event_string(self) -> str:
         """The ``xsm simulate --events`` grammar: ``"SUBMIT,+2000,PAY"``."""
@@ -133,6 +145,17 @@ class Path:
     def total_delay_ms(self) -> float:
         """Sum of every clock advance on the path."""
         return sum(_advance_of(s) for s in self.steps if s.event is None)
+
+
+@contextlib.contextmanager
+def _quiet() -> Iterator[None]:
+    lib_logger = logging.getLogger("xstate_statemachine")
+    prev = lib_logger.level
+    lib_logger.setLevel(logging.CRITICAL)
+    try:
+        yield
+    finally:
+        lib_logger.setLevel(prev)
 
 
 def _fmt_ms(ms: float) -> str:
@@ -229,6 +252,8 @@ class _Explorer:
         self.base: Tuple[str, ...] = (
             ("guard:*=False",) if guards == "false" else ()
         )
+        #: ⚡ prefix (step tuple) → (snapshot JSON, clock.now() s, wall_now()).
+        self._snapshots: Dict[Tuple[Step, ...], Tuple[str, float, float]] = {}
 
     @contextlib.contextmanager
     def stubbed(self) -> Iterator[None]:
@@ -253,11 +278,65 @@ class _Explorer:
     def run(
         self, steps: Tuple[Step, ...]
     ) -> Tuple[SyncInterpreter, SimulatedClock]:
+        """A fresh interpreter positioned after *steps*.
+
+        ⚡ #269 battle: the original design replayed the WHOLE prefix for
+        every candidate edge -- O(depth) engine runs per edge, so a
+        35-state parallel chart (3 456 configurations) took 60 s and a
+        deeper one never finished. The prefix's end state is now cached
+        as a snapshot (`get_snapshot` + the virtual clock) keyed by the
+        step tuple, and candidates restore from it: one engine run per
+        configuration instead of one per edge. The engine still performs
+        every step; nothing is simulated. A prefix that cannot be
+        snapshotted (an uncopyable stub context) falls back to replay.
+        """
+        cached = self._snapshots.get(steps)
+        if cached is not None:
+            blob, now, wall = cached
+            # 🕰️ Deadlines are persisted as ABSOLUTE wall time; the restore
+            #    clock must share the original's wall origin and elapsed
+            #    virtual time, or every `after` is already due / shifted.
+            clock = SimulatedClock(wall_start=wall - now)
+            clock.increment(now * 1000.0)
+            # 📝 `restart_timers="resume"`: the default leaves persisted
+            #    `after` deadlines DORMANT (a scanner's job, #264); here
+            #    the restored machine IS the live one, so re-arm them with
+            #    their remaining time on this clock.
+            # 📝 `start()` on a restore re-runs `always` transitions. A
+            #    configuration that is only STABLE under the last step's
+            #    forced outcomes (`guards="both"`: `Passive` holds while
+            #    `FeatureError=False`) would otherwise move on with the
+            #    all-True stubs -- the cached edge would describe a run the
+            #    replay never performs. Restore under those assumptions.
+            last = steps[-1].assumptions if steps else self.base
+            with _forced(self.machine.logic, last):
+                restored: SyncInterpreter = SyncInterpreter.from_snapshot(
+                    blob, self.machine, clock=clock, restart_timers="resume"
+                ).start()
+            return restored, clock
         clock = SimulatedClock()
         interp = SyncInterpreter(self.machine, clock=clock).start()
         for step in steps:
             _apply_step(interp, clock, step)
+        self._remember(steps, interp, clock)
         return interp, clock
+
+    def _remember(
+        self,
+        steps: Tuple[Step, ...],
+        interp: SyncInterpreter,
+        clock: SimulatedClock,
+    ) -> None:
+        if steps in self._snapshots or len(self._snapshots) >= _CACHE_MAX:
+            return
+        try:
+            self._snapshots[steps] = (
+                interp.get_snapshot(),
+                clock.now(),
+                clock.wall_now(),
+            )
+        except Exception:  # noqa: BLE001 -- replay remains correct
+            logger.debug("graph: prefix not snapshottable", exc_info=True)
 
     def initial(self) -> Tuple[Config, bool]:
         interp, _ = self.run(())
@@ -301,22 +380,34 @@ class _Explorer:
             out.append((None, ms, extra))
         return out
 
-    def _variants(self, config: Config) -> List[Tuple[str, ...]]:
+    def _variants(
+        self, config: Config, event: Optional[str]
+    ) -> List[Tuple[str, ...]]:
         """Default outcome, plus (``"both"``) one flip per relevant name.
 
-        📝 Flipped: guards on transitions of the active states / ancestors,
-        guards on EVENTLESS transitions anywhere (``always`` / ``onDone`` /
-        invoke results run inside the step's macrostep, in states not yet
-        active), and every service (a service entered during the step
-        resolves within it). Other event guards cannot affect this step.
+        📝 Flipped: guards on the active states' transitions FOR THIS
+        candidate (``on <event>``; for a clock step, the ``after``
+        transitions), guards on EVENTLESS transitions anywhere (``always``
+        / ``onDone`` / invoke results run inside the step's macrostep, in
+        states not yet active), and every service (a service entered
+        during the step resolves within it).
+
+        ⚡ #269 battle: the flips used to be the union over EVERY event of
+        the active states and were tried for EVERY candidate -- a guard
+        on ``on 'X'`` cannot change what ``send('Y')`` does, yet each such
+        pair cost one engine run. On a 53-state / 78-guard chart that was
+        43 variants × 17 candidates per configuration (137 s); scoping the
+        event guards to their own event keeps the result identical.
         """
         variants: List[Tuple[str, ...]] = [()]
         if self.mode != "both":
             return variants
         guards: Set[str] = set(self.eventless_guards)
+        want = "after" if event is None else f"on '{event}'"
         for node in self._active_nodes(config):
-            for _, t in transitions_of(node):
-                _collect_guards(t.guard_def, guards)
+            for label, t in transitions_of(node):
+                if label.startswith(want):
+                    _collect_guards(t.guard_def, guards)
         known_g = set(self.guard_names)
         variants += [(f"guard:{g}=False",) for g in sorted(guards & known_g)]
         variants += [(f"service:{s}=error",) for s in self.service_names]
@@ -327,10 +418,9 @@ class _Explorer:
     ) -> List[Tuple[Step, bool]]:
         """Every distinct step out of *config* (reached via *steps*)."""
         out: List[Tuple[Step, bool]] = []
-        variants = self._variants(config)
         for event, ms, extra in self._candidates(config):
             seen: Set[Config] = set()
-            for variant in variants:
+            for variant in self._variants(config, event):
                 step = Step(
                     event=event,
                     delay_ms=ms,
@@ -360,7 +450,13 @@ class _Explorer:
             return None
         try:
             _apply_step(interp, clock, step)
-            return frozenset(interp.current_state_ids), self._done(interp)
+            to = frozenset(interp.current_state_ids)
+            done = self._done(interp)
+            if not done:
+                self._remember(
+                    steps + (_with_target(step, to),), interp, clock
+                )
+            return to, done
         except Exception:
             logger.debug("graph: step %r failed", step, exc_info=True)
             return None
