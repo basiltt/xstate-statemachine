@@ -339,8 +339,10 @@ def _cycle(
     markers = _mark_plugins(plugins)
     interp.store_key = key  # #261: the instance identity for scoped plugins
     with _session(markers):
+        before = interp.status
         interp.start()
         try:
+            _refuse_failed_start(interp, before)
             result = fn(interp)
             _save_with_marks(store, key, interp, expected(version), markers)
             return result
@@ -579,6 +581,22 @@ def _strategy(lock: Any) -> Any:
     )
 
 
+def _refuse_failed_start(interp: Any, status_before: str) -> None:
+    """#266 battle: a machine that `start()` itself put into ``error`` (a
+    `TypedContextPlugin` refusing the restored context, an initial action
+    under ``actionErrorPolicy: "fail"``) is not a committed step. Saving it
+    would overwrite the stored state with a terminal ``error`` snapshot
+    that still holds the bad context -- the record could never run again.
+    Raise the start error instead; the block is skipped and nothing is
+    written. A record ALREADY in ``error`` when loaded is left alone (the
+    caller is inspecting it)."""
+    if interp.status == "error" and status_before != "error":
+        err = interp.error
+        if isinstance(err, BaseException):
+            raise err
+        raise RuntimeError(f"interpreter failed to start: {err!r}")
+
+
 def _mark_plugins(plugins: Iterable[Any]) -> List[Any]:
     """Plugins that buffer post-save writes (`IdempotencyPlugin` #261,
     `OutboxPlugin` #293), ordered by ``flush_priority`` (lower first) so
@@ -684,8 +702,10 @@ def persisted(
         markers = _mark_plugins(plugins)
         interp.store_key = key  # #261
         with _session(markers):
+            before = interp.status
             interp.start()
             try:
+                _refuse_failed_start(interp, before)
                 yield interp
             except BaseException:
                 for m in markers:
@@ -791,8 +811,10 @@ async def apersisted(
         markers = _mark_plugins(plugins)
         interp.store_key = key  # #261
         with _session(markers):
+            before = interp.status
             await interp.start()
             try:
+                _refuse_failed_start(interp, before)
                 yield interp
             except BaseException:
                 for m in markers:
