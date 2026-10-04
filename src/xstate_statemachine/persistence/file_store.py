@@ -397,6 +397,14 @@ class FileStore(BaseStore):
         #: inside a `with store.lock(key):` block does not deadlock on its
         #: own lock (the OS primitive is not reentrant).
         self._held = threading.local()
+        # 🏛️ #306 battle (CI, Windows): N threads of ONE process spinning on
+        #    the OS lock with sleeps is a lottery -- one waiter can lose
+        #    every draw for the whole `timeout` (observed: 4 of 16 threads
+        #    hit LockTimeoutError at 30 s under PessimisticLock). Same-process
+        #    waiters queue on a per-key threading.Lock FIRST (FIFO-ish, no
+        #    starvation); the OS lock then only arbitrates across processes.
+        self._gate_mutex = threading.Lock()
+        self._gates: Dict[str, threading.Lock] = {}
         #: Test seam: called with the temp path right before `os.replace`.
         #: A test raises from it to simulate a crash mid-write and asserts
         #: the previous record is intact (the review's "fault hook, not a
@@ -726,11 +734,33 @@ class FileStore(BaseStore):
         with self._lock_raw(key, timeout):
             yield
 
+    def _gate(self, key: str) -> threading.Lock:
+        with self._gate_mutex:
+            gate = self._gates.get(key)
+            if gate is None:
+                gate = self._gates[key] = threading.Lock()
+            return gate
+
     @contextlib.contextmanager
     def _file_lock(
         self, lock_path: Path, key: str, timeout: float
     ) -> Iterator[None]:
         deadline = time.monotonic() + timeout
+        gate = self._gate(key)
+        if not gate.acquire(timeout=max(timeout, 0.0)):
+            raise LockTimeoutError(
+                key, timeout, holder=self._holder_info(lock_path)
+            )
+        try:
+            with self._os_lock(lock_path, key, deadline, timeout):
+                yield
+        finally:
+            gate.release()
+
+    @contextlib.contextmanager
+    def _os_lock(
+        self, lock_path: Path, key: str, deadline: float, timeout: float
+    ) -> Iterator[None]:
         fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             while True:

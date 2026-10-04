@@ -1449,6 +1449,12 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **`FileStore.lock()` is fair within a process (battle-test #306, CI).**
+  Sixteen threads spinning on the OS file lock with sleeps was a lottery:
+  one waiter could lose every draw for the whole `timeout` (4 of 16 hit
+  `LockTimeoutError` at 30 s on the Windows runner). Same-process waiters
+  now queue on a per-key `threading.Lock` first; the OS lock arbitrates
+  only across processes. `LockTimeoutError` still names the holder.
 - **`RedisStore` / `AsyncRedisStore` (battle-test #306, the store).**
   A key containing `|` woke the wrong instance from `due_keys` (the
   deadline-index member was `key|field`, split on the first `|`);
