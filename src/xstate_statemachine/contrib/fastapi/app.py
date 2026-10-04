@@ -96,8 +96,20 @@ def instrument_app(
         async def handle_validation(
             request: Request, exc: Exception
         ) -> Response:
-            assert isinstance(exc, RequestValidationError)
+            if not isinstance(exc, RequestValidationError):  # pragma: no cover
+                return problem_for_exception(exc)
             return _validation_problem(exc)
 
-        app.add_exception_handler(RequestValidationError, handle_validation)
+        # 📝 reviewer M2: an app that registered its OWN handler for
+        #    RequestValidationError before `instrument_app` keeps it -- the
+        #    library's value-free 422 is the default, not an override.
+        from fastapi.exception_handlers import (
+            request_validation_exception_handler as _fastapi_default,
+        )
+
+        current = app.exception_handlers.get(RequestValidationError)
+        if current is None or current is _fastapi_default:
+            app.add_exception_handler(
+                RequestValidationError, handle_validation
+            )
     return app

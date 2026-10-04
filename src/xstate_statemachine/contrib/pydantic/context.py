@@ -95,7 +95,15 @@ def _validate_into(
         #    and turns nested models into plain dicts.
         dumped = instance.model_dump(mode="python")
         for name in model.model_fields:
-            ctx[name] = dumped[name]
+            # 📝 reviewer H1: a field with `exclude=True` is not in the
+            #    dump -- a `KeyError` here escaped the plugin (contained)
+            #    and the validator (an action error on every mutation).
+            #    Keep the instance's value for it; computed fields are
+            #    deliberately NOT injected (`model_fields` only).
+            if name in dumped:
+                ctx[name] = dumped[name]
+            else:
+                ctx[name] = getattr(instance, name)
     return instance
 
 

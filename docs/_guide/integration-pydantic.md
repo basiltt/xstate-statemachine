@@ -121,6 +121,13 @@ assert order.context["currency"] == "USD"                  # ...and rolled back:
 
 | Symptom | Cause | Fix |
 |:--|:--|:--|
+| `InvalidConfigError: the machine's initial context does not satisfy its context model` at `create_machine` | the chart's static `context` fails the `context_model` (a Literal, a bound, a missing required field) | fix the chart's `context` -- the message names the field path, never the value (#266 battle) |
+| `status == "error"` right after `start()`, no event processed, no entry action ran | a RESTORED context (edited at rest, or written by another version) fails the model; `TypedContextPlugin` failed the machine | inspect `interpreter.error` (a `ContextValidationError`); fix the stored record or the model; nothing ran on the refused context |
+| `ContextValidationError` raised by `persisted()` / `apersisted()` before the block | the loaded record's context fails the model | the record is **not** overwritten with an error-status snapshot; repair it, or load without the plugin to migrate |
+| `KeyError` from write-back on a field with `exclude=True` (pre-0.11) | `model_dump()` omits excluded fields | fixed: excluded fields keep the instance's value; computed fields are never injected |
+| `RuntimeWarning: PydanticCodec stored a context the model refuses` | the snapshot being saved fails the codec's model | the blob is stored unchanged; the next `TypedContextPlugin` restore fails loudly -- fix the model or the writer |
+| a card token / secret visible in a log line or a receipt after a validation failure (pre-0.11) | pydantic's error text embeds `input_value=` and custom-validator messages interpolate the value | fixed: errors are rebuilt value-free (path, type, allow-listed `ctx` rule keys only); raise exceptions whose text does not embed the value anyway |
+| `InvalidConfigError: ... 'target' must be a string (multi-target lists are not supported)` | an XState v5 multi-target transition | not implemented; use one target per transition |
 | `MissingExtraError: … pip install "xstate-statemachine[pydantic]"` | extra not installed | run the command |
 | Restored machine's action fails with `unsupported operand type(s) for +: 'str' and 'Decimal'` | a snapshot stores `Decimal` as text | attach `TypedContextPlugin(Model)` (and use `PydanticCodec` on the store) |
 | `ContextValidationError` but the context kept the bad value | `actionErrorPolicy` is `"continue"` | set `"rollback"` on the machine |

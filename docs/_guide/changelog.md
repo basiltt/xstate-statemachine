@@ -1498,6 +1498,17 @@ _No unreleased changes yet._
   422 for routes added beside `StatechartRouter` (the orders example's
   `PAY` route parsed a 1 MB body and answered 422). `event_type_of`,
   `ActionObject` / `ActionSpec` are exported from `contrib.pydantic`.
+  **Independent review then found:** the scrubbed error still carried
+  the value through `ctx["error"]` (a `ValueError` from a
+  `field_validator`) and a `PydanticCustomError`'s interpolated message;
+  `ctx` is now allow-listed to rule keys (`max_length`, `expected`, ...)
+  and free-text error types get a fixed message. Write-back raised
+  `KeyError` on a field with `exclude=True`. And a machine failed by a
+  start hook still **entered its initial states** -- entry actions,
+  services and timers ran on the refused context (the async run loop
+  stayed alive); both engines now return from `start()` without
+  entering anything. `instrument_app` no longer replaces a
+  `RequestValidationError` handler the app registered first.
 - **`FileStore.lock()` is fair within a process (battle-test #306, CI).**
   Sixteen threads spinning on the OS file lock with sleeps was a lottery:
   one waiter could lose every draw for the whole `timeout` (4 of 16 hit

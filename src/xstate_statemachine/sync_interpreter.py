@@ -478,6 +478,13 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         # 🔌 Notify plugins about the interpreter start
         for plugin in plugins:
             plugin.on_interpreter_start(self)
+        if self.status == "error":
+            # 🛑 #266 battle (review H2): a start hook failed the machine
+            #    (`TypedContextPlugin` on a context the model refuses).
+            #    Entering the initial states would run the user's entry
+            #    actions, services and timers on that refused context.
+            self._is_processing = False
+            return self
 
         # Capture the pre-transition state set (empty before initialization)
         pre_states = set(self._active_state_nodes)

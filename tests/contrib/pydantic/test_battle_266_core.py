@@ -175,3 +175,123 @@ class TestFastAPIValidationProblem:
         assert body["title"] == "Request validation failed"
         assert body["errors"][0]["loc"] == ["body", "token"]
         assert "s3cr3t" not in r.text and "123" not in r.text
+
+
+# -----------------------------------------------------------------------------
+# reviewer follow-ups (#266): C1 scrub leaks, H1 exclude write-back, H2 start
+# -----------------------------------------------------------------------------
+class TestReviewerFollowUps:
+    def test_scrub_hides_values_from_custom_validators_and_ctx(self) -> None:
+        """C1: a `ValueError(f"... {v}")` / `PydanticCustomError` from a
+        field_validator carried the value in `ctx["error"]` / `msg`."""
+        import traceback
+
+        from pydantic import field_validator
+        from pydantic_core import PydanticCustomError
+
+        class M(BaseModel):
+            tok: str
+            cur: Literal["USD"] = "USD"
+
+            @field_validator("tok")
+            @classmethod
+            def v(cls, v: str) -> str:
+                if v.startswith("S"):
+                    raise ValueError(f"bad token {v}")
+                if v.startswith("C"):
+                    raise PydanticCustomError("bad", "bad {v}", {"v": v})
+                return v
+
+        validate = context_model(M)
+        for raw in (
+            {"tok": "SECRET123"},
+            {"tok": "CUSTOM456"},
+            {"tok": "ok", "cur": "GBPSECRET"},
+        ):
+            with pytest.raises(ContextValidationError) as ei:
+                validate(dict(raw))
+            exc = ei.value
+            blob = str(exc) + repr(exc.errors)
+            blob += "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            )
+            for v in raw.values():
+                assert v not in blob, (raw, blob)
+            # the field path survives
+            assert any(k in str(exc) for k in raw)
+
+    def test_excluded_field_write_back_does_not_crash(self) -> None:
+        """H1: `model_dump()` omits `exclude=True` fields; the write-back
+        loop raised KeyError on every validation."""
+        from pydantic import Field
+
+        class M(BaseModel):
+            a: int = 1
+            secret: str = Field(default="s", exclude=True)
+
+        ctx = {"a": 2, "secret": "tok"}
+        context_model(M)(ctx)
+        assert ctx == {"a": 2, "secret": "tok"}
+
+    def test_failed_start_runs_no_entry_actions_both_engines(self) -> None:
+        """H2: the machine went to `error`, but the initial entry actions
+        (and services / timers) still ran on the refused context."""
+        import asyncio
+
+        from src.xstate_statemachine import Interpreter
+
+        class N(BaseModel):
+            n: int = 0
+
+        ran: list = []
+        cfg = {
+            "id": "m",
+            "initial": "a",
+            "context": {"n": "x"},
+            "states": {"a": {"entry": "e", "on": {"GO": "b"}}, "b": {}},
+        }
+        m = create_machine(
+            cfg, logic=MachineLogic(actions={"e": lambda *a: ran.append(1)})
+        )
+        i = SyncInterpreter(m).use(TypedContextPlugin(N)).start()
+        i.send("GO")
+        assert i.status == "error" and not ran and not i.current_state_ids
+
+        async def go() -> Any:
+            a = await Interpreter(m).use(TypedContextPlugin(N)).start()
+            await asyncio.sleep(0.05)
+            task = a._event_loop_task
+            out = (a.status, bool(ran), task is None or task.done())
+            await a.stop()
+            return out
+
+        assert asyncio.run(go()) == ("error", False, True)
+
+    def test_instrument_app_keeps_a_user_validation_handler(self) -> None:
+        """M2: a handler the app registered first is not replaced."""
+        pytest.importorskip("fastapi")
+        from fastapi import Body, FastAPI
+        from fastapi.exceptions import RequestValidationError
+        from fastapi.responses import JSONResponse
+        from fastapi.testclient import TestClient
+
+        from src.xstate_statemachine.contrib.fastapi import instrument_app
+        from src.xstate_statemachine.contrib.starlette import (
+            StatechartRegistry,
+        )
+        from src.xstate_statemachine.persistence import MemoryStore
+
+        app = FastAPI()
+
+        @app.exception_handler(RequestValidationError)
+        async def mine(request: Any, exc: Exception) -> JSONResponse:
+            return JSONResponse({"mine": True}, status_code=400)
+
+        @app.post("/pay")
+        async def pay(body: _In = Body(...)) -> dict:
+            return {"ok": True}
+
+        instrument_app(app, StatechartRegistry(MemoryStore()))
+        with TestClient(app) as c:
+            r = c.post("/pay", json={"token": 1})
+        assert r.status_code == 400 and r.json() == {"mine": True}
