@@ -121,7 +121,7 @@ A `JSONResponse` with `{state, state_ids, changed, denied, deferred, duplicate, 
 
 ### `problem(status, title, detail=None, **ext)` / `problem_for_exception(exc)` / `status_for_exception(exc)`
 
-RFC 9457 `application/problem+json`. The exception mapping: `UnknownEventError`, `InvalidEventPayloadError`, `InvalidEventError`, `IdempotencyMismatchError` → 422; `SnapshotDriftError` / `MachineVersionMismatchError` → 409 with a `machine_version` hint; `ConflictError`, `LockTimeoutError`, `IdempotencyInFlightError` → 409; `KeyNotFoundError` → 404; `ForbiddenError` → 403; `UnsupportedMediaTypeError` → 415; `PayloadTooLargeError` → 413; anything else → 500. Problems carry a fixed title and `error` class name only.
+RFC 9457 `application/problem+json`. The exception mapping: `UnknownEventError`, `InvalidEventPayloadError`, `InvalidEventError`, `IdempotencyMismatchError` → 422; `SnapshotDriftError` / `MachineVersionMismatchError` → 409 with a `machine_version` hint; `ConflictError`, `LockTimeoutError`, `IdempotencyInFlightError` → 409; `KeyNotFoundError` → 404; `ForbiddenError` → 403; `UnsupportedMediaTypeError` → 415; `PayloadTooLargeError` → 413; `StoreUnavailableError` → **503** (the store's backend is down -- retryable, one WARNING line per request, #306 battle); anything else → 500. Problems carry a fixed title and `error` class name only.
 
 ### `HTTPProblemError(title=None)` / `BadRequestError`
 
