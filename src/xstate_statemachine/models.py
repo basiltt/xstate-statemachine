@@ -1250,7 +1250,11 @@ class StateNode(Generic[TContext]):
             )
         if self.type != "compound" or initial:
             return initial
-
+        # 🛡️ #266 battle (B): a non-dict `states` reached `.items()` below
+        #    as a bare AttributeError before the shape check in `__init__`
+        #    could name it. Defer: that check raises InvalidConfigError.
+        if not isinstance(raw_states, dict):
+            return initial
         # 🕰️ History pseudo-states are never a valid initial target.
         candidates = [
             key
@@ -1550,6 +1554,25 @@ class StateNode(Generic[TContext]):
         return f"StateNode(id='{self.id}', type='{self.type}')"
 
 
+def _root_number(
+    config: Dict[str, Any], key: str, default: Any, kind: Callable
+) -> Any:
+    """Coerce a numeric root policy, naming the key on failure.
+
+    🛡️ #266 battle (B): ``int(config["maxIterations"])`` escaped as a bare
+    ``ValueError`` / ``TypeError`` for ``"abc"`` / ``[]``. Coercion stays as
+    lenient as before (``"5"`` still works) -- only the failure is typed.
+    """
+    raw = config.get(key, default)
+    try:
+        return kind(raw)
+    except (TypeError, ValueError):
+        raise InvalidConfigError(
+            f"Machine '{config.get('id')}': {key!r} must be a number, got "
+            f"{type(raw).__name__} {raw!r}."
+        ) from None
+
+
 class MachineNode(StateNode[TContext]):
     """The root node of a state machine, with added machine-wide utilities.
 
@@ -1622,7 +1645,9 @@ class MachineNode(StateNode[TContext]):
         self._structure_hash: Optional[str] = None
         #: Upper bound on microsteps when settling transient ("always")
         #: transitions, mirroring XState's `maxIterations` (v5.31.0).
-        self.max_iterations: int = int(config.get("maxIterations", 1000))
+        self.max_iterations: int = _root_number(
+            config, "maxIterations", 1000, int
+        )
         #: 🛡️ #51: `strict` from config; an interpreter may also opt in.
         self.strict: bool = bool(config.get("strict", False))
         #: Payload validators keyed by event type; set by `create_machine`.
@@ -1645,7 +1670,9 @@ class MachineNode(StateNode[TContext]):
         #: finish on the async engine; `None` waits indefinitely (#41).
         raw_timeout = config.get("spawnBlockingTimeout")
         self.spawn_blocking_timeout_ms: Optional[float] = (
-            None if raw_timeout is None else float(raw_timeout)
+            None
+            if raw_timeout is None
+            else _root_number(config, "spawnBlockingTimeout", None, float)
         )
         #: Machine-level output declaration, resolved when a top-level final
         #: state is reached.

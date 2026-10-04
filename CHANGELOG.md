@@ -9,7 +9,30 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ## [Unreleased]
 
-_No unreleased changes yet._
+### Added
+- `[fastapi]` `bounded_route_class(registry)`: the router's route class
+  (413 / 415 / value-free 422) for routes added beside `StatechartRouter`
+  (#266 battle).
+- `[pydantic]` `ActionObject` / `ActionSpec` re-exported from the package.
+
+### Fixed
+- `create_machine`: a non-numeric `maxIterations` / `spawnBlockingTimeout`,
+  a non-object `states` on an initial-less compound, and a chart nested
+  ~600 deep are `InvalidConfigError` (were bare `ValueError` /
+  `TypeError` / `AttributeError` / `RecursionError`) (#266 battle).
+- `validate_machine_json` now refuses what the engine refuses: a
+  non-object `context`, duplicate custom state `id`s, and string
+  `strict` / `strictTargets` / `strictConfig` (the parser reads `"false"`
+  as true). It takes `bytes` and a BOM, reports malformed JSON and
+  duplicate JSON keys as `InvalidConfigError`, prints list paths as
+  `PAY[0].target` without union-branch noise, and names its ~95-level
+  nesting cap instead of "cyclic reference".
+- `machine_json_schema`: same-named nested models in the event and
+  context schemas no longer overwrite each other's `$defs` entry;
+  `x-leaf-states` omits history pseudo-states; a union member without a
+  `Literal` `type` is a `TypeError`.
+- Orders example: the hand-written `PAY` route enforces the body cap
+  (1 MB was parsed and answered 422 instead of 413).
 
 ## [0.11.0] - 2026-10-01
 

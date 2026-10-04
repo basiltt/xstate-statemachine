@@ -32,6 +32,8 @@ from .._compat import require_extra
 require_extra("pydantic", "pydantic")
 
 from .config import (  # noqa: E402
+    ActionObject,
+    ActionSpec,
     InvokeConfig,
     MachineConfig,
     StateConfig,
@@ -55,6 +57,8 @@ from .events import (  # noqa: E402
 from .schema import machine_json_schema  # noqa: E402
 
 __all__ = [
+    "ActionObject",
+    "ActionSpec",
     "ContextValidationError",
     "EventModel",
     "InvokeConfig",

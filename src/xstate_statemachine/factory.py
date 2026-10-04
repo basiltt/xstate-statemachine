@@ -273,27 +273,26 @@ def create_machine(
     #    distinction. `copy.copy` works for any plain object; the three
     #    registries are re-bound to owned copies by `_alias_logic_names`.
     machine: MachineNode[Any]
+    try:
+        machine = _build_node(config, final_logic)
+    except RecursionError:
+        # 🛡️ #266 battle (B): a pathologically deep chart (~600 levels)
+        #    escaped as a bare RecursionError from the recursive parser.
+        raise InvalidConfigError(
+            f"Machine '{machine_id}' nests states too deeply to parse "
+            f"(Python recursion limit reached)."
+        ) from None
     if final_logic is None:
         # 🤖 Build once with an empty logic, discover against the built
         #    tree, then attach. `MachineNode.logic` is a plain attribute read
         #    only at run time, so attaching after the parse is
         #    observationally identical to passing it in.
-        # ⚡ The placeholder logic is replaced two lines down and never
-        #    read; share one immutable-by-convention instance instead of
-        #    constructing (and INFO-logging) a fresh one per build.
-        machine = MachineNode(config, _EMPTY_LOGIC)
         machine.logic = LogicLoader.get_instance().discover_and_build_logic(
             config,
             logic_modules=logic_modules,
             logic_providers=logic_providers,
             machine=machine,
         )
-    else:
-        try:
-            owned_logic = copy.copy(final_logic)
-        except TypeError:  # pragma: no cover -- exotic objects refusing copy
-            owned_logic = final_logic
-        machine = MachineNode(config, owned_logic)
     # 🔤 Bind snake_case implementations to the camelCase names the config
     #    uses (and vice versa) once, here, so every interpreter lookup stays
     #    a plain dict hit. Exact-name entries are never overridden.
@@ -340,6 +339,23 @@ def create_machine(
         ),
     )
     return machine
+
+
+def _build_node(
+    config: Dict[str, Any], final_logic: Any
+) -> "MachineNode[Any]":
+    """Parse the tree with the caller's logic copied, or the shared
+    placeholder (replaced by discovery right after)."""
+    if final_logic is None:
+        # ⚡ The placeholder logic is replaced by the caller and never
+        #    read; share one immutable-by-convention instance instead of
+        #    constructing (and INFO-logging) a fresh one per build.
+        return MachineNode(config, _EMPTY_LOGIC)
+    try:
+        owned_logic = copy.copy(final_logic)
+    except TypeError:  # pragma: no cover -- exotic objects refusing copy
+        owned_logic = final_logic
+    return MachineNode(config, owned_logic)
 
 
 def _alias_logic_names(machine: MachineNode[Any]) -> None:
