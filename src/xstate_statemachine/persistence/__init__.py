@@ -40,6 +40,7 @@ from ..exceptions import (
     LockTimeoutError,
     SnapshotTooLargeError,
     StoreError,
+    StoreUnavailableError,
 )
 from .async_store import AsyncStateStore, AsyncStoreAdapter, as_async
 from .migration import (
@@ -197,6 +198,7 @@ __all__ = [
     "DEFAULT_MAX_SNAPSHOT_BYTES",
     "MAX_KEY_LENGTH",
     "StoreError",
+    "StoreUnavailableError",
     "ConflictError",
     "LockTimeoutError",
     "SnapshotTooLargeError",

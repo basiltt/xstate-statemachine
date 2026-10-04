@@ -231,6 +231,24 @@ _No unreleased changes yet._
 
 ### Added
 
+- **`StoreUnavailableError` (`StoreError` subclass) and typed Redis errors
+  (battle-test #306).** A Redis failover surfaced as a raw
+  `redis.exceptions.ConnectionError` past `except StoreError`: every web
+  route answered `500 "ConnectionError"` with a traceback per request. The
+  `[redis]` store, inbox and log now map `redis.RedisError` the way
+  `SQLiteStore` has since #259 -- connection-class failures are
+  `StoreUnavailableError`, which the Starlette/FastAPI, Flask and Django
+  adapters answer with **503 Store unavailable** (one WARNING line per
+  request, no exception text; `/_xsm/health` stays 200, `/_xsm/ready` is
+  503). `IdempotencyPlugin(on_inbox_error="refuse")` refuses on it.
+  Clients `RedisStore`, `RedisInbox` and `RedisLog` build from a URL get
+  `DEFAULT_SOCKET_TIMEOUT_S` /
+  `DEFAULT_SOCKET_CONNECT_TIMEOUT_S` (5 s; URL query overrides), so a
+  server that accepts TCP and never answers is a bounded
+  `StoreUnavailableError`, not a hang (a client you pass in keeps its
+  own settings). `RedisStore.due_keys` /
+  `AsyncRedisStore.due_keys` read the sorted-set index for the scanner.
+
 - **`StreamEvent`, `drain_pending_cleanups(timeout=)`,
   `DEFAULT_CLEANUP_TIMEOUT` (battle-test #267).** `StreamEvent` is the
   `Event` subclass a stream actor (`from_async_iterator` / `from_iterator`)
@@ -822,8 +840,16 @@ _No unreleased changes yet._
   `ConflictError`, never a lost update); `forget()` is atomic;
   `list_keys()` escapes glob metacharacters; `prefix` is mandatory
   (X0.15) with a `{prefix}:schema` key; deadlines are indexed in a sorted
-  set the scanner reads directly. Guide page *Redis* with guarantees and
-  threat-model boxes.
+  set the scanner reads directly. `RedisInbox` computes and compares
+  every expiry on the **Redis server clock** (hosts with skewed clocks
+  agree on whether a key is live). `RedisLog` uses the record's `seq` as
+  the stream id with a compare-and-append script, so concurrent writers
+  never mint the same `seq`, `append_next` is atomic across hosts and
+  `read(after_seq=)` is a ranged `XRANGE`; its `maxlen` defaults to
+  unbounded (it was 10 000 -- a silently trimmed audit head). Guide page
+  *Redis* with guarantees and threat-model boxes; the boxes state that
+  snapshot, inbox mark and log record are three atomic writes, not one
+  transaction.
 - `require_extra()` now turns every failure mode -- not installed, import
   refused by a finder, installed-but-broken -- into `MissingExtraError`
   (it used to let a raw `ImportError` escape from the subpackage's own
@@ -1416,6 +1442,49 @@ _No unreleased changes yet._
   `requires-python` and CI have been 3.9 since 0.9).
 
 ### Fixed
+
+- **`FileStore.lock()` is fair within a process (battle-test #306, CI).**
+  Sixteen threads spinning on the OS file lock with sleeps was a lottery:
+  one waiter could lose every draw for the whole `timeout` (4 of 16 hit
+  `LockTimeoutError` at 30 s on the Windows runner). Same-process waiters
+  now queue on a per-key `threading.Lock` first; the OS lock arbitrates
+  only across processes. `LockTimeoutError` still names the holder.
+- **`RedisStore` / `AsyncRedisStore` (battle-test #306, the store).**
+  A key containing `|` woke the wrong instance from `due_keys` (the
+  deadline-index member was `key|field`, split on the first `|`);
+  members are now JSON arrays and the namespace schema marker is **2**
+  (a namespace written by a pre-release build is upgraded in place and
+  its members still read; the `[redis]` extra has not shipped, so no
+  released version is affected). Snapshots expired by `ttl_s`
+  left their index members behind and, `limit` of them, starved every
+  live due key -- they are now pruned atomically. A Redis outage while
+  *taking* a lock escaped as a raw `redis.ConnectionError`; it is now
+  `StoreUnavailableError`. A damaged record or schema marker raised a
+  bare `KeyError` / `ValueError`; now `SnapshotCorruptError` /
+  `StoreError`. `lock_ttl_ms=0` and sub-millisecond / negative `ttl_s`
+  are refused at construction. URL-built clients get 5 s socket
+  timeouts (`DEFAULT_SOCKET_TIMEOUT_S`), overridable in the URL.
+  `AsyncRedisStore` had drifted from the sync store: it now checks the
+  schema marker, refuses a non-`str` snapshot / negative
+  `expected_version` / negative `limit`, wraps codec failures, hides
+  planted invalid keys from `list_keys`, validates `lock()` arguments,
+  and gains `due_keys`. `health()` never raises.
+- **`RedisInbox` / `RedisLog` (battle-test #306).** Found by a two-host
+  fleet attack before the extra shipped: inbox expiry used each worker's
+  `time.time()` (a slow host wrote an already-expired claim and a peer
+  re-admitted the key -- a second charge); `mark(ttl_s=None)` after a
+  TTL'd claim left the claim's expiry in the index, so `purge_expired`
+  deleted a permanent receipt; a scope containing `|` was never purged;
+  `forget(scope)` and `len()` were not atomic / glob-safe. The log let 32
+  concurrent appenders mint 640 records with 37 distinct `seq`s, accepted
+  a duplicate `append`, raised a bare `JSONDecodeError` / `AttributeError`
+  instead of `LogCorruptError` / `TypeError`, accepted `limit=-1` and a
+  NaN purge cutoff, and scanned the whole stream for every page.
+- **Flask: one WARNING line per request for a store outage (battle-test
+  #306).** `problem_response` logged a full traceback for every `503
+  StoreUnavailableError` -- thousands per second during a Redis failover;
+  the Starlette registry already logged one line. An unknown `500` still
+  logs the traceback.
 
 - **A circuit breaker could close without a probe (battle-test #265).** A
   call admitted while *closed* that reported SUCCESS after the circuit

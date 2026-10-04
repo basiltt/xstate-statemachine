@@ -27,6 +27,7 @@ from ...exceptions import (
     InvalidEventPayloadError,
     InvalidKeyError,
     LockTimeoutError,
+    StoreUnavailableError,
     SnapshotDriftError,
     UnknownEventError,
     XStateMachineError,
@@ -195,6 +196,8 @@ _STATUS_TABLE = (
     #    refusal. Both engines report it on the receipt (sync parity fix).
     (InterpreterStoppedError, 409, "Instance is no longer running"),
     (LockTimeoutError, 409, "Lock timeout"),
+    # 🔌 #306 battle: the backend is down, not the request. Retryable.
+    (StoreUnavailableError, 503, "Store unavailable"),
     (KeyNotFoundError, 404, "Not Found"),
     (InvalidKeyError, 400, "Invalid key"),
 )

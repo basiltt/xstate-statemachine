@@ -75,6 +75,7 @@ __all__ = [
     "StoreError",
     "ConflictError",
     "LockTimeoutError",
+    "StoreUnavailableError",
     "SnapshotTooLargeError",
     "InvalidKeyError",
 ]
@@ -725,6 +726,14 @@ class ConflictError(StoreError):
             f"Store conflict on '{key}': expected version {expected}, "
             f"found {actual}. Reload the snapshot and retry."
         )
+
+
+class StoreUnavailableError(StoreError):
+    """The store's backend could not be reached (a Redis failover, a
+    refused connection, a network timeout). **Retryable**; nothing was
+    written. Web adapters answer **503** -- a dependency outage is not an
+    application fault (#306 battle: a Redis outage used to surface as a
+    500 "ConnectionError" on every route)."""
 
 
 class LockTimeoutError(StoreError):

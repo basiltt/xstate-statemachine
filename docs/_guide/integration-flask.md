@@ -77,7 +77,7 @@ A context manager that yields a started `SyncInterpreter` and saves on a clean e
 
 ### `receipt_response(interp, receipt, *, status=None, context_serializer=None)`
 
-A JSON response whose status comes from the **core** table, `xstate_statemachine.receipts.receipt_to_status`: 200 for a transition or a no-op, 202 for deferred, 409 when a guard denies, 422 when an idempotency key is reused with a different body, 500 for an action error (class name only). An idempotency refusal comes back as an RFC 9457 problem. `problem_response(exc)` builds a problem for any exception, containing a fixed title and the class name, **never** `str(exc)`.
+A JSON response whose status comes from the **core** table, `xstate_statemachine.receipts.receipt_to_status`: 200 for a transition or a no-op, 202 for deferred, 409 when a guard denies, 422 when an idempotency key is reused with a different body, 500 for an action error (class name only). An idempotency refusal comes back as an RFC 9457 problem. `problem_response(exc)` builds a problem for any exception, containing a fixed title and the class name, **never** `str(exc)`. A `StoreUnavailableError` (the store's backend is down) is a **503** problem logged as one WARNING line per request, not a traceback (#306 battle).
 
 ### `create_statechart_blueprint(xsm, name, url_prefix, *, per_event_routes=False, create_if_missing=True)`
 

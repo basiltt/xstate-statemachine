@@ -50,6 +50,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from ...events import Receipt
+from ...exceptions import StoreUnavailableError
 from ...interpreter import Interpreter
 from ...models import MachineNode
 from ...persistence.async_store import as_async
@@ -502,6 +503,18 @@ class StatechartRegistry:
             ):
                 return problem_for_exception(receipt.error)
             return JSONResponse(body, status_code=receipt_to_status(receipt))
+        except StoreUnavailableError as exc:
+            # 🔌 #306 battle: a backend outage is one WARNING line per
+            #    request, not a stack trace per request -- a Redis failover
+            #    under load used to write thousands of identical tracebacks.
+            logger.warning(
+                "🔌 store unavailable; %r on %s/%s answered 503: %s",
+                event_type,
+                name,
+                key,
+                exc,
+            )
+            return problem_for_exception(exc)
         except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
             if receipt_to_status_is_server_error(exc):
                 logger.exception(

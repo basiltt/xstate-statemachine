@@ -137,12 +137,12 @@ class TestIndexParity:
         assert n[0] == 0
         assert st.due_keys(1e12) == []
 
-    def test_redis_ttl_expiry_leaves_zset_member(self) -> None:
-        """DOCUMENTED (Redis, ``ttl_s``): the snapshot + deadline hashes
-        expire, the ``deadlines`` zset member does not. `due_keys` keeps
-        returning the key; the scanner's re-read sees no record and counts
-        it ``skipped_stale`` -- every tick, never an error, never a fire.
-        The scanner never fires a key whose record is gone."""
+    def test_redis_ttl_expiry_prunes_zset_member(self) -> None:
+        """Redis ``ttl_s``: the snapshot + deadline hashes expire, the
+        ``deadlines`` zset member cannot. #306 battle: `due_keys` used to
+        keep returning such orphans every tick (and, ``limit`` of them,
+        starved live keys); it now prunes them and reports nothing. The
+        scanner never fires a key whose record is gone."""
         fakeredis = pytest.importorskip("fakeredis")
         from src.xstate_statemachine.contrib.redis import RedisStore
 
@@ -153,9 +153,10 @@ class TestIndexParity:
         # The TTL elapses: Redis drops both hashes, not the zset member.
         r.delete(st.k.snap("k"), st.k.dl("k"))
         assert st.load("k") is None
-        assert st.due_keys(10.0) == [("k", dl.due_at_wall)]
+        assert st.due_keys(10.0) == []
+        assert r.zcard(st.k.deadlines) == 0
         res = DueTimerScanner(st, lambda k: create_machine(CFG)).scan(10.0)
-        assert (res.woken, res.skipped_stale, res.errors) == (0, 1, [])
+        assert (res.woken, res.skipped_stale, res.errors) == (0, 0, [])
 
     def test_redis_save_is_atomic_so_index_cannot_diverge(self) -> None:
         """The hash and the zset are written by ONE Lua script: a failing

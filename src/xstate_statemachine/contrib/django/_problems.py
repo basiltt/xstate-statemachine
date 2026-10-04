@@ -21,6 +21,7 @@ from ...exceptions import (
     InvalidEventError,
     InvalidEventPayloadError,
     LockTimeoutError,
+    StoreUnavailableError,
     SnapshotDriftError,
     UnknownEventError,
 )
@@ -49,6 +50,8 @@ _TABLE: Tuple[Tuple[type, int, str], ...] = (
     (IdempotencyInFlightError, 409, "Request in flight"),
     (ConflictError, 409, "Conflict"),
     (LockTimeoutError, 409, "Lock timeout"),
+    # 🔌 #306 battle: the backend is down, not the request. Retryable.
+    (StoreUnavailableError, 503, "Store unavailable"),
 )
 
 

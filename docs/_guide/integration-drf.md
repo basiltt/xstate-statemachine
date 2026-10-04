@@ -112,6 +112,7 @@ The status of a send is the core [`receipts`](../persistence/) table (#305), the
 | `Idempotency-Key` reused with a different body | 422 problem |
 | payload fails the event serializer / unknown event on `send/` | 422 problem |
 | `ConflictError` / `LockTimeoutError` | 409 problem |
+| `StoreUnavailableError` (the store's backend is down, e.g. a Redis failover) | 503 problem -- retryable |
 
 The receipt body is FastAPI's `ReceiptModel`: `state`, `state_ids`, `available_events`, `machine_version`, `changed`, `denied`, `deferred`, `duplicate`, `error` (a class name).
 

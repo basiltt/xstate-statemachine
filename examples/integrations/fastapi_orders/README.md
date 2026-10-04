@@ -312,7 +312,86 @@ Going live: the same wiring; tune `XSM_ORDERS_CB_THRESHOLD` /
 deployments point `dead_letters=` at a `BrokerDeadLetterSink` or your
 queue instead of the in-memory default.
 
-## Tests
+## Four workers on two hosts share one Redis
+
+The fourth battle scenario (`tests/test_redis_fleet.py`, #306). The first
+question every web user asks -- "I have 4 uvicorn workers on 2 machines,
+where does the snapshot live?" -- answered with `RedisStore` + `RedisInbox`
+(`XSM_REDIS_URL`) and then attacked the way production attacks it. Four
+registries stand in for four worker processes: each has its own breaker and
+its own memory, nothing shared but Redis. What the test pins:
+
+* **one hot order, 200 `PAY`s over four workers** -- exactly one charge,
+  only `200` / `409`, and with an `Idempotency-Key` the inbox is shared:
+  a replay on *another* host returns the original receipt as `duplicate`;
+* **the lock expires under a slow worker** -- `PessimisticLock` with a
+  `lock_ttl_ms` shorter than the gateway call: worker B takes the expired
+  lock and pays; worker A's late save hits the version fence and answers
+  `409`. One charge, one email, nothing overwritten (X0.3, end to end
+  through HTTP);
+* **Redis goes away for a failover** -- every request during the outage is
+  a `503 Store unavailable` problem (no `500`, no exception text in the
+  body, one WARNING line per request in the log instead of a traceback);
+  `/_xsm/health` stays `200` (the process is alive), `/_xsm/ready` is
+  `503`; the first request after it comes back finds the order byte-for-byte
+  as it was;
+* **the scheduler on Redis** -- 120 orders, 20 retry backoffs:
+  `due_keys()` reads the sorted-set index (no record is loaded to decide
+  what is due), the backoffs drain before any 15-minute timeout, four
+  ticks of `limit=50` converge;
+* **`forget()` is total and namespace-safe** -- no key with the order's
+  name survives in the prefix; a lookalike prefix (`orders-x-other`) is
+  untouched;
+* **nothing leaks** -- 2 000 create → act → persist → discard cycles: the
+  connection pool, the thread count and tracemalloc (N/2 vs N) are flat.
+
+Offline by default: one `fakeredis.FakeServer` shared by every worker. Set
+`XSM_REDIS_URL=redis://localhost:6379/15` to run it against a live Redis.
+The multi-**process** proof is the load test with the same variable set:
+
+```bash
+docker run -d --rm -p 6379:6379 redis:7-alpine
+XSM_REDIS_URL=redis://localhost:6379/3 python loadtest.py --workers 4 --requests 200
+```
+
+| Workers | Round | changed | unchanged | duplicate | 409 | p50 ms | p95 ms |
+|--:|:--|--:|--:|--:|--:|--:|--:|
+| 4 (Redis, local) | no key | 1 | 154 | 0 | 45 | 192 | 344 |
+| 4 (Redis, local) | with key | 1 | 0 | 199 | 0 | 192 | 339 |
+
+One library defect this scenario found: a Redis connection error escaped
+the store as a raw `redis.exceptions.ConnectionError` -- past
+`except StoreError`, so every route answered `500 "ConnectionError"` for a
+dependency outage and wrote a traceback per request. Redis errors are now
+typed (`StoreUnavailableError` for the connection class → `503`,
+`StoreError` otherwise), the same mapping `SQLiteStore` has had since #259.
+
+The seams between hosts (`tests/test_redis_fleet_b.py`):
+
+* **host A is mid-charge when host B replays the key** -- B answers
+  `409 IdempotencyInFlightError` and charges nothing; once A commits, a
+  replay on any host is the original receipt (`duplicate`), and a different
+  body under the same key is `422`. One gateway call, one email.
+* **SSE is per process** -- a stream on host B does not see a commit made on
+  host A; reconnecting (the `snapshot` event is a fresh read of Redis) does.
+  Use sticky sessions, or let `EventSource` reconnect.
+* **two schedulers by accident, on Redis** -- every deadline is committed
+  exactly once (version +1); optimistic losers are `skipped_stale`, under
+  `PessimisticLock` nothing runs twice.
+* **dead letters are per process here** -- with `XSM_REDIS_URL` set,
+  `build_dead_letter_store` falls back to a `MemoryDeadLetterStore`: only
+  the worker that exhausted the retries holds the record, its peers do not,
+  and `xsm dlq` cannot read it. In production pass `dead_letters=` a shared
+  sink (`BrokerDeadLetterSink`, or a `SQLiteDeadLetterStore` on a volume
+  the operator can reach).
+
+A second round of defects, in `RedisInbox` / `RedisLog` (agent B): inbox
+expiry used each worker's clock (two hosts 5 minutes apart could both
+admit one key), a permanent receipt was purged with its claim's TTL, a
+scope containing `|` was never purged; the log let 32 concurrent writers
+mint duplicate `seq`s (640 records, 37 distinct) and read every page by
+scanning the whole stream. All fixed; see the CHANGELOG.
+
 
 ```bash
 python -m pytest tests -q

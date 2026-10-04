@@ -32,6 +32,7 @@ from flask import Flask, Response, current_app, g, has_request_context
 from flask import request as flask_request
 
 from ...events import Receipt
+from ...exceptions import StoreUnavailableError
 from ...persistence.locking import _restore_kwargs, persisted
 from ...persistence.log import TransitionLogPlugin
 from ...plugins import PluginBase
@@ -71,7 +72,17 @@ def problem_response(exc: BaseException) -> Any:
     """An RFC 9457 ``application/problem+json`` response for *exc* --
     fixed title and class name, never the exception text (X0.7)."""
     status, body = problem_for_exception(exc)
-    if status >= 500:
+    if isinstance(exc, StoreUnavailableError):
+        # 🔌 #306 battle (agent B): a backend outage is ONE warning line
+        #    per request, as in the Starlette registry -- a Redis failover
+        #    under load used to write a full traceback per request here.
+        logger.warning(
+            "🔌 store unavailable; %s %s answered 503: %s",
+            flask_request.method if has_request_context() else "-",
+            flask_request.path if has_request_context() else "-",
+            exc,
+        )
+    elif status >= 500:
         # 📝 Full traceback in the SERVER log (operators need it); the
         #    client body still carries only the class name (X0.7).
         logger.exception(

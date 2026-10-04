@@ -24,6 +24,7 @@ from ...exceptions import (
     InvalidEventPayloadError,
     InvalidKeyError,
     LockTimeoutError,
+    StoreUnavailableError,
     SnapshotDriftError,
     UnknownEventError,
     XStateMachineError,
@@ -165,6 +166,8 @@ _STATUS_TABLE = (
     (IdempotencyInFlightError, 409, "Request in flight"),
     (ConflictError, 409, "Conflict"),
     (LockTimeoutError, 409, "Lock timeout"),
+    # 🔌 #306 battle: the backend is down, not the request. Retryable.
+    (StoreUnavailableError, 503, "Store unavailable"),
     (KeyNotFoundError, 404, "Not Found"),
     (InvalidKeyError, 400, "Invalid key"),
 )
