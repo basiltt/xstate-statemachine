@@ -15,27 +15,7 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
-### Fixed
-
-- **`RedisStore` / `AsyncRedisStore` (#306 battle, store half).**
-  A key containing `|` woke the wrong instance from `due_keys` (the
-  deadline-index member was `key|field`, split on the first `|`);
-  members are now JSON arrays and the namespace schema is **2**
-  (0.11.0 namespaces are upgraded in place and still read; 0.11.0
-  processes refuse a layout-2 namespace). Snapshots expired by `ttl_s`
-  left their index members behind and, `limit` of them, starved every
-  live due key -- they are now pruned atomically. A Redis outage while
-  *taking* a lock escaped as a raw `redis.ConnectionError`; it is now
-  `StoreUnavailableError`. A damaged record or schema marker raised a
-  bare `KeyError` / `ValueError`; now `SnapshotCorruptError` /
-  `StoreError`. `lock_ttl_ms=0` and sub-millisecond / negative `ttl_s`
-  are refused at construction. URL-built clients get 5 s socket
-  timeouts (`DEFAULT_SOCKET_TIMEOUT_S`), overridable in the URL.
-  `AsyncRedisStore` had drifted from the sync store: it now checks the
-  schema marker, refuses a non-`str` snapshot / negative
-  `expected_version` / negative `limit`, wraps codec failures, hides
-  planted invalid keys from `list_keys`, validates `lock()` arguments,
-  and gains `due_keys`. `health()` never raises.
+_No unreleased changes yet._
 
 ## [0.11.0] - 2026-10-01
 
@@ -256,6 +236,22 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   if one fails.
 
 ### Added
+
+- **`StoreUnavailableError` (`StoreError` subclass) and typed Redis errors
+  (battle-test #306).** A Redis failover surfaced as a raw
+  `redis.exceptions.ConnectionError` past `except StoreError`: every web
+  route answered `500 "ConnectionError"` with a traceback per request. The
+  `[redis]` store, inbox and log now map `redis.RedisError` the way
+  `SQLiteStore` has since #259 -- connection-class failures are
+  `StoreUnavailableError`, which the Starlette/FastAPI, Flask and Django
+  adapters answer with **503 Store unavailable** (one WARNING line per
+  request, no exception text; `/_xsm/health` stays 200, `/_xsm/ready` is
+  503). `IdempotencyPlugin(on_inbox_error="refuse")` refuses on it.
+  Clients `RedisStore` builds from a URL get `DEFAULT_SOCKET_TIMEOUT_S` /
+  `DEFAULT_SOCKET_CONNECT_TIMEOUT_S` (5 s; URL query overrides), so a
+  server that accepts TCP and never answers is a bounded
+  `StoreUnavailableError`, not a hang. `RedisStore.due_keys` /
+  `AsyncRedisStore.due_keys` read the sorted-set index for the scanner.
 
 - **`StreamEvent`, `drain_pending_cleanups(timeout=)`,
   `DEFAULT_CLEANUP_TIMEOUT` (battle-test #267).** `StreamEvent` is the
@@ -1451,6 +1447,26 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ### Fixed
 
+- **`RedisStore` / `AsyncRedisStore` (battle-test #306, the store).**
+  A key containing `|` woke the wrong instance from `due_keys` (the
+  deadline-index member was `key|field`, split on the first `|`);
+  members are now JSON arrays and the namespace schema marker is **2**
+  (a namespace written by a pre-release build is upgraded in place and
+  its members still read; the `[redis]` extra has not shipped, so no
+  released version is affected). Snapshots expired by `ttl_s`
+  left their index members behind and, `limit` of them, starved every
+  live due key -- they are now pruned atomically. A Redis outage while
+  *taking* a lock escaped as a raw `redis.ConnectionError`; it is now
+  `StoreUnavailableError`. A damaged record or schema marker raised a
+  bare `KeyError` / `ValueError`; now `SnapshotCorruptError` /
+  `StoreError`. `lock_ttl_ms=0` and sub-millisecond / negative `ttl_s`
+  are refused at construction. URL-built clients get 5 s socket
+  timeouts (`DEFAULT_SOCKET_TIMEOUT_S`), overridable in the URL.
+  `AsyncRedisStore` had drifted from the sync store: it now checks the
+  schema marker, refuses a non-`str` snapshot / negative
+  `expected_version` / negative `limit`, wraps codec failures, hides
+  planted invalid keys from `list_keys`, validates `lock()` arguments,
+  and gains `due_keys`. `health()` never raises.
 - **`RedisInbox` / `RedisLog` (battle-test #306).** Found by a two-host
   fleet attack before the extra shipped: inbox expiry used each worker's
   `time.time()` (a slow host wrote an already-expired claim and a peer

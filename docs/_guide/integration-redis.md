@@ -65,7 +65,7 @@ Implements `StateStore`. `client_or_url` is a `redis.Redis` or a URL. A client b
 - `ttl_s` expires idle instances; `health()` pings and never raises.
 - A damaged record (missing `snapshot` field, non-integer `version`) is `SnapshotCorruptError`; an unreadable `{prefix}:schema` marker is `StoreError` at construction.
 - `due_keys(until_wall, limit=)` reads the deadline index directly — the scanner uses it instead of loading every record. Index members whose snapshot expired (`ttl_s`) are pruned as they are met, so they cannot starve live keys.
-- **Layout 2** (this release): deadline index members are JSON arrays `[key, state_id, entry_seq, event]`, so a key containing `|` is unambiguous. A namespace written by 0.11.0 (layout 1) is upgraded in place on construction and its old members are still read; **0.11.0 processes then refuse the namespace** (`StoreError: … newer`) — upgrade every worker sharing a prefix together.
+- **Layout 2** (this release): deadline index members are JSON arrays `[key, state_id, entry_seq, event]`, so a key containing `|` is unambiguous. A namespace written by a pre-release build (layout 1) is upgraded in place on construction and its old members are still read; a process on the older layout then refuses the namespace (`StoreError: … newer`) — upgrade every worker sharing a prefix together. No released version wrote layout 1.
 
 ### `AsyncRedisStore(...)`
 
