@@ -366,6 +366,32 @@ dependency outage and wrote a traceback per request. Redis errors are now
 typed (`StoreUnavailableError` for the connection class → `503`,
 `StoreError` otherwise), the same mapping `SQLiteStore` has had since #259.
 
+The seams between hosts (`tests/test_redis_fleet_b.py`):
+
+* **host A is mid-charge when host B replays the key** -- B answers
+  `409 IdempotencyInFlightError` and charges nothing; once A commits, a
+  replay on any host is the original receipt (`duplicate`), and a different
+  body under the same key is `422`. One gateway call, one email.
+* **SSE is per process** -- a stream on host B does not see a commit made on
+  host A; reconnecting (the `snapshot` event is a fresh read of Redis) does.
+  Use sticky sessions, or let `EventSource` reconnect.
+* **two schedulers by accident, on Redis** -- every deadline is committed
+  exactly once (version +1); optimistic losers are `skipped_stale`, under
+  `PessimisticLock` nothing runs twice.
+* **dead letters are per process here** -- with `XSM_REDIS_URL` set,
+  `build_dead_letter_store` falls back to a `MemoryDeadLetterStore`: only
+  the worker that exhausted the retries holds the record, its peers do not,
+  and `xsm dlq` cannot read it. In production pass `dead_letters=` a shared
+  sink (`BrokerDeadLetterSink`, or a `SQLiteDeadLetterStore` on a volume
+  the operator can reach).
+
+A second round of defects, in `RedisInbox` / `RedisLog` (agent B): inbox
+expiry used each worker's clock (two hosts 5 minutes apart could both
+admit one key), a permanent receipt was purged with its claim's TTL, a
+scope containing `|` was never purged; the log let 32 concurrent writers
+mint duplicate `seq`s (640 records, 37 distinct) and read every page by
+scanning the whole stream. All fixed; see the CHANGELOG.
+
 
 ```bash
 python -m pytest tests -q

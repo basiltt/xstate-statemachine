@@ -848,8 +848,16 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   `ConflictError`, never a lost update); `forget()` is atomic;
   `list_keys()` escapes glob metacharacters; `prefix` is mandatory
   (X0.15) with a `{prefix}:schema` key; deadlines are indexed in a sorted
-  set the scanner reads directly. Guide page *Redis* with guarantees and
-  threat-model boxes.
+  set the scanner reads directly. `RedisInbox` computes and compares
+  every expiry on the **Redis server clock** (hosts with skewed clocks
+  agree on whether a key is live). `RedisLog` uses the record's `seq` as
+  the stream id with a compare-and-append script, so concurrent writers
+  never mint the same `seq`, `append_next` is atomic across hosts and
+  `read(after_seq=)` is a ranged `XRANGE`; its `maxlen` defaults to
+  unbounded (it was 10 000 -- a silently trimmed audit head). Guide page
+  *Redis* with guarantees and threat-model boxes; the boxes state that
+  snapshot, inbox mark and log record are three atomic writes, not one
+  transaction.
 - `require_extra()` now turns every failure mode -- not installed, import
   refused by a finder, installed-but-broken -- into `MissingExtraError`
   (it used to let a raw `ImportError` escape from the subpackage's own
@@ -1442,6 +1450,23 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   `requires-python` and CI have been 3.9 since 0.9).
 
 ### Fixed
+
+- **`RedisInbox` / `RedisLog` (battle-test #306).** Found by a two-host
+  fleet attack before the extra shipped: inbox expiry used each worker's
+  `time.time()` (a slow host wrote an already-expired claim and a peer
+  re-admitted the key -- a second charge); `mark(ttl_s=None)` after a
+  TTL'd claim left the claim's expiry in the index, so `purge_expired`
+  deleted a permanent receipt; a scope containing `|` was never purged;
+  `forget(scope)` and `len()` were not atomic / glob-safe. The log let 32
+  concurrent appenders mint 640 records with 37 distinct `seq`s, accepted
+  a duplicate `append`, raised a bare `JSONDecodeError` / `AttributeError`
+  instead of `LogCorruptError` / `TypeError`, accepted `limit=-1` and a
+  NaN purge cutoff, and scanned the whole stream for every page.
+- **Flask: one WARNING line per request for a store outage (battle-test
+  #306).** `problem_response` logged a full traceback for every `503
+  StoreUnavailableError` -- thousands per second during a Redis failover;
+  the Starlette registry already logged one line. An unknown `500` still
+  logs the traceback.
 
 - **A circuit breaker could close without a probe (battle-test #265).** A
   call admitted while *closed* that reported SUCCESS after the circuit
