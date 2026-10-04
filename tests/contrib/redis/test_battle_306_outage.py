@@ -108,6 +108,7 @@ class TestStarlette:
     def test_every_route_is_a_clean_503(
         self, dead: Dead, prefix: str, caplog: Any
     ) -> None:
+        pytest.importorskip("starlette")
         from starlette.testclient import TestClient
 
         app = _starlette_app(dead, prefix)
@@ -138,6 +139,7 @@ class TestStarlette:
     def test_unknown_500_still_logs_a_traceback(
         self, dead: Dead, prefix: str, caplog: Any
     ) -> None:
+        pytest.importorskip("starlette")
         from starlette.testclient import TestClient
 
         app = _starlette_app(dead, prefix)

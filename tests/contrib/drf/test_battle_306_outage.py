@@ -29,7 +29,7 @@ def _client() -> Any:
 
 
 def test_inbox_outage_is_503_not_admitted(db: Any) -> None:
-    import redis
+    redis = pytest.importorskip("redis")
     from django.contrib.auth import get_user_model
     from rest_framework.test import APIClient
     from shop import api

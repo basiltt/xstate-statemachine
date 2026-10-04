@@ -75,6 +75,7 @@ __all__ = [
     "StoreError",
     "ConflictError",
     "LockTimeoutError",
+    "StoreUnavailableError",
     "SnapshotTooLargeError",
     "InvalidKeyError",
 ]
