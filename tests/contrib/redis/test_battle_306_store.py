@@ -50,6 +50,14 @@ def _store(r: Any, prefix: str, **kw: Any) -> Any:
 def _astore(r: Any, prefix: str, **kw: Any) -> Any:
     from src.xstate_statemachine.contrib.redis import AsyncRedisStore
 
+    # 📝 3.9: an asyncio client built with no running loop calls
+    #    `get_event_loop()`, which raises once an earlier test unset it.
+    #    Give it a fresh loop for construction; the store itself is
+    #    loop-agnostic until its first awaited call.
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
     return AsyncRedisStore(_aclient(r), prefix=prefix, **kw)
 
 
