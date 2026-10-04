@@ -46,7 +46,12 @@ from .context import (  # noqa: E402
     context_of,
     typed_context,
 )
-from .events import EventModel, events_union, models_of  # noqa: E402
+from .events import (  # noqa: E402
+    EventModel,
+    event_type_of,
+    events_union,
+    models_of,
+)
 from .schema import machine_json_schema  # noqa: E402
 
 __all__ = [
@@ -60,6 +65,7 @@ __all__ = [
     "TypedContextPlugin",
     "context_model",
     "context_of",
+    "event_type_of",
     "events_union",
     "machine_json_schema",
     "models_of",

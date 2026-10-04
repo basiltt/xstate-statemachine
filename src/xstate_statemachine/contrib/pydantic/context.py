@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from typing import Any, Callable, Dict, Type, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -196,6 +197,17 @@ class PydanticCodec:
     nothing is lost at rest. Restoring the rich types is the job of
     `TypedContextPlugin` (values come back from JSON as strings/numbers
     that ``model_validate`` accepts). ``decode`` is the identity.
+
+    ⚠️ The codec receives the snapshot AFTER the engine's
+    ``json.dumps(default=str)``: `Decimal` and `datetime` (aware or naive)
+    survive that and round-trip, but an `Enum` arrives as ``"Color.R"``
+    (the model refuses it; the codec warns and `TypedContextPlugin` fails
+    the restore) and `bytes` as ``"b'...'"``, which a ``bytes`` field
+    ACCEPTS as different bytes. Use ``use_enum_values=True`` and store
+    binary as base64 ``str``. A context the model refuses is stored as-is
+    with a `RuntimeWarning`. The codec does not redact: the stored blob
+    holds the full context, secrets included (`redact()` is for logs).
+    Stateless, so one instance is safe to share across threads.
     """
 
     def __init__(self, model: Type[BaseModel]) -> None:
@@ -207,8 +219,18 @@ class PydanticCodec:
         if isinstance(ctx, dict):
             try:
                 instance = self.model.model_validate(ctx)
-            except ValidationError:
-                return snapshot  # not ours to fix; store as-is
+            except ValidationError as exc:
+                # 🔥 #266 battle: storing as-is was SILENT acceptance -- a
+                #    blob the model refuses then fails `TypedContextPlugin`
+                #    at the next restore. Still stored (refusing would lose
+                #    the machine's state), but loudly. Field paths only; a
+                #    rejected value is never echoed (X0.5).
+                warnings.warn(
+                    str(ContextValidationError(self.model, scrub(exc))),
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                return snapshot
             typed = instance.model_dump(mode="json")
             for k, v in ctx.items():
                 typed.setdefault(k, v)

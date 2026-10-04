@@ -145,3 +145,199 @@ def test_scrub_keeps_custom_validator_errors_value_free():
         context_model(V)({"pin": SECRET})
     assert SECRET not in str(ei.value)
     assert ei.value.errors[0]["loc"] == ("pin",)
+
+
+# --------------------------------------------------------------------------
+# PydanticCodec round trips, warning, threads; persisted() refusal; leaks
+# --------------------------------------------------------------------------
+import datetime  # noqa: E402
+import enum  # noqa: E402
+import gc  # noqa: E402
+import threading  # noqa: E402
+import tracemalloc  # noqa: E402
+
+from pydantic import ConfigDict  # noqa: E402
+
+from xstate_statemachine.contrib.pydantic import (  # noqa: E402
+    TypedContextPlugin,
+)
+from xstate_statemachine.persistence import MemoryStore  # noqa: E402
+from xstate_statemachine.persistence.locking import (  # noqa: E402
+    apersisted,
+    persisted,
+)
+
+_TZ = datetime.timezone(datetime.timedelta(hours=5))
+
+
+class Color(enum.Enum):
+    R = "r"
+
+
+class Rich(BaseModel):
+    at: datetime.datetime
+    naive: datetime.datetime
+    total: Decimal = Decimal("1.10")
+
+
+class Enumy(BaseModel):
+    c: Color = Color.R
+
+
+class EnumyValues(BaseModel):
+    model_config = ConfigDict(use_enum_values=True)
+    c: Color = Color.R
+
+
+def _plain():
+    cfg = {"id": "p", "initial": "a", "context": {}, "states": {"a": {}}}
+    return create_machine(cfg)
+
+
+def _snapshot_with(ctx):
+    i = SyncInterpreter(_plain()).start()
+    i.context.update(ctx)
+    try:
+        return i.get_snapshot()
+    finally:
+        i.stop()
+
+
+def test_codec_round_trips_decimal_and_aware_and_naive_datetime():
+    ctx = Rich(
+        at=datetime.datetime(2026, 1, 1, tzinfo=_TZ),
+        naive=datetime.datetime(2026, 1, 1),
+    ).model_dump(mode="python")
+    blob = PydanticCodec(Rich).encode(_snapshot_with(ctx))
+    i = SyncInterpreter.from_snapshot(blob, _plain())
+    i.use(TypedContextPlugin(Rich)).start()
+    assert i.status == "running"
+    assert i.context["at"] == ctx["at"] and i.context["at"].tzinfo
+    assert i.context["naive"] == ctx["naive"]
+    assert i.context["naive"].tzinfo is None
+    assert i.context["total"] == Decimal("1.10")
+    i.stop()
+
+
+def test_codec_warns_on_enum_member_and_use_enum_values_round_trips():
+    snap = _snapshot_with({"c": Color.R})  # engine writes "Color.R"
+    with pytest.warns(RuntimeWarning, match="Enumy"):
+        PydanticCodec(Enumy).encode(snap)
+    snap2 = _snapshot_with(EnumyValues(c=Color.R).model_dump(mode="python"))
+    blob = PydanticCodec(EnumyValues).encode(snap2)
+    assert json.loads(blob)["context"]["c"] == "r"
+
+
+def test_codec_warning_does_not_echo_the_value_and_keeps_blob():
+    snap = _snapshot_with({"total": "x" + SECRET})
+    with pytest.warns(RuntimeWarning) as rec:
+        out = PydanticCodec(Rich).encode(snap)
+    assert all(SECRET not in str(w.message) for w in rec)
+    assert out == snap  # stored as-is: refusing would lose the state
+
+
+def test_codec_does_not_redact_secrets_at_rest():
+    snap = _snapshot_with({"card_token": "tok_live"})
+    blob = PydanticCodec(Ctx).encode(snap)
+    assert json.loads(blob)["context"]["card_token"] == "tok_live"
+
+
+def test_shared_codec_is_thread_safe():
+    codec = PydanticCodec(Ctx)
+    snap = _snapshot_with({"items": [{"sku": "a", "qty": 1}], "total": "2"})
+    outs, errors = set(), []
+
+    def work():
+        try:
+            for _ in range(100):
+                outs.add(codec.encode(snap))
+        except Exception as exc:  # pragma: no cover - failure path
+            errors.append(exc)
+
+    threads = [threading.Thread(target=work) for _ in range(32)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors and len(outs) == 1
+
+
+def _bad_store():
+    store = MemoryStore()
+    store.save("k", _snapshot_with({"total": "oops"}))
+    return store
+
+
+def test_persisted_refuses_and_does_not_save_after_failed_start():
+    store = _bad_store()
+    before = store.load("k")
+    entered = []
+    with pytest.raises(ContextValidationError):
+        with persisted(
+            store,
+            "k",
+            _plain(),
+            plugins=[TypedContextPlugin(Rich)],
+            verify_machine_hash=False,
+        ) as i:
+            entered.append(i)
+    assert not entered
+    after = store.load("k")
+    assert after.version == before.version
+    assert json.loads(after.snapshot)["status"] == "running"
+
+
+def test_apersisted_refuses_and_does_not_save_after_failed_start():
+    store = _bad_store()
+    before = store.load("k")
+
+    async def run():
+        async with apersisted(
+            store,
+            "k",
+            _plain(),
+            plugins=[TypedContextPlugin(Rich)],
+            verify_machine_hash=False,
+        ):
+            raise AssertionError("block must not run")
+
+    with pytest.raises(ContextValidationError):
+        asyncio.run(run())
+    assert store.load("k").version == before.version
+
+
+def test_no_leak_across_10k_build_validate_cycles():
+    from typing import Literal
+
+    from xstate_statemachine.contrib.pydantic import EventModel, events_union
+
+    class Pay(EventModel):
+        type: Literal["PAY"] = "PAY"
+        amount: Decimal
+
+    cfg = {"id": "m", "initial": "a", "context": {}, "states": {"a": {}}}
+
+    def cycle():
+        m = create_machine(
+            cfg,
+            context_validator=context_model(Ctx),
+            event_schemas=events_union(Pay),
+        )
+        m.event_schemas["PAY"]({"amount": "1"})
+
+    for _ in range(200):
+        cycle()
+    gc.collect()
+    tracemalloc.start()
+    try:
+        for _ in range(5000):
+            cycle()
+        gc.collect()
+        half = tracemalloc.get_traced_memory()[0]
+        for _ in range(5000):
+            cycle()
+        gc.collect()
+        full = tracemalloc.get_traced_memory()[0]
+    finally:
+        tracemalloc.stop()
+    assert full - half < 64 * 1024
