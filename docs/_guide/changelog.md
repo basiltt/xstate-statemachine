@@ -1449,6 +1449,22 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Typed boundary, as battle-tested (#266).** A chart whose static
+  `context` the `context_model` refuses **built and started** -- the
+  `TypedContextPlugin` raise is contained by the plugin system -- and then
+  rolled back every mutating action forever. `create_machine` now refuses
+  it (`InvalidConfigError`, field path, never the value) when the
+  validator is a model validator (a plain callable keeps the #305
+  "after mutations only" contract); a bad *restored* context puts the
+  machine in `status == "error"` with the `ContextValidationError` as
+  `interpreter.error`. `{"type": 1}` actions and list / non-string
+  transition targets escaped the parser as a bare `AttributeError`; both
+  the static gate (`ActionObject`, `TransitionConfig.target: str`) and
+  the parser report `InvalidConfigError` with a path (multi-target lists
+  are not implemented and now say so). `contrib.fastapi.instrument_app`
+  maps **every** `RequestValidationError` -- including routes the app
+  adds beside the generated router -- to the 422 problem shape (field
+  path + error type, never the offending `input`; X0.7).
 - **`FileStore.lock()` is fair within a process (battle-test #306, CI).**
   Sixteen threads spinning on the OS file lock with sleeps was a lottery:
   one waiter could lose every draw for the whole `timeout` (4 of 16 hit
