@@ -7,9 +7,10 @@
     {prefix}:keys                set      every snapshot key (for list_keys)
     {prefix}:snap:{key}          hash     snapshot, version, machine_version,
                                           updated_at
-    {prefix}:dl:{key}            hash     field "state_id|entry_seq|event" ->
+    {prefix}:dl:{key}            hash     field = zset member (below) ->
                                           JSON Deadline
-    {prefix}:deadlines           zset     member "{key}|state_id|entry_seq"
+    {prefix}:deadlines           zset     member JSON
+                                          ["key","state_id",entry_seq,"event"]
                                           scored by due_at_wall (scanner index)
     {prefix}:lock:{key}          string   random token, PX ttl
     {prefix}:inbox:{scope}       hash     field key -> JSON InboxEntry
@@ -22,7 +23,11 @@ from __future__ import annotations
 
 from ...exceptions import InvalidConfigError
 
-SCHEMA_VERSION = 1
+#: 📝 2 (#306 battle): deadline members became JSON arrays -- layout 1
+#: (``"{key}|{field}"``) mis-parsed a key containing ``|``. A layout-2
+#: store still reads and cleans up layout-1 members; a 0.11.0 process
+#: refuses a layout-2 namespace at construction instead of mis-parsing.
+SCHEMA_VERSION = 2
 
 
 def validate_prefix(prefix: str) -> str:

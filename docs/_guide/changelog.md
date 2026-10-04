@@ -15,7 +15,27 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
-_No unreleased changes yet._
+### Fixed
+
+- **`RedisStore` / `AsyncRedisStore` (#306 battle, store half).**
+  A key containing `|` woke the wrong instance from `due_keys` (the
+  deadline-index member was `key|field`, split on the first `|`);
+  members are now JSON arrays and the namespace schema is **2**
+  (0.11.0 namespaces are upgraded in place and still read; 0.11.0
+  processes refuse a layout-2 namespace). Snapshots expired by `ttl_s`
+  left their index members behind and, `limit` of them, starved every
+  live due key -- they are now pruned atomically. A Redis outage while
+  *taking* a lock escaped as a raw `redis.ConnectionError`; it is now
+  `StoreUnavailableError`. A damaged record or schema marker raised a
+  bare `KeyError` / `ValueError`; now `SnapshotCorruptError` /
+  `StoreError`. `lock_ttl_ms=0` and sub-millisecond / negative `ttl_s`
+  are refused at construction. URL-built clients get 5 s socket
+  timeouts (`DEFAULT_SOCKET_TIMEOUT_S`), overridable in the URL.
+  `AsyncRedisStore` had drifted from the sync store: it now checks the
+  schema marker, refuses a non-`str` snapshot / negative
+  `expected_version` / negative `limit`, wraps codec failures, hides
+  planted invalid keys from `list_keys`, validates `lock()` arguments,
+  and gains `due_keys`. `health()` never raises.
 
 ## [0.11.0] - 2026-10-01
 
