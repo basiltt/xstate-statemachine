@@ -1443,6 +1443,21 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Path generation, as battle-tested (#269).** The explorer replayed
+  the WHOLE prefix for every candidate edge -- O(depth) engine runs per
+  edge: the 35-state parallel `addressFields` chart (3 456
+  configurations) took 60 s and a 53-state / 78-guard chart under
+  `guards="both"` 137 s. Prefix end-states are now cached as snapshots
+  and restored per candidate (`restart_timers="resume"` on a clock that
+  shares the original's wall origin -- the default leaves `after`
+  deadlines dormant; restored under the last step's forced assumptions
+  -- `start()` re-runs `always`, so a configuration stable only while a
+  guard is forced False moved on under the all-True stubs), and guard
+  flips are scoped to the candidate's own event (a guard on `on 'X'`
+  cannot change `send('Y')`). Results are byte-identical on 100 corpus
+  charts in every mode; the two charts run in 34 s and 39 s. A forced
+  `service:<name>=error` step no longer logs an ERROR traceback per
+  generated test under `xsm_path`.
 - **Typed boundary, as battle-tested (#266).** A chart whose static
   `context` the `context_model` refuses **built and started** -- the
   `TypedContextPlugin` raise is contained by the plugin system -- and then
