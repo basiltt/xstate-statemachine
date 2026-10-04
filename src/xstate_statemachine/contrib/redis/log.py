@@ -9,6 +9,7 @@ from typing import Any, List, Optional
 import redis
 
 from ...persistence.log import TransitionRecord
+from ._errors import redis_errors_typed
 from ._keys import Keys
 
 __all__ = ["RedisLog"]
@@ -47,6 +48,7 @@ class RedisLog:
         )
         self.maxlen = maxlen
 
+    @redis_errors_typed
     def append(self, rec: TransitionRecord, *, connection: Any = None) -> None:
         body = json.dumps(rec.to_dict(), sort_keys=True, default=str)
         kw = (
@@ -58,6 +60,7 @@ class RedisLog:
             **kw,
         )
 
+    @redis_errors_typed
     def next_seq(self, machine_id: str) -> int:
         last = self.r.xrevrange(self.k.log(machine_id), count=1)
         if not last:
@@ -66,6 +69,7 @@ class RedisLog:
         fields = {_s(a): b for a, b in fields.items()}
         return int(_s(fields["seq"])) + 1
 
+    @redis_errors_typed
     def read(
         self, machine_id: str, *, after_seq: int = 0, limit: int = 1000
     ) -> List[TransitionRecord]:
@@ -82,6 +86,7 @@ class RedisLog:
                 break
         return out
 
+    @redis_errors_typed
     def purge_older_than(self, cutoff_ts: float) -> int:
         n = 0
         for name in self.r.scan_iter(match=f"{self.k.p}:log:*", count=500):
@@ -91,6 +96,7 @@ class RedisLog:
                     n += int(self.r.xdel(name, _id))
         return n
 
+    @redis_errors_typed
     def forget(self, machine_id: str) -> int:
         name = self.k.log(machine_id)
         n = int(self.r.xlen(name))

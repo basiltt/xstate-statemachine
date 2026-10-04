@@ -727,6 +727,14 @@ class ConflictError(StoreError):
         )
 
 
+class StoreUnavailableError(StoreError):
+    """The store's backend could not be reached (a Redis failover, a
+    refused connection, a network timeout). **Retryable**; nothing was
+    written. Web adapters answer **503** -- a dependency outage is not an
+    application fault (#306 battle: a Redis outage used to surface as a
+    500 "ConnectionError" on every route)."""
+
+
 class LockTimeoutError(StoreError):
     """`store.lock(key, timeout=...)` could not acquire the lock in time
     (another holder, or SQLite's ``database is locked``). Retryable."""

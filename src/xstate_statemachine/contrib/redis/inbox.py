@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 import redis
 
 from ...persistence.idempotency import InboxEntry
+from ._errors import redis_errors_typed
 from ._keys import Keys
 
 __all__ = ["RedisInbox"]
@@ -108,6 +109,7 @@ class RedisInbox:
     def _expiry(self, ttl_s: Optional[float]) -> str:
         return "" if ttl_s is None else repr(time.time() + float(ttl_s))
 
+    @redis_errors_typed
     def get(self, scope: str, key: str) -> Optional[InboxEntry]:
         raw = self.r.hget(self.k.inbox(scope), key)
         if raw is None:
@@ -120,6 +122,7 @@ class RedisInbox:
             str(e.get("fingerprint", "")), e.get("receipt_json"), exp
         )
 
+    @redis_errors_typed
     def claim(
         self, scope: str, key: str, fp: str, *, ttl_s: Optional[float]
     ) -> bool:
@@ -129,6 +132,7 @@ class RedisInbox:
         )
         return int(res) == 1
 
+    @redis_errors_typed
     def mark(
         self,
         scope: str,
@@ -142,17 +146,20 @@ class RedisInbox:
             args=[key, receipt_json, self._expiry(ttl_s), scope],
         )
 
+    @redis_errors_typed
     def release(self, scope: str, key: str) -> None:
         self._release(
             keys=[self.k.inbox(scope), self.k.inbox_exp], args=[key, scope]
         )
 
+    @redis_errors_typed
     def purge_expired(self, *, now: Optional[float] = None) -> int:
         at = time.time() if now is None else now
         return int(
             self._purge(keys=[self.k.inbox_exp], args=[repr(at), self.k.p])
         )
 
+    @redis_errors_typed
     def forget(self, scope: str) -> int:
         name = self.k.inbox(scope)
         fields = [_s(f) for f in self.r.hkeys(name)]
@@ -163,6 +170,7 @@ class RedisInbox:
         pipe.execute()
         return len(fields)
 
+    @redis_errors_typed
     def __len__(self) -> int:
         n = 0
         for name in self.r.scan_iter(match=f"{self.k.p}:inbox:*", count=500):

@@ -31,6 +31,7 @@ from ...persistence.store import (
     check_save_args,
     validate_key,
 )
+from ._errors import aredis_errors_typed, redis_errors_typed
 from ._keys import SCHEMA_VERSION, Keys
 
 __all__ = ["AsyncRedisStore", "RedisStore", "escape_glob"]
@@ -205,6 +206,7 @@ class RedisStore(BaseStore):
         self._ensure_schema()
 
     # -- schema (X0.10) -----------------------------------------------------------
+    @redis_errors_typed
     def _ensure_schema(self) -> None:
         cur = self.r.get(self.k.schema)
         if cur is None:
@@ -218,6 +220,7 @@ class RedisStore(BaseStore):
             )
 
     # -- primitives ---------------------------------------------------------------
+    @redis_errors_typed
     def _load_raw(
         self, key: str
     ) -> Optional[Tuple[str, int, str, float, Sequence[Deadline]]]:
@@ -234,6 +237,7 @@ class RedisStore(BaseStore):
             deadlines,
         )
 
+    @redis_errors_typed
     def _save_raw(
         self,
         key: str,
@@ -266,6 +270,7 @@ class RedisStore(BaseStore):
             )
         return new_version
 
+    @redis_errors_typed
     def _delete_raw(self, key: str) -> bool:
         res = self._delete(
             keys=[
@@ -278,6 +283,7 @@ class RedisStore(BaseStore):
         )
         return int(res[0]) > 0
 
+    @redis_errors_typed
     def _forget_raw(self, key: str) -> Dict[str, int]:
         res = self._forget(
             keys=[
@@ -297,6 +303,7 @@ class RedisStore(BaseStore):
             "log_entries": int(res[3]),
         }
 
+    @redis_errors_typed
     def _list_keys_raw(self, prefix: str, limit: int) -> List[str]:
         # 📝 The keys SET is the index; SCAN over it with an escaped pattern
         #    so a user prefix containing `*?[` matches literally (X0.15).
@@ -341,6 +348,7 @@ class RedisStore(BaseStore):
             return {"ok": False, "backend": self.backend, "error": str(exc)}
 
     # -- scanner support -------------------------------------------------------------
+    @redis_errors_typed
     def due_keys(
         self, until_wall: float, *, limit: int = 1000
     ) -> List[Tuple[str, float]]:
@@ -396,6 +404,7 @@ class AsyncRedisStore:
         self._forget = self.r.register_script(_FORGET)
         self._unlock = self.r.register_script(_UNLOCK)
 
+    @aredis_errors_typed
     async def load(self, key: str) -> Optional[StoredSnapshot]:
         validate_key(key)
         h = await self.r.hgetall(self.k.snap(key))
@@ -414,6 +423,7 @@ class AsyncRedisStore:
             deadlines=tuple(deadlines),
         )
 
+    @aredis_errors_typed
     async def save(
         self,
         key: str,
@@ -454,6 +464,7 @@ class AsyncRedisStore:
             )
         return new_version
 
+    @aredis_errors_typed
     async def delete(self, key: str) -> bool:
         validate_key(key)
         res = await self._delete(
@@ -467,6 +478,7 @@ class AsyncRedisStore:
         )
         return int(res[0]) > 0
 
+    @aredis_errors_typed
     async def forget(self, key: str) -> Dict[str, int]:
         validate_key(key)
         res = await self._forget(
@@ -487,6 +499,7 @@ class AsyncRedisStore:
             "log_entries": int(res[3]),
         }
 
+    @aredis_errors_typed
     async def list_keys(
         self, *, prefix: str = "", limit: int = 1000
     ) -> List[str]:
