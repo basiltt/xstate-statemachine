@@ -71,11 +71,19 @@ The same layout and scripts on `redis.asyncio` — `AsyncStateStore`, so `async 
 
 ### `RedisInbox(client_or_url, *, prefix)`
 
-Implements `InboxStore`: one hash per scope (`inbox:{scope}`, field = idempotency key, value = JSON entry) plus a sorted-set TTL index (`inbox_exp`) so `purge_expired()` is a range query. `claim` is atomic first-wins (Lua). `forget(scope)` erases a tenant.
+Implements `InboxStore`: one hash per scope (`inbox:{scope}`, field = idempotency key, value = JSON entry) plus a sorted-set TTL index (`inbox_exp`) so `purge_expired()` is a range query (cost grows with the number of *expired* entries, not the total). `claim` is atomic first-wins (Lua). `forget(scope)` erases one tenant atomically; a scope containing `*` or `?` never touches another.
 
-### `RedisLog(client_or_url, *, prefix, maxlen=10_000)`
+- **Expiry uses the Redis server clock** (`TIME` inside the scripts), never the worker's: two hosts with skewed clocks agree on whether a key is still live.
+- A worker that dies between `claim` and `mark` leaves the key **in flight** (`409`) until the plugin's `ttl_s` passes, then a retry is admitted — the same rule as `SQLiteInbox`.
+- The mark is written right **after** the snapshot save, not in one transaction with it (Redis cannot span both scripts); the in-snapshot `processed_ids` ring covers a crash in between.
 
-Implements `TransitionLogStore` as one Redis Stream per machine id (`log:{machine_id}`), `XADD MAXLEN ~ maxlen`. `read(after_seq=)`, `purge_older_than`, `forget`.
+### `RedisLog(client_or_url, *, prefix, maxlen=None)`
+
+Implements `TransitionLogStore` as one Redis Stream per machine id (`log:{machine_id}`). The stream entry id **is** the record's `seq` (`"{seq}-0"`) and each append is a compare-and-append script, so two workers can never store the same `seq` and `append_next` (used by `TransitionLogPlugin`) is atomic across hosts. `read(after_seq=, limit=)` is a ranged `XRANGE` — paging a long stream costs the page, not the stream.
+
+- `maxlen` (default **unbounded**, like `SQLiteLog`) trims with `XADD MAXLEN ~` — *approximate*: at least `maxlen` newest records are kept. Trimming drops the **head** of the audit trail: `replay()` then refuses with `ReplayDivergenceError(field="seq")` unless you pass a `snapshot=` taken at the first retained record. It never silently replays from the middle.
+- `purge_older_than(cutoff)` walks every stream of the prefix in pages (O(records)); run it from a maintenance job.
+- **Not transactional with the snapshot.** `append(..., connection=)` is accepted for protocol parity and ignored. `TransitionLogPlugin` writes records after the `persisted()` block commits, so after a crash the log may **trail** the snapshot, never lead it (#262).
 
 ### `escape_glob(text)`
 
@@ -85,7 +93,7 @@ The SCAN-pattern escaper `list_keys` uses; exported for your own `SCAN`s.
 
 > **What this does:** optimistic saves are atomic (no read-then-write window); the pessimistic lock is token-owned and **fenced** — `persisted(..., lock=PessimisticLock())` still saves with `expected_version`, so a lock that **expired** under a slow holder produces `ConflictError`, never a lost update; `forget()` is atomic; two applications cannot share a namespace by accident (`prefix` is mandatory).
 >
-> **What this does not do:** durability beyond what your Redis persistence (AOF / RDB) provides; multi-key transactions across prefixes; broker semantics (see the Streams integration). A lock is advisory: a writer that bypasses `persisted()` and calls `save()` without `expected_version` is not stopped.
+> **What this does not do:** durability beyond what your Redis persistence (AOF / RDB) provides; multi-key transactions across prefixes; **one transaction for snapshot + inbox mark + log record** (each is its own atomic script — mark and log are written after the save); SSE/WebSocket fan-out across workers (per process — a stream on host B does not see a commit on host A until it reconnects); broker semantics (see the Streams integration). A lock is advisory: a writer that bypasses `persisted()` and calls `save()` without `expected_version` is not stopped.
 >
 > See the programme-wide [Guarantees](../guarantees/) and [Security](../security/) pages ([#303](https://github.com/basiltt/xstate-statemachine/issues/303)).
 
@@ -93,7 +101,7 @@ The SCAN-pattern escaper `list_keys` uses; exported for your own `SCAN`s.
 
 > **Who can call this:** anyone with network access to the Redis and its credentials — the store trusts the connection you hand it. Use `requirepass` / ACLs and TLS (`rediss://`).
 >
-> **What it exposes:** snapshots contain `context` in clear text unless you pass a `codec=` that encrypts. Idempotency entries contain cached receipts (state ids, no payloads). Log streams contain redacted payloads (the shared `redact()` denylist).
+> **What it exposes:** snapshots contain `context` in clear text unless you pass a `codec=` that encrypts. Idempotency entries contain cached receipts (state ids, flags, no payloads — but a receipt for a step whose action raised also stores that exception's class **and message**, so do not put secrets in exception messages). Log streams contain redacted payloads (the shared `redact()` denylist).
 >
 > **You must configure:** a unique `prefix` per application; a `lock_ttl_ms` longer than your slowest step (the fence catches the rest); a `maxlen` for logs and `ttl_s` for idle snapshots if the key space is unbounded; Redis persistence if a restart must not lose state.
 
