@@ -26,13 +26,14 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from fastapi import BackgroundTasks, Body, FastAPI, Request
+from fastapi import APIRouter, BackgroundTasks, Body, FastAPI, Request
 from fastapi.responses import FileResponse, Response
 
 from xstate_statemachine import create_machine
 from xstate_statemachine.contrib.fastapi import (
     StatechartRegistry,
     StatechartRouter,
+    bounded_route_class,
     instrument_app,
 )
 from xstate_statemachine.contrib.pydantic import context_model
@@ -238,9 +239,14 @@ def add_pay_route(
     Registered BEFORE the router so it shadows the generated PAY route;
     the router refuses PAY on ``/send`` (``per_event_dependencies``), so
     this is the only way in -- no payment can skip the email hook.
-    """
 
-    @app.post(
+    The route lives on an `APIRouter` with `bounded_route_class` so it gets
+    the same 413 / 415 / problem-shaped 422 envelope as the generated
+    routes (#266 battle: a 1 MB body was parsed and answered 422).
+    """
+    extra = APIRouter(route_class=bounded_route_class(registry))
+
+    @extra.post(
         "/orders/{id}/events/PAY",
         tags=["orders"],
         operation_id="order_pay_with_confirmation",
@@ -262,6 +268,8 @@ def add_pay_route(
             #    committed (send_event returned a 200 receipt).
             background.add_task(email, id, charge, customer_of(request))
         return response
+
+    app.include_router(extra)
 
 
 def create_app(
