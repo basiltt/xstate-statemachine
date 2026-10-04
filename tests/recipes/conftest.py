@@ -94,6 +94,11 @@ class Driver:
         return self.i.value
 
     def close(self) -> None:
+        """Idempotent: a test may close the driver itself (to time
+        `stop()`); the fixture's teardown then finds it already closed."""
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
         self.run(self.i.stop)
         if self.engine == "async":
             self.loop.close()

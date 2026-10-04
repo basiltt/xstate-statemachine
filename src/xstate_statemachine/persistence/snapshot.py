@@ -291,22 +291,7 @@ def check_shape(snapshot: Dict[str, Any], *, version: int = 0) -> None:
     #    to say is not one this library wrote.
     if status == "error" and not snapshot.get("error"):
         fail("status is 'error' but no 'error' message is recorded")
-    for key in ("pending_events", "deferred", "scheduled_sends"):
-        val = snapshot.get(key)
-        if val is not None and (
-            not isinstance(val, list)
-            or not all(
-                isinstance(r, dict)
-                # 🛡️ #158: the type must be a non-empty str, as `send()`
-                #    requires; `restore_event` re-checks per record.
-                and isinstance(r.get("type"), str) and r["type"]
-                for r in val
-            )
-        ):
-            fail(
-                f"'{key}' must be a list of event records whose 'type' is "
-                f"a non-empty string"
-            )
+    _check_event_records(snapshot, fail)
     # 🛡️ #146: every remaining top-level key `from_snapshot` reads. Each
     #    is optional, but when present it must have the shape the reader
     #    assumes, or the reader's own `.items()` / indexing leaks a bare
@@ -372,6 +357,34 @@ def check_shape(snapshot: Dict[str, Any], *, version: int = 0) -> None:
         fail("'system' must map system ids to actor-id strings")
     # 🛡️ #305 (layout v4): `machine_version` / `deadlines`.
     _check_v4_fields(snapshot, fail)
+
+
+def _check_event_records(snapshot: Dict[str, Any], fail: Any) -> None:
+    """The three persisted event lanes: a list of records whose `type` is
+    a non-empty string (#158) and whose optional `stream` flag (#267) is a
+    bool -- `restore_event` tests `is True`, so a corrupt ``"yes"`` would
+    silently restore a `StreamEvent` as a plain `Event` with the other
+    `.data` meaning."""
+    for key in ("pending_events", "deferred", "scheduled_sends"):
+        val = snapshot.get(key)
+        if val is None:
+            continue
+        if not isinstance(val, list) or not all(
+            isinstance(r, dict)
+            and isinstance(r.get("type"), str)
+            and r["type"]
+            for r in val
+        ):
+            fail(
+                f"'{key}' must be a list of event records whose 'type' is "
+                f"a non-empty string"
+            )
+        for r in val:
+            if "stream" in r and not isinstance(r["stream"], bool):
+                fail(
+                    f"'{key}' record 'stream' is "
+                    f"{type(r['stream']).__name__}, expected a boolean"
+                )
 
 
 def _check_v4_fields(snapshot: Dict[str, Any], fail: Any) -> None:

@@ -331,6 +331,13 @@ actors.
 > Stopping a child early does not fire either. As of 0.8.0, invoked child
 > completion is detected immediately via a terminal-listener callback, not by
 > polling — the old `_ACTOR_POLL_INTERVAL` no longer exists.
+>
+> On the **sync engine** the child runs on its own thread, so its completion
+> reaches the parent through the thread-safe mailbox: the parent's `onDone`
+> runs on the parent's *next* `send()` or `tick()`, not inside the call that
+> finished the child. A test that checks the parent right after the child's
+> last event must `tick()` first (#267 battle: a thousand children, each
+> `onDone` exactly once, thread count flat).
 
 > **Unresolvable `to` (0.9.0, #133).** A `sendTo` whose `to` names no live actor does
 > **not** raise. The send is dropped, `on_event_dropped(reason="unresolved_target")`

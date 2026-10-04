@@ -65,7 +65,7 @@ def _machine(service: Any, max_tokens: Any = None) -> Any:
     deltas: List[str] = []
 
     def keep(i: Any, ctx: Any, e: Any, a: Any) -> None:
-        d = e.data.get("data") or {}
+        d = e.payload.get("data") or {}  # #267: e.data is the item
         if "delta" in d:
             deltas.append(d["delta"])
 

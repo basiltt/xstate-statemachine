@@ -221,7 +221,26 @@ class _LogicTarget:
     def send(self, event: Any, **payload: Any) -> None:
         if isinstance(event, str):
             event = Event(type=event, payload=payload)
-        self._handle.receive(event)
+        handle = self._handle
+        if handle.finished:
+            # 📝 #267 battle: a DELAYED `sendTo` resolved this target while
+            #    the invocation was live, but its state exited (cleanup ran)
+            #    before the timer fired. Delivering would call `receive`
+            #    handlers of torn-down logic (a closed socket). If the state
+            #    was RE-ENTERED and a new invocation runs under the same id,
+            #    that live one is the addressee; otherwise drop and say so
+            #    -- never a silent drop. The timer fires BETWEEN steps, so
+            #    the soft error must not leak onto the next unrelated
+            #    receipt: report the drop, not a step error.
+            owner = handle._interp
+            live = owner._running_logic.get(self.id)
+            if live is None or live.finished:
+                owner._report_unresolved_target(
+                    "sendTo", self.id, event, soft_error=False
+                )
+                return
+            handle = live
+        handle.receive(event)
 
     def send_threadsafe(self, event: Any, **payload: Any) -> None:
         self.send(event, **payload)
@@ -1300,7 +1319,12 @@ class BaseInterpreter(Generic[TContext]):
         return json_snapshot
 
     def _report_unresolved_target(
-        self, action: str, to: Any, undelivered: Any
+        self,
+        action: str,
+        to: Any,
+        undelivered: Any,
+        *,
+        soft_error: bool = True,
     ) -> None:
         """An addressed event reached no live actor (#133): `sendTo` and
         `forwardTo` share this so the two siblings cannot drift.
@@ -1321,6 +1345,11 @@ class BaseInterpreter(Generic[TContext]):
         )
         for plugin in self._plugins:
             plugin.on_event_dropped(self, undelivered, "unresolved_target")
+        if not soft_error:
+            # 📝 #267 battle: a drop that happens between steps (a delayed
+            #    send's timer) has no step to charge; `_step_soft_error`
+            #    would otherwise attach to the NEXT event's receipt.
+            return
         self._step_soft_error = ActorSpawningError(
             f"{action} target {to!r} did not resolve to a live actor; "
             f"'{getattr(undelivered, 'type', undelivered)}' was not delivered."

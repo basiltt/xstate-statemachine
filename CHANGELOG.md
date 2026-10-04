@@ -231,6 +231,21 @@ _No unreleased changes yet._
 
 ### Added
 
+- **`StreamEvent`, `drain_pending_cleanups(timeout=)`,
+  `DEFAULT_CLEANUP_TIMEOUT` (battle-test #267).** `StreamEvent` is the
+  `Event` subclass a stream actor (`from_async_iterator` / `from_iterator`)
+  delivers: **`event.data` is the item** (the `DoneEvent` precedent and
+  what the #267 verification script read), `event.payload` stays
+  `{"data": item}` so dict / JSON code keeps working. It round-trips
+  through `persist_event` / `restore_event` (a `"stream": true` flag in
+  the record; a record without it is a plain `Event`), so a pending stream
+  item in a snapshot restores as the same shape on both engines.
+  `drain_pending_cleanups(timeout=30.0)` bounds how long the async
+  `stop()` waits for `async def` cleanups: a cleanup still running after
+  the timeout is cancelled and logged (`None` waits without bound).
+  `StreamEvent`, `RunningLogic`, `drain_pending_cleanups` and
+  `DEFAULT_CLEANUP_TIMEOUT` are exported from the top-level package.
+
 - **`PRIVATE_CONTEXT_PREFIX` (`"_xsm_"`), `is_private_context_key()`,
   `public_context()` (battle-test #265).** A reserved prefix for library
   bookkeeping that must survive the process and therefore rides in the
@@ -1156,6 +1171,45 @@ _No unreleased changes yet._
   line under Install.
 
 ### Changed
+
+- **Actor logic helpers, as battle-tested (#267) -- a market-data feed
+  that flaps for an hour (20 000 ticks pushed from the socket's own
+  thread across 50 drop/reconnect cycles, both engines) and two
+  adversary suites:**
+  - **A `send_back` from an exited invocation is dropped.** A producer
+    thread does not know the machine left the state; its late event used
+    to land in whatever state came next -- and on the *next* socket's
+    counter. It is now dropped with a debug log once the invocation's
+    cleanup ran (SCXML's rule for a cancelled invocation).
+  - **`send_back` refuses `internal` / `wait` / `priority` as payload
+    keys** (`TypeError`). They reached the async engine's
+    `send_threadsafe(internal=...)` as a *control* and the sync engine's
+    as payload -- the same call meant two things. Send a dict event to
+    carry such a key.
+  - **A `send_back` that races `stop()`** on the async engine (status
+    still `running`, loop already closing) is dropped with a warning
+    instead of raising `RuntimeError` on the producer's thread.
+  - **`drain_pending_cleanups` drains only the current loop's
+    cleanups** and forgets tasks whose loop is closed; a cleanup left
+    behind by a finished `asyncio.run()` no longer breaks the next one
+    with `ValueError("different loop")`, and the module-global registry
+    cannot grow with abandoned loops.
+  - **A delayed `sendTo` whose target invocation exited** before the
+    delay elapsed is dropped and reported via
+    `on_event_dropped(reason="unresolved_target")`, not delivered to
+    torn-down logic (both engines). If the state was re-entered and a
+    new invocation runs under the same id, that live one receives it.
+    The drop happens between steps, so it is reported but never
+    attached as the *next* unrelated event's receipt error.
+  - **`from_iterator` is honest about a blocked `next()`.** A sync
+    iterator stuck in a blocking read cannot be interrupted; it stops at
+    its next item, and the cleanup logs a warning naming the invocation
+    when its thread is still alive (the 100 ms grace wait is skipped on
+    an asyncio loop thread, so N blocked iterators cannot stall the
+    loop). Give blocking iterators a timeout, or use `from_callback` and
+    let the client's own thread push.
+  - `tests/recipes` `Driver.close()` is idempotent (a scenario may stop
+    the machine itself before the fixture does).
 
 - **Patterns, as battle-tested (#265) -- behaviour changes you can hit:**
   - **The dead-letter error chain now lives in the snapshot** under
