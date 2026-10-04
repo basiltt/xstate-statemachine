@@ -60,7 +60,10 @@ def instrument_app(
     * wraps the app's current lifespan with `registry.lifespan`
       (call before the app starts);
     * with *exception_handlers*, maps the library's exceptions escaping a
-      handler (e.g. a `get_interpreter` save conflict) to problem+json.
+      handler (e.g. a `get_interpreter` save conflict) to problem+json,
+      and every `RequestValidationError` -- including those of routes you
+      add yourself -- to the same `422` problem (field path + error type,
+      never the offending value; X0.7).
 
     Returns *app*.
     """
@@ -80,4 +83,21 @@ def instrument_app(
             return problem_for_exception(exc)
 
         app.add_exception_handler(XStateMachineError, handle)
+        # 🛡️ #266 battle (X0.7): a route the APP adds beside the generated
+        #    router (the orders example's `PAY` with BackgroundTasks) fell
+        #    back to FastAPI's default 422 body, which echoes the offending
+        #    `input` (a card token, a 1 MB string) and its full message.
+        #    The router's own routes already answered with the problem
+        #    shape (loc + type only); make it app-wide.
+        from fastapi.exceptions import RequestValidationError
+
+        from .router import _validation_problem
+
+        async def handle_validation(
+            request: Request, exc: Exception
+        ) -> Response:
+            assert isinstance(exc, RequestValidationError)
+            return _validation_problem(exc)
+
+        app.add_exception_handler(RequestValidationError, handle_validation)
     return app

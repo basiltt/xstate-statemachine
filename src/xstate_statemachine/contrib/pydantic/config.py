@@ -27,6 +27,7 @@ from pydantic import (
 from ...exceptions import InvalidConfigError
 
 __all__ = [
+    "ActionObject",
     "ActionSpec",
     "InvokeConfig",
     "MachineConfig",
@@ -37,8 +38,19 @@ __all__ = [
 
 _X_KEY = re.compile(r"^x-")
 
+
+class ActionObject(BaseModel):
+    """`{type, params, ...}` -- `type` MUST be a string (#266 battle: the
+    parser crashed with a bare ``AttributeError`` on ``{"type": 1}``)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+    params: Optional[Dict[str, Any]] = None
+
+
 #: An action: a name, a `{type, params}` object, or a list of either.
-ActionSpec = Union[str, Dict[str, Any]]
+ActionSpec = Union[str, ActionObject]
 Actions = Union[ActionSpec, List[ActionSpec]]
 #: A guard: a name, `{type, params}`, or a composite `{and|or|not: ...}`.
 GuardSpec = Union[str, Dict[str, Any]]
@@ -56,7 +68,10 @@ class _Loose(BaseModel):
 
 
 class TransitionConfig(_Loose):
-    target: Optional[Union[str, List[str]]] = None
+    # 📝 #266 battle: a LIST target (XState v5 multi-target) is not
+    #    implemented by the parser -- it crashed with AttributeError. The
+    #    gate refuses it with a path instead of passing it through.
+    target: Optional[str] = None
     actions: Optional[Actions] = None
     guard: Optional[GuardSpec] = None
     cond: Optional[GuardSpec] = None  # XState v4 alias

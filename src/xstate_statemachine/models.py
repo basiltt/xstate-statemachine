@@ -251,7 +251,15 @@ class ActionDefinition:
         elif isinstance(config, dict):
             # 📝 Handle object definition: {"type": "myAction", ...}
             logger.debug("🔧 Parsing action definition from dict: %s", config)
-            self.type = config.get("type", "UnknownAction")
+            action_type = config.get("type", "UnknownAction")
+            if not isinstance(action_type, str):
+                # 🛡️ #266 battle: `{"type": 1}` escaped as a bare
+                #    AttributeError from `startswith` deep in the parser.
+                raise InvalidConfigError(
+                    "Action definition 'type' must be a string, got "
+                    f"{type(action_type).__name__}: {config!r}"
+                )
+            self.type = action_type
             self.params = config.get("params")
             self._validate_builtin_params(config)
         else:
@@ -503,7 +511,17 @@ class TransitionDefinition:
             )
         self.event: str = event
         self.source: "StateNode" = source
-        self.target_str: Optional[str] = config.get("target")
+        target = config.get("target")
+        if target is not None and not isinstance(target, str):
+            # 🛡️ #266 battle: a list / number target escaped as a bare
+            #    AttributeError from the resolver. Multi-target transitions
+            #    are not implemented; say so.
+            raise InvalidConfigError(
+                f"Transition '{event}' on state '{source.id}': 'target' "
+                f"must be a string (multi-target lists are not supported), "
+                f"got {type(target).__name__}"
+            )
+        self.target_str: Optional[str] = target
         self.actions: List[ActionDefinition] = actions or []
         #: ⚡ Perf: the target `StateNode`, resolved ONCE at build time by
         #: `validation.validate_machine` (which already has to resolve it to

@@ -310,6 +310,7 @@ def create_machine(
                 f"got {type(context_validator).__name__}."
             )
         machine.context_validator = context_validator
+        _check_initial_context(machine, context_validator)
 
     # -------------------------------------------------------------------------
     # 🛡️ Step 4: Validate the built tree (0.8.0)
@@ -394,3 +395,33 @@ def _warn_collapsed_config_names(
                 UserWarning,
                 stacklevel=3,
             )
+
+
+def _check_initial_context(
+    machine: Any, validator: Callable[[Any], None]
+) -> None:
+    """#266 battle: a validator that declares a *static schema* for the
+    context (it carries ``__xsm_context_model__`` -- the `[pydantic]`
+    extra's `context_model()` does) is run against the chart's static
+    initial context at BUILD time, so a chart whose ``context`` the model
+    refuses is `InvalidConfigError` here, not a machine that starts and
+    then rolls back every mutating action forever.
+
+    🏛️ Why only marked validators: the #305 contract for a plain callable
+    is "called after a mutating action, never at start" (pinned by
+    counter tests, and a side-effecting validator must not be invoked at
+    build). A context FACTORY has nothing static to check. A COPY is
+    validated so a `write_back` validator cannot mutate the chart.
+    """
+    if getattr(validator, "__xsm_context_model__", None) is None:
+        return
+    raw = getattr(machine, "initial_context", None)
+    if callable(raw) or not isinstance(raw, dict):
+        return
+    try:
+        validator(copy.deepcopy(raw))
+    except Exception as exc:  # noqa: BLE001 -- user validator
+        raise InvalidConfigError(
+            "the machine's initial context does not satisfy its "
+            f"context model: {exc}"
+        ) from exc

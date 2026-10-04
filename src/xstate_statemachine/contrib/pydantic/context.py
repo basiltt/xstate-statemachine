@@ -155,8 +155,10 @@ class TypedContextPlugin(PluginBase[Any]):
     the initial or restored context. A snapshot round-trips `Decimal` as
     a string (`json.dumps(default=str)`), so a restored machine would hand
     its first action a ``"9.5"``. This plugin re-validates on
-    `on_interpreter_start`, coercing values back to their model types and
-    refusing an invalid context loudly. Attach it wherever you use
+    `on_interpreter_start`, coercing values back to their model types. An
+    invalid context puts the machine in ``status == "error"`` with the
+    `ContextValidationError` as ``interpreter.error`` (a plugin hook
+    cannot raise through `start()`). Attach it wherever you use
     `context_model`; `persisted(..., plugins=[TypedContextPlugin(Model)])`.
     """
 
@@ -164,7 +166,17 @@ class TypedContextPlugin(PluginBase[Any]):
         self.model = model
 
     def on_interpreter_start(self, interpreter: Any) -> None:
-        _validate_into(self.model, interpreter.context, True)
+        # 🏛️ #266 battle: plugin hooks are CONTAINED (`_SafePlugin`), so a
+        #    raise here was logged and the machine started anyway with a
+        #    context the model refuses -- silent acceptance. Put the
+        #    machine in the terminal `error` status instead (the same
+        #    surface as a service failure with no `onError`): `status ==
+        #    "error"`, `interpreter.error` is the `ContextValidationError`,
+        #    `on_error` fires, and no event is processed.
+        try:
+            _validate_into(self.model, interpreter.context, True)
+        except ContextValidationError as exc:
+            interpreter._fail(exc)
 
 
 class PydanticCodec:
