@@ -9,9 +9,9 @@ from typing import Any, Callable, Dict, Type, TypeVar
 from pydantic import BaseModel, ValidationError
 
 from ...context_keys import is_private_context_key
-
 from ...exceptions import XStateMachineError
 from ...plugins import PluginBase
+from ._scrub import scrub
 
 __all__ = [
     "ContextValidationError",
@@ -76,15 +76,25 @@ def _validate_into(
     try:
         instance = model.model_validate(visible)
     except ValidationError as exc:
-        raise ContextValidationError(model, exc) from exc
+        # 🔥 #266 battle (X0.5): `from None` + a scrubbed copy -- the raw
+        #    error carries the offending VALUE (a card token), and this
+        #    exception is logged with its traceback on every engine.
+        raise ContextValidationError(model, scrub(exc)) from None
     if write_back:
         # 🏛️ The interpreter owns a plain dict (actions mutate it in
         #    place); the model is a LENS on it, not a replacement. Write
         #    the model's defaults and coerced values back so `ctx["total"]`
         #    is a Decimal and a key the chart omitted exists -- keys the
         #    model does not declare are left untouched.
+        # 🔥 #266 battle: written as `model_dump(mode="python")` values,
+        #    not attributes. `getattr` put nested MODEL INSTANCES
+        #    (`List[LineItem]`) into the dict; the snapshot's
+        #    `default=str` then persisted their repr ("sku='a' qty=2") --
+        #    unrestorable data loss. The dump keeps `Decimal`/`datetime`
+        #    and turns nested models into plain dicts.
+        dumped = instance.model_dump(mode="python")
         for name in model.model_fields:
-            ctx[name] = getattr(instance, name)
+            ctx[name] = dumped[name]
     return instance
 
 

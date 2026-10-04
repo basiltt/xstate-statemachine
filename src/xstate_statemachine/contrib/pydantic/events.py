@@ -14,7 +14,9 @@ from typing import (
     get_origin,
 )
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
+
+from ._scrub import scrub
 
 __all__ = ["EventModel", "events_union", "event_type_of", "models_of"]
 
@@ -85,7 +87,13 @@ def _validator_for(
         # A pydantic ValidationError propagates as-is: the engine wraps it
         # in `InvalidEventPayloadError` (#51) with the structured
         # `.errors()` reachable through `.cause`.
-        model.model_validate(data)
+        # 🔥 #266 battle (X0.5): re-raised SCRUBBED and unchained -- the
+        #    raw error's text carries `input_value=<the card number>` and
+        #    `InvalidEventPayloadError` embeds `str(cause)` in its message.
+        try:
+            model.model_validate(data)
+        except ValidationError as exc:
+            raise scrub(exc) from None
 
     _validate.__name__ = f"validate_{model.__name__}"
     _validate.__xsm_event_model__ = model  # type: ignore[attr-defined]
