@@ -14,7 +14,7 @@ from litestar.config.app import AppConfig
 from litestar.di import Provide
 from litestar.plugins import InitPluginProtocol, OpenAPISchemaPluginProtocol
 
-from ...exceptions import XStateMachineError
+from ...exceptions import StoreUnavailableError, XStateMachineError
 from ...persistence.helpers import KeyNotFoundError
 from ..starlette._http import problem_for_exception, status_for_exception
 from ._edge import to_litestar, to_starlette
@@ -65,7 +65,11 @@ def get_interpreter(
 
 
 def _problem_handler(request: Any, exc: Exception) -> Any:
-    if status_for_exception(exc) >= 500:
+    if isinstance(exc, StoreUnavailableError):
+        # 🔌 #306 battle: a backend outage is one WARNING per request,
+        #    as in the Starlette registry and Flask -- not an ERROR storm.
+        logger.warning("🔌 store unavailable on %s: %s", request.url.path, exc)
+    elif status_for_exception(exc) >= 500:
         logger.error("🔥 %s on %s", type(exc).__name__, request.url.path)
     return to_litestar(problem_for_exception(exc))
 

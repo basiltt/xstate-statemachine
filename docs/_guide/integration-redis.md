@@ -62,7 +62,7 @@ Implements `StateStore`. `client_or_url` is a `redis.Redis` or a URL. A client b
 - `lock(key, timeout=)` is `SET NX PX lock_ttl_ms` with a random token, released only by that token (Lua compare-and-delete). `LockTimeoutError` when not acquired in time.
 - `forget(key)` deletes snapshot + deadlines + lock **+ the instance's log stream** atomically and reports counts (X0.5: everything the namespace holds about one instance); inbox rows are per tenant scope — use `RedisInbox.forget(scope)`. `delete(key)` removes only the record and leaves a held lock alone.
 - `list_keys(prefix=)` escapes `*?[]\` so a user prefix matches literally.
-- `ttl_s` expires idle instances; `health()` pings and never raises.
+- `ttl_s` expires idle instances; `health()` pings and never raises (a down backend reports the exception **class name**, never its text -- it carries host:port). With `ttl_s`, the `keys` set is not expired with the hash: `list_keys()` may still name an instance whose snapshot is gone (`load()` returns `None`); `due_keys()` prunes such orphans, `list_keys()` does not.
 - A damaged record (missing `snapshot` field, non-integer `version`) is `SnapshotCorruptError`; an unreadable `{prefix}:schema` marker is `StoreError` at construction.
 - `due_keys(until_wall, limit=)` reads the deadline index directly — the scanner uses it instead of loading every record. Index members whose snapshot expired (`ttl_s`) are pruned as they are met, so they cannot starve live keys.
 - **Layout 2** (this release): deadline index members are JSON arrays `[key, state_id, entry_seq, event]`, so a key containing `|` is unambiguous. A namespace written by a pre-release build (layout 1) is upgraded in place on construction and its old members are still read; a process on the older layout then refuses the namespace (`StoreError: … newer`) — upgrade every worker sharing a prefix together. No released version wrote layout 1.
@@ -108,6 +108,8 @@ The SCAN-pattern escaper `list_keys` uses; exported for your own `SCAN`s.
 > **You must configure:** a unique `prefix` per application; a `lock_ttl_ms` longer than your slowest step (the fence catches the rest); a `maxlen` for logs and `ttl_s` for idle snapshots if the key space is unbounded; Redis persistence if a restart must not lose state.
 
 ## Compatibility
+
+**Redis Cluster is not supported**: the layout is not hash-tagged (one instance spans `snap:`, `dl:`, `deadlines`, `keys`, `lock:` keys) and the Lua scripts touch keys across them. Use a single primary (with replicas / Sentinel) per namespace.
 
 | redis-py | Redis server | Python | Tested in CI |
 |:--|:--|:--|:--|

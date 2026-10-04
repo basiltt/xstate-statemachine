@@ -31,6 +31,7 @@ import redis
 from ...persistence.idempotency import InboxEntry
 from ._errors import redis_errors_typed
 from ._keys import Keys
+from ._layout import _client_from_url
 from .store import escape_glob
 
 __all__ = ["RedisInbox"]
@@ -168,7 +169,7 @@ class RedisInbox:
     def __init__(self, client_or_url: Any, *, prefix: str) -> None:
         self.k = Keys(prefix)
         self.r: Any = (
-            redis.Redis.from_url(client_or_url)
+            _client_from_url(redis.Redis, client_or_url)
             if isinstance(client_or_url, str)
             else client_or_url
         )

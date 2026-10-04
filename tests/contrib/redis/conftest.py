@@ -5,6 +5,7 @@ gets a fresh, unique prefix and the namespace is wiped afterwards."""
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from typing import Any, Iterator
@@ -33,6 +34,16 @@ def _client() -> Any:
 
 
 def _aclient(sync_client: Any) -> Any:
+    # 📝 3.9: an asyncio client built with no running loop calls
+    #    `get_event_loop()`, which raises once an earlier test closed /
+    #    unset the thread's loop. Provide one; the client binds lazily.
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        try:
+            asyncio.get_event_loop()
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
     url = os.environ.get("XSM_REDIS_URL")
     if url:
         import redis.asyncio as aredis

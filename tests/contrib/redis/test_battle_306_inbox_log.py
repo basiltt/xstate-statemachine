@@ -7,6 +7,7 @@ failure it pins. Runs on fakeredis by default and on a live server with
 
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
 import time
@@ -400,3 +401,94 @@ def test_read_paging_is_ranged(r: Any, prefix: str) -> None:
     head = min(timed("m", 0) for _ in range(3))
     tail = min(timed("m", 99_800) for _ in range(3))
     assert max(head, tail) < max(small * 5, 0.05), (small, head, tail)
+
+
+# -----------------------------------------------------------------------------
+# reviewer follow-ups (#306): URL clients bounded everywhere; parity; L4
+# -----------------------------------------------------------------------------
+class TestReviewerFollowUps:
+    def test_inbox_and_log_url_clients_get_the_store_timeouts(self) -> None:
+        """H1: `RedisInbox(url)` / `RedisLog(url)` built bare clients with
+        no socket timeout -- an inbox on the request path could hang
+        forever on a Redis that accepts TCP and never answers."""
+        from unittest import mock
+
+        import redis
+
+        from src.xstate_statemachine.contrib.redis import (
+            DEFAULT_SOCKET_CONNECT_TIMEOUT_S,
+            DEFAULT_SOCKET_TIMEOUT_S,
+            RedisInbox,
+            RedisLog,
+        )
+
+        for cls in (RedisInbox, RedisLog):
+            fake = mock.MagicMock()
+            with mock.patch.object(
+                redis.Redis, "from_url", return_value=fake
+            ) as from_url:
+                cls("redis://localhost:1/0", prefix="p")
+            kw = from_url.call_args.kwargs
+            assert kw["socket_timeout"] == DEFAULT_SOCKET_TIMEOUT_S, cls
+            assert (
+                kw["socket_connect_timeout"]
+                == DEFAULT_SOCKET_CONNECT_TIMEOUT_S
+            )
+
+    def test_async_health_matches_sync_and_hides_host(
+        self, r: Any, prefix: str
+    ) -> None:
+        """M1 / L1: the async probe reports the same fields; a down backend
+        reports the class name, never `str(exc)` (which carries host:port)."""
+        from .conftest import _aclient
+        from src.xstate_statemachine.contrib.redis import (
+            AsyncRedisStore,
+            RedisStore,
+        )
+
+        sync_h = RedisStore(r, prefix=prefix).health()
+
+        async def go() -> Any:
+            a = AsyncRedisStore(_aclient(r), prefix=prefix)
+            try:
+                return await a.health()
+            finally:
+                close = getattr(a.r, "aclose", None) or a.r.close
+                await close()
+
+        async_h = asyncio.run(go())
+        assert set(async_h) == set(sync_h)
+        assert async_h["schema_version"] == sync_h["schema_version"]
+        # a down client: class name only
+        import redis
+
+        class _Down:
+            def ping(self) -> Any:
+                raise redis.ConnectionError("Error 111 connecting to h:6379")
+
+            def scard(self, *_a: Any) -> int:
+                return 0
+
+        store = RedisStore(r, prefix=prefix)
+        store.r = _Down()
+        h = store.health()
+        assert h["ok"] is False and h["error"] == "ConnectionError"
+        assert "6379" not in str(h)
+
+    def test_purge_with_malformed_entry_is_log_corrupt(
+        self, r: Any, prefix: str
+    ) -> None:
+        """L4: an entry without a numeric `ts` is `LogCorruptError`, not a
+        bare KeyError / ValueError."""
+        from src.xstate_statemachine.contrib.redis import RedisLog
+        from src.xstate_statemachine.persistence.log import LogCorruptError
+
+        log = RedisLog(r, prefix=prefix)
+        name = log.k.log("m1")
+        r.xadd(name, {"body": "{}"}, id="1-0")  # no ts
+        with pytest.raises(LogCorruptError):
+            log.purge_older_than(10.0)
+        r.delete(name)
+        r.xadd(name, {"body": "{}", "ts": "soon"}, id="1-0")
+        with pytest.raises(LogCorruptError):
+            log.purge_older_than(10.0)

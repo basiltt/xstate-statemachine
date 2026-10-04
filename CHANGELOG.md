@@ -241,10 +241,12 @@ _No unreleased changes yet._
   adapters answer with **503 Store unavailable** (one WARNING line per
   request, no exception text; `/_xsm/health` stays 200, `/_xsm/ready` is
   503). `IdempotencyPlugin(on_inbox_error="refuse")` refuses on it.
-  Clients `RedisStore` builds from a URL get `DEFAULT_SOCKET_TIMEOUT_S` /
+  Clients `RedisStore`, `RedisInbox` and `RedisLog` build from a URL get
+  `DEFAULT_SOCKET_TIMEOUT_S` /
   `DEFAULT_SOCKET_CONNECT_TIMEOUT_S` (5 s; URL query overrides), so a
   server that accepts TCP and never answers is a bounded
-  `StoreUnavailableError`, not a hang. `RedisStore.due_keys` /
+  `StoreUnavailableError`, not a hang (a client you pass in keeps its
+  own settings). `RedisStore.due_keys` /
   `AsyncRedisStore.due_keys` read the sorted-set index for the scanner.
 
 - **`StreamEvent`, `drain_pending_cleanups(timeout=)`,

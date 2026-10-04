@@ -38,6 +38,7 @@ from ...persistence.log import (
 )
 from ._errors import redis_errors_typed
 from ._keys import Keys
+from ._layout import _client_from_url
 from .store import escape_glob
 
 __all__ = ["RedisLog"]
@@ -118,7 +119,7 @@ class RedisLog:
             raise ValueError(f"maxlen must be >= 1, got {maxlen!r}")
         self.k = Keys(prefix)
         self.r: Any = (
-            redis.Redis.from_url(client_or_url)
+            _client_from_url(redis.Redis, client_or_url)
             if isinstance(client_or_url, str)
             else client_or_url
         )
@@ -221,11 +222,7 @@ class RedisLog:
             )
             if not page:
                 return n
-            dead = [
-                _s(i)
-                for i, f in page
-                if float(_s({_s(a): b for a, b in f.items()}["ts"])) < cutoff
-            ]
+            dead = [_s(i) for i, f in page if _entry_ts(name, i, f) < cutoff]
             if dead:
                 n += int(self._drop(keys=[name], args=dead))
             start = f"({_s(page[-1][0])}"
@@ -233,8 +230,20 @@ class RedisLog:
     @redis_errors_typed
     def forget(self, machine_id: str) -> int:
         name = self.k.log(machine_id)
-        pipe = self.r.pipeline()
+        pipe = self.r.pipeline(transaction=True)  # MULTI: count + delete
         pipe.xlen(name)
         pipe.delete(name)
         n, _ = pipe.execute()
         return int(n)
+
+
+def _entry_ts(name: str, entry_id: Any, fields: Any) -> float:
+    """The ``ts`` of a stream entry, or `LogCorruptError` -- a missing or
+    non-numeric field must not escape as a bare ``KeyError`` /
+    ``ValueError`` (reviewer L4, #306 battle)."""
+    try:
+        return float(_s({_s(a): b for a, b in fields.items()}["ts"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise LogCorruptError(
+            f"{name}: entry {_s(entry_id)!r} has no numeric 'ts'"
+        ) from exc

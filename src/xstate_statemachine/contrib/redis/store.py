@@ -219,7 +219,12 @@ class RedisStore(BaseStore):
                 "schema_version": SCHEMA_VERSION,
             }
         except Exception as exc:  # a probe reports, it does not raise
-            return {"ok": False, "backend": self.backend, "error": str(exc)}
+            # 📝 class name only: `str(exc)` carries host:port (X0.7).
+            return {
+                "ok": False,
+                "backend": self.backend,
+                "error": type(exc).__name__,
+            }
 
     # -- scanner support -------------------------------------------------------------
     @redis_errors_typed
@@ -437,15 +442,27 @@ class AsyncRedisStore:
         """Liveness probe; never raises (a down Redis is ``ok: False``)."""
         try:
             ok = bool(await self.r.ping())
-            return {"ok": ok, "backend": self.backend, "prefix": self.k.p}
+            return {
+                "ok": ok,
+                "backend": self.backend,
+                "prefix": self.k.p,
+                "keys": int(await self.r.scard(self.k.keys)),
+                "schema_version": SCHEMA_VERSION,
+            }
         except Exception as exc:  # a probe reports, it does not raise
-            return {"ok": False, "backend": self.backend, "error": str(exc)}
+            # 📝 class name only: `str(exc)` carries host:port (X0.7).
+            return {
+                "ok": False,
+                "backend": self.backend,
+                "error": type(exc).__name__,
+            }
 
     async def due_keys(
         self, until_wall: float, *, limit: int = 1000
     ) -> List[Tuple[str, float]]:
         """Async twin of `RedisStore.due_keys` (orphans pruned)."""
         try:
+            await self._ensure_schema()  # reviewer M1: parity with sync
             while True:
                 rows = await self.r.zrangebyscore(
                     self.k.deadlines,
