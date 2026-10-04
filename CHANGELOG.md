@@ -9,30 +9,7 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ## [Unreleased]
 
-### Added
-- `[fastapi]` `bounded_route_class(registry)`: the router's route class
-  (413 / 415 / value-free 422) for routes added beside `StatechartRouter`
-  (#266 battle).
-- `[pydantic]` `ActionObject` / `ActionSpec` re-exported from the package.
-
-### Fixed
-- `create_machine`: a non-numeric `maxIterations` / `spawnBlockingTimeout`,
-  a non-object `states` on an initial-less compound, and a chart nested
-  ~600 deep are `InvalidConfigError` (were bare `ValueError` /
-  `TypeError` / `AttributeError` / `RecursionError`) (#266 battle).
-- `validate_machine_json` now refuses what the engine refuses: a
-  non-object `context`, duplicate custom state `id`s, and string
-  `strict` / `strictTargets` / `strictConfig` (the parser reads `"false"`
-  as true). It takes `bytes` and a BOM, reports malformed JSON and
-  duplicate JSON keys as `InvalidConfigError`, prints list paths as
-  `PAY[0].target` without union-branch noise, and names its ~95-level
-  nesting cap instead of "cyclic reference".
-- `machine_json_schema`: same-named nested models in the event and
-  context schemas no longer overwrite each other's `$defs` entry;
-  `x-leaf-states` omits history pseudo-states; a union member without a
-  `Literal` `type` is a `TypeError`.
-- Orders example: the hand-written `PAY` route enforces the body cap
-  (1 MB was parsed and answered 422 instead of 413).
+_No unreleased changes yet._
 
 ## [0.11.0] - 2026-10-01
 
@@ -1482,6 +1459,39 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   maps **every** `RequestValidationError` -- including routes the app
   adds beside the generated router -- to the 422 problem shape (field
   path + error type, never the offending `input`; X0.7).
+  **The adversary suites then found:** `context_model(write_back=True)`
+  put nested model INSTANCES into the dict, so `get_snapshot()` stored
+  `"sku='a' qty=2"` -- an unrestorable snapshot; write-back now uses
+  `model_dump(mode="python")` (plain dicts, `Decimal` / `datetime`
+  kept). A rejected value -- a card token failing validation -- rode in
+  pydantic's error text (`input_value=`) into `logger.exception` and
+  `InvalidEventPayloadError`'s message; `ContextValidationError` and the
+  payload error are now rebuilt value-free (path, type, message; X0.5).
+  `persisted()` / `apersisted()` / `persisted_retry` ran the block and
+  then **saved** a terminal `status: "error"` snapshot over the record
+  when `TypedContextPlugin` had just failed a restored machine; they now
+  raise the `ContextValidationError` before the block and write nothing.
+  `PydanticCodec` stored a context the model refuses silently; it still
+  stores it (refusing would lose state) but emits a `RuntimeWarning`
+  naming the field paths. `create_machine`: a non-numeric
+  `maxIterations` / `spawnBlockingTimeout`, a non-object `states` on an
+  initial-less compound, and a chart nested ~600 deep are
+  `InvalidConfigError` (were bare `ValueError` / `TypeError` /
+  `AttributeError` / `RecursionError`). `validate_machine_json` refuses
+  what the engine refuses -- a non-object `context`, duplicate custom
+  state `id`s, string `strict*` flags (the parser read `"false"` as
+  true) -- takes `bytes` and a BOM, reports malformed JSON and duplicate
+  JSON keys as `InvalidConfigError`, prints list paths as `PAY[0].target`,
+  and names its ~95-level nesting cap; gate ⇔ parser parity holds in
+  BOTH directions on all 168 shipped charts and a seeded 600-mutation
+  fuzz. `machine_json_schema`: same-named nested models in the event and
+  context schemas no longer overwrite each other's `$defs`;
+  `x-leaf-states` omits history pseudo-states; a union member without a
+  `Literal` `type` is a `TypeError`. `[fastapi]` gains
+  `bounded_route_class(registry)` -- the router's 413 / 415 / value-free
+  422 for routes added beside `StatechartRouter` (the orders example's
+  `PAY` route parsed a 1 MB body and answered 422). `event_type_of`,
+  `ActionObject` / `ActionSpec` are exported from `contrib.pydantic`.
 - **`FileStore.lock()` is fair within a process (battle-test #306, CI).**
   Sixteen threads spinning on the OS file lock with sleeps was a lottery:
   one waiter could lose every draw for the whole `timeout` (4 of 16 hit

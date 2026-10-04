@@ -39,7 +39,7 @@ def scrub(exc: ValidationError) -> ValidationError:
     except Exception:  # noqa: BLE001 -- a custom error type pydantic
         # cannot rebuild (`PydanticCustomError` needs its message
         # template): fall back to a generic, value-free error per loc.
-        generic = [
+        generic: List[Any] = [
             {
                 "type": "value_error",
                 "loc": d["loc"],
