@@ -703,6 +703,14 @@ class Interpreter(BaseInterpreter[TContext]):
 
             # 🔔 Notify plugins that the interpreter is starting.
             self._notify_interpreter_start()
+            if self.status == "error":
+                # 🛑 #266 battle (review H2): a start hook failed the
+                #    machine; do not enter the initial states (entry
+                #    actions, services, timers) on a refused context, and
+                #    do not leave the run loop alive on a dead machine.
+                self._processing = False
+                self._schedule_teardown()
+                return self
 
             # 🚀 Enter the initial state(s) of the machine.
             # We use a synthetic init event to allow any entry actions on the

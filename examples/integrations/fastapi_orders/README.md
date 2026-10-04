@@ -392,6 +392,50 @@ scope containing `|` was never purged; the log let 32 concurrent writers
 mint duplicate `seq`s (640 records, 37 distinct) and read every page by
 scanning the whole stream. All fixed; see the CHANGELOG.
 
+## A typed boundary under hostile traffic
+
+The fifth battle scenario (`tests/test_pydantic_boundary.py`, #266). The
+order service is the only thing between a browser and the chart: every
+payload is an `EventModel`, the context is `OrderContext` after every
+action, the chart passes `validate_machine_json(strict=True)` in the deploy
+pipeline, and the JSON Schema from `machine_json_schema` is what the
+frontend team codes against. Each is attacked:
+
+* **hostile payloads** -- 30+ malformed `PAY` / `ADD_ITEM` / `CANCEL`
+  bodies (wrong types, extra keys, nested objects, 1 MB strings, NUL,
+  `type` overrides, reserved `send()` kwargs, `__class__` /
+  `model_config` keys, non-object bodies): every one is `422` with a
+  field *path* and an error *type*, never a `500`, never the offending
+  value echoed, and the stored order is byte-identical afterwards;
+* **a mutating action that breaks the model** under
+  `actionErrorPolicy: rollback`, 64 threads × 50 events on the sync
+  engine and 200 awaited events on the async one: the context is never
+  observed invalid, every refusal is a `ContextValidationError` on the
+  receipt, `n` and `total` equal the clean events exactly;
+* **money through the persistence loop** -- a `Decimal` total through
+  `persisted()` on Memory / File / SQLite with `PydanticCodec` +
+  `TypedContextPlugin`: `"14.00"` at rest (never a float), a `Decimal`
+  in the restored machine's first action; the same *without* the plugin
+  is pinned as the documented pitfall (a `str` total, a visible error);
+* **the deploy gate** -- the shipped chart passes `strict=True`; 12
+  single-key corruptions are each refused *with the path*; the gate never
+  refuses a corpus chart (104) the engine accepts;
+* **the schema** -- every client-sendable event is a `oneOf` branch with
+  a `discriminator.mapping`, the `state` enum is the chart, the document
+  round-trips through `json`, and `x-machine-hash` changes with the chart.
+
+Four defects it found, all fixed in 0.11.0: a chart whose static
+`context` the model refuses **built and started** (the plugin's raise is
+contained) and then rolled back every mutating action forever -- it is
+now `InvalidConfigError` at `create_machine`, and a bad *restored* context
+puts the machine in `status == "error"`; `{"type": 1}` actions and list
+transition targets crashed the parser with a bare `AttributeError`; and a
+route the app adds beside the generated router (`PAY` with
+`BackgroundTasks`) fell back to FastAPI's default 422 body, which echoes
+the offending `input` -- `instrument_app` now maps every
+`RequestValidationError` to the problem shape.
+
+## Tests
 
 ```bash
 python -m pytest tests -q

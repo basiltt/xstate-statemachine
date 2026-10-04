@@ -273,27 +273,26 @@ def create_machine(
     #    distinction. `copy.copy` works for any plain object; the three
     #    registries are re-bound to owned copies by `_alias_logic_names`.
     machine: MachineNode[Any]
+    try:
+        machine = _build_node(config, final_logic)
+    except RecursionError:
+        # 🛡️ #266 battle (B): a pathologically deep chart (~600 levels)
+        #    escaped as a bare RecursionError from the recursive parser.
+        raise InvalidConfigError(
+            f"Machine '{machine_id}' nests states too deeply to parse "
+            f"(Python recursion limit reached)."
+        ) from None
     if final_logic is None:
         # 🤖 Build once with an empty logic, discover against the built
         #    tree, then attach. `MachineNode.logic` is a plain attribute read
         #    only at run time, so attaching after the parse is
         #    observationally identical to passing it in.
-        # ⚡ The placeholder logic is replaced two lines down and never
-        #    read; share one immutable-by-convention instance instead of
-        #    constructing (and INFO-logging) a fresh one per build.
-        machine = MachineNode(config, _EMPTY_LOGIC)
         machine.logic = LogicLoader.get_instance().discover_and_build_logic(
             config,
             logic_modules=logic_modules,
             logic_providers=logic_providers,
             machine=machine,
         )
-    else:
-        try:
-            owned_logic = copy.copy(final_logic)
-        except TypeError:  # pragma: no cover -- exotic objects refusing copy
-            owned_logic = final_logic
-        machine = MachineNode(config, owned_logic)
     # 🔤 Bind snake_case implementations to the camelCase names the config
     #    uses (and vice versa) once, here, so every interpreter lookup stays
     #    a plain dict hit. Exact-name entries are never overridden.
@@ -310,6 +309,7 @@ def create_machine(
                 f"got {type(context_validator).__name__}."
             )
         machine.context_validator = context_validator
+        _check_initial_context(machine, context_validator)
 
     # -------------------------------------------------------------------------
     # 🛡️ Step 4: Validate the built tree (0.8.0)
@@ -339,6 +339,23 @@ def create_machine(
         ),
     )
     return machine
+
+
+def _build_node(
+    config: Dict[str, Any], final_logic: Any
+) -> "MachineNode[Any]":
+    """Parse the tree with the caller's logic copied, or the shared
+    placeholder (replaced by discovery right after)."""
+    if final_logic is None:
+        # ⚡ The placeholder logic is replaced by the caller and never
+        #    read; share one immutable-by-convention instance instead of
+        #    constructing (and INFO-logging) a fresh one per build.
+        return MachineNode(config, _EMPTY_LOGIC)
+    try:
+        owned_logic = copy.copy(final_logic)
+    except TypeError:  # pragma: no cover -- exotic objects refusing copy
+        owned_logic = final_logic
+    return MachineNode(config, owned_logic)
 
 
 def _alias_logic_names(machine: MachineNode[Any]) -> None:
@@ -394,3 +411,33 @@ def _warn_collapsed_config_names(
                 UserWarning,
                 stacklevel=3,
             )
+
+
+def _check_initial_context(
+    machine: Any, validator: Callable[[Any], None]
+) -> None:
+    """#266 battle: a validator that declares a *static schema* for the
+    context (it carries ``__xsm_context_model__`` -- the `[pydantic]`
+    extra's `context_model()` does) is run against the chart's static
+    initial context at BUILD time, so a chart whose ``context`` the model
+    refuses is `InvalidConfigError` here, not a machine that starts and
+    then rolls back every mutating action forever.
+
+    🏛️ Why only marked validators: the #305 contract for a plain callable
+    is "called after a mutating action, never at start" (pinned by
+    counter tests, and a side-effecting validator must not be invoked at
+    build). A context FACTORY has nothing static to check. A COPY is
+    validated so a `write_back` validator cannot mutate the chart.
+    """
+    if getattr(validator, "__xsm_context_model__", None) is None:
+        return
+    raw = getattr(machine, "initial_context", None)
+    if callable(raw) or not isinstance(raw, dict):
+        return
+    try:
+        validator(copy.deepcopy(raw))
+    except Exception as exc:  # noqa: BLE001 -- user validator
+        raise InvalidConfigError(
+            "the machine's initial context does not satisfy its "
+            f"context model: {exc}"
+        ) from exc

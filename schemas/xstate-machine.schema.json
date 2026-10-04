@@ -1,5 +1,33 @@
 {
   "$defs": {
+    "ActionObject": {
+      "additionalProperties": true,
+      "description": "`{type, params, ...}` -- `type` MUST be a string (#266 battle: the\nparser crashed with a bare ``AttributeError`` on ``{\"type\": 1}``).",
+      "properties": {
+        "params": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Params"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ActionObject",
+      "type": "object"
+    },
     "InvokeConfig": {
       "additionalProperties": true,
       "properties": {
@@ -239,8 +267,7 @@
               "type": "string"
             },
             {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/ActionObject"
             },
             {
               "items": {
@@ -249,8 +276,7 @@
                     "type": "string"
                   },
                   {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/$defs/ActionObject"
                   }
                 ]
               },
@@ -269,8 +295,7 @@
               "type": "string"
             },
             {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/ActionObject"
             },
             {
               "items": {
@@ -279,8 +304,7 @@
                     "type": "string"
                   },
                   {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/$defs/ActionObject"
                   }
                 ]
               },
@@ -517,8 +541,7 @@
               "type": "string"
             },
             {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/ActionObject"
             },
             {
               "items": {
@@ -527,8 +550,7 @@
                     "type": "string"
                   },
                   {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/$defs/ActionObject"
                   }
                 ]
               },
@@ -644,12 +666,6 @@
           "anyOf": [
             {
               "type": "string"
-            },
-            {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
             },
             {
               "type": "null"
@@ -779,8 +795,7 @@
           "type": "string"
         },
         {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/ActionObject"
         },
         {
           "items": {
@@ -789,8 +804,7 @@
                 "type": "string"
               },
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/$defs/ActionObject"
               }
             ]
           },
@@ -809,8 +823,7 @@
           "type": "string"
         },
         {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/ActionObject"
         },
         {
           "items": {
@@ -819,8 +832,7 @@
                 "type": "string"
               },
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/$defs/ActionObject"
               }
             ]
           },

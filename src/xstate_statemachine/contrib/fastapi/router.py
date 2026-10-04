@@ -59,6 +59,25 @@ _SEND_RESPONSES: Dict[Any, Any] = {
 # -----------------------------------------------------------------------------
 # 🧱 Route class: JSON-only bounded bodies + problem+json validation errors
 # -----------------------------------------------------------------------------
+def bounded_route_class(registry: Any) -> type:
+    """The route class `StatechartRouter` uses, for routes you add BESIDE it.
+
+    A hand-written route (the orders example's ``PAY`` with
+    ``BackgroundTasks``) is otherwise outside the X0.7 envelope: FastAPI
+    parses a 1 MB body and answers ``422`` instead of ``413``, and a
+    ``text/plain`` body is not ``415``. ::
+
+        extra = APIRouter(route_class=bounded_route_class(registry))
+        @extra.post("/orders/{id}/events/PAY")
+        async def pay(...): ...
+        app.include_router(extra)
+
+    📝 #266 battle (B): found by posting 1 MB to every POST route of the
+    orders app's OpenAPI document.
+    """
+    return _problem_route_class(registry.max_body_bytes)
+
+
 def _problem_route_class(max_body_bytes: int) -> type:
     class StatechartRoute(APIRoute):
         def get_route_handler(self) -> Callable[[Request], Any]:

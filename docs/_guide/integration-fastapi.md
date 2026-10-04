@@ -265,6 +265,8 @@ Returns an `APIRouter` for machine *name* (already registered on *registry*). `p
 
 Both POSTs delegate to `registry.send_event`: authorize (with the event type) → `Idempotency-Key` → `act()` → receipt. Bodies must be `application/json` (415) and at most `max_body_bytes` (413); request validation failures are `422` problems listing each error's `loc` and `type` only.
 
+A route you add **beside** the router (a custom `PAY` with `BackgroundTasks`) is outside that envelope unless it uses the same route class: `APIRouter(route_class=bounded_route_class(registry))`. Without it FastAPI parses a 1 MB body and answers `422` rather than `413`, and accepts a `text/plain` body.
+
 ### `get_interpreter(registry, name, *, key="id", actor=None, create_if_missing=True)`
 
 Returns a `Depends(...)` — use it directly as a parameter default. It runs `authorize` with `event=None`, then yields a started interpreter inside `registry.act()`: **saved** with `expected_version` after the handler returns, **not saved** if the handler raises. *key* is a path-parameter name or a `(request) -> str` callable. A save conflict raises `ConflictError`, which `instrument_app` turns into a 409 problem. On FastAPI `>=0.121` the dependency uses `scope="function"`, so the save happens *before* the response is sent — a conflict becomes the response instead of a log line.

@@ -4,14 +4,15 @@
 from __future__ import annotations
 
 import json
+import warnings
 from typing import Any, Callable, Dict, Type, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
 from ...context_keys import is_private_context_key
-
 from ...exceptions import XStateMachineError
 from ...plugins import PluginBase
+from ._scrub import scrub
 
 __all__ = [
     "ContextValidationError",
@@ -76,15 +77,33 @@ def _validate_into(
     try:
         instance = model.model_validate(visible)
     except ValidationError as exc:
-        raise ContextValidationError(model, exc) from exc
+        # 🔥 #266 battle (X0.5): `from None` + a scrubbed copy -- the raw
+        #    error carries the offending VALUE (a card token), and this
+        #    exception is logged with its traceback on every engine.
+        raise ContextValidationError(model, scrub(exc)) from None
     if write_back:
         # 🏛️ The interpreter owns a plain dict (actions mutate it in
         #    place); the model is a LENS on it, not a replacement. Write
         #    the model's defaults and coerced values back so `ctx["total"]`
         #    is a Decimal and a key the chart omitted exists -- keys the
         #    model does not declare are left untouched.
+        # 🔥 #266 battle: written as `model_dump(mode="python")` values,
+        #    not attributes. `getattr` put nested MODEL INSTANCES
+        #    (`List[LineItem]`) into the dict; the snapshot's
+        #    `default=str` then persisted their repr ("sku='a' qty=2") --
+        #    unrestorable data loss. The dump keeps `Decimal`/`datetime`
+        #    and turns nested models into plain dicts.
+        dumped = instance.model_dump(mode="python")
         for name in model.model_fields:
-            ctx[name] = getattr(instance, name)
+            # 📝 reviewer H1: a field with `exclude=True` is not in the
+            #    dump -- a `KeyError` here escaped the plugin (contained)
+            #    and the validator (an action error on every mutation).
+            #    Keep the instance's value for it; computed fields are
+            #    deliberately NOT injected (`model_fields` only).
+            if name in dumped:
+                ctx[name] = dumped[name]
+            else:
+                ctx[name] = getattr(instance, name)
     return instance
 
 
@@ -155,8 +174,10 @@ class TypedContextPlugin(PluginBase[Any]):
     the initial or restored context. A snapshot round-trips `Decimal` as
     a string (`json.dumps(default=str)`), so a restored machine would hand
     its first action a ``"9.5"``. This plugin re-validates on
-    `on_interpreter_start`, coercing values back to their model types and
-    refusing an invalid context loudly. Attach it wherever you use
+    `on_interpreter_start`, coercing values back to their model types. An
+    invalid context puts the machine in ``status == "error"`` with the
+    `ContextValidationError` as ``interpreter.error`` (a plugin hook
+    cannot raise through `start()`). Attach it wherever you use
     `context_model`; `persisted(..., plugins=[TypedContextPlugin(Model)])`.
     """
 
@@ -164,7 +185,17 @@ class TypedContextPlugin(PluginBase[Any]):
         self.model = model
 
     def on_interpreter_start(self, interpreter: Any) -> None:
-        _validate_into(self.model, interpreter.context, True)
+        # 🏛️ #266 battle: plugin hooks are CONTAINED (`_SafePlugin`), so a
+        #    raise here was logged and the machine started anyway with a
+        #    context the model refuses -- silent acceptance. Put the
+        #    machine in the terminal `error` status instead (the same
+        #    surface as a service failure with no `onError`): `status ==
+        #    "error"`, `interpreter.error` is the `ContextValidationError`,
+        #    `on_error` fires, and no event is processed.
+        try:
+            _validate_into(self.model, interpreter.context, True)
+        except ContextValidationError as exc:
+            interpreter._fail(exc)
 
 
 class PydanticCodec:
@@ -174,6 +205,17 @@ class PydanticCodec:
     nothing is lost at rest. Restoring the rich types is the job of
     `TypedContextPlugin` (values come back from JSON as strings/numbers
     that ``model_validate`` accepts). ``decode`` is the identity.
+
+    ⚠️ The codec receives the snapshot AFTER the engine's
+    ``json.dumps(default=str)``: `Decimal` and `datetime` (aware or naive)
+    survive that and round-trip, but an `Enum` arrives as ``"Color.R"``
+    (the model refuses it; the codec warns and `TypedContextPlugin` fails
+    the restore) and `bytes` as ``"b'...'"``, which a ``bytes`` field
+    ACCEPTS as different bytes. Use ``use_enum_values=True`` and store
+    binary as base64 ``str``. A context the model refuses is stored as-is
+    with a `RuntimeWarning`. The codec does not redact: the stored blob
+    holds the full context, secrets included (`redact()` is for logs).
+    Stateless, so one instance is safe to share across threads.
     """
 
     def __init__(self, model: Type[BaseModel]) -> None:
@@ -185,8 +227,18 @@ class PydanticCodec:
         if isinstance(ctx, dict):
             try:
                 instance = self.model.model_validate(ctx)
-            except ValidationError:
-                return snapshot  # not ours to fix; store as-is
+            except ValidationError as exc:
+                # 🔥 #266 battle: storing as-is was SILENT acceptance -- a
+                #    blob the model refuses then fails `TypedContextPlugin`
+                #    at the next restore. Still stored (refusing would lose
+                #    the machine's state), but loudly. Field paths only; a
+                #    rejected value is never echoed (X0.5).
+                warnings.warn(
+                    str(ContextValidationError(self.model, scrub(exc))),
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                return snapshot
             typed = instance.model_dump(mode="json")
             for k, v in ctx.items():
                 typed.setdefault(k, v)

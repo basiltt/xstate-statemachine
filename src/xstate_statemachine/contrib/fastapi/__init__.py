@@ -34,7 +34,11 @@ from ..starlette import (  # noqa: E402
 )
 from ._models import Problem, ReceiptModel, StateModel  # noqa: E402
 from .app import compose_lifespan, instrument_app  # noqa: E402
-from .router import StatechartRouter, get_interpreter  # noqa: E402
+from .router import (  # noqa: E402
+    StatechartRouter,
+    bounded_route_class,
+    get_interpreter,
+)
 
 __all__ = [
     "Problem",
@@ -44,6 +48,7 @@ __all__ = [
     "StatechartRegistry",
     "StatechartRouter",
     "allow_all",
+    "bounded_route_class",
     "compose_lifespan",
     "get_interpreter",
     "instrument_app",
