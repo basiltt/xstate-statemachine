@@ -40,6 +40,17 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 
 
+def _non_negative_int(text: str) -> int:
+    """argparse type for depth / count bounds (#269 battle)."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not an integer: {text!r}")
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0, got {value}")
+    return value
+
+
 def _add_file_input_args(parser: argparse.ArgumentParser) -> None:
     """
     Adds arguments related to file inputs and hierarchy to the parser.
@@ -431,13 +442,23 @@ examples:
         "'both' also records which assumption each path relies on.",
     )
     paths_parser.add_argument(
-        "--max-depth", type=int, default=50, help="Depth bound (50)."
+        "--max-depth",
+        type=_non_negative_int,
+        default=50,
+        help="Depth bound (50).",
     )
     paths_parser.add_argument(
         "--max-paths",
-        type=int,
+        type=_non_negative_int,
         default=1000,
         help="Cap for --simple (1000).",
+    )
+    paths_parser.add_argument(
+        "--weight",
+        choices=["steps", "time"],
+        default="steps",
+        help="Shortest by step count (default) or by simulated clock "
+        "time spent in `after` delays.",
     )
     paths_parser.add_argument(
         "--json", action="store_true", help="Emit the paths as JSON."

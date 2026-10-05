@@ -2505,7 +2505,7 @@ assert interp.send("GO", wait=True).changed and ran == ["log"]
 
 `from xstate_statemachine.coverage import CoverageCollector, CoverageReport` (#270). `CoverageCollector()` is a `PluginBase`: `.use()` it or `plugins.register_global` it; `report(machine) -> CoverageReport(machine_id, key, states_visited, states_total, unvisited, transitions_hit, transitions_total, unhit)` with `state_percent` / `transition_percent` and `to_json()` / `to_text()` / `to_html()`; `reports()`, `machines()`, `merge(other)`. Module functions: `reports_to_json` (the stable `{"version": 1, "machines": [...]}` document), `reports_from_json` (rejects other versions with `ValueError`), `reports_to_text`, `reports_to_html`, `below(reports, state=, transition=)`, `machine_key(machine)` (`id@structure_hash`), `format_edge`. See [State & transition coverage](../guide/integration-testing/#state-transition-coverage).
 
-Named `after` delays fire only when `logic.delays` defines them; otherwise the step is skipped (`delay:<name>=unknown`). Machines that cannot start raise as they would at runtime. CLI: `xsm paths`.
+Named `after` delays are explored only when `logic.delays` defines them: the step then advances the clock by a large sentinel (`graph.UNKNOWN_DELAY_MS`, 10^9 ms) and carries a `delay:<name>=unknown` assumption. A named delay `logic.delays` does not define is skipped (no step). Machines that cannot start raise as they would at runtime. CLI: `xsm paths` (`--weight steps|time` maps to `weight=`).
 ## `xstate_statemachine.patterns` **[0.11.0]**
 
 Resilience building blocks, each a small statechart (#265). Zero-dependency, both engines. Guide: [Resilience Patterns](../guide/patterns/).
