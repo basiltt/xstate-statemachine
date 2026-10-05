@@ -21,7 +21,7 @@ from .pytest_plugin import _start_async, _stop_async
 
 @pytest_asyncio.fixture
 async def _xsm_ainterp_async(
-    xsm_machine: MachineNode, xsm_clock: SimulatedClock
+    xsm_machine: MachineNode[Any], xsm_clock: SimulatedClock
 ) -> Any:
     """Internal: the async engine behind ``xsm_ainterp``."""
     interp = await _start_async(xsm_machine, xsm_clock)
