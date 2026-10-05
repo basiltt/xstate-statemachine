@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import (
     Any,
+    Callable,
     Dict,
     List,
     Mapping,
@@ -52,7 +53,7 @@ def _guard_names(guard: Any, out: Set[str]) -> None:
 
 
 def logic_names(
-    config_or_machine: Union[Mapping[str, Any], MachineNode],
+    config_or_machine: Union[Mapping[str, Any], MachineNode[Any]],
 ) -> Tuple[Set[str], Set[str], Set[str]]:
     """Return ``(actions, guards, services)`` a chart references by name.
 
@@ -93,12 +94,12 @@ def logic_names(
 
 
 def stub_logic(
-    config_or_machine: Union[Mapping[str, Any], MachineNode],
+    config_or_machine: Union[Mapping[str, Any], MachineNode[Any]],
     *,
     ran: Optional[List[str]] = None,
     guards: Union[bool, Mapping[str, bool]] = True,
     service_results: Optional[Mapping[str, Any]] = None,
-) -> MachineLogic:
+) -> MachineLogic[Any]:
     """A `MachineLogic` that satisfies every name the chart declares.
 
     Args:
@@ -122,11 +123,11 @@ def stub_logic(
         >>> from xstate_statemachine.testing_utils import stub_logic
         >>> cfg = {"id": "m", "initial": "a", "states": {
         ...     "a": {"on": {"GO": {"target": "b", "guard": "ok",
-        ...                          "actions": "log"}}}, "b": {}}}
+        ...                          "actions": "save"}}}, "b": {}}}
         >>> ran: list = []
         >>> m = create_machine(cfg, logic=stub_logic(cfg, ran=ran))
         >>> i = SyncInterpreter(m).start(); i.send("GO"); ran
-        ['log']
+        ['save']
     """
     # 🏛️ Names are read from the PARSED machine, not the raw dict. The raw
     #    extractor only understands the `params.guards` composite shape, so
@@ -160,21 +161,21 @@ def stub_logic(
     default_guard = guards if isinstance(guards, bool) else True
     results: Mapping[str, Any] = service_results or {}
 
-    def mk_action(name: str):
+    def mk_action(name: str) -> Callable[..., Any]:
         def _action(i: Any, c: Any, e: Any, ad: Any) -> None:
             record.append(name)
 
         _action.__name__ = f"stub_action_{name}"
         return _action
 
-    def mk_guard(name: str):
+    def mk_guard(name: str) -> Callable[..., Any]:
         def _guard(c: Any, e: Any) -> bool:
             return bool(guard_table.get(name, default_guard))
 
         _guard.__name__ = f"stub_guard_{name}"
         return _guard
 
-    def mk_service(name: str):
+    def mk_service(name: str) -> Callable[..., Any]:
         def _service(i: Any, c: Any, e: Any) -> Any:
             return results.get(name)
 

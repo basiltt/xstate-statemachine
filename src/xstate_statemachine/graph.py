@@ -27,9 +27,11 @@ from __future__ import annotations
 # 📦 Standard Library Imports
 # -------------------------------------------------------------------------
 import contextlib
+import copy
 import heapq
 import itertools
 import logging
+import threading
 from collections import deque
 from dataclasses import dataclass
 from typing import (
@@ -49,14 +51,16 @@ from typing import (
 # 📥 Project-Specific Imports
 # -------------------------------------------------------------------------
 from .clock import SimulatedClock
+from .exceptions import XStateMachineError
 from .models import MachineNode, StateNode
 from .sync_interpreter import SyncInterpreter
 from .testing_utils import logic_names, stub_logic
-from .validation import transitions_of, walk
+from .validation import _collect_findings, transitions_of, walk
 
 __all__ = [
     "Step",
     "Path",
+    "ExplorationLimitError",
     "reachable_states",
     "shortest_paths",
     "simple_paths",
@@ -111,7 +115,9 @@ class Path:
     steps: Tuple[Step, ...]
     final_states: FrozenSet[str]
 
-    def replay(self, interp: SyncInterpreter, clock: SimulatedClock) -> None:
+    def replay(
+        self, interp: SyncInterpreter[Any], clock: SimulatedClock
+    ) -> None:
         """Drive *interp* (on *clock*) through every step.
 
         Starts the interpreter if it has not been started. Each step's
@@ -147,15 +153,35 @@ class Path:
         return sum(_advance_of(s) for s in self.steps if s.event is None)
 
 
+_QUIET_LOCK = threading.Lock()
+_quiet_depth = 0
+_quiet_saved = logging.NOTSET
+
+
 @contextlib.contextmanager
 def _quiet() -> Iterator[None]:
+    """Silence the library logger; re-entrant and thread-safe.
+
+    🐛 #269 battle (A5): each caller used to save/restore the level
+    itself. Two overlapping traversals on different threads restored in
+    the wrong order (A saves INFO, B saves CRITICAL, A restores INFO, B
+    restores CRITICAL) and the library logger stayed muted for the rest
+    of the process. Now the FIRST entrant saves and the LAST restores.
+    """
+    global _quiet_depth, _quiet_saved
     lib_logger = logging.getLogger("xstate_statemachine")
-    prev = lib_logger.level
-    lib_logger.setLevel(logging.CRITICAL)
+    with _QUIET_LOCK:
+        if _quiet_depth == 0:
+            _quiet_saved = lib_logger.level
+            lib_logger.setLevel(logging.CRITICAL)
+        _quiet_depth += 1
     try:
         yield
     finally:
-        lib_logger.setLevel(prev)
+        with _QUIET_LOCK:
+            _quiet_depth -= 1
+            if _quiet_depth == 0:
+                lib_logger.setLevel(_quiet_saved)
 
 
 def _fmt_ms(ms: float) -> str:
@@ -215,7 +241,7 @@ _MISSING = object()
 
 
 def _apply_step(
-    interp: SyncInterpreter, clock: SimulatedClock, step: Step
+    interp: SyncInterpreter[Any], clock: SimulatedClock, step: Step
 ) -> None:
     with _forced(interp.machine.logic, step.assumptions):
         if step.event is not None:
@@ -230,7 +256,7 @@ def _apply_step(
 class _Explorer:
     """Discovers successors of a path by replaying it on the real engine."""
 
-    def __init__(self, machine: MachineNode, guards: str) -> None:
+    def __init__(self, machine: MachineNode[Any], guards: str) -> None:
         if guards not in _GUARD_MODES:
             raise ValueError(
                 f"guards must be one of {_GUARD_MODES}, got {guards!r}"
@@ -241,7 +267,9 @@ class _Explorer:
         self.guard_names = sorted(guard_names)
         self.service_names = sorted(service_names)
         self.named_delays = set(machine.logic.delays)
-        self.nodes: Dict[str, StateNode] = {n.id: n for n in walk(machine)}
+        self.nodes: Dict[str, StateNode[Any]] = {
+            n.id: n for n in walk(machine)
+        }
         self.eventless_guards: Set[str] = set()
         for node in self.nodes.values():
             for label, t in transitions_of(node):
@@ -254,30 +282,47 @@ class _Explorer:
         )
         #: ⚡ prefix (step tuple) → (snapshot JSON, clock.now() s, wall_now()).
         self._snapshots: Dict[Tuple[Step, ...], Tuple[str, float, float]] = {}
+        #: ⚡ #269 battle (A1): BFS keeps only the FIRST path into each
+        #: configuration, in exactly the order `_try` discovers them, so it
+        #: needs one snapshot per configuration -- not one per edge. With
+        #: every edge cached, `addressFields` (3 456 configurations,
+        #: ~19 000 edges) filled `_CACHE_MAX` and the prefixes it then
+        #: needed fell back to replay (77 % hit rate). Dijkstra / DFS keep
+        #: non-first paths and leave this off.
+        self.first_only = False
+        self.max_configs: Optional[int] = None
+        self._seen_configs: Set[Config] = set()
 
     @contextlib.contextmanager
     def stubbed(self) -> Iterator[None]:
-        """Swap in `stub_logic` for the duration of the traversal."""
-        original = self.machine.logic
-        stub = stub_logic(self.machine)
-        stub.delays.update(original.delays)
-        self.machine.logic = stub
+        """Explore a private copy of the machine carrying `stub_logic`.
+
+        🐛 #269 battle (A5): this used to swap ``machine.logic`` on the
+        CALLER's machine. Anything else using that machine meanwhile -- a
+        second thread generating paths (pytest-xdist threads, a web app
+        per request) or the application's own interpreter -- ran on the
+        all-True stubs, and `_forced` patched a table shared between
+        threads. Only a private copy is stubbed now (see `_private_copy`);
+        the caller's machine is never written.
+        """
+        original = self.machine
+        stub = stub_logic(original)
+        stub.delays.update(original.logic.delays)
+        self.machine = _private_copy(original, stub)
         # 🔇 Forced service failures are the POINT of a `guards="both"`
         #    probe, not incidents: the engine would otherwise log each one
         #    at ERROR with a traceback. Silence the library logger for the
-        #    traversal only; the caller's logging config is untouched.
-        lib_logger = logging.getLogger("xstate_statemachine")
-        prev_level = lib_logger.level
-        lib_logger.setLevel(logging.CRITICAL)
+        #    traversal only (thread-safe; see `_quiet`).
         try:
-            yield
+            with _quiet():
+                yield
         finally:
-            lib_logger.setLevel(prev_level)
-            self.machine.logic = original
+            self.machine = original
+            self._snapshots.clear()
 
     def run(
         self, steps: Tuple[Step, ...]
-    ) -> Tuple[SyncInterpreter, SimulatedClock]:
+    ) -> Tuple[SyncInterpreter[Any], SimulatedClock]:
         """A fresh interpreter positioned after *steps*.
 
         ⚡ #269 battle: the original design replayed the WHOLE prefix for
@@ -310,7 +355,7 @@ class _Explorer:
             #    replay never performs. Restore under those assumptions.
             last = steps[-1].assumptions if steps else self.base
             with _forced(self.machine.logic, last):
-                restored: SyncInterpreter = SyncInterpreter.from_snapshot(
+                restored: SyncInterpreter[Any] = SyncInterpreter.from_snapshot(
                     blob, self.machine, clock=clock, restart_timers="resume"
                 ).start()
             return restored, clock
@@ -324,7 +369,7 @@ class _Explorer:
     def _remember(
         self,
         steps: Tuple[Step, ...],
-        interp: SyncInterpreter,
+        interp: SyncInterpreter[Any],
         clock: SimulatedClock,
     ) -> None:
         if steps in self._snapshots or len(self._snapshots) >= _CACHE_MAX:
@@ -338,6 +383,15 @@ class _Explorer:
         except Exception:  # noqa: BLE001 -- replay remains correct
             logger.debug("graph: prefix not snapshottable", exc_info=True)
 
+    def _wanted(self, to: Config) -> bool:
+        """Should the prefix ending in *to* be snapshotted?"""
+        if not self.first_only:
+            return True
+        if to in self._seen_configs:
+            return False
+        self._seen_configs.add(to)
+        return True
+
     def initial(self) -> Tuple[Config, bool]:
         interp, _ = self.run(())
         try:
@@ -346,13 +400,13 @@ class _Explorer:
             interp.stop()
 
     @staticmethod
-    def _done(interp: SyncInterpreter) -> bool:
+    def _done(interp: SyncInterpreter[Any]) -> bool:
         return interp.status != "running"
 
-    def _active_nodes(self, config: Config) -> List[StateNode]:
-        seen: Dict[str, StateNode] = {}
+    def _active_nodes(self, config: Config) -> List[StateNode[Any]]:
+        seen: Dict[str, StateNode[Any]] = {}
         for sid in config:
-            node: Optional[StateNode] = self.nodes.get(sid)
+            node: Optional[StateNode[Any]] = self.nodes.get(sid)
             while node is not None and node.id not in seen:
                 seen[node.id] = node
                 node = node.parent
@@ -366,6 +420,7 @@ class _Explorer:
         delays: Dict[str, Tuple[Optional[float], Tuple[str, ...]]] = {}
         for node in self._active_nodes(config):
             events.update(k for k in node.on if k and "*" not in k)
+            events.update(_wildcard_probe(k) for k in node.on if "*" in k)
             for key in node.after:
                 ms = _numeric_delay(key)
                 if ms is not None:
@@ -452,7 +507,7 @@ class _Explorer:
             _apply_step(interp, clock, step)
             to = frozenset(interp.current_state_ids)
             done = self._done(interp)
-            if not done:
+            if not done and self._wanted(to):
                 self._remember(
                     steps + (_with_target(step, to),), interp, clock
                 )
@@ -463,6 +518,56 @@ class _Explorer:
         finally:
             with contextlib.suppress(Exception):
                 interp.stop()
+
+
+#: Attributes `create_machine` sets AFTER the parse; a rebuild from the
+#: source config must carry them over to behave like the caller's machine.
+_POST_PARSE_ATTRS = ("event_schemas", "context_validator")
+
+
+def _private_copy(machine: MachineNode[Any], logic: Any) -> MachineNode[Any]:
+    """An independent tree equal to *machine*, carrying *logic*.
+
+    📝 Rebuilt from ``source_config`` (never mutated by the library),
+    which is iterative-safe and as cheap as the original parse. A
+    ``deepcopy`` recursed through target references and blew the stack
+    on a 200-state chain. Hand-built nodes without a usable source config
+    fall back to ``deepcopy`` (logic and config shared by reference).
+    """
+    try:
+        private: MachineNode[Any] = MachineNode(machine.source_config, logic)
+    except Exception:  # noqa: BLE001 -- hand-built / non-reparseable
+        memo: Dict[int, Any] = {
+            id(machine.logic): machine.logic,
+            id(machine.source_config): machine.source_config,
+        }
+        private = copy.deepcopy(machine, memo)
+        private.logic = logic
+        return private
+    for attr in _POST_PARSE_ATTRS:
+        setattr(private, attr, getattr(machine, attr))
+    # ⚡ Memoise `resolved_target` exactly as `create_machine` does (the
+    #    caller's machine already passed validation; findings are moot).
+    _collect_findings(private)
+    return private
+
+
+#: Event sent to exercise a wildcard handler (``"*"`` / ``"mouse.*"``).
+WILDCARD_PROBE = "xsm.graph.any"
+
+
+def _wildcard_probe(key: str) -> str:
+    """A concrete event the wildcard *key* matches and nothing else does.
+
+    🐛 #269 battle (A2): wildcard keys were skipped outright, so a state
+    reachable only through ``"*"`` (any event the chart does not name)
+    or ``"mouse.*"`` was reported unreachable although every real run
+    can take it. The probe is sent like any event and kept only if the
+    engine actually moves.
+    """
+    if key == "*":
+        return WILDCARD_PROBE
+    return key.replace("*", "xsm_graph_any")
 
 
 def _with_target(step: Step, to: Config) -> Step:
@@ -501,41 +606,84 @@ def _numeric_delay(key: Union[int, float, str]) -> Optional[float]:
 # 🚀 Public API
 # -----------------------------------------------------------------------------
 def shortest_paths(
-    machine: MachineNode,
+    machine: MachineNode[Any],
     *,
     guards: str = "true",
     max_depth: int = 50,
     weight: str = "steps",
+    max_configs: Optional[int] = 100_000,
 ) -> Dict[FrozenSet[str], Path]:
     """Shortest path to every reachable configuration.
 
     Args:
-        machine: The machine to explore. Its ``logic`` is temporarily
-            replaced by `stub_logic` stand-ins (restored afterwards).
+        machine: The machine to explore. Never modified: the traversal
+            runs on a private copy carrying `stub_logic` stand-ins, so
+            concurrent calls and live interpreters are unaffected.
         guards: ``"true"``, ``"false"`` or ``"both"`` (also explores each
             guard forced False and each service forced to error).
         max_depth: Maximum number of steps in any path.
         weight: ``"steps"`` (BFS) or ``"time"`` (Dijkstra over total
             clock advance; events weigh 0).
+        max_configs: Stop with `ExplorationLimitError` once this many
+            configurations are found (``None``: unbounded). Parallel
+            regions multiply: 16 two-state regions are 65 536
+            configurations, each one engine run plus a cached snapshot.
 
     Returns:
         Mapping of configuration to the shortest `Path` reaching it. The
         initial configuration maps to the empty path.
 
     Raises:
-        ValueError: On an unknown ``guards`` or ``weight``.
+        ValueError: On an unknown ``guards`` / ``weight`` or a negative
+            bound.
+        ExplorationLimitError: More than *max_configs* configurations.
     """
     if weight not in _WEIGHTS:
         raise ValueError(f"weight must be one of {_WEIGHTS}, got {weight!r}")
+    _check_bounds(max_depth=max_depth, max_configs=max_configs)
     explorer = _Explorer(machine, guards)
+    explorer.max_configs = max_configs
     with explorer.stubbed():
         if weight == "steps":
             return _bfs(explorer, max_depth)
         return _dijkstra(explorer, max_depth)
 
 
+class ExplorationLimitError(XStateMachineError):
+    """`shortest_paths` found more configurations than ``max_configs``.
+
+    🐛 #269 battle (A3): a wide parallel chart has a configuration count
+    exponential in its regions; with no bound the traversal ran until the
+    snapshot cache or the clock gave out. ``found`` is the partial result
+    so far (shortest paths are already final for every entry).
+    """
+
+    def __init__(self, limit: int, found: Dict[FrozenSet[str], Path]):
+        super().__init__(
+            f"graph: more than {limit} reachable configurations; raise "
+            f"max_configs (or None), lower max_depth, or explore a "
+            f"sub-chart."
+        )
+        self.limit = limit
+        self.found = found
+
+
+def _check_bounds(**bounds: Optional[int]) -> None:
+    for name, value in bounds.items():
+        if value is not None and value < 0:
+            raise ValueError(f"{name} must be >= 0, got {value!r}")
+
+
+def _over(explorer: _Explorer, best: Dict[Config, Path]) -> None:
+    limit = explorer.max_configs
+    if limit is not None and len(best) > limit:
+        raise ExplorationLimitError(limit, best)
+
+
 def _bfs(explorer: _Explorer, max_depth: int) -> Dict[Config, Path]:
+    explorer.first_only = True
     start, done = explorer.initial()
+    explorer._seen_configs.add(start)
     best: Dict[Config, Path] = {start: Path((), start)}
     queue: Deque[Tuple[Path, bool]] = deque([(best[start], done)])
     while queue:
@@ -549,6 +697,7 @@ def _bfs(explorer: _Explorer, max_depth: int) -> Dict[Config, Path]:
                 continue
             nxt = Path(path.steps + (step,), step.to_states)
             best[step.to_states] = nxt
+            _over(explorer, best)
             queue.append((nxt, nxt_done))
     return best
 
@@ -565,6 +714,7 @@ def _dijkstra(explorer: _Explorer, max_depth: int) -> Dict[Config, Path]:
         if path.final_states in best:
             continue
         best[path.final_states] = path
+        _over(explorer, best)
         if is_done or depth >= max_depth:
             continue
         for step, nxt_done in explorer.successors(
@@ -581,7 +731,7 @@ def _dijkstra(explorer: _Explorer, max_depth: int) -> Dict[Config, Path]:
 
 
 def reachable_states(
-    machine: MachineNode, *, guards: str = "true", max_depth: int = 50
+    machine: MachineNode[Any], *, guards: str = "true", max_depth: int = 50
 ) -> Set[str]:
     """Every state id (leaves AND their ancestors) the engine can reach."""
     explorer = _Explorer(machine, guards)
@@ -592,7 +742,7 @@ def reachable_states(
 
 
 def simple_paths(
-    machine: MachineNode,
+    machine: MachineNode[Any],
     *,
     guards: str = "true",
     max_paths: int = 1000,
@@ -602,6 +752,7 @@ def simple_paths(
 
     Depth-first; stops after *max_paths* paths or at *max_depth* steps.
     """
+    _check_bounds(max_depth=max_depth, max_paths=max_paths)
     explorer = _Explorer(machine, guards)
     found: List[Path] = []
     with explorer.stubbed():
@@ -631,7 +782,7 @@ def simple_paths(
 
 
 def transition_coverage_targets(
-    machine: MachineNode,
+    machine: MachineNode[Any],
 ) -> Set[Tuple[str, str, str]]:
     """``(from_state_id, label, to_state_id)`` for every chart transition.
 
