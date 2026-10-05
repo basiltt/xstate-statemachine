@@ -35,7 +35,6 @@ in-process and still exercises what production exercises. Pinned:
 from __future__ import annotations
 
 import gc
-import json
 import threading
 import tracemalloc
 from typing import Any, Dict, List
@@ -311,10 +310,15 @@ def test_ten_thousand_envelopes_flat_memory_and_ordered() -> None:
         for s in full.compare_to(half, "filename")
         if s.size_diff > 0
     )
-    # 📝 `published` / `acked` are test affordances that keep every
-    #    envelope by design; the growth must be linear in envelopes kept
-    #    (~4500 × a few hundred bytes), never quadratic.
-    assert grown < 8 * 1024 * 1024, grown
+    # 📝 `published` / `acked` / `nacked` keep every envelope by design
+    #    (copy-on-wire since the #272 battle: a consumer mutating `data`
+    #    must not rewrite the record). Growth must be LINEAR in envelopes
+    #    kept -- the second 4 500 cost the same as the first -- and
+    #    `clear()` releases it.
+    per_env = grown / 4500
+    assert per_env < 6 * 1024, per_env  # a few KB per kept envelope
+    broker.clear()  # the reset affordance releases the records
+    assert len(broker.published) == 0 and len(broker.acked) == 0
     assert broker.pending("t") == 0 and broker.in_flight == 0
     for sub, ns in seen.items():
         assert ns == sorted(ns), sub
