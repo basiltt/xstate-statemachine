@@ -90,35 +90,42 @@ class TestHandlerBaseException(unittest.TestCase):
         self.assertEqual(d.envelope.attempt, 0)
 
 
-class TestSubscribeCancellation(unittest.TestCase):
-    def test_sync_break_requeues_unsettled_delivery(self) -> None:
+class TestSubscribeAbandonedDelivery(unittest.TestCase):
+    """M4: as on a real broker, an unsettled delivery survives the end of
+    the consumer loop -- it is in flight until settled (never silently
+    requeued, never lost)."""
+
+    def test_sync_break_leaves_delivery_in_flight_and_settleable(
+        self,
+    ) -> None:
         b = SyncFakeBrokerAdapter()
         b.deliver("t", env(n=1))
         b.deliver("t", env(n=2))
+        kept = None
         for d in b.subscribe("t", timeout=0):
+            kept = d
             break  # unsettled
+        self.assertEqual((b.pending("t"), b.in_flight), (1, 1))
+        assert kept is not None
+        b.nack(kept, requeue=True)  # the handle is still valid
         self.assertEqual((b.pending("t"), b.in_flight), (2, 0))
-        self.assertEqual(b.nacked, [])
-        got = [d.envelope.data["n"] for d in b.subscribe("t", timeout=0)]
-        self.assertEqual(got, [1, 2])  # order kept, attempt unchanged
+        got = [
+            (d.envelope.data["n"], d.envelope.attempt)
+            for d in b.subscribe("t", timeout=0)
+        ]
+        self.assertEqual(got, [(1, 1), (2, 0)])
 
-    def test_sync_settled_delivery_is_not_requeued_on_break(self) -> None:
-        b = SyncFakeBrokerAdapter()
-        b.deliver("t", env())
-        for d in b.subscribe("t", timeout=0):
-            b.ack(d)
-            break
-        self.assertEqual((b.pending("t"), len(b.acked)), (0, 1))
-
-    def test_async_cancel_requeues_unsettled_delivery(self) -> None:
+    def test_async_cancel_leaves_delivery_in_flight(self) -> None:
         b = FakeBrokerAdapter()
 
         async def go() -> Any:
             await b.deliver("t", env(n=1))
             started = asyncio.Event()
+            box: List[Any] = []
 
             async def consume() -> None:
-                async for _d in b.subscribe("t"):
+                async for d in b.subscribe("t"):
+                    box.append(d)
                     started.set()
                     await asyncio.sleep(60)  # never settles
 
@@ -127,13 +134,12 @@ class TestSubscribeCancellation(unittest.TestCase):
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await task
-            # the abandoned generator is finalised (aclose) by asyncio on
-            # the loop's next turn -- that is when the delivery goes back
             await asyncio.sleep(0)
-            await asyncio.sleep(0)
-            return b.pending("t"), b.in_flight, len(b.nacked)
+            before = (b.pending("t"), b.in_flight)
+            await b.ack(box[0])
+            return before, (b.pending("t"), b.in_flight, len(b.acked))
 
-        self.assertEqual(asyncio.run(go()), (1, 0, 0))
+        self.assertEqual(asyncio.run(go()), ((0, 1), (0, 0, 1)))
 
 
 if __name__ == "__main__":  # pragma: no cover

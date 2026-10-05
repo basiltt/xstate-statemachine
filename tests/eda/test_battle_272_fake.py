@@ -293,7 +293,11 @@ class TestDrain(unittest.TestCase):
         self.assertEqual((seen, b.pending("b")), (["a"], 2))
         self.assertEqual(b.drain(), 2)
 
-    def test_keyboard_interrupt_in_handler_nacks_and_propagates(self) -> None:
+    def test_keyboard_interrupt_in_handler_releases_and_propagates(
+        self,
+    ) -> None:
+        # 📝 independent review (H2): a runner teardown is not a handler
+        #    failure -- the envelope goes back untouched, nothing counted.
         b = SyncFakeBrokerAdapter()
 
         def stop(e: Envelope) -> None:
@@ -303,7 +307,9 @@ class TestDrain(unittest.TestCase):
         b.deliver("t", env())
         with self.assertRaises(KeyboardInterrupt):
             b.drain()
-        self.assertEqual((len(b.nacked), b.in_flight), (1, 0))
+        self.assertEqual(
+            (len(b.nacked), b.in_flight, b.pending("t")), (0, 0, 1)
+        )
 
 
 class TestSubscribe(unittest.TestCase):

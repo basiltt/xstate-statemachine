@@ -281,10 +281,10 @@ class _Core:
     def _release(self, d: Delivery) -> None:
         """Put an UNSETTLED delivery back at the head of its queue.
 
-        📝 #272 review (M4): a consumer loop cancelled / closed while the
-        last yielded delivery was still in flight must not lose it. This
-        is neither an ack nor a nack -- the consumer never decided -- so
-        nothing is counted and ``attempt`` is unchanged.
+        📝 #272 review (H2): `drain()` torn down by KeyboardInterrupt /
+        SystemExit mid-handler must not lose the envelope. This is neither
+        an ack nor a nack -- the handler never decided -- so nothing is
+        counted and ``attempt`` is unchanged.
         """
         with self._lock:
             entry = self._inflight.get(id(d))
@@ -304,11 +304,10 @@ class FakeBrokerAdapter(_Core):
 
     ``subscribe(topic, timeout=None)`` waits forever for traffic (like a
     real consumer) -- in a test that is a HANG, so pass a *timeout* (idle
-    seconds; ``0`` = "drain what is queued and stop"). Breaking out of /
-    cancelling the loop while a yielded delivery is unsettled requeues it
-    untouched (no nack counted, ``attempt`` unchanged) when the generator
-    is closed -- immediately on ``break`` / ``aclose()``, on the loop's
-    next turn after a task cancellation (asyncio finalises it then).
+    seconds; ``0`` = "drain what is queued and stop"). As on a real
+    broker, a delivery left unsettled when the loop ends / is cancelled
+    stays IN FLIGHT (``in_flight`` counts it; the handle is still valid)
+    -- ack / nack it, or ``clear()``; it is never silently requeued.
 
     ::
 
@@ -334,12 +333,7 @@ class FakeBrokerAdapter(_Core):
         while True:
             d = self._take(topic)
             if d is not None:
-                try:
-                    yield d
-                except BaseException:
-                    # GeneratorExit / CancelledError: see `_release`
-                    self._release(d)
-                    raise
+                yield d
                 # 📝 As the real adapters: *timeout* is IDLE time; a
                 #    consumer must not stop mid-backlog.
                 if timeout is not None:
@@ -361,8 +355,8 @@ class SyncFakeBrokerAdapter(_Core):
 
     ``subscribe(topic, timeout=None)`` blocks forever when idle -- pass an
     idle *timeout* in tests (``0`` drains the backlog and stops). A
-    ``break`` out of the loop with the last delivery unsettled requeues
-    it untouched.
+    ``break`` with the last delivery unsettled leaves it in flight, as on
+    a real broker -- settle it or ``clear()``.
     """
 
     def publish(self, topic: str, envelope: Envelope) -> None:
@@ -378,12 +372,7 @@ class SyncFakeBrokerAdapter(_Core):
         while True:
             d = self._take(topic)
             if d is not None:
-                try:
-                    yield d
-                except BaseException:
-                    # GeneratorExit (a `break`): see `_release`
-                    self._release(d)
-                    raise
+                yield d
                 # 📝 As the real adapters: *timeout* is IDLE time; a
                 #    consumer must not stop mid-backlog.
                 if timeout is not None:
