@@ -76,8 +76,10 @@ class Scenario:
     ) -> "Scenario":
         """Send *event*; the `Receipt` is kept on ``self.receipt``."""
         interp = self._ensure_live("when")
-        label = (
-            event if isinstance(event, str) else getattr(event, "type", event)
+        label: Any = (
+            event.get("type", event)
+            if isinstance(event, dict)
+            else getattr(event, "type", event)
         )
         self._steps.append(f"when({label!r})")
         self.receipt = interp.send(event, wait=True, **payload)
