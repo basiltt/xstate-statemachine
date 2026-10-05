@@ -190,14 +190,15 @@ class CoverageSession:
             #    the gate judged partial data. Say so (the gate fails
             #    closed on the missing rows, but the operator must know
             #    WHY).
-            import warnings
-
-            warnings.warn(
-                f"xsm coverage: worker {getattr(node, 'gateway', node)} "
-                f"ended with an error ({error}); its coverage data was "
-                f"lost and the gate judges the remaining workers only.",
-                RuntimeWarning,
-                stacklevel=2,
+            # 📝 reviewer M1 (#270): NOT `warnings.warn` -- under `-W error`
+            #    that is an exception inside a controller hook (the exact
+            #    INTERNALERROR this battle removed), and otherwise its
+            #    visibility depends on capture timing. A summary note is
+            #    always printed.
+            self.notes.append(
+                f"(worker {getattr(node, 'gateway', node)} ended with an "
+                f"error: {error}; its coverage data was lost and the gate "
+                f"judges the remaining workers only)"
             )
 
     def merged_reports(self) -> List[CoverageReport]:

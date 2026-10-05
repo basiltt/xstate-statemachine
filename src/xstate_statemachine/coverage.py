@@ -357,8 +357,12 @@ class CoverageCollector(PluginBase[Any]):
                 for k, d in other._data.items()
             ]
         with self._lock:
-            for _key, machine, states, hits in items:
-                data = self._data_for(machine)
+            for key, machine, states, hits in items:
+                # 📝 reviewer L4 (#270): straight to the key's data -- no
+                #    transition-index walk is needed to fold counts in.
+                data = self._data.get(key)
+                if data is None:
+                    data = self._data[key] = _MachineData(machine)
                 data.states |= states
                 data.hits |= hits
 
