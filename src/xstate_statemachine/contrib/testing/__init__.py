@@ -35,6 +35,7 @@ require_extra("testing", "pytest")
 from .broker import (  # noqa: E402
     BrokerPublishError,
     FakeBrokerAdapter,
+    ReplayDivergenceError,
     SyncFakeBrokerAdapter,
     assert_replay_consistent,
     replay,
@@ -53,6 +54,7 @@ __all__ = [
     "BrokerPublishError",
     "FakeBrokerAdapter",
     "PLUGIN_NAME",
+    "ReplayDivergenceError",
     "Scenario",
     "SnapshotMismatchError",
     "assert_replay_consistent",

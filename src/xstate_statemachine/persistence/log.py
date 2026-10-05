@@ -1224,7 +1224,8 @@ def replay(
     With *verify*, every record is checked in order -- event type, reached
     leaves, disposition -- and its ``machine_version`` against the
     machine's; the first mismatch raises `ReplayDivergenceError(seq,
-    field=...)`. *upto* caps the seq.
+    field=...)`. *upto* caps the seq, inclusive (``0`` = the initial
+    state; a negative or non-int *upto* is a `ValueError`).
     """
     from ..clock import SimulatedClock
     from ..sync_interpreter import SyncInterpreter
@@ -1367,6 +1368,11 @@ def _select(
     verify: bool,
 ) -> List[TransitionRecord]:
     """The records `replay()` runs: one key, gap-free, capped, versioned."""
+    if upto is not None and (
+        isinstance(upto, bool) or not isinstance(upto, int) or upto < 0
+    ):
+        # 🐛 Battle #272: ``upto=-1`` silently replayed nothing.
+        raise ValueError(f"upto must be an int >= 0, got {upto!r}")
     rows = list(records)
     keys = {r.machine_id for r in rows}
     if key is not None:

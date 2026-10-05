@@ -30,15 +30,24 @@ from typing import (
     Iterator,
     List,
     Optional,
-    Set,
+    Tuple,
 )
 
 from .broker import Delivery
+from ..persistence.store import DEFAULT_MAX_SNAPSHOT_BYTES
 from .envelope import Envelope
 
-__all__ = ["BrokerPublishError", "FakeBrokerAdapter", "SyncFakeBrokerAdapter"]
+__all__ = [
+    "BrokerPublishError",
+    "DEFAULT_DRAIN_LIMIT",
+    "FakeBrokerAdapter",
+    "SyncFakeBrokerAdapter",
+]
 
 _POLL_S = 0.005
+#: `drain()` refuses to loop forever: a handler that republishes to its
+#: own topic is a test bug, reported loudly instead of hanging CI.
+DEFAULT_DRAIN_LIMIT = 100_000
 
 
 class BrokerPublishError(ConnectionError):
@@ -46,13 +55,24 @@ class BrokerPublishError(ConnectionError):
 
 
 class _Core:
-    """The broker state shared by both fakes. Thread-safe."""
+    """The broker state shared by both fakes. Thread-safe.
 
-    def __init__(self) -> None:
+    Envelopes cross the fake the way they cross a real broker: encoded
+    with ``to_json(max_bytes=...)`` and decoded again (battle #272). So a
+    non-JSON payload or an oversized envelope fails at ``publish`` /
+    ``deliver`` like a real adapter, and a consumer that mutates
+    ``delivery.envelope.data`` cannot rewrite the ``published`` record.
+    A ``nack(requeue=True)`` redelivers with ``attempt + 1`` stamped, as
+    the real adapters do. Records (``published`` / ``acked`` /
+    ``nacked``) grow by design; `clear()` resets everything.
+    """
+
+    def __init__(self, *, max_bytes: int = DEFAULT_MAX_SNAPSHOT_BYTES) -> None:
+        self.max_bytes = int(max_bytes)
         self._lock = threading.Lock()
         self._queues: Dict[str, Deque[Envelope]] = {}
-        self._inflight: Dict[int, Delivery] = {}
-        self._settled: Set[int] = set()
+        # id(delivery) -> (delivery, the pristine envelope a requeue uses)
+        self._inflight: Dict[int, Tuple[Delivery, Envelope]] = {}
         self.published: List[Envelope] = []
         self._log: List[Any] = []  # (topic, envelope)
         self.acked: List[Envelope] = []
@@ -64,10 +84,36 @@ class _Core:
     def fail_next_publish(
         self, error: Optional[BaseException] = None, *, times: int = 1
     ) -> None:
-        """Make the next *times* publishes raise *error*."""
+        """Make the next *times* publishes (any topic, in call order) raise
+        *error* (default `BrokerPublishError`). *error* must be an
+        `Exception`: injecting ``KeyboardInterrupt`` / ``SystemExit``
+        would tear down the test runner, not simulate a broker."""
+        if error is not None and not isinstance(error, Exception):
+            raise TypeError(
+                "fail_next_publish() needs an Exception instance, got "
+                f"{type(error).__name__}"
+            )
+        if isinstance(times, bool) or not isinstance(times, int) or times < 1:
+            raise ValueError(f"times must be an int >= 1, got {times!r}")
         with self._lock:
             for _ in range(times):
                 self._fail.append(error or BrokerPublishError("injected"))
+
+    def clear(self) -> None:
+        """Forget everything: queues, records, pending failures, handlers.
+        In-flight deliveries become unknown (settling them is a no-op)."""
+        with self._lock:
+            for coll in (
+                self._queues,
+                self._inflight,
+                self.published,
+                self._log,
+                self.acked,
+                self.nacked,
+                self._fail,
+                self._handlers,
+            ):
+                coll.clear()
 
     def published_on(self, topic: str) -> List[Envelope]:
         with self._lock:
@@ -85,16 +131,26 @@ class _Core:
         """Register a handler `drain()` calls for each envelope on *topic*."""
         self._handlers[topic] = handler
 
-    def drain(self, topic: Optional[str] = None) -> int:
+    def drain(
+        self, topic: Optional[str] = None, *, limit: int = DEFAULT_DRAIN_LIMIT
+    ) -> int:
         """Run registered handlers until their topics are empty.
 
         A handler that returns normally acks; one that raises nacks
         without requeue and the exception propagates. Handlers may
         publish; their output is drained in the same call. Returns the
-        number of envelopes handled.
+        number of envelopes handled. With *topic*, only that topic's
+        handler runs. Handling more than *limit* envelopes raises
+        `RuntimeError` -- a handler feeding its own topic would otherwise
+        never return.
         """
         handled = 0
         while True:
+            if handled >= limit:
+                raise RuntimeError(
+                    f"drain() handled {handled} envelopes and the topics "
+                    f"are still not empty (a handler feeding itself?)"
+                )
             progressed = False
             for t, handler in list(self._handlers.items()):
                 if topic is not None and t != topic:
@@ -120,7 +176,9 @@ class _Core:
         with self._lock:
             if self._fail:
                 raise self._fail.pop(0)
-            self.published.append(envelope)
+        envelope = self._wire(envelope)
+        with self._lock:
+            self.published.append(self._wire(envelope))
             self._log.append((topic, envelope))
             self._queues.setdefault(topic, deque()).append(envelope)
 
@@ -131,17 +189,29 @@ class _Core:
             raise TypeError(
                 f"deliver() needs an Envelope, got {type(envelope).__name__}"
             )
+        envelope = self._wire(envelope)
         with self._lock:
             self._queues.setdefault(topic, deque()).append(envelope)
+
+    def _wire(self, envelope: Envelope) -> Envelope:
+        """Encode + decode, as a real broker would (size cap; values JSON
+        cannot hold become ``str`` exactly as on a real wire; no mutable
+        ``data`` shared between parties)."""
+        return Envelope.from_json(
+            envelope.to_json(max_bytes=self.max_bytes),
+            max_bytes=self.max_bytes,
+        )
 
     def _take(self, topic: str) -> Optional[Delivery]:
         with self._lock:
             q = self._queues.get(topic)
             if not q:
                 return None
-            env = q.popleft()
-            d = self._make(topic, env)
-            self._inflight[id(d)] = d
+            # 📝 Each delivery gets its own decoded copy: a consumer that
+            #    mutates ``data`` and nacks must not change the redelivery.
+            pristine = q.popleft()
+            d = self._make(topic, self._wire(pristine))
+            self._inflight[id(d)] = (d, pristine)
             return d
 
     def _make(self, topic: str, env: Envelope) -> Delivery:
@@ -158,16 +228,22 @@ class _Core:
 
     def _settle(self, d: Delivery, *, ack: bool, requeue: bool) -> None:
         with self._lock:
-            if self._inflight.pop(id(d), None) is None:
-                return  # settled already: a no-op
+            # 📝 Identity, not just id(): an unknown delivery (another
+            #    broker's, or one forgotten by `clear()`) is a no-op.
+            entry = self._inflight.get(id(d))
+            if entry is None or entry[0] is not d:
+                return  # settled already / unknown: a no-op
+            del self._inflight[id(d)]
+            pristine = entry[1]
             if ack:
                 self.acked.append(d.envelope)
                 return
             self.nacked.append(d.envelope)
             if requeue:
-                self._queues.setdefault(d.topic, deque()).appendleft(
-                    d.envelope
-                )
+                # 📝 As every real adapter (`_base._requeue`): the
+                #    redelivery carries ``attempt + 1``.
+                env = pristine.with_attempt(pristine.attempt + 1)
+                self._queues.setdefault(d.topic, deque()).appendleft(env)
 
     @property
     def in_flight(self) -> int:
@@ -177,6 +253,9 @@ class _Core:
 
 class FakeBrokerAdapter(_Core):
     """In-memory async `BrokerAdapter`.
+
+    ``subscribe(topic, timeout=None)`` waits forever for traffic (like a
+    real consumer); pass a *timeout* (idle seconds) in tests.
 
     ::
 
@@ -203,6 +282,10 @@ class FakeBrokerAdapter(_Core):
             d = self._take(topic)
             if d is not None:
                 yield d
+                # 📝 As the real adapters: *timeout* is IDLE time; a
+                #    consumer must not stop mid-backlog.
+                if timeout is not None:
+                    deadline = time.monotonic() + timeout
                 continue
             if deadline is not None and time.monotonic() >= deadline:
                 return
@@ -232,6 +315,10 @@ class SyncFakeBrokerAdapter(_Core):
             d = self._take(topic)
             if d is not None:
                 yield d
+                # 📝 As the real adapters: *timeout* is IDLE time; a
+                #    consumer must not stop mid-backlog.
+                if timeout is not None:
+                    deadline = time.monotonic() + timeout
                 continue
             if deadline is not None and time.monotonic() >= deadline:
                 return
