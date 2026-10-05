@@ -33,7 +33,9 @@ from .._compat import require_extra
 require_extra("testing", "pytest")
 
 from .broker import (  # noqa: E402
+    BrokerPublishError,
     FakeBrokerAdapter,
+    SyncFakeBrokerAdapter,
     assert_replay_consistent,
     replay,
 )
@@ -47,6 +49,7 @@ from .pytest_plugin import (  # noqa: E402
 )
 
 __all__ = [
+    "BrokerPublishError",
     "FakeBrokerAdapter",
     "PLUGIN_NAME",
     "SnapshotMismatchError",
@@ -58,4 +61,5 @@ __all__ = [
     "payload_strategy",
     "render_snapshot",
     "replay",
+    "SyncFakeBrokerAdapter",
 ]

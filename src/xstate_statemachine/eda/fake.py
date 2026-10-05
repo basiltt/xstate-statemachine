@@ -125,6 +125,12 @@ class _Core:
             self._queues.setdefault(topic, deque()).append(envelope)
 
     def _inject(self, topic: str, envelope: Envelope) -> None:
+        # 📝 Battle #268: same typed refusal as `publish` -- a malformed
+        #    injection must fail HERE, not later inside the consumer.
+        if not isinstance(envelope, Envelope):
+            raise TypeError(
+                f"deliver() needs an Envelope, got {type(envelope).__name__}"
+            )
         with self._lock:
             self._queues.setdefault(topic, deque()).append(envelope)
 
