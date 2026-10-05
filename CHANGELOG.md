@@ -412,19 +412,9 @@ _No unreleased changes yet._
   `--xsm-fail-under-transition-coverage=N`. The new
   `xsm coverage report.json [--fail-under N] [--plain] [--json]` renders the
   report in CI.
-  Hardened in the #270 battle: the report options and thresholds without
-  `--xsm-coverage` are a usage error (they were silently ignored); a set
-  threshold FAILS when no machine was observed (`-k` matched nothing)
-  instead of passing on nothing; `nan` / `inf` / out-of-range thresholds
-  are refused by both the pytest options and `xsm coverage --fail-under`
-  (exit 2; `nan` used to disable the gate); `xsm coverage --fail-under`
-  on a report with no machines exits 1; an unwritable report path is one
-  `FAIL xstate coverage: cannot write ...` line instead of an
-  INTERNALERROR; a repeated report spec is produced once;
-  `--collect-only` writes and gates nothing; a run stopped early (`-x`)
-  is labelled `(session interrupted -- coverage partial)`. New benchmark
-  row `coverage_collector_overhead` (send() with the session collector vs
-  bare, unbudgeted).
+  Hardened in the #270 battle -- see "Coverage gates, as battle-tested"
+  under Changed. New benchmark row `coverage_collector_overhead`
+  (unbudgeted).
 - **Hypothesis model-based testing (#271).**
   `xstate_statemachine.contrib.testing.model_test(chart, *, logic=,
   invariants=, state_assertions=, payloads=, clock=True, max_steps=50,
@@ -1478,8 +1468,8 @@ _No unreleased changes yet._
   **The adversary suites then found:** the collector kept EVERY machine
   build and its transition index alive for its lifetime -- a session that
   rebuilds a chart per test grew without bound (3 000 builds → 3 000
-  entries); builds are held weakly and a recycled `id()` can never land
-  in a stale index. The terminal summary put every unvisited state /
+  entries); one representative build per key is kept, later builds are
+  held weakly, and a recycled `id()` can never land in a stale index. The terminal summary put every unvisited state /
   unhit edge on one line (500 edges → a 20 kB line); lists are capped at
   `TEXT_LIST_LIMIT` (20) with "... and N more" (JSON / HTML keep the full
   lists). `below()` accepted NaN (the gate silently off) -- `ValueError`
@@ -1488,7 +1478,9 @@ _No unreleased changes yet._
   threshold PASSED when no machine was observed (`-k` matched nothing) --
   it fails; an unwritable report path was an INTERNALERROR traceback;
   `--collect-only` wrote files and gated; a run stopped by `-x` gave no
-  sign the numbers were partial. Honest numbers: the denominator is
+  sign the numbers were partial; a crashed xdist worker is now named in
+  the summary (not a `warnings.warn` that `-W error` turns into an
+  INTERNALERROR). Honest numbers: the denominator is
   *statically declared* -- on 30 corpus charts 105 of 731 targets can
   never be hit (shadowed `always` alternatives, inline-actor invoke
   outcomes the stubs cannot drive, named `after` delays with no
