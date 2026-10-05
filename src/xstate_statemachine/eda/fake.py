@@ -145,25 +145,49 @@ class _Core:
         `RuntimeError` -- a handler feeding its own topic would otherwise
         never return.
         """
+        # 📝 #272 review (H1): `limit` is validated and checked BEFORE each
+        #    take, so a drain that handles exactly `limit` envelopes and
+        #    empties the topics returns normally; only a take that would
+        #    exceed it raises. The old top-of-pass check fired after a
+        #    completed drain of exactly `limit`, and k handlers could
+        #    overshoot by k-1.
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError(
+                f"drain(): limit must be an int >= 1, got {limit!r}"
+            )
         handled = 0
         while True:
-            if handled >= limit:
-                raise RuntimeError(
-                    f"drain() handled {handled} envelopes and the topics "
-                    f"are still not empty (a handler feeding itself?)"
-                )
             progressed = False
-            for t, handler in list(self._handlers.items()):
+            with self._lock:
+                handlers = list(self._handlers.items())
+            for t, handler in handlers:
                 if topic is not None and t != topic:
                     continue
+                if handled >= limit:
+                    with self._lock:
+                        empty = not self._queues.get(t)
+                    if empty:
+                        continue  # nothing more here; keep checking
+                    raise RuntimeError(
+                        f"drain() handled {handled} envelopes and the topics "
+                        f"are still not empty (a handler feeding itself?)"
+                    )
                 d = self._take(t)
                 if d is None:
                     continue
                 progressed = True
                 try:
                     handler(d.envelope)
-                except BaseException:
+                except Exception:
+                    # a handler FAILURE: nack without requeue, propagate
                     self._settle(d, ack=False, requeue=False)
+                    raise
+                except BaseException:
+                    # 📝 #272 review (H2): KeyboardInterrupt / SystemExit
+                    #    tear down the runner -- they must not permanently
+                    #    drop the envelope. Release it (no nack counted,
+                    #    ``attempt`` unchanged) and re-raise untouched.
+                    self._release(d)
                     raise
                 self._settle(d, ack=True, requeue=False)
                 handled += 1
@@ -174,11 +198,19 @@ class _Core:
     def _publish(self, topic: str, envelope: Envelope) -> None:
         if not isinstance(envelope, Envelope):
             raise TypeError("publish() needs an Envelope")
+        # 📝 #272 review (L2): the injected failure is checked BEFORE the
+        #    size cap -- "the broker is down" wins over "too big", as a
+        #    real client fails on connect before it serialises. Note that
+        #    the failure is NOT consumed when the envelope is malformed
+        #    (the TypeError above fires first).
         with self._lock:
             if self._fail:
                 raise self._fail.pop(0)
         envelope = self._wire(envelope)
         with self._lock:
+            # 📝 #272 review (L1): the `published` record is a SECOND copy,
+            #    so ``broker.published[0] is env`` is False by design --
+            #    compare by ``id`` / value, never identity.
             self.published.append(self._wire(envelope))
             self._log.append((topic, envelope))
             self._queues.setdefault(topic, deque()).append(envelope)
@@ -246,6 +278,21 @@ class _Core:
                 env = pristine.with_attempt(pristine.attempt + 1)
                 self._queues.setdefault(d.topic, deque()).appendleft(env)
 
+    def _release(self, d: Delivery) -> None:
+        """Put an UNSETTLED delivery back at the head of its queue.
+
+        📝 #272 review (M4): a consumer loop cancelled / closed while the
+        last yielded delivery was still in flight must not lose it. This
+        is neither an ack nor a nack -- the consumer never decided -- so
+        nothing is counted and ``attempt`` is unchanged.
+        """
+        with self._lock:
+            entry = self._inflight.get(id(d))
+            if entry is None or entry[0] is not d:
+                return
+            del self._inflight[id(d)]
+            self._queues.setdefault(d.topic, deque()).appendleft(entry[1])
+
     @property
     def in_flight(self) -> int:
         with self._lock:
@@ -256,7 +303,12 @@ class FakeBrokerAdapter(_Core):
     """In-memory async `BrokerAdapter`.
 
     ``subscribe(topic, timeout=None)`` waits forever for traffic (like a
-    real consumer); pass a *timeout* (idle seconds) in tests.
+    real consumer) -- in a test that is a HANG, so pass a *timeout* (idle
+    seconds; ``0`` = "drain what is queued and stop"). Breaking out of /
+    cancelling the loop while a yielded delivery is unsettled requeues it
+    untouched (no nack counted, ``attempt`` unchanged) when the generator
+    is closed -- immediately on ``break`` / ``aclose()``, on the loop's
+    next turn after a task cancellation (asyncio finalises it then).
 
     ::
 
@@ -282,7 +334,12 @@ class FakeBrokerAdapter(_Core):
         while True:
             d = self._take(topic)
             if d is not None:
-                yield d
+                try:
+                    yield d
+                except BaseException:
+                    # GeneratorExit / CancelledError: see `_release`
+                    self._release(d)
+                    raise
                 # 📝 As the real adapters: *timeout* is IDLE time; a
                 #    consumer must not stop mid-backlog.
                 if timeout is not None:
@@ -300,7 +357,13 @@ class FakeBrokerAdapter(_Core):
 
 
 class SyncFakeBrokerAdapter(_Core):
-    """In-memory blocking `SyncBrokerAdapter` (threads, Celery, Django)."""
+    """In-memory blocking `SyncBrokerAdapter` (threads, Celery, Django).
+
+    ``subscribe(topic, timeout=None)`` blocks forever when idle -- pass an
+    idle *timeout* in tests (``0`` drains the backlog and stops). A
+    ``break`` out of the loop with the last delivery unsettled requeues
+    it untouched.
+    """
 
     def publish(self, topic: str, envelope: Envelope) -> None:
         self._publish(topic, envelope)
@@ -315,7 +378,12 @@ class SyncFakeBrokerAdapter(_Core):
         while True:
             d = self._take(topic)
             if d is not None:
-                yield d
+                try:
+                    yield d
+                except BaseException:
+                    # GeneratorExit (a `break`): see `_release`
+                    self._release(d)
+                    raise
                 # 📝 As the real adapters: *timeout* is IDLE time; a
                 #    consumer must not stop mid-backlog.
                 if timeout is not None:

@@ -270,3 +270,57 @@ def test_bdd_recipe_skips_without_pytest_bdd(tmp_path: Path) -> None:
     out = r.stdout + r.stderr
     assert r.returncode in (0, 5), out
     assert "skipped" in out and "failed" not in out, out
+
+
+# --- #272 independent review ------------------------------------------------
+def test_then_state_prefers_the_active_configuration() -> None:
+    """M1: two regions each with an `idle` leaf -- `then_state("idle")`
+    resolves against what is ACTIVE before the whole tree."""
+    chart = {
+        "id": "m",
+        "type": "parallel",
+        "states": {
+            "r1": {
+                "initial": "idle",
+                "states": {"idle": {"on": {"GO": "busy"}}, "busy": {}},
+            },
+            "r2": {"initial": "idle", "states": {"idle": {}, "busy": {}}},
+        },
+    }
+    mm = create_machine(chart)
+    # both idle active -> ambiguous even among active ids -> ValueError
+    with pytest.raises(ValueError, match="ambiguous"):
+        given(mm).then_state("idle")
+    # only r2.idle is active now: a bare 'idle' resolves to it
+    given(mm).when("GO").then_state("busy", "r2.idle")
+    sc = given(mm).when("GO")
+    sc.then_state("busy")  # r1.busy is the only active 'busy'
+    sc.then_not_state("r1.idle")
+    with pytest.raises(AssertionError, match="r1.idle"):
+        sc.then_state("r1.idle")
+
+
+def test_read_all_pages_until_an_empty_chunk() -> None:
+    """M3: a store that caps `limit` below the page size returns SHORT
+    pages while records remain; the helper must not stop early."""
+    from xstate_statemachine.contrib.testing.broker import _read_all
+
+    class Rec:
+        def __init__(self, seq: int) -> None:
+            self.seq = seq
+
+    class CappedStore:
+        CAP = 7
+
+        def read(
+            self, key: str, after_seq: int = 0, limit: int = 1000
+        ) -> List[Rec]:
+            lim = min(limit, self.CAP)
+            return [
+                Rec(s)
+                for s in range(after_seq + 1, after_seq + 1 + lim)
+                if s <= 100
+            ]
+
+    recs = _read_all(CappedStore(), "k", page=1000)
+    assert [r.seq for r in recs] == list(range(1, 101))

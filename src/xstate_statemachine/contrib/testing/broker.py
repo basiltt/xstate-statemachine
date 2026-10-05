@@ -64,8 +64,11 @@ def _read_all(store: Any, key: str, page: int = 1000) -> List[Any]:
     out: List[Any] = []
     after = 0
     while True:
-        chunk = store.read(key, after_seq=after, limit=page)
-        out.extend(chunk)
-        if len(chunk) < page:
+        chunk = list(store.read(key, after_seq=after, limit=page))
+        if not chunk:
             return out
+        out.extend(chunk)
+        # 📝 #272 review (M3): loop until an EMPTY page, not a short one --
+        #    a store that caps `limit` below `page` returned short pages
+        #    while records remained.
         after = chunk[-1].seq

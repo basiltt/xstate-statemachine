@@ -1497,8 +1497,9 @@ _No unreleased changes yet._
   `when()` after `stop()` was a silent no-op, and the step trail omitted
   the given steps. pytest-bdd recipe
   (`tests/contrib/testing/bdd_order_specs/`, skipped without
-  `pytest-bdd`); benchmark rows `fake_broker_10k_envelopes` (≈36 ms) and
-  `given_when_then_spec` (≈160 µs).
+  `pytest-bdd`); benchmark rows `fake_broker_10k_envelopes` and
+  `given_when_then_spec` (no wall-clock budget; run `benchmarks/` to
+  measure on your hardware).
 - **Model-based testing, as battle-tested (#271).** The orders team's
   path tests (#269) and coverage gate (#270) were green and a refund still
   drove `total_cents` negative after a specific interleaving. `model_test`

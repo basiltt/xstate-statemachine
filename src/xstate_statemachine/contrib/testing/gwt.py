@@ -99,7 +99,9 @@ class Scenario:
         interp = self._ensure()
         active = set(interp.current_state_ids)
         missing = [
-            s for s in state_ids if not interp.matches(self._full_id(s))
+            s
+            for s in state_ids
+            if not interp.matches(self._full_id(s, active=active))
         ]
         if missing:
             self._fail(
@@ -110,7 +112,12 @@ class Scenario:
 
     def then_not_state(self, *state_ids: str) -> "Scenario":
         interp = self._ensure()
-        present = [s for s in state_ids if interp.matches(self._full_id(s))]
+        active = set(interp.current_state_ids)
+        present = [
+            s
+            for s in state_ids
+            if interp.matches(self._full_id(s, active=active))
+        ]
         if present:
             self._fail(
                 f"expected state(s) {sorted(present)} NOT to be active; "
@@ -242,12 +249,29 @@ class Scenario:
             raise RuntimeError(f"{step}() needs a preceding when()")
         return self.receipt
 
-    def _full_id(self, state: str) -> str:
+    def _full_id(
+        self, state: str, active: Optional[Iterable[str]] = None
+    ) -> str:
         if state.startswith(self.machine.id + ".") or state == self.machine.id:
             return state
         if "." in state:
             return f"{self.machine.id}.{state}"
-        # a bare leaf name: find it
+        # 📝 #272 review (M1): for then_* a bare leaf name is resolved
+        #    against the ACTIVE configuration first -- a chart with two
+        #    `idle` leaves (one per region) is a common shape and the
+        #    assertion should pass when exactly one of them is active.
+        if active is not None:
+            live = sorted(
+                {
+                    anc
+                    for sid in active
+                    for anc in _ancestors(sid)
+                    if anc.rsplit(".", 1)[-1] == state
+                }
+            )
+            if len(live) == 1:
+                return live[0]
+        # a bare leaf name: find it in the whole tree
         matches = [
             n.id
             for n in _walk(self.machine)
@@ -268,6 +292,13 @@ class Scenario:
     def _fail(self, message: str) -> None:
         trail = " -> ".join(self._steps) or "given()"
         raise AssertionError(f"{trail}: {message}")
+
+
+def _ancestors(state_id: str) -> Iterable[str]:
+    """``a.b.c`` -> ``a.b.c``, ``a.b``, ``a``."""
+    parts = state_id.split(".")
+    for n in range(len(parts), 0, -1):
+        yield ".".join(parts[:n])
 
 
 def _walk(machine: MachineNode[Any]) -> Iterable[Any]:
