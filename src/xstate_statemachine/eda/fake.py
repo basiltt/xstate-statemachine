@@ -129,7 +129,8 @@ class _Core:
 
     def on(self, topic: str, handler: Callable[[Envelope], Any]) -> None:
         """Register a handler `drain()` calls for each envelope on *topic*."""
-        self._handlers[topic] = handler
+        with self._lock:  # the class promises thread-safety (#272 review)
+            self._handlers[topic] = handler
 
     def drain(
         self, topic: Optional[str] = None, *, limit: int = DEFAULT_DRAIN_LIMIT

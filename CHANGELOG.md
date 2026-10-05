@@ -9,30 +9,7 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ## [Unreleased]
 
-### Test doubles & BDD (#272)
-
-- **`given(machine)` / `Scenario`, `xstate_statemachine.contrib.testing`.**
-  `given(m).in_state("paid").with_context(orderId="o").when("PACKED")
-  .then_state("shipped").then_context(trackingId="TRK-o")` over a
-  `SyncInterpreter` on a `SimulatedClock`; `after(ms)`, `then_not_state`,
-  `then_changed`, `then_denied`, `then_error`, `then_no_error`,
-  `then_done`. Every failure is an `AssertionError` that names the step
-  trail, the expected and the actual value. `in_state` refuses unknown,
-  ambiguous and history ids and runs no entry actions; a top-level final
-  state starts `done`; `when` / `after` on a stopped or finished scenario
-  and a non-finite `after` are errors, not silent no-ops. Sync engine
-  only.
-- **`FakeBrokerAdapter` / `SyncFakeBrokerAdapter`, `replay`,
-  `assert_replay_consistent`** are documented affordance by affordance
-  in the Testing guide, including `drain()` (a raising handler nacks
-  without requeue and re-raises) and the outbox relay's at-least-once
-  rule under `fail_next_publish()`.
-- **pytest-bdd recipe** (`tests/contrib/testing/bdd_order_specs/`): a
-  `.feature` file with a scenario outline, step definitions over
-  `given()`, run when `pytest-bdd` is installed and skipped otherwise.
-  `pytest-bdd` is not part of `[testing]`.
-- Benchmark rows `fake_broker_10k_envelopes` and `given_when_then_spec`
-  (no budget until the reference runner records one).
+_No unreleased changes yet._
 
 ## [0.11.0] - 2026-10-01
 
@@ -1495,6 +1472,33 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   balance; `assert_replay_consistent` holds for every order and a
   tampered log raises `ReplayDivergenceError`; 10 000 envelopes through
   the fake stay ordered per subject with linear memory.
+  **The adversary suites then found:** the fake redelivered a
+  `nack(requeue=True)` with `attempt` still 0 while every real adapter
+  adds 1 -- poison tests passed on the fake for a different reason than
+  on a real broker; `subscribe(timeout=)` was a TOTAL limit in the fake
+  and an IDLE limit in the adapters, so a trickling producer ended the
+  iterator mid-backlog; the fake handed out the SAME `Envelope` object it
+  stored -- a consumer mutating `data` rewrote the `published` record and
+  a nack redelivered the mutated payload (copy-on-wire through
+  `to_json(max_bytes)` / `from_json` now, which also enforces the X0.4
+  size cap on `publish` and `deliver`); `fail_next_publish` accepted
+  `KeyboardInterrupt`, an exception CLASS and `times=0`; a handler that
+  republished to its own topic made `drain()` loop forever
+  (`limit=DEFAULT_DRAIN_LIMIT`); `assert_replay_consistent` read the
+  store with the default `limit=1000` -- a log tampered at record 1 200
+  was "consistent" (every page is read now); `upto=-1` silently replayed
+  nothing (`ValueError`; `upto` is inclusive, `0` is the initial state).
+  The contract suite existed only for async; `SyncBrokerContract` now runs
+  against the sync fake and the real `SyncBroker` base. New: `clear()` on
+  both fakes, `ReplayDivergenceError` exported from `contrib.testing`,
+  `eda.DEFAULT_DRAIN_LIMIT`. In `given()`: a history id gave a misleading
+  `InvalidConfigError`, `in_state()` with no ids passed through, a
+  top-level final start stayed `running`, `after(nan)` was accepted,
+  `when()` after `stop()` was a silent no-op, and the step trail omitted
+  the given steps. pytest-bdd recipe
+  (`tests/contrib/testing/bdd_order_specs/`, skipped without
+  `pytest-bdd`); benchmark rows `fake_broker_10k_envelopes` (≈36 ms) and
+  `given_when_then_spec` (≈160 µs).
 - **Model-based testing, as battle-tested (#271).** The orders team's
   path tests (#269) and coverage gate (#270) were green and a refund still
   drove `total_cents` negative after a specific interleaving. `model_test`
