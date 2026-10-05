@@ -1450,6 +1450,56 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Test doubles, as battle-tested (#272).** The fulfilment team runs its
+  two-chart EDA pipeline with no broker. The #272 acceptance criteria
+  promised `given(machine).in_state(...).when(...).then_state(...)` and
+  it never shipped: `contrib.testing.given()` / `Scenario` exist now (sync
+  engine, `SimulatedClock`, `from_state_ids` for the starting
+  configuration; `in_state` / `with_context` / `when` / `after` /
+  `then_state` / `then_not_state` / `then_context` / `then_changed` /
+  `then_denied` / `then_error` / `then_no_error` / `then_done`; every
+  failure names the step trail, the expectation and what was active).
+  Pinned on `eda_fulfilment` with `SyncFakeBrokerAdapter`: an injected
+  publish failure leaves the outbox row pending and the relay raises to
+  its caller -- the next tick publishes it once (at-least-once, no
+  duplicate); a four-publish partition delays but never reorders a
+  subject's `OrderPaid → OrderPacked → OrderShipped`; a raising handler
+  nacks without requeue and the exception reaches the test; a poison
+  command is attempted exactly `MAX_ATTEMPTS` times, then dead-lettered
+  and acked with nothing committed or pending; 50 interleaved orders keep
+  per-subject order and every published event's `causationid` names its
+  inbound cause; 8 producer threads lose nothing and the fake's counters
+  balance; `assert_replay_consistent` holds for every order and a
+  tampered log raises `ReplayDivergenceError`; 10 000 envelopes through
+  the fake stay ordered per subject with linear memory.
+  **The adversary suites then found:** the fake redelivered a
+  `nack(requeue=True)` with `attempt` still 0 while every real adapter
+  adds 1 -- poison tests passed on the fake for a different reason than
+  on a real broker; `subscribe(timeout=)` was a TOTAL limit in the fake
+  and an IDLE limit in the adapters, so a trickling producer ended the
+  iterator mid-backlog; the fake handed out the SAME `Envelope` object it
+  stored -- a consumer mutating `data` rewrote the `published` record and
+  a nack redelivered the mutated payload (copy-on-wire through
+  `to_json(max_bytes)` / `from_json` now, which also enforces the X0.4
+  size cap on `publish` and `deliver`); `fail_next_publish` accepted
+  `KeyboardInterrupt`, an exception CLASS and `times=0`; a handler that
+  republished to its own topic made `drain()` loop forever
+  (`limit=DEFAULT_DRAIN_LIMIT`); `assert_replay_consistent` read the
+  store with the default `limit=1000` -- a log tampered at record 1 200
+  was "consistent" (every page is read now); `upto=-1` silently replayed
+  nothing (`ValueError`; `upto` is inclusive, `0` is the initial state).
+  The contract suite existed only for async; `SyncBrokerContract` now runs
+  against the sync fake and the real `SyncBroker` base. New: `clear()` on
+  both fakes, `ReplayDivergenceError` exported from `contrib.testing`,
+  `eda.DEFAULT_DRAIN_LIMIT`. In `given()`: a history id gave a misleading
+  `InvalidConfigError`, `in_state()` with no ids passed through, a
+  top-level final start stayed `running`, `after(nan)` was accepted,
+  `when()` after `stop()` was a silent no-op, and the step trail omitted
+  the given steps. pytest-bdd recipe
+  (`tests/contrib/testing/bdd_order_specs/`, skipped without
+  `pytest-bdd`); benchmark rows `fake_broker_10k_envelopes` and
+  `given_when_then_spec` (no wall-clock budget; run `benchmarks/` to
+  measure on your hardware).
 - **Model-based testing, as battle-tested (#271).** The orders team's
   path tests (#269) and coverage gate (#270) were green and a refund still
   drove `total_cents` negative after a specific interleaving. `model_test`

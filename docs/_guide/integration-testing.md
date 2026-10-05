@@ -323,13 +323,99 @@ assert broker.published_on("out") == []
 
 | Affordance | Effect |
 |:--|:--|
-| `deliver(topic, env)` | Inbound traffic; **not** recorded in `published`. Anything but an `Envelope` is a `TypeError` (same as `publish`). |
-| `publish(topic, env)` | Recorded in `published` / `published_on(topic)` and queued. |
-| `fail_next_publish(error=None, *, times=1)` | The next *times* publishes raise *error* (default `BrokerPublishError`, a `ConnectionError`). |
-| `acked`, `nacked`, `in_flight`, `pending(topic)`, `topics()` | Counters for assertions. Settling a delivery twice is a no-op. |
-| `on(topic, handler)` + `drain()` | Run handlers until their topics are empty; a raising handler nacks without requeue and re-raises. |
+| `publish(topic, env)` | Appended to `published` (all topics, in order) and to `published_on(topic)`, then queued on *topic*. Anything but an `Envelope` is `TypeError: publish() needs an Envelope`. |
+| `deliver(topic, env)` | Inbound traffic: queued on *topic* but **not** recorded in `published`. Anything but an `Envelope` is `TypeError: deliver() needs an Envelope, got <type>`. |
+| `subscribe(topic, *, timeout=None)` | Yields `Delivery(envelope, topic, ack, nack)` in FIFO order; `timeout=0` returns as soon as the queue is empty, `None` polls for ever. Async on `FakeBrokerAdapter`, a plain iterator on `SyncFakeBrokerAdapter`. |
+| `ack(d)` / `nack(d, *, requeue)` | Settle a delivery (also `d.ack()` / `d.nack(requeue=True)`). Appends to `acked` / `nacked`; `requeue=True` puts the envelope back at the **head** of its topic. Settling twice is a no-op. |
+| `fail_next_publish(error=None, *, times=1)` | The next *times* publishes raise *error* (default `BrokerPublishError("injected")`, a `ConnectionError`); a failed publish records and queues nothing. |
+| `published`, `published_on(topic)` | Every successful publish, and the ones on one topic. |
+| `acked`, `nacked`, `in_flight` | Lists of settled envelopes; the number of deliveries taken and not yet settled. |
+| `pending(topic)`, `topics()` | Envelopes still queued on *topic*; every topic ever queued on (sorted). |
+| `on(topic, handler)` + `drain(topic=None)` | `drain()` takes from every registered topic (or only *topic*) round-robin until all are empty, including envelopes the handlers publish meanwhile, and returns how many it handled. A handler that returns acks; a handler that **raises** nacks the delivery **without requeue** and the exception propagates out of `drain()`. One handler per topic (a second `on()` replaces it). |
 
-`replay(machine, records)` / `assert_replay_consistent(machine, log, key=…)` replay a transition log and fail with `AssertionError` at the first divergent `seq`.
+Both fakes are thread-safe (one lock around the queues); `drain()` runs handlers on the calling thread.
+
+**The outbox relay is at-least-once on the fake too.** `OutboxRelay.relay_once()` publishes pending rows in order. When a publish raises, the exception reaches the caller: the rows already published are marked sent, and the failing row and every row after it **stay pending** for the next call. `fail_next_publish()` tests exactly that path.
+
+### Replaying a transition log
+
+| Call | Behaviour |
+|:--|:--|
+| `replay(machine, records, *, upto=None, logic=None, verify=True, key=None, snapshot=None)` | Re-runs the logged user events on a `SimulatedClock` and returns the `SyncInterpreter`. Actions and services are stubbed (services replay the recorded `done` / `error`); the machine's real guards run unless you pass `logic=`. With `verify=True` the first mismatch raises `ReplayDivergenceError(seq, expected, actual)`. The caller's machine is not mutated. |
+| `assert_replay_consistent(machine, log, *, key=None)` | `replay(..., verify=True)` with the divergence turned into `AssertionError: replay diverged: …` naming the first divergent `seq`. *log* is an iterable of `TransitionRecord` or a `TransitionLogStore` (then `key=` is required, otherwise `ValueError`). Returns the replayed interpreter. |
+
+## Given / When / Then
+
+`given(machine)` returns a `Scenario`: a thin, fluent wrapper over a `SyncInterpreter` on a `SimulatedClock`. Every method returns the scenario, so one behaviour fits on one line:
+
+```python
+from xstate_statemachine import create_machine
+from xstate_statemachine.contrib.testing import given
+
+machine = create_machine({
+    "id": "order", "initial": "pending",
+    "states": {"pending": {"on": {"PAY": "paid"}},
+               "paid": {"after": {"1000": "expired"}},
+               "expired": {"type": "final"}},
+})
+given(machine).in_state("pending").when("PAY").then_state("paid")
+given(machine).in_state("paid").after(1000).then_done()
+```
+
+| Method | Behaviour |
+|:--|:--|
+| `given(machine)` | A new `Scenario`. Nothing is built until the first step that needs the interpreter. |
+| `.in_state(*ids)` | Start in this configuration via `from_state_ids`: full ids (`"order.paid"`), ids relative to the root (`"review.legal"`) or a bare leaf name if it is unique. Pass several ids for a parallel chart. **No entry actions run**, so use `with_context` to supply the context the chart would have built. A top-level final state starts with `status == "done"`. Unknown or ambiguous names, and history states, are `ValueError`. |
+| `.with_context(**kv)` | Merged over the chart's initial context. Without `in_state` it is merged **before** `start()`, so entry actions see it. Not validated here: a `context_validator` refusal surfaces on the next `when()`'s receipt (`then_error`). |
+| `.when(event, **payload)` | `send(event, wait=True)` with a string, `Event`, dict or `EventModel`; the `Receipt` is kept on `.receipt`. Engine errors (e.g. `UnknownEventError` under `strict`) propagate unchanged. |
+| `.after(ms)` | Advance the simulated clock (fires due `after` timers). Needs a finite number; a negative one is the clock's own `ValueError`. |
+| `.then_state(*ids)` / `.then_not_state(*ids)` | Each id (leaf, ancestor or the machine id) is / is not active. |
+| `.then_context(**kv)` | Each key compares equal (`==`, so nested dicts and lists compare by value); a missing key reports `<missing>`. |
+| `.then_changed(changed=True)` / `.then_denied()` | On the last receipt. An unhandled event and a denied one both have `changed=False`; only a refused event has `denied=True`. |
+| `.then_error(type=None)` / `.then_no_error()` | The last receipt carries (an instance of) an action or validator error, or none. |
+| `.then_done()` | `status == "done"`. |
+| `.interp`, `.clock`, `.receipt` | The interpreter (built on access), the `SimulatedClock`, the last `Receipt`. |
+| `.stop()`, `with given(m) as s:` | Stop the interpreter; the context manager stops it on exit. |
+
+Every `then_*` failure is an `AssertionError` that starts with the step trail and then gives the expected and actual values, e.g. `in_state('m.a') -> when('GO'): expected state(s) ['done'] to be active; active: ['m.b.a']`. Misuse is a `RuntimeError`: `then_changed` / `then_denied` / `then_error` / `then_no_error` before any `when()`, `in_state` / `with_context` after it, or `when` / `after` once the interpreter is stopped or done.
+
+⚠️ **Sync engine only, one thread.** `Scenario` is not thread-safe, and there is no async variant; for the async engine use the `xsm_ainterp` fixture. Two scenarios on one `MachineNode` run as independent interpreters, but they share the machine's `logic` table, so a stub that keeps state is shared too.
+
+⚠️ A failing `then_context` prints the values it compared, unredacted, as snapshot diffs do. They are your own test data, but keep real secrets (card tokens, passwords) out of test contexts.
+
+### BDD with pytest-bdd
+
+`pytest-bdd` is **not** part of the `[testing]` extra; `pip install pytest-bdd` if you want Gherkin. Each step is a one-line call on a `Scenario` fixture. The repository's own recipe is in `tests/contrib/testing/bdd_order_specs/`; CI runs it whenever pytest-bdd is installed and skips it otherwise:
+
+```gherkin
+Scenario: A paid order is packed and shipped
+  Given the order is in state "paid"
+  And the context has orderId "o"
+  When I send "PACKED"
+  Then the state is "shipped"
+  And the context has trackingId "TRK-o"
+```
+
+```python
+@pytest.fixture
+def spec(order_machine):
+    with given(order_machine) as s:
+        yield s
+
+@bdd_given(parsers.parse('the order is in state "{state}"'))
+def _in_state(spec, state):
+    spec.in_state(state)
+
+@when(parsers.parse('I send "{event}"'))
+def _send(spec, event):
+    spec.when(event)
+
+@then(parsers.parse('the state is "{state}"'))
+def _state_is(spec, state):
+    spec.then_state(state)
+```
+
+Step arguments are plain strings from `parsers.parse`; nothing in a `.feature` file is evaluated. Scenario outlines (`<start>` / `Examples:`) work as usual. A conftest cannot call `importorskip`, so wrap its `pytest_bdd` import in `try/except ImportError`, and call `pytest.importorskip("pytest_bdd")` in the test module that calls `scenarios(...)`.
 
 ## Guarantees
 
@@ -375,6 +461,13 @@ assert broker.published_on("out") == []
 | `FAIL xstate coverage: cannot write json report to …` | the report path is a directory or its parent is a file | pick a writable file path |
 | `xsm coverage: … unsupported coverage report version` | the JSON was written by an incompatible release | regenerate it with the installed version |
 | `--xsm-coverage` gate passes under `-n N` with "(no machines observed)" | a release before the xdist merge | upgrade; workers' reports are now merged on the controller |
+| `ValueError: given/then: no state named 'x' in machine 'm'` | a typo, or a state from another chart | use a full id; the machine id is the prefix |
+| `ValueError: given/then: 'a' is ambiguous ([...])` | a bare leaf name used by several states | pass one of the listed full ids |
+| `ValueError: given/then: '…' is a history pseudostate` | `in_state()` named a history node, which is never active | name the state it would restore |
+| `RuntimeError: then_changed() needs a preceding when()` | a receipt assertion with no event sent | add `.when(...)` first; use `then_state` for the starting configuration |
+| `RuntimeError: given(...).in_state() must come before the first when()` | `in_state` / `with_context` after a `when` | start a new `given(machine)` |
+| `RuntimeError: when(): the scenario's interpreter is 'stopped', not running` | a step after `stop()`, after the `with` block, or once the chart is done | start a new scenario |
+| `in_state(...)`, then a `KeyError` in an action | `from_state_ids` runs no entry actions, so context they would have set is missing | supply it with `.with_context(...)` |
 | `TypeError: deliver() needs an Envelope` | `FakeBrokerAdapter.deliver()` was given a dict or a string | wrap it: `Envelope.new(type=…, subject=…, data=…)` |
 | `MissingExtraError: hypothesis is not installed … [testing]` at collection | a `model_test(...)` module without Hypothesis | `pip install "xstate-statemachine[testing]"` |
 | `ValueError: model_test: guard_flip=True needs stub logic` | `guard_flip=True` together with real `logic=` | real guards cannot be flipped; drop one of the two |

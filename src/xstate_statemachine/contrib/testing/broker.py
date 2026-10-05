@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Optional
+from typing import Any, List, Optional
 
 from ...eda.fake import (
     BrokerPublishError,
@@ -35,18 +35,40 @@ def assert_replay_consistent(
 ) -> Any:
     """Replay *log* against *machine* and fail loudly on divergence.
 
-    *log* is an iterable of `TransitionRecord` or a `TransitionLogStore`
-    (read under *key*). Returns the replayed interpreter (stopped by the
-    caller). Raises `AssertionError` naming the first divergent ``seq``.
+    *log* is an iterable of `TransitionRecord` (*key* selects one instance
+    when it mixes several) or a `TransitionLogStore` (read under *key*,
+    EVERY page -- a store's ``read`` returns at most ``limit`` rows).
+    Returns the replayed `SyncInterpreter`, still running on a
+    `SimulatedClock` (no threads); inspect it, then ``stop()`` it.
+    Raises `AssertionError` naming the first divergent ``seq``.
     """
-    records: Iterable[Any]
+    records: List[Any]
     if hasattr(log, "read"):
         if key is None:
             raise ValueError("reading a log store needs key=")
-        records = log.read(key)
+        records = _read_all(log, key)
     else:
-        records = log
+        records = list(log)
     try:
-        return replay(machine, list(records), verify=True)
+        return replay(machine, records, verify=True, key=key)
     except ReplayDivergenceError as exc:
         raise AssertionError(f"replay diverged: {exc}") from exc
+
+
+def _read_all(store: Any, key: str, page: int = 1000) -> List[Any]:
+    """Every record of *key*, page by page.
+
+    🐛 Battle #272: a single ``read(key)`` stopped at the store's default
+    ``limit=1000`` -- a log tampered past record 1000 was reported
+    consistent."""
+    out: List[Any] = []
+    after = 0
+    while True:
+        chunk = list(store.read(key, after_seq=after, limit=page))
+        if not chunk:
+            return out
+        out.extend(chunk)
+        # 📝 #272 review (M3): loop until an EMPTY page, not a short one --
+        #    a store that caps `limit` below `page` returned short pages
+        #    while records remained.
+        after = chunk[-1].seq

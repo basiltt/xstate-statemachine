@@ -129,11 +129,11 @@ class TestMarkerParsing:
             @pytest.mark.parametrize("n", [1, 2, 3])
             @pytest.mark.xstate_machine(CFG)
             def test_it(xsm_machine, xsm_ran, n):
-                seen.append(id(xsm_machine))
+                seen.append(xsm_machine)  # hold it: id() reuse after GC
                 assert xsm_ran == []
 
             def test_distinct():
-                assert len(set(seen)) == 3
+                assert len({id(m) for m in seen}) == 3
             """))
         run(xsm_pytester).assert_outcomes(passed=4)
 
