@@ -1499,10 +1499,18 @@ _No unreleased changes yet._
   `--script` with `--events` ran both so the replayed artefact was not
   the recorded run -- one-line errors, exit 2. Pinned: the file left
   after shrinking is the minimal sequence; three planted bugs
-  (sequence-, payload-, time-dependent) shrink to 3 / 1 / 2 steps; 200
-  examples on the orders chart with real logic take ≈3.4 s; a
-  `Decimal` in context fails `snapshot_roundtrip` on purpose. New
-  benchmark row `model_test_200_examples`; `failing.json` is gitignored.
+  (sequence-, payload-, time-dependent) shrink to minimal sequences
+  (≤ 5 / 1 / 2 steps; exact lengths vary by Hypothesis version); 200
+  examples on the orders chart with real logic take a few seconds; a
+  `Decimal` in context fails `snapshot_roundtrip` on purpose, with a
+  hint. **Independent review then found:** `assume()` inside an
+  invariant raised `UnsatisfiedAssumption` -- an `Exception` -- and was
+  reported as a failure with a script written and a non-bug shrunk;
+  Hypothesis control exceptions now pass through. Field bounds
+  (`Field(ge=1000, le=1001)`, `min_length`) are read into the integer /
+  text strategies instead of filtering a default range that could never
+  pass (`Unsatisfiable`). New benchmark row `model_test_200_examples`;
+  `failing.json` is gitignored.
 - **Coverage gates, as battle-tested (#270).** The orders team gates CI
   on state & transition coverage: `--xsm-fail-under-state-coverage=nan`
   was accepted (`type=float`) and every `percent < nan` is False -- the

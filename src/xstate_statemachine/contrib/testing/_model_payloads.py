@@ -25,7 +25,38 @@ def _hypothesis() -> Any:
     return hypothesis
 
 
-def _annotation_strategy(st: Any, ann: Any) -> Any:
+def _bounds(info: Any) -> Dict[str, Any]:
+    """Numeric / length bounds from a pydantic field's `annotated_types`
+    metadata (``Field(ge=1000, le=1001)`` → ``{"min_value": 1000,
+    "max_value": 1001}``), so the strategy is BOUNDED rather than filtered.
+
+    📝 reviewer M5 (#271 battle): filtering `integers(-1000, 1000)` through
+    `model_validate` for a field bounded to ``[1000, 1001]`` could never
+    pass -- Hypothesis gave up with `Unsatisfiable` / `filter_too_much`
+    and nothing pointed at the field.
+    """
+    out: Dict[str, Any] = {}
+    for meta in getattr(info, "metadata", ()) or ():
+        for attr, key in (
+            ("ge", "min_value"),
+            ("gt", "min_exclusive"),
+            ("le", "max_value"),
+            ("lt", "max_exclusive"),
+            ("min_length", "min_size"),
+            ("max_length", "max_size"),
+        ):
+            val = getattr(meta, attr, None)
+            if val is not None:
+                out[key] = val
+    if "min_exclusive" in out:
+        out["min_value"] = out.pop("min_exclusive") + 1
+    if "max_exclusive" in out:
+        out["max_value"] = out.pop("max_exclusive") - 1
+    return out
+
+
+def _annotation_strategy(st: Any, ann: Any, info: Any = None) -> Any:
+    b = _bounds(info) if info is not None else {}
     origin = typing.get_origin(ann)
     args = typing.get_args(ann)
     if ann is Any:
@@ -52,9 +83,19 @@ def _annotation_strategy(st: Any, ann: Any) -> Any:
         datetime.date: st.dates(),
         type(None): st.none(),
         bool: st.booleans(),
-        int: st.integers(-1000, 1000),
-        float: st.floats(-1e6, 1e6, allow_nan=False, allow_infinity=False),
-        str: st.text(max_size=20),
+        int: st.integers(b.get("min_value", -1000), b.get("max_value", 1000)),
+        float: st.floats(
+            float(b.get("min_value", -1e6)),
+            float(b.get("max_value", 1e6)),
+            allow_nan=False,
+            allow_infinity=False,
+        ),
+        str: st.text(
+            min_size=int(b.get("min_size", 0)),
+            max_size=int(
+                b.get("max_size", max(20, int(b.get("min_size", 0))))
+            ),
+        ),
     }
     return table.get(ann)
 
@@ -85,6 +126,8 @@ def payload_strategy(schema: Any) -> Any:
     event_type = getattr(model.model_fields.get("type"), "default", None)
 
     def _valid(payload: Dict[str, Any]) -> bool:
+        # The bounded strategies above make this a safety net for
+        # validators the metadata cannot express, not the main filter.
         # 📝 Battle #271: constraints (``Field(ge=1)``, ``min_length``,
         #    validators) are not in the annotation -- an unfiltered draw
         #    made every send raise `InvalidEventPayloadError`.
@@ -106,7 +149,7 @@ def _fields_strategy(st: Any, model: Any, skip: Sequence[str]) -> Any:
     for name, info in model.model_fields.items():
         if name in skip:
             continue
-        strat = _annotation_strategy(st, info.annotation)
+        strat = _annotation_strategy(st, info.annotation, info)
         if strat is None:
             if info.is_required():
                 raise ValueError(

@@ -407,6 +407,12 @@ def _run_check(self: Any, label: str, fn: Check) -> None:
     except AssertionError as exc:
         self._fail(f"{label} failed: {exc}")
         return
+    except _hypothesis().errors.HypothesisException:
+        # 🛑 reviewer H1 (#271): `assume(...)` inside a check raises
+        #    `UnsatisfiedAssumption`, an `Exception` subclass -- treating
+        #    it as a failure wrote a script and shrank a non-bug. Hypothesis
+        #    control flow passes through untouched.
+        raise
     except Exception as exc:  # noqa: BLE001 -- user check, reported
         self._fail(f"{label} raised {type(exc).__name__}: {exc}")
         return
@@ -524,7 +530,10 @@ def _roundtrip_rule(hs: Any, machine: MachineNode[Any]) -> Any:
             json.dumps(interp.context)
         except (TypeError, ValueError) as exc:
             self._fail(
-                f"snapshot round-trip: context is not JSON-serialisable: {exc}"
+                f"snapshot round-trip: context is not JSON-serialisable: "
+                f"{exc} -- store money as integer cents or a str, or keep "
+                f"such values out of context (a persisted snapshot would "
+                f"restore them as str)"
             )
         blob = interp.get_snapshot()
         before = (

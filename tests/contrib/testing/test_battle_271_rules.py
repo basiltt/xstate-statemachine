@@ -232,3 +232,103 @@ def test_payload_dependent_guard_never_refused(
     finally:
         mp.undo()
     assert denied == []
+
+
+# -----------------------------------------------------------------------------
+# reviewer follow-ups (#271)
+# -----------------------------------------------------------------------------
+def test_assume_inside_a_check_is_not_a_failure(tmp_path) -> None:
+    """H1: `assume()` raises UnsatisfiedAssumption (an Exception); the
+    generic handler turned it into a failure with a script written."""
+    from hypothesis import assume, settings, HealthCheck
+
+    from src.xstate_statemachine.contrib.testing import model_test
+
+    cfg = {
+        "id": "a",
+        "initial": "x",
+        "context": {"n": 0},
+        "states": {"x": {"on": {"INC": {"actions": "inc"}}}},
+    }
+    from src.xstate_statemachine import MachineLogic
+
+    lg = MachineLogic(
+        actions={"inc": lambda i, c, e, a: c.__setitem__("n", c["n"] + 1)}
+    )
+    failing = tmp_path / "f.json"
+
+    def picky(interp) -> bool:
+        assume(interp.context["n"] < 40)  # discard long examples only
+        return True
+
+    cls = model_test(
+        cfg,
+        logic=lambda: lg,
+        invariants={"picky": picky},
+        clock=False,
+        snapshot_roundtrip=False,
+        settings=settings(
+            deadline=None,
+            max_examples=60,
+            database=None,
+            derandomize=True,
+            suppress_health_check=list(HealthCheck),
+        ),
+        failing_path=failing,
+    )
+    cls.TestCase().runTest()  # no AssertionError
+    assert not failing.exists()
+
+
+def test_tight_field_bounds_are_used_not_filtered(tmp_path) -> None:
+    """M5: `Field(ge=1000, le=1001)` on an int could never pass the
+    default `integers(-1000, 1000)` draw -> Unsatisfiable."""
+    pytest.importorskip("pydantic")
+    from typing import Literal
+
+    from hypothesis import settings, HealthCheck
+    from pydantic import Field
+
+    from src.xstate_statemachine.contrib.pydantic import (
+        EventModel,
+        events_union,
+    )
+    from src.xstate_statemachine import create_machine, stub_logic
+    from src.xstate_statemachine.contrib.testing import (
+        model_test,
+        payload_strategy,
+    )
+
+    class Big(EventModel):
+        type: Literal["BIG"] = "BIG"
+        n: int = Field(ge=1000, le=1001)
+        name: str = Field(min_length=30, max_length=32)
+
+    strat = payload_strategy(Big)
+    from hypothesis import find
+
+    ex = find(strat, lambda d: True)
+    assert 1000 <= ex["n"] <= 1001 and 30 <= len(ex["name"]) <= 32
+
+    cfg = {
+        "id": "b",
+        "initial": "x",
+        "states": {"x": {"on": {"BIG": {"actions": "noop"}}}},
+    }
+    m = create_machine(
+        cfg, logic=stub_logic(cfg), event_schemas=events_union(Big)
+    )
+    cls = model_test(
+        m,
+        clock=False,
+        snapshot_roundtrip=False,
+        settings=settings(
+            deadline=None,
+            max_examples=50,
+            database=None,
+            derandomize=True,
+            suppress_health_check=list(HealthCheck),
+        ),
+        failing_path=tmp_path / "f.json",
+    )
+    cls.TestCase().runTest()

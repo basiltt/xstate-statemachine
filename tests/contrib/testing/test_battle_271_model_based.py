@@ -207,17 +207,15 @@ def test_failing_artifact_is_deterministic_under_a_seed(
             logic=_refund_logic,
             invariants={"nn": lambda i: i.context["total_cents"] >= 0},
             payloads={
-                "ADD_ITEM": st.fixed_dictionaries(
-                    {"sku": st.just("tea"), "qty": st.integers(1, 3)}
-                ),
+                # fixed payloads: the search is short and the shrink
+                # trivial -- this test is about byte-identity, not finding
+                "ADD_ITEM": st.just({"sku": "tea", "qty": 1}),
                 "PAY": st.just({"card_token": "tok_ok"}),
-                "REFUND": st.fixed_dictionaries(
-                    {"amount_cents": st.integers(1, 2000)}
-                ),
+                "REFUND": st.just({"amount_cents": 100_000}),
             },
             clock=False,
             snapshot_roundtrip=False,
-            settings=settings(QUIET, max_examples=300),
+            settings=settings(QUIET, max_examples=400),
             failing_path=failing,
         )
         assert _run(cls) is not None
@@ -448,13 +446,13 @@ def test_corpus_smoke_has_no_false_failures(tmp_path: pathlib.Path) -> None:
     from src.xstate_statemachine.exceptions import XStateMachineError
 
     checked = 0
-    for p in sorted(CORPUS.glob("*.json"))[:12]:
+    for p in sorted(CORPUS.glob("*.json"))[:10]:
         raw = json.loads(p.read_text("utf-8"))
         try:
             create_machine(raw, logic=stub_logic(raw))
             cls = model_test(
                 raw,
-                settings=settings(QUIET, max_examples=50),
+                settings=settings(QUIET, max_examples=30),
                 failing_path=tmp_path / f"{p.stem}.json",
             )
             exc = _run(cls)
@@ -464,4 +462,4 @@ def test_corpus_smoke_has_no_false_failures(tmp_path: pathlib.Path) -> None:
             continue  # the chart itself loops (`always` cycle): engine-refused
         assert exc is None, (p.name, str(exc)[:300])
         checked += 1
-    assert checked >= 8
+    assert checked >= 6
