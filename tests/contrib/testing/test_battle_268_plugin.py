@@ -5,6 +5,10 @@ throw-away `pytester` session."""
 
 from __future__ import annotations
 
+import json
+import os
+import pathlib
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -12,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from .conftest import SRC, run
+from .conftest import CORPUS, SRC, run
 
 pytestmark = pytest.mark.timeout(300)
 
@@ -409,3 +413,96 @@ class TestHygiene:
                 assert "t.a" in xsm_interp.current_state_ids
             '''))
         run(xsm_pytester, "--doctest-modules").assert_outcomes(passed=2)
+
+
+# -----------------------------------------------------------------------------
+# 7. the generated template over corpus charts
+# -----------------------------------------------------------------------------
+CORPUS_CHARTS = [
+    "HelloWorld.json",
+    "SimplePayment.json",
+    "Parallelism.json",
+    "Hierarchy.json",
+    "Kiosk.json",
+    "Parking.json",
+    "Installation_v1.json",
+    "Joyride.json",
+    "ConsoleLifecycle.json",
+    "TMC2209.json",
+]
+UNICODE_CHART = {
+    "id": "café",
+    "initial": "attente",
+    "states": {
+        "attente": {"on": {"PAYÉ": "réglé", "ÜBER-GEHEN": "fertig"}},
+        "réglé": {"type": "final"},
+        "fertig": {},
+    },
+}
+
+
+def _gt(chart: pathlib.Path, out: pathlib.Path, *extra: str) -> None:
+    env = dict(
+        os.environ,
+        PYTHONIOENCODING="utf-8",
+        PYTHONUTF8="1",
+        PYTHONPATH=str(SRC),
+    )
+    proc = subprocess.run(
+        [sys.executable, "-m", "xstate_statemachine", "gt", str(chart)]
+        + ["-t", "pytest", *extra, "-o", str(out)],
+        env=env,
+        capture_output=True,
+        text=True,
+        errors="replace",
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+class TestGeneratedTemplate:
+    @pytest.mark.parametrize("fixtures", [True, False])
+    def test_corpus_modules_pass_from_generated_dir(
+        self, xsm_pytester: Any, fixtures: bool
+    ) -> None:
+        charts = [CORPUS / name for name in CORPUS_CHARTS]
+        gen = xsm_pytester.path / "generated"
+        uni = xsm_pytester.path / "unicode.json"
+        uni.write_text(json.dumps(UNICODE_CHART), encoding="utf-8")
+        for chart in charts + [uni]:
+            # 📝 `-o generated/<chart>/` with the chart one level up: the
+            #    layout the template's CONFIG_PATH fallback supports.
+            out = gen / chart.stem
+            out.mkdir(parents=True)
+            _gt(chart, out, *(["--fixtures"] if fixtures else []))
+            shutil.copy(chart, gen / chart.name)
+        tests = list(gen.rglob("test_*.py"))
+        assert len(tests) == len(charts) + 1
+        for t in tests:
+            # 📝 Non-ASCII state / event names must still make valid,
+            #    importable test identifiers.
+            compile(t.read_text(encoding="utf-8"), str(t), "exec")
+        r = run(xsm_pytester, "generated", "--import-mode=importlib")
+        assert r.ret == 0, r.stdout.str()[-3000:]
+
+    def test_chart_engine_rejects_is_one_line_not_traceback(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        bad = tmp_path / "bad.json"
+        bad.write_text(
+            json.dumps({"id": "bad", "states": {"a": {}, "b": {}}}),
+            encoding="utf-8",
+        )
+        env = dict(os.environ, PYTHONUTF8="1", PYTHONPATH=str(SRC))
+        proc = subprocess.run(
+            [sys.executable, "-m", "xstate_statemachine", "gt", str(bad)]
+            + ["-t", "pytest", "--fixtures", "-o", str(tmp_path)],
+            env=env,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=120,
+        )
+        assert proc.returncode == 1
+        assert "Traceback" not in proc.stderr
+        assert "cannot generate the pytest companion" in proc.stderr
