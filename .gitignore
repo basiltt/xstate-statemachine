@@ -722,3 +722,6 @@ benchmarks/last_run.json
 benchmarks/scaling.json
 
 .venv39/
+
+# model_test failing artefacts (#271)
+failing.json

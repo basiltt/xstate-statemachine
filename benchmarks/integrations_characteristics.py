@@ -80,6 +80,7 @@ ROWS = (
     "shortest_paths_payment",
     "pytest_plugin_per_test",
     "coverage_collector_overhead",
+    "model_test_200_examples",
     "fastapi_router",
     "timer_scan_sqlite_100k",
     "circuit_breaker_call_closed",
@@ -738,6 +739,42 @@ def benchmark_coverage_collector_overhead(
     return metric
 
 
+def benchmark_model_test_200_examples(
+    examples: int = 200,
+) -> Optional[Dict[str, Any]]:
+    """One ``model_test`` run of *examples* examples (#271 battle).
+
+    📝 `AdvancePayment.json` on stub logic, ``derandomize=True`` and no
+    example database, so every sample replays the same 200 sequences.
+    Each sample is µs for the whole run (p50 of REPETITIONS).
+    """
+    chart = SHORTEST_PATHS_CHART.with_name("AdvancePayment.json")
+    try:
+        from hypothesis import settings
+        from hypothesis.stateful import run_state_machine_as_test
+    except ImportError:
+        return None
+    if not chart.is_file():
+        return None
+    from xstate_statemachine.contrib.testing import model_test
+
+    cls = model_test(
+        chart,
+        settings=settings(
+            max_examples=examples, derandomize=True, database=None
+        ),
+    )
+
+    def once() -> float:
+        start = time.perf_counter_ns()
+        run_state_machine_as_test(cls, settings=cls.TestCase.settings)
+        return (time.perf_counter_ns() - start) / 1000
+
+    once()  # warm
+    samples = [once() for _ in range(REPETITIONS)]
+    return _metric(samples, chart=chart.name, examples=examples)
+
+
 def benchmark_fastapi_router() -> None:
     """Reserved for the later phase that ships the FastAPI router."""
     return None
@@ -820,6 +857,7 @@ def run(quick: bool = False) -> Dict[str, Any]:
         "shortest_paths_payment": "#269 battle: AdvancePayment.json (3 configurations); no budget until a nightly records one",
         "pytest_plugin_per_test": "#268 battle: xsm_machine + xsm_interp + one xsm_snapshot compare on the orders chart; no budget until the reference runner records one",
         "coverage_collector_overhead": "#270 battle: send() on the orders chart with the --xsm-coverage global collector; ratio vs bare; no budget until the reference runner records one",
+        "model_test_200_examples": "#271 battle: one model_test run (200 derandomized examples) on AdvancePayment.json; no budget until the reference runner records one",
         "fastapi_router": "FastAPI router is not shipped yet",
         "circuit_breaker_call_closed": "#265 battle: per-call cb.call(f) on a closed breaker; no budget until the reference runner records one",
     }
@@ -890,6 +928,9 @@ def run(quick: bool = False) -> Dict[str, Any]:
         results["coverage_collector_overhead"] = _clean(
             benchmark_coverage_collector_overhead
         )
+        results["model_test_200_examples"] = _clean(
+            benchmark_model_test_200_examples
+        )
         results["fastapi_router"] = benchmark_fastapi_router()
         results["circuit_breaker_call_closed"] = _clean(
             benchmark_circuit_breaker_call_closed
@@ -953,6 +994,7 @@ def measure_row(row: str, quick: bool = False) -> Dict[str, Any]:
             (),
         ),
         "timer_scan_sqlite_100k": (benchmark_timer_scan_sqlite_100k, ()),
+        "model_test_200_examples": (benchmark_model_test_200_examples, ()),
     }
     if row not in dispatch:
         raise KeyError(f"{row!r} is not a re-measurable row")

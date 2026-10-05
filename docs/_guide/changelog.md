@@ -15,7 +15,16 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
-_No unreleased changes yet._
+### Fixed
+
+- **`xsm simulate --script` (#271 battle).** A malformed script (not a
+  list, a step without `send` / `clock` / `guard`, a list `payload`, a
+  negative, infinite or non-numeric `clock`, a non-boolean guard `value`,
+  a missing file) printed a Python traceback; it is now one line naming
+  the step, exit 2. `--script` together with `--events` / `--clock` used
+  to run the events first and then the script, so a replayed `model_test`
+  artefact was not the recorded run; the combination is now refused
+  (exit 2). New benchmark row `model_test_200_examples` (no budget yet).
 
 ## [0.11.0] - 2026-10-01
 
