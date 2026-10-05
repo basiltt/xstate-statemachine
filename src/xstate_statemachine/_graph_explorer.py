@@ -24,7 +24,6 @@ from .validation import _collect_findings, transitions_of, walk
 from ._graph_model import (
     Config,
     Step,
-    UNKNOWN_DELAY_MS,
     _apply_step,
     _forced,
     _quiet,

@@ -27,13 +27,6 @@ Config = FrozenSet[str]
 #: known statically. Large enough to exceed any realistic delay.
 UNKNOWN_DELAY_MS = 10**9
 
-#: ⚡ Upper bound on cached prefix snapshots (each is a small JSON blob);
-#: beyond it the explorer falls back to replaying the prefix.
-_CACHE_MAX = 50_000
-
-_GUARD_MODES = ("true", "false", "both")
-_WEIGHTS = ("steps", "time")
-
 
 # -----------------------------------------------------------------------------
 # 🧱 Data model

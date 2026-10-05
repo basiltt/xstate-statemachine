@@ -26,34 +26,28 @@ from __future__ import annotations
 # -------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -------------------------------------------------------------------------
-import contextlib
-import copy
 import heapq
 import itertools
 import logging
-import threading
 from collections import deque
-from dataclasses import dataclass
 from typing import (
     Any,
     Deque,
     Dict,
     FrozenSet,
-    Iterator,
     List,
     Optional,
     Set,
     Tuple,
-    Union,
 )
 
 # -------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -------------------------------------------------------------------------
 from .exceptions import XStateMachineError
-from .models import MachineNode, StateNode
+from .models import MachineNode
 from .validation import transitions_of, walk
-from ._graph_explorer import _CACHE_MAX, _Explorer, _GUARD_MODES  # noqa: F401
+from ._graph_explorer import _Explorer
 from ._graph_explorer import WILDCARD_PROBE  # noqa: F401
 from ._graph_model import (  # noqa: F401
     UNKNOWN_DELAY_MS,
